@@ -168,6 +168,7 @@ class SearchGateway:
                 filters=filters,
                 top_k=request.top_k,
                 mode=mode,
+                record_kind="knowledge_object",
             )
             filters_applied = {
                 **dict(request.filters_applied),

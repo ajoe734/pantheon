@@ -204,6 +204,7 @@ from services.rankings.snapshots import (
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
+from services.control_plane.bff.ports.persona_pool import PersonaPoolViewsPort
 
 from services.control_plane.bff.persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
@@ -15612,6 +15613,35 @@ class PersonaService:
 
     def get_write_owner(self) -> Any:
         return self._write_owner
+
+    def read_strategy_pool(
+        self,
+        persona_id: str,
+        tenant_id: str,
+        *,
+        authorization: Optional[str],
+        snapshot_at: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Read owner pool observations for an authorized, tenant-scoped persona.
+
+        Detail routes resolve the persona and caller tenant before this use case.
+        The existing owner port preserves unavailable sections and version/digest
+        checks, using this application's bound cycle read owner.
+        """
+        return PersonaPoolViewsPort(
+            read_store=self.get_read_store(), authorization=authorization,
+        ).read(persona_id, tenant_id, snapshot_at=snapshot_at)
+
+    def read_persona_cycle(self, persona_id, tenant_id, *, identity, authorization, snapshot_at):
+        """Compose authorized detail reads from the existing owning services."""
+        from .cycle_views import read_cycle_views
+        return read_cycle_views(self.get_read_store(), persona_id, tenant_id, identity,
+                                authorization, snapshot_at)
+
+    def read_persona_cycle_health(self, tenant_id, persona_ids):
+        """One controller owner read for the authorized Management page."""
+        from .cycle_views import read_fleet_cycle_health
+        return read_fleet_cycle_health(self.get_read_store(), tenant_id, persona_ids)
 
     def _source_ingest_truth_by_connector(self) -> Dict[str, Dict[str, Any]]:
         """Sole implementation of the TTL-cached source-ingest truth read.

@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Date: Fri, 13 Nov 2026 08:56:50 GMT
+Server: GDELT Server
+Access-Control-Allow-Origin: *
+Timing-Allow-Origin: *
+X-XSS-Protection: 1; mode=block
+Cache-Control: public, max-age=900
+Content-Length: 2
+Content-Type: application/json; charset=utf-8
+

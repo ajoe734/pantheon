@@ -13,13 +13,14 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from .usefulness import marked_payload, usefulness_score
 
 
 def _parse_utc_timestamp(value: str) -> datetime:
@@ -33,8 +34,8 @@ def _parse_utc_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _entry_sort_key(entry: "PersonaMemoryEntry") -> tuple[int, datetime]:
-    return (entry.reuse_count, _parse_utc_timestamp(entry.written_at))
+def _entry_sort_key(entry: "PersonaMemoryEntry") -> tuple[float, datetime]:
+    return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 
 class PersonaMemoryError(ValueError):
@@ -142,8 +143,13 @@ class PersonaMemoryEntry:
     embedding_ref: Optional[str] = None
     superseded_by: Optional[str] = None
     relevance_scope: str = PersonaRelevanceScope.PERSONA_PRIVATE.value
+    usefulness_marks: Dict[str, Any] = field(default_factory=dict)
+    memory_review: Optional[Dict[str, Any]] = None
     reuse_count: int = 0
     tenant_id: Optional[str] = None
+    expires_at: Optional[str] = None
+    archived_at: Optional[str] = None
+    archived_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         for enum_cls, val, label in (
@@ -166,7 +172,10 @@ class PersonaMemoryEntry:
 
     @property
     def is_active(self) -> bool:
-        return not bool(self.superseded_by)
+        return not bool(self.superseded_by or self.archived_at)
+
+    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+        return bool(self.expires_at and _parse_utc_timestamp(self.expires_at) <= (now or datetime.now(timezone.utc)))
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -200,6 +209,15 @@ def validate_persona_memory(entry: PersonaMemoryEntry) -> List[str]:
         _parse_utc_timestamp(entry.written_at)
     except ValueError:
         errors.append("written_at must be an ISO-8601 UTC timestamp")
+
+    for field_name in ("expires_at", "archived_at"):
+        if getattr(entry, field_name):
+            try:
+                _parse_utc_timestamp(getattr(entry, field_name))
+            except ValueError:
+                errors.append(f"{field_name} must be an ISO-8601 UTC timestamp")
+    if entry.archived_at and not entry.archived_reason:
+        errors.append("archived_reason is required when archived_at is set")
 
     if entry.write_authority != PersonaWriteAuthority.PERSONA_MEMORY_SVC.value:
         allowed = _WRITEBACK_RULES.get(entry.write_authority, set())
@@ -262,6 +280,7 @@ class PersonaMemoryStore:
                 raise PersonaMemoryError(f"Entry already exists: {entry.memory_id}")
             self._entries[entry.memory_id] = entry
             self._save()
+            self._project(entry)
             return entry
 
     def get(self, memory_id: str) -> Optional[PersonaMemoryEntry]:
@@ -286,6 +305,8 @@ class PersonaMemoryStore:
         relevance_scope: Optional[str] = None,
         active_only: bool = True,
     ) -> List[PersonaMemoryEntry]:
+        if active_only:
+            self.archive_expired()
         with self._lock:
             entries = list(self._entries.values())
 
@@ -318,6 +339,15 @@ class PersonaMemoryStore:
         ]
         return sorted(matches, key=lambda entry: (entry.persona_id, entry.memory_id))
 
+    def mark_usefulness(self, memory_id: str, mark: dict) -> PersonaMemoryEntry:
+        with self._lock:
+            entry = self._require_unlocked(memory_id)
+            updated = PersonaMemoryEntry(**marked_payload(entry, mark))
+            self._entries[memory_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
+
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
         if count <= 0:
             raise PersonaMemoryError("count must be >= 1")
@@ -338,6 +368,43 @@ class PersonaMemoryStore:
             )
             self._entries[memory_id] = updated
             self._save()
+            self._project(updated)
+            return updated
+
+    def archive_expired(self, *, now: Optional[str] = None, reason: Optional[str] = None) -> List[PersonaMemoryEntry]:
+        archive_time = _parse_utc_timestamp(now) if now else datetime.now(timezone.utc)
+        archived = []
+        with self._lock:
+            for memory_id, entry in list(self._entries.items()):
+                if not entry.is_active or not entry.is_expired(now=archive_time):
+                    continue
+                updated = PersonaMemoryEntry(**{**entry.to_dict(),
+                    "archived_at": archive_time.isoformat().replace("+00:00", "Z"),
+                    "archived_reason": reason or "retention_ttl_expired"})
+                self._entries[memory_id] = updated
+                archived.append(updated)
+            if archived:
+                self._save()
+                for entry in archived:
+                    self._project(entry)
+        return archived
+
+    @staticmethod
+    def _project(entry) -> None:
+        from .search_retrieval import sync_memory_projection
+        sync_memory_projection(entry)
+
+    def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
+        if not reason.strip():
+            raise ValueError("archive reason is required")
+        with self._lock:
+            entry = self._require_unlocked(memory_id)
+            updated = PersonaMemoryEntry(**{**entry.to_dict(),
+                "archived_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "archived_reason": reason})
+            self._entries[memory_id] = updated
+            self._save()
+            self._project(updated)
             return updated
 
     def retrieve(
@@ -377,13 +444,13 @@ class PersonaMemoryStore:
             if query_terms or normalized_tags:
                 if matched_terms == 0 and matched_tags == 0:
                     continue
-            score = float(matched_terms * 10 + matched_tags * 5 + entry.reuse_count)
+            score = float(matched_terms * 10 + matched_tags * 5 + usefulness_score(entry))
             hits.append(PersonaRetrievalHit(entry=entry, relevance_score=score))
 
         hits.sort(
             key=lambda hit: (
                 hit.relevance_score,
-                hit.entry.reuse_count,
+                usefulness_score(hit.entry),
                 _parse_utc_timestamp(hit.entry.written_at),
             ),
             reverse=True,
@@ -461,13 +528,45 @@ class PostgresPersonaMemoryStore(PersonaMemoryStore):
             active_only=active_only,
         )
 
+    def mark_usefulness(self, memory_id: str, mark: dict) -> PersonaMemoryEntry:
+        for _ in range(8):
+            raw = self._records.get(memory_id)
+            if raw is None:
+                raise ValueError("usefulness_entry_unavailable")
+            entry = PersonaMemoryEntry.from_dict(raw)
+            updated = PersonaMemoryEntry(**marked_payload(entry, mark))
+            committed, _ = self._records.compare_and_set(memory_id, raw, updated.to_dict())
+            if committed:
+                self._project(updated)
+                return updated
+        raise ValueError("concurrent_usefulness_update")
+
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
-        self._refresh_from_postgres()
-        return super().mark_reused(memory_id, count=count)
+        # A retrieval counter must not overwrite a concurrent usefulness mark.
+        if count <= 0:
+            raise PersonaMemoryError("count must be >= 1")
+        for _ in range(8):
+            raw = self._records.get(memory_id)
+            if raw is None:
+                raise PersonaMemoryError("Entry not found")
+            entry = PersonaMemoryEntry.from_dict(raw)
+            updated = PersonaMemoryEntry(**{**entry.to_dict(), "reuse_count": entry.reuse_count + count})
+            committed, _ = self._records.compare_and_set(memory_id, raw, updated.to_dict())
+            if committed:
+                return updated
+        raise PersonaMemoryError("concurrent_reuse_update")
 
     def supersede(self, memory_id: str, replacement_memory_id: str) -> PersonaMemoryEntry:
         self._refresh_from_postgres()
         return super().supersede(memory_id, replacement_memory_id)
+
+    def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
+        self._refresh_from_postgres()
+        return super().archive(memory_id, reason=reason)
+
+    def archive_expired(self, *, now=None, reason=None):
+        self._refresh_from_postgres()
+        return super().archive_expired(now=now, reason=reason)
 
     def _save(self) -> None:
         for entry in self._entries.values():

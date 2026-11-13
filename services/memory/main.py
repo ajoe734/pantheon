@@ -21,6 +21,8 @@ from .institutional_memory_store import (
     InstitutionalMemoryStore,
     build_institutional_memory_store,
 )
+from .usefulness import apply_usefulness
+
 from .learn_feedback_writeback import (
     LearnFeedbackUnauthorizedError,
     LearnFeedbackWritebackError,
@@ -62,6 +64,8 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
 
 
 _MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+# Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
+_MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin",)
 _MEMORY_WRITE_ROLES = (
     "operator",
     "admin",
@@ -466,6 +470,8 @@ async def store_entry(
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise InstitutionalMemoryError("usefulness is written only by the outcome owner")
         entry = InstitutionalMemoryEntry.from_dict(payload)
         saved = _store().create(entry)
     except (InstitutionalMemoryError, TypeError) as exc:
@@ -485,6 +491,8 @@ def _store_persona_payload(payload: Dict[str, Any], auth_ctx: Optional[AuthConte
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise PersonaMemoryError("usefulness is written only by the outcome owner")
         entry = PersonaMemoryEntry.from_dict(payload)
         saved = _persona_store().create(entry)
     except (PersonaMemoryError, TypeError) as exc:
@@ -517,6 +525,16 @@ async def writeback_learn_feedback(
     authorization: Optional[str] = Header(default=None),
 ):
     ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    if payload.get("source_event_type") == "case_file_usefulness":
+        # Same route and existing writer role; no operator/session can submit marks.
+        ctx = _authenticate_memory_request(authorization, required_roles=("persona-svc",), require_jwt=True)
+        tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant")
+        if not tenant or tenant == "*" or tenant != payload.get("tenant_id"):
+            raise HTTPException(status_code=403, detail="Usefulness requires one verified tenant")
+        try:
+            return apply_usefulness(payload, persona_store=_persona_store(), institutional_store=_store())
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if ctx is not None:
         authority = str(payload.get("write_authority") or "")
         if not ({authority, "operator", "admin", "system", "memory-writer"} & set(ctx.roles)):
@@ -581,6 +599,7 @@ async def get_entry(
 
 @app.get("/api/memory/retrieve")
 async def retrieve_memory(
+    review_required: bool = Query(default=False),
     actor_id: str = Query(..., min_length=1),
     actor_roles: List[str] = Query(...),
     session_id: str = Query(..., min_length=1),
@@ -645,94 +664,44 @@ async def retrieve_memory(
             },
         )
 
+    from .search_retrieval import (
+        SearchServiceClient, get_search_retrieval_backend,
+        retrieve_institutional_with_backend, retrieve_persona_with_backend,
+    )
+    backend = get_search_retrieval_backend()
+    if isinstance(backend, SearchServiceClient):
+        backend.source_event_id = session_id
     ranked_hits = []
-    if scope in {"institutional", "both"}:
-        institutional_store = _store()
-        backend = None
-        try:
-            from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_institutional_with_backend
-            backend = get_search_retrieval_backend()
-        except Exception:
-            backend = None
-
-        if backend is not None:
-            for hit in retrieve_institutional_with_backend(
-                institutional_store,
-                backend=backend,
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-        else:
-            for hit in institutional_store.retrieve(
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-
-    persona_tenant = None
+    retrieval_details = {}
+    tenant_id = None
     if ctx is not None:
-        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
-        if token_tenant != "*":
-            persona_tenant = token_tenant
-    persona_fetch_limit = 1_000_000 if persona_tenant is not None else limit
-
+        tenant_id = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
+        if tenant_id == "*":
+            tenant_id = "default"
+    if scope in {"institutional", "both"}:
+        diagnostics = {}
+        for hit in retrieve_institutional_with_backend(
+            _store(), backend=backend, query=query, tenant_id=tenant_id,
+            persona_id=persona_id or effective_actor_id, workspace_id=session_id, knowledge_type=knowledge_type,
+            scope_filter=scope_filter, tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
+        ):
+            ranked_hits.append(("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry))
+        retrieval_details["institutional"] = diagnostics
     if scope in {"persona", "both"}:
+        diagnostics = {}
         try:
-            persona_store = _persona_store()
-            backend = None
-            try:
-                from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_persona_with_backend
-                backend = get_search_retrieval_backend()
-            except Exception:
-                backend = None
-
-            def _persona_hits():
-                # Tenant must be filtered before ranking/limit: fetch the full
-                # candidate set from the local store, then cut after filtering.
-                if backend is not None and query.strip():
-                    return retrieve_persona_with_backend(
-                        persona_store,
-                        persona_id=persona_id or "",
-                        backend=backend,
-                        query=query,
-                        tenant_id=persona_tenant,
-                        memory_type=memory_type,
-                        relevance_scope=persona_relevance_scope,
-                        tags=tag_values,
-                        limit=min(persona_fetch_limit, 100),
-                    )
-                return persona_store.retrieve(
-                    persona_id=persona_id or "",
-                    query=query,
-                    memory_type=memory_type,
-                    relevance_scope=persona_relevance_scope,
-                    tags=tag_values,
-                    limit=persona_fetch_limit,
-                )
-
-            persona_hits = _persona_hits()
-            if persona_tenant is not None:
-                persona_hits = [h for h in persona_hits if h.entry.tenant_id == persona_tenant]
-            for hit in persona_hits:
-                ranked_hits.append(
-                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
-                )
+            if not persona_id:
+                raise PersonaMemoryError("persona_id is required for persona memory retrieval")
+            for hit in retrieve_persona_with_backend(
+                _persona_store(), persona_id=persona_id, backend=backend, query=query, tenant_id=tenant_id,
+                workspace_id=session_id,
+                memory_type=memory_type, relevance_scope=persona_relevance_scope,
+                tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
+            ):
+                ranked_hits.append(("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry))
         except PersonaMemoryError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"error": "invalid_persona_retrieve", "message": str(exc)},
-            ) from exc
+            raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve", "message": str(exc)}) from exc
+        retrieval_details["persona"] = diagnostics
 
     ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
     selected_hits = ranked_hits[:limit]
@@ -760,6 +729,10 @@ async def retrieve_memory(
         "hits": response_hits,
         "count": len(response_hits),
         "scope": scope,
+        "retrieval_mode": min((d["retrieval_mode"] for d in retrieval_details.values()),
+                              key=lambda mode: {"keyword_fallback": 0, "lexical_only": 1, "hybrid": 2}[mode]),
+        "fallback_reason": ";".join(sorted({d["fallback_reason"] for d in retrieval_details.values() if d.get("fallback_reason")})) or None,
+        "retrieval_details": retrieval_details,
         "authz": {
             "allowed": True,
             "reason": str(decision.get("reason") or "authorized"),
@@ -768,8 +741,10 @@ async def retrieve_memory(
     }
 
 
-def _lesson_identity(authorization: Optional[str], *, write: bool = False) -> tuple[AuthContext, str]:
-    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else _MEMORY_READ_ROLES, require_jwt=True)
+def _lesson_identity(
+    authorization: Optional[str], *, write: bool = False, read_roles: tuple = _MEMORY_READ_ROLES
+) -> tuple[AuthContext, str]:
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else read_roles, require_jwt=True)
     assert ctx is not None
     tenants = {str(ctx.claims.get(key) or "").strip() for key in _TENANT_CLAIM_NAMES if str(ctx.claims.get(key) or "").strip()}
     if len(tenants) != 1:
@@ -817,7 +792,7 @@ async def list_trade_lessons(
 
 @app.get("/api/memory/trade-lessons/{candidate_id}")
 async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
-    _ctx, tenant_id = _lesson_identity(authorization)
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=_MEMORY_LESSON_GET_ROLES)
     return _owned_lesson(candidate_id, tenant_id)
 
 

@@ -33,6 +33,16 @@ from services.source_ingestion.runtime import create_runtime
 
 
 CONNECTOR_ID = "tw-official-market-datasets"
+
+
+@pytest.fixture(autouse=True)
+def _fixture_connector_has_taiwan_session_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The generic fixture connector stands in for a governed Taiwan session connector.
+    monkeypatch.setattr(
+        controller_worker,
+        "_TAIWAN_SESSION_CONNECTOR_IDS",
+        controller_worker._TAIWAN_SESSION_CONNECTOR_IDS | {CONNECTOR_ID},
+    )
 DATASET = "tw_price_daily"
 FINAL_TRUTH_LEVEL = "reconciled_live_proof"
 SIMULATION_CONNECTOR_ID = "dev-paper-us-equity-simulation"
@@ -1331,6 +1341,25 @@ def test_main_failure_line_is_unchanged_without_schedule_context(
     )
 
     assert set(line) == {"tick", "status", "stage", "error", "state_sequence_no"}
+
+
+def test_main_skips_cadence_sleep_only_while_continuation_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = iter([{"status": "ok", "continuation_pending": True}, {"status": "ok", "continuation_pending": False}])
+    sleeps: list[float] = []
+    config = replace(_config(tmp_path), max_ticks=3, interval_seconds=60)
+    monkeypatch.setattr(controller_worker, "config_from_env", lambda: config)
+    monkeypatch.setattr(controller_worker, "_new_state", lambda: _state())
+    monkeypatch.setattr(controller_worker, "build_loop_writer", lambda **kwargs: RecordingWriter([]))
+    monkeypatch.setattr(controller_worker, "run_controller_tick", lambda **kwargs: next(results, {"status": "ok"}))
+    monkeypatch.setattr(controller_worker.time, "sleep", sleeps.append)
+
+    assert controller_worker.main() == 0
+    capsys.readouterr()
+    assert sleeps == [controller_worker.CONTINUATION_PAUSE_SECONDS, 60]
 
 
 def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
@@ -3285,3 +3314,308 @@ def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent
     assert controller_worker.limit_collector_pull_batch(actual, selected, limit=2) == ["collector-b", "collector-c"]
     assert controller_worker.limit_collector_pull_batch(actual, selected, limit=10) == selected
     assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []
+
+
+def _deferred_scope_validate(
+    actual: dict[str, Any], now: datetime, items: list[dict[str, Any]] | None = None, selected_at: datetime | None = None
+):
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    return _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        now=now,
+        frontier_items=items or [],
+        session_selected_at=selected_at,
+    )
+
+
+def _queued_item(run_date: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "frontier_id": "frontier-a0bceb2da89b", "connector_id": CONNECTOR_ID, "status": "queued",
+        "attempts": 0, "last_error": None, "job_parameters": {"run_date": run_date}, **overrides,
+    }
+
+
+def _queued_actual(run_date: str, now: datetime, count: int = 1) -> dict[str, Any]:
+    actual = _actual_readback()
+    stamp = now.isoformat().replace("+00:00", "Z")
+    actual["captured_at"] = stamp
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = stamp
+    actual["frontier_backlog"] = count
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: count}
+    return actual
+
+
+def test_terminal_readback_defers_untouched_queue_for_unclosed_later_session() -> None:
+    now = datetime.now(timezone.utc)
+    items = [_queued_item("2099-01-01")]  # later than any closed session
+    assert _deferred_scope_validate(_queued_actual("2099-01-01", now), now, items) == 0
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        _queued_item("2000-01-03"),  # requested/closed session stays a hard failure
+        _queued_item("2099-01-01", attempts=1),
+        _queued_item("2099-01-01", last_error="boom"),
+        _queued_item("2099-01-01", status="retry"),
+        _queued_item("2099-01-01", connector_id="other"),
+    ],
+)
+def test_terminal_readback_still_rejects_non_deferrable_queue(item: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ControllerTickError, match="unresolved frontier|contradict"):
+        _deferred_scope_validate(_queued_actual(item["job_parameters"]["run_date"], now), now, [item])
+
+
+@pytest.mark.parametrize(
+    "now,connector,expected",
+    [
+        ("2026-11-13T02:48:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),  # actual 10:48 Taipei
+        ("2026-11-13T05:29:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),
+        ("2026-11-13T05:30:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # Monday -> Friday
+        ("2026-11-13T05:30:00Z", "tw-finmind-broker-daily-report", "2026-11-12"),  # FinMind 18:00 cutoff kept
+        ("2026-11-13T10:00:00Z", "tw-finmind-broker-daily-report", "2026-11-13"),
+    ],
+)
+def test_latest_eligible_session_boundaries(now: str, connector: str, expected: str) -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    assert _latest_eligible_session(connector, parsed).isoformat() == expected
+
+
+NOV13_MORNING = datetime(2026, 11, 13, 2, 48, tzinfo=timezone.utc)  # actual 10:48 Taipei
+
+
+def _nov(frontier_id: str, run_date: str, **overrides: Any) -> dict[str, Any]:
+    return _queued_item(run_date, frontier_id=frontier_id, **overrides)
+
+
+def test_terminal_readback_defers_only_session_after_real_latest_closed() -> None:
+    from datetime import timedelta
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    now = datetime.now(timezone.utc)
+    later = (_latest_eligible_session(CONNECTOR_ID, now) + timedelta(days=1)).isoformat()
+    assert _deferred_scope_validate(_queued_actual(later, now), now, [_nov("frontier-a0bceb2da89b", later)]) == 0
+
+
+@pytest.mark.parametrize(
+    "items,count,match",
+    [
+        # requested-day work plus newly queued later work: never netted away
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 2, "unresolved frontier"),
+        ([_nov("f-req", "2026-11-12")], 1, "unresolved frontier"),
+        # concurrent enqueue: aggregate (1) predates the item list (2), or the reverse
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 1, "contradict"),
+        ([_nov("f-later", "2026-11-13")], 2, "contradict"),
+        ([_nov("f-later", "2026-11-13"), _nov("f-later", "2026-11-13")], 2, "malformed or duplicated"),
+        # holiday/weekend: Sunday Nov15 morning-closed session is Fri Nov13, so Nov13 is requested work
+        ([_nov("f-fri", "2026-11-13")], 1, None),
+    ],
+)
+def test_terminal_readback_reconciles_frontier_items_exactly(items, count, match) -> None:
+    now = NOV13_MORNING
+    if match is None:
+        now = datetime(2026, 11, 15, 3, 0, tzinfo=timezone.utc)
+        with pytest.raises(ControllerTickError, match="unresolved frontier"):
+            _deferred_scope_validate(_queued_actual("2026-11-13", now, count), now, items)
+        return
+    with pytest.raises(ControllerTickError, match=match):
+        _deferred_scope_validate(_queued_actual("x", now, count), now, items)
+
+
+def test_terminal_readback_does_not_defer_queued_work_for_non_taiwan_connector(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real validator fixture: us_price_daily-style connector, queued run_date today, attempts 0, no error.
+    monkeypatch.setattr(controller_worker, "_TAIWAN_SESSION_CONNECTOR_IDS", frozenset({"tw-taifex-futures-options-chip"}))
+    now = datetime.fromisoformat("2026-11-13T02:48:00+00:00")
+    assert controller_worker._latest_eligible_session(CONNECTOR_ID, now) is None
+    with pytest.raises(Exception, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-13", now), now, [_queued_item("2026-11-13")])
+
+
+def test_terminal_readback_binds_deferral_to_session_selected_at_across_close() -> None:
+    selected = datetime(2026, 11, 13, 5, 29, 59, tzinfo=timezone.utc)  # Taipei 13:29:59, Nov12 still latest
+    later = datetime(2026, 11, 13, 5, 31, tzinfo=timezone.utc)  # observed after 13:30 close
+    items = [_nov("frontier-a0bceb2da89b", "2026-11-13")]
+    actual = _queued_actual("2026-11-13", later)
+    # Selected-session binding: later queued Nov13 work stays deferred.
+    assert _deferred_scope_validate(actual, later, items, selected_at=selected) == 0
+    # Without the binding the real clock retargets Nov13 and fails closed.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, items)
+    # Requested-session work (Nov12) is never deferred, and a future selection cannot hide it.
+    req = [_nov("f-req", "2026-11-12")]
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-12", later), later, req, selected_at=selected)
+    # Failed/attempted later work is never deferred.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, [_nov("f-x", "2026-11-13", attempts=1)], selected_at=selected)
+
+
+def test_finmind_1800_cutoff_session_binds_to_selected_at() -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    finmind = "tw-finmind-broker-daily-report"
+    selected = datetime(2026, 11, 13, 9, 59, 59, tzinfo=timezone.utc)  # 17:59:59 Taipei
+    later = datetime(2026, 11, 13, 10, 1, tzinfo=timezone.utc)  # after 18:00 publication
+    # The terminal validator evaluates min(observed now, selected_at): Nov12 stays the
+    # requested session across the 18:00 cutoff, while the real clock would retarget Nov13.
+    assert _latest_eligible_session(finmind, min(later, selected)).isoformat() == "2026-11-12"
+    assert _latest_eligible_session(finmind, later).isoformat() == "2026-11-13"
+
+
+def test_steady_request_carries_one_collector_pull_so_serial_pulls_fit_one_http_timeout() -> None:
+    """Serial claimed pulls share one HTTP request; a steady tick must claim exactly one."""
+    assert controller_worker.STEADY_PULLS_PER_REQUEST == 1
+    import inspect
+
+    src = inspect.getsource(controller_worker.run_controller_tick)
+    assert "limit=STEADY_PULLS_PER_REQUEST" in src
+    assert "STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency" in src
+
+from services.source_ingestion.tests.test_scheduled_connector import (  # noqa: E402,F401
+    _configure_with_records,
+    _read_headers,
+    client,
+)
+
+
+def test_controller_disconnect_keeps_execution_lock_and_terminal_receipt_without_duplicates(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real uvicorn endpoint + real controller HTTP client with a short request timeout.
+
+    The configured fetch is held in flight past the controller's timeout, so the controller
+    disconnects. Execution must stay in flight under the source execution lock (a second
+    controller request cannot overlap it), finish with a terminal receipt, persist exactly one
+    run/record, and a later tick must see it as already run instead of executing it again.
+    """
+    import socket
+    import threading
+    import time
+    import urllib.error
+
+    import uvicorn
+    from services.source_ingestion import controller_worker
+
+    test_client, _, module = client
+    assert _configure_with_records(test_client, connector_id="conn-disconnect").status_code == 201
+    assert test_client.put(
+        "/api/source-ingest/connectors/conn-disconnect/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    ).status_code == 200
+
+    fetcher = module.runtime.configured_fetcher
+    real_fetch = fetcher.fetch_batch
+    entered, release, calls = threading.Event(), threading.Event(), []
+
+    def gated_fetch(*args, **kwargs):
+        calls.append(time.monotonic())
+        entered.set()
+        assert release.wait(timeout=20), "test never released the in-flight fetch"
+        return real_fetch(*args, **kwargs)
+
+    monkeypatch.setattr(fetcher, "fetch_batch", gated_fetch)
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(module.app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started
+    api_url = f"http://127.0.0.1:{port}"
+    token = _read_headers()["Authorization"].split(" ", 1)[1]
+    try:
+        with pytest.raises((TimeoutError, urllib.error.URLError, socket.timeout)):
+            controller_worker.run_schedule_tick(
+                api_url=api_url, max_concurrency=1, timeout_seconds=0.5, controller_token=token
+            )
+        assert entered.wait(timeout=5)
+        lock = module.runtime.source_execution_lock
+        assert not lock.acquire(blocking=False), "execution must still hold the source execution lock"
+
+        overlap: list[object] = []
+
+        def second_request() -> None:
+            try:
+                overlap.append(
+                    controller_worker.run_schedule_tick(
+                        api_url=api_url, max_concurrency=1, timeout_seconds=30.0, controller_token=token
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - surfaced by the assertions below
+                overlap.append(exc)
+
+        second = threading.Thread(target=second_request, daemon=True)
+        second.start()
+        time.sleep(0.5)
+        assert len(calls) == 1 and not overlap, "a second request must wait, not overlap the fetch"
+
+        release.set()
+        second.join(timeout=20)
+        assert not second.is_alive() and len(overlap) == 1 and isinstance(overlap[0], dict)
+        assert overlap[0]["summary"]["total_ran"] == 0, "the later tick must not re-run the connector"
+    finally:
+        release.set()
+        server.should_exit = True
+        thread.join(timeout=10)
+
+    assert len(calls) == 1
+    runs = module.runtime.store.list_runs()
+    assert len(runs) == 1 and runs[0].status.value == "completed"
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1
+    assert len(module.runtime.store.list_frontier(status="done")) == 1
+    assert module.runtime.connector_store.get_fetch_state("conn-disconnect")["attempts"] == 1
+    receipt = test_client.get(f"/api/source-ingest/receipts/{runs[0].ingest_run_id}")
+    assert receipt.status_code == 200 and receipt.json()["receipt"]["status"] == "completed"
+
+
+def _continuing(actual: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    item = actual["connectors"][0]
+    state = {
+        "last_error": None,
+        "collector_outcome": {"observed": {"continuation_pending": True}, "complete": False},
+    }
+    state.update(overrides.pop("state", {}))
+    item["fetch_state"] = state
+    item["freshness"]["latest_run"] = {"status": overrides.pop("run_status", "completed")}
+    item["freshness"].update(overrides)
+    return actual
+
+
+def test_selection_continues_partial_newest_session_before_cadence() -> None:
+    actual = _continuing(_collector_actual(is_due=False))
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == [COLLECTOR_CONNECTOR_ID]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"state": {"last_error": "boom"}},
+        {"state": {"collector_outcome": {"observed": {}, "complete": False}}},
+        {"state": {"collector_outcome": {"observed": {"continuation_pending": "yes"}}}},
+        {"run_status": "failed"},
+        {"status": "degraded"},
+    ],
+)
+def test_selection_continuation_negatives_keep_finished_cadence(overrides: dict[str, Any]) -> None:
+    actual = _continuing(_collector_actual(is_due=False), **overrides)
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == []

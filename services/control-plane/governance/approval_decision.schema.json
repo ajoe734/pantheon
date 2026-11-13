@@ -36,6 +36,8 @@
         "persona_lifecycle_transition",
         "paper_canary_candidacy",
         "evolution_execute",
+        "lesson_gate_check_proposal",
+        "pool_policy_parameter_proposal",
         "persona_training_target"
       ],
       "description": "The type of object being approved. Must match a valid governance target."

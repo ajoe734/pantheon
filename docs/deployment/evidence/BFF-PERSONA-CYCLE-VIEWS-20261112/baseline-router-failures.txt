@@ -1,0 +1,29 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________________________ test_route_inventory_count __________________________
+
+persona_router = <fastapi.routing.APIRouter object at 0x703072e50530>
+
+    def test_route_inventory_count(persona_router):
+        """Verify that the router registers all 49 route decorators."""
+>       assert len(persona_router.routes) == 49
+E       AssertionError: assert 53 == 49
+E        +  where 53 = len([APIRoute(path='/api/v1/personas', name='list_personas', methods=['GET']), APIRoute(path='/bff/management/persona-inte...s=['POST']), APIRoute(path='/bff/management/persona-fleet', name='bff_management_persona_fleet', methods=['GET']), ...])
+E        +    where [APIRoute(path='/api/v1/personas', name='list_personas', methods=['GET']), APIRoute(path='/bff/management/persona-inte...s=['POST']), APIRoute(path='/bff/management/persona-fleet', name='bff_management_persona_fleet', methods=['GET']), ...] = <fastapi.routing.APIRouter object at 0x703072e50530>.routes
+
+services/control-plane/bff/tests/test_persona_router.py:129: AssertionError
+______________________ test_bff_management_persona_fleet _______________________
+
+client = <starlette.testclient.TestClient object at 0x703072ae98e0>
+
+    def test_bff_management_persona_fleet(client: TestClient):
+        resp = client.get("/bff/management/persona-fleet", headers=AUTH_HEADERS)
+>       assert resp.status_code == 200
+E       assert 422 == 200
+E        +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+
+services/control-plane/bff/tests/test_persona_router.py:418: AssertionError
+=========================== short test summary info ============================
+FAILED services/control-plane/bff/tests/test_persona_router.py::test_route_inventory_count
+FAILED services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_fleet
+2 failed, 3 warnings in 1.93s

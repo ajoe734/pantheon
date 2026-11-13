@@ -1,0 +1,5 @@
+HTTP/1.1 429 Too Many Requests
+Date: Fri, 13 Nov 2026 10:47:35 GMT
+Server: GDELT Server
+Content-Length: 444
+

@@ -52,6 +52,8 @@ class TargetType(str, Enum):
     PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
     PAPER_CANARY_CANDIDACY = "paper_canary_candidacy"
     EVOLUTION_EXECUTE = "evolution_execute"
+    LESSON_GATE_CHECK_PROPOSAL = "lesson_gate_check_proposal"
+    POOL_POLICY_PARAMETER_PROPOSAL = "pool_policy_parameter_proposal"
 
 
 class RiskLevel(str, Enum):

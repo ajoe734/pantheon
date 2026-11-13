@@ -199,25 +199,29 @@
     "collector-gdelt": {
       "source_id": "collector-gdelt",
       "section_ref": "5.1",
-      "description": "GDELT DOC 2.0 API (max 250 records per call, 3-month default window)",
+      "description": "GDELT 2.0 official 15-minute event export; hourly latest snapshot filtered by fixed vocabulary",
       "base_urls": [
-        "https://api.gdeltproject.org/api/v2/doc/doc"
+        "https://data.gdeltproject.org/gdeltv2/"
       ],
-      "max_records_per_call": 250,
-      "default_window": "3months",
       "cadence": "hourly",
       "cadence_seconds": 3600,
-      "max_requests_per_run": 5,
+      "max_requests_per_run": 2,
       "min_interval_seconds": 5.0,
-      "fetcher": "api",
+      "fetcher": "http",
       "respect_robots": true,
-      "robots_decision": "not_applicable_api",
+      "robots_decision": "allowed",
       "terms_ref": "https://www.gdeltproject.org/about.html#termsofuse (read 2026-11-10)",
       "attribution_required": true,
       "attribution": "The GDELT Project (https://www.gdeltproject.org/)",
       "logged_in": false,
       "enabled": true,
-      "rate_limit_note": "GDELT asks for at most one request every 5 seconds (429 observed at 2s on 2026-11-10)"
+      "rate_limit_note": "One index request and at most one new export download, >=5 seconds apart; same hourly cadence",
+      "query_terms": [
+        "Taiwan",
+        "semiconductor"
+      ],
+      "index_url": "https://data.gdeltproject.org/gdeltv2/lastupdate.txt",
+      "feed_type": "export"
     },
     "collector-macro-dbnomics": {
       "source_id": "collector-macro-dbnomics",
@@ -293,7 +297,11 @@
       "attribution_required": false,
       "attribution": "arXiv.org metadata (CC0 1.0); full-text PDFs stored for internal extraction only and never re-served",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "query_terms": [
+        "quantitative finance",
+        "machine learning"
+      ]
     },
     "collector-paper-openalex": {
       "source_id": "collector-paper-openalex",
@@ -313,7 +321,10 @@
       "attribution_required": false,
       "attribution": "OpenAlex (CC0 1.0 Universal)",
       "logged_in": false,
-      "enabled": true
+      "enabled": true,
+      "query_terms": [
+        "asset pricing"
+      ]
     },
     "collector-paper-nber-rss": {
       "source_id": "collector-paper-nber-rss",

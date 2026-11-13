@@ -14,6 +14,8 @@ Both end in an explicit terminal outcome so the run can be finished with a recei
 
 from __future__ import annotations
 
+import copy
+import os
 from typing import Any, Callable, Mapping
 
 from services.research.alpha_replication import evolution_search as search
@@ -107,6 +109,82 @@ class ExecutorRefusal(Exception):
         self.reason = reason
 
 
+def compose_member_case_file(parent, *, params, tenant_id, decision_id, parent_registry_ref):
+    """Read owners as the configured research service, never as a persona.
+
+    The caller persists the result before checking availability. Credentials and
+    roles come from deployment configuration, not decision/model input.
+    """
+    from services.knowledge.case_file import Caller, CaseFileError, Owners, Subject, compose_case_file
+
+    member = params["pool_member"]
+    symbols = (parent.get("parameters") or {}).get("symbols")
+    if not isinstance(symbols, list) or not symbols or any(not isinstance(s, str) or not s.strip() for s in symbols):
+        raise ExecutorRefusal("no_candidate", "case_file_underlyings_missing")
+    subject = Subject(
+        decision_type="evolution_proposal", persona_id=str(member.get("persona_id") or ""),
+        tenant_id=tenant_id, strategy_family=str(parent.get("strategy_id") or ""),
+        underlyings=tuple(symbols), member_artifact_refs=(parent_registry_ref,),
+        instrument_class=str((parent.get("parameters") or {}).get("instrument_class") or ""),
+        persona_capital_binding_id=str(member.get("persona_capital_binding_id") or ""),
+    )
+    caller = Caller(
+        actor_id=os.getenv("RESEARCH_CASE_FILE_ACTOR_ID", ""),
+        actor_roles=tuple(r.strip() for r in os.getenv("RESEARCH_CASE_FILE_ACTOR_ROLES", "").split(",") if r.strip()),
+        session_id=decision_id,
+    )
+    try:
+        return compose_case_file(subject, caller, Owners.from_env())
+    except CaseFileError as exc:
+        raise ExecutorRefusal("no_candidate", f"case_file_{exc.reason}") from None
+
+
+def validate_case_file_availability(case_file):
+    """An unavailable read cannot be declared an absence of applicable lessons."""
+    for name in ("facts", "similar_history", "lessons", "evidence"):
+        group = case_file["groups"][name]
+        for missing in group["unavailable"]:
+            # Both omissions are explicit optional-source boundaries of M3.
+            if missing.get("expected") or (
+                missing["owner"] == "telemetry"
+                and missing["reason"] == "persona_capital_binding_id_not_supplied"
+            ):
+                continue
+            raise ExecutorRefusal("no_candidate", f"case_file_unavailable:{name}:{missing['owner']}:{missing['reason']}")
+
+
+def child_lesson_context(case_file, declaration):
+    """A child proposal must explicitly cite this case file or explain no reuse.
+
+    This context is a research record/registry metadata sidecar. It is never
+    inserted into the executable strategy artifact or passed to execution.
+    """
+    validate_case_file_availability(case_file)
+    if declaration is None:
+        raise ExecutorRefusal("no_candidate", "addresses_lessons_missing")
+    if not isinstance(declaration, Mapping):
+        raise ExecutorRefusal("no_candidate", "addresses_lessons_invalid")
+    ids = declaration.get("lesson_ids")
+    if declaration.get("none_applicable") is True:
+        if ids or not isinstance(declaration.get("reason"), str) or not declaration["reason"].strip():
+            raise ExecutorRefusal("no_candidate", "addresses_lessons_none_applicable_requires_reason")
+        normalized = {"none_applicable": True, "reason": declaration["reason"].strip()}
+    else:
+        if (not isinstance(ids, list) or not ids
+                or any(not isinstance(i, str) or not i.strip() for i in ids)
+                or len(ids) != len(set(ids))):
+            raise ExecutorRefusal("no_candidate", "addresses_lessons_invalid")
+        available = {
+            item["item_id"] for group in ("lessons", "similar_history", "evidence")
+            for item in case_file["groups"][group]["items"]
+        }
+        if not set(ids) <= available:
+            raise ExecutorRefusal("no_candidate", "addresses_lessons_unknown_citation")
+        normalized = {"lesson_ids": list(ids)}
+    return {"case_file_id": case_file["case_file_id"], "case_file_digest": case_file["digest"],
+            "addresses_lessons": normalized}
+
+
 def build_gate_request_factory(
     *,
     spec: Mapping[str, Any],
@@ -190,15 +268,31 @@ def execute_mutate(
     children: int = 1,
     family_versions: Callable[[], Any] | None = None,
     parent_registry_ref: str | None = None,
+    case_file: Mapping[str, Any] | None = None,
+    declare_lessons: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     logic = parent.get("strategy_logic")
     if not isinstance(logic, Mapping) or logic.get("kind") != "factor_rule_v1":
         raise ExecutorRefusal("no_candidate", "mutate_requires_factor_rule_v1")
+    contexts = {}
+
+    def guarded_request(child):
+        if case_file is not None:
+            declaration = declare_lessons(copy.deepcopy(child), copy.deepcopy(case_file)) if declare_lessons else None
+            contexts[child["artifact_id"]] = child_lesson_context(case_file, declaration)
+        return request_factory(child)
+
+    def guarded_register(child, verdict):
+        return register_child(child, {**verdict, **contexts.get(child["artifact_id"], {})})
+
     result = search.run_mutation_decision(
-        parent, decision_id=decision_id, gate=gate, request_factory=request_factory,
-        family_id=family_id, children=children, register_child=register_child,
+        parent, decision_id=decision_id, gate=gate, request_factory=guarded_request,
+        family_id=family_id, children=children, register_child=guarded_register,
         family_versions=family_versions, parent_registry_ref=parent_registry_ref,
     )
+    for child in result["children"]:
+        if child.get("built"):
+            child.update(contexts.get(child["verdict"]["child_artifact_id"], {}))
     built = [c for c in result["children"] if c.get("built")]
     registered = [c["verdict"]["child_artifact_id"] for c in built if c.get("registered")]
     if registered:

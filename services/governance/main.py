@@ -1474,6 +1474,34 @@ def _resolve_consultation_veto(
     consultation_handoff_store.compare_and_set(handoff, resolved)
 
 
+# Endorsed-lesson conversions that need a human or committee decision. They are
+# pure decision records: approving one never changes a gate, pool policy,
+# execution, risk or capital limit by itself; the owning service applies it
+# through its own route afterwards.
+LESSON_RULE_TARGETS: Dict[str, str] = {
+    "lesson_gate_check_proposal": "gate_check",
+    "pool_policy_parameter_proposal": "pool_policy",
+}
+LESSON_RULE_SUBJECT_FIELDS = ("proposal_kind", "lesson_ids", "case_file_id", "proposal_digest")
+
+
+def lesson_rule_proposal_errors(body: Any) -> List[str]:
+    """Fail-closed shape check for lesson-derived proposals (empty for other targets)."""
+    target = str(getattr(body.target_type, "value", body.target_type))
+    if target not in LESSON_RULE_TARGETS:
+        return []
+    subject = body.subject or {}
+    errors = [f"subject.{name} is required" for name in LESSON_RULE_SUBJECT_FIELDS
+              if not str(subject.get(name) or "").strip()]
+    if subject.get("proposal_kind") and subject["proposal_kind"] != LESSON_RULE_TARGETS[target]:
+        errors.append(f"subject.proposal_kind must be {LESSON_RULE_TARGETS[target]}")
+    if str(getattr(body.risk_level, "value", body.risk_level)) not in ("high", "critical"):
+        errors.append("risk_level must be high or critical so an automated gate cannot decide")
+    if not str(body.persona_id or "").strip():
+        errors.append("persona_id is required")
+    return errors
+
+
 def _approval_command(operation, decision_id, body, authorization, idempotency_key):
     from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
     ctx = _approval_principal(authorization)
@@ -1491,6 +1519,9 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             raise HTTPException(403, 'Proposal owner and tenant must match verified principal')
         if body.expected_version != 0:
             raise HTTPException(409, 'Proposal expected_version must be zero')
+        rule_errors = lesson_rule_proposal_errors(body)
+        if rule_errors:
+            raise HTTPException(422, '; '.join(rule_errors))
     elif role not in ctx.roles or body.actor_id != ctx.actor_id:
         raise HTTPException(403, 'Body actor and role must match verified principal')
     now = datetime.now(timezone.utc)

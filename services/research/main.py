@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
-from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
+from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthenticatedTenant, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.alpha_template import (
@@ -1040,10 +1040,10 @@ def _structured_token_tenants(authorization: Optional[str]) -> set[str]:
     return {t.strip() for t in raw_tenants.split(",") if t.strip()}
 
 
-def _authenticated_alpha_replication_tenant(
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None),
-) -> str:
+def _authenticated_alpha_replication_actor(
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+) -> AuthenticatedTenant:
     """Verified bearer identity bound to an explicit tenant; anonymous or cross-tenant is denied."""
     try:
         verified = authenticate_tenant(
@@ -1051,18 +1051,35 @@ def _authenticated_alpha_replication_tenant(
             tenant_id=x_tenant_id,
             service_prefix="RESEARCH",
             required_roles=_ALPHA_REPLICATION_READ_ROLES,
-        ).tenant_id
+        )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except TenantBoundaryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     structured_tenants = _structured_token_tenants(authorization)
-    if structured_tenants and "*" not in structured_tenants and verified not in structured_tenants:
+    if structured_tenants and "*" not in structured_tenants and verified.tenant_id not in structured_tenants:
         raise HTTPException(
             status_code=403,
-            detail=f"Authenticated actor is not authorized for tenant {verified!r}.",
+            detail=f"Authenticated actor is not authorized for tenant {verified.tenant_id!r}.",
         )
     return verified
+
+
+def _authenticated_alpha_replication_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    return _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+
+
+def _authenticated_persona_demand_writer_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    actor = _authenticated_alpha_replication_actor(authorization, x_tenant_id)
+    if actor.actor_id != "persona-pool-cycle":
+        raise HTTPException(status_code=403, detail="Persona demand writes require the persona-pool-cycle principal.")
+    return actor.tenant_id
 
 
 def _build_alpha_replication_entry(
@@ -1146,7 +1163,8 @@ def list_alpha_replication_entries(
 
 @app.get("/api/research-orchestrator/tasks")
 def list_tasks(status: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    tasks = store.list_tasks()
+    _expire_collector_query_plans()
+    tasks = store.list_tasks() + query_plan_store.list_tasks()
     return [task for task in tasks if str(task.get("status") or "").lower() == status.lower()] if status else tasks
 
 
@@ -1176,7 +1194,8 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
 
 @app.get("/api/research-orchestrator/tasks/{task_id}")
 def get_task(task_id: str) -> Dict[str, Any]:
-    task = store.get_task(task_id)
+    _expire_collector_query_plans()
+    task = store.get_task(task_id) or query_plan_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="research task not found")
     return task
@@ -1801,6 +1820,7 @@ def _retrain_prior_state(run_id: str, params: Dict[str, Any], tenant_id: str) ->
         "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
         "baseline_metrics", "candidate_metrics", "persona_id", "parameter_updates",
         "candidate_artifact_id", "candidate_proof_ref", "outcome", "outcome_reason",
+        "evolution_case_file", "evolution_child_context", "evolution_children",
     )
     related = []
     for other in get_store().list_runs():
@@ -1857,9 +1877,32 @@ def _admit_evolution_child(params, child_id):
         owner.admit_child(ctx, child_id, params["decision_id"])
 
 
+def _evolution_member_case_context(run_id, parent, params):
+    """Persist the owner-composed case file even when a child is refused."""
+    if not params.get("pool_member"):
+        return None, {}
+    from services.research.alpha_replication import evolution_executor as executor
+
+    try:
+        case_file = executor.compose_member_case_file(
+            parent, params=params, tenant_id=params["tenant_id"],
+            decision_id=params["decision_id"], parent_registry_ref=params["target_artifact_id"],
+        )
+        _retrain_record(run_id, evolution_case_file=case_file)
+        declaration = params.get("addresses_lessons", params["pool_member"].get("addresses_lessons"))
+        context = executor.child_lesson_context(case_file, declaration)
+    except executor.ExecutorRefusal as exc:
+        _retrain_record(run_id, evolution_case_file_refusal={"reason": exc.reason})
+        raise _RetrainFinished(exc.outcome, exc.reason) from None
+    _retrain_record(run_id, evolution_child_context=context)
+    return case_file, context
+
+
 @app.get("/api/research/evolution/families/{family_id}")
-def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
+                           tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
     from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    from services.research.replication.gate import family_trial_key
     # The same family counter used by the real gate is durable across workers.
     views = _retrain_call(step="family_state", service="registry", method="GET",
         token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
@@ -1867,8 +1910,14 @@ def evolution_family_state(family_id: str, tenant_id: str = Depends(_authenticat
             "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
     if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
         raise HTTPException(status_code=404, detail="family not found")
-    trials = SharedFamilyTrialCounterStore(_retrain_trial_counter_path()).get(family_id)
-    return {"family_id": family_id, "trials": trials, "status": "tried" if trials >= 500 else "available"}
+    # Frequency-scoped key (SD §9 K8); omitted/daily keeps the legacy bare family key.
+    # `trials` stays frequency-isolated; the O-17 lifetime cap (500) is enforced on the
+    # aggregate family total across every frequency bucket.
+    store = SharedFamilyTrialCounterStore(_retrain_trial_counter_path())
+    trials = store.get(family_trial_key(family_id, bar_frequency))
+    total = store.family_total(family_id)
+    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials,
+            "family_total_trials": total, "status": "tried" if total >= 500 else "available"}
 
 
 def _retrain_trial_counter_path() -> Path:
@@ -1923,7 +1972,7 @@ def _retrain_search_update(
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
     budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
-    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).get(family_id) >= 500:
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).family_total(family_id) >= 500:
         raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
@@ -2061,9 +2110,12 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     state = _retrain_prior_state(run_id, params, tenant_id)
     if state.get("candidate_artifact_id") or state.get("outcome") in _RETRAIN_OUTCOMES:
         # The decision already reached its outcome: adopt it, change nothing.
+        if params.get("pool_member") and state.get("candidate_artifact_id") and not state.get("evolution_child_context"):
+            raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
         carried = {k: v for k, v in state.items() if k in {
             "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
-            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
+            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id",
+            "evolution_case_file", "evolution_child_context", "evolution_children"}}
         _retrain_record(run_id, **carried)
         if state.get("candidate_artifact_id"):
             _admit_evolution_child(params, state["candidate_artifact_id"])
@@ -2092,6 +2144,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     persona_id = str(metadata.get("persona_id") or "").strip()
     if not persona_id:
         raise _RetrainFinished("evaluation_rejected", "target_has_no_persona")
+
+    _case_file, child_context = _evolution_member_case_context(run_id, parent_artifact, params)
 
     # 2. One Teaching session for this decision (resumed, never duplicated).
     session_id = str(state.get("session_id") or "")
@@ -2236,8 +2290,12 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
                     parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
                     source_run_ids=source_runs, child_version=new_version, parent_registry_ref=target_artifact_id,
                 )
-            except search.EvolutionSearchError as exc:
+                if child_context:
+                    child["artifact_id"] = new_artifact_id
+            except (search.EvolutionSearchError, StrategyArtifactValidationError) as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
+            if child_context:
+                _retrain_record(run_id, evolution_children={new_artifact_id: child_context})
             prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
             os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
             try:
@@ -2253,16 +2311,29 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             if not verdict["passed"]:
                 raise _RetrainFinished("no_candidate", "children_failed_out_of_sample_gate")
             try:
+                registration_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate"
+                registration_body = {
+                    "new_artifact_id": new_artifact_id,
+                    "new_version": new_version,
+                    "parameter_updates": proposed,
+                    "source_run_ids": [decision_id, *source_runs],
+                }
+                if child_context:
+                    # The existing full registration API preserves proposal
+                    # metadata; the parameter-only mutation API has no such field.
+                    registration_url = f"{registry_url}/api/registry/strategy-artifacts"
+                    registration_body = {
+                        "registry_id": new_artifact_id, "artifact_state": "candidate",
+                        "strategy_artifact": child,
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
+                        ),
+                        "metadata": {"persona_id": persona_id, **child_context},
+                    }
                 child_view = _retrain_call(
                     step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-                    url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
-                    tenant_id=tenant_id,
-                    body={
-                        "new_artifact_id": new_artifact_id,
-                        "new_version": new_version,
-                        "parameter_updates": proposed,
-                        "source_run_ids": [decision_id, *source_runs],
-                    },
+                    url=registration_url, tenant_id=tenant_id, body=registration_body,
                 )
                 break
             except _OwnerRejection as exc:
@@ -2379,6 +2450,11 @@ class _ProofCapturingGate:
     def get_family_trial_count(self, family_id: str) -> int:
         return self._gate.get_family_trial_count(family_id)
 
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        # The real gate always provides the aggregate; minimal gate doubles fall back to the bare key.
+        total = getattr(self._gate, "get_family_total_trial_count", None)
+        return total(family_id) if callable(total) else self._gate.get_family_trial_count(family_id)
+
     def record_family_trial(self, family_id: str) -> int:
         record = getattr(self._gate, "record_family_trial", None)
         return record(family_id) if callable(record) else self._gate.get_family_trial_count(family_id)
@@ -2463,6 +2539,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication import evolution_search as search
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2481,6 +2558,12 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     ]
     if prior:  # an earlier attempt of this decision already reached its terminal outcome: adopt it
         done = max(prior, key=lambda r: str(r.get("updated_at") or ""))
+        if params.get("pool_member"):
+            if done["outcome"] == "candidate_created" and not done.get("evolution_child_context"):
+                raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
+            _retrain_record(run_id, **{k: done[k] for k in (
+                "evolution_case_file", "evolution_child_context", "evolution_result", "evolution_case_file_refusal"
+            ) if k in done})
         raise _RetrainFinished(str(done["outcome"]), str(done.get("outcome_reason") or "resumed_from_recorded_outcome"))
 
     def read(step: str, path: str) -> Any:
@@ -2522,6 +2605,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
         _retrain_record(run_id, evolution_result=result["verdict"])
         raise _RetrainFinished(result["outcome"], result["reason"])
 
+    case_file, child_context = _evolution_member_case_context(run_id, parent, params) if action == "mutate" else (None, {})
     gate, factory = _evolution_oos_context(
         parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
         family_id=family_id, read=read,
@@ -2552,7 +2636,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                             data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
                             decision_id=decision_id, run_id=run_id, gate=gate,
                         ),
-                        "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
+                        "metadata": {**{k: v for k, v in entry_meta.items() if k == "persona_id"}, **child_context},
                     },
                 )
             except _OwnerRejection as exc:
@@ -2587,6 +2671,8 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
                 children=50 if params.get("pool_member") else 1,
                 parent_registry_ref=target_artifact_id,
+                case_file=case_file,
+                declare_lessons=lambda _child, _case: child_context.get("addresses_lessons"),
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
@@ -2602,7 +2688,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),
-        family_trial_count=gate.get_family_trial_count(family_id),
+        family_trial_count=gate.get_family_trial_count(search.artifact_trial_key(family_id, parent)),
     )
     raise _RetrainFinished(result["outcome"], result["reason"])
 
@@ -2625,36 +2711,46 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
     def run_worker():
         rstore = get_store()
+        template_run = _is_template_search_run(rstore.get_run(run_id) or {})
+        label = "Template search" if template_run else "Retrain"
         try:
-            if _evolution_action(params) == "retrain":
+            if template_run:
+                _execute_template_search(run_id, params)
+            elif _evolution_action(params) == "retrain":
                 _execute_retrain(run_id, params)
             else:
                 _execute_evolution_gate(run_id, params)
         except _RetrainFinished as done:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
             _finish_run(
                 run_id, "completed",
-                f"Retrain completed: outcome={done.outcome}, outcome_reason={done.reason}.",
+                f"{label} completed: outcome={done.outcome}, outcome_reason={done.reason}.",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except _RetrainFailure as failure:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(
                 run_id, failed_step=failure.step,
                 rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
             )
             _finish_run(
-                run_id, "failed", f"Retrain failed at step {failure.step}: {failure.detail}",
+                run_id, "failed", f"{label} failed at step {failure.step}: {failure.detail}",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
-            logger.exception("retrain executor crashed for %s", run_id)
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
+            logger.exception("%s executor crashed for %s", label, run_id)
             detail = f"{type(exc).__name__}: {exc}"
             if rstore.get_run(run_id):
                 _retrain_record(
                     run_id, failed_step="executor",
                     rejection={"reason": "retrain_failed", "step": "executor", "detail": detail},
                 )
-                _finish_run(run_id, "failed", f"Retrain failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
+                _finish_run(run_id, "failed", f"{label} failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
         finally:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
@@ -2662,74 +2758,198 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
-# --- Discovery allocator: daily paper-only run inside this orchestrator ---
-DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
-def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
-    from services.research import discovery_allocator as _da
+# --- Persona-written research demands (research_demand.v1) ---
+# The persona's daily pool cycle writes demands here; this owner keeps and serves
+# them. Nothing in this service allocates capital or binds personas to discovery.
+from services.research.research_demand import DemandError, ResearchDemandStore  # noqa: E402
+from services.research.query_plan import QueryPlanError, QueryPlanStore  # noqa: E402
 
-    token_variable = {
-        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
-        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
-        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
-        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
-    }[service]
+research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json", influence_store=get_influence_store())
+query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
+
+
+def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the mandate universe and registered templates from their owners."""
+    tenant_id = demand["tenant_id"]
+    persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
+    persona = _retrain_call(
+        step="template_mandate", service="persona", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_PERSONA_SERVICE_TOKEN",
+        url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
+    if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
+        raise ValueError("template_mandate_owner_mismatch")
+    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
+    universe = scope.get("symbols")
+    if not universe:
+        raise ValueError("mandate_universe_missing")
+    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
+    if not dataset:
+        raise ValueError("governed_market_data_missing")
+    registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+    templates = _retrain_call(
+        step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=f"{registry_url}/api/registry/alpha-templates?scope=time_series")
+    return {"universe": universe, "dataset": dataset, "templates": templates}
+
+
+def _is_template_search_run(run: Dict[str, Any]) -> bool:
+    # This adapter is only recorded by authenticated demand reconciliation;
+    # dispatch_run rejects it as unknown. Caller-supplied stub parameters do
+    # not grant execution on startup or retry.
+    return (run.get("adapter") == "template_demand_gate"
+            and (run.get("parameters") or {}).get("action_type") == "template_search")
+
+
+def _execute_template_search(run_id: str, params: Dict[str, Any]) -> None:
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    demand = next((row for row in research_demand_store.list(params["tenant_id"], params["persona_id"])
+                   if row["demand_id"] == params["demand_id"]), None)
+    if not demand:
+        raise _RetrainFailure("template_search", "research_demand_missing")
+    run.update(status="running", updated_at=utc_now())
+    store.put_run(run)
+    from services.research.template_demand_search import TemplateDemandSearch
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(),
+                                 backtest_run_store=SharedBacktestRunStore(data_dir / "backtest_runs.json"))
+    search = TemplateDemandSearch(store=research_demand_store, gate=gate,
+                                  context_loader=_template_search_context, lock_path=data_dir / "template_search.lock",
+                                  run_budget=1)
+    row = search.run(demand)
+    result = (row.get("discovery") or {}).get("template_search") or {}
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run["template_search"] = {"demand_ref": demand["demand_id"], **result}
+    store.put_run(run)
+    reason = result.get("reason", "demand_closed")
+    if reason.startswith("template_search_unavailable:"):
+        raise _RetrainFailure("template_search", reason)
+    raise _RetrainFinished("template_search_completed", reason)
+
+
+def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
+    """Record normal Research runs; never perform owner I/O or backtests here."""
+    for row in rows:
+        if row["status"] != "open":
+            continue
+        # An unconfigured owner cannot execute a search. Record the same
+        # unavailable outcome without creating Research tasks that can never
+        # start; credential-file validation and all owner I/O stay in worker.
+        missing = next((name for name in ("RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_REGISTRY_SERVICE_TOKEN")
+                        if not (os.getenv(name, "").strip() or os.getenv(name + "_FILE", "").strip())), None)
+        if missing:
+            research_demand_store.record_template_search(
+                row["tenant_id"], row["demand_id"],
+                {"run_at": utc_now(), "attempts": {}, "paper_only": True,
+                 "reason": "template_search_unavailable:owner_credential_unconfigured:" + missing})
+            continue
+        with _plan_progress_lock:
+            runs = store.list_runs()
+            matching = [r for r in runs if _is_template_search_run(r)
+                        and (r.get("parameters") or {}).get("demand_id") == row["demand_id"]
+                        and r.get("tenant_id") == row["tenant_id"]]
+            active = next((r for r in matching if r.get("status") in ACTIVE_STATUSES), None)
+            if active:
+                run = active
+            else:
+                if sum(r.get("status") in ACTIVE_STATUSES for r in runs) >= MAX_ACTIVE_RUNS:
+                    continue  # next normal persona cycle retries; no separate queue
+                timestamp = utc_now()
+                task = create_task(CreateTaskBody(
+                    title="Search registered templates for " + row["demand_id"],
+                    objective="Compile mandate-compatible templates through the replication gate",
+                    actor_id="persona-pool-cycle",
+                    constraints={"tenant_id": row["tenant_id"], "persona_id": row["persona_id"]},
+                    idempotency_key="template-search:" + row["tenant_id"] + ":" + row["demand_id"]))
+                if task.get("cancellation_fence"):
+                    continue
+                run_id = _next_id("rrun", timestamp, {r["run_id"] for r in runs})
+                event = _event(timestamp, "run_queued", "Template search queued for the replication gate.",
+                               "persona-pool-cycle", run_id, [])
+                run = {"id": run_id, "run_id": run_id, "task_id": task["task_id"],
+                       "adapter": "template_demand_gate", "requested_mode": "replication_gate",
+                       "dispatch_mode": "replication_gate", "production_activation": "disabled",
+                       "status": "queued", "tenant_id": row["tenant_id"], "created_by": "persona-pool-cycle",
+                       "paper_only": True, "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
+                       "parameters": {"action_type": "template_search", "tenant_id": row["tenant_id"],
+                                      "persona_id": row["persona_id"], "demand_id": row["demand_id"]},
+                       "created_at": timestamp, "updated_at": timestamp, "events": [event],
+                       "artifact_refs": [], "proposal_refs": [], "registry_writebacks": []}
+                task.update(status="running", updated_at=timestamp)
+                store.put_task(task)
+                store.put_run(run)
+                store.append_event(event)
+        _trigger_retrain_execution(run["run_id"], run["parameters"])
+
+
+def _refresh_collector_query_plan(tenant_id: str) -> None:
     try:
-        return _retrain_call(
-            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
-            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
-        )
-    except _OwnerRejection as exc:
-        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
-    except _RetrainFailure as exc:
-        raise _da.OwnerUnreachable(service, str(exc)) from None
+        query_plan_store.refresh(tenant_id, research_demand_store.list(tenant_id, status="open"))
+    except QueryPlanError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _build_discovery_allocator_ports() -> Dict[str, Any]:
-    from services.research import discovery_allocator as _da
-
-    return _da.make_production_ports(
-        call=_discovery_owner_call,
-        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
-        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
-        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
-        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
-        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
-        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
-        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
-    )
+def _expire_collector_query_plans() -> None:
+    # Demand expiry is time-based and has no write event: re-evaluate on read.
+    for tenant_id in query_plan_store.tenants():
+        try:
+            _refresh_collector_query_plan(tenant_id)
+        except HTTPException:
+            pass
 
 
-# Module-level so tests can inject; the default is the real production wiring
-# (persona service reader, active-binding reader, scorer, BFF provisioner).
-discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
+@app.post("/api/research/persona-demands", status_code=201)
+def open_persona_research_demand(
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    try:
+        result = research_demand_store.open(tenant_id, body)
+        _refresh_collector_query_plan(tenant_id)
+        return result
+    except DemandError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def run_discovery_allocator_once() -> Dict[str, Any]:
-    from services.research import discovery_allocator as _da
-
-    return _da.run_scheduled_allocation(
-        enabled=_da.allocator_enabled(os.environ),
-        allocator_factory=discovery_allocator_ports["allocator_factory"],
-        list_admitted=lambda: [
-            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
-            if e.get("status") == "admitted"
-        ],
-        list_personas=discovery_allocator_ports["list_personas"],
-        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
-        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
-        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
-        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
-    )
+@app.get("/api/research/persona-demands")
+def list_persona_research_demands(
+    persona_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> Dict[str, Any]:
+    rows = research_demand_store.list(tenant_id, persona_id, status)
+    return {"demands": rows, "count": len(rows)}
 
 
-@app.on_event("startup")
-def start_discovery_allocator_schedule() -> None:
-    from services.research import discovery_allocator as _da
+@app.post("/api/research/persona-demands/reconcile")
+def reconcile_persona_research_demands(
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    persona_id = str(body.get("persona_id") or "")
+    if not persona_id:
+        raise HTTPException(status_code=422, detail="persona_id is required")
+    rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
+    _search_demand_templates(rows)
+    _refresh_collector_query_plan(tenant_id)
+    return {"demands": rows, "count": len(rows)}
 
-    _da.start_daily_scheduler(
-        run_discovery_allocator_once,
-        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
-    )
+
+@app.post("/api/research/persona-demands/{demand_id}/actions")
+def record_persona_research_demand_discovery(
+    demand_id: str,
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    try:
+        return research_demand_store.record_discovery(tenant_id, demand_id, body)
+    except DemandError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
 
 
 @app.on_event("startup")
@@ -2738,12 +2958,12 @@ def resume_retrain_runs() -> None:
 
     The run, its session and its evaluation job ids are the ones already
     recorded: the same executor continues from them, so no new run, second
-    session or second child is created.  A non-retrain run is not touched.
+    session or second child is created. Template searches use this same worker.
     """
     for record in get_store().list_runs():
         status = str(record.get("status") or "").lower()
         params = record.get("parameters") or {}
-        if status not in {"queued", "running"} or not isinstance(params, dict) or not _is_retrain_action(params):
+        if status not in {"queued", "running"} or not isinstance(params, dict) or not (_is_retrain_action(params) or _is_template_search_run(record)):
             continue
         if record.get("cancellation_fence"):
             continue
@@ -2765,7 +2985,7 @@ def repair_retrain_tasks_left_running() -> None:
         params = run.get("parameters") or {}
         if (
             not isinstance(params, dict)
-            or not _is_retrain_action(params)
+            or not (_is_retrain_action(params) or _is_template_search_run(run))
             or str(run.get("status") or "").lower() not in {"completed", "failed"}
         ):
             continue
@@ -3031,7 +3251,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     adapter = new_run.get("adapter", "stub")
     supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
-    if _is_retrain_action(params):
+    if _is_retrain_action(params) or _is_template_search_run(new_run):
         _trigger_retrain_execution(new_run["run_id"], params)
     elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
         _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)

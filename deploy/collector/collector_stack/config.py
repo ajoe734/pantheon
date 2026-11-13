@@ -11,6 +11,36 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "fetch-policy.json"
+QUERY_VOCABULARY_PATH = DEFAULT_POLICY_PATH.with_name("query_vocabulary.json")
+QUERY_SOURCE_IDS = frozenset({"collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"})
+GDELT_INDEX_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+GDELT_BASE_URL = "https://data.gdeltproject.org/gdeltv2/"
+
+
+def load_query_vocabulary() -> dict[str, list[str]]:
+    """The committed vocabulary is shared with research; no host override or fallback."""
+    try:
+        raw = json.loads(QUERY_VOCABULARY_PATH.read_text(encoding="utf-8"))
+        terms = raw["terms"]
+        if raw["schema_version"] != "collector_query_vocabulary.v1" or not isinstance(terms, dict) or not terms:
+            raise ValueError("invalid vocabulary")
+        for term, aliases in terms.items():
+            if not isinstance(term, str) or not term or any(c in term for c in '\"():*'):
+                raise ValueError("invalid query term")
+            if not isinstance(aliases, list) or not aliases or not all(isinstance(a, str) and a for a in aliases):
+                raise ValueError("invalid demand aliases")
+        return terms
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CollectorConfigError("missing or invalid fixed query vocabulary") from exc
+
+
+def validate_query_terms(source_id: str, terms: Any) -> tuple[str, ...]:
+    vocabulary = load_query_vocabulary()
+    if (not isinstance(terms, list) or not terms or len(terms) > 12
+            or not all(isinstance(t, str) and t in vocabulary for t in terms)
+            or len(set(terms)) != len(terms)):
+        raise CollectorConfigError(f"source {source_id} query_terms must contain 1..12 unique fixed vocabulary terms")
+    return tuple(terms)
 
 ALLOWED_SCHEMA_VERSIONS = frozenset({"collector_fetch_policy.v1"})
 ALLOWED_FETCHERS = frozenset({"http", "browser", "api"})
@@ -266,6 +296,22 @@ def validate_collector_config(
             )
 
         _check_forbidden_settings(entry, context=f"source {source_id}")
+        if source_id in QUERY_SOURCE_IDS:
+            validate_query_terms(source_id, entry.get("query_terms"))
+        elif "query_terms" in entry:
+            raise CollectorConfigError(f"source {source_id} cannot be steered by query_terms")
+
+        if source_id == "collector-gdelt":
+            if (entry.get("base_urls") != [GDELT_BASE_URL]
+                    or entry.get("index_url") != GDELT_INDEX_URL
+                    or entry.get("feed_type") != "export"
+                    or entry.get("cadence") != "hourly"
+                    or entry.get("cadence_seconds") != 3600
+                    or entry.get("fetcher") != "http"
+                    or entry.get("max_requests_per_run") != 2
+                    or float(entry.get("min_interval_seconds", 0)) < 5
+                    or any(k in entry for k in ("max_records_per_call", "default_window", "query", "api_url"))):
+                raise CollectorConfigError("collector-gdelt requires the official hourly export feed policy")
 
         if entry.get("logged_in") is not False:
             raise CollectorConfigError(f"source {source_id} must explicitly set logged_in=false")

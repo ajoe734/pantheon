@@ -37,6 +37,7 @@ from services.knowledge.evidence import (
     normalize_source_record,
 )
 from services.knowledge.evidence.models import EvidenceValidationError
+from services.knowledge.evidence.normalization import normalize_evidence_item
 
 from .connectors import (
     ConnectorStatus,
@@ -46,6 +47,7 @@ from .connectors import (
     SourceRecord,
     SourceRecordStatus,
 )
+from .connectors.collector_bundle import CollectorDelivery
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .controller_state import read_controller_state
 from .distillation_worker import DistillationJobQueue
@@ -283,6 +285,19 @@ def persist_source_evidence_refs(
     connector_license_scope = connector.license_scope if connector else None
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
+        verified_close = (
+            isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+            and record.source_type.value == "market"
+            and isinstance(record.metadata.get("collector_close"), Mapping)
+        )
+        if verified_close:
+            # One exchange URL describes thousands of distinct verified close
+            # items. URL-only dedupe retained the first prefix's run forever,
+            # failing the next controller tick's real record/run readback.
+            # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
+            candidate_source = replace(candidate_source, metadata={
+                **candidate_source.metadata, "source_dedupe_key": f"collector-close:{record.source_id}",
+            })
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
         source_owner = (
             evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=candidate_source.tenant_id)
@@ -290,16 +305,24 @@ def persist_source_evidence_refs(
             or candidate_source
         )
         source_owner_by_dedupe_key[source_dedupe_key] = source_owner
-        normalized = normalize_source_evidence(
-            source_record=record,
-            evidence_item=evidence_item_for_record(record, result.run),
-            connector_license_scope=connector_license_scope,
-            source_owner_id=source_owner.source_id,
-        )
-        normalized_source = source_owner if source_owner.source_id != record.source_id else normalized.source_record
+        if verified_close:
+            normalized_source = candidate_source
+            normalized_item = normalize_evidence_item(
+                candidate_source, evidence_item_for_record(record, result.run),
+                source_owner_id=source_owner.source_id,
+            )
+        else:
+            normalized = normalize_source_evidence(
+                source_record=record,
+                evidence_item=evidence_item_for_record(record, result.run),
+                connector_license_scope=connector_license_scope,
+                source_owner_id=source_owner.source_id,
+            )
+            normalized_source = source_owner if source_owner.source_id != record.source_id else normalized.source_record
+            normalized_item = normalized.evidence_item
         normalized_source_records_by_id[normalized_source.source_id] = normalized_source
-        source_by_evidence_item_id[normalized.evidence_item.evidence_item_id] = normalized_source
-        evidence_items_by_id[normalized.evidence_item.evidence_item_id] = normalized.evidence_item
+        source_by_evidence_item_id[normalized_item.evidence_item_id] = normalized_source
+        evidence_items_by_id[normalized_item.evidence_item_id] = normalized_item
     evidence_items = list(evidence_items_by_id.values())
     bundle_metadata = {
         "connector_id": result.run.connector_id,
@@ -915,6 +938,7 @@ class IngestPipelineService:
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
         connector_tenant = _resolve_connector_tenant(connector, runtime=self.runtime)
+        starting_watermark = self.store.get_watermark(connector.connector_id)
 
         effective_fetch_batch = fetch_batch
         if connector_tenant:
@@ -923,7 +947,8 @@ class IngestPipelineService:
                 batch_records = fetched.records if isinstance(fetched, IngestBatch) else tuple(fetched)
                 stamped_records = tuple(stamp_source_record_tenant(r, connector_tenant) for r in batch_records)
                 if isinstance(fetched, IngestBatch):
-                    return replace(fetched, records=stamped_records)
+                    return replace(fetched, records=stamped_records, derived_records=tuple(
+                        stamp_source_record_tenant(r, connector_tenant) for r in fetched.derived_records))
                 return stamped_records
             effective_fetch_batch = tenant_stamped_fetch_batch
 
@@ -933,6 +958,7 @@ class IngestPipelineService:
             trigger_type=trigger_type,
             fetch_batch=effective_fetch_batch,
             frontier_id=frontier_id,
+            defer_commit=True,
         )
         evidence_refs: dict[str, Any] = {
             "source_ids": [],
@@ -982,10 +1008,16 @@ class IngestPipelineService:
                 evidence_refs,
                 future_tolerance_seconds=self.runtime.SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS,
             )
+            if result.run.status.value == "completed":
+                post_processing_stage = "delivery_acknowledgement"
+                if result.collector_delivery is not None:
+                    result.collector_delivery.acknowledge()
+                if result.watermark is not None:
+                    self.store.update_watermark(result.watermark)
         except Exception as exc:
             persist_ingest_receipt(
                 self.store,
-                result,
+                replace(result, watermark=starting_watermark),
                 evidence_refs,
                 status="failed",
                 typed_failure=post_processing_typed_failure(exc, stage=post_processing_stage),

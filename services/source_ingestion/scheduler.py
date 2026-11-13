@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Iterable, Mapping
@@ -25,6 +25,7 @@ from services.foundation import (
 )
 
 from .connectors.base import IngestRun, IngestRunStatus, SourceEvidenceError, SourceRecord
+from .connectors.collector_bundle import CollectorDelivery
 from .ingest_manager import IngestManager
 from .process_lock import exclusive_file_lock
 
@@ -75,10 +76,13 @@ class IngestBatch:
     empty_ok: bool = False
     empty_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    derived_records: tuple[SourceRecord, ...] = field(default_factory=tuple)
+    collector_delivery: CollectorDelivery | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "records", tuple(self.records))
-        for record in self.records:
+        object.__setattr__(self, "derived_records", tuple(self.derived_records))
+        for record in (*self.records, *self.derived_records):
             if not isinstance(record, SourceRecord):
                 raise SourceEvidenceError("ingest batch records must be SourceRecord instances")
         object.__setattr__(self, "empty_ok", bool(self.empty_ok))
@@ -190,6 +194,7 @@ class ScheduledIngestResult:
     audit_actions: tuple[AuditAction, ...] = field(default_factory=tuple)
     frontier_id: str | None = None
     typed_failure: Mapping[str, Any] | None = None
+    collector_delivery: CollectorDelivery | None = None
 
 
 @dataclass(frozen=True)
@@ -290,6 +295,8 @@ class JsonlIngestScheduleStore:
         self._frontier: dict[str, CrawlFrontierItem] = {}
         self._receipts: dict[str, IngestReceipt] = {}
         self._read_key: tuple[int, int, int] | None = (-1, -1, -1)
+        self._read_offset = 0
+        self._read_line_no = 0
         self.reload()
 
     def reload(self) -> None:
@@ -304,56 +311,70 @@ class JsonlIngestScheduleStore:
             return None
 
     def _reload_if_changed_unlocked(self) -> None:
-        """Skip the full journal replay while the journal is byte-for-byte what
-        the last replay read (same inode, size and mtime). Any append, from
-        this or another process, or replacing the file with a new inode changes
-        that key and forces a fresh replay.
-        """
-        key = self._stat_key()
-        if key != getattr(self, "_read_key", (-1, -1, -1)):
+        """Catch up under the transaction lock only when the journal changed."""
+        if self._stat_key() != self._read_key:
             self._reload_unlocked(recover_incomplete=False)
-            self._read_key = key
-            self._page_read_key = key
 
     def _reload_unlocked(self, *, recover_incomplete: bool) -> None:
-        self._runs = {}
-        self._watermarks = {}
-        self._frontier = {}
-        self._receipts = {}
-        if not self.path.exists():
+        key = self._stat_key()
+        # Append-only growth of the same inode preserves the consumed prefix.
+        # Explicit reload/startup, replacement, shrink, and same-size rewrites
+        # must rebuild all four projections instead.
+        if (
+            recover_incomplete
+            or key is None
+            or self._read_key is None
+            or key[0] != self._read_key[0]
+            or key[1] < self._read_key[1]
+            or (key != self._read_key and key[1] == self._read_key[1])
+        ):
+            self._runs = {}
+            self._watermarks = {}
+            self._frontier = {}
+            self._receipts = {}
+            self._read_offset = 0
+            self._read_line_no = 0
             self._read_key = None
-            self._page_read_key = None
-            return
-        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise SourceEvidenceError(f"Invalid ingest schedule JSONL at {self.path}:{line_no}: {exc.msg}") from exc
-            record_type = str(entry.get("record_type") or "")
-            payload = entry.get("payload")
-            if not isinstance(payload, Mapping):
-                raise SourceEvidenceError(f"Invalid ingest schedule payload at {self.path}:{line_no}")
-            if record_type == "ingest_run":
-                run = IngestRun.from_dict(payload)
-                self._runs[run.ingest_run_id] = run
-            elif record_type == "source_watermark":
-                watermark = SourceWatermark.from_dict(payload)
-                self._watermarks[watermark.connector_id] = watermark
-            elif record_type == "crawl_frontier_item":
-                item = CrawlFrontierItem.from_dict(payload)
-                self._frontier[item.frontier_id] = item
-            elif record_type == "ingest_receipt":
-                receipt = IngestReceipt.from_dict(payload)
-                self._receipts[receipt.ingest_run_id] = receipt
-            else:
-                raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
+        if key is not None:
+            # Binary offsets remain correct even if a writer stops within a
+            # multibyte character. Only newline-terminated rows are consumed.
+            with self.path.open("rb") as handle:
+                handle.seek(self._read_offset)
+                while line := handle.readline():
+                    if not line.endswith(b"\n"):
+                        break
+                    self._apply_line_unlocked(line, self._read_line_no + 1)
+                    self._read_offset = handle.tell()
+                    self._read_line_no += 1
+        self._read_key = key
         if recover_incomplete:
             self._recover_incomplete_receipts()
-        key = self._stat_key()
-        self._read_key = key
-        self._page_read_key = key
+
+    def _apply_line_unlocked(self, line: bytes, line_no: int) -> None:
+        if not line.strip():
+            return
+        try:
+            entry = json.loads(line.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SourceEvidenceError(f"Invalid ingest schedule JSONL at {self.path}:{line_no}: {exc.msg}") from exc
+        record_type = str(entry.get("record_type") or "")
+        payload = entry.get("payload")
+        if not isinstance(payload, Mapping):
+            raise SourceEvidenceError(f"Invalid ingest schedule payload at {self.path}:{line_no}")
+        if record_type == "ingest_run":
+            run = IngestRun.from_dict(payload)
+            self._runs[run.ingest_run_id] = run
+        elif record_type == "source_watermark":
+            watermark = SourceWatermark.from_dict(payload)
+            self._watermarks[watermark.connector_id] = watermark
+        elif record_type == "crawl_frontier_item":
+            item = CrawlFrontierItem.from_dict(payload)
+            self._frontier[item.frontier_id] = item
+        elif record_type == "ingest_receipt":
+            receipt = IngestReceipt.from_dict(payload)
+            self._receipts[receipt.ingest_run_id] = receipt
+        else:
+            raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
 
     def _recover_incomplete_receipts(self) -> list[IngestReceipt]:
         """Durably terminalize receipts stranded by a post-processing crash.
@@ -404,14 +425,14 @@ class JsonlIngestScheduleStore:
 
     def upsert_run(self, run: IngestRun) -> IngestRun:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             self._append("ingest_run", run.ingest_run_id, run.to_dict())
             self._runs[run.ingest_run_id] = run
             return run
 
     def update_watermark(self, watermark: SourceWatermark) -> SourceWatermark:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             self._append("source_watermark", watermark.connector_id, watermark.to_dict())
             self._watermarks[watermark.connector_id] = watermark
             return watermark
@@ -459,7 +480,7 @@ class JsonlIngestScheduleStore:
 
     def upsert_receipt(self, receipt: IngestReceipt) -> IngestReceipt:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
             self._receipts[receipt.ingest_run_id] = receipt
             return receipt
@@ -521,7 +542,7 @@ class JsonlIngestScheduleStore:
         job_parameters: Mapping[str, Any] | None = None,
     ) -> CrawlFrontierItem:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             for item in self._frontier.values():
                 if (
                     item.connector_id == connector_id
@@ -572,7 +593,7 @@ class JsonlIngestScheduleStore:
             else {str(connector_id).strip() for connector_id in connector_ids if str(connector_id).strip()}
         )
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             claimed: list[CrawlFrontierItem] = []
             now_dt = _parse_utc(now or _utc_now())
             for item in self._list_frontier_unlocked():
@@ -592,7 +613,7 @@ class JsonlIngestScheduleStore:
 
     def claim_frontier(self, frontier_id: str, *, now: str | None = None) -> CrawlFrontierItem:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             item = self._require_frontier(frontier_id)
             if item.status not in {"queued", "retry"}:
                 raise SourceEvidenceError(f"frontier item is not claimable: {frontier_id} status={item.status}")
@@ -617,7 +638,7 @@ class JsonlIngestScheduleStore:
 
     def complete_frontier(self, frontier_id: str, *, ingest_run_id: str) -> CrawlFrontierItem:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             item = self._require_frontier(frontier_id)
             updated = CrawlFrontierItem(
                 **{
@@ -642,7 +663,7 @@ class JsonlIngestScheduleStore:
         available_at: str | None = None,
     ) -> CrawlFrontierItem:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             item = self._require_frontier(frontier_id)
             if item.status not in {"failed", "retry"}:
                 raise SourceEvidenceError(f"frontier item is not replayable: {frontier_id} status={item.status}")
@@ -671,7 +692,7 @@ class JsonlIngestScheduleStore:
         ingest_run_id: str | None = None,
     ) -> CrawlFrontierItem:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             item = self._require_frontier(frontier_id)
             terminal = item.attempts >= item.max_attempts
             updated = CrawlFrontierItem(
@@ -699,7 +720,7 @@ class JsonlIngestScheduleStore:
         if timeout_seconds < 1:
             raise SourceEvidenceError("frontier running timeout must be >= 1")
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._reload_unlocked(recover_incomplete=False)
+            self._reload_if_changed_unlocked()
             now_value = now or _utc_now()
             now_dt = _parse_utc(now_value)
             recovered: list[CrawlFrontierItem] = []
@@ -728,6 +749,8 @@ class JsonlIngestScheduleStore:
         return item
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
+        if self._read_key is not None and self._read_offset != self._read_key[1]:
+            raise SourceEvidenceError(f"Incomplete ingest schedule JSONL tail at {self.path}")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         file_preexisted = self.path.exists()
         entry = {
@@ -740,12 +763,18 @@ class JsonlIngestScheduleStore:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+            stat = os.fstat(handle.fileno())
         if not file_preexisted:
             directory_fd = os.open(self.path.parent, os.O_RDONLY)
             try:
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+        # The caller applies this row to its projection before releasing the
+        # same exclusive lock. A subsequent read need not deserialize it again.
+        self._read_offset = stat.st_size
+        self._read_line_no += 1
+        self._read_key = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
 def _utc_now() -> str:
@@ -827,6 +856,7 @@ class IngestionScheduler:
         trace_id: str,
         trigger_type: str = "scheduled",
         frontier_id: str | None = None,
+        defer_commit: bool = False,
     ) -> ScheduledIngestResult:
         connector = self.manager.get_connector(connector_id)
         if connector is None:
@@ -851,6 +881,19 @@ class IngestionScheduler:
                         raise SourceEvidenceError("fetched record connector_id must match job connector")
                     if record.source_type != connector.source_type:
                         raise SourceEvidenceError("fetched record source_type must match job connector")
+                if batch.derived_records and not isinstance(batch.collector_delivery, CollectorDelivery):
+                    raise SourceEvidenceError("derived records require a verified Collector delivery")
+                if batch.collector_delivery is not None:
+                    # The adapter emits derived rows first. Validate its in-process
+                    # proof before composing the records for the existing writer.
+                    batch.collector_delivery.validate((*batch.derived_records, *batch.records))
+                    expected_dataset = {"macro": "tw_macro_series", "social": "tw_community_daily"}.get(
+                        connector.source_type.value)
+                    if any(r.connector_id != connector_id or r.source_type.value != "market"
+                           or r.metadata.get("dataset") != expected_dataset for r in batch.derived_records):
+                        raise SourceEvidenceError("derived record connector/type/dataset mismatch")
+                delivery = batch.collector_delivery
+                batch = replace(batch, records=(*batch.derived_records, *batch.records), derived_records=())
                 run.raw_count = len(batch.records)
                 run.normalized_count = sum(1 for record in batch.records if not record.is_rejected)
                 run.rejected_count = sum(1 for record in batch.records if record.is_rejected)
@@ -905,7 +948,11 @@ class IngestionScheduler:
                     else str(run.finished_at),
                     last_ingest_run_id=run.ingest_run_id,
                 )
-                self.store.update_watermark(watermark)
+                if not defer_commit and not (delivery and any(
+                        r.source_type != connector.source_type for r in batch.records)):
+                    if delivery:
+                        delivery.acknowledge()
+                    self.store.update_watermark(watermark)
                 return ScheduledIngestResult(
                     run=run,
                     watermark=watermark,
@@ -913,6 +960,7 @@ class IngestionScheduler:
                     dlq_entries=tuple(rejected_dlq_entries),
                     audit_actions=tuple(rejected_audit_actions),
                     frontier_id=frontier_id,
+                    collector_delivery=delivery,
                 )
             except Exception as exc:  # noqa: BLE001 - scheduler must DLQ final governed failures.
                 last_error = exc

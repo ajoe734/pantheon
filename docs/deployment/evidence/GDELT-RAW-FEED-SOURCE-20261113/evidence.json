@@ -1,0 +1,117 @@
+{
+  "task_id": "GDELT-RAW-FEED-SOURCE-20261113",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "scope": "Official raw event feed source implementation; collector-host rollout remains coordinator-owned after merge.",
+  "acceptance": {
+    "1": {
+      "result": "implemented",
+      "evidence": [
+        "deploy/collector/collector_stack/pollers.py:GdeltRawFeedPoller",
+        "deploy/collector/fetch-policy.json",
+        "test_gdelt_real_export_features_and_provenance",
+        "test_gdelt_filter_uses_policy_and_never_accepts_query_override"
+      ]
+    },
+    "2": {
+      "result": "verified_offline_with_real_recordings",
+      "evidence": [
+        "test_gdelt_cache_survives_restart_and_new_snapshot_downloads_once",
+        "test_gdelt_bundle_write_failure_replays_verified_cache",
+        "test_gdelt_failures_record_reason_and_auto_pause",
+        "test_gdelt_rejects_corrupt_existing_cache"
+      ]
+    },
+    "3": {
+      "result": "verified",
+      "evidence": [
+        "test_gdelt_real_export_features_and_provenance",
+        "README.md#file-choice-and-field-semantics"
+      ]
+    },
+    "4": {
+      "result": "verified",
+      "evidence": [
+        "deploy/collector/tests/fixtures/gdelt_feed_recorded/provenance.json",
+        "test_gdelt_real_export_features_and_provenance"
+      ],
+      "note": "Synthetic gdelt_doc.json deleted; gdelt_query_recorded.json was already absent in base."
+    },
+    "5": {
+      "result": "implemented",
+      "evidence": [
+        "deploy/collector/collector_stack/runner.py",
+        "deploy/collector/collector_stack/config.py",
+        "test_gdelt_requires_single_official_hourly_raw_feed"
+      ],
+      "note": "DOC poller removed and runner uses one raw-feed poller; DOC URL occurs only in startup rejection test and historical evidence."
+    },
+    "6": {
+      "result": "recorded",
+      "evidence": [
+        "README.md",
+        "coordinator-doc-api-429.md",
+        "doc-api-429.headers",
+        "doc-api-429.txt"
+      ]
+    }
+  },
+  "chosen_feed": {
+    "type": "export",
+    "index_url": "https://data.gdeltproject.org/gdeltv2/lastupdate.txt",
+    "recorded_sizes_bytes": {
+      "export": 55892,
+      "mentions": 96624,
+      "gkg": 4194274
+    },
+    "rationale": "Smallest official file carrying event IDs, dates, CAMEO/Goldstein/tone features, actors/geography and source URLs."
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python -m pytest -q -ra deploy/collector/tests",
+      "exit_code": 0,
+      "passed": 175,
+      "skipped": 2,
+      "output": "validation.txt"
+    },
+    {
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python -m compileall -q deploy/collector/collector_stack",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "limits": [
+    "Hourly latest snapshots only; no intervening 15-minute backfill.",
+    "Vocabulary matches export actor/geographic names and decoded URLs, not article full text.",
+    "Day-precision event times and separate GDELT DATEADDED; publisher time and article language are unknown.",
+    "No hosted deployment, source resume, W1 readiness or downstream ingestion acceptance claimed.",
+    "Playwright/browser and opt-in image-build tests skipped; see validation output."
+  ],
+  "rollout_owner": "coordinator after merge",
+  "records": [
+    {
+      "path": "README.md",
+      "sha256": "40577f4aba69168a248eeb2062fc7e4feadc7fde889ce969c095c79e188a6952"
+    },
+    {
+      "path": "coordinator-doc-api-429.md",
+      "sha256": "02ad870388576408188894879c61f91a2cdd9aff78ee5c718a45396e76af0fcc"
+    },
+    {
+      "path": "doc-api-429.headers",
+      "sha256": "8eec9dd8fb127fa32ee3d3b2ed03ec05a8a86a2bce4f92aebe699c9148e3b485"
+    },
+    {
+      "path": "doc-api-429.txt",
+      "sha256": "44c03f8dd984184218c90dc7e64aed9e6e2d8b17426feb5aa7933b3c44df64c6"
+    },
+    {
+      "path": "validation.txt",
+      "sha256": "6147716be7a87c83256fdfb72ea5f2f951ffa46e5af24a1c4b4c08178320bec3"
+    }
+  ]
+}

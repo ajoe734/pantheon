@@ -145,7 +145,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             _require_read_role(identity)
 
             # PS-02: Persona detail
-            persona = _service.get_persona(persona_id)
+            caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+            persona = _get_persona_record_for_detail(
+                persona_id, caller_tenant, fallback_owner=identity.operator_id,
+            )
             if not persona:
                 _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
                 raise _bff_error(
@@ -541,6 +544,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "activeIncidents": active_incidents_for_persona,
                 "latestTelemetry": latest_telemetry_summary,
             }
+            data["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            surfaces.update(pool_surfaces)
+            data["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
+                persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            surfaces.update(cycle_surfaces)
 
             return {
                 "data": data,
@@ -596,6 +607,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     snapshot_at=snapshot_at,
                     has_data=True,
                 )
+            dto["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            meta.setdefault("surfaces", {}).update(pool_surfaces)
+            dto["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
+                persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            meta["surfaces"].update(cycle_surfaces)
             return {
                 "data": dto,
                 "meta": meta,

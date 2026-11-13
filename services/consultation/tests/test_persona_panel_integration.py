@@ -2,8 +2,9 @@
 
 Real: consultation-svc, its workflow executor, the Persona owner (bootstrap via
 ``POST /api/personas``), governance handoff intake, evolution health and the
-memory service (Learn-feedback writeback). Faked: only the provider HTTP that
-stands in for each persona's own agent.
+memory service (Learn-feedback writeback). Owner-shaped registry/pool HTTP
+fixtures supply case-file facts; provider HTTP stands in for each persona's
+own agent.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from typing import Any, Iterator
 
 import pytest
 import uvicorn
+from fastapi import FastAPI, Header
 
 from services.consultation import main as consultation_main
 from services.consultation.client import ConsultationServiceClient
@@ -69,7 +71,7 @@ def _serve(app: Any) -> Iterator[str]:
 
 
 class ProviderFake(ThreadingHTTPServer):
-    """The only fake: each persona's own agent, reached over provider HTTP."""
+    """Each persona's own agent, reached over provider HTTP."""
 
     answers: dict[str, str]
     calls: list[dict[str, Any]]
@@ -95,6 +97,9 @@ class _ProviderHandler(BaseHTTPRequestHandler):
         )
         rid = payload["request_id"]
         rec = self.server.answers[persona_id]
+        case = payload["request"]["case_file"]
+        item_id = case["groups"]["facts"]["items"][0]["item_id"]
+        refs = [] if persona_id in self.server.uncited else [item_id]
         body = {
             "status": "completed",
             "contribution": {
@@ -107,10 +112,12 @@ class _ProviderHandler(BaseHTTPRequestHandler):
                 "recommendation": rec,
                 "confidence": 0.7,
                 "event_type": "persona_contribution",
-                "event_content": {"claim": f"{persona_id} position: {rec}"},
+                "event_content": {
+                    "claims": [{"claim": f"{persona_id} position: {rec}", "evidence_refs": refs}],
+                    "summary_evidence_refs": refs},
                 "evidence": [
                     {
-                        "id": f"ev-{rid}-{persona_id}",
+                        "id": item_id,
                         "evidence_type": "persona_review",
                         "link": f"artifact://{rid}/{persona_id}",
                     }
@@ -127,10 +134,11 @@ class _ProviderHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _provider_fake(answers: dict[str, str]) -> Iterator[ProviderFake]:
+def _provider_fake(answers: dict[str, str], *, uncited: tuple[str, ...] = ()) -> Iterator[ProviderFake]:
     server = ProviderFake(("127.0.0.1", 0), _ProviderHandler)
     server.answers = answers
     server.calls = []
+    server.uncited = set(uncited)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -153,6 +161,8 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
     monkeypatch.delenv("PANTHEON_MEMORY_AUTHZ_MODE", raising=False)
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", _make_jwt(roles=["memory-writer"], tenant_id=TENANT))
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "memory-operator-1")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "memory-writer")
     monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "institutional.json"))
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona.json"))
     monkeypatch.setenv("PANTHEON_MEMORY_DATA_DIR", str(tmp_path / "memory"))
@@ -181,11 +191,36 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
     monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_SECRET", GOV_JWT_SECRET)
     monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_ISSUER", "panel-gov")
     monkeypatch.setenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE", "panel-gov-aud")
-    with _serve(consultation_main.app) as api, _serve(memory_main.app) as memory, _serve(
+    # Owner-shaped HTTP fixtures supply the subject facts; the actual composer
+    # and its HTTP client run unchanged, as do the panel and memory services.
+    facts = FastAPI()
+
+    @facts.get("/api/registry/entries/{ref}")
+    def registry_entry(ref: str, tenant_id: str = Header(alias="X-Tenant-Id")):
+        return {"registry_id": ref, "tenant_id": tenant_id, "strategy_id": "momentum",
+                "artifact_type": "strategy_spec", "version": "1", "artifact_state": "candidate",
+                "metadata": {"underlyings": ["2330"], "instrument_class": "equity"},
+                "evaluation_summary": {"sharpe": 1.1}}
+
+    @facts.get("/api/registry/strategies/{family}/entries")
+    def history(family: str):
+        return []
+
+    @facts.get("/api/personas/{pid}/strategy-pool")
+    def pool(pid: str):
+        return {"pool_version": 1, "members": [{"artifact_ref": "reg-member", "stage": "active"}]}
+
+    @facts.get("/api/personas/{pid}/strategy-pool/versions")
+    def versions(pid: str):
+        return {"versions": [], "refusals": []}
+
+    with _serve(facts) as facts_url, _serve(consultation_main.app) as api, _serve(memory_main.app) as memory, _serve(
         governance_main.app
     ) as governance, _serve(evolution_main.app) as evolution, _serve(
         create_persona_app()
     ) as persona:
+        monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", facts_url)
+        monkeypatch.setenv("PANTHEON_PERSONA_API_URL", facts_url)
         yield {
             "api": api,
             "memory": memory,
@@ -645,7 +680,8 @@ def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
 
     monkeypatch.setattr(wf, "_write_panel_memory", flaky)
     with _provider_fake({INITIATOR: "approve", triggers.RISK_PERSONA_ID: "reject"}) as fake:
-        cfg = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        from dataclasses import replace
+        cfg = replace(_config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute"), batch_size=1)
         requirement = triggers.required_consultation(
             "trial_admission", "trial-outage", initiator_persona_id=INITIATOR
         )
@@ -654,6 +690,12 @@ def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
         ).open_persona_panel(requirement, persona_id=INITIATOR, trace_id="trace-outage")
         first = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
         assert first["completed"] == 0
+        assert len(fake.calls) == 2
+        # A retry must preserve the cited snapshot even if owner data changes
+        # or the composer becomes unavailable after the first attempt.
+        def no_recomposition(*args, **kwargs):
+            raise AssertionError("retry recomposed the decision case file")
+        monkeypatch.setattr(wf, "_compose_panel_case_file", no_recomposition)
         # The hold exists even though memory failed.
         held = stack["handoffs"].list_all()
         assert len(held) == 1 and held[0]["operator_decision"]["status"] == "pending"
@@ -664,11 +706,15 @@ def test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts(
         )
         assert status == 409, body
         # Retry adopts the same handoff (no duplicate) and finishes memory.
+        retries = []
         for _ in range(5):
             second = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
+            retries.append(second)
             if second["completed"]:
                 break
             time.sleep(0.5)
+        assert second["completed"] == 1, json.dumps(retries)
+        assert len(fake.calls) == 2
     assert len(stack["handoffs"].list_all()) == 1
     assert stack["handoffs"].list_all()[0]["operator_decision"]["status"] == "pending"
     status, _ = _decide(

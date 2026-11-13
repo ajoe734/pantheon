@@ -16,7 +16,9 @@ from typing import Any, Mapping
 from services.external_egress import is_internal_host, open_external_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
-from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorPullResult
+from .connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorPullResult, deferred_collector_acknowledgement,
+)
 from .external_sources import validate_external_source_connector, validate_external_source_record
 from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
 from .process_lock import exclusive_file_lock
@@ -497,13 +499,14 @@ class ConfiguredConnectorFetcher:
                     request = dict(fetch.get("request") or {})
                     request.setdefault("watermark", watermark)
                     fetch = {**fetch, "request": request}
-                result = execute_provider_owned_adapter(
-                    connector=config.connector,
-                    fetch=fetch,
-                    trace_id=trace_id,
-                    job_parameters=job_parameters,
-                    preserve_collector_outcome=True,
-                )
+                with deferred_collector_acknowledgement():
+                    result = execute_provider_owned_adapter(
+                        connector=config.connector,
+                        fetch=fetch,
+                        trace_id=trace_id,
+                        job_parameters=job_parameters,
+                        preserve_collector_outcome=True,
+                    )
                 if isinstance(result, CollectorPullResult):
                     collector_result = result
                     records = result.records
@@ -557,7 +560,13 @@ class ConfiguredConnectorFetcher:
             empty_ok = collector_result.no_new_data
             empty_reason = "verified collector consumed cursor; no new data" if empty_ok else None
         return IngestBatch(
-            records=records,
+            records=tuple(r for r in records if not (
+                collector_result is not None and r.source_type.value == "market"
+                and config.connector.source_type.value in {"macro", "social"})),
+            derived_records=tuple(r for r in records if (
+                collector_result is not None and r.source_type.value == "market"
+                and config.connector.source_type.value in {"macro", "social"})),
+            collector_delivery=collector_result.delivery if collector_result is not None else None,
             next_watermark=next_watermark,
             empty_ok=empty_ok,
             empty_reason=empty_reason,

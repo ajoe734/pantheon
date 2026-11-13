@@ -94,6 +94,9 @@ def expression_replay_gate(
     recorded = [dict(r) for r in records or []]
     if not recorded:
         return {"passed": False, "reason": "no_recorded_decisions", "decision_count": 0}
+    from services.execution.lean_runtime.expression_policy import POLICY_KIND, TARGET_POLICY_KIND
+    if any(r.get("policy_kind", POLICY_KIND) not in {POLICY_KIND, TARGET_POLICY_KIND} for r in recorded):
+        return {"passed": False, "reason": "unsupported_expression_policy", "decision_count": len(recorded)}
     parent = replay(recorded, parent_parameters)
     child = replay(recorded, child_parameters)
     graded = child["summary"]["graded_count"] + parent["summary"]["graded_count"]

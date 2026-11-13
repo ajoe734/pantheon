@@ -23,6 +23,49 @@ def _replay(prepared, artifact, dates):
     """Same dated inputs/interpreter/netting as paper, previous-bar exposure only."""
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
+    from services.registry.portfolio_envelope import uses_target_positions
+    if uses_target_positions(artifact):
+        from services.research.vectorbt.adapter.vectorbt_adapter import _portfolio_target_sequence
+        replay = _portfolio_target_sequence(prepared, artifact)
+        calendar = list(prepared.dates_by_instrument[prepared.instruments[0]])
+        indexes = [calendar.index(day) for day in dates]
+        if any(replay["bars"][i] is None for i in indexes):
+            raise ValueError("backtest_warmup_missing")
+        return [replay["returns"][i] for i in indexes[1:]]
+    if "screen" in artifact.get("strategy_logic", {}):
+        from services.research.vectorbt.adapter.vectorbt_adapter import _screened_artifact_view_sequence
+        sequences = _screened_artifact_view_sequence(prepared, artifact)
+        series = []
+        for symbol, views in sequences.items():
+            calendar = list(prepared.dates_by_instrument[symbol])
+            if not set(dates) <= set(calendar):
+                raise ValueError("backtest_dates_missing_or_duplicate")
+            rows = []
+            strength = 0.0
+            for index, view in enumerate(views):
+                direction = view.get("target_direction", view["direction"])
+                if view.get("exit_reason"):
+                    direction = "FLAT"
+                if view["action"] != "HOLD":
+                    strength = 1.0 if view["strength"] is None else view["strength"]
+                if direction == "FLAT":
+                    strength = 0.0
+                if calendar[index] in dates:
+                    rows.append({"exposure": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction] * strength,
+                                 "price": prepared.ohlcv_by_instrument[symbol][index][3]})
+            costs = _net_interval_costs(symbol, rows)
+            values = []
+            for i, (prior, row) in enumerate(zip(rows, rows[1:]), 1):
+                value = prior["exposure"] * (row["price"] / prior["price"] - 1) - costs[i]
+                if i == 1:
+                    value -= costs[0]
+                if i == len(rows) - 1:
+                    value -= _net_interval_costs(symbol, [rows[-1], {"exposure": 0}])[-1]
+                if not math.isfinite(value) or value <= -1:
+                    raise ValueError("backtest_return_invalid")
+                values.append(value)
+            series.append(values)
+        return [statistics.mean(values) for values in zip(*series)]
     wanted = {normalize_taiwan_symbol(s) for s in artifact["parameters"]["symbols"]}
     instruments = [s for s in prepared.instruments if normalize_taiwan_symbol(s) in wanted]
     if {normalize_taiwan_symbol(s) for s in instruments} != wanted:
@@ -114,9 +157,15 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
         reasons.append("combined_oos_sharpe_did_not_improve")
     if candidate_sharpe <= threshold:
         reasons.append("candidate_oos_sharpe_below_persona_trial_threshold")
+    from services.registry.portfolio_envelope import uses_target_positions
+    target_basis = "portfolio_target_position_cash_net_taiwan_costs"
+    before_basis = target_basis if uses_target_positions(_envelope(current, entries)) else NET_BASIS
+    after_basis = target_basis if uses_target_positions(_envelope(proposed, entries)) else NET_BASIS
     return {"admitted": not reasons, "reasons": reasons, "correlations": correlations,
             "pool_oos_sharpe": before, "combined_oos_sharpe": after, "candidate_oos_sharpe": candidate_sharpe,
             "persona_trial_count": trial_count, "sharpe_haircut": haircut, "required_candidate_sharpe": threshold,
-            "return_basis": NET_BASIS, "periods_per_year": policy.periods_per_year,
+            "return_basis": after_basis, "pool_oos_return_basis": before_basis,
+            "combined_oos_return_basis": after_basis, "candidate_oos_return_basis": NET_BASIS,
+            "periods_per_year": policy.periods_per_year,
             "oos_start": dates[0], "oos_end": dates[-1], "return_observations": len(dates) - 1,
             "dataset_id": prepared.dataset_id, "source_dataset_refs": list(prepared.source_dataset_refs)}

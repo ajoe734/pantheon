@@ -79,6 +79,24 @@ services:
       retries: 10
       start_period: 10s
 
+  retrieval-postgres:
+    profiles: ["core", "root"]
+    image: pgvector/pgvector:0.8.0-pg16@sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: retrieval_owner
+      POSTGRES_PASSWORD: ${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}
+      POSTGRES_DB: pantheon_retrieval
+    volumes:
+      - retrieval-postgres-data:/var/lib/postgresql/data
+      - ./services/search/sql/retrieval_index.sql:/docker-entrypoint-initdb.d/01-retrieval.sql:ro
+    # No host port: this projection is accessible only inside the service network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retrieval_owner -d pantheon_retrieval"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   nats:
     profiles: ["core", "root"]
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
@@ -143,6 +161,20 @@ services:
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
       PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      # Decision case files read their facts from the existing owner APIs.
+      # Credentials must be supplied by the environment; no new authority.
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_REGISTRY_SERVICE_TOKEN: ${PANTHEON_REGISTRY_SERVICE_TOKEN:-}
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-}
+      PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
       # No depends_on for evolution: it transitively depends on this service
       # (via runtime-manager). A harness-patch panel probes it and blocks.
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
@@ -374,6 +406,8 @@ services:
       PANTHEON_L2_EXTRACTION_ENABLED: ${PANTHEON_L2_EXTRACTION_ENABLED:-0}
       PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP: ${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}
       PANTHEON_L2_EXTRACTION_LEDGER_PATH: /data/source-ingest/l2_extraction_ledger.sqlite
+      DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
+      DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
@@ -469,6 +503,9 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8098"
+      PANTHEON_SEARCH_JWT_SECRET: ${PANTHEON_SEARCH_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_SEARCH_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_SEARCH_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
       SEARCH_MATERIALIZE_STORE_PATH: /data/search/search-materialize.jsonl
@@ -477,6 +514,11 @@ services:
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
       SEARCH_PIPELINE_RETENTION_RUNS: ${SEARCH_PIPELINE_RETENTION_RUNS:-500}
       SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
+      # Hybrid Postgres backend is the default; jsonl only by explicit override and always reported.
+      PANTHEON_SEARCH_BACKEND: ${PANTHEON_SEARCH_BACKEND:-postgres_pgvector}
+      PANTHEON_SEARCH_POSTGRES_DSN: postgresql://retrieval_owner:${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}@retrieval-postgres:5432/pantheon_retrieval
+      SEARCH_EMBEDDING_CACHE_DIR: /opt/search/models
+      HF_HUB_OFFLINE: "1"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       # Read the source owner's transactional evidence table by default.
@@ -491,6 +533,8 @@ services:
       - "${SEARCH_PORT:-18098}:8098"
     depends_on:
       postgres:
+        condition: service_healthy
+      retrieval-postgres:
         condition: service_healthy
       # source-ingest owns and bootstraps source_ingest.source_evidence;
       # search must not open its read-only view before the owner is ready.
@@ -803,10 +847,6 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
-      # Must equal the tenant of the issued BFF principal (tenant-dev in dev).
-      # Daily paper-only allocator (cap 5); opt in with DISCOVERY_ALLOCATOR_ENABLED=true.
-      DISCOVERY_ALLOCATOR_ENABLED: ${DISCOVERY_ALLOCATOR_ENABLED:-false}
-      DISCOVERY_ALLOCATOR_TENANT_ID: ${DISCOVERY_ALLOCATOR_TENANT_ID:-tenant-dev}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
@@ -1814,6 +1854,25 @@ services:
       PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       PERSONA_GOVERNANCE_TIMEOUT_SECONDS: ${PERSONA_GOVERNANCE_TIMEOUT_SECONDS:-5}
+      PERSONA_RESEARCH_SERVICE_TOKEN_FILE: ${PERSONA_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RESEARCH_SERVICE_TOKEN}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-http://research-orchestrator:8100}
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://memory:8086}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution:8093}
+      REGISTRY_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
+      PERSONA_POOL_CANONICAL_DATASET_PATH: ${PERSONA_POOL_CANONICAL_DATASET_PATH:-}
+      PERSONA_POOL_THRESHOLD_POLICY_PATH: ${PERSONA_POOL_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Same DatasetVersion authority as training; direct dataset paths stay unset.
+      SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      PERSONA_POOL_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
+      PERSONA_POOL_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
+      PERSONA_POOL_SOURCE_VOLUME_ROOT: /data/source-ingest
+      PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT: /data/bff/persona-pool-dataset-authority
+      PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
+      PERSONA_POOL_SOURCE_READ_TOKEN_FILE: ${PERSONA_POOL_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
+      PERSONA_POOL_SOURCE_READ_TENANT_ID: ${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}
       PORT: "8002"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PERSONA_STORE_BACKEND: ${PERSONA_STORE_BACKEND:-postgres}
@@ -1841,6 +1900,7 @@ services:
     volumes:
       - bff-data:/data/bff
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1988,6 +2048,8 @@ services:
       PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_MEMORY_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
@@ -3177,6 +3239,7 @@ services:
 
         required: false
 volumes:
+  retrieval-postgres-data:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
   dev-paper-governance-tokens:

@@ -471,3 +471,165 @@ def test_true_null_volume_is_no_trade_not_official_row():
     from services.source_ingestion.intraday_reconcile import _official_volume_shares
     assert _official_volume_shares({"volume": None, "volume_lots": None}) is None
     assert _official_volume_shares({"volume": 0, "volume_lots": None}) == Decimal(0)
+
+
+# ---- comparable regular-session volume basis (official total minus evidence-bound categories)
+CATS = {"intraday_odd": 2_016_133, "afterhours_odd": 84_152, "afterhours_fixed": 130_000, "block": 3_138_000}
+REGULAR = 27_100_000  # == 271 minute bars * 100 lots * 1000
+AVAIL = "2026-11-10T06:30:00Z"
+
+
+def _write_snapshot(root, *, total=REGULAR + sum(CATS.values()), comps=None, symbol="2330"):
+    daily = root / "normalized" / "tw_price_daily" / DAY
+    daily.mkdir(parents=True, exist_ok=True)
+    body = {"symbol": symbol, "date": DAY, "market": "TWSE", "open": 100, "high": 110, "low": 95, "close": 104,
+            "volume": total, "available_time": AVAIL}
+    (daily / "a.jsonl").write_text(json.dumps({"metadata": {"body": json.dumps(body)}}) + "\n")
+    comps = [dict(symbol=symbol, date=DAY, market="TWSE", category=k, volume=v, unit="shares",
+                  available_time=AVAIL) for k, v in CATS.items()] if comps is None else comps
+    if comps:
+        cdir = root / "normalized" / "tw_price_daily_volume_components" / DAY
+        cdir.mkdir(parents=True, exist_ok=True)
+        (cdir / "c.jsonl").write_text("".join(json.dumps(c) + "\n" for c in comps))
+    return root
+
+
+def _named_day(tmp_path, **kw):
+    store = _store(tmp_path / "store")
+    store.put_symbol_day("2330", DAY, _bars())
+    off = OfficialDaily.from_snapshot(_write_snapshot(tmp_path / "off", **kw))
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    res = _run(store, off, write=False)
+    assert sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before  # write=False
+    return res
+
+
+def test_comparable_regular_volume_passes_with_bound_refs_and_raw_total_preserved(tmp_path):
+    res = _named_day(tmp_path)
+    assert res.outcome == "pass" and not res.violations
+    assert res.official["volume"] == str(REGULAR + sum(CATS.values()))  # raw official total kept
+    basis = res.source_refs["volume_basis"]
+    assert basis["comparable_volume"] == str(REGULAR) and basis["non_regular_total"] == str(sum(CATS.values()))
+    assert {c["category"] for c in basis["components"]} == set(CATS)
+    assert all(c["ref"]["line_sha256"] and c["market"] == "TWSE" for c in basis["components"])
+    assert res.observed["raw_volume"] is not None
+
+
+def test_real_volume_error_still_fails_on_comparable_basis(tmp_path):
+    res = _named_day(tmp_path, total=int(REGULAR * 1.05) + sum(CATS.values()))
+    assert res.outcome == "fail"
+    vol = [v for v in res.violations if v["field"] == "volume"][0]
+    assert vol["reason"] == "volume_outside_tolerance" and vol["basis"].startswith("official_total_minus")
+
+
+def test_no_component_evidence_keeps_legacy_total_comparison(tmp_path):
+    res = _named_day(tmp_path, comps=[])  # total includes categories, no evidence -> not normalised
+    assert res.outcome == "fail" and res.source_refs["volume_basis"]["basis"] == "official_total"
+
+
+def _comp(cat, **kw):
+    return {**dict(symbol="2330", date=DAY, market="TWSE", category=cat, volume=CATS[cat], unit="shares",
+                   available_time=AVAIL), **kw}
+
+
+@pytest.mark.parametrize("mutate,reason", [
+    (lambda c: [x for x in c if x["category"] != "block"], "component_category_missing:block"),
+    (lambda c: [{**x, "volume": -1} if x["category"] == "block" else x for x in c], "component_negative"),
+    (lambda c: [{**x, "market": "TPEX"} if x["category"] == "block" else x for x in c], "component_market_unbound_or_mismatch"),
+    (lambda c: [{**x, "symbol": "2317"} if x["category"] == "block" else x for x in c], "component_category_missing:block"),
+    (lambda c: [{**x, "unit": "board"} if x["category"] == "block" else x for x in c], "component_unit_or_amount_unsupported"),
+    (lambda c: [*c, c[0]], "component_category_duplicate"),
+    (lambda c: [{**x, "available_time": None} if x["category"] == "block" else x for x in c], "component_availability_unknown"),
+])
+def test_bad_component_evidence_is_unavailable_and_quarantines(tmp_path, mutate, reason):
+    comps = mutate([_comp(k) for k in CATS])
+    res = _named_day(tmp_path, comps=comps)
+    assert res.outcome == "fail"
+    vol = [v for v in res.violations if v["reason"] == "volume_basis_unavailable"]
+    assert vol and reason in vol[0]["basis_reason"]
+
+
+def test_components_exceeding_total_and_unparseable_line_are_unavailable(tmp_path):
+    res = _named_day(tmp_path / "a", total=sum(CATS.values()) - 1)
+    assert res.outcome == "fail" and "components_exceed_official_total" in res.violations[0]["basis_reason"]
+    root = _write_snapshot(tmp_path / "b" / "off")
+    (root / "normalized" / "tw_price_daily_volume_components" / DAY / "bad.jsonl").write_text("{not json\n")
+    off = OfficialDaily.from_snapshot(root)
+    store = _store(tmp_path / "b" / "store"); store.put_symbol_day("2330", DAY, _bars())
+    res = _run(store, off, write=False)
+    assert res.outcome == "fail" and any(v["reason"] == "volume_basis_unavailable" for v in res.violations)
+
+
+def test_component_not_yet_available_is_pending(tmp_path):
+    late = [_comp(k, available_time="2026-11-10T10:00:00Z") if k == "block" else _comp(k) for k in CATS]
+    res = _named_day(tmp_path, comps=late)
+    assert res.outcome == "pending_official" and res.reason == "official_volume_component_not_yet_available"
+
+
+def test_report_script_uses_component_basis_read_only(tmp_path):
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    _write_snapshot(tmp_path / "off")
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+    out = subprocess.run([sys.executable, str(ROOT / "scripts/report_intraday_reconciliation.py"),
+                          "--store-root", str(tmp_path / "store"), "--official-root", str(tmp_path / "off")],
+                         capture_output=True, text=True, check=True, cwd=tmp_path)
+    assert json.loads(out.stdout)["summary"]["outcome_counts"] == {"pass": 1}
+    assert sorted(str(p) for p in tmp_path.rglob("*")) == before
+
+
+def test_component_basis_write_path_pass_record_and_loader(tmp_path):
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    off = OfficialDaily.from_snapshot(_write_snapshot(tmp_path / "off"))
+    res = _run(store, off)
+    assert res.outcome == "pass" and len(read_reconciled_rows(store, "2330", DAY)) == 271
+    assert _run(store, off).unchanged
+
+
+def test_only_malformed_component_evidence_fails_closed_and_loader_empty(tmp_path):
+    """P1: unreadable component evidence with NO parseable component must not be treated as absent."""
+    root = _write_snapshot(tmp_path / "off", comps=[])  # total == REGULAR, would pass legacy basis
+    cdir = root / "normalized" / "tw_price_daily_volume_components" / DAY
+    cdir.mkdir(parents=True)
+    (cdir / "bad.jsonl").write_text("{not json\n")
+    off = OfficialDaily.from_snapshot(root)
+    assert off.components_for("2330", DAY)  # marker preserved
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    ro = _run(store, off, write=False)  # read-only: verdict only, no writes
+    assert ro.outcome == "fail" and sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
+    res = _run(store, off)
+    assert res.outcome == "fail"
+    assert any(v["reason"] == "volume_basis_unavailable" for v in res.violations)
+    assert store.symbol_day_status("2330", DAY) == "quarantined"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+@pytest.mark.parametrize("ident", [{"symbol": None}, {"date": None}, {"date": "garbage"}, {"symbol": "  "}, {"date": "2026-13-45"}])
+def test_invalid_component_identity_fails_closed_not_legacy_fallback(tmp_path, ident):
+    """P1: null/blank/invalid symbol or date must stay an unattributable marker, never legacy total."""
+    root = _write_snapshot(tmp_path / "off", total=REGULAR, comps=[_comp("block", **ident)])
+    off = OfficialDaily.from_snapshot(root)
+    assert off.components_for("2330", DAY)
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    before = sorted(str(p) for p in (tmp_path / "store").rglob("*"))
+    ro = _run(store, off, write=False)
+    assert ro.outcome == "fail" and sorted(str(p) for p in (tmp_path / "store").rglob("*")) == before
+    res = _run(store, off)
+    assert res.outcome == "fail" and store.symbol_day_status("2330", DAY) == "quarantined"
+    assert read_reconciled_rows(store, "2330", DAY) == []
+
+
+def test_direct_dataset_dir_root_uses_canonical_component_root(tmp_path):
+    bad = [_comp(k, volume=-1) if k == "block" else _comp(k) for k in CATS]
+    root = _write_snapshot(tmp_path / "off", comps=bad)
+    store = _store(tmp_path / "store"); store.put_symbol_day("2330", DAY, _bars())
+    for form in (root, root / "normalized" / "tw_price_daily"):
+        off = OfficialDaily.from_snapshot(form)
+        assert _run(store, off, write=False).outcome == "fail"
+    res = _run(store, OfficialDaily.from_snapshot(root / "normalized" / "tw_price_daily"))
+    assert res.outcome == "fail" and read_reconciled_rows(store, "2330", DAY) == []
+    out = subprocess.run([sys.executable, str(ROOT / "scripts/report_intraday_reconciliation.py"),
+                          "--store-root", str(tmp_path / "store"),
+                          "--official-root", str(root / "normalized" / "tw_price_daily")],
+                         capture_output=True, text=True, check=True, cwd=tmp_path)
+    assert json.loads(out.stdout)["summary"]["outcome_counts"] == {"already_quarantined": 1}
