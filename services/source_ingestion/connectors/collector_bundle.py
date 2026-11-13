@@ -749,7 +749,7 @@ class CollectorBundleAdapter:
     ) -> CollectorPullResult:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
-            cursor, trace_id=trace_id, total_cap=total_cap, held=_held_codes((*priority_symbols, *os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",")))
+            cursor, trace_id=trace_id, total_cap=total_cap, held=_held_codes(priority_symbols)
         )
         if priority is None:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)

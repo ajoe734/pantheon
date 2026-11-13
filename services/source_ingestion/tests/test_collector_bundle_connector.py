@@ -1424,3 +1424,12 @@ def test_provider_handler_uses_active_paper_symbol_environment(tmp_path, monkeyp
     monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS")
     result = _collector_bundle(_held_session(tmp_path / "b")(), {"_effective_max_records": 55}, "trace")
     assert "2330" not in _symbols(result)
+
+
+def test_provider_handler_forwards_request_priority_symbols_without_environment(tmp_path, monkeypatch):
+    from services.source_ingestion.provider_adapters import _collector_bundle
+
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    request = {"_effective_max_records": 55, "priority_symbols": ["2330.TWSE", "2317.TWSE"]}
+    result = _collector_bundle(_held_session(tmp_path)(), request, "trace")
+    assert {"2330", "2317"} <= set(_symbols(result))
