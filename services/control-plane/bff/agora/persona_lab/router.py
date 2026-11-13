@@ -21,9 +21,48 @@ HANDOFF_KIND = "trainer_feedback_to_persona_update"
 SHADOW_ARMS = ("base", "candidate")
 
 
+def _timed_http(timeout: float) -> HttpRequest:
+    """Default owner transport with an explicit per-call timeout (no global state)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    def request(method, url, payload=None, headers=None):
+        req_headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        req_headers.update(headers or {})
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+                return resp.status, json.loads(raw.decode("utf-8")) if raw else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                return exc.code, json.loads(raw.decode("utf-8")) if raw else None
+            except Exception:
+                return exc.code, {"detail": raw.decode("utf-8", errors="replace")}
+        except Exception as exc:
+            return 503, {"detail": str(exc)}
+
+    return request
+
+
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, ""))
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+
 def _default_http() -> HttpRequest:
-    from ...research.client import default_http_request
-    return default_http_request
+    return _timed_http(_env_seconds("RESEARCH_ORCHESTRATOR_TIMEOUT_SECONDS", 3.0))
+
+
+def _default_shadow_http() -> HttpRequest:
+    """Shadow replay is synchronous on the owner; budget it separately from ordinary reads."""
+    return _timed_http(_env_seconds("PANTHEON_PERSONA_SHADOW_TIMEOUT_SECONDS", 120.0))
 
 
 def create_persona_lab_router(
@@ -37,6 +76,7 @@ def create_persona_lab_router(
 ) -> APIRouter:
     router = APIRouter(tags=["agora-persona-lab"])
     send = http_request or _default_http()
+    send_shadow = http_request or _default_shadow_http()
 
     def _base(kind: str) -> str:
         envs = (("PANTHEON_PERSONA_API_URL", "PANTHEON_PERSONA_SERVICE_URL", "PERSONA_URL") if kind == "persona"
@@ -54,9 +94,9 @@ def create_persona_lab_router(
         except AgoraScopeResolutionError as exc:
             raise bff_error(exc.status_code, "FORBIDDEN", exc.message, exc.reason)
 
-    def _owner(kind: str, method: str, path: str, scope, authorization, payload=None) -> Any:
+    def _owner(kind: str, method: str, path: str, scope, authorization, payload=None, transport=None) -> Any:
         headers = {"Authorization": authorization or "", "X-Tenant-Id": scope.tenant_id}
-        code, body = send(method, _base(kind) + path, payload, headers)
+        code, body = (transport or send)(method, _base(kind) + path, payload, headers)
         if code not in (200, 201):
             reason = body.get("detail") if isinstance(body, dict) else None
             raise bff_error(code if 400 <= code < 600 else 502, "OWNER_REFUSED",
@@ -113,7 +153,7 @@ def create_persona_lab_router(
         scope = _scope(authorization, x_tenant_id, True)
         _owner("persona", "POST", _patch_path(persona_id, patch_id, "/precheck"), scope, authorization, {})
         return _wrap(scope, _owner("persona", "POST", _patch_path(persona_id, patch_id, "/shadow"), scope,
-                                   authorization, {}))
+                                   authorization, {}, send_shadow))
 
     @router.post(base + "/patches/{patch_id}/submit", status_code=201)
     def submit_patch(persona_id: str, patch_id: str, body: Dict[str, Any] = Body(default_factory=dict),
