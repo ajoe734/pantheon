@@ -81,5 +81,22 @@
     "caller_source_diff_against_base": false,
     "authentication_dependency_overrides": false,
     "no_hosted_or_deployment_authority_claimed": true
+  },
+  "recorded_research_runs": {
+    "path": "recorded-research-runs.json",
+    "format": "focused_research_run_summary_v1",
+    "full_output": {
+      "sha256": "991bd8d50f998bafe6982ed2a39ef6709cc2a8a41c828570a1009d4370ee1a41",
+      "bytes": 36253,
+      "lines": 786,
+      "git_commit": "c122aeaa100a362c5f340ddc14c53f6d162c4ba6",
+      "git_blob": "471df7921f8cca66c8a25871218a59d5cc82a88c",
+      "path": "docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+      "url": "https://github.com/ajoe734/pantheon/blob/c122aeaa100a362c5f340ddc14c53f6d162c4ba6/docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json",
+      "retrieval": "git show c122aeaa100a362c5f340ddc14c53f6d162c4ba6:docs/deployment/evidence/TEMPLATE-DEMAND-SEARCH-R2-20261112/recorded-research-runs.json"
+    },
+    "summary_sha256": "a8d25cc0abb13c1dd7df1471487822328f02db65a36562b2e4f3fe2e8316021a",
+    "run_count": 2,
+    "receipt_reused": true
   }
 }

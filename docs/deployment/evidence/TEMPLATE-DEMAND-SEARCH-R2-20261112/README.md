@@ -90,9 +90,13 @@ terminal run/task status, and verifies receipt reuse on the next cycle.
 Synthetic data and fallback-artifact builders are poisoned. The recorded KMID
 candidate is legitimately **rejected**, with its
 actual OOS metrics, family trial and gate criteria recorded in
-`recorded-gate-result.json`; `recorded-research-runs.json` records both completed
-Research runs from this execution. A successful numerical strategy admission on these
-bars is not claimed. Passing-candidate persistence and family exhaustion are
+`recorded-gate-result.json`; `recorded-research-runs.json` summarizes both completed
+Research runs, their lifecycle events and reused candidate receipt. It references
+the full 786-line output at immutable commit `c122aeaa100a362c5f340ddc14c53f6d162c4ba6`
+by repository path, Git blob, byte count and SHA-256; `git show` in its
+`full_output.retrieval` field reproduces the exact original bytes. Repeated gate
+payloads are omitted from the summary. A successful numerical strategy admission
+on these bars is not claimed. Passing-candidate persistence and family exhaustion are
 separately exercised with an explicitly named gate double; its receipts are
 not represented as real numerical proof. No hosted deployment, pool admission,
 profitable candidate, StrategySpec approval or capital write is claimed.
