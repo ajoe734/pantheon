@@ -30,7 +30,7 @@ from .connectors.finmind_taiwan import (
     shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
 )
-from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter
+from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, CollectorPullResult
 from .connectors.social import AdmittedSocialMediaAdapter
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 from .connectors.taiwan_official import (
@@ -57,7 +57,7 @@ from .connectors.us_paid_broker import (
 from .connectors.yahoo_taiwan import AnueTaiwanRssAdapter, YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
-Handler = Callable[[Any, Mapping[str, Any], str], tuple[SourceRecord, ...]]
+Handler = Callable[[Any, Mapping[str, Any], str], tuple[SourceRecord, ...] | CollectorPullResult]
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,8 @@ def execute_provider_owned_adapter(
     fetch: Mapping[str, Any],
     trace_id: str,
     job_parameters: Mapping[str, Any] | None = None,
-) -> tuple[SourceRecord, ...]:
+    preserve_collector_outcome: bool = False,
+) -> tuple[SourceRecord, ...] | CollectorPullResult:
     token = validate_provider_adapter_token(str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or ""))
     spec = ALLOWED_PROVIDER_ADAPTERS[token]
     adapter_config = _mapping(fetch.get("adapter_config"))
@@ -126,8 +127,12 @@ def execute_provider_owned_adapter(
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
-    records = spec.handler(adapter, request, trace_id)
-    return tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
+    result = spec.handler(adapter, request, trace_id)
+    records = result.records if isinstance(result, CollectorPullResult) else result
+    records = tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
+    if preserve_collector_outcome and isinstance(result, CollectorPullResult):
+        return replace(result, records=records)
+    return records
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -1108,12 +1113,12 @@ def _collector_bundle(
     adapter: CollectorBundleAdapter,
     request: Mapping[str, Any],
     trace_id: str,
-) -> tuple[SourceRecord, ...]:
+) -> CollectorPullResult:
     """Pull verified bundles newer than the cursor; any mismatch raises with no write."""
 
     explicit = request.get("cursor") or request.get("watermark") or None
-    # The public path discards CollectorPullResult.next_cursor, so partial progress under
-    # the output cap is persisted by the adapter itself and resumed by fresh adapters.
+    # Tuple consumers still rely on adapter-owned partial resume. Configured scheduling
+    # also retains the typed outcome and acknowledges its cursor through IngestBatch.
     cursor = explicit or adapter.load_resume_cursor()
     result = adapter.pull(
         cursor=str(cursor) if cursor else None,
@@ -1122,7 +1127,7 @@ def _collector_bundle(
     )
     if not explicit:
         adapter.save_resume_cursor(result)
-    return result.records
+    return result
 
 
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {

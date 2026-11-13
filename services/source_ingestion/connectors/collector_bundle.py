@@ -171,6 +171,7 @@ class CollectorPullResult:
     observed: Mapping[str, Any] = field(default_factory=dict)
     feature_rejected: tuple[Mapping[str, str], ...] = ()
     complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
+    no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
     priority_key: str | None = None  # newest-trading-day bundle delivered ahead of the cursor sweep
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
@@ -263,6 +264,8 @@ def verify_bundle(
     if status not in BUNDLE_STATUSES:
         raise SourceEvidenceError(f"collector bundle status must be one of {sorted(BUNDLE_STATUSES)}: {status!r}")
     finished_at = _utc(manifest.get("finished_at"), "finished_at")
+    if finished_at != _utc(entry.get("finished_at"), "index finished_at"):
+        raise SourceEvidenceError("collector bundle finished_at does not match its index entry")
     _utc(manifest.get("started_at"), "started_at")
     for required in ("terms_ref", "robots_decision", "collector_version", "fetch_policy_hash"):
         if not str(manifest.get(required) or "").strip():
@@ -349,16 +352,22 @@ def observed_from_collector_status(
         entry = sources.get(source_id) or {}
     elif isinstance(sources, list):
         entry = next((s for s in sources if isinstance(s, Mapping) and s.get("source_id") == source_id), {})
+    if not isinstance(entry, Mapping):
+        raise SourceEvidenceError("collector status source entry must be an object")
     if not entry:
         reasons.append("collector_status_missing_source")
 
     host_status = str(entry.get("status") or "")
-    if host_status in {"paused", "failed", "failing"}:
+    if host_status in {"paused", "failed", "failing", "unavailable"}:
         reasons.append(f"collector_source_{host_status}" + (f":{entry.get('paused_reason')}" if entry.get("paused_reason") else ""))
+    elif host_status not in {"ok", "healthy"}:
+        reasons.append(f"collector_source_status_unverified:{host_status or 'missing'}")
 
     last_run_at = None
     if entry.get("last_run_at"):
         last_run_at = _utc(entry["last_run_at"], "status.last_run_at")
+    else:
+        reasons.append("collector_last_run_missing")
     cadence = int(cadence_seconds or entry.get("cadence_seconds") or 0)
     if last_run_at and cadence and now - last_run_at > timedelta(seconds=2 * cadence):
         reasons.append("newest_bundle_older_than_twice_cadence")
@@ -536,6 +545,7 @@ class CollectorBundleAdapter:
             observed=base.observed,
             feature_rejected=base.feature_rejected,
             complete=base.complete,
+            no_new_data=not merged and not paused and base.no_new_data,
             priority_key=key,
             priority_delivered=delivered,
             priority_done=done,
@@ -638,11 +648,13 @@ class CollectorBundleAdapter:
 
         base_cursor, partial_skip = _split_cursor(cursor)
         pending: list[tuple[datetime, str, Mapping[str, Any]]] = []
+        source_entries: list[tuple[str, Mapping[str, Any]]] = []
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("source_id") or "") != self.source_id:
                 continue
             finished = _utc(entry.get("finished_at"), "index finished_at")
             key = _cursor_key(finished, str(entry.get("run_id") or ""))
+            source_entries.append((key, entry))
             if base_cursor is None or key > base_cursor or (partial_skip and key == base_cursor):
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
@@ -663,6 +675,10 @@ class CollectorBundleAdapter:
                 transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining)
             )
             verified.append(bundle)
+            if bundle.status in {"paused", "partial"}:
+                # Material after an unresolved bundle must remain pending.
+                unverified_pending = True
+                break
             if bundle.status != "paused":
                 remaining -= max(len(bundle.items) - skip, 0)
 
@@ -671,7 +687,7 @@ class CollectorBundleAdapter:
         for bundle in verified:
             if bundle.status == "paused":
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
-                continue
+                break
             skip = partial_skip if bundle.cursor == base_cursor else 0
             for row in bundle.items[skip:]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
@@ -711,6 +727,21 @@ class CollectorBundleAdapter:
         )
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
+        no_new_data = False
+        if not records and not feature_records and not verified and source_entries and cursor and not partial_skip:
+            # Revalidate the exact consumed boundary over the guarded transport. No raw
+            # rows are fetched here: the acknowledged cursor represents their previous
+            # consumption; manifest hashes and item coverage are verified again.
+            latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0])
+            if cursor == latest_key:
+                boundary = verify_bundle(transport, expected_source_id=self.source_id,
+                                         entry=latest_entry, item_window=(0, 0))
+                no_new_data = (
+                    boundary.status == "complete" and boundary.cursor == cursor and complete
+                    and observed["health_state"] == "healthy"
+                    and observed["freshness"]["collector_last_run_at"] == _iso(boundary.finished_at)
+                    and not feature_rejected
+                )
         return CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -719,6 +750,7 @@ class CollectorBundleAdapter:
             observed=observed,
             feature_rejected=feature_rejected,
             complete=complete,
+            no_new_data=no_new_data,
         )
 
     # -- durable resume cursor (capped public pulls) -------------------------------
@@ -972,7 +1004,12 @@ class CollectorBundleAdapter:
     ) -> tuple[list[SourceRecord], str | None, list[tuple[VerifiedBundle, Mapping[str, Any]]]]:
         skips = skips or {}
         raw_plan = [(b, {}) for b in verified if b.status != "paused"]
-        next_cursor = verified[-1].cursor if verified else cursor
+        next_cursor = cursor
+        for bundle in verified:
+            if bundle.status == "paused":
+                break
+            next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
+                           if bundle.status == "partial" else bundle.cursor)
         records = list(all_records[:budget])
         # Truncation must not skip unconsumed bundles: advance the cursor past whole
         # bundles fully represented in `records`. A bundle larger than the remaining
@@ -984,7 +1021,9 @@ class CollectorBundleAdapter:
             running = 0
             consumed_bundles: list[VerifiedBundle] = []
             for bundle in verified:
-                n = 0 if bundle.status == "paused" else max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
+                if bundle.status == "paused":
+                    break
+                n = max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
                 if running + n > kept:
                     take = kept - running
                     if take > 0:
@@ -993,7 +1032,8 @@ class CollectorBundleAdapter:
                         running += take
                     break
                 running += n
-                next_cursor = bundle.cursor
+                next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
+                               if bundle.status == "partial" else bundle.cursor)
                 consumed_bundles.append(bundle)
             keep_ids = {id(b) for b in consumed_bundles}
             raw_plan = [(b, x) for b, x in raw_plan if id(b) in keep_ids]
