@@ -408,6 +408,7 @@ class PersistentHarnessOwner:
                 row.update(status="committed", version=version["version"], adoption_ref=adoption_ref)
                 row["adopted_at"] = self.adoption.now().isoformat()
                 row["observation_trading_days"] = self.adoption.observation_trading_days
+                row["observation_criterion"] = "net_of_costs_total_return"
             self._event(state, action, actor, patch_id=patch_id, version=state["active_version"])
             return state, row
         result = self._mutate(persona_id, actor, reduce)
