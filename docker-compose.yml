@@ -143,6 +143,20 @@ services:
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
       PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      # Decision case files read their facts from the existing owner APIs.
+      # Credentials must be supplied by the environment; no new authority.
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_REGISTRY_SERVICE_TOKEN: ${PANTHEON_REGISTRY_SERVICE_TOKEN:-}
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-}
+      PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
       # No depends_on for evolution: it transitively depends on this service
       # (via runtime-manager). A harness-patch panel probes it and blocks.
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
