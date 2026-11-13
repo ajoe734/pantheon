@@ -3,11 +3,12 @@
   "owner": "Codex2",
   "assigned_independent_reviewer": "Claude",
   "delivery_scope": "Source and local regression tests only; no hosted success claimed",
-  "base_sha": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
-  "anchor_commit": "3340e50cb",
+  "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271",
+  "anchor_commit": "1893ec2ef",
   "source_file_sha256": {
     "scripts/deploy_nonprod_vm.sh": "e78446dd8e24d2625e5b2021ebfe54306766bd3a67a6d206c4903117765287fb",
-    "scripts/test_dev_tw_market_refresh.py": "e35a3e2173d89b04d7ad296d2208f23de1be405c4c7e0baaee8dd4af59fe2bec"
+    "scripts/test_dev_tw_market_refresh.py": "e35a3e2173d89b04d7ad296d2208f23de1be405c4c7e0baaee8dd4af59fe2bec",
+    "scripts/test_deploy_nonprod_vm.py": "d8c42accf0c7fbc1b4c89b7612e2908505b7d01add482430ec8a5e714f3be396"
   },
   "incident_evidence": {
     "workflow": "https://github.com/ajoe734/pantheon/actions/runs/43354287693",
@@ -75,7 +76,7 @@
       "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k source_refresh",
       "exit_status": 1,
       "result": "10 passed, 1 failed, 123 deselected in 14.62s",
-      "failure": "test_source_refresh_restore_env_mode_key_presence_and_wrong_env expects full key=value diagnostics; production correctly fails closed with key-only diagnostics. Updating its two assertions is outside the three declared task artifacts; narrow operator scope confirmation requested. This is a changed diagnostic assertion, not a pre-existing baseline failure."
+      "failure": "Historical pre-resume failure: obsolete full key=value diagnostic assertion. Resolved by the explicitly granted two-assertion update; current-dev image-pin rerun below passes."
     },
     {
       "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k workflow",
@@ -105,6 +106,35 @@
     {
       "command": "git diff --check",
       "exit_status": 0
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k source_refresh",
+      "exit_status": 0,
+      "result": "11 passed, 123 deselected in 6.07s",
+      "base_sha": "802df28ee7559c299d499f3a81882464272cf7fb"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k 'refresh_entrypoint or bounded_refresh_restore or exact_restore or terminating_signal'",
+      "exit_status": 0,
+      "result": "35 passed, 81 deselected in 113.90s",
+      "base_sha": "802df28ee7559c299d499f3a81882464272cf7fb"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k collector_host_gate_steady_restore_and_refresh_guard",
+      "exit_status": 1,
+      "result": "1 failed, 133 deselected in 1.77s",
+      "base_sha": "802df28ee7559c299d499f3a81882464272cf7fb"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only; bash -n scripts/deploy_nonprod_vm.sh; git diff --check origin/dev...HEAD",
+      "exit_status": 0,
+      "result": "Provisioned checkout-scoped Python verified; shell syntax and task diff clean."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py -k 'source_refresh or collector_host_gate_steady_restore_and_refresh_guard'",
+      "exit_status": 0,
+      "result": "12 passed, 122 deselected in 5.97s",
+      "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271"
     }
   ],
   "preserved_baseline_workflow_failures": [
@@ -116,12 +146,12 @@
   ],
   "delivery_limits": [
     "Independent exact-head review by Claude, required CI, native supervisor integration and DONE remain pending; this manifest is owner evidence, not reviewer attestation.",
-    "Outstanding narrow test-assertion scope confirmation must be resolved before claiming all affected image-pin checks pass.",
+    "The explicitly authorized diagnostic and Collector assertion updates now pass locally. Five genuine baseline workflow failures and incomplete full-suite timeouts remain recorded separately.",
     "Original hosted owner must later perform the same normal force=false validation and exact-pair release; author performs no VM/SSH/secrets/provider/model/business/data/service operations or workflow dispatch.",
     "No frontier clearing/skipping, TAIFEX enabling, journal migration, fabricated dates/quotes/fills/resume, licensed intraday expansion, StageProd/time/frozenpair changes, new Root/gate/platform/scheduler/lease.",
     "Pattern/original9aeb all12/original49 remain CLOSED."
   ],
-  "baseline_comparison_method": "A local pytest collection hook sets each collected module DEPLOY_SCRIPT to an unmodified git-show copy of deploy_nonprod_vm.sh from base_sha, with sibling script symlinks. New tests and fixtures stay unchanged. Baseline full-suite timeout and baseline workflow/new-regression terminal results are recorded separately.",
+  "baseline_comparison_method": "A local pytest collection hook sets each collected module DEPLOY_SCRIPT to an unmodified git-show copy of deploy_nonprod_vm.sh from regression_baseline_sha, with sibling script symlinks. New tests and fixtures stay unchanged. Baseline full-suite timeout and baseline workflow/new-regression terminal results are recorded separately.",
   "terminal_output_sha256": {
     "regressions": "1bfa575b8d792db587f2bea37fa112a76ac7fb54dd2c202fa527d9d36c8fdbd2",
     "focused": "f88ad5d5b97df61dca599b397bfe94e6d43acf716aba73e2320d2a30634eb0d2",
@@ -130,6 +160,26 @@
     "workflow": "0243a76094ea59fe0ab65b1fd799a3be6c303cfb5aa0015abdd6d96b7327483d",
     "workflow-before": "81090b5c51443a7367da4274e080afd733ac4969eaee2ce69d641c9fa5adbc79",
     "refresh": "7254d8a64cc0dfa4c4a38077456783adb29586155e7207bc7baaf1a84cc3174f",
-    "before": "b1465583f636400d07cfcb4155ca42d335e6ba18991ff96f7a4fd2957fcadf92"
+    "before": "b1465583f636400d07cfcb4155ca42d335e6ba18991ff96f7a4fd2957fcadf92",
+    "pin-current-dev": "59f2b8fc93bdddb6970c82452f8fe4b5610366777c340f444faea976e168bb91",
+    "focused-resumed": "6bc77d05b79beb2e49cac8b8ff218a8a96a4971bbae1e6c56d3324d2a7f80b9d",
+    "collector-current": "9e6f6ff51f52ab364db3a5f3dbed78bbaf0f4b585b6086577cf4e308c28102de",
+    "prior-ci-failure": "9e4129641c76b23514475e7a0b251ddfd6398649b9fab1b9aa0bd9348e8d4b36",
+    "collector-fixed": "07bee7da9fbd45bbad06b2e89443290f10df48be5a6e5328d62cbe0f19efaaa6"
+  },
+  "regression_baseline_sha": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+  "scope_resume": {
+    "grant": "Human/Ops artifact-contract 2026-11-13T03:27:33Z adds scripts/test_deploy_nonprod_vm.py for only the directly affected key-only diagnostic assertions and negative value checks.",
+    "implementation": "Changed the two existing diagnostic assertions to key-only added-key output and asserted the former values are absent from stdout/stderr. All source code and original restore/readiness tests unchanged.",
+    "publication": "Rebased original task changes onto current dev, skipped duplicate original patch history, and retained original published tip as merge parent for a normal non-force push. Only the four scoped artifacts differ from dev.",
+    "additional_grant": "Human/Ops 2026-11-13T03:39:35Z explicitly authorizes updating only the obsolete fallback assertion in test_collector_host_gate_steady_restore_and_refresh_guard in addition to the two diagnostic assertion changes.",
+    "additional_implementation": "Replace only the fallback-specific assertion with captured-environment-missing refusal and restore_rc=1 assertions; retain every other Collector identity/allowlist and official bounded-host assertion. Production behavior and original restore/readiness tests unchanged."
+  },
+  "resolved_changed_test_failure": {
+    "test": "scripts/test_deploy_nonprod_vm.py::test_collector_host_gate_steady_restore_and_refresh_guard",
+    "prior_pr_head": "331a63ba2d9b15af1306a3d0b028dadbbd220490",
+    "ci_job": "https://github.com/ajoe734/pantheon/actions/runs/43358746730/job/131667305207",
+    "cause": "Structural assertion requires the deleted unverified Compose fallback PANTHEON_EXTERNAL_EGRESS=\"${PANTHEON_COLLECTOR_HOST:+allowlist}\". The implementation deliberately fails closed when captured environment is unavailable. This is caused by the repair, not one of the five preserved baseline workflow failures.",
+    "resolution": "Explicit narrow grant applied; 12 affected image-pin and Collector tests pass, including captured-environment-missing refusal with nonzero restore status."
   }
 }

@@ -3220,7 +3220,10 @@ def test_collector_host_gate_steady_restore_and_refresh_guard() -> None:
     assert 'sys.argv[2].startswith("collector-")' in text
     assert "if hosts != {collector}" in text
     assert '"allowlist" if steady_host else "deny"' in text
-    assert 'PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}"' in text
+    assert (
+        'info "captured source-ingest environment is missing; refusing unverified restore" >&2\n'
+        '      restore_rc=1'
+    ) in text
     # Official bounded refresh host sets are unchanged.
     assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in text
     assert 'required = {"openapi.taifex.com.tw", "www.taifex.com.tw"}' in text
