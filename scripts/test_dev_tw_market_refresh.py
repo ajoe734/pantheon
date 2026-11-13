@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import re
 import subprocess
 import sys
 import threading
+import tempfile
 import time as time_mod
-from datetime import datetime, time, timedelta, timezone
+import urllib.error
+import urllib.parse
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -822,121 +827,242 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     assert "restored container env mismatch" in proc.stderr
 
 
-def _run_preflight_script(force: bool, now_dt: datetime, snapshot_json: dict[str, Any] | None, http_status: int = 200) -> dict[str, Any]:
-    """Helper to exercise the preflight Python logic extracted from deploy_nonprod_vm.sh."""
-    from services.execution.market_snapshot_admission import (
-        evaluate_taiwan_market_freshness,
-        validate_taiwan_calendar_evidence,
+CHIP_PROFILES = [
+    ("tw-taifex-futures-options-chip", "taifex_ssf_contracts"),
+    ("tw-finmind-broker-daily-report", "tw_broker_top"),
+]
+
+
+def _run_preflight_script(
+    force: bool,
+    now_dt: datetime,
+    snapshot_json: dict[str, Any] | None,
+    http_status: int = 200,
+    *,
+    profile=("tw-twse-tpex-official-market", "tw_price_daily"),
+    readback=None,
+    readback_http_status=200,
+    source_records=None,
+    readback_error=None,
+    script_text=None,
+) -> dict[str, Any]:
+    """Execute the maintained shell heredoc; only I/O and the test clock are injected.
+
+    script_text permits a local old/new comparison against a git blob, without
+    copying or rewriting the preflight decision logic.
+    """
+    content = script_text if script_text is not None else DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    code = content.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    connector, dataset = profile
+
+    def urlopen(request, *, timeout):
+        parsed = urllib.parse.urlparse(request.full_url)
+        assert parsed.hostname == "preflight.test", "tests must never reach a service/provider"
+        assert timeout == 3  # Keep the production read timeout bounded.
+        assert request.get_method() == "GET"
+        if parsed.path.endswith("/snapshots/latest"):
+            status, payload = (404, {}) if snapshot_json is None and http_status == 200 else (http_status, snapshot_json)
+        else:
+            assert parsed.path == "/api/source-ingest/controller/readback"
+            assert urllib.parse.parse_qs(parsed.query) == {"connector_id": [connector], "dataset": [dataset]}
+            if readback_error:
+                raise readback_error
+            status, payload = readback_http_status, readback or {"connectors": []}
+        if status != 200:
+            raise urllib.error.HTTPError(request.full_url, status, "test response", {}, None)
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        return response
+
+    with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as records_file:
+        json.dump({"source_records": source_records or []}, records_file)
+        records_file.flush()
+        env = {
+            "SOURCE_INGEST_API_URL": "http://preflight.test",
+            "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS": "2330.TW,2317.TW",
+            "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": connector,
+            "SOURCE_INGEST_BOUNDED_DATASET": dataset,
+            "PANTHEON_REFRESH_PREFLIGHT_NOW": now_dt.isoformat(),
+            "FINMIND_SOURCE_RECORDS_PATH": records_file.name if source_records is not None else "",
+        }
+        output = io.StringIO()
+        with patch.dict(os.environ, env), patch.object(sys, "argv", ["-", str(force)]), \
+             patch("urllib.request.urlopen", side_effect=urlopen), redirect_stdout(output), \
+             pytest.raises(SystemExit) as stopped:
+            exec(compile(code, str(DEPLOY_SCRIPT) + ":PREFLIGHT_PY", "exec"), {"__name__": "__main__"})
+        assert stopped.value.code is None
+        return json.loads(output.getvalue())
+
+
+def _preflight_snapshot(session="2026-11-12", *, calendar_day="2026-11-13"):
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=calendar_day)
+    assert cal is not None
+    return {
+        "snapshot_id": "test-official-close",
+        "event_time": f"{session}T05:30:00Z",
+        "observed_at": f"{session}T11:00:00Z",
+        "calendar_evidence": cal,
+        "lineage": {"connector_ids": ["tw-twse-tpex-official-market"], "calendar_evidence": cal},
+    }
+
+
+def _preflight_readback(profile, session="2026-11-12", *, observed_at=None):
+    connector, dataset = profile
+    return {"connectors": [{
+        "connector_id": connector,
+        "latest_source_record": {
+            "source_id": f"tw-taifex:{dataset}:test" if profile == CHIP_PROFILES[0] else "finmind:test",
+            "status": "normalized",
+            "provenance": {"dataset": dataset, "trade_date": session},
+            "metadata": {"date": session},
+        },
+        "freshness": {"last_success_at": observed_at or f"{session}T11:00:00Z"},
+    }]}
+
+
+def _preflight_broker_coverage(session="2026-11-12", covered=("2330", "2317"), missing=()):
+    return [{
+        "connector_id": CHIP_PROFILES[1][0],
+        "metadata": {"refresh_coverage": {
+            "trade_date": session, "covered_symbols": list(covered), "missing_symbols": list(missing),
+        }},
+    }]
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("state,reason", [("missing", "dataset_missing"), ("stale", "closed_session_missing"), ("fresh", "already_fresh")])
+def test_preflight_morning_previous_session(profile, state, reason):
+    # Official run's ordinary next-morning time. Fixtures describe controlled
+    # missing/stale/fresh alternatives, never asserted historical database state.
+    readback = None if state == "missing" else _preflight_readback(profile, "2026-11-11" if state == "stale" else "2026-11-12")
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=profile, readback=readback, source_records=_preflight_broker_coverage(),
     )
-
-    tz = timezone(timedelta(hours=8))
-    now_u = now_dt.astimezone(timezone.utc)
-    now_t = now_u.astimezone(tz)
-    d_str = str(now_t.date())
-
-    def emit(status, **kw):
-        return {"status": status, "taipei_date": d_str, **kw}
-
-    if not force and now_t.weekday() >= 5:
-        return emit("skipped", reason="weekend", checked_at=now_u.isoformat())
-    if not force and now_t.time() < time(13, 30):
-        return emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
-
-    snap = snapshot_json
-    if http_status != 200 and http_status != 404:
-        return emit("error", reason="snapshot_lookup_failed", detail=f"HTTP {http_status}")
-
-    if snap is not None:
-        cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-        if not cal:
-            return emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
-        c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
-        if not c_ok:
-            return emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
-        if d_str in (c_norm.get("holidays") or {}):
-            return emit("skipped", reason="holiday", checked_at=now_u.isoformat())
-        ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
-        obs = snap.get("observed_at")
-        obs_dt = datetime.fromisoformat(obs.replace("Z", "+00:00")) if obs else None
-        close_t = datetime(now_t.year, now_t.month, now_t.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
-        if not force and ev_dt.astimezone(tz).date() == now_t.date() and obs_dt and obs_dt >= close_t:
-            ok, reason, detail = evaluate_taiwan_market_freshness(
-                event_time_dt=ev_dt, now_dt=now_u, refresh_receipt_dt=obs_dt,
-                lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal
-            )
-            if ok:
-                return emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
-            return emit("error", reason="existing_snapshot_admission_failed", detail=f"{reason}: {detail}")
-
-    return emit("proceed")
+    assert res["status"] == ("noop" if state == "fresh" else "proceed")
+    assert res["reason"] == reason
+    assert res["session_date"] == "2026-11-12"
+    assert res["taipei_date"] == "2026-11-13"
+    assert (res["connector_id"], res["dataset"]) == profile
 
 
-def test_preflight_weekend_skip():
-    # 2026-10-10 is a Saturday (weekday 5)
-    dt = datetime(2026, 10, 10, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=None)
-    assert res["status"] == "skipped"
-    assert res["reason"] == "weekend"
-
-    # With force=True, weekend skip is bypassed
-    res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=None)
-    assert res_force["status"] == "proceed"
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+def test_preflight_chip_without_equity_snapshot(profile):
+    res = _run_preflight_script(False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), None, profile=profile)
+    assert (res["status"], res["reason"], res["session_date"]) == ("proceed", "dataset_missing", "2026-11-12")
 
 
-def test_preflight_session_not_closed_skip():
-    # 2026-10-06 (Tuesday) at 11:00 Taipei time (before 13:30 session close)
-    dt = datetime(2026, 10, 6, 11, 0, tzinfo=timezone(timedelta(hours=8)))
-    res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=None)
-    assert res["status"] == "skipped"
-    assert res["reason"] == "session_not_closed"
-
-    # With force=True, session close check is bypassed
-    res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=None)
-    assert res_force["status"] == "proceed"
-
-
-def test_preflight_holiday_skip():
-    # 2026-10-06 after session close, but calendar says it's a holiday
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    cal = {
-        "calendar_schema": "twse_trading_calendar_v1",
-        "jurisdiction": "TW",
-        "holidays": {"2026-10-06": "Special Holiday"},
-        "pins": {"market": "TWSE", "pin_hash": "a" * 64},
-    }
-    snap = {
-        "snapshot_id": "snap-123",
-        "event_time": "2026-10-05T06:00:00Z",
-        "observed_at": "2026-10-05T07:00:00Z",
-        "calendar_evidence": cal,
-        "lineage": {"calendar_evidence": cal},
-    }
-    with patch("services.execution.market_snapshot_admission.validate_taiwan_calendar_evidence", return_value=(True, "", cal)):
-        res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-        assert res["status"] == "skipped"
-        assert res["reason"] == "holiday"
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("now,session", [
+    ("2026-11-16T00:30:00+00:00", "2026-11-13"),  # Monday walks over weekend.
+    ("2026-10-27T00:30:00+00:00", "2026-10-22"),  # Governed emergency Friday + Monday holiday.
+    ("2026-11-12T16:30:00+00:00", "2026-11-12"),  # Taipei date already Friday.
+])
+def test_preflight_morning_calendar_boundaries(profile, now, session):
+    dt = datetime.fromisoformat(now)
+    cal_day = dt.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    res = _run_preflight_script(False, dt, _preflight_snapshot(session, calendar_day=cal_day), profile=profile)
+    assert (res["status"], res["session_date"]) == ("proceed", session)
 
 
-def test_preflight_already_fresh_same_day_noop():
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    cal = {"calendar_schema": "twse_trading_calendar_v1", "holidays": {}}
-    snap = {
-        "snapshot_id": "snap-fresh-today",
-        "event_time": "2026-10-06T06:00:00Z",  # 14:00 Asia/Taipei
-        "observed_at": "2026-10-06T06:30:00Z", # 14:30 Asia/Taipei (>= 13:30 Asia/Taipei)
-        "calendar_evidence": cal,
-        "lineage": {"calendar_evidence": cal},
-    }
-    with patch("services.execution.market_snapshot_admission.validate_taiwan_calendar_evidence", return_value=(True, "", cal)), \
-         patch("services.execution.market_snapshot_admission.evaluate_taiwan_market_freshness", return_value=(True, "fresh", "ok")):
-        res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-        assert res["status"] == "noop"
-        assert res["reason"] == "already_fresh"
-        assert res["snapshot_id"] == "snap-fresh-today"
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("now,reason", [
+    ("2026-11-14T00:30:00+00:00", "weekend"),
+    ("2026-10-26T00:30:00+00:00", "holiday"),
+])
+def test_preflight_chip_nontrading_day_safety(profile, now, reason):
+    dt = datetime.fromisoformat(now)
+    cal_day = dt.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    res = _run_preflight_script(False, dt, _preflight_snapshot(calendar_day=cal_day), profile=profile)
+    assert (res["status"], res["reason"]) == ("skipped", reason)
 
-        # With force=True, even an already-fresh snapshot proceeds
-        res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=snap)
-        assert res_force["status"] == "proceed"
+
+@pytest.mark.parametrize("now,taifex_session,broker_session", [
+    ("2026-11-13T05:29:59+00:00", "2026-11-12", "2026-11-12"),
+    ("2026-11-13T05:30:00+00:00", "2026-11-13", "2026-11-12"),
+    ("2026-11-13T09:59:59+00:00", "2026-11-13", "2026-11-12"),
+    ("2026-11-13T10:00:00+00:00", "2026-11-13", "2026-11-13"),
+])
+def test_preflight_distinct_close_and_publication_cutoffs(now, taifex_session, broker_session):
+    for profile, expected in zip(CHIP_PROFILES, (taifex_session, broker_session)):
+        res = _run_preflight_script(False, datetime.fromisoformat(now), _preflight_snapshot(), profile=profile)
+        assert (res["status"], res["session_date"]) == ("proceed", expected)
+
+
+@pytest.mark.parametrize("records,reason", [
+    (None, "coverage_readback_unavailable"),
+    ([], "coverage_incomplete"),
+    (_preflight_broker_coverage(covered=("2330",), missing=("2317",)), "coverage_incomplete"),
+    (_preflight_broker_coverage(session="2026-11-11"), "coverage_incomplete"),
+    (_preflight_broker_coverage(covered=("2330.TW",)) + _preflight_broker_coverage(covered=("2317.TWSE",)), "already_fresh"),
+])
+def test_preflight_morning_broker_coverage(records, reason):
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=CHIP_PROFILES[1], readback=_preflight_readback(CHIP_PROFILES[1]), source_records=records,
+    )
+    assert res["reason"] == reason
+    assert res["status"] == ("noop" if reason == "already_fresh" else "proceed")
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("mutation", ["wrong_dataset", "invalid_status", "prepublication_receipt", "unpublished_date"])
+def test_preflight_chip_invalid_record_cannot_noop(profile, mutation):
+    readback = _preflight_readback(profile)
+    conn = readback["connectors"][0]
+    if mutation == "wrong_dataset":
+        conn["latest_source_record"]["provenance"]["dataset"] = "tw_price_daily"
+    elif mutation == "invalid_status":
+        conn["latest_source_record"]["status"] = "invalid"
+    elif mutation == "unpublished_date":
+        conn["latest_source_record"]["metadata"]["date"] = "2026-11-13"
+    else:
+        conn["freshness"]["last_success_at"] = "2026-11-12T05:00:00Z"
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=profile, readback=readback, source_records=_preflight_broker_coverage(),
+    )
+    assert res["status"] == "proceed"
+    assert res["session_date"] == "2026-11-12"
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+def test_preflight_morning_real_http_errors_remain_errors(profile):
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    snapshot_error = _run_preflight_script(False, now, _preflight_snapshot(), 503, profile=profile)
+    assert (snapshot_error["status"], snapshot_error["reason"]) == ("error", "snapshot_lookup_failed")
+    readback_error = _run_preflight_script(False, now, _preflight_snapshot(), profile=profile, readback_http_status=503)
+    assert (readback_error["status"], readback_error["reason"]) == ("error", "readback_lookup_failed")
+    missing = _run_preflight_script(False, now, _preflight_snapshot(), profile=profile, readback_http_status=404)
+    assert (missing["status"], missing["reason"]) == ("proceed", "dataset_missing")
+
+
+def test_preflight_calendar_pin_and_equity_admission_stay_enforced():
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    snap = _preflight_snapshot()
+    snap["calendar_evidence"]["checksum"] = "0" * 64
+    res = _run_preflight_script(False, now, snap, profile=CHIP_PROFILES[0])
+    assert (res["status"], res["reason"]) == ("proceed", "calendar_evidence_refresh_needed")
+    snap = _preflight_snapshot()
+    snap["lineage"] = {"connector_ids": ["unofficial"]}
+    res = _run_preflight_script(False, now, snap)
+    assert (res["status"], res["reason"]) == ("error", "existing_snapshot_admission_failed")
+
+
+def test_preflight_equity_missing_and_fresh_are_distinct():
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    stale = _run_preflight_script(False, now, _preflight_snapshot("2026-11-11"))
+    assert (stale["status"], stale["reason"], stale["session_date"]) == ("proceed", "closed_session_missing", "2026-11-12")
+    missing = _run_preflight_script(False, now, None)
+    assert (missing["status"], missing["reason"]) == ("proceed", "snapshot_missing")
+    fresh = _run_preflight_script(False, now, _preflight_snapshot())
+    # Preserve equity's existing skip semantics: this is NOT stale-data evidence.
+    assert (fresh["status"], fresh["reason"]) == ("skipped", "session_not_closed")
+    after_close = _run_preflight_script(False, datetime.fromisoformat("2026-11-13T11:00:00+00:00"), _preflight_snapshot("2026-11-13"))
+    assert (after_close["status"], after_close["reason"]) == ("noop", "already_fresh")
+    forced = _run_preflight_script(True, now, _preflight_snapshot())
+    assert forced["status"] == "proceed"
 
 
 def test_refresh_only_with_no_bindings_runs_bounded_pull_for_baseline_symbol(tmp_path: Path):

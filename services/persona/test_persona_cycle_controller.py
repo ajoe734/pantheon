@@ -456,3 +456,17 @@ def test_provider_outage_still_removes_member_using_real_deterministic_drawdown_
     assert member["stage"] == "removed"
     assert member["risk_weight"] == 0
     assert member["removal_reason"] == "own_high_water_drawdown"
+
+
+class _StubLessonRegistrar:
+    """Test double for the memory service lesson registry (these tests do not exercise registration)."""
+    configured = True
+
+    def register(self, candidates, authorization):
+        return {"registered": [c["lesson_candidate_id"] for c in candidates], "already_registered": []}
+
+
+@pytest.fixture(autouse=True)
+def _stub_lesson_registrar(monkeypatch):
+    import services.persona.write_owner as write_owner
+    monkeypatch.setattr(write_owner, "MemoryLessonRegistrar", _StubLessonRegistrar)

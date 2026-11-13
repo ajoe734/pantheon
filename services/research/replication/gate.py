@@ -9,11 +9,12 @@ allowing promotion to the registry.
 import copy
 import hashlib
 import math
+import os
 import uuid
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import date as date_cls, datetime
 
 from jsonschema import Draft7Validator, RefResolver
 
@@ -33,13 +34,309 @@ from .mechanism_tests import (
 )
 from services.research.vectorbt.adapter.vectorbt_adapter import (
     INSUFFICIENT_HISTORY_STATUS,
+    INTRADAY_FREQUENCY_MINUTES,
+    REPLAY_LABEL,
+    BacktestConfig,
+    GovernedVectorbtInputAdapter,
+    VectorbtBackend,
+    VectorbtWorkflowError,
+    _artifact_identity,
+    _compute_buy_and_hold_benchmark,
+    _session_of,
+    _slice_prepared_dataset,
+    _summarize_window_result,
+    bars_per_session,
     TAIWAN_BROKER_COMMISSION_RATE,
+    VECTORBT_VERSION_PIN,
     TAIWAN_COST_RATE_CITATIONS,
     TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
     TAIWAN_ETF_TRANSACTION_TAX_RATE,
     build_canonical_tw_strategy_artifact,
     run_replication_backtest_protocol,
 )
+
+
+INTRADAY_UNQUALIFIED_STATUS = "intraday_evidence_unqualified"
+INTRADAY_SOURCE_DATASET = "tw_price_1m"
+_ISOLATION_FLAGS = (
+    "waived", "waiver", "quarantined", "quarantine", "isolated", "partial", "unreconciled",
+    "waived_days", "quarantined_days", "isolated_days",
+)
+
+
+def _is_intraday_evaluation(evaluation: Dict[str, Any]) -> bool:
+    block = evaluation.get("intraday")
+    return (
+        isinstance(block, dict)
+        or evaluation.get("evidence_mode") == REPLAY_LABEL
+        or str(evaluation.get("bar_frequency") or "") in INTRADAY_FREQUENCY_MINUTES
+    )
+
+
+def run_intraday_replication_protocol(
+    dataset: Dict[str, Any],
+    strategy_artifact: Dict[str, Any],
+    *,
+    config: GateConfig,
+    mandate_max_drawdown: float = 0.25,
+    run_id: Optional[str] = None,
+    backend: Any = None,
+    run_windows: Any = None,
+) -> Dict[str, Any]:
+    """Session-based replication protocol on a governed minute replay dataset (K6).
+
+    Same 70/30 IS/OOS + walk-forward shape, statutory costs and benchmarks as the daily C2
+    protocol, but windows are cut on SESSION boundaries and sizes are counted in clean sessions
+    and round-trip trades.  Fills, annualisation, flatten-by-13:25 and the replay label come from
+    the K5 engine (``VectorbtBackend``, real vectorbt); nothing is reconstructed.
+    Only reconciled ``tw_price_1m`` replay data is accepted (the K5 governed boundary enforces
+    it); there is no daily or synthetic fallback.
+    """
+    from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        validate_strategy_artifact,
+    )
+
+    try:
+        validate_strategy_artifact(strategy_artifact)
+    except StrategyArtifactValidationError as exc:
+        raise VectorbtWorkflowError(f"strategy artifact validation failed: {exc}") from exc
+    parameters = strategy_artifact.get("parameters") or {}
+    if "screen" in (strategy_artifact.get("strategy_logic") or {}):
+        raise VectorbtWorkflowError("screen strategies are daily-only; no intraday screen replay is defined")
+    if str(parameters.get("market") or "TW").strip().upper() != "TW":
+        raise VectorbtWorkflowError("intraday replication protocol requires governed Taiwan market ('TW')")
+
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    frequency = prepared.data_frequency
+    if frequency not in INTRADAY_FREQUENCY_MINUTES:
+        raise VectorbtWorkflowError(f"{frequency!r} is not an intraday frequency")
+    declared = parameters.get("bar_frequency")
+    if declared is not None and declared != frequency:
+        raise VectorbtWorkflowError(
+            f"strategy bar_frequency {declared!r} != replay dataset frequency {frequency!r}"
+        )
+    snapshot = dict((prepared.replay or {}).get("source_snapshot") or {})
+
+    wanted = {normalize_taiwan_symbol(s) for s in parameters.get("symbols", [])}
+    targets = [i for i in prepared.instruments if normalize_taiwan_symbol(i) in wanted]
+    bench_0050 = [i for i in prepared.instruments if i.split(".")[0].strip() == "0050"]
+    if not targets:
+        raise VectorbtWorkflowError("no target instrument present in the replay dataset")
+
+    # Clean session = every target instrument has the full regular bar count for that session.
+    expected = bars_per_session(frequency)
+    per_symbol_sessions: Dict[str, Dict[str, int]] = {}
+    for inst in targets:
+        counts: Dict[str, int] = {}
+        for key in prepared.dates_by_instrument[inst]:
+            counts[_session_of(key)] = counts.get(_session_of(key), 0) + 1
+        per_symbol_sessions[inst] = counts
+    all_sessions = sorted(set().union(*[set(c) for c in per_symbol_sessions.values()]))
+    clean = [
+        s for s in all_sessions
+        if all(per_symbol_sessions[i].get(s) == expected for i in targets)
+    ]
+    unclean = [s for s in all_sessions if s not in clean]
+    aligned = all(
+        prepared.dates_by_instrument[i] == prepared.dates_by_instrument[targets[0]] for i in targets
+    )
+    n_sessions = len(clean)
+    is_sessions = int(n_sessions * config.in_sample_ratio)
+    oos_sessions = n_sessions - is_sessions
+    fold_edges = [(k * is_sessions) // config.walk_forward_folds for k in range(config.walk_forward_folds + 1)]
+
+    history_sufficient = (
+        aligned and not unclean
+        and n_sessions >= config.min_clean_sessions
+        and oos_sessions >= config.min_oos_sessions
+    )
+    first_day = date_cls.fromisoformat(clean[0]) if clean else None
+    last_day = date_cls.fromisoformat(clean[-1]) if clean else None
+    history_check = {
+        "sufficient": bool(history_sufficient),
+        "calendar_days": (last_day - first_day).days if first_day and last_day else 0,
+        "trading_days": n_sessions,
+        "required_calendar_days": 0,
+        "required_trading_days": config.min_clean_sessions,
+        "unit": "clean_sessions",
+        "details": {
+            "clean_sessions": n_sessions,
+            "unclean_sessions": unclean,
+            "bar_aligned_across_targets": aligned,
+            "start_session": clean[0] if clean else None,
+            "end_session": clean[-1] if clean else None,
+        },
+    }
+    ident = _artifact_identity(strategy_artifact)
+    base: Dict[str, Any] = {
+        "backtest_run_id": run_id or f"bt-intraday-{_sha(prepared.dataset_id + str(ident))[:12]}",
+        "backend": "vectorbt_portfolio",
+        "framework": "vectorbt",
+        "market": "TW",
+        "governed_data": True,
+        "dataset_id": prepared.dataset_id,
+        "source_dataset_refs": list(prepared.source_dataset_refs),
+        "strategy_artifact": ident,
+        "bar_frequency": frequency,
+        "evidence_mode": REPLAY_LABEL,
+        "live_or_paper_evidence": False,
+        "history_check": history_check,
+        "pit_history_days": history_check["calendar_days"],
+        "pit_history_bars": n_sessions,
+    }
+    base["artifact_ref"] = f"vectorbt://backtest-runs/{base['backtest_run_id']}"
+    if not history_sufficient:
+        return {
+            **base,
+            "intraday": {
+                "bar_frequency": frequency,
+                "evidence_mode": REPLAY_LABEL,
+                "live_or_paper_evidence": False,
+                "replay_clock": "bar_end",
+                "availability_ceiling": (prepared.replay or {}).get("availability_ceiling"),
+                "source_snapshot": snapshot,
+                "clean_sessions": n_sessions,
+                "unclean_sessions": len(unclean),
+                "in_sample_sessions": is_sessions,
+                "out_of_sample_sessions": oos_sessions,
+                "in_sample_trades": 0,
+                "out_of_sample_trades": 0,
+                "trade_unit": "round_trips",
+                "not_run": True,
+            },
+            "status": INSUFFICIENT_HISTORY_STATUS,
+            "reason": (
+                f"intraday replay has {n_sessions} clean sessions ({len(unclean)} unclean, "
+                f"{oos_sessions} OOS); need >= {config.min_clean_sessions} clean sessions and "
+                f">= {config.min_oos_sessions} OOS sessions"
+            ),
+        }
+
+    split_idx = prepared.dates_by_instrument[targets[0]].index(
+        next(k for k in prepared.dates_by_instrument[targets[0]] if _session_of(k) == clean[is_sessions])
+    )
+    fold_idx = []
+    for e in fold_edges:
+        fold_idx.append(
+            split_idx if e >= is_sessions else next(
+                i for i, k in enumerate(prepared.dates_by_instrument[targets[0]]) if _session_of(k) == clean[e]
+            )
+        )
+    total_len = len(prepared.dates_by_instrument[targets[0]])
+    is_ds = _slice_prepared_dataset(prepared, 0, split_idx, "in_sample")
+    oos_ds = _slice_prepared_dataset(prepared, split_idx, total_len, "out_of_sample")
+    fold_ds = [
+        _slice_prepared_dataset(prepared, fold_idx[k], fold_idx[k + 1], f"wf_fold_{k + 1}")
+        for k in range(config.walk_forward_folds)
+    ]
+    base_cfg = BacktestConfig(strategy_artifact=dict(strategy_artifact))
+    bt_config = BacktestConfig(
+        version=base_cfg.version,
+        requested_by=base_cfg.requested_by,
+        strategy_params=dict(parameters),
+        strategy_artifact=dict(strategy_artifact),
+        init_cash=base_cfg.init_cash,
+        fees=base_cfg.commission_rate,
+        commission_rate=base_cfg.commission_rate,
+        transaction_tax_rate=base_cfg.transaction_tax_rate,
+        etf_transaction_tax_rate=base_cfg.etf_transaction_tax_rate,
+        apply_taiwan_fill_costs=True,
+        storage_backend=base_cfg.storage_backend,
+        storage_path_template=base_cfg.storage_path_template,
+    )
+    windows = [("full", prepared), ("in_sample", is_ds), ("out_of_sample", oos_ds)] + [
+        (f"wf_fold_{k + 1}", d) for k, d in enumerate(fold_ds)
+    ]
+    previous = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        if run_windows is not None:
+            results = list(run_windows([d for _, d in windows], bt_config))
+        else:
+            runner = backend or VectorbtBackend()
+            results = [runner.run(d, bt_config) for _, d in windows]
+    finally:
+        if previous is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = previous
+    if len(results) != len(windows):
+        raise VectorbtWorkflowError("window runner returned a different number of results")
+    full_res, is_res, oos_res, *fold_res = results
+    is_sum = _summarize_window_result(is_ds, is_res, window_fraction=config.in_sample_ratio)
+    oos_sum = _summarize_window_result(oos_ds, oos_res, window_fraction=round(1.0 - config.in_sample_ratio, 4))
+    folds = []
+    for idx, (d, r) in enumerate(zip(fold_ds, fold_res), start=1):
+        f = _summarize_window_result(d, r, window_fraction=round(config.in_sample_ratio / config.walk_forward_folds, 4))
+        f["fold_index"] = idx
+        folds.append(f)
+    sharpes = [float(f["sharpe_ratio"]) for f in folds]
+    bh_same = _compute_buy_and_hold_benchmark(oos_ds, targets, bt_config)
+    bh_0050 = _compute_buy_and_hold_benchmark(oos_ds, bench_0050, bt_config)
+    agg = full_res.aggregate_metrics
+    costs = {
+        "applied_on_every_fill": True,
+        "commission_rate": round(float(bt_config.commission_rate), 6),
+        "transaction_tax_rate": round(float(bt_config.transaction_tax_rate), 6),
+        "equity_transaction_tax_rate": round(float(bt_config.transaction_tax_rate), 6),
+        "etf_transaction_tax_rate": round(float(bt_config.etf_transaction_tax_rate), 6),
+        "total_commission_paid": round(float(agg.get("total_commission_paid", 0.0)), 6),
+        "total_transaction_tax_paid": round(float(agg.get("total_transaction_tax_paid", 0.0)), 6),
+        "total_fees_paid": round(float(agg.get("total_fees_paid", 0.0)), 6),
+        "citations": copy.deepcopy(TAIWAN_COST_RATE_CITATIONS),
+        "rate_citations": copy.deepcopy(TAIWAN_COST_RATE_CITATIONS),
+    }
+    return {
+        **base,
+        "status": "completed",
+        "framework_version": VECTORBT_VERSION_PIN,
+        "protocol": {
+            "in_sample_ratio": round(config.in_sample_ratio, 4),
+            "out_of_sample_ratio": round(1.0 - config.in_sample_ratio, 4),
+            "walk_forward_folds": config.walk_forward_folds,
+            "mandate_max_drawdown": mandate_max_drawdown,
+            "window_unit": "sessions",
+        },
+        "intraday": {
+            "bar_frequency": frequency,
+            "evidence_mode": REPLAY_LABEL,
+            "live_or_paper_evidence": False,
+            "replay_clock": "bar_end",
+            "availability_ceiling": (prepared.replay or {}).get("availability_ceiling"),
+            "source_snapshot": snapshot,
+            "clean_sessions": n_sessions,
+            "unclean_sessions": len(unclean),
+            "in_sample_sessions": is_sessions,
+            "out_of_sample_sessions": oos_sessions,
+            "in_sample_trades": int(is_sum["round_trips"]),
+            "out_of_sample_trades": int(oos_sum["round_trips"]),
+            "trade_unit": "round_trips",
+            "fill_rule": "next_bar_open",
+        },
+        "in_sample": is_sum,
+        "out_of_sample": oos_sum,
+        "walk_forward_folds": folds,
+        "walk_forward": {
+            "folds": folds,
+            "consistent_sign": len(sharpes) == config.walk_forward_folds
+            and all(math.isfinite(x) and x != 0.0 for x in sharpes)
+            and (all(x > 0 for x in sharpes) or all(x < 0 for x in sharpes)),
+            "all_positive": all(math.isfinite(x) and x > 0 for x in sharpes),
+        },
+        "costs": costs,
+        "transaction_costs": copy.deepcopy(costs),
+        "benchmarks": {
+            "buy_and_hold_same_symbols": bh_same,
+            "benchmark_0050": bh_0050,
+            "tw_0050": bh_0050,
+        },
+    }
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 CONFLICT = object()
@@ -669,6 +966,14 @@ class ReplicationGate:
             mandate_dd = float(
                 spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
             )
+            if str(dataset.get("data_frequency") or "") in INTRADAY_FREQUENCY_MINUTES:
+                computed = run_intraday_replication_protocol(
+                    dataset, strategy_artifact, config=self.config, mandate_max_drawdown=mandate_dd
+                )
+                if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
+                    self.backtest_run_store.record(computed)
+                request.backtest_evaluation = computed
+                return computed
             computed = run_replication_backtest_protocol(
                 strategy_artifact=strategy_artifact,
                 dataset=dataset,
@@ -1081,13 +1386,19 @@ class ReplicationGate:
         if unbound is not None:
             return unbound
 
+        intraday = _is_intraday_evaluation(backtest_eval)
+        if intraday:
+            unqualified = self._intraday_refusal(request, backtest_eval)
+            if unqualified is not None:
+                return unqualified
+
         history_check = backtest_eval["history_check"]
         eval_status = str(backtest_eval.get("status", ""))
         calendar_days = int(history_check.get("calendar_days", 0))
         trading_days = int(history_check.get("trading_days", 0))
         history_sufficient = bool(history_check["sufficient"])
 
-        if (
+        if not intraday and (
             eval_status == INSUFFICIENT_HISTORY_STATUS
             or not history_sufficient
             or (
@@ -1312,7 +1623,8 @@ class ReplicationGate:
             "oos_sharpe_exceeds_deflated_threshold": oos_sharpe > deflated_sharpe_threshold,
             "oos_sharpe_beats_buy_and_hold": oos_sharpe > bh_sharpe,
             "oos_max_drawdown_within_mandate": oos_max_drawdown <= mandate_max_drawdown,
-            "oos_minimum_round_trips_met": oos_round_trips >= self.config.min_oos_round_trips,
+            "oos_minimum_round_trips_met": oos_round_trips
+            >= (self.config.min_oos_trades if intraday else self.config.min_oos_round_trips),
             "walk_forward_consistent_across_folds": walk_forward_consistent,
         }
         failed_checks = [name for name, ok in checks.items() if not ok]
@@ -1349,6 +1661,8 @@ class ReplicationGate:
             "checks": checks,
             "failed_checks": failed_checks,
         }
+        if intraday:
+            details["intraday"] = self._intraday_details(backtest_eval)
         if screen_contribution is not None:
             details["screen_contribution"] = screen_contribution
 
@@ -1374,6 +1688,131 @@ class ReplicationGate:
             ),
             details=details,
         )
+
+    def _intraday_details(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
+        block = evaluation.get("intraday") if isinstance(evaluation.get("intraday"), dict) else {}
+        snapshot = block.get("source_snapshot") if isinstance(block.get("source_snapshot"), dict) else {}
+        return {
+            "bar_frequency": block.get("bar_frequency") or evaluation.get("bar_frequency"),
+            "evidence_mode": block.get("evidence_mode"),
+            "live_or_paper_evidence": block.get("live_or_paper_evidence"),
+            "replay_clock": block.get("replay_clock"),
+            "availability_ceiling": block.get("availability_ceiling"),
+            "source_dataset": snapshot.get("source_dataset"),
+            "source_snapshot_sha256": snapshot.get("content_sha256"),
+            "clean_sessions": block.get("clean_sessions"),
+            "in_sample_sessions": block.get("in_sample_sessions"),
+            "out_of_sample_sessions": block.get("out_of_sample_sessions"),
+            "in_sample_trades": block.get("in_sample_trades"),
+            "out_of_sample_trades": block.get("out_of_sample_trades"),
+            "trade_unit": block.get("trade_unit"),
+            "thresholds": {
+                "min_clean_sessions": self.config.min_clean_sessions,
+                "min_in_sample_trades": self.config.min_in_sample_trades,
+                "min_oos_sessions": self.config.min_oos_sessions,
+                "min_oos_trades": self.config.min_oos_trades,
+            },
+        }
+
+    def _intraday_refusal(
+        self, request: ReplicationRequest, evaluation: Dict[str, Any]
+    ) -> Optional[ReplicationResult]:
+        """K6: minute evidence must be replay-labelled, reconciled, clean, and large enough."""
+        run_id = evaluation.get("backtest_run_id")
+
+        def refuse(status: str, reason: str, **extra: Any) -> ReplicationResult:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=f"Intraday replication evidence refused ({reason})",
+                details={
+                    "status": status,
+                    "reason": reason,
+                    "backtest_run_id": run_id,
+                    "intraday": self._intraday_details(evaluation),
+                    **extra,
+                },
+            )
+
+        block = evaluation.get("intraday")
+        if not isinstance(block, dict):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "missing_intraday_evidence_block")
+        frequency = str(block.get("bar_frequency") or "")
+        if (
+            frequency not in INTRADAY_FREQUENCY_MINUTES
+            or evaluation.get("bar_frequency") != frequency
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "bar_frequency_missing_or_inconsistent")
+        declared = self._declared_bar_frequency(request)
+        if declared is not None and declared != frequency:
+            return refuse(
+                INTRADAY_UNQUALIFIED_STATUS, "strategy_frequency_differs_from_evidence", declared=declared
+            )
+        if (
+            block.get("evidence_mode") != REPLAY_LABEL
+            or evaluation.get("evidence_mode") != REPLAY_LABEL
+            or block.get("live_or_paper_evidence") is not False
+            or block.get("replay_clock") != "bar_end"
+            or not block.get("availability_ceiling")
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "not_labelled_replay_with_bar_end_clock")
+        snapshot = block.get("source_snapshot")
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("source_dataset") != INTRADAY_SOURCE_DATASET
+            or snapshot.get("reconciled_only") is not True
+            or not snapshot.get("content_sha256")
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "source_snapshot_not_reconciled_tw_price_1m")
+        flagged = [
+            name for name in _ISOLATION_FLAGS
+            if snapshot.get(name) or block.get(name) or evaluation.get(name)
+        ]
+        if flagged:
+            return refuse(
+                INTRADAY_UNQUALIFIED_STATUS, "quarantined_or_waived_data_is_not_replication_evidence",
+                flags=flagged,
+            )
+        counts = {
+            key: block.get(key)
+            for key in (
+                "clean_sessions", "unclean_sessions", "in_sample_sessions",
+                "out_of_sample_sessions", "in_sample_trades", "out_of_sample_trades",
+            )
+        }
+        if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in counts.values()):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "session_or_trade_counts_missing")
+        if counts["unclean_sessions"] > 0:
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "unclean_sessions_in_window", counts=counts)
+        cfg = self.config
+        shortfalls = {
+            name: {"have": counts[key], "need": need}
+            for name, key, need in (
+                ("clean_sessions", "clean_sessions", cfg.min_clean_sessions),
+                ("out_of_sample_sessions", "out_of_sample_sessions", cfg.min_oos_sessions),
+                ("in_sample_trades", "in_sample_trades", cfg.min_in_sample_trades),
+                ("out_of_sample_trades", "out_of_sample_trades", cfg.min_oos_trades),
+            )
+            if counts[key] < need
+        }
+        if shortfalls or str(evaluation.get("status")) == INSUFFICIENT_HISTORY_STATUS:
+            return refuse(
+                INSUFFICIENT_HISTORY_STATUS,
+                "insufficient_clean_sessions_or_trades; thresholds are not lowered for thin data",
+                shortfalls=shortfalls,
+            )
+        return None
+
+    @staticmethod
+    def _declared_bar_frequency(request: ReplicationRequest) -> Optional[str]:
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        for holder in (spec.get("strategy_artifact"), handoff.get("strategy_artifact")):
+            if isinstance(holder, dict):
+                value = (holder.get("parameters") or {}).get("bar_frequency")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _check_no_live_bypass(self, request: ReplicationRequest) -> ReplicationResult:
         """Check that candidate doesn't attempt to bypass promotion gates."""

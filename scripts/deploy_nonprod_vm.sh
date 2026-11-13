@@ -2193,7 +2193,7 @@ holidays = {}
 calendars = {}
 if connector_id in CHIP_CONNECTORS and all(snap is None for _, snap in snaps):
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
-    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str, fetched_at=now_u.isoformat().replace("+00:00", "Z"))
+    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str)
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
     if not c_ok:
         emit("proceed", reason="calendar_evidence_refresh_needed", detail=str(c_err), connector_id=connector_id, dataset=bounded_dataset)
@@ -2237,8 +2237,9 @@ if connector_id in CHIP_CONNECTORS:
         emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     if d_str in holidays:
         emit("skipped", reason="holiday", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
-    if now_t.time() < time(13, 30):
-        emit("skipped", reason="session_not_closed", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
+    # Morning recovery checks the selected CLOSED/PUBLISHED session, not today's
+    # open session. Missing prior-session data must reach the bounded refresh;
+    # valid complete prior-session data can noop without fetching today's data.
     readback_payload = None
     try:
         rb_url = (
@@ -2315,7 +2316,7 @@ if connector_id in CHIP_CONNECTORS:
             obs_dt = datetime.fromisoformat(str(obs_raw).replace("Z", "+00:00"))
         except ValueError:
             obs_dt = None
-    if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
+    if record_session_date != session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if connector_id == "tw-finmind-broker-daily-report":
         records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
