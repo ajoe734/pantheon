@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -807,6 +808,8 @@ def _compose_panel_case_file(
                     if m.get("stage") != "removed" and m.get("artifact_ref")]
         if not refs:
             raise WorkflowBlocked("panel_case_file: no subject member artifacts")
+        if len(set(refs)) > decision_case.Budgets().max_items_per_group:
+            raise WorkflowBlocked("panel_case_file: subject exceeds member budget")
         # Resolve family/spec/backtest context from registry ownership, never a model.
         families: dict[str, list[dict[str, Any]]] = {}
         for ref in dict.fromkeys(refs):
@@ -853,11 +856,18 @@ def _compose_panel_case_file(
         group["truncated"] = any(g["truncated"] for g in groups) or len(items) > len(group["items"])
         group["status"] = ("partial" if group["unavailable"] else "ok") if group["items"] else (
             "unavailable" if group["unavailable"] else "empty")
+        if group["status"] == "unavailable":
+            group["reason"] = "; ".join(f"{u['owner']}:{u['reason']}" for u in group["unavailable"])
+        else:
+            group.pop("reason", None)
     case["subject"]["member_artifact_refs"] = list(dict.fromkeys(refs))
-    case["subject"]["strategy_families"] = list(families)
-    case["subject"]["gated_decision"] = dict(decision)
-    case["subject"]["initiator_persona_id"] = persona
-    case["subject"]["request_id"] = request["request_id"]
+    case["subject"]["strategy_family"] = " ".join(families)
+    case["subject"]["underlyings"] = list(dict.fromkeys(u for f in files for u in f["subject"]["underlyings"]))
+    case["subject"]["backtest_run_refs"] = list(dict.fromkeys(r for f in files for r in f["subject"]["backtest_run_refs"]))
+    while sum(len(i["excerpt"]) for g in case["groups"].values() for i in g["items"]) > budgets.max_total_chars:
+        group = max(case["groups"].values(), key=lambda g: len(g["items"]))
+        group["items"].pop()
+        group["truncated"] = True
     case["lesson_query"] = {
         "query": " ".join([str(decision["type"]).replace("_", " "), str(decision["id"]),
                            *panel.get("touches", []), *[f["lesson_query"]["query"] for f in files]]),
@@ -877,10 +887,15 @@ def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str,
     the decision subject. This checks attribution, not semantic entailment.
     """
     items = {i["item_id"]: i for g in case["groups"].values() for i in g["items"]}
+    if any(not isinstance(e["id"], str) or e["id"] not in items for e in contribution.evidence):
+        return "evidence_not_in_case_file"
+    attached = {e["id"] for e in contribution.evidence}
     claims = contribution.event_content.get("claims")
     if not isinstance(claims, list) or not claims:
         return "claims_missing"
     content = contribution.event_content
+    if set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs"}:
+        return "unvalidated_claim_fields"
     nodes = [*claims, {"claim": contribution.summary, "evidence_refs": content.get("summary_evidence_refs")},
              *contribution.findings]
     # A legacy free claim beside the claims list cannot escape validation.
@@ -894,12 +909,16 @@ def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str,
             return "claim_uncited"
         if any(not isinstance(ref, str) or ref not in items for ref in refs):
             return "case_item_unknown"
-        for field, value in (node.get("subject_fields") or {}).items():
-            if not any(value == items[ref].get("subject_fields", {}).get(field)
-                       or value == case["subject"].get(field) for ref in refs):
+        if any(ref not in attached for ref in refs):
+            return "case_item_not_attached"
+        fields = node.get("subject_fields", {})
+        if not isinstance(fields, Mapping):
+            return "claim_subject_malformed"
+        for field, value in fields.items():
+            if value is None or not any(
+                (field in items[ref].get("subject_fields", {}) and value == items[ref]["subject_fields"][field])
+                or (field in case["subject"] and value == case["subject"][field]) for ref in refs):
                 return "claim_subject_mismatch"
-    if any(e["id"] not in items for e in contribution.evidence):
-        return "evidence_not_in_case_file"
     return None
 
 
@@ -1131,7 +1150,16 @@ def _execute_panel_claim(
     case = saved.get("case_file")
     if not isinstance(case, Mapping):
         try:
-            case = _compose_panel_case_file(config, request, decision)
+            # Owner reads are sequential inside the knowledge library. Keep the
+            # durable lease alive during a slow composition and always join it.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_compose_panel_case_file, config, request, decision)
+                while True:
+                    try:
+                        case = future.result(timeout=max(0.05, config.lease_seconds / 3))
+                        break
+                    except FutureTimeout:
+                        claim = _renew(state, claim, config)
         except WorkflowBlocked as exc:
             _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
                 "request_id": claim.request_id, "event_type": "panel_case_file_unavailable",
@@ -1140,8 +1168,10 @@ def _execute_panel_claim(
                 "idempotency_key": f"{claim.request_id}:case-unavailable:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
             raise
         state.save_progress(claim, phase="case_file_composed", contribution={"case_file": case})
-    request = {**request, "case_file": case}
-    case_binding = {"case_file_id": case["case_file_id"], "digest": case["digest"]}
+    case_binding = {"case_file_id": case["case_file_id"], "digest": case["digest"],
+                    "request_id": claim.request_id, "gated_decision": decision,
+                    "initiator_persona_id": panel["initiator_persona_id"]}
+    request = {**request, "case_file": case, "case_file_binding": case_binding}
     recorded = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
         "request_id": claim.request_id, "event_type": "panel_case_file_attached",
         "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
@@ -1247,6 +1277,14 @@ def _execute_panel_claim(
     gate, summary, recommendation, findings, confidence = _synthesize(
         participants, contributions
     )
+    missing = [f"{name}/{u['owner']}: {u['reason']}" for name, group in case["groups"].items()
+               for u in group["unavailable"] if not u.get("expected")]
+    if missing:
+        gate["outcome"] = "operator_decision"
+        gate["operator_decision_required"] = True
+        gate["reasons"] = [*gate["reasons"], *missing]
+        recommendation = "escalate"
+        summary += " Case-file sources unavailable; operator decision required: " + "; ".join(missing) + "."
     summary += f" Case file: {case['case_file_id']} digest={case['digest']}."
     if rejected:
         summary += " Invalid contributions excluded: " + "; ".join(

@@ -55,11 +55,13 @@ def _turn(tmp_path, monkeypatch, *, source_tenant, scope, sentinel):
                   'request': {'tenant_id': TENANT, 'request_id': 'req-own',
                               'participant': {'persona_id': persona_id,
                                               'role': 'risk_reviewer',
-                                              'agent': 'persona_own_agent'}}})
+                                              'agent': 'persona_own_agent'},
+                              'case_file': {'lesson_query': {
+                                  'query': 'momentum 2330 equity trial admission'}}}})
     return resp, fake
 
 
-SENTINEL = 'COMMITTEE-SENTINEL recent lessons preferences risks institutional context persona'
+SENTINEL = 'COMMITTEE-SENTINEL momentum 2330 equity trial admission'
 
 
 def test_default_reader_never_injects_another_tenants_memory(tmp_path, monkeypatch):

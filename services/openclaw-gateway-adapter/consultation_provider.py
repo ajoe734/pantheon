@@ -599,6 +599,20 @@ def _persona_prompt(
     memory_block = json.dumps(
         committee_memory or [], sort_keys=True, separators=(",", ":")
     )
+    # Keep the generic structured-extraction contract unchanged. Persona panels
+    # have a stricter per-claim citation contract in their own prompt schema.
+    schema = json.loads(json.dumps(QUALIFIED_CONTRIBUTION_SCHEMA))
+    schema["properties"]["event_content"] = {
+        "type": "object", "required": ["claims", "summary_evidence_refs"],
+        "properties": {
+            "claims": {"type": "array", "minItems": 1, "items": {
+                "type": "object", "required": ["claim", "evidence_refs"],
+                "properties": {"claim": {"type": "string", "minLength": 1},
+                               "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                               "subject_fields": {"type": "object"}},
+                "additionalProperties": False}},
+            "summary_evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}}},
+        "additionalProperties": False}
     return (
         f"You are persona {persona_id}, answering a Pantheon Consultation "
         "independently as yourself. Use your own persona judgement and only the "
@@ -606,7 +620,7 @@ def _persona_prompt(
         "deployment, broker, capital, or mutation authority. Do not vote. "
         "Answer with exactly one JSON object, no prose and no code fence, "
         "satisfying this JSON schema:\n"
-        + json.dumps(QUALIFIED_CONTRIBUTION_SCHEMA, sort_keys=True)
+        + json.dumps(schema, sort_keys=True)
         + "\nUse participant_type=persona and participant_ref="
         + json.dumps(persona_id)
         + ".\nCommittee-visible memory JSON: "
@@ -823,6 +837,7 @@ def create_app(
         try:
             if own_agent:
                 persona_id = str(participant.get("persona_id") or "").strip()
+                is_panel = isinstance((payload.request.get("metadata") or {}).get("panel"), Mapping)
                 try:
                     panel_agent_id = admit_panel_agent(
                         provider,
@@ -852,6 +867,27 @@ def create_app(
                                          ("target_type", "target_id", "task")).strip()
                     if not query:
                         query = str(payload.request_id)
+                    if is_panel:
+                        subject = case.get("subject") or {}
+                        panel = payload.request["metadata"]["panel"]
+                        binding = payload.request.get("case_file_binding") or {}
+                        if (subject.get("tenant_id") != payload.tenant_id
+                            or subject.get("persona_id") != panel.get("initiator_persona_id")
+                            or binding.get("request_id") != payload.request_id
+                            or binding.get("initiator_persona_id") != panel.get("initiator_persona_id")
+                            or binding.get("gated_decision") != panel.get("gated_decision")
+                            or binding.get("case_file_id") != case.get("case_file_id")
+                            or binding.get("digest") != case.get("digest")):
+                            raise ContributionProviderError("panel case-file subject binding mismatch")
+                        body = {k: v for k, v in case.items() if k not in {"case_file_id", "digest"}}
+                        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                                          ensure_ascii=False, default=str).encode()).hexdigest()
+                        if case.get("digest") != digest or case.get("case_file_id") != f"casefile-{digest[:24]}":
+                            raise ContributionProviderError("panel case-file digest mismatch")
+                        if any(i.get("memory_layer") == "persona_private"
+                               or i.get("relevance_scope") == "persona_private"
+                               for g in case.get("groups", {}).values() for i in g.get("items", [])):
+                            raise ContributionProviderError("private memory cannot enter a panel case file")
                     retrieval = memory_fetcher(
                         payload.tenant_id, persona_id, session_id, query
                     )
@@ -860,6 +896,8 @@ def create_app(
                 except Exception:  # noqa: BLE001 - context failures are recorded
                     retrieval = None
                 memory_status = "available" if isinstance(retrieval, Mapping) else "unavailable"
+                if is_panel and memory_status == "unavailable":
+                    raise ContributionProviderError("panel committee memory retrieval unavailable")
                 result = provider.invoke(
                     _persona_prompt(
                         payload,
