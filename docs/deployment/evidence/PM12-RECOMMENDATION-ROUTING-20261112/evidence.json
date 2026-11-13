@@ -1,0 +1,111 @@
+{
+  "task_id": "PM12-RECOMMENDATION-ROUTING-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "base": "04947d53b",
+  "anchors": [
+    "5e4e533e7",
+    "8352c7ec0"
+  ],
+  "evidence_boundary": "Local source, real isolated PostgreSQL and integration proof. HTTP owner responses and metrics are test fixtures. No hosted deployment, production principal provisioning, real capital or permission activation was performed. Independent exact-head review and supervisor merge remain required.",
+  "acceptance": {
+    "1": {
+      "implementation": "fixed_actions applies every matching 2026-07-05 score condition; ask_agent accepts rationale only for preselected persona/action pairs and retains factual explanations on omission, malformed output or outage.",
+      "tests": [
+        "test_fixed_governance_mapping_boundaries (12 cases)",
+        "test_rationale_writer_cannot_omit_fixed_low_score_actions",
+        "test_unsourced_or_unknown_agent_output_is_dropped"
+      ]
+    },
+    "2": {
+      "implementation": "Research/tool advice POSTs draft tool_profile patches with recorded session, active base and ranking evidence. Retrain reads exact tenant/binding/paper-runtime virtual books, selects the weakest active member by observed Sharpe and posts the existing Evolution pool-member proposal. Reduction IDs/evidence are forwarded in paper allocation pool_health.recommendation_inputs at quarter close; Capital retains target calculation authority. Freeze/suspend/retire use existing legal lifecycle proposals; unsupported transitions retain an explicit routing reason. Suspend maps to frozen.",
+      "tests": [
+        "test_real_postgres_ranking_to_each_owner_over_http",
+        "test_harness_unknown_outcome_replays_original_request_after_base_moves"
+      ]
+    },
+    "3": {
+      "implementation": "Existing trial_admission panel gains required red-team participation for paper_canary_candidacy scope. The evaluator requires sourced conclusions from risk and red team plus a published committee memo bound to persona, tenant and exact ranking snapshot. It includes memo content/ref in the candidacy digest/subject before operator proposal. BFF digest readback and promotion review expose this evidence.",
+      "tests": [
+        "test_candidacy_panel_policy_includes_risk_and_red_team",
+        "test_candidacy_waits_for_real_panel_and_fixed_thresholds",
+        "test_scheduled_paper_candidacy_inbox_decision_journey (4 cases)"
+      ]
+    },
+    "4": {
+      "implementation": "Nonfinite, out-of-range or missing overall/component scores create no recommendations; last_run persists the reason. Snapshot admission may reject invalid numbers earlier. Missing member books, owner credentials/session/harness base or panel evidence keep the corresponding route unsubmitted with a reason.",
+      "tests": [
+        "test_missing_metrics_record_reason_and_make_no_recommendation (7 cases)",
+        "test_promotion_fail_closed_records_readable_reason"
+      ]
+    },
+    "5": {
+      "implementation": "test_real_postgres_ranking_to_each_owner_over_http calls real run_once, paper_cycle_once and promotion_once, with real Rankings/PostgreSQL and only owner HTTP faked. It reaches every advice action, weakest member, closed-quarter paper allocation and panel-bound candidacy; schema-validates harness and Evolution payloads and rejects a model attempt to change action. Existing Governance integration exercises real main(), PostgreSQL/CAS, BFF inbox, approval/rejection and review readback."
+    }
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_PM12_TEST_POSTGRES_DSN=<isolated pm12_test PostgreSQL> .venv-pantheon/bin/python3 -m pytest -q services/persona-evaluator-agent/test_persona_evaluator_agent.py services/persona/test_consult_triggers.py services/persona/test_harness.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py --tb=short --maxfail=4",
+      "result": "183 passed, 3 warnings in 52.81s",
+      "exit_code": 0
+    },
+    {
+      "command": "PANTHEON_PM12_TEST_POSTGRES_DSN=<isolated pm12_test PostgreSQL> .venv-pantheon/bin/python3 -m pytest -q services/persona-evaluator-agent/test_persona_evaluator_agent.py::test_harness_unknown_outcome_replays_original_request_after_base_moves --tb=short",
+      "result": "1 passed in 0.86s (added after the 183-test batch)",
+      "exit_code": 0
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<isolated gov_approval_test PostgreSQL> .venv-pantheon/bin/python3 -m pytest -q services/governance/test_approval_targets.py --tb=short --maxfail=3",
+      "result": "94 passed, 1 warning in 17.83s",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_consult_triggers.py services/persona/test_harness.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_bff_promotion_review_governance.py --tb=short --maxfail=5",
+      "result": "127 passed, 3 baseline failures in 58.10s; failing batch is not counted as passing",
+      "exit_code": 1
+    },
+    {
+      "command": "DOCKER_CONFIG=<task-local directory> docker build --file services/persona-evaluator-agent/Dockerfile --tag pm12-recommendation-routing:test .",
+      "result": "Image build completed; manifest sha256:79c7f2ee005af963eef30908c63e753f90678b7d20973bf13e44425920bac100. Original default Docker config was read-only; using an isolated empty task-local Docker config resolved builder metadata writes.",
+      "exit_code": 0
+    },
+    {
+      "command": "docker run --rm --entrypoint python pm12-recommendation-routing:test -c <evaluator import, fixed mapping and three-persona candidacy policy assertions>",
+      "result": "packaged evaluator and canary panel import/mapping smoke passed",
+      "exit_code": 0
+    },
+    {
+      "command": "docker compose --profile core config (captured in memory; assert evaluator owner URLs and token-file binding without printing credential values)",
+      "result": "Compose evaluator owner endpoints and existing credential bindings verified",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      "result": "routes match snapshot",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed",
+      "exit_code": 0
+    }
+  ],
+  "baseline_failures": {
+    "base": "04947d53b (unaltered git archive with its own provisioned .venv-pantheon)",
+    "tests": [
+      "test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+      "test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+      "test_cockpit_timeout_degrades_without_blocking_health"
+    ],
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py::<each of the three named tests> --tb=short",
+    "result": "3 failed in 7.61s, exit 1. Same elapsed-time assertion and two missing read_timeout reason assertions as changed source. The prerequisite task also documents these baseline failures."
+  },
+  "runtime_limits": [
+    "Capital/Registry read tokens must be existing valid owner credentials; Compose leaves unset bindings empty and the evaluator records a hold. No new principal, grant or privileged route is added.",
+    "Reduction advice is an input/provenance record for the existing paper allocation policy, not a caller-specified weight or guaranteed Capital outcome.",
+    "Harness advice is a draft within existing tool permissions; activation remains with the governed harness/shadow/adoption path.",
+    "Current-state lifecycle refusals remain explicit; this task does not widen Persona lifecycle transitions.",
+    "No hosted completion track or deployment proof is claimed."
+  ],
+  "review_state": "Ready for independent Claude review of the frozen manifest and PR head; owner has not asserted approval or done."
+}

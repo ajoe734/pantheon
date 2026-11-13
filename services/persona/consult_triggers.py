@@ -149,6 +149,9 @@ def required_consultation(
         reasons.append(
             "harness patch touches " + ", ".join(hit) + "; red team required"
         )
+    if decision_type == DECISION_TRIAL_ADMISSION and "paper_canary_candidacy" in scopes:
+        participants.append(PanelParticipant(red_team_persona_id, ROLE_RED_TEAM))
+        reasons.append("paper canary candidacy requires the red team persona")
     index: dict[str, int] = {}
     unique: list[PanelParticipant] = []
     for item in participants:

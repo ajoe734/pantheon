@@ -297,6 +297,7 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         'PERSONA_EVALUATOR_BFF_URL': 'http://bff.test', 'PERSONA_EVALUATOR_PERSONA_URL': 'http://facts.test',
         'PERSONA_EVALUATOR_PERSONA_TOKEN': 'persona-test', 'PERSONA_EVALUATOR_PAPER_POOL_ID': '',
         'PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL': 'http://agent.test', 'PANTHEON_TENANT_ID': 't1',
+        'PANTHEON_CONSULTATION_API_URL': 'http://consult.test', 'CONSULTATION_SERVICE_TOKEN': 'panel-test',
         'PERSONA_EVALUATOR_ACTOR_ID': 'evaluator',
     }
     def jwt(actor, roles):
@@ -336,6 +337,7 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
 
     personas = [{'persona_id': i['persona_id'], 'id': i['persona_id'], 'tenant_id': 't1', 'lifecycle_state': 'paper_running',
                  'metadata': {}, 'name': i['persona_id']} for i in items]
+    panel_http = fixture._promotion_fetch([])
     def transport(req, timeout=30):
         url = urlparse(req.full_url)
         path = url.path + ('?' + url.query if url.query else '')
@@ -349,6 +351,8 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
             return Response(response.status_code, response.content)
         if url.netloc == 'agent.test':
             raise OSError('agent unavailable')
+        if url.netloc == 'consult.test':
+            return Response(200, json.dumps(panel_http(req.full_url, data=json.loads(req.data) if req.data else None)).encode())
         if url.netloc == 'evaluator.test':
             query = parse_qs(url.query)
             quarter = query['quarter'][0]
@@ -399,6 +403,7 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         assert reviews.status_code == 200, reviews.text
         assert reviews.json()['data']['items'], (reviews.text, [(c[0], c[2]) for c in calls])
         assert reviews.json()['data']['items'][0]['status'] == 'pending_human_gate', reviews.text
+        assert reviews.json()['data']['items'][0]['source_recommendation']['panel_memo']['memo_id'] == 'memo-panel-1'
         decided = bff.post(f'/bff/approvals/{decision_id}/decide', headers={**headers, 'Idempotency-Key': 'human-decision'},
                            json={'decision': outcome, 'rationale': 'human reviewed nomination only', 'actor_role': 'governance_reviewer',
                                  'expected_version': 1})
@@ -412,6 +417,7 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         assert evaluator_store.load()['last_promotion']['reused'] is True
         assert len([c for c in calls if c[:3] == ('gov.test', 'POST', '/api/governance/approvals')]) == 1
         assert [(c[0], c[2]) for c in calls if c[1] == 'POST' and not c[2].endswith('trade-reflections:pattern-review')] == [
+            ('consult.test', '/api/consult/requests'),
             ('agent.test', '/api/openclaw-adapter/assistant/providers/openclaw/structured'),
             ('gov.test', '/api/governance/approvals'),
             ('gov.test', f'/api/governance/approvals/{decision_id}/decide')]
