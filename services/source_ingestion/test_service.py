@@ -1134,7 +1134,7 @@ def test_configured_failure_dlq_audit_preserves_existing_watermark(client) -> No
     assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == first_run_id
 
 
-def test_configured_connector_preserves_per_record_access_scope_for_search_index(client) -> None:
+def test_configured_connector_preserves_per_record_access_scope_for_search_index(client, monkeypatch) -> None:
     test_client, data_dir, _ = client
     configured = test_client.post(
         "/api/source-ingest/connectors",
@@ -1194,6 +1194,7 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
     assert by_id[knowledge_object_ids[0]]["access_scope"] == ["operator", "research"]
     assert by_id[knowledge_object_ids[1]]["access_scope"] == ["risk-committee"]
 
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app
 
     search_client = TestClient(create_app(data_dir / "search-index.jsonl", data_dir / "source_evidence.jsonl"))
