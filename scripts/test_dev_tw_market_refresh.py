@@ -2730,7 +2730,9 @@ def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforc
                 "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc123",
                 "status": "normalized",
                 "metadata": {
-                    "date": "2026-11-06",
+                    # Verifier binds to the latest closed session at deploy start (real clock).
+                    "date": _latest_closed_taipei_session(datetime.now(timezone.utc)),
+                    "underlying_code": "2330",
                     "dataset": "taifex_ssf_contracts",
                     "schema_hash": "tw_taifex_ssf_contracts.v1",
                 },
@@ -3251,3 +3253,129 @@ def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path:
     sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
     assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
     assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        ("2026-11-13T02:48:00Z", "2026-11-12"),  # actual 10:48 Taipei Nov13: Nov13 not yet closed
+        ("2026-11-13T05:29:00Z", "2026-11-12"),  # 13:29 Taipei, still open
+        ("2026-11-13T05:30:00Z", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "2026-11-13"),  # Monday morning -> Friday
+    ],
+)
+def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
+    _run_taifex_prepare(now, None, expected)
+
+
+def test_taifex_bounded_prepare_keeps_session_selected_at_refresh_start_across_cutoff() -> None:
+    # Started 13:29:59 Taipei (open Nov13 -> Nov12); preparation runs after 13:30.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", "2026-11-13T05:29:59Z", "2026-11-12")
+    # Without the carried selection the later wall clock selects Nov13.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", None, "2026-11-13")
+
+
+def _run_taifex_prepare(now: str, selected_at: str | None, expected: str) -> None:
+    import http.server
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            posted.append({"path": self.path, **json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
+            raw = b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        do_PUT = do_POST
+
+        def log_message(self, *args) -> None:
+            pass
+
+    # Isolated test clock inside the child process only; production has no override.
+    clock = (
+        "import datetime as _dt\n_REAL = _dt.datetime\n"
+        f"_FIX = _dt.datetime.fromisoformat({now!r}.replace('Z', '+00:00'))\n"
+        "class _D(_dt.datetime):\n    @classmethod\n    def now(cls, tz=None):\n"
+        "        return _FIX.astimezone(tz) if tz else _FIX.replace(tzinfo=None)\n"
+        "_dt.datetime = _D\n"
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW,0050.TW,2317.TW"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t",
+                 **({"SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT": selected_at} if selected_at else {})},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    assert schedule["run_date"] == expected
+
+
+def _latest_closed_taipei_session(now: datetime) -> str:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    return _latest_eligible_session("tw-taifex-futures-options-chip", now).isoformat()
+
+
+def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta: dict, symbols: str = "2330.TW") -> subprocess.CompletedProcess:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
+    body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
+    run = "run-ssf-1"
+    receipt_at = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    receipts = {"receipts": [{
+        "connector_id": "tw-taifex-futures-options-chip", "status": "completed", "typed_failure": None,
+        "source_timestamp": "2026-11-12T07:15:00Z", "source_timestamp_status": "valid",
+        "created_at": receipt_at, "finished_at": receipt_at, "ingest_run_id": run,
+    }]}
+    readback = {"connectors": [{
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"latest_receipt": {"ingest_run_id": run}, "source_timestamp_status": "valid"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:CDF:202611:abc", "status": "normalized",
+            "metadata": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1", **record_meta},
+            "provenance": {"source_ingest_run_id": run, "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }]}
+    for name, payload in (("receipts", receipts), ("readback", readback), ("projection", {})):
+        (tmp_path / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return subprocess.run(
+        ["python3", "-I", "-c", f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nexec(compile({body!r}, 'verify', 'exec'))",
+         "tw-taifex-futures-options-chip", started, str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "projection.json"), symbols, "taifex_ssf_contracts"],
+        capture_output=True, text=True, check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "started,meta,message",
+    [
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-11", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "9999", "contract": "ZZF"}, "outside active scope"),
+        ("2026-11-13T05:30:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, None),
+        # Started before the 13:30 close, receipt finished after it: still the Nov12 session.
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+    ],
+)
+def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Path, started: str, meta: dict, message: str | None) -> None:
+    proc = _run_embedded_readback_verifier(tmp_path, started=started, record_meta=meta)
+    if message is None:
+        assert proc.returncode == 0, proc.stderr
+    else:
+        assert proc.returncode != 0 and message in proc.stderr, proc.stderr
