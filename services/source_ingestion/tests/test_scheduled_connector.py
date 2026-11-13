@@ -2440,9 +2440,30 @@ def test_held_close_with_invalid_raw_or_wrong_date_never_publishes_a_snapshot(st
     assert _snapshot_date(module, "2330.TW") != _CLOSE_DATE
 
 
-@pytest.mark.parametrize("n_rows,exchange", [(1377, "TWSE"), (6090, "TPEX")])
+def test_completed_close_keeps_native_boundary_ack_and_replays_as_empty(steady_stack, monkeypatch):
+    from services.source_ingestion import controller_worker as cw
+
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch, n_rows=8)
+    selected, first = _steady_step(reconcile)
+    assert selected == [cid] and first["summary"]["total_failed"] == 0
+    before = [r.source_id for r in module.runtime.evidence_repository.list_source_records()]
+    assert len(before) == 8
+    # Simulate the next due tick without sleeping ten minutes. A completed native
+    # persistence boundary is required; cached raw bytes alone are never an ack.
+    replay = cw.run_schedule_tick(
+        api_url="http://source-ingest.test:8097", max_concurrency=1, force_connector_ids=[cid],
+        exclusive_connector_ids=[cid], controller_token=module.runtime.controller_token,
+    )
+    assert replay["summary"]["total_failed"] == 0
+    assert replay["ran"][0]["receipt"]["normalized_count"] == 0
+    item = next(c for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]
+                if c["connector_id"] == cid)
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert [r.source_id for r in module.runtime.evidence_repository.list_source_records()] == before
+
+
 def test_full_size_close_through_controller_main_with_persistence(
-    steady_stack, monkeypatch, tmp_path, capsys, n_rows, exchange,
+    steady_stack, monkeypatch, tmp_path, capsys,
 ) -> None:
     """Captured cardinalities; finite 270ms reads, actual loop sleeps and real disk stores.
 
@@ -2464,9 +2485,25 @@ def test_full_size_close_through_controller_main_with_persistence(
     from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
 
     http, module, _ = steady_stack
-    source = f"collector-tw-{exchange.lower()}-price-history"
-    cid = f"conn-close-{exchange.lower()}"
-    files = _close_files(n_rows=n_rows, source=source, exchange=exchange)
+    sessions = [(1377, "TWSE"), (6090, "TPEX")]
+    files, entries, statuses, requirements, paths = {}, [], {}, [], {}
+    for n_rows, exchange in sessions:
+        source = f"collector-tw-{exchange.lower()}-price-history"
+        cid = f"conn-close-{exchange.lower()}"
+        bundle_files = _close_files(n_rows=n_rows, source=source, exchange=exchange)
+        entries.extend(json.loads(bundle_files["bundles/index.json"])["bundles"])
+        statuses.update(json.loads(bundle_files["status.json"])["sources"])
+        files.update(bundle_files)
+        assert http.post("/api/source-ingest/connectors", json=_close_config(cid, source)).status_code == 201
+        assert http.put(f"/api/source-ingest/connectors/{cid}/schedule",
+                        json={"interval_seconds": 600, "enabled": True}).status_code == 200
+        requirements.append({
+            "dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
+            "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+        })
+        paths[cid] = Path(os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"]) / "state" / cid / "latest_priority.json"
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": statuses}).encode()
     clock, reads, peak, active = [60.0], [], [0], [0]
     lock = threading.Lock()
     real_start = time.monotonic()
@@ -2491,14 +2528,9 @@ def test_full_size_close_through_controller_main_with_persistence(
     monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
     # Whole-session delivery must work without optional priority/holdings provisioning.
     monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
-    assert http.post("/api/source-ingest/connectors", json=_close_config(cid, source)).status_code == 201
-    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule",
-                    json={"interval_seconds": 600, "enabled": True}).status_code == 200
-    personas = ({"persona_id": "close-persona", "required_data_sources": [{
-        "dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
-        "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
-    }]},)
-    metadata = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    personas = ({"persona_id": "close-persona", "required_data_sources": requirements},)
+    metadata = {**tcw._desired_meta(), "requirement_count": 2,
+                "sha256": module.runtime._desired_state_digest(list(personas))}
     config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
                      state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, interval_seconds=60,
                      max_concurrency=1)
@@ -2513,8 +2545,16 @@ def test_full_size_close_through_controller_main_with_persistence(
         return request(*args, **kwargs)
 
     monkeypatch.setattr(cw, "_request_json", timed_request)
-    sleeps, progress = [], []
-    priority_path = Path(os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"]) / "state" / cid / "latest_priority.json"
+    sleeps, progress, completed_at, receipts = [], {cid: [] for cid in paths}, {}, []
+    tick_request = cw._request_json
+
+    def record_receipts(*args, **kwargs):
+        response = tick_request(*args, **kwargs)
+        if args[0].endswith("/run-scheduled"):
+            receipts.extend(item["receipt"] for item in response["ran"])
+        return response
+
+    monkeypatch.setattr(cw, "_request_json", record_receipts)
 
     class SessionFinished(Exception):
         pass
@@ -2524,42 +2564,55 @@ def test_full_size_close_through_controller_main_with_persistence(
         clock[0] += seconds
         time.sleep(1)  # real persisted run timestamps must advance between loop ticks
         assert len(sleeps) < 150, "bounded controller regression"
-        assert priority_path.is_file(), capsys.readouterr().out[-3000:]
-        state = json.loads(priority_path.read_text())
-        progress.append(state["delivered"])
-        if state["done"]:
+        for cid, path in paths.items():
+            if not path.is_file():
+                continue  # the other source may have been selected on this tick
+            state = json.loads(path.read_text())
+            if not progress[cid] or state["delivered"] != progress[cid][-1]:
+                progress[cid].append(state["delivered"])
+            if state["done"]:
+                completed_at.setdefault(cid, clock[0] + time.monotonic() - real_start)
+        if len(completed_at) == len(paths):
             assert seconds == 60  # normal cadence resumes after newest-session persistence
             raise SessionFinished
-        assert seconds == cw.CONTINUATION_PAUSE_SECONDS
+        assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
 
     monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
     with pytest.raises(SessionFinished):
         cw.main()  # genuine main -> run_controller_tick -> handler -> scheduler -> pipeline
     logs = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     assert all(log.get("status") == "ok" for log in logs if "tick" in log), logs[-2:]
-    assert progress[-1] == n_rows and all(a < b for a, b in zip(progress, progress[1:]))
-    assert len(progress) > 1 and not cb._DEFER_ACK.get()
+    for n_rows, exchange in sessions:
+        counts = progress[f"conn-close-{exchange.lower()}"]
+        assert counts[-1] == n_rows and all(a < b for a, b in zip(counts, counts[1:]))
+        assert len(counts) > 1
+    assert not cb._DEFER_ACK.get()
+    ack_ids = [receipt["ingest_run_id"] for receipt in receipts]
+    assert len(ack_ids) == len(sleeps) == len(set(ack_ids))
+    assert all(receipt["status"] == "completed" for receipt in receipts)
     assert 1 < peak[0] <= cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
     records = list(module.runtime.evidence_repository.list_source_records())
-    assert len(records) == n_rows and len({r.source_id for r in records}) == n_rows
+    assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
     for record in records:
         assert record.tenant_id == "tenant-a"
-        expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if exchange == "TWSE"
+        expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if "twse" in record.connector_id
                         else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
         assert record.content_ref == expected_url
         assert record.metadata["collector_close"]["official"] is False
         assert record.metadata["collector_close"]["trade_date"] == _CLOSE_DATE
         assert record.metadata["source_dedupe_key"] == f"collector-close:{record.source_id}"
-    for code in ("2317", "2330", "10000", str(10000 + n_rows - 1)):
-        assert _snapshot_date(module, f"{code}.{exchange}") == _CLOSE_DATE
+    for n_rows, exchange in sessions:
+        for code in ("2317", "2330", "10000", str(10000 + n_rows - 1)):
+            assert _snapshot_date(module, f"{code}.{exchange}") == _CLOSE_DATE
     # Freshly reloaded store verifies disk persistence rather than only an in-memory view.
     from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
     snapshots = LatestMarketSnapshotStore(module.runtime.latest_market_snapshot_store.path)
-    assert snapshots.get(f"2330.{exchange}").points[-1].event_time[:10] == _CLOSE_DATE
+    for _, exchange in sessions:
+        assert snapshots.get(f"2330.{exchange}").points[-1].event_time[:10] == _CLOSE_DATE
     actual = cw.read_actual_state_with_fetch_bindings(api_url=config.api_url)
-    assert cw.select_collector_pull_connectors(actual, _steady_reconcile([cid])) == []
+    assert cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths))) == []
     assert active[0] == 0
     elapsed = clock[0] + time.monotonic() - real_start
-    print({"rows": n_rows, "exchange": exchange, "ticks": len(progress), "reads": len(reads),
-           "peak_inflight": peak[0], "elapsed_seconds": round(elapsed, 2)})
+    print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
+           "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2)})
     assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"

@@ -820,8 +820,14 @@ class CollectorBundleAdapter:
             priority_held=held,
         )
         if _DEFER_ACK.get():
-            result = replace(result, delivery=CollectorDelivery(
-                result.records, lambda: self.save_resume_cursor(result)))
+            def acknowledge() -> None:
+                # The ordered part may have verified a complete persisted
+                # boundary. Composing priority rows must retain its native ack;
+                # otherwise the next due pull rejects the consumed cursor.
+                if base.delivery is not None:
+                    base.delivery.acknowledge()
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
         return result
 
     def _priority_latest_enabled(self) -> bool:

@@ -47,6 +47,7 @@ from .connectors import (
     SourceRecord,
     SourceRecordStatus,
 )
+from .connectors.collector_bundle import CollectorDelivery
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .controller_state import read_controller_state
 from .distillation_worker import DistillationJobQueue
@@ -285,7 +286,7 @@ def persist_source_evidence_refs(
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
         verified_close = (
-            result.collector_delivery is not None
+            isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
             and record.source_type.value == "market"
             and isinstance(record.metadata.get("collector_close"), Mapping)
         )
