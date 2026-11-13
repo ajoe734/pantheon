@@ -91,3 +91,22 @@ def test_rebuild_deletes_then_reretains_and_chunks_config():
     ix.rebuild(items)
     assert [c[0] for c in fake.calls[n:n + 2]] == ["DELETE", "POST"]
     assert any(c[0] == "PATCH" and c[2] == {"updates": {"retain_extraction_mode": "chunks"}} for c in fake.calls)
+
+
+def test_global_ranking_across_banks_before_topk():
+    items = [item(f"p{i}", persona="alice") for i in range(8)] + [item("sh1", layer="institutional"),
+                                                                    item("sh2", layer="institutional")]
+    ix = hi.HindsightIndex(FakeHindsight(), "llm")
+    ix.retain(items)
+    known = {canonical for canonical in [hi.canonical_id(i) for i in items]}
+    got = ix.recall("alice", "q", known_ids=known).canonical_ids
+    assert len(got) == 8 and {"sh1", "sh2"} <= set(got)           # shared hits not starved by 8 private hits
+    # usefulness-style rerank is applied to the whole pool before the cut
+    got = ix.recall("alice", "q", known_ids=known, rerank=lambda ids: sorted(ids, reverse=True)).canonical_ids
+    assert got == sorted(known, reverse=True)[:8]
+
+
+def test_scored_results_ranked_globally():
+    rows = [[{"document_id": "a", "score": 0.1}, {"document_id": "b", "score": 0.9}],
+            [{"document_id": "c", "score": 0.5}]]
+    assert [r["document_id"] for r in hi._merge_banks(rows)] == ["b", "c", "a"]

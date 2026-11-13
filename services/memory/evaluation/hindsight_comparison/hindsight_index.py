@@ -175,9 +175,15 @@ class HindsightIndex:
         return [f"{self.arm_family}-persona-{persona_id}", f"{self.arm_family}-{SHARED_BANK}"]
 
     def recall(self, persona_id: str, query: str, *, tags: Optional[Sequence[str]] = None,
-               top_k: int = 8, known_ids: Optional[set] = None) -> RecallResult:
-        """Recall for one persona over its own bank + the shared bank only."""
-        merged: List[Dict[str, Any]] = []
+               top_k: int = 8, known_ids: Optional[set] = None,
+               rerank: Optional[Callable[[List[str]], List[str]]] = None) -> RecallResult:
+        """Recall for one persona over its own bank + the shared bank only.
+
+        Candidates from both banks are merged into ONE global ranking (by score when every
+        result carries one, else rank-interleaved) and ``rerank`` (e.g. usefulness) is applied
+        to the whole eligible pool before the final top_k cut, so neither bank starves the other.
+        """
+        per_bank: List[List[Dict[str, Any]]] = []
         t0 = time.monotonic()
         for bank in self.banks_for_persona(persona_id):
             if bank not in self.seen_banks:
@@ -186,8 +192,9 @@ class HindsightIndex:
             if tags:
                 body["tag_groups"] = [{"tags": list(tags), "match": "any_strict"}]
             res = self.transport("POST", f"{API}/{urllib.parse.quote(bank, safe='')}/memories/recall", body)
-            merged += list((res or {}).get("results") or [])
+            per_bank.append(list((res or {}).get("results") or []))
         latency = time.monotonic() - t0
+        merged = _merge_banks(per_bank)
         for r in merged:                                   # learn fact -> document links
             if r.get("id") and r.get("document_id"):
                 self.fact_to_doc[str(r["id"])] = r["document_id"]
@@ -198,6 +205,8 @@ class HindsightIndex:
                 dropped += 1
             elif cid not in out:
                 out.append(cid)
+        if rerank is not None:
+            out = rerank(out)
         return RecallResult(out[:top_k], dropped, len(merged), latency)
 
     def _map(self, r: Mapping, known: Optional[set]) -> Optional[str]:
@@ -210,3 +219,20 @@ class HindsightIndex:
         if not cand or (known is not None and cand not in known):
             return None
         return cand
+
+
+def _score(r: Mapping) -> Optional[float]:
+    for k in ("score", "relevance", "similarity"):
+        v = r.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
+
+
+def _merge_banks(per_bank: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    flat = [(bi, ri, r) for bi, rows in enumerate(per_bank) for ri, r in enumerate(rows)]
+    if flat and all(_score(r) is not None for _, _, r in flat):
+        flat.sort(key=lambda t: (-_score(t[2]), t[0], t[1]))
+    else:                                   # no comparable scores: interleave by in-bank rank
+        flat.sort(key=lambda t: (t[1], t[0]))
+    return [r for _, _, r in flat]

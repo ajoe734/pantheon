@@ -35,8 +35,9 @@
     "pgroonga_text_search": "extension present in the pg image; recall keyword score non-zero",
     "not_verified": [
       "LLM-extraction arms (hs_default, hs_filtered_rerank): no LLM key on this host, so run with --no-llm",
-      "cosine>=0.95 duplicate basis (no embedder passed in smoke)",
-      "real-owner endpoint shapes: exporter mappers are defensive and list unmappable sources; verify on the real run"
+      "cosine>=0.95 duplicate basis against the live e5 model (run_comparison now wires local_embedder; unit-tested with a fake embedder only)",
+      "live owner endpoints: exporter now targets real routes (/api/postmortems, /api/evolution/proposals, /api/consult/memos, /api/research/persona-demands, strategy-pool/versions) with owner-shaped fixtures; not exercised against hosted dev",
+      "hybrid current-arm against a live isolated eval search service (unit-tested with a spy backend)"
     ]
   },
   "smoke_results": {
@@ -63,5 +64,7 @@
     "chunks_rebuild_top8_jaccard": 1.0
   },
   "disk": "free 17G before, 12G after image pulls; stack torn down with down -v after smoke",
-  "tests": "pytest services/memory/evaluation/hindsight_comparison: 16 passed"
+  "tests": "pytest services/memory/evaluation/hindsight_comparison: 24 passed",
+  "smoke_predates": "Smoke run recorded at head 1d756895f..a01377fec, before the review-fix commit; the live eval stack was torn down and not re-run for the fix (disk ~12G free after image pulls). Fix behaviour is covered by unit tests with owner-shaped fixtures and a Hindsight fake, not by a live re-run.",
+  "review_fixes": "PR #7330 review findings: owner contracts, decision_state gating, production hybrid wrappers, manifest hash set/type/count validation, global cross-bank ranking before top-8, embedder wiring, fail-closed disk guard"
 }

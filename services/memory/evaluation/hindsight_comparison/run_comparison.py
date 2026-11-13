@@ -43,33 +43,87 @@ def decision_query(decision: Mapping):
     return lesson_query(_subject(decision))
 
 
-class CurrentRetrieval:
-    """The current keyword-fallback retrieval over rebuilt local stores (hybrid when a backend is configured)."""
+class _UnconfiguredBackend:
+    """Stands in when no isolated eval search backend exists.
 
-    def __init__(self, entries: List[Mapping], workdir: Path):
+    Passing this (instead of None) stops the production wrappers from falling through to
+    the process-global / PANTHEON_SEARCH_API_URL backend, which may be hosted.  Search raises,
+    so the wrappers take their own explicit keyword-fallback path and record diagnostics.
+    """
+    last_mode, last_reason = "keyword_fallback", "eval_search_backend_unconfigured"
+
+    def project(self, entry):
+        return {"projected": 1}
+
+    def search(self, **_kw):
+        raise RuntimeError("eval_search_backend_unconfigured")
+
+
+def eval_search_backend():
+    """Isolated eval search service only (PANTHEON_EVAL_SEARCH_API_URL); never the hosted one."""
+    from services.memory.search_retrieval import SearchServiceClient
+    url = os.getenv("PANTHEON_EVAL_SEARCH_API_URL", "").strip().rstrip("/")
+    if not url:
+        return _UnconfiguredBackend()
+    if url == os.getenv("PANTHEON_SEARCH_API_URL", "").strip().rstrip("/"):
+        raise ValueError("eval_search_backend_must_differ_from_configured_search_api")
+    return SearchServiceClient(url)
+
+
+class CurrentRetrieval:
+    """Current memory retrieval via the PRODUCTION hybrid wrappers (retrieve_*_with_backend)
+    over rebuilt local stores and an isolated eval backend, with explicit fallback diagnostics."""
+
+    def __init__(self, entries: List[Mapping], workdir: Path, backend: Any = None):
         from services.memory import search_retrieval
         from services.memory.institutional_memory_store import InstitutionalMemoryEntry, InstitutionalMemoryStore
         from services.memory.persona_memory_store import PersonaMemoryEntry, PersonaMemoryStore
 
-        class _Null:
-            def project(self, e):
-                return {"projected": 1}
-        search_retrieval.set_search_retrieval_backend(_Null())
-        self.p, self.i = PersonaMemoryStore(workdir / "p.json"), InstitutionalMemoryStore(workdir / "i.json")
-        for it in entries:
-            if it["layer"] == "persona":
-                self.p.create(PersonaMemoryEntry.from_dict(it["entry"]))
-            else:
-                self.i.create(InstitutionalMemoryEntry.from_dict(it["entry"]))
-        self.hybrid = bool(os.getenv("PANTHEON_SEARCH_API_URL"))
+        self.backend = backend if backend is not None else eval_search_backend()
+        self.diagnostics: Dict[str, Any] = {"calls": 0, "modes": {}, "fallback_reasons": {}}
+        prior = search_retrieval._GLOBAL_SEARCH_BACKEND
+        search_retrieval.set_search_retrieval_backend(self.backend)     # store.create projects into the eval backend only
+        try:
+            self.p, self.i = PersonaMemoryStore(workdir / "p.json"), InstitutionalMemoryStore(workdir / "i.json")
+            for it in entries:
+                if it["layer"] == "persona":
+                    self.p.create(PersonaMemoryEntry.from_dict(it["entry"]))
+                else:
+                    self.i.create(InstitutionalMemoryEntry.from_dict(it["entry"]))
+        finally:
+            search_retrieval.set_search_retrieval_backend(prior)
+        self.hybrid = not isinstance(self.backend, _UnconfiguredBackend)
 
     def retrieve(self, persona_id: str, query: str, tags: List[str], k: int) -> List[str]:
+        from services.memory.search_retrieval import retrieve_institutional_with_backend, retrieve_persona_with_backend
+        dp, di = {}, {}
         hits = [(h.relevance_score, h.entry.written_at, h.entry.memory_id)
-                for h in self.p.retrieve(persona_id=persona_id, query=query, tags=tags, limit=k)]
+                for h in retrieve_persona_with_backend(self.p, persona_id, self.backend, query=query, tags=tags,
+                                                       limit=k, diagnostics=dp)]
         hits += [(h.relevance_score, h.entry.written_at, h.entry.entry_id)
-                 for h in self.i.retrieve(query=query, tags=tags, limit=k)]
+                 for h in retrieve_institutional_with_backend(self.i, self.backend, query=query, tags=tags,
+                                                              limit=k, diagnostics=di)]
+        for d in (dp, di):
+            self.diagnostics["calls"] += 1
+            mode = d.get("retrieval_mode", "unknown")
+            self.diagnostics["modes"][mode] = self.diagnostics["modes"].get(mode, 0) + 1
+            if d.get("fallback_reason"):
+                fr = self.diagnostics["fallback_reasons"]
+                fr[d["fallback_reason"]] = fr.get(d["fallback_reason"], 0) + 1
         hits.sort(reverse=True)
         return [h[2] for h in hits[:k]]
+
+
+def local_embedder(model: Optional[str] = None):
+    """multilingual-e5-large with 'passage: ' prefix; returns (embed, None) or (None, reason)."""
+    name = model or os.getenv("HINDSIGHT_EVAL_EMBED_MODEL", "intfloat/multilingual-e5-large")
+    try:
+        from sentence_transformers import SentenceTransformer
+        st = SentenceTransformer(name)
+    except Exception as exc:
+        return None, f"embedder_unavailable:{type(exc).__name__}"
+    return (lambda texts: [list(map(float, v)) for v in st.encode([f"passage: {t}" for t in texts],
+                                                                   normalize_embeddings=True)]), None
 
 
 def usefulness_of(item: Mapping) -> float:
@@ -88,7 +142,8 @@ def rerank_by_usefulness(ids: List[str], by_id: Mapping[str, Mapping]) -> List[s
 def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optional[Mapping] = None,
         embed: Optional[Callable[[List[str]], List[List[float]]]] = None, rebuild_twice: bool = True,
         smoke: bool = False, max_decisions: Optional[int] = None,
-        llm_enabled: bool = True) -> Dict[str, Any]:
+        llm_enabled: bool = True, current_backend: Any = None,
+        embed_unavailable_reason: Optional[str] = None) -> Dict[str, Any]:
     ds = load_dataset(Path(data_dir))
     entries, decisions = ds["entries"], ds["decisions"][:max_decisions]
     by_id = {canonical_id(e): e for e in entries}
@@ -97,7 +152,7 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
     flat = lambda cid: {**by_id[cid]["entry"], "persona_id": by_id[cid]["entry"].get("persona_id")}
 
     with tempfile.TemporaryDirectory() as tmp:
-        current = CurrentRetrieval(entries, Path(tmp))
+        current = CurrentRetrieval(entries, Path(tmp), current_backend)
     arms = ARMS if llm_enabled else tuple(a for a in ARMS if a not in ("hs_default", "hs_filtered_rerank"))
     indexes = {"chunks": HindsightIndex(transport, "chunks")}
     if llm_enabled:
@@ -117,10 +172,12 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
             if llm_enabled:
                 rr = indexes["llm"].recall(pid, q, top_k=TOP_K, known_ids=known)
                 r["hs_default"] = {"ids": rr.canonical_ids, "latency": rr.latency_s, "dropped": rr.dropped}
-                rr = indexes["llm"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known)
-                r["hs_filtered_rerank"] = {"ids": rerank_by_usefulness(rr.canonical_ids, by_id), "latency": rr.latency_s, "dropped": rr.dropped}
-            rr = indexes["chunks"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known)
-            r["hs_chunks_rerank"] = {"ids": rerank_by_usefulness(rr.canonical_ids, by_id), "latency": rr.latency_s, "dropped": rr.dropped}
+                rr = indexes["llm"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known,
+                                           rerank=lambda ids: rerank_by_usefulness(ids, by_id))
+                r["hs_filtered_rerank"] = {"ids": rr.canonical_ids, "latency": rr.latency_s, "dropped": rr.dropped}
+            rr = indexes["chunks"].recall(pid, q, tags=tags, top_k=TOP_K, known_ids=known,
+                                          rerank=lambda ids: rerank_by_usefulness(ids, by_id))
+            r["hs_chunks_rerank"] = {"ids": rr.canonical_ids, "latency": rr.latency_s, "dropped": rr.dropped}
             res[d["decision_id"]] = r
         return res
 
@@ -172,6 +229,8 @@ def run(data_dir: Path, out_dir: Path, *, transport: Callable, llm_info: Optiona
         "note": "smoke: pipeline check only, not a comparison result" if smoke else "",
         "llm": dict(llm_info or {}), "manifest_sha256": ds["manifest"]["sha256"],
         "retain": {name: {**retain[name], **metrics.retain_summary(indexes[name].retain_stats)} for name in indexes},
+        "current_retrieval": {"hybrid_backend_configured": current.hybrid, **current.diagnostics},
+        "duplicate_embedding": {"available": bool(embed), "unavailable_reason": None if embed else (embed_unavailable_reason or "no_embedder_supplied")},
         "arms": per_arm, "llm_arms_run": llm_enabled, "hosted_behavior_claimed": False,
     }
     (out_dir / "results.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
@@ -186,13 +245,15 @@ def main(argv=None) -> int:
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--no-llm", action="store_true", help="skip arms that need an LLM")
     ap.add_argument("--max-decisions", type=int)
+    ap.add_argument("--no-embed", action="store_true", help="skip local e5 embeddings (duplicate rate becomes source-event only)")
     a = ap.parse_args(argv)
     llm = {"provider": os.getenv("HINDSIGHT_EVAL_LLM_PROVIDER", ""), "model": os.getenv("HINDSIGHT_EVAL_LLM_MODEL", ""),
            "embeddings": os.getenv("HINDSIGHT_EVAL_EMBED_MODEL", "intfloat/multilingual-e5-large"),
            "reranker": os.getenv("HINDSIGHT_EVAL_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")}
+    embed, why = (None, "disabled_by_flag") if a.no_embed else local_embedder(llm["embeddings"])
     try:
         r = run(Path(a.data), Path(a.out), transport=http_transport(a.api), llm_info=llm, smoke=a.smoke, llm_enabled=not a.no_llm,
-                max_decisions=a.max_decisions)
+                max_decisions=a.max_decisions, embed=embed, embed_unavailable_reason=why)
     except ValueError as exc:
         print(f"refused: {exc}")
         return 2
