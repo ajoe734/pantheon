@@ -90,15 +90,28 @@ class CollectorDelivery:
 
     expected: tuple[SourceRecord, ...]
     acknowledge: Callable[[], None]
+    _payloads: tuple[str, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # SourceRecord metadata contains mutable nested mappings. Snapshot the
+        # verified payload so an in-place change cannot mutate its own proof.
+        object.__setattr__(self, "_payloads", tuple(
+            json.dumps(r.to_dict(), sort_keys=True, default=str) for r in self.expected))
 
     def validate(self, records: Sequence[SourceRecord]) -> None:
-        if len(records) != len(self.expected):
+        if len(records) != len(self._payloads):
             raise SourceEvidenceError("collector delivery record coverage mismatch")
-        for actual, expected in zip(records, self.expected):
-            payload, original = actual.to_dict(), expected.to_dict()
-            payload.pop("metadata")
-            original.pop("metadata")
-            if payload != original or any(actual.metadata.get(k) != v for k, v in expected.metadata.items()):
+        for actual, snapshot in zip(records, self._payloads):
+            payload = json.loads(json.dumps(actual.to_dict(), sort_keys=True, default=str))
+            original = json.loads(snapshot)
+            metadata = payload.pop("metadata")
+            expected_metadata = original.pop("metadata")
+            # The maintained provider wrapper adds these defaults after pull;
+            # it cannot overwrite any value already verified by the adapter.
+            for key in ("tenant_id", "provider_owned_adapter", "ingest_job", "as_of_date", "dataset", "symbol"):
+                if key not in expected_metadata:
+                    metadata.pop(key, None)
+            if payload != original or metadata != expected_metadata:
                 raise SourceEvidenceError("collector delivery identity/hash/PIT/schema mismatch")
 
 
@@ -508,7 +521,7 @@ class CollectorBundleAdapter:
         )
         if derived is None:
             return {}
-        original = [self.dataset] if self.dataset != derived else []
+        original = [self.dataset if self.dataset != derived else "collector_bundle_items"]
         return {
             "normalized_datasets": [derived, *original],
             "feature_targets": [derived],
@@ -757,7 +770,9 @@ class CollectorBundleAdapter:
             first = next((b for b in verified if b.status != "paused"), None)
             if first is not None:
                 first_skip = partial_skip if first.cursor == base_cursor else 0
-                candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
+                # Only the raw window verified by this pull may contribute to
+                # derived rows, even when a bundle exceeds the public cap.
+                candidate = list(all_records[: min(max(len(first.items) - first_skip, 0), total_cap)])
                 plan = self._plan_governed_features(candidate)
         limit = max(total_cap - len(records), 0)
         selected = self._select_feature_rows(plan, limit)
@@ -766,7 +781,9 @@ class CollectorBundleAdapter:
             feature_rejected = plan.rejected
         else:
             feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
-        self._write_raw(raw_plan, records)
+        # Cache the verified window even for a feature-only capped delivery.
+        # Its provenance must already resolve; this cache is not a cursor ack.
+        self._write_raw([(b, {}) for b in verified if b.status != "paused"], records)
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self._health_cadence_seconds()
         )
@@ -805,7 +822,8 @@ class CollectorBundleAdapter:
         )
         if _DEFER_ACK.get():
             def acknowledge() -> None:
-                self._commit_governed_features(replace(plan, rows=selected), limit=None, trace_id=trace_id)
+                self._commit_governed_features(replace(plan, rows=selected), limit=None,
+                                               trace_id=trace_id, persisted=True)
                 self.save_resume_cursor(result)
             result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
         return result
@@ -815,6 +833,10 @@ class CollectorBundleAdapter:
         return self._raw_root() / "state" / _slug(self.connector_id) / "resume_cursor.json"
 
     def load_resume_cursor(self) -> str | None:
+        if _DEFER_ACK.get():
+            # Only the schedule store proves configured ingestion committed.
+            # Legacy adapter cursors may have been saved by a failed raw job.
+            return None
         path = self._resume_cursor_path()
         if not path.is_file():
             return None
@@ -943,6 +965,11 @@ class CollectorBundleAdapter:
         ):
             if row.get(optional) not in (None, "", [], {}):
                 metadata[optional] = row[optional]
+
+        if self.source_type in {"macro", "social"}:
+            # Provider item labels cannot turn raw evidence into a governed row.
+            metadata["dataset"] = (self.dataset if self.dataset not in {
+                TW_MACRO_SERIES_DATASET, TW_COMMUNITY_DAILY_DATASET} else "collector_bundle_items")
 
         if self.source_type == "social":
             author = str(row.get("hashed_author") or "").strip()
@@ -1103,12 +1130,13 @@ class CollectorBundleAdapter:
         return self._raw_root() / "state" / _slug(self.connector_id) / "macro_emitted.jsonl"
 
     @staticmethod
-    def _read_markers(path: Path) -> list[tuple[str, str, str]]:
+    def _read_markers(path: Path, *, persisted_only: bool = False) -> list[tuple[str, str, str]]:
         if not path.is_file():
             return []
         return [
             (d["symbol"], d["day"], d["step"])
             for d in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+            if not persisted_only or d.get("persisted") is True
         ]
 
     def _community_ledger_path(self) -> Path:
@@ -1135,11 +1163,11 @@ class CollectorBundleAdapter:
             for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
                 extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
             rows, rejected = macro_feature_rows(records, extra_series_map=extra)
-            known = frozenset(self._read_markers(self._macro_emitted_path()))
+            known = frozenset(self._read_markers(self._macro_emitted_path(), persisted_only=_DEFER_ACK.get()))
             return _FeaturePlan(tuple(rows), tuple(rejected), (), known)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
-            ledger = dict(load_community_ledger(path))
+            ledger = dict(load_community_ledger(path, persisted_only=_DEFER_ACK.get()))
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
             entries, rejected_list = community_ledger_entries(
                 records, authority=self._instrument_authority(), seen_at=now
@@ -1148,12 +1176,7 @@ class CollectorBundleAdapter:
             for entry in fresh:
                 ledger[entry["key"]] = entry
             emitted_path = path.with_name("community_emitted.jsonl")
-            done = []
-            if emitted_path.is_file():
-                done = [
-                    (d["symbol"], d["day"], d["step"])
-                    for d in (json.loads(x) for x in emitted_path.read_text(encoding="utf-8").splitlines() if x.strip())
-                ]
+            done = self._read_markers(emitted_path, persisted_only=_DEFER_ACK.get())
             rows = community_daily_rows_from_ledger(
                 ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
             )
@@ -1162,7 +1185,7 @@ class CollectorBundleAdapter:
         return _FeaturePlan((), (), (), frozenset())
 
     def _commit_governed_features(
-        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
+        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = "", persisted: bool = False
     ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
         """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
         rows = self._select_feature_rows(plan, limit)
@@ -1172,13 +1195,13 @@ class CollectorBundleAdapter:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
                     for entry in plan.fresh_entries:
-                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+                        handle.write(json.dumps({**entry, "persisted": persisted}, sort_keys=True) + "\n")
             emitted_path = path.with_name("community_emitted.jsonl")
         elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
             emitted_path = self._macro_emitted_path()
         else:
             return (), plan.rejected
-        known = set(self._read_markers(emitted_path))
+        known = set(self._read_markers(emitted_path, persisted_only=persisted))
         new_markers = []
         for r in rows:
             marker = (r["symbol"], r["event_time"], r["available_time"])
@@ -1189,12 +1212,13 @@ class CollectorBundleAdapter:
             emitted_path.parent.mkdir(parents=True, exist_ok=True)
             with emitted_path.open("a", encoding="utf-8") as handle:
                 for m in new_markers:
-                    handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+                    handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2],
+                                             "persisted": persisted}) + "\n")
         return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
 
     @staticmethod
     def _select_feature_rows(plan: "_FeaturePlan", limit: int | None) -> tuple:
-        rows = plan.rows
+        rows = tuple(r for r in plan.rows if not plan.is_acked(r)) if _DEFER_ACK.get() else plan.rows
         if limit is not None and len(rows) > limit:
             # An output cap must never starve unacknowledged revisions: keep those first
             # (then already-acknowledged replays), preserving chronological order.
@@ -1305,7 +1329,8 @@ def _feature_time(value: Any) -> datetime:
 
 
 def _feature_iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    # Distinct same-second ingestion steps must remain distinct PIT revisions.
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _month_end(year: int, month: int) -> date:
@@ -1420,6 +1445,8 @@ def macro_feature_rows(
                     "unit": str(meta.get("unit") or ""),
                     "source_id": record.source_id,
                     "connector_id": record.connector_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return tuple(rows), tuple(rejected)
@@ -1541,18 +1568,23 @@ def community_ledger_entries(
                     "engagement": engagement,
                     "available": _feature_iso(available),
                     "first_seen": seen_at,
+                    "source_id": record.source_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return entries, rejected
 
 
-def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
+def load_community_ledger(path: Path, *, persisted_only: bool = False) -> dict[str, dict[str, Any]]:
     ledger: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return ledger
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             entry = json.loads(line)
+            if persisted_only and entry.get("persisted") is not True:
+                continue
             ledger.setdefault(str(entry["key"]), entry)  # first sight wins: replays never rewrite history
     return ledger
 
@@ -1637,6 +1669,8 @@ def community_daily_rows_from_ledger(
                 "ingest_time": max(str(e["first_seen"]) for e in visible),
                 "availability_lag_days": 0,
                 "post_volume": float(len(visible)),
+                "source_records": [{k: e.get(k) for k in ("source_id", "content_hash", "raw_uri")}
+                                   for e in visible],
             }
             authors = {e.get("author") for e in visible if e.get("author")}
             if authors:
@@ -1701,7 +1735,8 @@ def feature_rows_to_records(
     for row in rows:
         dataset = str(row["dataset"])
         entity = str(row.get("series_id") or row.get("symbol") or "")
-        row_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()[:24]
+        content_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()
+        row_hash = content_hash[:24]
         out.append(
             SourceRecord(
                 source_id=f"{connector_id}:{dataset}:{entity}:{row.get('field') or 'daily'}:{row['event_time']}:{row_hash}",
@@ -1721,7 +1756,12 @@ def feature_rows_to_records(
                     "availability_lag_days": row["availability_lag_days"],
                     "normalized_row": dict(row),
                     "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
-                    "access_scope": ["public", "research"],
+                    "content_hash": f"sha256:{content_hash}",
+                    "access_scope": ["research"],
+                    "allowed_use": ["research", "search_index", "experiment"],
+                    "entitlement_tags": ["collector-research"],
+                    "direct_execution_allowed": False,
+                    "redistribution_allowed": False,
                     "license_scope": "collector_public_web",
                     "schema_hash": f"{dataset}.v1",
                 },

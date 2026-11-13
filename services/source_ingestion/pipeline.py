@@ -915,6 +915,7 @@ class IngestPipelineService:
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
         connector_tenant = _resolve_connector_tenant(connector, runtime=self.runtime)
+        starting_watermark = self.store.get_watermark(connector.connector_id)
 
         effective_fetch_batch = fetch_batch
         if connector_tenant:
@@ -993,7 +994,7 @@ class IngestPipelineService:
         except Exception as exc:
             persist_ingest_receipt(
                 self.store,
-                result,
+                replace(result, watermark=starting_watermark),
                 evidence_refs,
                 status="failed",
                 typed_failure=post_processing_typed_failure(exc, stage=post_processing_stage),

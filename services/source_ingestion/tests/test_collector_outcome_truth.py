@@ -281,14 +281,7 @@ def test_real_http_reader_denial_never_reuses_prior_no_new_data(tmp_path, monkey
     assert state["collector_outcome"]["observed"]["health_state"] == "degraded"
 
 
-@pytest.mark.parametrize("kind", ["macro", "social"])
-def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeypatch, kind):
-    """Regression for the retained NDC/PTT type failures, using local bundle fixtures.
-
-    The read-only hosted proof records failed receipts, not raw provider payloads.
-    Bundle bytes here are the existing local contract fixtures; no hosted data is
-    fetched and no local result is claimed as hosted acceptance.
-    """
+def setup_governed_pipeline(tmp_path, monkeypatch, kind, *, cap=100):
     from services.source_ingestion.runtime import create_runtime
 
     source = "collector-tw-macro-ndc" if kind == "macro" else SOURCE
@@ -325,8 +318,21 @@ def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeyp
         "mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN,
         "adapter_config": {"source_id": source, "source_type": kind,
             "platform": adapter.platform, "host": HOST, "raw_root": adapter.raw_root},
-        "max_records": 100,
+        "max_records": cap,
     })
+    return runtime, connector, files
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeypatch, kind):
+    """Regression for the retained NDC/PTT type failures, using local bundle fixtures.
+
+    The read-only hosted proof records failed receipts, not raw provider payloads.
+    Bundle bytes here are the existing local contract fixtures; no hosted data is
+    fetched and no local result is claimed as hosted acceptance.
+    """
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind)
+    dataset = "tw_macro_series" if kind == "macro" else "tw_community_daily"
     result, refs, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-features",
         trigger_type="scheduled", fetch_batch=runtime.pipeline.configured_fetch(
             connector.connector_id, trace_id="trace-features"))
@@ -344,3 +350,228 @@ def test_governed_features_persist_through_configured_pipeline(tmp_path, monkeyp
     assert receipt.normalized_count == len(result.records)
     assert set(refs["source_ids"]) == {r.source_id for r in result.records}
     assert result.watermark.value == CURSOR
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+@pytest.mark.parametrize("cap", [1, 2])
+def test_actual_scheduled_frontier_persists_capped_features_and_restarts(tmp_path, monkeypatch, kind, cap):
+    from services.source_ingestion.runtime import create_runtime
+    from services.source_ingestion.api_models import RunScheduledRequest
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    raw_ids, revisions, community_volumes = set(), set(), []
+    complete = False
+    for _ in range(12):
+        # A new runtime replays the same stores on every natural scheduled entry.
+        runtime = create_runtime(data_dir=tmp_path)
+        payload = runtime.pipeline.run_scheduled_connectors(RunScheduledRequest(
+            exclusive_connector_ids=[connector.connector_id]))
+        assert not payload["failed"], payload
+        assert len(payload["ran"]) == 1
+        item = payload["ran"][0]
+        receipt = item["receipt"]
+        assert receipt["status"] == "completed"
+        assert receipt["raw_count"] <= cap
+        for ref in receipt["storage_refs"]["normalized_refs"]:
+            from pathlib import Path
+            rows = [json.loads(line) for line in Path(ref["uri"]).read_text().splitlines()]
+            for row in rows:
+                if row["dataset"] == "collector_bundle_items":
+                    raw_ids.add(row["source_id"])
+                else:
+                    meta = row["metadata"]
+                    nrow = meta["normalized_row"]
+                    revision = (meta["symbol"], meta["event_time"], meta["available_time"], nrow.get("field"))
+                    assert revision not in revisions
+                    revisions.add(revision)
+                    if kind == "social":
+                        community_volumes.append(nrow["post_volume"])
+                    assert meta["access_scope"] == ["research"]
+                    assert meta["redistribution_allowed"] is False
+                    assert meta["tenant_id"] == "tenant-a"
+                    assert meta["content_hash"].startswith("sha256:")
+                    provenance = [nrow] if kind == "macro" else nrow["source_records"]
+                    import hashlib
+                    for origin in provenance:
+                        raw_bytes = (tmp_path / "market_data_store" / origin["raw_uri"]).read_bytes()
+                        assert origin["content_hash"] == "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
+        state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+        if state["complete"]:
+            complete = True
+            break
+    assert complete
+    assert len(raw_ids) == 2
+    assert len(revisions) == (6 if kind == "macro" else 2)
+    if kind == "social":
+        assert max(community_volumes) == 2.0
+    # A consumed boundary produces no synthetic rows after a restart.
+    from services.source_ingestion.connectors import collector_bundle as module
+    real_observed = module.observed_from_collector_status
+    monkeypatch.setattr(module, "observed_from_collector_status", lambda *a, **kw: real_observed(
+        *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
+    runtime = create_runtime(data_dir=tmp_path)
+    empty = runtime.pipeline.run_scheduled_connectors(RunScheduledRequest(
+        exclusive_connector_ids=[connector.connector_id]))
+    assert not empty["failed"], empty
+    assert empty["ran"][0]["receipt"]["normalized_count"] == 0
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+@pytest.mark.parametrize("stage", ["market_storage", "source_evidence", "receipt_finalize"])
+@pytest.mark.parametrize("cap", [2, 100])
+def test_failed_persistence_never_acknowledges_features_or_cursor(tmp_path, monkeypatch, kind, stage, cap):
+    import services.source_ingestion.pipeline as module
+    from services.source_ingestion.runtime import create_runtime
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind, cap=cap)
+    function = {"market_storage": "persist_market_data_storage_refs",
+                "source_evidence": "persist_source_evidence_refs",
+                "receipt_finalize": "persist_ingest_receipt"}[stage]
+    original = getattr(module, function)
+
+    def fail(*args, **kwargs):
+        if stage != "receipt_finalize" or kwargs.get("status") is None:
+            raise OSError("fixture persistence failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, function, fail)
+    with pytest.raises(OSError, match="fixture persistence failure"):
+        runtime.pipeline.run_job(connector=connector, trace_id="trace-failed", trigger_type="scheduled",
+            fetch_batch=runtime.pipeline.configured_fetch(connector.connector_id, trace_id="trace-failed"))
+    assert runtime.store.get_watermark(connector.connector_id) is None
+    assert runtime.store.list_receipts()[-1].status == "failed"
+    assert not list((tmp_path / "market_data_store" / "state").rglob("*emitted*"))
+    assert not list((tmp_path / "market_data_store" / "state").rglob("*ledger*"))
+    assert not list((tmp_path / "market_data_store" / "state").rglob("resume_cursor.json"))
+    monkeypatch.setattr(module, function, original)
+    runtime = create_runtime(data_dir=tmp_path)
+    runtime._register_or_validate_connector(connector)
+    result, refs, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-retry", trigger_type="scheduled",
+        fetch_batch=runtime.pipeline.configured_fetch(connector.connector_id, trace_id="trace-retry"))
+    assert result.run.status.value == "completed"
+    assert any(r.source_type.value == "market" for r in result.records)
+    assert refs["storage_refs"]["feature_refs"]
+    assert runtime.store.get_receipt(result.run.ingest_run_id).status == "completed"
+
+
+@pytest.mark.parametrize("target,change", [
+    ("raw", "connector"), ("raw", "type"),
+    ("derived", "connector"), ("derived", "type"), ("derived", "hash"),
+    ("derived", "PIT"), ("derived", "schema"), ("derived", "scope"),
+    ("derived", "forged"), ("derived", "coverage"), ("derived", "nested"),
+])
+def test_scheduled_handoff_rejects_unverified_or_mutated_records(tmp_path, monkeypatch, target, change):
+    from dataclasses import replace
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, "macro")
+    fetch = runtime.pipeline.configured_fetch(connector.connector_id, trace_id="trace-invalid")
+
+    def tampered(watermark):
+        batch = fetch(watermark)
+        if change == "forged":
+            return replace(batch, collector_delivery=None)
+        if change == "coverage":
+            return replace(batch, derived_records=batch.derived_records[:-1])
+        field = "records" if target == "raw" else "derived_records"
+        records = list(getattr(batch, field))
+        if change == "nested":
+            records[0].metadata["normalized_row"]["available_time"] = "1900-01-01T00:00:00Z"
+            return batch
+        record = records[0]
+        if change == "connector":
+            record = replace(record, connector_id="another-connector")
+        elif change == "type":
+            record = replace(record, source_type="news")
+        else:
+            key, value = {"hash": ("content_hash", "sha256:" + "0" * 64),
+                          "PIT": ("available_time", "1900-01-01T00:00:00Z"),
+                          "schema": ("normalized_row", {"dataset": "tw_macro_series"}),
+                          "scope": ("access_scope", ["public"])}[change]
+            record = replace(record, metadata={**record.metadata, key: value})
+        records[0] = record
+        return replace(batch, **{field: tuple(records)})
+
+    result, _, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-invalid",
+        trigger_type="scheduled", fetch_batch=tampered)
+    assert result.run.status.value == "failed"
+    assert runtime.store.get_watermark(connector.connector_id) is None
+    assert runtime.store.get_receipt(result.run.ingest_run_id).status == "failed"
+    assert not list((tmp_path / "market_data_store" / "state").rglob("*emitted*"))
+    assert not list((tmp_path / "market_data_store" / "normalized").rglob("*.jsonl"))
+
+
+@pytest.mark.parametrize("change", ["connector", "type", "derived"])
+def test_ordinary_batches_cannot_use_collector_derived_exception(tmp_path, monkeypatch, change):
+    from dataclasses import replace
+    from services.source_ingestion.scheduler import IngestBatch
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, "macro")
+    batch = runtime.pipeline.configured_fetch(connector.connector_id, trace_id="trace-ordinary")(None)
+    raw = batch.records[0]
+    if change == "connector":
+        ordinary = IngestBatch(records=(replace(raw, connector_id="forged"),))
+    elif change == "type":
+        ordinary = IngestBatch(records=(replace(raw, source_type="market"),))
+    else:
+        ordinary = IngestBatch(records=batch.records, derived_records=batch.derived_records,
+                              metadata={"fetch_mode": "provider_owned_adapter", "collector_outcome": {"complete": True}})
+    result, _, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-ordinary",
+        trigger_type="scheduled", fetch_batch=lambda watermark: ordinary)
+    assert result.run.status.value == "failed"
+    expected = {"connector": "connector_id must match", "type": "source_type must match",
+                "derived": "require a verified Collector delivery"}[change]
+    assert any(expected in (event.message or "") for event in result.run.events)
+    assert runtime.store.get_watermark(connector.connector_id) is None
+
+
+def test_capped_derived_rows_never_consume_unverified_raw_hashes(tmp_path, monkeypatch):
+    from services.source_ingestion.api_models import RunScheduledRequest
+
+    runtime, connector, files = setup_governed_pipeline(tmp_path, monkeypatch, "macro", cap=1)
+    raw_paths = sorted(path for path in files if "/raw/" in path)
+    # Identify the second item in maintained bundle order, not hash filename order.
+    manifest_path = next(path for path in files if path.endswith("/manifest.json"))
+    manifest = json.loads(files[manifest_path])
+    base = manifest_path.rsplit("/", 1)[0]
+    bad_path = base + "/" + manifest["items"][1]["raw_path"]
+    assert bad_path in raw_paths
+    files[bad_path] = b"corrupted fixture raw bytes"
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    request = RunScheduledRequest(exclusive_connector_ids=[connector.connector_id])
+    # First verified raw item yields its three fields, followed by its raw record.
+    for _ in range(4):
+        payload = runtime.pipeline.run_scheduled_connectors(request)
+        assert not payload["failed"], payload
+    previous = runtime.store.get_watermark(connector.connector_id)
+    assert previous.value == CURSOR + "|items=1"
+    payload = runtime.pipeline.run_scheduled_connectors(request)
+    assert payload["failed"] and not payload["ran"]
+    assert "raw hash mismatch" in payload["failed"][0]["error"]
+    assert runtime.store.get_watermark(connector.connector_id) == previous
+
+
+@pytest.mark.parametrize("kind", ["macro", "social"])
+def test_failed_legacy_pull_markers_and_cursor_cannot_acknowledge_unstored_features(tmp_path, monkeypatch, kind):
+    from dataclasses import replace
+
+    runtime, connector, _ = setup_governed_pipeline(tmp_path, monkeypatch, kind)
+    config = runtime.connector_store.get_config(connector.connector_id)
+    # This is exactly the old eager provider contract: it can leave markers and
+    # a resume file even though the scheduler/persistence owner never accepted it.
+    legacy = execute_provider_owned_adapter(connector=connector, fetch=config.fetch,
+        trace_id="trace-legacy", preserve_collector_outcome=True)
+    assert any(r.source_type.value == "market" for r in legacy.records)
+    adapter = CollectorBundleAdapter(connector_id=connector.connector_id,
+        source_id=config.fetch["adapter_config"]["source_id"], source_type=kind)
+    adapter.save_resume_cursor(replace(legacy, complete=False))
+    assert adapter.load_resume_cursor() == CURSOR
+    assert runtime.store.get_watermark(connector.connector_id) is None
+    result, refs, _ = runtime.pipeline.run_job(connector=connector, trace_id="trace-recovered",
+        trigger_type="scheduled", fetch_batch=runtime.pipeline.configured_fetch(
+            connector.connector_id, trace_id="trace-recovered"))
+    assert result.run.status.value == "completed"
+    assert len([r for r in result.records if r.source_type.value == kind]) == 2
+    assert len([r for r in result.records if r.source_type.value == "market"]) == (6 if kind == "macro" else 1)
+    assert refs["storage_refs"]["feature_refs"]
+    assert runtime.store.get_watermark(connector.connector_id).value == CURSOR
