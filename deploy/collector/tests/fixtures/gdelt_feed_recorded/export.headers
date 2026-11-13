@@ -1,0 +1,30 @@
+HTTP/1.1 301 Moved Permanently
+Cache-Control: private
+Location: https://data.gdeltproject.org:443/gdeltv2/20261113114500.export.CSV.zip
+Content-Length: 0
+Date: Fri, 13 Nov 2026 11:46:02 GMT
+Content-Type: text/html; charset=UTF-8
+
+HTTP/2 200 
+x-guploader-uploadid: AFy3sg3zWHrXEp4UtGQw8D2D3JOLcfJAwdBnKIpvswTp0JI7zp503M-Kk138dHoTG3l9IvJfA7zxjV0
+x-goog-generation: 1794569674980375
+x-goog-metageneration: 1
+x-goog-stored-content-encoding: identity
+x-goog-stored-content-length: 55892
+x-goog-hash: crc32c=z1DkpA==
+x-goog-hash: md5=0yS58V/noOFsDvyOBZG22g==
+x-goog-storage-class: STANDARD
+accept-ranges: bytes
+content-length: 55892
+access-control-allow-origin: *
+access-control-expose-headers: Content-Type
+server: UploadServer
+via: 1.1 google
+date: Fri, 13 Nov 2026 11:36:06 GMT
+last-modified: Fri, 13 Nov 2026 11:34:35 GMT
+etag: "d324b9f15fe7a0e16c0efc8e0591b6da"
+content-type: application/zip
+age: 596
+cache-control: public,max-age=3600
+alt-svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+

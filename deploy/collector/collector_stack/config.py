@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "fetch-policy.json"
 QUERY_VOCABULARY_PATH = DEFAULT_POLICY_PATH.with_name("query_vocabulary.json")
 QUERY_SOURCE_IDS = frozenset({"collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"})
+GDELT_INDEX_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+GDELT_BASE_URL = "https://data.gdeltproject.org/gdeltv2/"
 
 
 def load_query_vocabulary() -> dict[str, list[str]]:
@@ -298,6 +300,18 @@ def validate_collector_config(
             validate_query_terms(source_id, entry.get("query_terms"))
         elif "query_terms" in entry:
             raise CollectorConfigError(f"source {source_id} cannot be steered by query_terms")
+
+        if source_id == "collector-gdelt":
+            if (entry.get("base_urls") != [GDELT_BASE_URL]
+                    or entry.get("index_url") != GDELT_INDEX_URL
+                    or entry.get("feed_type") != "export"
+                    or entry.get("cadence") != "hourly"
+                    or entry.get("cadence_seconds") != 3600
+                    or entry.get("fetcher") != "http"
+                    or entry.get("max_requests_per_run") != 2
+                    or float(entry.get("min_interval_seconds", 0)) < 5
+                    or any(k in entry for k in ("max_records_per_call", "default_window", "query", "api_url"))):
+                raise CollectorConfigError("collector-gdelt requires the official hourly export feed policy")
 
         if entry.get("logged_in") is not False:
             raise CollectorConfigError(f"source {source_id} must explicitly set logged_in=false")
