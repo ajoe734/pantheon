@@ -292,6 +292,78 @@ def test_status_healthy_paused_and_lagging():
     assert edge["health_state"] == "healthy"
 
 
+def test_readonly_threads_complete_metadata_requires_verified_boundary(tmp_path, monkeypatch):
+    # Exact status metadata from the retained 20261113T043111 readonly proof.
+    # Payload bytes are generated contract fixtures, not native Threads rows.
+    source = "collector-tw-threads"
+    run = "run-20261113T001922Z"
+    finished = "2026-11-13T00:19:22Z"
+    status = {"sources": {source: {"status": "complete", "paused_reason": None,
+                                  "last_run_at": finished, "last_run_id": run}}}
+    now = datetime(2026, 11, 13, 4, 25, 14, tzinfo=timezone.utc)
+    cursor = finished + "#" + run
+    observed = observed_from_collector_status(status, source_id=source, cursor=cursor,
+                                             cadence_seconds=86400, now=now)
+    assert observed["health_state"] == "degraded"
+    assert "collector_complete_boundary_unverified" in observed["reasons"]
+    files, entry, _ = make_bundle(source_id=source, run_id=run, date="2026-11-13", finished=finished)
+    files["status.json"] = json.dumps(status).encode()
+    import services.source_ingestion.connectors.collector_bundle as module
+    real_observed = module.observed_from_collector_status
+    monkeypatch.setattr(module, "observed_from_collector_status",
+                        lambda *a, **kw: real_observed(*a, **{**kw, "now": now}))
+    adapter = adapter_for(files, [entry], tmp_path, source_id=source)
+    first = adapter.pull()
+    assert len(first.records) == 2 and first.observed["health_state"] == "healthy"
+    assert first.no_new_data is False
+
+
+@pytest.mark.parametrize("change", ["no_proof", "partial_bundle", "incomplete_delivery", "partial_cursor",
+                                   "wrong_cursor", "wrong_source", "missing_run", "wrong_run", "older_time",
+                                   "newer_time", "missing_time", "stale", "future", "missing_cadence", "paused_reason"])
+def test_complete_status_never_overrides_unverified_or_contradictory_evidence(tmp_path, change):
+    from dataclasses import replace
+    from services.source_ingestion.connectors.collector_bundle import verify_bundle
+
+    files, entry, _ = make_bundle()
+    bundle = verify_bundle(FakeTransport(files), expected_source_id=entry["source_id"], entry=entry)
+    status = _status(entry["finished_at"], "complete")
+    source = status["sources"][entry["source_id"]]
+    source["last_run_id"] = entry["run_id"]
+    kwargs = dict(verified_bundle=bundle, delivery_complete=True, cursor=bundle.cursor,
+                  cadence_seconds=86400, now=datetime(2026, 11, 10, 3, tzinfo=timezone.utc))
+    if change == "no_proof":
+        kwargs["verified_bundle"] = None
+    elif change == "partial_bundle":
+        kwargs["verified_bundle"] = replace(bundle, manifest={**bundle.manifest, "status": "partial"})
+    elif change == "incomplete_delivery":
+        kwargs["delivery_complete"] = False
+    elif change == "partial_cursor":
+        kwargs["cursor"] += "|items=1"
+    elif change == "wrong_cursor":
+        kwargs["cursor"] = "2026-11-10T02:05:00Z#other"
+    elif change == "wrong_source":
+        kwargs["verified_bundle"] = replace(bundle, source_id="other")
+    elif change == "missing_run":
+        source.pop("last_run_id")
+    elif change == "wrong_run":
+        source["last_run_id"] = "other"
+    elif change in {"older_time", "newer_time"}:
+        source["last_run_at"] = "2026-11-10T02:04:59Z" if change == "older_time" else "2026-11-10T02:05:01Z"
+    elif change == "missing_time":
+        source.pop("last_run_at")
+    elif change == "stale":
+        kwargs["now"] += timedelta(days=3)
+    elif change == "future":
+        kwargs["now"] -= timedelta(hours=2)
+    elif change == "missing_cadence":
+        kwargs["cadence_seconds"] = None
+    elif change == "paused_reason":
+        source["paused_reason"] = "login_required"
+    observed = observed_from_collector_status(status, source_id=entry["source_id"], **kwargs)
+    assert observed["health_state"] == "degraded" and observed["reasons"]
+
+
 def test_status_reflected_in_observed_state(tmp_path):
     engine, store = _engine(tmp_path)
     engine.execute_command(_cmd(CommandType.CREATE, "ds-1", 1, definition_id="collector-tw-ptt-stock",
