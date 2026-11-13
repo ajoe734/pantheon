@@ -9,6 +9,14 @@ baseline references, observed virtual books and health, latest cycles, and
 open research demands. Caller authorization and tenant are forwarded to the
 HTTP owners. A foreign persona is refused before pool reads.
 
+PR #7317's architecture correction stays within the same task, owner Codex2,
+reviewer Claude, and generation 2. Human/Ops added the existing
+`personas/service.py` to the artifact contract. Both handlers now call
+`PersonaService.read_strategy_pool`, which binds the existing owner port to
+the service's actual read store. No new store, facade, service, compatibility
+layer, AST exclusion, or reverse import of BFF main was introduced. Pool-owner
+composition and tenant/version/digest/unavailable checks are unchanged.
+
 Health/books are the latest daily cycle observation, pinned to the current
 pool version and digest, with packet ID and observation timestamp. They are
 not recomputed by BFF. Unknown owner measures remain unknown. Missing or
@@ -32,10 +40,10 @@ A transport test also executes the real HTTP helper and checks GET-only calls,
 authorization forwarding, tenant header and bounded timeout.
 
 Validation commands, terminal results, acceptance mapping and limits are in
-`evidence.json`. The full architecture scan exceeded its 90-second foreground
-budget, and the broad router/facade run exceeded 60 seconds with partial
-failures; neither is counted as passed. Focused inventory, live importer scan,
-persona detail and owner-read checks completed successfully.
+`evidence.json`. On the corrected delivery the exact direct-store regression,
+all 39 architecture tests, 67 pool/owner regressions and 6 focused detail tests
+passed. Prior delivery results, including timeouts, remain recorded separately
+and are not used as evidence for the corrected delivery.
 
 The unrelated route-count assertion expects 49 routes while the unchanged
 dev router registers 53; this reproduces on a clean archive of base

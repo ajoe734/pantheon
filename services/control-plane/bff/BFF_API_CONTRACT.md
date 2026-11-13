@@ -575,6 +575,9 @@ return a bare `[]`. The unavailable condition is explicit in
 `GET /api/v1/operator/persona-management/{persona_id}` add `data.strategyPool`.
 Both resolve the authenticated tenant and refuse a foreign persona with 404
 before reading its pool, cycles or demands. Existing read-role checks apply.
+Both handlers call `PersonaService.read_strategy_pool`; the existing application
+service binds `PersonaPoolViewsPort` to its cycle read owner and forwards the
+caller authorization, tenant and snapshot time. Routes do not access stores.
 
 | Field | Owner and semantics | `meta.surfaces` key |
 |---|---|---|
