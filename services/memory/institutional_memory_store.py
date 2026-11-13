@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from .usefulness import marked_payload, usefulness_score
 
 
 def utc_now() -> str:
@@ -41,7 +42,7 @@ def _format_utc_timestamp(value: datetime) -> str:
 
 
 def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[int, datetime]:
-    return (entry.reuse_count, _parse_utc_timestamp(entry.written_at))
+    return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 
 class InstitutionalMemoryError(ValueError):
@@ -106,6 +107,8 @@ class InstitutionalMemoryEntry:
     expires_at: Optional[str] = None
     archived_at: Optional[str] = None
     archived_reason: Optional[str] = None
+    usefulness_marks: Dict[str, Any] = field(default_factory=dict)
+    memory_review: Optional[Dict[str, Any]] = None
     reuse_count: int = 0
     tenant_id: Optional[str] = None
 
@@ -339,6 +342,15 @@ class InstitutionalMemoryStore:
         ]
         return sorted(matches, key=lambda entry: entry.entry_id)
 
+    def mark_usefulness(self, entry_id: str, mark: dict) -> InstitutionalMemoryEntry:
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(**marked_payload(entry, mark))
+            self._entries[entry_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
+
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
         if count <= 0:
             raise InstitutionalMemoryError("count must be >= 1")
@@ -443,13 +455,13 @@ class InstitutionalMemoryStore:
             if query_terms or normalized_tags:
                 if matched_terms == 0 and matched_tags == 0:
                     continue
-            score = float(matched_terms * 10 + matched_tags * 5 + entry.reuse_count)
+            score = float(matched_terms * 10 + matched_tags * 5 + usefulness_score(entry))
             hits.append(RetrievalHit(entry=entry, relevance_score=score))
 
         hits.sort(
             key=lambda hit: (
                 hit.relevance_score,
-                hit.entry.reuse_count,
+                usefulness_score(hit.entry),
                 _parse_utc_timestamp(hit.entry.written_at),
             ),
             reverse=True,
@@ -528,6 +540,19 @@ class PostgresInstitutionalMemoryStore(InstitutionalMemoryStore):
             contributing_persona_id=contributing_persona_id,
             active_only=active_only,
         )
+
+    def mark_usefulness(self, entry_id: str, mark: dict) -> InstitutionalMemoryEntry:
+        for _ in range(8):
+            raw = self._records.get(entry_id)
+            if raw is None:
+                raise ValueError("usefulness_entry_unavailable")
+            entry = InstitutionalMemoryEntry.from_dict(raw)
+            updated = InstitutionalMemoryEntry(**marked_payload(entry, mark))
+            committed, _ = self._records.compare_and_set(entry_id, raw, updated.to_dict())
+            if committed:
+                self._project(updated)
+                return updated
+        raise ValueError("concurrent_usefulness_update")
 
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
         self._refresh_from_postgres()

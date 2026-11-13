@@ -13,13 +13,14 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from .usefulness import marked_payload, usefulness_score
 
 
 def _parse_utc_timestamp(value: str) -> datetime:
@@ -34,7 +35,7 @@ def _parse_utc_timestamp(value: str) -> datetime:
 
 
 def _entry_sort_key(entry: "PersonaMemoryEntry") -> tuple[int, datetime]:
-    return (entry.reuse_count, _parse_utc_timestamp(entry.written_at))
+    return (usefulness_score(entry), _parse_utc_timestamp(entry.written_at))
 
 
 class PersonaMemoryError(ValueError):
@@ -142,6 +143,8 @@ class PersonaMemoryEntry:
     embedding_ref: Optional[str] = None
     superseded_by: Optional[str] = None
     relevance_scope: str = PersonaRelevanceScope.PERSONA_PRIVATE.value
+    usefulness_marks: Dict[str, Any] = field(default_factory=dict)
+    memory_review: Optional[Dict[str, Any]] = None
     reuse_count: int = 0
     tenant_id: Optional[str] = None
     expires_at: Optional[str] = None
@@ -336,6 +339,15 @@ class PersonaMemoryStore:
         ]
         return sorted(matches, key=lambda entry: (entry.persona_id, entry.memory_id))
 
+    def mark_usefulness(self, memory_id: str, mark: dict) -> PersonaMemoryEntry:
+        with self._lock:
+            entry = self._require_unlocked(memory_id)
+            updated = PersonaMemoryEntry(**marked_payload(entry, mark))
+            self._entries[memory_id] = updated
+            self._save()
+            self._project(updated)
+            return updated
+
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
         if count <= 0:
             raise PersonaMemoryError("count must be >= 1")
@@ -432,13 +444,13 @@ class PersonaMemoryStore:
             if query_terms or normalized_tags:
                 if matched_terms == 0 and matched_tags == 0:
                     continue
-            score = float(matched_terms * 10 + matched_tags * 5 + entry.reuse_count)
+            score = float(matched_terms * 10 + matched_tags * 5 + usefulness_score(entry))
             hits.append(PersonaRetrievalHit(entry=entry, relevance_score=score))
 
         hits.sort(
             key=lambda hit: (
                 hit.relevance_score,
-                hit.entry.reuse_count,
+                usefulness_score(hit.entry),
                 _parse_utc_timestamp(hit.entry.written_at),
             ),
             reverse=True,
@@ -515,6 +527,19 @@ class PostgresPersonaMemoryStore(PersonaMemoryStore):
             relevance_scope=relevance_scope,
             active_only=active_only,
         )
+
+    def mark_usefulness(self, memory_id: str, mark: dict) -> PersonaMemoryEntry:
+        for _ in range(8):
+            raw = self._records.get(memory_id)
+            if raw is None:
+                raise ValueError("usefulness_entry_unavailable")
+            entry = PersonaMemoryEntry.from_dict(raw)
+            updated = PersonaMemoryEntry(**marked_payload(entry, mark))
+            committed, _ = self._records.compare_and_set(memory_id, raw, updated.to_dict())
+            if committed:
+                self._project(updated)
+                return updated
+        raise ValueError("concurrent_usefulness_update")
 
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
         self._refresh_from_postgres()

@@ -21,6 +21,8 @@ from .institutional_memory_store import (
     InstitutionalMemoryStore,
     build_institutional_memory_store,
 )
+from .usefulness import apply_usefulness
+
 from .learn_feedback_writeback import (
     LearnFeedbackUnauthorizedError,
     LearnFeedbackWritebackError,
@@ -468,6 +470,8 @@ async def store_entry(
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise InstitutionalMemoryError("usefulness is written only by the outcome owner")
         entry = InstitutionalMemoryEntry.from_dict(payload)
         saved = _store().create(entry)
     except (InstitutionalMemoryError, TypeError) as exc:
@@ -487,6 +491,8 @@ def _store_persona_payload(payload: Dict[str, Any], auth_ctx: Optional[AuthConte
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise PersonaMemoryError("usefulness is written only by the outcome owner")
         entry = PersonaMemoryEntry.from_dict(payload)
         saved = _persona_store().create(entry)
     except (PersonaMemoryError, TypeError) as exc:
@@ -519,6 +525,16 @@ async def writeback_learn_feedback(
     authorization: Optional[str] = Header(default=None),
 ):
     ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    if payload.get("source_event_type") == "case_file_usefulness":
+        # Same route and existing writer role; no operator/session can submit marks.
+        ctx = _authenticate_memory_request(authorization, required_roles=("persona-svc",), require_jwt=True)
+        tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant")
+        if not tenant or tenant == "*" or tenant != payload.get("tenant_id"):
+            raise HTTPException(status_code=403, detail="Usefulness requires one verified tenant")
+        try:
+            return apply_usefulness(payload, persona_store=_persona_store(), institutional_store=_store())
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if ctx is not None:
         authority = str(payload.get("write_authority") or "")
         if not ({authority, "operator", "admin", "system", "memory-writer"} & set(ctx.roles)):
@@ -583,6 +599,7 @@ async def get_entry(
 
 @app.get("/api/memory/retrieve")
 async def retrieve_memory(
+    review_required: bool = Query(default=False),
     actor_id: str = Query(..., min_length=1),
     actor_roles: List[str] = Query(...),
     session_id: str = Query(..., min_length=1),
@@ -666,7 +683,7 @@ async def retrieve_memory(
         for hit in retrieve_institutional_with_backend(
             _store(), backend=backend, query=query, tenant_id=tenant_id,
             persona_id=persona_id or effective_actor_id, workspace_id=session_id, knowledge_type=knowledge_type,
-            scope_filter=scope_filter, tags=tag_values, limit=limit, diagnostics=diagnostics,
+            scope_filter=scope_filter, tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
         ):
             ranked_hits.append(("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry))
         retrieval_details["institutional"] = diagnostics
@@ -679,7 +696,7 @@ async def retrieve_memory(
                 _persona_store(), persona_id=persona_id, backend=backend, query=query, tenant_id=tenant_id,
                 workspace_id=session_id,
                 memory_type=memory_type, relevance_scope=persona_relevance_scope,
-                tags=tag_values, limit=limit, diagnostics=diagnostics,
+                tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
             ):
                 ranked_hits.append(("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry))
         except PersonaMemoryError as exc:
