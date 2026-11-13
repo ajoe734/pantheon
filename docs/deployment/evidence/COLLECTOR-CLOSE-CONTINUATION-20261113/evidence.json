@@ -1,46 +1,108 @@
 {
   "task_id": "COLLECTOR-CLOSE-CONTINUATION-20261113",
-  "diagnosis": "Newest-session priority delivery advanced in manifest order (55 of 1377 per bounded pull), so held symbols at positions 531/538 (2317/2330) waited ~10+ pulls behind unrelated rows.",
-  "change": "Held (active paper) symbol rows are verified and delivered first inside the newest-session bundle; every row still hash/size verified, remaining rows continue in manifest order; persisted priority state records the held set and restarts the session order (idempotent replay) if it changes. Held symbols are resolved in the existing provider_adapters._collector_bundle handler (SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS + request priority_symbols, as the Taiwan official handler) and passed to pull(priority_symbols), same identities as the Taiwan official adapter. No new store/service.",
-  "validation": {
-    "command": "/tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_controller_worker.py",
-    "exit": 0,
-    "result": "351 passed, 1 skipped in 98.37s"
+  "pr": "https://github.com/ajoe734/pantheon/pull/7314",
+  "owner": "Codex",
+  "independent_reviewer": "Codex2",
+  "source_commit_before_evidence_only_commit": "03a8c98d37d0f01e44bf006778a2130a73010b8c",
+  "composed_dev": "7c968cbedc35b1c88689def3fcca3f2a139b4f34",
+  "scope": "Same existing task, PR and eight admitted artifacts. Source validation only; independent exact-head review, CI, native integration and Ops hosted acceptance remain pending.",
+  "primary_observation": {
+    "reference": "/tmp/pantheon-root01a15322-resume-20261111/actual-Root434086-held-close-cursor-and-snapshots-20261113T112315Z.json",
+    "facts": "Captured TWSE 55/1377 and TPEx 54/6090 durable partial progress; held 2317/2330 at positions 531/538 still Nov12, 0050 Nov13. This is a current counterexample, not reconstruction of the lost historical call."
   },
+  "diagnosis": [
+    "Serial 270ms raw reads plus repeated metadata and loop pauses exceeded the newest-session 1800s requirement at 6090 rows, even with 1s continuation pauses.",
+    "URL-only evidence dedupe collapses distinct verified close items and dates sharing one exchange URL. A native Nov12-to-Nov13 due-tick regression reproduced record_run_mismatch on the rejected production source.",
+    "Priority result composition discarded the ordered native boundary acknowledgement, causing the next due replay of an actually completed small session to fail. The dedicated regression failed before composition was repaired and now passes."
+  ],
+  "repair": [
+    "Only newest-close raw verification overlaps at most four reads in joined bounded batches. Each reader copies the same operation context/deadline and uses the existing guarded transport. The 15s whole-request budget, record cap and full source scope are unchanged; ordinary reads remain synchronous.",
+    "Only a contiguous verified prefix survives deadline cuts. Every in-flight result is collected; genuine later hash/size/read errors cannot be hidden behind an earlier timeout. No reader survives return.",
+    "Native verified Collector close evidence dedupes by original item source_id, retaining original URL, hash, tenant, source/run/date, PIT and licensing. Non-Collector and unverified evidence keep existing dedupe behavior.",
+    "Priority delivery composes the existing ordered acknowledgement after real pipeline persistence, then saves its durable priority cursor. Existing continuation selection/cadence and optional generic held ordering are retained."
+  ],
+  "full_scale_local_proof": {
+    "fixture": "Synthetic captured-shape Nov13 TWSE1377 / TPEx6090 manifests, unique selected raw bytes/hash/size and held positions 531/538. Real registered definitions (600s cadence, 1000 records) are provisioned through existing reconciliation. SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS is absent.",
+    "path": "controller main -> run_controller_tick -> real due selection / one pull per request -> configured Collector handler -> real scheduler/pipeline -> disk-backed LatestMarketSnapshotStore and native acknowledgements",
+    "time_model": "270ms per finite transport read; actually overlapping reader threads share virtual start/finish time. Add 50ms per local API call, actual main-loop pauses, a 600s worst-phase source cadence delay, and all measured real API/normalization/CPU/disk/test-consumer time. Network time is simulated; disk persistence and controller execution are real local operations.",
+    "metrics": {
+      "sessions": [
+        [
+          1377,
+          "TWSE"
+        ],
+        [
+          6090,
+          "TPEX"
+        ]
+      ],
+      "ticks": 36,
+      "reads": 7645,
+      "peak_inflight": 4,
+      "completed_at": {
+        "collector-tw-twse-price-history": 931.0846980539791,
+        "collector-tw-tpex-price-history": 1555.3727696869464
+      },
+      "elapsed_seconds": 1573.24
+    },
+    "assertions": "7467 unique persisted source records, both complete exact priority counts, strictly advancing per-source prefixes, unique completed run receipts, current held and last-row snapshots in both venues after store reload, exact controller tenant, original URL/provisional flags, configured cadence/cap and no further due source at completion."
+  },
+  "negative_and_retry_proof": [
+    "Native day rollover: previous-day held snapshots persisted, same registered source becomes due, newest close refreshes both snapshots and preserves both days of item evidence. Old exact production modules fail record_run_mismatch; new source passes.",
+    "Joined four-reader test asserts identical operation deadline, deferred-ack context, zero active readers at return and no priority acknowledgement before persistence.",
+    "Timeout gap keeps only the verified contiguous prefix; a fresh adapter replays the missing/later rows from durable progress. A later raw hash failure rejects the pull despite an earlier timeout.",
+    "Existing focused suites retain unavailable/hash/size/source/date/tenant/PIT/incomplete/uncommitted and persistence-failure controls, historical progress and no-holdings/non-price behavior."
+  ],
+  "old_fails_controls": {
+    "rejected_head": "5d8e1b34a3d5c390096346baea4c8611b32f6f42",
+    "serial_scale": {
+      "command": "PYTHONPATH=. /tmp/codex2-collector-steady-review-venv/bin/python /tmp/codex2_review_collector_scale.py",
+      "exit": 1,
+      "result": "1377 rows: 26 pulls/1485 reads/425.95s. 6090 rows: 115 pulls/6555 reads/1883.85s; fails before API/persistence/other-source overhead."
+    },
+    "native_rollover": {
+      "command": "PYTHONPATH=/tmp:. /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -p collector_old_head_plugin -q services/source_ingestion/tests/test_scheduled_connector.py -k native_close_rollover",
+      "exit": 1,
+      "result": "Actual steady controller fails terminal readback with record_run_mismatch after a real persisted prior-day fixture.",
+      "method": "Read-only plugin execs git-show exact rejected collector_bundle.py/pipeline.py into their namespaces before collection and refreshes the registered adapter class. Repository files are not reverted or modified.",
+      "plugin_sha256": "405680b649857f565a691e18b69b9211a69d1b7f998b37f91297a324805bb0cd"
+    }
+  },
+  "validation": [
+    {
+      "command": "/tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_pipeline_snapshot_dataset_isolation.py -k 'not full_size_close'",
+      "exit": 0,
+      "result": "466 passed, 1 skipped, 1 deselected, 1 warning in 132.99s (0:02:12)",
+      "terminal_log": "/tmp/collector-final-regression.log",
+      "log_sha256": "24f781cf93feffdc6c091d7025cf7ecf71fa88590626f3bac8ad2af882375ac7"
+    },
+    {
+      "command": "/tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/test_service.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/knowledge/evidence/tests/test_normalization.py",
+      "exit": 0,
+      "result": "80 passed, 2 skipped, 1 warning in 37.42s",
+      "terminal_log": "/tmp/collector-final-consumer.log",
+      "log_sha256": "bf388e75a84a616f0166c1ef9a1d478b60f479d296e7094b9298040b60d598c9"
+    },
+    {
+      "command": "/tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -rP services/source_ingestion/tests/test_scheduled_connector.py -k full_size_close",
+      "exit": 0,
+      "result": "1 passed, 62 deselected, 1 warning in 315.25s (0:05:15)",
+      "terminal_log": "/tmp/collector-native-paired-validation.log",
+      "log_sha256": "d73f83f07f2fb2854ad5533d4c2c67a6c123fd20b9b453efd3a060cc7e6339a8"
+    }
+  ],
   "source_sha256": {
-    "connectors/collector_bundle.py": "f345dcc622bdccac7e2a88372f4328e3ad0899b50878aac56209b994ff210be0",
-    "controller_worker.py": "df797c5a279a7d39b339a6e43df3a4442ff74cc8c17173849a9a89808d12bf9d",
-    "tests/test_collector_bundle_connector.py": "b24397629b0c24d993892b531d66385a5ca624bef10ccb08a1613028e6e7172e",
-    "tests/test_controller_worker.py": "7cd7e5c1cce8d3eccab5b9025d6d1f2c2f7f8a55568a5dcc4e7682ddeffab5ac",
-    "provider_adapters.py": "73bf33768bd44f5126a526ae161cba34bb12f865cca53b53c38d0540383608c7",
-    "tests/test_scheduled_connector.py": "e601e73e23e8af8b8f797b93ed6631b6671e3fba878bc69f3e45e90d0bb7d42c"
+    "services/source_ingestion/connectors/collector_bundle.py": "7df082b8ce4dda9bd851316401fbfb97e99b023e18178f10af4e94d08f01b42a",
+    "services/source_ingestion/controller_worker.py": "a5668c2690dc56768255b07c9bd30365e5a45ac059da0fcac19aa1a901ab45a4",
+    "services/source_ingestion/pipeline.py": "20197c0fd60d1ebd0d2b0b97dd7e2148bd7708bc1b4a5c8e837b46fd1073eaa3",
+    "services/source_ingestion/provider_adapters.py": "73bf33768bd44f5126a526ae161cba34bb12f865cca53b53c38d0540383608c7",
+    "services/source_ingestion/tests/test_collector_bundle_connector.py": "9acd22003c94972faaa35339f35a4c57284d99c9d721a57034d28352990f3e20",
+    "services/source_ingestion/tests/test_controller_worker.py": "83297ff83b7f30913d6ba6d0df03a090d5943cadf23ee9d2c2913b514ba54c49",
+    "services/source_ingestion/tests/test_scheduled_connector.py": "7d675f63d27ce119506c0ed0388f0c7ef31a84baef7ef47e1bb98eedbead15c1"
   },
   "remaining_hosted_gaps": [
-    "No hosted/provider verification performed by the author; Ops must deploy and confirm 2330/2317 snapshots reach Nov 13 and SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS is set on the live ingest service.",
-    "tw_close_reconcile cover logic (partial-batch receipt) not changed; out of listed scope.",
-    "Fixtures reproduce captured manifest shape only; not production data."
-  ],
-  "review_repair": "Reviewer P1: partial newest-session progress waited the full 600s cadence (54/600 then selected=[] for 598s). Fix: a pull that leaves newest-session rows undelivered marks observed.continuation_pending (collector_bundle._pull_bounded, only on its own acknowledged outcome); controller_worker.select_collector_pull_connectors treats the source as due when the persisted fetch_state outcome carries it, the last fetch had no error and the latest run completed. Finished-source cadence, failed/degraded runs and fetch errors keep normal cadence. No timeout change, no scope reduction.",
-  "integration_tests": {
-    "command": "pytest -q services/source_ingestion/tests/test_scheduled_connector.py -k 'held or close_pull'",
-    "exit": 0,
-    "result": "4 passed",
-    "old_fails_new_passes": "With f6f8d1be6 production files restored, test_held_symbols_reach_snapshot_store_on_first_tick_and_session_completes_across_ticks fails (held 2330/2317 at manifest positions 538/531 not in snapshot store after tick 1); passes on this head.",
-    "coverage": "Real configured CollectorBundleAdapter handler (SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS) -> select_collector_pull_connectors -> run_schedule_tick -> persistence -> LatestMarketSnapshotStore; 600-row newest close, 0.27s per-read latency against the unchanged 15s request budget (~55 rows/pull); held symbols published on tick 1; session completes across ticks within 30 ticks (<=30 min at 1 tick/min) with no timeout/scope change; unique run ids per ack; cadence restored after completion; injected outage acknowledges nothing and retry replays held-first; tampered raw hash and wrong trade date never publish a held snapshot."
-  },
-  "review_repair_2": "Reviewer P2 (AC2/AC5): added configured scheduler-to-snapshot finite-latency integration tests in test_scheduled_connector.py; no production change.",
-  "review_repair_3": {
-    "finding": "Controller main loop slept SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS (60s) after every tick, so a partial newest session (1377/6090 rows) advanced one bounded pull per minute regardless of continuation_pending.",
-    "change": "run_controller_tick reports continuation_pending (post-pull readback via existing select_collector_pull_connectors); main() pauses CONTINUATION_PAUSE_SECONDS=1 instead of the cadence interval only then. Failed ticks, errored fetches and non-pending sources keep the normal interval. No timeout, scope, queue or scheduler change.",
-    "validation": {
-      "command": "pytest services/source_ingestion/tests/test_controller_worker.py -q",
-      "exit": 0,
-      "result": "199 passed"
-    },
-    "source_sha256": {
-      "services/source_ingestion/controller_worker.py": "a5668c2690dc56768255b07c9bd30365e5a45ac059da0fcac19aa1a901ab45a4",
-      "services/source_ingestion/tests/test_controller_worker.py": "83297ff83b7f30913d6ba6d0df03a090d5943cadf23ee9d2c2913b514ba54c49"
-    },
-    "remaining_hosted_gaps": "Hosted verification, CI, independent review and Ops acceptance remain unproven."
-  }
+    "No author VM/SSH/provider, credential, business/data/service/configuration, deployment or workflow-dispatch action was performed. Existing sole Ops owns exact-version publication and real held-symbol/full-session acceptance.",
+    "Local synthetic fixtures and the stated finite-latency model are not hosted PASS or an arbitrary provider-latency SLA. Ops must verify actual 2317/2330 latest snapshots and full-source progress on the accepted runtime.",
+    "Root434086 remains terminal FAIL with its accepted compensation; Pattern/all12/original49 remain closed, and separate StageProd is unchanged."
+  ]
 }
