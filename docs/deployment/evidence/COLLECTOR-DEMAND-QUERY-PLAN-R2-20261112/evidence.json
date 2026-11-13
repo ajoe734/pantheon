@@ -15,5 +15,17 @@
     "decision": "A real GDELT DOC 2.0 recording is unobtainable (HTTP 429 from dev host and collector host, including after an 11 minute cooldown; collector-gdelt auto-paused since 2026-11-11 with 0 items). GDELT poller still reads query terms from fetch-policy.json (acceptance 1); test_gdelt_request_url_built_from_policy_vocabulary asserts the exact request URL. gdelt_query_recorded.json is NOT committed, GDELT response parsing unchanged, DOC API not called again. Real GDELT recording moves to GDELT-RAW-FEED-SOURCE-20261113 (depends on this task; official raw 15-minute feed).",
     "evidence_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-collector-real-fixtures-20261110/gdelt_query_20261113/README.md",
     "superseded_files": "gdelt-recorded-*.txt and gdelt-recording-provenance-and-limits.json document the earlier maxrecords=10 '{}' attempt; they are retained as history only and no longer back any test or fixture."
+  },
+  "contract_repair_refresh_20261113": {
+    "source_anchor": "ddce8c3d4f66d0d7d1215303759b45bdff85d902",
+    "contract_paths_now_authorized": [
+      "deploy/collector/Dockerfile (single COPY query_vocabulary.json)",
+      "deploy/collector/tests/test_real_source_repair.py (GDELT test wiring for policy-sourced terms)"
+    ],
+    "tests_rerun": {
+      "deploy/collector/tests": "155 passed, 2 skipped",
+      "research test_query_plan + bff test_research_tasks_read": "15 passed"
+    },
+    "limits": "No GDELT real recording claimed; official raw-feed recording remains with GDELT-RAW-FEED-SOURCE-20261113. No release/deploy/hosted PASS claimed."
   }
 }
