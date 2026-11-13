@@ -1,6 +1,6 @@
 # Persona pool DatasetVersion authority
 
-Task: `PERSONA-POOL-DATASET-AUTHORITY-20261113`  
+Task: `PERSONA-POOL-DATASET-AUTHORITY-20261113`
 Owner: Codex; assigned independent reviewer: Claude.
 
 The persona lifespan now constructs its pool loader from
