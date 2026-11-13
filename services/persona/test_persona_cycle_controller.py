@@ -775,3 +775,28 @@ def test_citation_outside_the_proposal_case_file_is_rejected_after_revision(syst
     packet = controller.consume_run(persona, "job-1", run(90))
     assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
     assert packet["status"] == "observing"
+
+
+@pytest.mark.parametrize("second_kind", ["demand", "no_action", "harness_patch"])
+def test_revision_revalidates_every_final_proposal(system, memory_service, second_kind):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service,
+                                     base=100 + 10 * ["demand", "no_action", "harness_patch"].index(second_kind))
+
+    def answer(pid, prompt):
+        revision = "ProposalCaseFiles: " in prompt
+        result = _remove_citing("REMOVAL-ONLY" if revision else "CYCLE-ONLY", [])(pid, prompt)
+        second = {"kind": second_kind, "reason": "Review another proposal.", "evidence_refs": []}
+        if revision:
+            second["case_file_item_ids"] = ["lessons:memory_x:not-in-any-case-file"]
+        else:
+            second["none_applicable_reason"] = "No lesson applies to this second proposal."
+        result["proposals"].append(second)
+        return result
+
+    state["answer_fn"] = answer
+    packet = controller.consume_run(persona, "job-1", run(100))
+    assert state["turns"] == 2
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["status"] == "observing"
+    assert "decisions" not in packet["persona_cycle"]

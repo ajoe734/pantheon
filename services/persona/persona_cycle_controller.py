@@ -271,8 +271,9 @@ class PersonaCycleController:
                             raise CaseFileCitationError("revision changed the proposals")
                         output = revised
                         cycle["output"] = output.model_dump(mode="json")
-                        for i in unseen:
-                            check_proposal_citations(output.proposals[i], proposal_cases[i])
+                    # Every final proposal (revised or not) binds to the case file persisted for it.
+                    for i, final in enumerate(output.proposals):
+                        check_proposal_citations(final, proposal_cases.get(i) or cycle_case)
                     for composed in proposal_cases.values():
                         cycle["case_files"][composed["case_file_id"]] = composed
                     packet["orient"]["evidence_bundle_refs"] = [f"{packet_id}#persona_cycle/output",
