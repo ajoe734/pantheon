@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
-"""Score recorded source-labelled retrieval runs; never generate queries or data.
+"""Score retrieval from the recorded query log; never generate or load query sets.
 
-Default exits 2 until genuine gold and measurements exist. Run files contain
-model_name, mode, host, model_manifest_sha256, and requests with query_id,
-latency_ms (full authorized request), and source_scores mapping source_event_id
-to retrieval score. Scoring is evidence, never authority to activate a model.
+Reads only retrieval_query_log (rows written by the live search request path)
+and retrieval_query_labels (human source_event_id labels) from retrieval-postgres.
+Persona-private rows are invisible to this tool (RLS, no persona context).
+Reports status=unavailable with a reason while fewer than MIN_QUERIES real
+labelled queries exist or when the set looks templated. Exit code 2 = unavailable.
+Scoring is evidence only, never authority to switch a model.
 """
 from __future__ import annotations
+
 import argparse
-import hashlib
 import json
 import math
+import os
+import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-MODES = {"keyword_fallback", "lexical", "dense", "hybrid", "hybrid_reranker"}
-GOLD_PATH = Path(__file__).with_name("zh_tw_gold_set.json")
+MIN_QUERIES = 150
+MAX_TEMPLATE_SHARE = 0.5  # refuse if >50% of queries collapse into few shapes
 
 
 def validate_local_dsn(dsn: str) -> None:
-    """Retained admission helper for isolated historical regression probes."""
+    """Retained admission helper for isolated loopback regression probes."""
     parsed = urlsplit(dsn)
     if (parsed.scheme not in {"postgres", "postgresql"}
         or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
@@ -29,74 +34,77 @@ def validate_local_dsn(dsn: str) -> None:
         raise ValueError("Evaluation requires the isolated loopback test database without DSN options")
 
 
-def load_gold(path: Path) -> dict[str, Any]:
-    gold = json.loads(path.read_text(encoding="utf-8"))
-    queries = gold.get("queries", [])
-    if not 150 <= len(queries) <= 300:
-        raise ValueError("Need 150–300 recorded, independently source-labelled real queries")
-    if {q.get("language") for q in queries} != {"zh-TW", "en"}:
-        raise ValueError("Gold set must contain both zh-TW and English queries")
-    if len({q["query_id"] for q in queries}) != len(queries):
-        raise ValueError("Duplicate query ids")
-    for query in queries:
-        if not all(query.get(key) for key in ("query", "recorded_ref", "recorded_at", "labelled_by", "source_event_ids")):
-            raise ValueError("Query lacks recorded provenance or source_event_id labels")
-        if not isinstance(query["source_event_ids"], list) or not all(isinstance(s, str) and s for s in query["source_event_ids"]):
-            raise ValueError("Invalid source_event_id labels")
-    return gold
+def _shape(query: str) -> str:
+    return re.sub(r"\d+", "#", re.sub(r"[A-Za-z]+", "a", query.strip().lower()))
 
 
-def score_runs(gold: dict[str, Any], paths: list[Path]) -> list[dict[str, Any]]:
+def refuse_templated(queries: list[str]) -> None:
+    shapes = {_shape(q) for q in queries}
+    texts = set(queries)
+    if len(texts) < len(queries) * MAX_TEMPLATE_SHARE or len(shapes) < len(queries) * 0.2:
+        raise ValueError("Recorded queries look templated or synthetic (too few distinct queries/shapes)")
+
+
+def load_recorded(dsn: str, tenant_id: str) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SET ROLE pantheon_retrieval")
+            cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
+            cur.execute("SELECT set_config('pantheon.current_persona', '', true)")
+            cur.execute("SELECT * FROM retrieval_query_log WHERE origin = 'live_request'")
+            rows = list(cur.fetchall())
+            cur.execute("SELECT query_log_id, source_event_id FROM retrieval_query_labels")
+            labels: dict[str, set[str]] = defaultdict(set)
+            for lab in cur.fetchall():
+                labels[str(lab["query_log_id"])].add(lab["source_event_id"])
+    return rows, labels
+
+
+def score(rows: list[dict[str, Any]], labels: dict[str, set[str]]) -> dict[str, Any]:
+    labelled = [r for r in rows if labels.get(str(r["query_log_id"]))]
+    if len(labelled) < MIN_QUERIES:
+        raise ValueError(f"Only {len(labelled)} real labelled queries recorded; need at least {MIN_QUERIES}")
+    refuse_templated([r["query_text"] for r in labelled])
     from ranx import Qrels, Run, evaluate
-    labels = {q["query_id"]: {source: 1 for source in q["source_event_ids"]} for q in gold["queries"]}
-    qrels = Qrels(labels)
-    results = []
-    identities = set()
-    for path in paths:
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if record.get("mode") not in MODES or not all(record.get(k) for k in ("host", "model_name", "model_manifest_sha256")):
-            raise ValueError(f"Incomplete measured run identity: {path}")
-        identity = (record["model_name"], record["mode"])
-        if identity in identities:
-            raise ValueError("Duplicate model/mode measurements")
-        identities.add(identity)
-        requests = record["requests"]
-        if len(requests) != len(labels) or {r["query_id"] for r in requests} != set(labels):
-            raise ValueError("Every measured run must cover every gold query exactly once")
-        times = sorted(float(r["latency_ms"]) for r in requests)
-        if any(not math.isfinite(t) or t < 0 for t in times):
-            raise ValueError("Invalid measured request latency")
-        run = Run({r["query_id"]: r["source_scores"] for r in requests})
-        metrics = evaluate(qrels, run, ["recall@10", "ndcg@10"])
-        results.append({
-            "model_name": record["model_name"], "mode": record["mode"],
-            "host": record["host"], "model_manifest_sha256": record["model_manifest_sha256"],
-            "input_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            **{key: float(value) for key, value in metrics.items()},
+
+    by_group: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for r in labelled:
+        by_group[(r["model_name"], r["retrieval_mode"])].append(r)
+    metrics = []
+    for (model, mode), group in sorted(by_group.items()):
+        qrels = Qrels({str(r["query_log_id"]): {s: 1 for s in labels[str(r["query_log_id"])]} for r in group})
+        run = Run({
+            str(r["query_log_id"]): {sid: float(len(r["returned_source_event_ids"]) - i)
+                                      for i, sid in enumerate(r["returned_source_event_ids"])} or {"": 0.0}
+            for r in group
+        })
+        result = evaluate(qrels, run, ["recall@10", "ndcg@10"])
+        times = sorted(float(r["latency_ms"]) for r in group)
+        metrics.append({
+            "model_name": model, "mode": mode, "queries": len(group),
+            **{k: float(v) for k, v in result.items()},
             "p95_latency_ms": times[math.ceil(len(times) * 0.95) - 1],
         })
-    if not results or any(
-        {r["mode"] for r in results if r["model_name"] == model} != MODES
-        for model in {r["model_name"] for r in results}
-    ):
-        raise ValueError("Each model needs keyword fallback, lexical, dense, hybrid and reranker measurements")
-    return results
+    return {"labelled_queries": len(labelled), "metrics": metrics}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold-set", type=Path, default=GOLD_PATH)
-    parser.add_argument("--run", type=Path, action="append", default=[])
+    parser.add_argument("--dsn", default=os.getenv("PANTHEON_SEARCH_POSTGRES_DSN"))
+    parser.add_argument("--tenant", default="default")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
-    report: dict[str, Any] = {"task_id": "RETRIEVAL-BACKEND-ACTIVATION-20261113", "accepted": False}
+    report: dict[str, Any] = {"task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113", "accepted": False}
     try:
-        gold = load_gold(args.gold_set)
-        report["metrics"] = score_runs(gold, args.run)
-        report["gold_sha256"] = hashlib.sha256(args.gold_set.read_bytes()).hexdigest()
-        report["status"] = "measured_pending_independent_review"
+        if not args.dsn:
+            raise ValueError("No retrieval database DSN configured")
+        rows, labels = load_recorded(args.dsn, args.tenant)
+        report.update(score(rows, labels), status="measured_pending_independent_review")
         code = 0
-    except (ValueError, OSError, KeyError, ImportError) as exc:
+    except Exception as exc:  # unavailable is a recorded reason, never a silent pass
         report.update(status="unavailable", reason=str(exc))
         code = 2
     raw = json.dumps(report, ensure_ascii=False, indent=2) + "\n"

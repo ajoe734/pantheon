@@ -1,0 +1,15 @@
+{
+  "task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113",
+  "carried_from": ["4d663c4b2", "127a6885c"],
+  "operator_decision": "2026-11-13T10:24:12Z ship first, compare later",
+  "verification": {
+    "services/search/tests": "111 passed, 13 skipped before query-log additions; real pgvector (pgvector/pgvector:0.8.0-pg16 on 127.0.0.1:25432) integration for RLS, jieba, persona-private query log: 20 passed",
+    "scripts/test_deploy_nonprod_vm.py": "132 passed, 2 skipped",
+    "scripts/test_dev_release_artifacts.py": "132 passed, 2 skipped"
+  },
+  "not_verified": [
+    "image build with services.search.package_model (needs network to huggingface.co; URLs derived from manifest source_path, not fetched here)",
+    "hosted deployment and the rebuild entry point against a populated evidence store",
+    "model quality: evaluation is unavailable until 150 recorded labelled queries exist"
+  ]
+}

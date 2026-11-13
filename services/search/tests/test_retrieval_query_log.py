@@ -1,0 +1,96 @@
+from unittest.mock import Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from services.search.filters import SearchCapabilityUnavailableError
+
+
+@pytest.fixture
+def client_factory(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEARCH_INDEX_STORE_BACKEND", "jsonl")
+    monkeypatch.setenv("SEARCH_EVIDENCE_BACKEND", "jsonl")
+    from services.search.main import create_app
+
+    def factory(backend):
+        return TestClient(create_app(
+            index_store_path=tmp_path / "i.jsonl", evidence_store_path=tmp_path / "e.jsonl",
+            materialize_store_path=tmp_path / "m.jsonl", pipeline_store_path=tmp_path / "p.jsonl",
+            durable_index_only=True, retrieval_backend=backend))
+    return factory
+
+
+def _backend():
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    backend.search.return_value = []
+    return backend
+
+
+BODY = {"query": "台積電 法說", "retrieval_mode": "hybrid", "request_id": "r1",
+        "caller_decision_type": "cycle_review", "source_event_id": "evt-1",
+        "access_context": {"persona_id": "p1", "workspace_id": "w1"}}
+
+
+def test_every_served_query_is_recorded(client_factory):
+    backend = _backend()
+    with client_factory(backend) as client:
+        assert client.post("/api/search/query", json=BODY).status_code == 200
+    kwargs = backend.record_query.call_args.kwargs
+    assert kwargs["query"] == "台積電 法說" and kwargs["retrieval_mode"] == "hybrid"
+    assert kwargs["caller_decision_type"] == "cycle_review" and kwargs["source_event_id"] == "evt-1"
+    assert kwargs["request_id"] == "r1" and kwargs["latency_ms"] >= 0
+
+
+def test_query_fails_closed_when_log_unavailable(client_factory):
+    backend = _backend()
+    backend.record_query.side_effect = RuntimeError("db down")
+    with client_factory(backend) as client:
+        response = client.post("/api/search/query", json=BODY)
+    assert response.status_code == 501
+    assert "retrieval_query_log_unavailable" in response.text
+
+
+def test_pg_query_log_private_scope_and_eval_unavailable():
+    """Real PostgreSQL: persona-private rows never reach another persona; eval is unavailable <150."""
+    import os
+    from services.search.filters import SearchAccessContext
+    from services.search.pg_retrieval import PostgresRetrievalBackend, RetrievalIndexRecord
+
+    dsn = os.getenv("PANTHEON_RETRIEVAL_INTEGRATION_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_RETRIEVAL_INTEGRATION_DSN for isolated pgvector integration")
+    engine = Mock(dimension=1024, model_name="test-model")
+    engine.is_ready.return_value = True
+    backend = PostgresRetrievalBackend(dsn, embedding_engine=engine)
+    backend.setup_schema()
+    vector = [1.0] + [0.0] * 1023
+    engine.embed_query.return_value = vector
+    tenant = "qlog-tenant"
+    backend.upsert_documents([RetrievalIndexRecord(
+        id="qlog-private", record_kind="knowledge_object", tenant_id=tenant, persona_id="owner",
+        title="私有備忘", search_text="私有 備忘 台積電", embedding=vector)])
+    try:
+        owner = SearchAccessContext(tenant_id=tenant, persona_id="owner")
+        hits = backend.search("台積電", context=owner, mode="hybrid")
+        assert [h.id for h in hits] == ["qlog-private"]
+        backend.record_query(context=owner, request_id="qlog-r1", query="台積電", retrieval_mode="hybrid",
+                             hits=hits, latency_ms=3.0, caller_decision_type="cycle_review", source_event_id="e1")
+        assert [r["request_id"] for r in backend.list_query_log(owner)] == ["qlog-r1"]
+        assert backend.list_query_log(SearchAccessContext(tenant_id=tenant, persona_id="other")) == []
+        row = backend.list_query_log(owner)[0]
+        assert row["persona_private"] and row["model_name"] == "test-model" and row["returned_ids"] == ["qlog-private"]
+        from services.search.evaluation.run_retrieval_eval import main
+        assert main(["--dsn", dsn, "--tenant", tenant]) == 2
+    finally:
+        backend.delete_document("qlog-private", tenant_id=tenant, hard=True)
+
+
+def test_rebuild_entry_point_fails_closed_without_model(monkeypatch):
+    from services.search import rebuild_index
+    fake = Mock()
+    fake.check_health.return_value = {"status": "unavailable", "reason": "embedding_model_unavailable"}
+    monkeypatch.setattr(rebuild_index, "PostgresRetrievalBackend", Mock(return_value=fake))
+    with pytest.raises(RuntimeError, match="embedding_model_unavailable"):
+        rebuild_index.rebuild()
+    fake.setup_schema.assert_not_called()

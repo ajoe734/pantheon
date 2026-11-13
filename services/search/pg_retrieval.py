@@ -372,6 +372,82 @@ class PostgresRetrievalBackend:
             conn.commit()
         return affected > 0
 
+    def record_query(
+        self,
+        *,
+        context: SearchAccessContext,
+        request_id: str,
+        query: str,
+        retrieval_mode: str,
+        hits: Sequence[RetrievalHitItem],
+        latency_ms: float,
+        caller_decision_type: str | None = None,
+        source_event_id: str | None = None,
+    ) -> str:
+        """Record one served query. Raises on failure so a query is never served unlogged."""
+        tenant = getattr(context, "tenant_id", "default") or "default"
+        persona = getattr(context, "persona_id", None)
+        missing = []
+        if not caller_decision_type:
+            missing.append("caller_decision_type")
+        if not source_event_id:
+            missing.append("source_event_id")
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)", (persona or "",))
+                private = False
+                if hits:
+                    cur.execute(
+                        "SELECT 1 AS private FROM search_retrieval_index WHERE tenant_id = %s AND id = ANY(%s)"
+                        " AND persona_id IS NOT NULL LIMIT 1",
+                        (tenant, [h.id for h in hits]),
+                    )
+                    private = cur.fetchone() is not None
+                cur.execute(
+                    """INSERT INTO retrieval_query_log
+                       (tenant_id, persona_id, workspace_id, persona_private, request_id, query_text,
+                        caller_decision_type, source_event_id, attribution_missing_reason,
+                        retrieval_mode, model_name, returned_ids, returned_source_event_ids, latency_ms)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING query_log_id""",
+                    (
+                        tenant, persona, getattr(context, "workspace_id", None), private, request_id, query,
+                        caller_decision_type, source_event_id,
+                        ("missing:" + ",".join(missing)) if missing else None,
+                        retrieval_mode, self.embedding_engine.model_name,
+                        [h.id for h in hits],
+                        [str(h.metadata.get("source_event_id") or h.evidence_item_id or h.id) for h in hits],
+                        float(latency_ms),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return str(row["query_log_id"])
+
+    def list_query_log(self, context: SearchAccessContext, limit: int = 1000) -> list[dict[str, Any]]:
+        """Read the log under the caller's scope; other personas' private rows are invisible."""
+        tenant = getattr(context, "tenant_id", "default") or "default"
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('pantheon.current_persona', %s, true)",
+                            (getattr(context, "persona_id", None) or "",))
+                cur.execute("SELECT * FROM retrieval_query_log ORDER BY recorded_at DESC LIMIT %s", (limit,))
+                return list(cur.fetchall())
+
+    def record_label(self, *, tenant_id: str, query_log_id: str, source_event_id: str, labelled_by: str) -> None:
+        if not (query_log_id and source_event_id and labelled_by):
+            raise ValueError("label needs query_log_id, source_event_id and labelled_by")
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (tenant_id,))
+                cur.execute(
+                    "INSERT INTO retrieval_query_labels (query_log_id, tenant_id, source_event_id, labelled_by)"
+                    " VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                    (query_log_id, tenant_id, source_event_id, labelled_by),
+                )
+            conn.commit()
+
     def search(
         self,
         query: str,

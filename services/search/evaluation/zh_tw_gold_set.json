@@ -1,7 +1,0 @@
-{
-  "schema_version": "pantheon.recorded-retrieval-gold.v1",
-  "task_id": "RETRIEVAL-BACKEND-ACTIVATION-20261113",
-  "status": "unavailable",
-  "reason": "No recorded real query set with source_event_id labels was supplied; templated fixtures are not admissible.",
-  "queries": []
-}

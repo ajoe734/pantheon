@@ -497,8 +497,8 @@ services:
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
       SEARCH_PIPELINE_RETENTION_RUNS: ${SEARCH_PIPELINE_RETENTION_RUNS:-500}
       SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
-      # Explicit fallback until real gold-set/model/hosted acceptance is complete.
-      PANTHEON_SEARCH_BACKEND: ${PANTHEON_SEARCH_BACKEND:-jsonl}
+      # Hybrid Postgres backend is the default; jsonl only by explicit override and always reported.
+      PANTHEON_SEARCH_BACKEND: ${PANTHEON_SEARCH_BACKEND:-postgres_pgvector}
       PANTHEON_SEARCH_POSTGRES_DSN: postgresql://retrieval_owner:${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}@retrieval-postgres:5432/pantheon_retrieval
       SEARCH_EMBEDDING_CACHE_DIR: /opt/search/models
       HF_HUB_OFFLINE: "1"
@@ -512,7 +512,6 @@ services:
     volumes:
       - search-data:/data/search
       - source-ingest-data:/data/source-ingest:ro
-      - retrieval-models:/opt/search/models:ro
     ports:
       - "${SEARCH_PORT:-18098}:8098"
     depends_on:
@@ -3222,7 +3221,6 @@ services:
         required: false
 volumes:
   retrieval-postgres-data:
-  retrieval-models:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
   dev-paper-governance-tokens:

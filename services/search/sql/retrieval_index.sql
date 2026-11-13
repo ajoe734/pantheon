@@ -96,3 +96,59 @@ USING (
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON search_retrieval_index TO pantheon_retrieval;
+
+-- Retrieval query log: one row per query served on the hybrid backend.
+-- Written only by the search service request path; there is no seed or
+-- synthetic writer. persona_private rows keep their persona scope under RLS.
+CREATE TABLE IF NOT EXISTS retrieval_query_log (
+    query_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    persona_id VARCHAR(64),
+    workspace_id VARCHAR(64),
+    persona_private BOOLEAN NOT NULL DEFAULT FALSE,
+    request_id TEXT NOT NULL,
+    query_text TEXT NOT NULL,
+    caller_decision_type TEXT,
+    source_event_id TEXT,
+    attribution_missing_reason TEXT,
+    retrieval_mode VARCHAR(32) NOT NULL,
+    model_name TEXT NOT NULL,
+    returned_ids TEXT[] NOT NULL DEFAULT '{}',
+    returned_source_event_ids TEXT[] NOT NULL DEFAULT '{}',
+    latency_ms DOUBLE PRECISION NOT NULL,
+    origin VARCHAR(32) NOT NULL DEFAULT 'live_request' CHECK (origin = 'live_request'),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_query_log_recorded
+    ON retrieval_query_log (tenant_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS retrieval_query_labels (
+    query_log_id UUID NOT NULL REFERENCES retrieval_query_log(query_log_id),
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    source_event_id TEXT NOT NULL,
+    labelled_by TEXT NOT NULL,
+    labelled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (query_log_id, source_event_id)
+);
+
+ALTER TABLE retrieval_query_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE retrieval_query_log FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_log_scope_policy ON retrieval_query_log;
+CREATE POLICY query_log_scope_policy ON retrieval_query_log
+FOR ALL
+USING (
+    tenant_id = current_setting('pantheon.current_tenant', true)
+    AND current_setting('pantheon.current_tenant', true) <> ''
+    AND (persona_private = FALSE
+         OR persona_id = NULLIF(current_setting('pantheon.current_persona', true), ''))
+);
+ALTER TABLE retrieval_query_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE retrieval_query_labels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_label_scope_policy ON retrieval_query_labels;
+CREATE POLICY query_label_scope_policy ON retrieval_query_labels
+FOR ALL
+USING (tenant_id = current_setting('pantheon.current_tenant', true)
+       AND current_setting('pantheon.current_tenant', true) <> '');
+
+GRANT SELECT, INSERT ON retrieval_query_log TO pantheon_retrieval;
+GRANT SELECT, INSERT ON retrieval_query_labels TO pantheon_retrieval;

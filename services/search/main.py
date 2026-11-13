@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -428,6 +429,8 @@ class SearchQueryBody(BaseModel):
     require_citations: bool = True
     filters_applied: dict[str, Any] = Field(default_factory=dict)
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
+    caller_decision_type: str | None = None
+    source_event_id: str | None = None
 
 
 class StructuredAlphaQueryBody(BaseModel):
@@ -572,6 +575,34 @@ def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str 
     return watermarks
 
 
+class _QueryLoggingBackend:
+    """Records every query served on the hybrid backend; a failed record fails the query."""
+
+    def __init__(self, inner: Any, request_id: str, caller_decision_type: str | None, source_event_id: str | None) -> None:
+        self._inner = inner
+        self._request_id = request_id
+        self._caller = (caller_decision_type, source_event_id)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def search(self, query: str, context: Any = None, *args: Any, **kwargs: Any) -> Any:
+        started = time.perf_counter()
+        hits = self._inner.search(query=query, context=context, *args, **kwargs)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        try:
+            self._inner.record_query(
+                context=context, request_id=self._request_id, query=query,
+                retrieval_mode=str(kwargs.get("mode", "hybrid")), hits=hits, latency_ms=latency_ms,
+                caller_decision_type=self._caller[0], source_event_id=self._caller[1],
+            )
+        except SearchCapabilityUnavailableError:
+            raise
+        except Exception as exc:
+            raise SearchCapabilityUnavailableError("retrieval_query_log_unavailable") from exc
+        return hits
+
+
 def create_app(
     index_store_path: Path | None = None,
     evidence_store_path: Path | None = None,
@@ -648,7 +679,17 @@ def create_app(
     hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
     alpha_eng = alpha_engine or StructuredAlphaEngine()
 
-    def _build_gateway(repository: InMemoryEvidenceRepository, adapter: KeywordIndexAdapter | None = None) -> SearchGateway:
+    def _build_gateway(
+        repository: InMemoryEvidenceRepository,
+        adapter: KeywordIndexAdapter | None = None,
+        query_body: "SearchQueryBody | None" = None,
+    ) -> SearchGateway:
+        served_backend = retrieval_backend
+        if retrieval_backend is not None and query_body is not None:
+            served_backend = _QueryLoggingBackend(
+                retrieval_backend, query_body.request_id,
+                query_body.caller_decision_type, query_body.source_event_id,
+            )
         return SearchGateway(
             repository=repository,
             retriever=kw_retriever,
@@ -658,7 +699,7 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
-            retrieval_backend=retrieval_backend,
+            retrieval_backend=served_backend,
         )
 
     def capabilities() -> dict[str, Any]:
@@ -964,7 +1005,7 @@ def create_app(
                 filters_applied=body.filters_applied,
             )
 
-            gateway = _build_gateway(repository, adapter=index_adapter)
+            gateway = _build_gateway(repository, adapter=index_adapter, query_body=body)
             response = gateway.search(request, context)
             snapshot = store.get_snapshot(response.request_id)
             return {

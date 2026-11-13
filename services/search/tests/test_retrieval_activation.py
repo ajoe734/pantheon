@@ -171,7 +171,24 @@ def test_pg_sql_segmentation_rls_and_private_persona_isolation(monkeypatch):
             backend.delete_document("activation-private", tenant_id=tenant, hard=True)
 
 
-def test_evaluation_refuses_missing_recorded_queries():
-    from services.search.evaluation.run_retrieval_eval import GOLD_PATH, load_gold
+def test_shipped_manifest_is_accepted_and_complete():
+    manifest = json.loads((Path(__file__).parents[1] / "model-manifest.json").read_text())
+    assert manifest["validation_status"] == "accepted"
+    assert manifest["model_name"] == "intfloat/multilingual-e5-large"
+    assert all(len(v["sha256"]) == 64 and v["source_path"] for v in manifest["files"].values())
+
+
+def test_evaluation_unavailable_below_150_and_refuses_templates():
+    from services.search.evaluation.run_retrieval_eval import refuse_templated, score
+    rows = [{"query_log_id": f"q{i}", "query_text": f"query {i}"} for i in range(10)]
     with pytest.raises(ValueError, match="150"):
-        load_gold(GOLD_PATH)
+        score(rows, {r["query_log_id"]: {"s"} for r in rows})
+    with pytest.raises(ValueError, match="templated"):
+        refuse_templated([f"台積電 {i} 營收" for i in range(200)])
+
+
+def test_evaluation_without_dsn_reports_unavailable(monkeypatch, capsys):
+    from services.search.evaluation.run_retrieval_eval import main
+    monkeypatch.delenv("PANTHEON_SEARCH_POSTGRES_DSN", raising=False)
+    assert main([]) == 2
+    assert "unavailable" in capsys.readouterr().out
