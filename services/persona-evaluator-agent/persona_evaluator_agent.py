@@ -317,9 +317,11 @@ def run_once(
     def apply(state: dict[str, Any]) -> None:
         nonlocal created, deduped, skipped, attempts, conflicts
         entry_result = {"ranking_snapshot_id": snapshot_id, "run_id": run_id, "evaluated_at": moment.isoformat(),
-                        "provider": "openclaw", "items": recs}
+                        "provider": "openclaw", "items": recs,
+                        "paper_persona_ids": sorted(i["persona_id"] for i in items if str(i.get("stage") or "").lower() == "paper_running")}
         if reused:
             entry_result.update({k: saved[k] for k in ("run_id", "evaluated_at")})
+            entry_result["paper_persona_ids"] = saved.get("paper_persona_ids", entry_result["paper_persona_ids"])
         state["results"][f"{quarter}|{snapshot_id}"] = entry_result
         state["latest"][quarter] = snapshot_id
         stale = sorted((v["evaluated_at"], k) for k, v in state["results"].items() if k.startswith(f"{quarter}|"))
@@ -401,6 +403,121 @@ def run_once(
         record["conflicts"] = conflicts
     store.update(lambda s: s.update(last_run=record))
     return record
+
+
+# The governed paper cycle rides the existing allocation-evaluation route with this authority_mode; the Capital owner
+# (operator role, paper pool and paper environment only) runs the cycle and is idempotent per tenant+quarter+pool.
+PAPER_CYCLE_PATH = "/bff/management/allocation-policy/evaluate"
+PAPER_CYCLE_MODE = "governed_paper_quarterly_cycle"
+
+
+def _fraction(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value in (float("inf"), float("-inf")):
+        return None
+    return float(value)
+
+
+def pool_health_factors(health: Any, policy: Any) -> dict[str, Any]:
+    """Derive the allocation factors from a persona's recorded strategy-pool health, never from a default.
+
+    risk_budget_factor = min(1, gross risk-budget utilisation / budget_full): an under-used budget earns less.
+    capacity_factor needs the O-21 capacity fact (budget full and admitted candidates waiting). The pool health
+    record carries no such observation, so it stays 1.0 with the reason recorded and the status is never "known".
+    Idle-day share is not a capacity fact and is never substituted for it.
+    """
+    health = health if isinstance(health, dict) else {}
+    out: dict[str, Any] = {"risk_budget_factor": 1.0, "capacity_factor": 1.0, "source": "strategy_pool_health", "reasons": {}}
+
+    def known(key: str) -> float | None:
+        entry = health.get(key)
+        return _fraction(entry.get("value")) if isinstance(entry, dict) and entry.get("status") == "known" else None
+
+    gross = known("gross_utilisation")
+    budget_full = _fraction((policy or {}).get("budget_full")) if isinstance(policy, dict) else None
+    if gross is not None and budget_full and gross >= 0:
+        out["risk_budget_factor"] = round(min(1.0, gross / budget_full), 8)
+    else:
+        out["reasons"]["risk_budget_factor"] = "gross_utilisation_or_budget_full_unknown"
+    out["reasons"]["capacity_factor"] = "capacity_observation_unavailable"
+    out["status"] = "known" if not out["reasons"] else "partial" if len(out["reasons"]) < 2 else "unavailable"
+    return out
+
+
+def collect_pool_health(persona_ids: list[str], *, persona_url: str, token: str, tenant: str,
+                        fetch: Callable[..., Any] = _http) -> dict[str, dict[str, Any]]:
+    """Per persona: factors from the current pool version's recorded health, else 1.0 plus the reason."""
+    result: dict[str, dict[str, Any]] = {}
+    headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+    for persona_id in persona_ids:
+        if not token or not tenant or not persona_url:
+            result[persona_id] = {"risk_budget_factor": 1.0, "capacity_factor": 1.0, "status": "unavailable",
+                                  "reason": "persona service credential or tenant missing"}
+            continue
+        try:
+            pool = fetch(f"{persona_url}/api/personas/{quote(persona_id, safe='')}/strategy-pool", headers=headers)
+            decision = pool.get("decision") if isinstance(pool, dict) else None
+            health = (decision or {}).get("health")
+            if not health:
+                raise ValueError("no recorded pool health")
+            result[persona_id] = pool_health_factors(health, (decision or {}).get("policy"))
+        except Exception as exc:  # absent or unreadable pool data: factors stay 1 and the reason is recorded
+            result[persona_id] = {"risk_budget_factor": 1.0, "capacity_factor": 1.0, "status": "unavailable",
+                                  "reason": f"pool health unavailable: {exc}"}
+    return result
+
+
+def closed_quarter_snapshot(state: dict[str, Any], current_quarter: str) -> tuple[str, str] | None:
+    """Most recent quarter strictly before the current one with a persisted ranking snapshot."""
+    def key(q: str) -> tuple[int, int]:
+        year, _, number = q.partition("-Q")
+        return int(year), int(number)
+    closed = [q for q in state["latest"] if q != current_quarter and key(q) < key(current_quarter)]
+    if not closed:
+        return None
+    quarter = max(closed, key=key)
+    return quarter, state["latest"][quarter]
+
+
+def paper_cycle_once(
+    *, store: Store, bff_url: str, bff_headers: dict[str, str], persona_url: str, persona_token: str,
+    tenant: str, paper_pool_id: str, fetch: Callable[..., Any] = _http, now: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """At quarter close ask the BFF/Capital owner for the governed paper allocation cycle (once per quarter).
+
+    The owner recomputes everything from the persisted snapshot and is idempotent per tenant+quarter+pool,
+    so a rerun or catch-up never creates a second proposal. Nothing is synthesised here: no configured pool,
+    no closed-quarter snapshot or an owner refusal leaves a recorded status and no allocation.
+    """
+    moment = datetime.fromtimestamp(now(), timezone.utc)
+    at = moment.isoformat()
+    if not paper_pool_id:
+        return {"status": "not_configured", "reason": "PERSONA_EVALUATOR_PAPER_POOL_ID is not set", "at": at}
+    state = store.load()
+    target = closed_quarter_snapshot(state, quarter_of(moment))
+    if target is None:
+        return {"status": "waiting_for_quarter_close", "at": at}
+    quarter, snapshot_id = target
+    cycle_key = f"{quarter}|{paper_pool_id}"
+    done = state.get("paper_cycles", {}).get(cycle_key)
+    if done and done.get("status") == "applied":
+        return {**done, "reused": True}
+    saved = state["results"].get(f"{quarter}|{snapshot_id}") or {}
+    health = collect_pool_health(saved.get("paper_persona_ids") or [], persona_url=persona_url, token=persona_token,
+                                 tenant=tenant, fetch=fetch)
+    body = {"authority_mode": PAPER_CYCLE_MODE, "quarter": quarter, "ranking_snapshot_id": snapshot_id,
+            "capital_pool_id": paper_pool_id, "pool_health": health}
+    headers = {**bff_headers, "X-Tenant-Id": tenant, "Idempotency-Key": f"paper-cycle:{tenant}:{quarter}:{paper_pool_id}"}
+    try:
+        resp = fetch(f"{bff_url}{PAPER_CYCLE_PATH}", data=body, headers=headers)
+        data = resp["data"]
+        record = {"status": "applied" if data.get("applied") else "pending", "quarter": quarter, "ranking_snapshot_id": snapshot_id,
+                  "rebalance_id": data["rebalance"]["rebalance_id"], "replayed": bool(data.get("replayed")), "at": at}
+    except Exception as exc:
+        record = {"status": "degraded", "reason": f"paper allocation cycle failed: {exc}", "quarter": quarter,
+                  "ranking_snapshot_id": snapshot_id, "at": at}
+    store.update(lambda s: s.setdefault("paper_cycles", {}).__setitem__(cycle_key, record))
+    return record
+
 
 
 def pattern_review_once(
@@ -515,6 +632,15 @@ def main() -> None:
             persona_token = read_token("PERSONA_EVALUATOR_PERSONA_TOKEN")
         except Degraded:
             persona_token = ""
+        paper_cycle = paper_cycle_once(
+            store=store, bff_url=env("PERSONA_EVALUATOR_BFF_URL", "http://operator-bff:8001"),
+            bff_headers={"Authorization": f"Bearer {bff_token}"},
+            persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
+            persona_token=persona_token, tenant=env("PANTHEON_TENANT_ID", "default"),
+            paper_pool_id=env("PERSONA_EVALUATOR_PAPER_POOL_ID", ""),
+        )
+        store.update(lambda s: s.update(last_paper_cycle=paper_cycle))
+        print(json.dumps({"paper_cycle": paper_cycle}), flush=True)
         pattern = pattern_review_once(
             persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
             token=persona_token, tenant=env("PANTHEON_TENANT_ID", ""),

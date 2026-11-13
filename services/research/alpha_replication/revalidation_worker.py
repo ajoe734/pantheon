@@ -212,6 +212,7 @@ class AlphaRevalidationWorker:
         self._backtest_run_store_path = self._data_dir / "backtest_runs.json"
         self._backtest_run_store = self._new_backtest_run_store()
         self._outbox_path = self._data_dir / "research_memory_outbox.jsonl"
+        self._entry_only_path = self._data_dir / "entry_only_registrations.json"
         self._metrics = self._load_metrics()
         self._loop_records = self._load_loop_records()
 
@@ -539,7 +540,7 @@ class AlphaRevalidationWorker:
         )
         spec = self._validate_registry_binding(entry, registry_entry)
         attempt_number = int(entry.get("attempt_count") or 0) + 1
-        task = self._build_experiment_task(entry, spec)
+        task = self._build_experiment_task(entry, spec, attribution=registry_entry.get("metadata"))
         task_receipt = self._authority.ensure_task(
             task,
             approval_decision_id=str(entry["approval_decision_id"]),
@@ -672,6 +673,7 @@ class AlphaRevalidationWorker:
         self,
         entry: Mapping[str, Any],
         spec: Mapping[str, Any],
+        attribution: Mapping[str, Any] | None = None,
     ) -> ExperimentTask:
         tenant_id = str(entry["tenant_id"])
         strategy_spec_id = str(entry["strategy_spec_id"])
@@ -703,8 +705,100 @@ class AlphaRevalidationWorker:
                 "strategy_spec_checksum": entry["checksum"],
                 "production_activation": "disabled",
                 "research_authority_required": True,
+                **{key: value for key, value in dict(attribution or {}).items()
+                   if key in {"persona_id", "sponsor_persona_id", "research_demand", "pool_member"}},
             },
         )
+
+    def _register_entry_only(
+        self,
+        *,
+        task: Any,
+        entry: Mapping[str, Any],
+        run_id: str,
+        screen_contribution: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Durably, idempotently register the entry-only variant of a dropped screen.
+
+        Keyed by tenant + parent spec + entry-only artifact checksum, so a retried
+        attempt returns the existing record instead of registering a duplicate. The
+        record carries the reason and the lineage back to the screened parent.
+        """
+        from services.research.alpha_replication.shared_stores import (
+            _atomic_write,
+            _locked,
+        )
+
+        registration = dict(screen_contribution["re_registration"])
+        key = _short_hash(
+            str(entry["tenant_id"]),
+            str(entry["strategy_spec_id"]),
+            str(registration["artifact_checksum"]),
+            length=24,
+        )
+        registration_id = f"entry-only-{key}"
+        evidence = {k: v for k, v in screen_contribution.items() if k != "re_registration"}
+        record = {
+            "registration_id": registration_id,
+            "candidate_kind": "entry_only",
+            "screen_dropped": True,
+            "reason": registration["reason"],
+            "tenant_id": entry["tenant_id"],
+            "strategy_artifact": registration["strategy_artifact"],
+            "artifact_checksum": registration["artifact_checksum"],
+            "lineage": {
+                "parent_strategy_spec_id": entry["strategy_spec_id"],
+                "parent_strategy_id": entry["strategy_id"],
+                "parent_strategy_spec_checksum": entry["checksum"],
+                "source_task_id": task.task_id,
+                "source_run_id": run_id,
+                "screened_backtest_run_id": evidence.get("screened_backtest_run_id"),
+                "entry_only_backtest_run_id": registration.get("backtest_run_id"),
+            },
+            "screen_contribution": evidence,
+            "registered_at": _utc_now(),
+        }
+        path = self._entry_only_path
+        with _locked(path):
+            try:
+                loaded = (
+                    json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+                )
+            except Exception as exc:  # never overwrite an unreadable registry
+                raise RevalidationAttemptError(
+                    f"entry-only registration store unreadable: {exc}"
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise RevalidationAttemptError("entry-only registration store is corrupt")
+            existing = loaded.get(registration_id)
+            if isinstance(existing, dict):
+                return {**existing, "created": False}
+            loaded[registration_id] = record
+            _atomic_write(path, loaded)
+        return {**record, "created": True}
+
+    def list_entry_only_registrations(
+        self,
+        *,
+        tenant_id: str | None = None,
+        parent_strategy_spec_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read durable entry-only registrations (the retrieval path)."""
+        from services.research.alpha_replication.shared_stores import _locked
+
+        if not self._entry_only_path.exists():
+            return []
+        with _locked(self._entry_only_path):
+            loaded = json.loads(self._entry_only_path.read_text(encoding="utf-8"))
+        return [
+            dict(r)
+            for r in sorted(loaded.values(), key=lambda r: r["registration_id"])
+            if (tenant_id is None or r["tenant_id"] == tenant_id)
+            and (
+                parent_strategy_spec_id is None
+                or r["lineage"]["parent_strategy_spec_id"] == parent_strategy_spec_id
+            )
+        ]
 
     def _new_backtest_run_store(self) -> Any:
         from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
@@ -781,6 +875,7 @@ class AlphaRevalidationWorker:
             ResearchMemoryOutboxRecord,
             ResearchMemoryOutboxStore,
             get_outbox_store,
+            resolve_memory_sponsor,
         )
 
         tx_costs = (
@@ -819,7 +914,9 @@ class AlphaRevalidationWorker:
             artifact_id=str(backtest_summary.get("backtest_run_id") or "") or None,
             source_event_type="research_finding_published",
             source_event_id=run_id,
-            sponsor_persona_id="persona-tw-equity",
+            sponsor_persona_id=resolve_memory_sponsor(
+                dict(task.metadata), dict(entry), dict(entry.get("metadata") or {}),
+            ),
             summary=gate_response.summary,
             headline=f"Replicated Taiwan strategy {entry['strategy_id']}",
             confidence=1.0,
@@ -846,14 +943,12 @@ class AlphaRevalidationWorker:
                 "artifact_refs": artifact_refs,
             },
         )
+        default_store = get_outbox_store()
+        if default_store.data_dir.resolve() == self._data_dir.resolve():
+            return default_store.create_record(outbox_record).to_dict()
         worker_outbox = ResearchMemoryOutboxStore(self._data_dir)
         saved = worker_outbox.create_record(outbox_record)
-        try:
-            default_store = get_outbox_store()
-            if default_store.path.resolve() != worker_outbox.path.resolve():
-                default_store.create_record(outbox_record)
-        except Exception:
-            pass
+        default_store.create_record(outbox_record)
         return saved.to_dict()
 
     def _evaluate(
@@ -896,6 +991,9 @@ class AlphaRevalidationWorker:
             "strategy_artifact",
             "skip_backtest",
             "history_trading_days",
+            "hypothesis_card",
+            "hypothesis_predictions",
+            "mechanism_inputs",
         ):
             evaluation_spec.pop(non_schema_key, None)
 
@@ -942,6 +1040,36 @@ class AlphaRevalidationWorker:
         }
         if isinstance(raw_spec.get("family_id"), str):
             handoff_payload["family_id"] = raw_spec["family_id"]
+        raw_artifact = raw_spec.get("strategy_artifact")
+        raw_dataset = raw_spec.get("backtest_dataset")
+        if (
+            isinstance(raw_artifact, Mapping)
+            and isinstance(raw_artifact.get("strategy_logic"), Mapping)
+            and "screen" in raw_artifact["strategy_logic"]
+        ):
+            # The gate's screen contribution test reruns the candidate's own rules over
+            # the whole boundary, so it needs the exact artifact and market dataset the
+            # approved run used. Unscreened candidates are handed nothing extra.
+            handoff_payload["strategy_artifact"] = dict(raw_artifact)
+            if isinstance(raw_dataset, Mapping):
+                handoff_payload["backtest_dataset"] = dict(raw_dataset)
+
+        raw_card = raw_spec.get("hypothesis_card")
+        raw_predictions = raw_spec.get("hypothesis_predictions")
+        if raw_predictions is None and isinstance(raw_card, Mapping):
+            raw_predictions = raw_card.get("predictions")
+        if isinstance(raw_predictions, list) and raw_predictions:
+            # The gate's mechanism stage tests the card's predictions on the in-sample
+            # window of the same governed dataset the approved run used, with the
+            # observable datasets the spec carries. Nothing is generated here: absent
+            # data leaves a prediction untestable in the gate.
+            handoff_payload["hypothesis_predictions"] = [
+                dict(p) for p in raw_predictions if isinstance(p, Mapping)
+            ]
+            if isinstance(raw_dataset, Mapping):
+                handoff_payload.setdefault("backtest_dataset", dict(raw_dataset))
+            if isinstance(raw_spec.get("mechanism_inputs"), Mapping):
+                handoff_payload["mechanism_inputs"] = dict(raw_spec["mechanism_inputs"])
 
         request = ReplicationRequest(
             candidate_id=run_id,
@@ -963,6 +1091,24 @@ class AlphaRevalidationWorker:
             backtest_run_store=self._backtest_run_store,
         )
         gate_response = gate.evaluate_candidate(request)
+
+        entry_only_registration: dict[str, Any] | None = None
+        for gate_result in getattr(gate_response, "results", None) or []:
+            contribution = (getattr(gate_result, "details", None) or {}).get(
+                "screen_contribution"
+            )
+            if (
+                isinstance(contribution, Mapping)
+                and contribution.get("status") == "screen_dropped"
+                and isinstance(contribution.get("re_registration"), Mapping)
+            ):
+                entry_only_registration = self._register_entry_only(
+                    task=task,
+                    entry=entry,
+                    run_id=run_id,
+                    screen_contribution=contribution,
+                )
+                break
 
         gate_metadata = getattr(gate_response, "metadata", None)
         backtest_summary: dict[str, Any] = (
@@ -991,6 +1137,8 @@ class AlphaRevalidationWorker:
         artifact_refs = [backtest_ref] if backtest_ref else []
 
         run_metadata: dict[str, Any] = {
+            **{key: value for key, value in dict(task.metadata).items()
+               if key in {"persona_id", "sponsor_persona_id", "research_demand", "pool_member"}},
             "dispatch_mode": "authoritative",
             "configured_mode": self._configured_mode,
             "production_activation": "disabled",
@@ -1005,9 +1153,20 @@ class AlphaRevalidationWorker:
             "approval_decision_id": entry["approval_decision_id"],
             "strategy_spec_checksum": entry["checksum"],
             "replication_gate": gate_response.to_dict(),
+            "mechanism_status": (gate_metadata or {}).get("mechanism_status")
+            if isinstance(gate_metadata, Mapping)
+            else None,
+            "mechanism_support": (gate_metadata or {}).get("mechanism_support")
+            if isinstance(gate_metadata, Mapping)
+            else None,
             "backtest_run_id": backtest_run_id,
             "backtest_summary": dict(backtest_summary),
         }
+        if entry_only_registration is not None:
+            run_metadata["entry_only_registration"] = {
+                k: entry_only_registration[k]
+                for k in ("registration_id", "artifact_checksum", "reason", "created")
+            }
 
         admission_status = getattr(gate_response, "admission_status", None)
         if admission_status == CandidateAdmissionStatus.INSUFFICIENT_HISTORY:
@@ -1058,15 +1217,19 @@ class AlphaRevalidationWorker:
                     )
                     run_metadata["promotion_request"] = promotion_request.to_dict()
                     run_metadata["promotion_gate_entry"] = draft_entry
-            finding_record = self._publish_research_finding(
-                run_id=run_id,
-                task=task,
-                entry=entry,
-                gate_response=gate_response,
-                backtest_summary=backtest_summary,
-                backtest_ref=backtest_ref,
-            )
-            run_metadata["research_finding_outbox_id"] = finding_record.get("outbox_id")
+            from services.research.research_memory_outbox import ResearchMemoryEligibilityError
+            try:
+                finding_record = self._publish_research_finding(
+                    run_id=run_id,
+                    task=task,
+                    entry=entry,
+                    gate_response=gate_response,
+                    backtest_summary=backtest_summary,
+                    backtest_ref=backtest_ref,
+                )
+                run_metadata["research_finding_outbox_id"] = finding_record.get("outbox_id")
+            except ResearchMemoryEligibilityError as exc:
+                run_metadata["memory_writeback_error"] = str(exc)
 
         common = {
             "run_id": run_id,

@@ -43,6 +43,52 @@ class DictRecord(dict):
         return dict(self)
 
 
+class AgoraEvidenceStore:
+    """Agora human-evidence owner over the single durable dataset inbox.
+
+    Admission and downstream publication share the existing inbox transaction;
+    there is no second notes table/outbox write that can be lost on a crash.
+    """
+
+    def __init__(self, dataset_store: Any) -> None:
+        self.inbox = dataset_store
+
+    def admit(self, evidence: Any, **scope: Any) -> Any:
+        from services.control_plane.bff.agora.dataset_extraction.extractor import admit_evidence
+        return admit_evidence(evidence, store=self.inbox, **scope)
+
+    def get(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Any:
+        return self.inbox.get_inbox_entry(evidence_id, tenant_id=tenant_id, user_id=user_id)
+
+    def list_persona(self, *, tenant_id: str, user_id: str, persona_id: str) -> List[Dict[str, Any]]:
+        # Keep pending/failed evidence visible to Observe independently of L5.
+        return [
+            item
+            for status in ("pending", "processing", "processed", "failed")
+            for item in self.inbox._list_inbox(tenant_id=tenant_id, user_id=user_id, status=status)
+            if item["persona_id"] == persona_id
+        ]
+
+    def pending_scopes(self, limit: int = 25) -> List[Any]:
+        """Discover bounded durable work after restart, including expired leases."""
+        if self.inbox.backend == "memory":
+            with self.inbox._lock:
+                return list(dict.fromkeys(
+                    (item["tenant_id"], item["user_id"])
+                    for item in self.inbox._inbox.values()
+                    if item["status"] in {"pending", "processing"}
+                ))[:limit]
+        with self.inbox._connect() as conn:
+            rows = conn.execute(
+                f"SELECT tenant_id, user_id FROM {self.inbox._inbox_table} "
+                "WHERE status = 'pending' OR (status = 'processing' AND "
+                "(lease_expires_at IS NULL OR lease_expires_at <= now())) "
+                "GROUP BY tenant_id, user_id ORDER BY min(created_at) LIMIT %s",
+                (limit,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+
 class AgoraStore:
     """
     Concrete persistent store for Agora write operations.

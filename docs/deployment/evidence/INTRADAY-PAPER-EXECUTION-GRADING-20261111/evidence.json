@@ -1,0 +1,50 @@
+{
+  "task": "INTRADAY-PAPER-EXECUTION-GRADING-20261111",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "plan_ref": "DEV_PLAN_STRATEGY_DISCOVERY_2026-11-10 §4 K7; SD_INTRADAY_MINUTE_BARS_2026-11-11 §6.4, §7, §9 K7",
+  "base_commit": "a5e4d495574cfa9f645813689daaf87832df1c52",
+  "tracks": {
+    "source": {
+      "status": "implemented_pending_independent_review",
+      "artifacts": [
+        "services/execution/lean_runtime/paper_signal_producer.py",
+        "services/execution/lean_runtime/intraday_settlement.py",
+        "services/execution/lean_runtime/instrument_candidates.py",
+        "services/execution/lean_runtime/test_intraday_paper_grading.py"
+      ],
+      "summary": [
+        "intraday_settlement.py implements the SD 6.4 six-step timeline as pure functions: plan_next_session_decision (step 3 window: bar_availability_ts <= decision time < D+1 08:55; target = D+1 09:00 first bar), pending_record (step 4 pending_settlement, no fill), settle (step 5: fill only from the real, reconciled, non-partial D+1 first bar open, delayed_simulated, price_observed_at recorded; expired_no_price at D+2 08:55), grade (step 6: first-bar open to horizon-th bar close, truncated at 13:30 and flagged), advance_decision (immutable first-write records over the existing decision-record store).",
+        "A bar whose availability stamp is at/before its session close, or a D bar, can never settle D+1; D close and past D opens are never fill sources; a late-reconciled D+1 bar after expiry is still expired_no_price.",
+        "paper_signal_producer: the snapshot is selected by the declared bar_frequency (snapshots/latest?frequency= only for intraday; the daily URL is unchanged), dataset/frequency isolation fails closed (market_input_frequency_mismatch), a missing stored bar is intraday_bar_missing, live-session decisions are no_live_intraday_feed, the feature clock is the real submission time, and the pending_settlement record is persisted before the order.",
+        "instrument_candidates: next_trading_day, session_bounds, submission_cutoff, in_regular_session built on the existing governed calendar (is_trading_day); no new calendar.",
+        "The grading horizon is the artifact's hold_bars (the only existing, mutation-classified holding parameter); 1 bar if absent.",
+        "Review fix (P1 early execution): an intraday decision is parked as pending_settlement (record + per-binding first-write index slots) and is NOT enqueued; the consumer sees nothing before settlement.",
+        "Review fix (P1 no caller): PaperSignalProducer.produce/tick now runs settle_pending_intraday first: it reads the pending index, calls advance_decision with a reconciled-only reader (default: intraday_bars.load_bars over IntradayStore; missing/quarantined/unreconciled -> [] so the decision reaches expired_no_price at D+2 08:55; a reader fault leaves it pending), and only a settled decision is released into the ordinary queue with market_price/market_data = real D+1 first-bar open, delayed_simulated, price_observed_at, is_live_fill_evidence=false. Release is marked once (#intraday-enqueued).",
+        "Review fix 2 (P1 closing auction): plan_next_session_decision accepts the governed K3/K4 closing-auction bar_end 13:31 (only one minute past close); availability is still required to be after the session close and never backdated. Tested through real IntradayStore -> reconcile_day -> LatestMarketSnapshotStore -> to_public_dict -> _market_input_for_binding.",
+        "Review fix 2 (P1 symbol): reconciled_intraday_bar_reader normalises the execution symbol with normalize_underlying_code for the native shard read (2330/2330.TW/2330.TWSE all return 271 bars) and restores the validated execution symbol on every bar.",
+        "Review fix 2 (P2 deferred grading): settle_pending_intraday no longer skips already-enqueued decisions before advance_decision; grading proceeds independently, the order is never re-enqueued. Two-tick test: first-open settles+enqueues once, horizon bar added, tick two writes #intraday-grade.",
+        "Review fix 2 (P2 no invented grid): _bar_end_grid removed. The snapshot only has the last real event_time, so only the last close is projected as a PIT observation; longer-history inputs fail closed (market_input_invalid) unless inline PIT features are supplied.",
+        "Review fix 3 (P1 durable discovery): settle_pending_intraday scans the per-binding day index across PENDING_DISCOVERY_DAYS=45 (> the 30-day decision-record retention) instead of the last 8 calendar days, so D=2026-02-11 -> D+1=2026-02-23 settles; tests: long-holiday settlement, restart-by-new-producer beyond 8 days, long-holiday missing-price expired_no_price.",
+        "Review fix 3 (P2 1m horizon): for 1m the grading grid is 271 bars (09:00..13:30 closing-auction bar); horizon 270/271/overflow tested incl. the real reconciled reader (271 bars, last close 104).",
+        "Review fix 4 (P1 index/pending ordering): _park_pending_intraday now writes the per-binding discovery index slot first and the pending record second, both idempotent first-write; a retry repairs a pending record whose index is missing. An interruption between the two leaves only a skipped index entry (advance_decision returns no_pending_record), never an undiscoverable pending record. Regressions: test_interrupted_pending_persistence_recovers_on_restart_and_settles (fault injected on the pending put, restart, settle) and test_pending_without_index_from_old_ordering_is_repaired_on_retry. test_intraday_paper_grading.py: 51 passed. Hosted verification remains unverified."
+      ],
+      "verification": {
+        "command": "/tmp/bffvenv/bin/python -m pytest test_intraday_paper_grading test_current_artifact_signal test_paper_signal_producer test_intraday_snapshot_projection (PYTHONPATH=/tmp/agy-venv/lib/python3.12/site-packages)",
+        "result": "192 passed, 15 subtests passed; test_intraday_paper_grading.py 49 passed; the 3 long-holiday tests fail with an 8-day window"
+      },
+      "known_limits": [
+        "Snapshot-only (no inline features) minute strategies needing more than one observation fail closed: the public snapshot carries no per-observation timestamps.",
+        "Intraday expression-layer decisions are degraded (intraday_expression_unsupported), not parked."
+      ]
+    },
+    "hosted": {
+      "status": "not_run",
+      "gaps": [
+        "No real-provider probe, hosted run or real D/D+1 timestamps were produced; hosted proof belongs to INTRADAY-HOSTED-ACCEPTANCE-20261111 (W5).",
+        "Reconciled-only reader is wired in the producer tick; no real IntradayStore D/D+1 data or hosted run was exercised (INTRADAY-HOSTED-ACCEPTANCE-20261111, W5).",
+        "Live intraday remains unavailable by design (no_live_intraday_feed); no feed authorisation path was added."
+      ]
+    }
+  }
+}

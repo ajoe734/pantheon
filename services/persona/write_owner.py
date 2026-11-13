@@ -29,6 +29,7 @@ from services.foundation.reliable_delivery import (
     build_record_store,
 )
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.persona.harness import PersistentHarnessOwner, register_harness_routes
 
 
 def _utc_now() -> str:
@@ -801,6 +802,8 @@ class PersistentPersonaOwner:
                 "Persona creation must start in 'draft'; use the governed lifecycle endpoint"
             )
         persona_id = str(request.persona_id or f"persona-{uuid.uuid4().hex[:12]}")
+        if "persona_harness" in request.metadata:
+            raise PersonaOwnerError("persona_harness metadata is owned by harness routes")
         created_at = _utc_now()
         record = PersonaBody(
             persona_id=persona_id,
@@ -988,6 +991,8 @@ class PersistentPersonaOwner:
         *,
         allow_lifecycle: bool = False,
     ) -> dict[str, Any]:
+        if request.metadata and "persona_harness" in request.metadata:
+            raise PersonaOwnerError("persona_harness metadata is owned by harness routes")
         record = dict(current)
         patch_fields = request.model_fields_set - {"actor_id"}
         if "lifecycle_state" in patch_fields:
@@ -1788,6 +1793,7 @@ def create_app(
     reflection_provider: ReflectionProvider | None = None,
     telemetry_fetcher: Callable[[str, str | None, str | None], dict[str, Any] | None] | None = None,
     pattern_episode_lister: EpisodeLister | None = None,
+    harness_owner: PersistentHarnessOwner | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1807,6 +1813,7 @@ def create_app(
         description="Persistent Persona registry write-owner service",
     )
     app.state.persona_owner = persistent_owner
+    register_harness_routes(app, persistent_owner, harness_owner or PersistentHarnessOwner(persistent_owner))
 
     @app.post(
         "/api/personas",

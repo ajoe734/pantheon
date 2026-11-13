@@ -97,6 +97,22 @@ def build_pm12_eligible_persona_records(
     Returns per-dataset record dicts ready to be merged into
     ``PromotionReviewTestReadPorts._data``.
     """
+    from services.execution.lean_runtime.performance_telemetry import quarter_equity_observation
+
+    def owner_observation(as_of, cumulative_pnl, fill_count):
+        equity = 1.0 + cumulative_pnl
+        return {
+            **quarter_equity_observation(
+                {"pnl": cumulative_pnl, "portfolio_value": equity, "cash": equity,
+                 "initial_cash": 1.0, "pnl_currency": "USD", "fill_count": fill_count,
+                 "valuation_mark_count": 0, "pnl_period_start_at": "2026-01-01T00:00:00Z"},
+                {"valuation_method": "fill_cash_ledger_mark_to_market", "mark_refs": []},
+                as_of=as_of,
+            ),
+            "runtime_id": runtime_id, "binding_id": binding_id,
+            "event_id": f"fixture-quarter-{runtime_id}-{as_of}",
+        }
+
     return {
         "personas": {
             persona_id: {
@@ -107,8 +123,8 @@ def build_pm12_eligible_persona_records(
                 "tenant_id": tenant_id,
                 "mandate": "alpha_research_and_paper_execution",
                 "strategy_family": "momentum",
-                "created_at": "2026-03-01T00:00:00Z",
-                "last_active_at": "2026-04-11T10:00:00Z",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_active_at": "2026-01-15T00:00:00Z",
                 "metadata": {
                     "archetype": "momentum",
                     "risk_level": "low",
@@ -146,12 +162,38 @@ def build_pm12_eligible_persona_records(
                 "runtime_id": runtime_id,
                 "window": "1h",
                 "pnl": pnl,
+                # Test ledger: 0.85 profit on 1.0 capital is an 85% return.
+                # Keep its observation in Q1 at the fixture contract's clock.
+                "initial_cash": 1.0,
+                "pnl_currency": "USD",
+                "pnl_period_start_at": "2026-01-01T00:00:00Z",
+                "pnl_at": "2026-01-15T00:00:00Z",
+                "quarter_equity_observations": [
+                    owner_observation("2026-01-01T00:00:00Z", 0.0, 0),
+                    owner_observation("2026-01-02T00:00:00Z", -drawdown, 1),
+                    owner_observation("2026-01-15T00:00:00Z", pnl, 120),
+                ],
+                # Explicit local order facts for the fixture's fill-quality input.
+                # Partial completion is quantity based; no legacy scalar fallback.
+                "order_execution_observations": [
+                    {"kind": "submission", "runtime_id": runtime_id, "binding_id": binding_id,
+                     "order_id": f"fixture-order-{runtime_id}",
+                     "event_id": f"fixture-submitted-{runtime_id}",
+                     "as_of": "2026-01-14T00:00:00Z", "quantity": 100.0},
+                    {"kind": "fill", "runtime_id": runtime_id, "binding_id": binding_id,
+                     "order_id": f"fixture-order-{runtime_id}",
+                     "fill_id": f"fixture-fill-{runtime_id}",
+                     "event_id": f"fixture-filled-{runtime_id}",
+                     "as_of": "2026-01-15T00:00:00Z", "quantity": 100.0 * fill_rate},
+                ],
+                "fill_rate_at": "2026-01-15T00:00:00Z",
+                "avg_slippage_bps_at": "2026-01-15T00:00:00Z",
                 "drawdown": drawdown,
                 "sharpe_ratio": sharpe_ratio,
                 "total_trades": 120,
                 "fill_rate": fill_rate,
                 "avg_slippage_bps": avg_slippage_bps,
-                "collected_at": "2026-04-10T15:00:00Z",
+                "collected_at": "2026-01-15T00:00:00Z",
             },
         },
         "sessions": {

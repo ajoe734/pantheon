@@ -1,0 +1,58 @@
+..................................................................................................................... [ 39%]
+...................................................................... [ 63%]
+....................................................... [ 82%]
+...................................................                      [100%]
+=============================== warnings summary ===============================
+services/research/strategy_spec/normalizer.py:21
+services/research/strategy_spec/normalizer.py:21
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate.py:16: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate_schema.py:80: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/execution/lean_runtime/test_paper_runtime.py: 27 warnings
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate_schema.py:59: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate_schema.py:121: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate.py:1074: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "timestamp": datetime.utcnow().isoformat() + "Z",
+
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+services/execution/lean_runtime/test_paper_runtime.py::PoolMemberBaselineRuntimeTest::test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-fill-rate-aggregation-20261112/services/research/replication/gate_schema.py:160: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_performance_attribution_pages_before_projection_and_uses_snake_case
+  pm12_service.py:812: DeprecationWarning: __package__ != __spec__.parent
+
+services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_performance_attribution_pages_before_projection_and_uses_snake_case
+  pm12_service.py:789: DeprecationWarning: __package__ != __spec__.parent
+
+services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_performance_attribution_pages_before_projection_and_uses_snake_case
+  pm12_service.py:774: DeprecationWarning: __package__ != __spec__.parent
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+293 passed, 47 warnings, 46 subtests passed in 89.58s (0:01:29)

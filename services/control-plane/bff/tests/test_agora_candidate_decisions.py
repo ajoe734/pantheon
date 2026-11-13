@@ -514,11 +514,11 @@ def _link(service, candidate, approval, *, key="approval-link-1", etag=None):
     )
 
 
-def test_formal_approval_is_distinct_canonical_linkage_and_non_executing() -> None:
+def test_formal_rejection_is_distinct_canonical_linkage_and_non_executing() -> None:
     service = _service()
     candidate = _accepted(service)
     validation = _validate(service, candidate).resource
-    approval = _approval(candidate, validation)
+    approval = _approval(candidate, validation, outcome="rejected")
     stored = _link(service, candidate, approval).resource
 
     assert stored["approval_decision_id"] == "approval-1"
@@ -562,7 +562,7 @@ def test_formal_approval_requires_current_validation_canonical_store_etag_and_id
     with pytest.raises(CandidateDecisionConflict, match="validation"):
         _link(service, candidate, approval_without_validation, key="no-validation")
     validation = _validate(service, candidate).resource
-    approval = _approval(candidate, validation)
+    approval = _approval(candidate, validation, outcome="rejected")
     with pytest.raises(CandidateDecisionConflict, match="ETag"):
         _link(service, candidate, approval, key="bad-etag", etag='"stale"')
     first = _link(service, candidate, approval, key="approval-replay")

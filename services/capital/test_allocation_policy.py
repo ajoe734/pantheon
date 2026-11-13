@@ -228,3 +228,67 @@ def test_paper_simulation_fails_closed_outside_paper_authority(
 
     with pytest.raises(ValueError, match=message):
         calculate_paper_simulation_allocations([row])
+
+
+@pytest.mark.parametrize("version", ["pm12-default-v1", "pm12-return-on-capital-v2"])
+def test_pm12_adapter_accepts_historical_and_return_on_capital_versions(version):
+    adapted = build_pm12_allocation_policy_input({"formula_version": version, "tier": "tier-3", "overall_score": 60.2})
+    assert adapted["source_formula_version"] == version
+    assert adapted["rank_score"] == 60.2
+    with pytest.raises(ValueError):
+        build_pm12_allocation_policy_input({"formula_version": version, "tier": "tier-3", "overall_score": None})
+
+
+# --- governed quarterly paper competition (PAPER-ALLOCATION-QUARTERLY-RUN-20261112) -------------------------------
+
+def _paper_row(persona_id, tier, score, **extra):
+    return {"persona_id": persona_id, "stage": "paper_running", "capital_scope": "paper_ledger", "tier": tier,
+            "overall_score": score, "eligible": True, "paper_ledger_id": f"ledger-{persona_id}",
+            "capital_pool_id": "pool-paper", "binding_id": f"binding-{persona_id}", "current_weight": 0.0,
+            "ranking_snapshot_id": "snap", **extra}
+
+
+def test_paper_competition_shares_one_pool_with_real_tier_caps_and_never_exceeds_the_total():
+    from services.capital.allocation_policy import calculate_paper_competition_allocations
+    lines = calculate_paper_competition_allocations([
+        _paper_row("p1", "tier-1", 90.0), _paper_row("p2", "tier-2", 70.0), _paper_row("p3", "tier-3", 60.0)])
+    assert {l["persona_id"]: l["target_weight"] for l in lines} == {"p1": 0.25, "p2": 0.15, "p3": 0.08}
+    assert sum(l["target_weight"] for l in lines) <= 1.0
+    assert all(l["capital_scope"] == "paper_ledger" and l["requires_human_approval"] is False
+               and l["live_capital_side_effects"] is False for l in lines)
+    assert lines[0]["allocation_policy_input"]["policy_version"] == "persona-paper-quarterly-allocation-v1"
+
+
+def test_paper_competition_applies_increase_cap_exclusions_and_factors():
+    from services.capital.allocation_policy import calculate_paper_competition_allocations
+    lines = {l["persona_id"]: l for l in calculate_paper_competition_allocations([
+        _paper_row("p1", "tier-1", 90.0, current_weight=0.10),
+        _paper_row("p2", "tier-1", 90.0, current_weight=0.20, eligible=False, exclusion_codes=["hard_risk_breach"]),
+        _paper_row("p3", "tier-1", 90.0, risk_budget_factor=0.0)])}
+    assert lines["p1"]["target_weight"] == pytest.approx(0.125) and "quarterly_increase_cap_25pct" in lines["p1"]["cap_reasons"]
+    assert lines["p2"]["target_weight"] <= 0.20 and "hard_risk_breach" in lines["p2"]["exclusions"]
+    assert lines["p3"]["target_weight"] == 0.0
+
+
+@pytest.mark.parametrize("bad", [
+    {"stage": "live_running"}, {"capital_scope": "pool"}, {"paper_ledger_id": ""}, {"binding_id": ""},
+    {"capital_sleeve_id": "sleeve"}, {"eligible": None}, {"current_weight": 1.5}, {"capacity_factor": 2},
+    {"risk_budget_factor": True},
+])
+def test_paper_competition_fails_closed_on_unknown_or_non_paper_rows(bad):
+    from services.capital.allocation_policy import calculate_paper_competition_allocations
+    with pytest.raises(ValueError):
+        calculate_paper_competition_allocations([_paper_row("p1", "tier-1", 90.0), _paper_row("p2", "tier-2", 70.0, **bad)])
+
+
+def test_paper_competition_rejects_empty_duplicate_and_split_pool_input():
+    from services.capital.allocation_policy import calculate_paper_competition_allocations
+    for rows in ([], [_paper_row("p1", "tier-1", 9.0), _paper_row("p1", "tier-1", 9.0)],
+                 [_paper_row("p1", "tier-1", 9.0), _paper_row("p2", "tier-1", 9.0, capital_pool_id="other")]):
+        with pytest.raises(ValueError):
+            calculate_paper_competition_allocations(rows)
+
+
+def test_real_allocation_defaults_are_unchanged_by_the_paper_policy():
+    line = calculate_target_allocations([{"persona_id": "p1", "stage": "paper_running", "tier": "tier-1", "overall_score": 90.0}])[0]
+    assert line["target_weight"] == 0.0 and "stage_not_real_allocation_eligible" in line["exclusions"]

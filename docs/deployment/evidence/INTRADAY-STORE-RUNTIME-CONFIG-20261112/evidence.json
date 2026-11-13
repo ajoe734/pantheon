@@ -1,0 +1,19 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "INTRADAY-STORE-RUNTIME-CONFIG-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "change": "docker-compose.yml: added nonsecret INTRADAY_STORE_ROOT=/data/source-ingest to source-ingest and source-ingest-scheduler. No volume/service added; existing source-ingest-data mount reused.",
+  "rendered_compose_check": {
+    "command": "docker compose --profile '*' config --format json",
+    "source-ingest": {"INTRADAY_STORE_ROOT": "/data/source-ingest", "mount": {"source": "source-ingest-data", "target": "/data/source-ingest", "read_only": false}},
+    "source-ingest-scheduler": {"INTRADAY_STORE_ROOT": "/data/source-ingest", "mount": {"source": "source-ingest-data", "target": "/data/source-ingest", "read_only": false}},
+    "path_inside_writable_mount": true
+  },
+  "existing_checks": {
+    "scripts/test_journal_compose_contract.py": "PASS",
+    "scripts/test_paper_runtime_topology_contract.py": "not run: pytest not installed in worker environment"
+  },
+  "not_claimed": "No deployment, hosted disk capacity, 200-symbol/two-year history, provider request, or backfill readiness is asserted; those remain the original K2 hosted track.",
+  "review": {"status": "pending_independent_review"}
+}

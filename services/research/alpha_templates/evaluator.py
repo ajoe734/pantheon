@@ -51,6 +51,9 @@ from services.registry.split_api import RegistryService  # noqa: E402
 
 EVALUATION_HORIZONS: tuple[int, ...] = (1, 5, 20)
 HORIZON_KEYS: tuple[str, ...] = ("1d", "5d", "20d")
+# SD_INTRADAY_MINUTE_BARS §7 (K5): intraday templates add bar horizons next to (never instead of) the daily set.
+INTRADAY_EVALUATION_HORIZONS: tuple[int, ...] = (1, 5, 15, 30)
+INTRADAY_HORIZON_KEYS: tuple[str, ...] = tuple(f"{h}b" for h in INTRADAY_EVALUATION_HORIZONS)
 REDUNDANCY_CORRELATION_THRESHOLD: float = 0.9
 DEFAULT_TAIWAN_SYMBOLS: tuple[str, ...] = ("2330", "2317", "2454", "2308", "2881")
 DEFAULT_TAIWAN_BAR_COUNT: int = 160
@@ -1079,6 +1082,333 @@ def compute_template_evaluation_metrics(
     }
 
 
+class IntradayEvaluationUnavailable(TaiwanEvaluationDataError):
+    """Intraday IC cannot be computed from governed minute bars (reported, never substituted)."""
+
+
+def _compute_forward_returns_in_session(
+    opens: Sequence[float],
+    closes: Sequence[float],
+    sessions: Sequence[str],
+    horizon: int,
+    *,
+    cross_session: bool = False,
+) -> list[float]:
+    """Return realised after the decision bar ``t``: ``open[t+1] -> close[t+horizon]``.
+
+    The factor at bar ``t`` only uses data through bar ``t``'s close, so the entry is the NEXT
+    bar's open (same rule as the backtest) and the exit is the close of the ``horizon``-th bar
+    after ``t``.  A window that would cross the session boundary is NaN unless ``cross_session``.
+    """
+    n = len(closes)
+    out = [math.nan] * n
+    for t in range(n - horizon):
+        if not cross_session and sessions[t] != sessions[t + horizon]:
+            continue
+        entry, exit_ = opens[t + 1], closes[t + horizon]
+        if math.isfinite(entry) and math.isfinite(exit_) and abs(entry) > 1e-12:
+            out[t] = (exit_ - entry) / entry
+    return out
+
+
+def compute_intraday_ic_metrics(
+    panel: Mapping[str, Mapping[str, Any]],
+    *,
+    bar_frequency: str,
+    horizons: Sequence[int] = INTRADAY_EVALUATION_HORIZONS,
+    cross_session: bool = False,
+    source_snapshot: Mapping[str, Any] | None = None,
+    availability_ceiling: Any = None,
+) -> dict[str, Any]:
+    """Pooled/per-symbol Spearman IC at minute-bar horizons (1, 5, 15, 30 bars) for an intraday template.
+
+    ``panel[symbol]`` carries parallel ``factor_values``, ``opens``, ``closes`` and the real
+    ``bar_starts`` timestamps (several bars per date are fine; the session is derived from the
+    timestamp).  Output is labelled ``replay``; it is historical evidence only.
+
+    Governed boundary: ``source_snapshot`` (reconciled, hashed) and ``availability_ceiling`` are mandatory,
+    every entry needs ``bar_availability_ts`` (all at or before the ceiling) and must not be flagged
+    quarantined / partial / waived / unreconciled; otherwise :class:`IntradayEvaluationUnavailable`.
+    """
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        _session_of,
+        bars_per_session,
+        bars_per_year,
+        is_intraday_frequency,
+    )
+
+    if not is_intraday_frequency(bar_frequency):
+        raise IntradayEvaluationUnavailable(f"bar_frequency {bar_frequency!r} is not an intraday frequency")
+    if not panel:
+        raise IntradayEvaluationUnavailable("no governed minute bars supplied; no daily/synthetic substitute")
+    if (
+        not isinstance(source_snapshot, Mapping)
+        or source_snapshot.get("reconciled_only") is not True
+        or not source_snapshot.get("content_sha256")
+    ):
+        raise IntradayEvaluationUnavailable("a reconciled source_snapshot is required for minute IC")
+    ceiling_dt = _as_aware_dt(availability_ceiling, "availability_ceiling")
+    for symbol, entry in panel.items():
+        if any(entry.get(flag) for flag in ("quarantined", "partial", "waived", "unreconciled")):
+            raise IntradayEvaluationUnavailable(f"{symbol}: quarantined/partial/waived bars are not usable")
+        avail = entry.get("bar_availability_ts")
+        if not avail or len(avail) != len(entry.get("bar_starts") or ()):
+            raise IntradayEvaluationUnavailable(f"{symbol}: bar_availability_ts per bar is required")
+        if any(_as_aware_dt(a, f"{symbol} bar_availability_ts") > ceiling_dt for a in avail):
+            raise IntradayEvaluationUnavailable(f"{symbol}: bars not available by the replay ceiling")
+    per_symbol_ic: dict[str, dict[str, float | None]] = {}
+    pooled_f: dict[int, list[float]] = {h: [] for h in horizons}
+    pooled_r: dict[int, list[float]] = {h: [] for h in horizons}
+    for symbol in sorted(panel):
+        entry = panel[symbol]
+        starts = [str(x) for x in entry.get("bar_starts") or ()]
+        factors = [float(x) for x in entry.get("factor_values") or ()]
+        opens = [float(x) for x in entry.get("opens") or ()]
+        closes = [float(x) for x in entry.get("closes") or ()]
+        if not starts or not (len(starts) == len(factors) == len(opens) == len(closes)):
+            raise IntradayEvaluationUnavailable(
+                f"{symbol}: bar_starts/factor_values/opens/closes must be non-empty and equal length"
+            )
+        if len(set(starts)) != len(starts) or starts != sorted(starts):
+            raise IntradayEvaluationUnavailable(f"{symbol}: bar_starts must be unique and ordered")
+        sessions = [_session_of(x) for x in starts]
+        f_ser = pd.Series(factors, dtype="float64").replace([np.inf, -np.inf], np.nan)
+        norm = (
+            (f_ser.rank(pct=True, method="average") * 2.0 - 1.0).tolist()
+            if int(f_ser.notna().sum()) >= 3 and float(f_ser.std(ddof=0)) > 1e-12
+            else factors
+        )
+        sym_ic: dict[str, float | None] = {}
+        for h in horizons:
+            fwd = _compute_forward_returns_in_session(opens, closes, sessions, h, cross_session=cross_session)
+            pairs = [(f, r) for f, r in zip(factors, fwd) if math.isfinite(f) and math.isfinite(r)]
+            sym_ic[f"{h}b"] = _spearman_ic_pandas(*zip(*pairs)) if len(pairs) >= MIN_IC_OBSERVATIONS else None
+            for f_norm, f_raw, r in zip(norm, factors, fwd):
+                if math.isfinite(f_raw) and math.isfinite(r):
+                    pooled_f[h].append(float(f_norm) if math.isfinite(f_norm) else f_raw)
+                    pooled_r[h].append(float(r))
+        per_symbol_ic[symbol] = sym_ic
+    pooled_ic = {
+        f"{h}b": (_spearman_ic_pandas(pooled_f[h], pooled_r[h]) if len(pooled_r[h]) >= MIN_IC_OBSERVATIONS else None)
+        for h in horizons
+    }
+    obs = {f"{h}b": len(pooled_r[h]) for h in horizons}
+    return {
+        "evidence_mode": "replay",
+        "live_or_paper_evidence": False,
+        "source_snapshot": copy.deepcopy(dict(source_snapshot)),
+        "availability_ceiling": ceiling_dt.isoformat(),
+        "bar_frequency": bar_frequency,
+        "bars_per_session": bars_per_session(bar_frequency),
+        "bars_per_year": bars_per_year(bar_frequency),
+        "horizons": list(horizons),
+        "horizon_unit": "bars",
+        "return_definition": "open[t+1] -> close[t+h], within session" if not cross_session else "open[t+1] -> close[t+h]",
+        "cross_session": cross_session,
+        "pooled_ic": pooled_ic,
+        "per_symbol_ic": per_symbol_ic,
+        "observations_by_horizon": obs,
+        "insufficient_by_horizon": {k: v < MIN_IC_OBSERVATIONS for k, v in obs.items()},
+        "min_ic_observations": MIN_IC_OBSERVATIONS,
+    }
+
+
+def attach_intraday_metrics(daily_metrics: Mapping[str, Any], intraday_metrics: Mapping[str, Any]) -> dict[str, Any]:
+    """Report the intraday horizon set NEXT TO the unchanged daily metrics (never replacing them)."""
+    merged = dict(daily_metrics)
+    merged["intraday"] = dict(intraday_metrics)
+    return merged
+
+
+def _as_aware_dt(value: Any, label: str) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise IntradayEvaluationUnavailable(f"{label} is not an ISO timestamp: {value!r}") from exc
+    else:
+        raise IntradayEvaluationUnavailable(f"{label} is missing")
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise IntradayEvaluationUnavailable(f"{label} must be timezone-aware")
+    return dt
+
+
+def govern_intraday_replay_dataset(replay_dataset: Mapping[str, Any]) -> tuple[str, dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Governed boundary for minute evaluation: clean reconciled replay history or unavailable.
+
+    Requires the dataset produced by ``build_intraday_replay_dataset`` (reconciled ``tw_price_1m`` only):
+    replay label + ``bar_end`` clock + ceiling, a ``source_snapshot`` whose content hash matches the
+    records, and every bar real-available at or before the ceiling and neither quarantined, partial,
+    waived nor unreconciled.  Anything else raises :class:`IntradayEvaluationUnavailable`; there is no
+    daily / synthetic fallback.  Returns ``(bar_frequency, records_by_symbol, replay_meta)``.
+    """
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        INTRADAY_DATASETS,
+        _sha256_json,
+        is_intraday_frequency,
+        normalize_data_frequency,
+    )
+
+    if not isinstance(replay_dataset, Mapping):
+        raise IntradayEvaluationUnavailable("intraday evaluation requires a governed replay dataset")
+    try:
+        frequency = normalize_data_frequency(str(replay_dataset.get("data_frequency") or ""))
+    except Exception as exc:  # noqa: BLE001 - any unknown frequency is simply unavailable
+        raise IntradayEvaluationUnavailable(f"unsupported data_frequency: {exc}") from exc
+    if not is_intraday_frequency(frequency):
+        raise IntradayEvaluationUnavailable(f"data_frequency {frequency!r} is not intraday; no daily substitute")
+    replay = replay_dataset.get("replay")
+    if not isinstance(replay, Mapping) or replay.get("label") != "replay" or replay.get("clock") != "bar_end":
+        raise IntradayEvaluationUnavailable("replay declaration (label 'replay', clock 'bar_end') is required")
+    snapshot = replay.get("source_snapshot")
+    if (
+        not isinstance(snapshot, Mapping)
+        or snapshot.get("reconciled_only") is not True
+        or snapshot.get("source_dataset") != "tw_price_1m"
+        or not snapshot.get("content_sha256")
+    ):
+        raise IntradayEvaluationUnavailable("a reconciled tw_price_1m source_snapshot with content_sha256 is required")
+    ceiling = _as_aware_dt(replay.get("availability_ceiling"), "replay.availability_ceiling")
+    records = replay_dataset.get("records")
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)) or not records:
+        raise IntradayEvaluationUnavailable("no governed minute bars supplied; no daily/synthetic substitute")
+    if _sha256_json(list(records)) != snapshot["content_sha256"]:
+        raise IntradayEvaluationUnavailable("records do not match the source_snapshot content hash")
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        if not isinstance(rec, Mapping):
+            raise IntradayEvaluationUnavailable("each minute record must be a mapping")
+        sym = str(rec.get("instrument") or "")
+        if not sym:
+            raise IntradayEvaluationUnavailable("minute record has no instrument")
+        if any(rec.get(flag) for flag in ("quarantined", "partial", "waived", "unreconciled")):
+            raise IntradayEvaluationUnavailable(f"{sym}: quarantined/partial/waived bar is not usable")
+        if rec.get("dataset") not in (None, INTRADAY_DATASETS[frequency]):
+            raise IntradayEvaluationUnavailable(f"{sym}: record is bound to {rec.get('dataset')!r}")
+        if _as_aware_dt(rec.get("bar_availability_ts"), f"{sym} bar_availability_ts") > ceiling:
+            raise IntradayEvaluationUnavailable(f"{sym}: bar not available by the replay ceiling")
+        _as_aware_dt(rec.get("bar_start"), f"{sym} bar_start")
+        _as_aware_dt(rec.get("bar_end"), f"{sym} bar_end")
+        by_symbol.setdefault(sym, []).append(dict(rec))
+    meta = {
+        "evidence_mode": "replay",
+        "live_or_paper_evidence": False,
+        "source_snapshot": copy.deepcopy(dict(snapshot)),
+        "availability_ceiling": ceiling.isoformat(),
+        "clock": "bar_end",
+    }
+    return frequency, by_symbol, meta
+
+
+def _iso(value: Any) -> str:
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+_MINUTE_BAR_FIELDS = ("open", "high", "low", "close", "volume")
+
+
+def _minute_bound_template(
+    record: Mapping[str, Any],
+    frequency: str,
+    available_fields: Sequence[str] = _MINUTE_BAR_FIELDS,
+) -> dict[str, Any]:
+    """Rebind a price/volume template onto the governed minute dataset; other inputs are unavailable."""
+    from services.registry.factor_rule import PRICE_VOLUME_DATASETS
+    from services.research.vectorbt.adapter.vectorbt_adapter import INTRADAY_DATASETS
+
+    minute_ds = INTRADAY_DATASETS[frequency]
+    bound = copy.deepcopy(dict(record))
+    new_inputs = []
+    for item in bound["inputs"]:
+        if item.get("dataset") not in PRICE_VOLUME_DATASETS:
+            raise IntradayEvaluationUnavailable(
+                f"input {item.get('name')!r} ({item.get('dataset')}) has no minute-bar form"
+            )
+        required = item.get("field") or item.get("name")
+        if required not in available_fields:
+            raise IntradayEvaluationUnavailable(
+                f"required minute input {required!r} is missing from governed minute bars; "
+                "no synthesized or daily substitute"
+            )
+        new_inputs.append({**item, "dataset": minute_ds, "availability_lag_days": 0})
+    bound["inputs"] = new_inputs
+    return bound
+
+
+def evaluate_intraday_replay_template(
+    record: Mapping[str, Any],
+    replay_dataset: Mapping[str, Any],
+    *,
+    parameters: Mapping[str, Any] | None = None,
+    horizons: Sequence[int] = INTRADAY_EVALUATION_HORIZONS,
+) -> dict[str, Any]:
+    """Governed, frequency-aware minute evaluation of one template: factor per bar -> 1/5/15/30-bar IC."""
+    frequency, by_symbol, meta = govern_intraday_replay_dataset(replay_dataset)
+    present = [
+        f for f in _MINUTE_BAR_FIELDS
+        if by_symbol and all(
+            r.get(f) is not None and math.isfinite(float(r[f])) for rows in by_symbol.values() for r in rows
+        )
+    ]
+    bound = _minute_bound_template(record, frequency, present)
+    from services.research.vectorbt.adapter.vectorbt_adapter import INTRADAY_DATASETS
+
+    ds_name = INTRADAY_DATASETS[frequency]
+    panel: dict[str, dict[str, Any]] = {}
+    for symbol, rows in sorted(by_symbol.items()):
+        rows.sort(key=lambda r: _as_aware_dt(r["bar_start"], "bar_start"))
+        decision_times = [_iso(r["bar_end"]) for r in rows]  # explicit simulated replay clock
+        features: dict[str, Any] = {}
+        for fld in ("open", "high", "low", "close", "volume"):
+            obs = [
+                {
+                    "value": float(r[fld]),
+                    "event_time": _iso(r["bar_end"]),
+                    "available_time": _iso(r["bar_end"]),  # simulated clock; real availability kept below
+                    "dataset": ds_name,
+                    "field": fld,
+                    "real_available_time": _iso(r["bar_availability_ts"]),
+                }
+                for r in rows
+            ]
+            features[fld] = obs
+        features[ds_name] = {k: v for k, v in features.items() if k in ("open", "high", "low", "close", "volume")}
+        sym = evaluate_template_point_in_time_symbol(
+            bound,
+            {"decision_times": decision_times, "features": features, "dataset": ds_name},
+            symbol=symbol,
+            parameters=parameters,
+            strict_stepwise=True,
+        )
+        panel[symbol] = {
+            "bar_starts": [_iso(r["bar_start"]) for r in rows],
+            "opens": [float(r["open"]) for r in rows],
+            "closes": [float(r["close"]) for r in rows],
+            "factor_values": list(sym["factor_values"]),
+            "bar_availability_ts": [_iso(r["bar_availability_ts"]) for r in rows],
+        }
+    metrics = compute_intraday_ic_metrics(
+        panel, bar_frequency=frequency, horizons=horizons,
+        source_snapshot=meta["source_snapshot"], availability_ceiling=meta["availability_ceiling"],
+    )
+    metrics["available"] = True
+    metrics["clock"] = meta["clock"]
+    return metrics
+
+
+def _intraday_report(
+    record: Mapping[str, Any], replay_dataset: Mapping[str, Any], parameters: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Dataset-level governance failures raise; template-level gaps are reported as unavailable."""
+    govern_intraday_replay_dataset(replay_dataset)
+    try:
+        return evaluate_intraday_replay_template(record, replay_dataset, parameters=parameters)
+    except IntradayEvaluationUnavailable as exc:
+        return {"available": False, "reason": str(exc), "evidence_mode": "replay", "live_or_paper_evidence": False}
+
+
 def _panel_correlation(
     panel_a: Mapping[str, Mapping[str, Any]],
     panel_b: Mapping[str, Mapping[str, Any]],
@@ -1178,8 +1508,13 @@ def evaluate_single_alpha_template(
     parameters: Mapping[str, Any] | None = None,
     strict_stepwise: bool = False,
     redundancy_threshold: float = REDUNDANCY_CORRELATION_THRESHOLD,
+    intraday_replay_dataset: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a single ``time_series`` AlphaTemplate on Taiwan point-in-time data."""
+    """Evaluate a single ``time_series`` AlphaTemplate on Taiwan point-in-time data.
+
+    ``intraday_replay_dataset`` (from ``build_intraday_replay_dataset``) adds governed minute 1/5/15/30-bar
+    IC under ``intraday`` next to the unchanged daily metrics; omitted -> output is exactly the daily result.
+    """
     eval_universe = load_taiwan_evaluation_universe(universe)
     record = validate_alpha_template(template)
     template_id = record["template_id"]
@@ -1213,7 +1548,7 @@ def evaluate_single_alpha_template(
         candidate_status=str(record.get("status", "draft")),
     )
 
-    return {
+    result = {
         "template_id": template_id,
         "name": record["name"],
         "family": record["family"],
@@ -1224,6 +1559,9 @@ def evaluate_single_alpha_template(
         "max_active_correlation": redundancy["max_active_correlation"],
         **metrics,
     }
+    if intraday_replay_dataset is not None:
+        result = attach_intraday_metrics(result, _intraday_report(record, intraday_replay_dataset, parameters))
+    return result
 
 
 def evaluate_alpha_template_library(
@@ -1233,8 +1571,12 @@ def evaluate_alpha_template_library(
     include_cross_sectional: bool = False,
     strict_stepwise: bool = False,
     redundancy_threshold: float = REDUNDANCY_CORRELATION_THRESHOLD,
+    intraday_replay_dataset: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a collection of AlphaTemplates (default: full checked-in seed library)."""
+    """Evaluate a collection of AlphaTemplates (default: full checked-in seed library).
+
+    With ``intraday_replay_dataset`` each evaluation also carries a governed ``intraday`` block.
+    """
     eval_universe = load_taiwan_evaluation_universe(universe)
     raw_templates = list(templates) if templates is not None else load_library_templates()
     validated_templates = [validate_alpha_template(t) for t in raw_templates]
@@ -1299,6 +1641,10 @@ def evaluate_alpha_template_library(
             "max_active_correlation": redundancy["max_active_correlation"],
             **metrics,
         }
+        if intraday_replay_dataset is not None:
+            evaluations[tid] = attach_intraday_metrics(
+                evaluations[tid], _intraday_report(record, intraday_replay_dataset)
+            )
 
     return {
         "symbols": sorted(eval_universe.keys()),

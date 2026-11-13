@@ -1,0 +1,15 @@
+{
+  "task_id": "BFF-PERSONA-CATALOG-CONTRACT-20261112",
+  "stale_declarations": [
+    "action_catalog.py PersonaAction description advertised edit/retire/route-policy/test-prompt; personas/routes/lifecycle.py bff_persona_action accepts only AdvanceLifecycle/Promote/PromoteCandidate/Demote (others 404)",
+    "assistant/management_service.py persona_activation guidance pointed at /bff/personas/{id}/actions (no action segment; route does not exist)"
+  ],
+  "fix": "Description now lists the four accepted aliases; guidance now points to /bff/personas/{id}/actions/AdvanceLifecycle. Endpoint template, flags, roles, handlers and ACTION_RETIRED guards unchanged.",
+  "reused": "Existing bff_persona_action route and submit_command_admission; no new route/adapter.",
+  "usage_note": "scripts/probe-persona-onboarding-endpoints.mjs is a maintained onboarding probe calling AdvanceLifecycle; no direct UI nested-action caller found by literal search; catalog/tests are not independent usage proof; no global external-unused claim.",
+  "validation": {
+    "test_persona_lifecycle_forward.py": "196 passed (local, /tmp/bffvenv)",
+    "test_action_catalog.py + test_action_catalog_safety_invariants.py": "13 passed"
+  },
+  "limits": "Source-only local in-memory fixtures; no hosted, credential, deploy or business actions; no performance claims."
+}

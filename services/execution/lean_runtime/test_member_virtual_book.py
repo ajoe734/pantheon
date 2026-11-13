@@ -170,3 +170,44 @@ class GateBasisTests(unittest.TestCase):
         self.assertEqual(gate_basis_metrics([legacy], 10)[1], "direction_not_recorded")
         flat = self._book((0, 0, 0), (100, 105, 110))
         self.assertEqual(gate_basis_metrics([flat], 10)[1], "insufficient_or_constant_returns")
+
+
+def test_exact_member_history_survives_envelope_replacement(tmp_path):
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    path = tmp_path / 'persona-books.json'
+    member = {'artifact_id': 'a', 'version': '1.0.0', 'checksum': 'sha256:member',
+              'virtual_only': False, 'view': {'direction': 'LONG', 'strength': 1}}
+    first = MemberVirtualBooks(path)
+    for day, price in ((1, 100), (2, 101)):
+        first.observe(binding_id='old', envelope_checksum='env1', symbol='2330.TW',
+            event_time=f'2024-10-{day:02}T05:30:00Z', price=price, source_ref='recorded-unit',
+            bar_frequency='1d', members={'member': member})
+    second = MemberVirtualBooks(path)
+    snapshot = second.observe(binding_id='new', envelope_checksum='env2', symbol='2330.TW',
+        event_time='2024-10-03T05:30:00Z', price=102, source_ref='recorded-unit',
+        bar_frequency='1d', members={'member': member})
+    current = next(b for b in snapshot if b['binding_id'] == 'new')
+    assert current['dates'] == ['2024-10-02', '2024-10-03']
+    assert len(current['net_of_costs']['returns']) == 2
+    # A stale instance reloads the durable store before adding a new envelope.
+    newer = first.observe(binding_id='newer', envelope_checksum='env3', symbol='2330.TW',
+        event_time='2024-10-04T05:30:00Z', price=103, source_ref='recorded-unit',
+        bar_frequency='1d', members={'member': member})
+    assert len(next(b for b in newer if b['binding_id'] == 'newer')['dates']) == 3
+    changed = {**member, 'checksum': 'sha256:different'}
+    last = second.observe(binding_id='other', envelope_checksum='env4', symbol='2330.TW',
+        event_time='2024-10-05T05:30:00Z', price=104, source_ref='recorded-unit',
+        bar_frequency='1d', members={'member': changed})
+    assert next(b for b in last if b['binding_id'] == 'other')['dates'] == []
+
+
+def test_baseline_lookup_uses_the_pool_member_registry_ref():
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    books = MemberVirtualBooks()
+    books.observe(binding_id='binding', envelope_checksum='envelope', symbol='2330.TW',
+        event_time='2024-10-01T05:30:00Z', price=100, source_ref='unit-book-source', bar_frequency='1d',
+        members={'registry-alias': {'artifact_id': 'embedded-a', 'version': '1.0.0', 'checksum': 'sha256:a',
+            'virtual_only': False, 'view': {'direction': 'LONG', 'strength': 1}}})
+    looked_up = []
+    books.snapshot(baseline_resolver=lambda ref, *_: looked_up.append(ref))
+    assert looked_up == ['registry-alias']

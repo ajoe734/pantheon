@@ -302,6 +302,7 @@ def build_child_artifact(
     source_run_ids: Sequence[str] = (),
     child_version: str | None = None,
     existing_versions: Sequence[Any] = (),
+    parent_registry_ref: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build one registered-ready child. Returns ``(child_artifact, descriptor)``.
 
@@ -334,6 +335,7 @@ def build_child_artifact(
             parameter_updates=parameter_updates,
             source_run_ids=runs,
         )
+        child["lineage"]["parent_registry_ids"] = [parent_registry_ref or parent["artifact_id"]]
         return child, {"kind": "retrain", "parameter_updates": dict(parameter_updates)}
 
     if kind != "mutate":
@@ -354,7 +356,7 @@ def build_child_artifact(
     child["mutation_surface"]["controls"] = result["controls"]
     child["artifact_id"] = child_id
     child["version"] = child_version
-    child["lineage"]["parent_registry_ids"] = [parent["artifact_id"]]
+    child["lineage"]["parent_registry_ids"] = [parent_registry_ref or parent["artifact_id"]]
     child["lineage"]["source_run_ids"] = runs
     try:
         validate_strategy_artifact(child)
@@ -379,6 +381,9 @@ def judge_child_out_of_sample(
     before = gate.get_family_trial_count(family_id)
     response = gate.evaluate_candidate(request_factory(child))
     after = gate.get_family_trial_count(family_id)
+    record_trial = getattr(gate, "record_family_trial", None)
+    if after == before and callable(record_trial):
+        after = record_trial(family_id)
     detail: Mapping[str, Any] = {}
     for result in getattr(response, "results", []) or []:
         if getattr(result, "criterion_id", "") == "real_backtest_validation":
@@ -410,6 +415,7 @@ def run_mutation_decision(
     register_child: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
     family_versions: Callable[[], Sequence[Any]] | None = None,
     max_version_retries: int = 3,
+    parent_registry_ref: str | None = None,
 ) -> dict[str, Any]:
     """Approved ``mutate`` decision: structural children, each judged out-of-sample.
 
@@ -422,13 +428,16 @@ def run_mutation_decision(
     results: list[dict[str, Any]] = []
     taken: list[str] = []  # versions this decision already built: siblings never share a revision
     for index in range(max(1, children)):
+        if gate.get_family_trial_count(family_id) >= 500:
+            results.append({"index": index, "built": False, "error": "family_tried"})
+            break
         result: dict[str, Any] | None = None
         for _attempt in range(max(1, max_version_retries)):
             known = [*(family_versions() if family_versions else []), *taken]
             try:
                 child, descriptor = build_child_artifact(
                     parent, decision_id=f"{decision_id}#{index}", kind="mutate", rng=rng,
-                    source_run_ids=[decision_id], existing_versions=known,
+                    source_run_ids=[decision_id], existing_versions=known, parent_registry_ref=parent_registry_ref,
                 )
             except EvolutionSearchError as exc:
                 result = {"index": index, "built": False, "error": str(exc)}

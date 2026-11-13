@@ -36,6 +36,27 @@ from services.registry.strategy_artifact import (
 )
 
 
+def test_direct_factor_interpreters_cannot_ignore_a_screen():
+    from services.registry.test_candidate_pool import screen_artifact, recorded_market
+    from services.registry.candidate_pool import MARKET_FEATURE_KEY
+
+    artifact = screen_artifact()
+    with pytest.raises(FactorRuleValidationError, match="decision symbol"):
+        evaluate_factor_rule_view(artifact, [1, 2], decision_time="2026-09-02")
+    view = evaluate_factor_rule_view(
+        artifact, None, symbol="2317.TW", decision_time="2026-09-02",
+        features={MARKET_FEATURE_KEY: recorded_market()},
+    )
+    assert view["action"] == "BUY"
+    assert "candidate_pool_digest" in view
+
+
+def test_screen_cadence_uses_source_catalogue_dataset_and_provider_periods():
+    assert get_feature_definition("tw_macro_cbc", "policy_rate").release_cadence == "monthly"
+    assert get_feature_definition("tw_macro_cbc", "usd_twd").release_cadence == "daily"
+    assert get_feature_definition("tw_macro_dgbas", "gdp_yoy").release_cadence == "quarterly"
+
+
 def _sample_factor_rule_artifact() -> dict[str, Any]:
     return {
         "artifact_schema_version": "1.0",

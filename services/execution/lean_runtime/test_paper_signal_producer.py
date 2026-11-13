@@ -27,6 +27,54 @@ _NOW = "2026-06-14T10:30:00Z"
 _BINDING = BindingRef(binding_id="rb-test-001", strategy_id="strategy-test-001", symbol="AAPL.US")
 
 
+def test_screen_production_path_rejects_partial_market_without_queueing():
+    from services.research.tests.test_candidate_pool_parity import paper_binding
+    from services.registry.test_candidate_pool import recorded_market, screen_artifact
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+    binding = paper_binding(screen_artifact(), recorded_market(), "2026-09-02")
+    binding["market_inputs"].pop("2317.TW")
+    store = InMemoryPendingSignalStore()
+    producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+    assert producer.produce(binding, "2026-09-02T12:00:00Z") == 0
+    assert store.queue_depth() == 0
+    assert "complete governed market" in producer.degraded_bindings[binding["binding_id"]]
+
+
+def test_pool_removal_expression_must_close_a_held_instrument():
+    from services.registry.test_candidate_pool import recorded_market, screen_artifact
+    from services.registry.test_strategy_artifact import _artifact_with_expression_policy
+    from services.research.tests.test_candidate_pool_parity import paper_binding
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+    artifact = screen_artifact()
+    policy_artifact = _artifact_with_expression_policy()
+    artifact["expression_policy"] = policy_artifact["expression_policy"]
+    artifact["mutation_surface"]["controls"].extend(
+        c for c in policy_artifact["mutation_surface"]["controls"]
+        if c["parameter_key"] in {"lever_min_strength", "notional_fraction_at_full_strength"}
+    )
+    market = recorded_market()
+    binding = paper_binding(artifact, market, "2026-09-02",
+                            {"2330.TW": {"current_direction": "LONG", "holding_bars": 1}})
+    budget = {"available_cash": 100000.0, "gross_limit": 200000.0, "gross_used": 0.0}
+
+    def decide(book):
+        strategy = CurrentArtifactStrategy(expression_layer=True,
+            candidates_builder=_expression_candidates(),
+            expression_inputs=lambda _: {"persona_book": book, "risk_budget": budget})
+        outputs = strategy(binding, "2026-09-02T12:00:00Z")["portfolio_decisions"]
+        [removed] = [o for o in outputs if o["symbol"] == "2330.TW"]
+        return removed["expression"]["evaluate"]()["decision"]
+
+    empty = decide({})
+    assert empty["reason_code"] == "candidates_unavailable"
+    held = decide({"positions": [{"underlying": "2330", "instrument_id": "eq:2330",
+                                  "direction": "LONG", "units": 10}]})
+    assert held["reason_code"] == "close_leg"
+    assert held["side"] == "sell" and held["units"] == 10
+
+
 class TestSmokeSignalContract(unittest.TestCase):
     def test_smoke_signal_passes_store_and_consumer_validation(self) -> None:
         sig = build_smoke_signal(_BINDING, _NOW)

@@ -69,6 +69,7 @@ class PersonaRuntimeProfile:
     memory_policy: MemoryPolicy
     sync_generation: int
     source_refs: list[dict[str, str]]
+    harness: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +79,7 @@ class PersonaRuntimeProfile:
             "memory_policy": self.memory_policy.to_dict(),
             "sync_generation": self.sync_generation,
             "source_refs": json.loads(json.dumps(self.source_refs)),
+            "harness": dict(self.harness),
         }
 
 
@@ -103,6 +105,7 @@ def build_persona_runtime_profile(
         model_routing=model_routing,
         memory_policy=_memory_policy(),
         sync_generation=_sync_generation(persona, route_policy),
+        harness=_harness_summary(persona),
         source_refs=[
             {"surface": "persona_registry", "ref": f"persona:{persona_id}"},
             {
@@ -430,3 +433,22 @@ def _string_list(value: Any) -> list[str]:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _harness_summary(persona: Mapping[str, Any]) -> dict[str, Any]:
+    state = _mapping(_mapping(persona.get("metadata")).get("persona_harness"))
+    active = state.get("active_version")
+    versions = state.get("versions")
+    if type(active) is int and isinstance(versions, list) and 1 <= active <= len(versions):
+        from services.persona.harness import HarnessVersion, digest
+        from pydantic import ValidationError
+        try:
+            row = HarnessVersion.model_validate(versions[active - 1])
+            if (row.persona_id == _persona_id(persona) and row.version == active
+                    and row.content_digest == digest(row.surface.model_dump(mode="json"))):
+                return {"status": "ready", "active_version": active,
+                        "content_digest": row.content_digest, "reason": None}
+        except ValidationError:
+            pass
+    return {"status": "unavailable", "active_version": None, "content_digest": None,
+            "reason": "invalid_harness_record" if state else "harness_not_initialized"}
