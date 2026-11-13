@@ -4472,7 +4472,9 @@ dump_dev_root_failure_diagnostics() {
   )"
   if [[ -n "$search_scheduler_container_id" ]]; then
     info "search-index-scheduler failure structure from last 200 log lines (redacted)"
-    { docker logs --tail 200 "$search_scheduler_container_id" 2>/dev/null || true; } \
+    # Non-TTY Docker logs preserves container stderr on CLI stderr. Merge both
+    # streams before redaction/selection so worker tracebacks are retained too.
+    { docker logs --tail 200 "$search_scheduler_container_id" 2>&1 || true; } \
       | redact_bounded_refresh_log \
       | python3 -c '
 import json
