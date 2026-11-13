@@ -21,7 +21,10 @@ def create_memory_review_router(*, extract_identity, require_read_role, require_
     def owner(request, write=False):
         identity, scope = admit(request, extract_identity=extract_identity,
                                 require_role=require_write_role if write else require_read_role, utc_now=utc_now)
-        return identity, MemoryReviewClient(request.headers.get("Authorization", ""), scope.tenant_id)
+        authorization = request.headers.get("Authorization")
+        if not authorization and request.cookies.get("pantheon_session"):
+            authorization = "Bearer " + request.cookies["pantheon_session"]
+        return identity, MemoryReviewClient(authorization or "", scope.tenant_id)
 
     @router.get("/bff/agora/memory")
     def review(request: Request, persona_id: str | None = Query(None, min_length=1),

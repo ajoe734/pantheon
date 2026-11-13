@@ -1,0 +1,26 @@
+{
+  "bundle_version": "1.14",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
+    "bundle_version": "1.13",
+    "bundle_index_sha256": "36cce833c8b34fb128750576435a93d40e1271d0cba6b89104898d5d68eda336"
+  },
+  "files": {
+    "specs/agora/v15/capability_manifest_v1_14.json": "1d8d75ad8666caae8770a1eebf4a2160aff0d9416f6e0cc918f03583c4ba5cd4"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "sha256": "051da07a300530be6c6253ff136a5edc9138f919b24dfb6cc2e37b122c735197"
+  },
+  "route_families": {
+    "agora.committee-memory.owner.v1": [
+      "GET /bff/agora/committee/sessions",
+      "GET /bff/agora/committee/sessions/{session_id}",
+      "GET /bff/agora/committee/sessions/{session_id}/memos",
+      "POST /bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish",
+      "GET /bff/agora/memory",
+      "POST /bff/agora/memory/{memory_id}/actions/quarantine"
+    ]
+  },
+  "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."
+}

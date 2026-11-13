@@ -16,6 +16,8 @@ class CommitteeOwnerClient:
         self.tenant_id = tenant_id
 
     def call(self, method: str, path: str):
+        if not self.client._token:
+            raise unavailable("consultation", "consultation_service_credential_unconfigured")
         try:
             return self.client._request_json(method, path, tenant_id=self.tenant_id)
         except ConsultationClientError as exc:

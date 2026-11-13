@@ -55,6 +55,10 @@ class MemoryReviewClient:
                                              or not isinstance(h.get("entry"), dict) for h in hits):
             raise unavailable("memory", "memory_owner_invalid_hits")
         for hit in hits:
+            entry = hit["entry"]
+            id_field = "memory_id" if hit["type"] == "persona" else "entry_id"
+            if not entry.get(id_field) or entry.get("tenant_id") != self.tenant_id:
+                raise unavailable("memory", "memory_entry_tenant_or_identity_mismatch")
             if (scope != "both" and hit["type"] != scope) or (hit["type"] == "persona" and hit["entry"].get("persona_id") != persona_id):
                 raise unavailable("memory", "memory_owner_scope_mismatch")
         lessons = []
@@ -72,6 +76,8 @@ class MemoryReviewClient:
         candidate = self.call("GET", path)
         if candidate.get("lesson_candidate_id") != memory_id or candidate.get("tenant_id") != self.tenant_id:
             raise unavailable("memory", "memory_candidate_scope_mismatch", 404)
+        if candidate.get("target_env", "paper") != "paper":
+            raise unavailable("memory", "quarantine_requires_paper_candidate", 409)
         result = self.call("POST", path + "/decide", {
             "action": "quarantine", "operator_id": actor_id, "reason": reason,
             "audit_receipt_id": audit_receipt_id, "target_env": "paper",
