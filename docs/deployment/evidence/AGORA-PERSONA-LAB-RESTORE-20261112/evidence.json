@@ -39,6 +39,6 @@
     "tell-why remains a Memory-owner lesson candidate (review_state=proposed)."
   ],
   "owner_changes": [
-    "services/persona/harness.py: POST .../patches/{id}/shadow (runs run_shadow_comparison, persists the record), POST .../patches/{id}/negative-experience (owner-written never_again harness experience, consumed via relevant_experiences/experience_refs), POST .../harness/deliver (outbox replay)"
+    "services/persona/harness.py: POST .../patches/{id}/shadow (runs run_shadow_comparison, persists the record), POST .../patches/{id}/negative-experience (owner-written never_again stored as row.operator_feedback, separate from the measured row.experience; both consumed via relevant_experiences/experience_refs), POST .../harness/deliver (outbox replay)"
   ]
 }

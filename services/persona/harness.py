@@ -345,11 +345,11 @@ class PersistentHarnessOwner:
             if not state or patch_id not in state["patches"]:
                 raise HarnessError("patch_not_found", 404)
             row = state["patches"][patch_id]
-            if row.get("experience"):
-                return state, row  # idempotent; an observed experience stays authoritative
+            if row.get("operator_feedback"):
+                return state, row  # idempotent; measured observation is kept separately
             proposal = row["proposal"]
             eid = "harness-experience-" + digest({"tenant": persona.tenant_id, "persona": persona_id,
-                                                  "patch": patch_id})
+                                                  "patch": patch_id, "source": "operator_never_again"})
             cue = "Harness component review: " + ", ".join(sorted(proposal["proposed_change"]))
             lesson = "Operator: never propose this change again. " + reason.strip()
             experience = {"source_event_type": "harness_experience", "source_event_id": eid,
@@ -361,7 +361,7 @@ class PersistentHarnessOwner:
                 "harness_version": row.get("version"), "proposal_ids": [patch_id],
                 "body": json.dumps({"operator": actor, "reason": reason.strip()}, sort_keys=True),
                 "tags": ["harness_experience", "never_again", *sorted(proposal["proposed_change"])]}
-            row["experience"] = experience
+            row["operator_feedback"] = experience
             state.setdefault("outbox", {})[eid] = {"kind": "memory", "payload": experience,
                                                    "status": "pending", "attempts": 0}
             self._event(state, "never_again", actor, patch_id=patch_id)

@@ -128,7 +128,7 @@ def test_never_again_writes_owner_negative_experience_consumed_by_next_proposal(
     assert draft(client, "p-old", evidence=system[-1]).status_code == 201
     r = client.post(P + "/change-log/p-old/never-again", headers=H, json={"reason": "caused whipsaw"})
     assert r.status_code == 201, r.text
-    experience = r.json()["data"]["experience"]
+    experience = r.json()["data"]["operator_feedback"]
     assert experience["outcome"] == "never_again" and "caused whipsaw" in experience["lesson"]
     assert any(kind == "memory" and p["source_event_id"] == experience["source_event_id"] for kind, p in deliveries)
     assert draft(client, "p-new", evidence=system[-1]).status_code == 201

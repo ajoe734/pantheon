@@ -271,3 +271,33 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
     assert governance["receipt"]["decision_state"] == "proposed"
     assert governance["receipt"]["risk_level"] == "medium"
     assert governance["receipt"]["metadata"]["reason"] == "hurt_rollback_proposal"
+
+
+def test_never_again_after_observed_keeps_both_records(adoption):
+    a = adoption
+    assert activate(a).status_code == 200
+    observed = observe(a, observations(a)).json()["experience"]
+    assert observed["outcome"] == "helped"
+    response = a.client.post(ROOT + "/patches/patch-1/negative-experience",
+                             headers=headers(), json={"reason": "operator rejects this pattern"})
+    assert response.status_code == 201
+    row = a.harness.read("p-alpha")["patches"]["patch-1"]
+    assert row["experience"]["outcome"] == "helped"
+    assert row["operator_feedback"]["outcome"] == "never_again"
+    assert row["operator_feedback"]["source_event_id"] != row["experience"]["source_event_id"]
+    assert "operator rejects this pattern" in row["operator_feedback"]["body"]
+    assert any(e["action"] == "never_again" for e in a.harness.read("p-alpha")["events"])
+
+
+def test_never_again_during_experiment_still_finalizes_observation(adoption):
+    a = adoption
+    assert activate(a).status_code == 200
+    assert a.client.post(ROOT + "/patches/patch-1/negative-experience", headers=headers(),
+                         json={"reason": "operator rejects this pattern"}).status_code == 201
+    response = observe(a, observations(a))
+    assert response.status_code == 200
+    state = a.harness.read("p-alpha")
+    row = state["patches"]["patch-1"]
+    assert row["status"] == "observed" and state["active_experiment"] is None
+    assert row["experience"]["outcome"] == "helped" and row["operator_feedback"]["outcome"] == "never_again"
+    assert state.get("component_cooldowns")

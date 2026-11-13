@@ -213,6 +213,7 @@ def create_persona_lab_router(
                             "status": patch.get("status"), "evidence_refs": proposal.get("evidence_refs", []),
                             "active": version.get("version") == state.get("active_version"),
                             "experience": patch.get("experience"),
+                            "operator_feedback": patch.get("operator_feedback"),
                             "actions": ["accept", "undo", "never_again", "tell_why"]})
         return _wrap(scope, {"active_version": state.get("active_version"), "entries": entries})
 

@@ -40,8 +40,9 @@ class ObservationFacts(StrictModel):
 
 def relevant_experiences(state: dict, patch: PersonaPatch) -> list[dict]:
     components = set(patch.proposed_change)
-    return [copy.deepcopy(row["experience"]) for row in state["patches"].values()
-            if row.get("experience") and components.intersection(row["proposal"]["proposed_change"])]
+    return [copy.deepcopy(row[key]) for row in state["patches"].values()
+            for key in ("experience", "operator_feedback")
+            if row.get(key) and components.intersection(row["proposal"]["proposed_change"])]
 
 
 class HarnessAdoption:
@@ -150,6 +151,8 @@ class HarnessAdoption:
                                 "rollback_target": proposal["rollback_target"]}}
         if row.get("experience"):
             payload["metadata"]["experience"] = row["experience"]
+        if row.get("operator_feedback"):
+            payload["metadata"]["operator_feedback"] = row["operator_feedback"]
         state.setdefault("outbox", {}).setdefault(ref, {"kind": "governance", "payload": payload,
                                                      "status": "pending", "attempts": 0})
         row["governance_proposal_ref"] = ref
