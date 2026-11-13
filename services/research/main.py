@@ -1146,7 +1146,7 @@ def list_alpha_replication_entries(
 
 @app.get("/api/research-orchestrator/tasks")
 def list_tasks(status: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    tasks = store.list_tasks()
+    tasks = store.list_tasks() + query_plan_store.list_tasks()
     return [task for task in tasks if str(task.get("status") or "").lower() == status.lower()] if status else tasks
 
 
@@ -1176,7 +1176,7 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
 
 @app.get("/api/research-orchestrator/tasks/{task_id}")
 def get_task(task_id: str) -> Dict[str, Any]:
-    task = store.get_task(task_id)
+    task = store.get_task(task_id) or query_plan_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="research task not found")
     return task
@@ -2680,8 +2680,17 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 # The persona's daily pool cycle writes demands here; this owner keeps and serves
 # them. Nothing in this service allocates capital or binds personas to discovery.
 from services.research.research_demand import DemandError, ResearchDemandStore  # noqa: E402
+from services.research.query_plan import QueryPlanError, QueryPlanStore  # noqa: E402
 
 research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json")
+query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
+
+
+def _refresh_collector_query_plan(tenant_id: str) -> None:
+    try:
+        query_plan_store.refresh(tenant_id, research_demand_store.list(tenant_id, status="open"))
+    except QueryPlanError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/research/persona-demands", status_code=201)
@@ -2690,7 +2699,9 @@ def open_persona_research_demand(
     tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
 ) -> Dict[str, Any]:
     try:
-        return research_demand_store.open(tenant_id, body)
+        result = research_demand_store.open(tenant_id, body)
+        _refresh_collector_query_plan(tenant_id)
+        return result
     except DemandError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -2714,6 +2725,7 @@ def reconcile_persona_research_demands(
     if not persona_id:
         raise HTTPException(status_code=422, detail="persona_id is required")
     rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
+    _refresh_collector_query_plan(tenant_id)
     return {"demands": rows, "count": len(rows)}
 
 
