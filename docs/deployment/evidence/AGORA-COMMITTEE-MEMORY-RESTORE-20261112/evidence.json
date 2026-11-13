@@ -1,0 +1,74 @@
+{
+  "task_id": "AGORA-COMMITTEE-MEMORY-RESTORE-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "independent_review": "pending; canonical handoff binds this committed manifest to the exact PR head",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md section 6.7 / D11",
+  "source_base": "bee86402b53352e8b4eecec12916395619a10944",
+  "anchor_commit": "06ef43985",
+  "hosted_behavior_claimed": false,
+  "environment_ceiling": "paper",
+  "execution_authority": "none",
+  "acceptance_evidence": {
+    "1_committee_owner": {
+      "implementation": "agora/committee/client.py and router.py forward to ConsultationServiceClient; no BFF store",
+      "routes": [
+        "GET /bff/agora/committee/sessions",
+        "GET /bff/agora/committee/sessions/{session_id}",
+        "GET /bff/agora/committee/sessions/{session_id}/memos",
+        "POST /bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish"
+      ],
+      "checks": "Panel type and tenant checked; memo request binding read before publish; qualification and persistence remain with Consultation. Repeated publish reads the same owner memo."
+    },
+    "2_memory_owner": {
+      "implementation": "agora/memory_review/client.py and router.py forward retrieval, lesson candidate list and candidate quarantine to Memory",
+      "routes": [
+        "GET /bff/agora/memory",
+        "POST /bff/agora/memory/{memory_id}/actions/quarantine"
+      ],
+      "checks": "Owner receives verified caller credential; Governance evaluates the token-derived roles. Institutional-only never fetches private candidates. Entries and candidates must match tenant; persona hits/candidates must match persona. Quarantine uses existing decide action with paper candidate, actual caller, supplied reason/audit receipt and Idempotency-Key."
+    },
+    "3_unavailable": "Empty owners carry explicit reasons; HTTP/transport/authz failures and malformed or foreign records fail closed, without any local list, cache, model call or invented record. Missing Consultation URL or credential and missing Memory URL make no owner HTTP call.",
+    "4_contract_and_doc": {
+      "manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json: 627 routes (six added)",
+      "route_diff_baseline": "Regenerated docs/bff/contract_snapshots/route-diff-baseline.json preserves actual FE/backend gaps; it also catches up three already-present human-evidence routes absent from the previous baseline. No frontend source or claimed FE compatibility changes.",
+      "bundle": "Additive services/control-plane/specs/agora/bundle_index.v1_14.json extends unchanged v1.13, hashes v15/capability_manifest_v1_14.json and openapi/agora_v1_14.openapi.yaml",
+      "architecture": "docs/02-architecture/phase4-bff-thinning.md: restored routes and their owners"
+    },
+    "5_production_entry_points": "tests/test_agora_committee_memory_owners.py uses the production mount_agora_review_routers hook and build_bff_app security stack. Real ConsultationServiceClient, MemoryReviewClient, Consultation/Memory HTTP apps and JSON stores, and Governance HTTP app/policy run. Only urllib HTTP transport is replaced. Backend manifest --check separately imports the full production app and confirms all six registrations."
+  },
+  "validation": [
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_committee_memory_owners.py scripts/test_agora_bundle_digests.py scripts/test_bff_route_diff.py",
+      "result": "32 passed, 3 deprecation warnings in 9.23s",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed, 3 deprecation warnings in 59.98s",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      "result": "routes match snapshot (full production application, 627 routes)",
+      "exit_status": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "no whitespace errors",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_committee_memory_owners.py services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_agora_bundle_digests.py scripts/test_bff_route_diff.py",
+      "result": "Combined batch hit the 120 second bound without a final pytest summary. NOT counted as passed; all suites were then collected to completion in the separate bounded batches above.",
+      "exit_status": 124
+    }
+  ],
+  "limitations": [
+    "Memory currently has quarantine only for lesson candidates. Explicit persona/institutional entry quarantine returns unavailable with entry_quarantine_not_supported_by_memory_owner; this task adds no privileged owner route or local flag.",
+    "This is local source/in-process HTTP evidence with test-only fixtures; it does not prove hosted deployment, production credentials, PostgreSQL restart durability or execute-plans delivery.",
+    "Unscoped legacy institutional or persona entries fail closed; they are not silently treated as shared tenant data.",
+    "Viewer reads may enter the BFF read surface but Memory/Governance can refuse them; BFF never substitutes a privileged Memory principal."
+  ]
+}
