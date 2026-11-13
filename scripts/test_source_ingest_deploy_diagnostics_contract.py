@@ -126,6 +126,8 @@ def test_search_worker_failure_retained_before_compensation_without_payloads(tmp
     assert result.returncode == 1, output
     assert 'healthy-service-log' in output
     assert 'Traceback (most recent call last):' in output
+    assert '  File "scheduler_worker.py", line 99, in main' in output
+    assert '/app/' not in output
     assert 'TimeoutError: [details omitted]' in output
     assert '{"error_type": "HTTPError", "status": "failed", "tick": 2}' in output
     assert 'status=restarting restart_count=5 health=unhealthy exit_code=1 oom_killed=false' in output

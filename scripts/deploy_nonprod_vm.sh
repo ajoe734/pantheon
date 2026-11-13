@@ -4498,6 +4498,10 @@ for line in sys.stdin:
         continue
     if line == "Traceback (most recent call last):":
         print(line)
+        continue
+    frame = re.fullmatch(r"  File \"[^\"\n]*/services/search/scheduler_worker.py\", line ([0-9]{1,7}), in (main|run_tick|_post_json|<module>)", line)
+    if frame:
+        print("  File \"scheduler_worker.py\", line {}, in {}".format(frame[1], frame[2]))
     elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}(?:Error|Exception|Interrupt|Exit)(?::.*)?", line):
         print(line.split(":", 1)[0] + ": [details omitted]")
 ' || true

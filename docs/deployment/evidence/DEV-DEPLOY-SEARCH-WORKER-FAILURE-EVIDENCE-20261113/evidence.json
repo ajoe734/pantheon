@@ -1,0 +1,90 @@
+{
+  "task_id": "DEV-DEPLOY-SEARCH-WORKER-FAILURE-EVIDENCE-20261113",
+  "scope": "Source-only diagnostic retention before existing dev compensation",
+  "owner": "Codex",
+  "assigned_reviewer": "Claude",
+  "base_commit": "abfb72c8c6c9417e95a9b56ad3cbaebd382b03de",
+  "historical_evidence": {
+    "workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/43460083439",
+    "official_log_path": "/tmp/pantheon-goal-resume-20261111/Root43460083439-failed-stack-and-compensation-primary-20261113/terminal-step-logs/step20-deploy-raw.txt",
+    "official_log_sha256_verified_locally": "6b7dff530ce8fdbd57c0a116386748edf6a357e18e31f9e77242008cadbef99b",
+    "line": 4533,
+    "failure": "2026-11-13T16:38:13.2988950Z required component(s) not in stable running state: search-index-scheduler: StartedAt changed (2026-11-13T16:36:56.734923783Z -> 2026-11-13T16:38:04.806053992Z); restart_count changed during observation (3 -> 5)",
+    "metadata_bundle_path": "/tmp/pantheon-goal-resume-20261111/Root434600-existing-actual-evidence-and-retention-limit-single-source-input-20261113.json",
+    "metadata_bundle_sha256": "629e06a729f8eda6806b83cdc3cab8274744551413dab90c59711716a2147bf2",
+    "pinned_deploy_script_sha256": "e49de11842946b1783a68c3b9d17c7d54987eeed8c77aa69b7d99c384002322d",
+    "omission": "At the pinned base, dump_dev_root_failure_diagnostics logs and inspects search-svc but never reads search-index-scheduler. rollback_dev_bff_on_failure calls this diagnostic function before its existing artifact restore/verify and exits 1 afterward.",
+    "retention_limit": "The supplied existing Ops observation at 2026-11-13T17:20:54Z found both original candidate containers absent. This repair cannot recover their deleted logs, original effective overrides, original exit code, exact failed input, or Python exception. No historical exception is inferred from restart timing."
+  },
+  "implementation": {
+    "function": "scripts/deploy_nonprod_vm.sh: dump_dev_root_failure_diagnostics",
+    "worker_identity": "Resolve search-index-scheduler with compose ps -a -q, then read that container ID, separately from search-svc.",
+    "logs": "Read at most the last 200 Docker log lines; use existing redact_bounded_refresh_log. Select only traceback header, scheduler_worker.py frames with line number and known entry-point functions, exception class without message, and failed JSON tick status/tick/error_type. Successful tick JSON, result/detail bodies, arbitrary text, source lines, absolute paths, and exception messages are omitted.",
+    "state": ["status", "restart_count", "health", "exit_code", "oom_killed"],
+    "excluded_inspect_fields": ["Config.Env", "State.Error", "full inspect", "healthcheck output"],
+    "failure_tolerance": "Missing container, compose lookup failure, log failure, and inspect failure do not bypass compensation or turn the original rollout green. Existing restore/verify policy and exit 1 are unchanged.",
+    "code_sha256": "f73013d0dacf6547c38a8e4b6f90b09c948a28b58d511a5e497d63ae83dd1482",
+    "contract_test_sha256": "5fa3a89fb5414827442aaa32f414fceea8c21747a5791ab24ff9db52c3667597"
+  },
+  "local_validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_status": 0,
+      "result": "Checkout-scoped .venv-pantheon created and import mapping verified. Initial bare system-python test invocation lacked pytest; all executed pytest results below use the provisioned interpreter."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q -k 'search_worker or root_failure_diagnostics or source_refresh_wait'",
+      "exit_status": 0,
+      "result": "20 passed, 15 deselected in 12.47s",
+      "behavior": "Real extracted shell functions run under set -euo pipefail with a fake Docker executable only. Healthy search-svc and failing worker IDs differ. Traceback and failed-tick structure survive before the artifact-driver marker; secret, JWT, successful/failed business payload and source-line sentinels do not. Missing/failed commands are crossed with restore success, restore failure, and unacknowledged-candidate verify. Original exit 1 survives all cases."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py -q --tb=short",
+      "exit_status": 1,
+      "result": "33 passed, 2 failed in 25.70s",
+      "baseline_failures": [
+        "test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse: pre-existing connector allowlist assertion excludes tw-finmind-broker-daily-report",
+        "test_taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing: pre-existing expected skipped vs actual proceed"
+      ]
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest /tmp/dev-deploy-search-evidence-baseline-20261113/test_source_ingest_deploy_diagnostics_contract.py -q -k 'workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse or taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing' --tb=short",
+      "exit_status": 1,
+      "result": "Same 2 failures, 19 deselected in 7.80s",
+      "setup": "Both test module and deploy script extracted via git show abfb72c8c:scripts/<file> into a temporary directory. Only ROOT and DEPLOY_SCRIPT test path constants were adjusted to execute the untouched baseline logic with the same checkout dependencies/workflows. No baseline code or assertions changed."
+    },
+    {
+      "command": "Provisioned Python imports the new test harness, overrides DEPLOY_SCRIPT to the pinned baseline script, and calls _run_root_failure with a synthetic TimeoutError worker log",
+      "exit_status": 0,
+      "result": "Negative control confirmed: pinned handler never reads the failing worker ID and retains no TimeoutError, while still restoring and exiting 1. This distinguishes the omission from the repaired behavior."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_vm.py -q -k 'bounded_refresh_failure_prints_last_200_log_lines_redacted or verify_exact_component_receipt_write_failure_reaches_rollback_caller' --tb=short",
+      "exit_status": 0,
+      "result": "3 passed, 131 deselected in 4.13s"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh; git diff --check",
+      "exit_status": 0,
+      "result": "Shell syntax and whitespace checks passed."
+    }
+  ],
+  "acceptance_boundaries": {
+    "fixtures_are_synthetic": true,
+    "real_docker_or_container_control_used": false,
+    "vm_ssh_or_hosted_execution_performed": false,
+    "provider_model_or_business_writes_performed": false,
+    "product_scheduler_or_index_source_changed": false,
+    "search_index_startup_task_state_changed": false,
+    "new_global_gate_or_release_prerequisite_added": false,
+    "original_closed_all12_rerun": false,
+    "product_indexing_fault_fixed": false,
+    "deleted_historical_logs_recovered": false,
+    "accepted_hosted_fe_bff_pair_proven": false,
+    "hosted_publication_authority": "Original sole Ops only; source merge is not hosted diagnostic execution."
+  },
+  "review_and_delivery": {
+    "status_at_manifest_creation": "Prepared for assigned independent exact-head review; no approval claimed",
+    "binding": "Owner handoff freezes this committed manifest blob, PR number and exact head in canonical TaskStore. Assigned reviewer and required CI must pass before the native supervisor integrator merges."
+  }
+}
