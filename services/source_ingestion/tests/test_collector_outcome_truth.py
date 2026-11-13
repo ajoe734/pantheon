@@ -682,3 +682,50 @@ def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(t
     state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth")
     assert state["collector_outcome"]["no_new_data"] is True
 
+
+
+def test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without_duplicates(tmp_path, monkeypatch):
+    """Configured fetcher + scheduler over the real HttpBundleTransport and http.client bodies.
+
+    Each socket receive costs 4 fake seconds (inside the idle timeout). The first pull's second raw
+    body is cut by the 15s operation budget: the run fails truthfully (no records, no watermark, no
+    ack, elapsed bounded below the 30s controller request). After the network recovers, the retry
+    ingests both items once, advances the cursor only then, and the next run has no new data.
+    """
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as module
+    from services.source_ingestion.tests.test_collector_bundle_connector import _trickle_response
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    clock = [0.0]
+    step = [4.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(module.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only-token")
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: HttpBundleTransport(host=HOST))
+    opened: list[str] = []
+
+    def fake_open(request, *, caller, timeout):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        opened.append(rel)
+        body = files[rel]
+        response, _raw = _trickle_response(body, clock, step[0] if "/raw/" in rel else 0.0, chunk=8)
+        return response
+
+    monkeypatch.setattr(module, "open_external_url", fake_open)
+    start = clock[0]
+    failed = run_scheduler(tmp_path, store)
+    assert failed.run.status.value != "completed"
+    assert failed.run.raw_count == 0 and failed.watermark is None
+    assert clock[0] - start <= 16.0
+    assert len([r for r in opened if "/raw/" in r]) == 2  # second body was started, then cut
+    assert JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth") in (None, {}) or \
+        not JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth").get(
+            "collector_outcome", {}).get("complete")
+    step[0] = 0.0
+    retry = run_scheduler(tmp_path, store)
+    assert retry.run.status.value == "completed"
+    assert retry.run.raw_count == 2 and retry.watermark.value == CURSOR
+    assert len({r.source_id for r in retry.records}) == len(retry.records)
+    again = run_scheduler(tmp_path, store)
+    assert again.run.raw_count == 0 and again.watermark.value == CURSOR

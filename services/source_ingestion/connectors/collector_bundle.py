@@ -95,7 +95,16 @@ class _DeadlineBody:
     def read(self, size: int = -1) -> bytes:
         if time.monotonic() >= self._deadline:
             raise TimeoutError("collector response body read exceeded the operation deadline")
-        return self._response.read(size)
+        # read1 performs at most one underlying receive, so the deadline is re-checked
+        # after every socket receive instead of once per (possibly many-recv) buffered
+        # read; the caller loops until EOF and Content-Length truncation is still checked.
+        read1 = getattr(self._response, "read1", None)
+        if read1 is None:
+            return self._response.read(size)
+        chunk = read1(size)
+        if chunk and time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        return chunk
 
 
 @contextmanager

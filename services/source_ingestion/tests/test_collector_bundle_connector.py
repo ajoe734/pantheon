@@ -1247,3 +1247,74 @@ def test_request_scope_deadline_is_shared_across_serial_pulls(monkeypatch):
         adapter.pull()
         adapter.pull()
     assert seen == [115.0, 115.0]
+
+
+def _trickle_response(payload: bytes, clock: list, step: float, chunk: int = 1024):
+    """Real http.client.HTTPResponse over a buffered raw stream; each receive costs `step` fake seconds."""
+    import http.client
+    import io
+
+    head = f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
+
+    class _Raw(io.RawIOBase):
+        def __init__(self):
+            self.header, self.pos, self.receives = head, 0, 0
+
+        def readable(self):
+            return True
+
+        def readinto(self, buf):
+            if self.header:
+                n = min(len(buf), len(self.header))
+                buf[:n] = self.header[:n]
+                self.header = self.header[n:]
+                return n
+            n = min(len(buf), chunk, len(payload) - self.pos)
+            if n <= 0:
+                return 0
+            buf[:n] = payload[self.pos:self.pos + n]
+            self.pos += n
+            self.receives += 1
+            clock[0] += step
+            return n
+
+    raw = _Raw()
+
+    class _Sock:
+        def makefile(self, mode):
+            return io.BufferedReader(raw)
+
+    response = http.client.HTTPResponse(_Sock())
+    response.begin()
+    return response, raw
+
+
+def test_real_http_body_deadline_enforced_between_socket_receives(monkeypatch):
+    """40 receives of 1 fake second each (every one inside the idle timeout) must stop at the 15s budget."""
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    clock = [0.0]
+    response, raw = _trickle_response(b"x" * (40 * 1024), clock, 1.0)
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout: response)
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    with pytest.raises(TimeoutError):
+        with cb.operation_deadline(15.0):
+            cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000)
+    assert clock[0] <= 16.0
+    assert raw.receives < 40
+
+
+def test_real_http_body_within_budget_returns_exact_bytes(monkeypatch):
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    clock = [0.0]
+    payload = bytes(range(256)) * 16
+    response, _raw = _trickle_response(payload, clock, 1.0)
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(cb, "open_external_url", lambda request, *, caller, timeout: response)
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    with cb.operation_deadline(15.0):
+        assert cb.HttpBundleTransport(host=HOST).read("raw/body", max_bytes=100000) == payload

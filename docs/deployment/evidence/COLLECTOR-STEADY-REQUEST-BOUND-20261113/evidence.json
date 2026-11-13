@@ -17,8 +17,12 @@
   ],
   "review_fix_20261113": {
     "p1_request_deadline": "Steady tick now claims exactly one Collector pull per scheduler HTTP request (STEADY_PULLS_PER_REQUEST=1 for both the selected batch and max_concurrency); remaining due sources stay due for following ticks, nothing dropped. Per-pull 15s budget therefore bounds the request.",
-    "p1_body_deadline": "collector_bundle._DeadlineBody enforces the floored operation deadline between body chunks (TimeoutError, never partial data).",
-    "tests": "3 scoped suites 374 passed/1 skipped incl. slow-drip body test and steady-limit test",
-    "limitations": "Non-steady modes unchanged (pipeline.py/bounded_reader.py outside the artifact contract); a single blocking socket read is bounded only by socket timeout; mandatory one raw read per pull after budget exhaustion. The steady-limit test is structural, not a full HTTP integration. Source/local only."
+    "p1_body_deadline": "collector_bundle._DeadlineBody now reads via HTTPResponse.read1 (one socket receive per call) and re-checks the shared operation deadline after every receive, so a trickling body cannot exceed the budget by many receives. TimeoutError, never partial data; Content-Length truncation, hash, size and persistence semantics unchanged.",
+    "tests": {
+      "result": "scoped suites (collector_bundle_connector, controller_worker, collector_outcome_truth) all pass; see final run",
+      "old_fails_new_passes": "With collector_bundle.py reverted, test_real_http_body_deadline_enforced_between_socket_receives and test_collector_outcome_truth::test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without_duplicates fail; both pass with the fix. Reviewer repro (40 receives x 1s, 15s budget) now raises at 15 fake seconds instead of 40."
+    },
+    "limitations": "The Python-level run_scheduled endpoint/controller HTTP disconnect and in-flight receipt/lock path is NOT exercised end to end (no real server/controller socket); the structural steady-limit test only asserts STEADY_PULLS_PER_REQUEST wiring. One blocking socket recv can still overshoot by up to the socket timeout (min(20s, remaining budget, 1s floor)). Non-steady modes unchanged. Source/local only; real latency distribution unknown.",
+    "integration": "New configured-fetcher + IngestionScheduler test uses the real HttpBundleTransport over real http.client responses: body cut by the budget fails truthfully (no records, no watermark/cursor/ack, elapsed <=16 fake s), retry ingests both items once, cursor advances only then, next run is no-new-data."
   }
 }
