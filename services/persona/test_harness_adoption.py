@@ -228,8 +228,8 @@ from services.consultation.tests.test_persona_panel_integration import (  # noqa
 )
 
 
-@pytest.mark.parametrize("complete_sources", [True, False], ids=["complete-sources", "missing-binding"])
-def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, stack, monkeypatch, complete_sources):
+@pytest.mark.parametrize("binding_source", ["complete", "missing", "other-persona"])
+def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, stack, monkeypatch, binding_source):
     from dataclasses import replace
     from fastapi import FastAPI, Header
     from services.consultation.client import ConsultationServiceClient
@@ -239,6 +239,7 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
     from services.persona.consult_triggers import RISK_PERSONA_ID
     from services.evolution import main as evolution
     a = adoption
+    complete_sources = binding_source == "complete"
     monkeypatch.setattr(evolution, "store", evolution.EvolutionDecisionStore(
         storage_path=str(stack["root"] / "adoption-evolution.json")))
     monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a")
@@ -267,8 +268,9 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
         assert tenant == "tenant-a"
         return {"registry_id": ref, "tenant_id": tenant, "strategy_id": "momentum",
                 "artifact_type": "strategy_spec", "version": "1", "artifact_state": "candidate",
-                "metadata": {"persona_id": "p-alpha", "underlyings": ["2330"],
-                    **({"persona_capital_binding_id": "pcb-alpha"} if complete_sources else {})},
+                "metadata": {"persona_id": "p-other" if binding_source == "other-persona" else "p-alpha",
+                    "underlyings": ["2330"],
+                    **({"persona_capital_binding_id": "pcb-alpha"} if binding_source != "missing" else {})},
                 "lineage": {"source_run_ids": ["bt-alpha"]}}
 
     @facts.get("/api/registry/strategies/{family}/entries")
