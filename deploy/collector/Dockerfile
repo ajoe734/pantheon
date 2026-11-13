@@ -38,6 +38,7 @@ RUN python -m playwright install --with-deps chromium \
 
 COPY collector_stack /app/collector_stack
 COPY fetch-policy.json /app/fetch-policy.json
+COPY query_vocabulary.json /app/query_vocabulary.json
 
 RUN useradd --create-home --uid 10001 collector \
     && mkdir -p /data/bundles /data/state /data/library \
