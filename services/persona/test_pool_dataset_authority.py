@@ -140,6 +140,13 @@ def run_cycle(tmp_path, source_case):
     book = candidate_virtual_book(dataset=recorded_dataset(), artifact=entries[current["artifact_ref"]]["metadata"]["strategy_artifact"],
                                   checksum=current["checksum"], policy=policy)
     ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env, clock=lambda: NOW), env=env)
+    # This file covers the dataset authority, not the consultation: the risk memo is an already-published, verified
+    # fixture (the consultation flow itself is covered by test_pool_admission_consult_integration).
+    from services.persona.consult_triggers import MemoCheck
+    ports.trial_admission_consultation = lambda persona, pl, cand, packet_id: {
+        "state": "verified", "memo_id": "memo-fixture", "decision_id": "d-fixture", "request_id": "r-fixture",
+        "pool_version": pl["pool_version"]}
+    pool._verify_memo = lambda *args: MemoCheck(True)
     result = PoolAutonomyCycle(ports, now=lambda: NOW.isoformat()).run(PERSONA, {
         "pool": initial, "pool_health": {"demand_reasons": ["low_risk_budget_utilisation"]},
         "books": {current["artifact_ref"]: book}, "observations": [], "unavailable": [],

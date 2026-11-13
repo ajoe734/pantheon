@@ -243,7 +243,7 @@ class PoolAutonomyCycle:
             out["learned"].append({"outcome": "admission_operator_decision", "family": cand.get("family"),
                                    "artifact_ref": cand["artifact_ref"], "detail": consult["reason"]})
         elif state == "verified":
-            out["memo_id"] = consult["memo_id"]
+            out["memo_id"], out["pool_version"] = consult["memo_id"], consult["pool_version"]
         else:
             out["receipts"].append({**base, **ids, "status": "not_attempted", "reason": "consultation_state_unknown:" + str(state)})
         return out
@@ -281,6 +281,7 @@ class PoolAutonomyCycle:
             result = ports.decide_pool(persona, {
                 "expected_version": pool["pool_version"], "execution_context": "paper", "action": "admit",
                 "initiated_by": "persona", "consultation_memo_id": gate["memo_id"],
+                "consultation_pool_version": gate["pool_version"],
                 "candidate": {"artifact_ref": cand["artifact_ref"], "checksum": cand["checksum"],
                               **({"demand_ref": cand["demand_ref"]} if cand.get("demand_ref") else {})},
                 "books": {**observe.get("books", {}), cand["artifact_ref"]: cand_book},
@@ -640,23 +641,35 @@ class HttpPoolCyclePorts:
         the decision id binds artifact_ref + checksum + pool version, so a repeat cycle finds the same
         request instead of opening another. Verification is the shared published-memo check.
         """
-        from services.persona.consult_triggers import trial_admission_requirement, verify_published_memo
+        from services.persona.consult_triggers import (
+            candidate_digest, pool_membership_signature, trial_admission_requirement, verify_published_memo)
         pid, tenant = persona["persona_id"], persona["tenant_id"]
-        requirement = trial_admission_requirement(tenant, pid, cand["artifact_ref"], cand["checksum"], pool["pool_version"])
-        ids = {"decision_id": requirement.decision_id}
+        digest = candidate_digest(cand["artifact_ref"], cand["checksum"])
         reader = self.consultation_factory(tenant)
-        found = [r for r in reader.list_requests(target_type=requirement.decision_type, target_id=requirement.decision_id,
-                                                  tenant_id=tenant) or []
-                 if r.get("target_id") == requirement.decision_id and r.get("from_persona_id") == pid]
+        signature = pool_membership_signature(pool["members"])
+        # The daily risk reweight appends a pool version every cycle, so the consultation is the newest one for
+        # this exact candidate whose pool version still has today's live membership (weights are not membership).
+        found = []
+        for r in reader.list_requests(target_type="trial_admission", tenant_id=tenant) or []:
+            gated = (r.get("metadata") or {}).get("panel", {}).get("gated_decision", {})
+            if r.get("from_persona_id") != pid or gated.get("candidate_digest") != digest:
+                continue
+            version = int(gated.get("target_version") or 0)
+            if 1 <= version <= pool["pool_version"] and pool_membership_signature(
+                    self.pool_store.version(pid, tenant, version)["members"]) == signature:
+                found.append((version, r))
         if not found:
+            requirement = trial_admission_requirement(tenant, pid, cand["artifact_ref"], cand["checksum"], pool["pool_version"])
             created = self.consultation_factory(tenant, f"persona:{pid}").open_persona_panel(
                 requirement, persona_id=pid, trace_id=f"ooda://{packet_id}", tenant_id=tenant,
                 task=f"Risk review of paper trial admission of {cand['artifact_ref']} (pool v{pool['pool_version']})",
                 evidence_refs=[f"ooda://{packet_id}", cand["artifact_ref"]],
                 request_id="consult-" + requirement.decision_id)
-            return {"state": "opened", "request_id": created["request_id"], **ids}
-        request = found[-1]
-        ids["request_id"] = request["request_id"]
+            return {"state": "opened", "request_id": created["request_id"], "decision_id": requirement.decision_id,
+                    "pool_version": pool["pool_version"]}
+        bound, request = max(found, key=lambda item: item[0])
+        requirement = trial_admission_requirement(tenant, pid, cand["artifact_ref"], cand["checksum"], bound)
+        ids = {"decision_id": requirement.decision_id, "request_id": request["request_id"], "pool_version": bound}
         status = str(request.get("status") or "")
         if status in self.CONSULT_FAILED_STATES:
             return {"state": "operator", "reason": "consultation_" + status, **ids}

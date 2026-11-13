@@ -272,6 +272,26 @@ def trial_admission_decision_id(
     return "trial-admission-" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+def candidate_digest(artifact_ref: str, checksum: str) -> str:
+    return hashlib.sha256(f"{artifact_ref}|{checksum}".encode()).hexdigest()
+
+
+def pool_membership_signature(members: Iterable[Mapping[str, Any]]) -> tuple[tuple[str, str, str], ...]:
+    """What a trial-admission consultation is about: the live members, not their daily weights.
+
+    The daily risk reweight appends a pool version every cycle, so a consultation bound to
+    version V stays valid for a later version only while this signature is unchanged.
+    """
+
+    return tuple(
+        sorted(
+            (str(m["artifact_ref"]), str(m["checksum"]), str(m["stage"]))
+            for m in members
+            if m.get("stage") != "removed"
+        )
+    )
+
+
 def trial_admission_requirement(
     tenant_id: str,
     persona_id: str,
@@ -289,7 +309,7 @@ def trial_admission_requirement(
         initiator_persona_id=persona_id,
         risk_persona_id=risk_persona_id,
         target_version=str(pool_version),
-        candidate_digest=hashlib.sha256(f"{artifact_ref}|{checksum}".encode()).hexdigest(),
+        candidate_digest=candidate_digest(artifact_ref, checksum),
     )
     assert required is not None
     return required

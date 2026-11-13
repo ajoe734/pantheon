@@ -597,12 +597,14 @@ def test_persona_initiated_admission_needs_verified_consultation_memo_and_links_
     assert down.json()["decision"]["reasons"] == ["consultation_unavailable:RuntimeError"] and len(down.json()["members"]) == 1
 
     store._verify_memo = lambda tenant, persona, candidate, version, memo: verified.append((tenant, persona, candidate.artifact_ref, version, memo)) or MemoCheck(True)
-    applied = _decision(client, 4, "admit", initiated_by="persona", consultation_memo_id="memo-ok", **body)
+    # the refusals above appended versions; the consultation was opened at version 1 with the same live membership
+    applied = _decision(client, 4, "admit", initiated_by="persona", consultation_memo_id="memo-ok",
+                        consultation_pool_version=1, **body)
     decision = applied.json()["decision"]
     assert decision["status"] == "applied", decision
     assert decision["consultation_memo_id"] == "memo-ok"
     assert decision["evidence_refs"] == [{"ref_type": "consultation_memo", "ref_id": "memo-ok"}]
-    assert verified == [("tenant-a", "persona-1", "candidate", 4, "memo-ok")]  # bound to the exact pool version
+    assert verified == [("tenant-a", "persona-1", "candidate", 1, "memo-ok")]  # bound to the pool version of the consultation
 
 
 def test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_its_path(env):
@@ -616,3 +618,7 @@ def test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_i
     assert refused["decision"]["reasons"] == ["consultation_memo_required"]
     operator = _decision(client, 2, "admit", **body)
     assert operator.json()["decision"]["status"] == "applied" and "consultation_memo_id" not in operator.json()["decision"]
+    # A consultation opened before the live membership changed no longer covers this pool.
+    store._verify_memo = lambda *a: (_ for _ in ()).throw(AssertionError("stale memo must not be verified"))
+    stale = _decision(client, 3, "admit", initiated_by="persona", consultation_memo_id="memo-old", consultation_pool_version=1, **body)
+    assert stale.json()["decision"]["reasons"] == ["consultation_stale_pool_membership_changed"]

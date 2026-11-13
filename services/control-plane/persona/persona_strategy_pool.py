@@ -153,6 +153,9 @@ class PoolDecisionRequest(BaseModel):
     # consultation memo; an operator-initiated one keeps its governed path unchanged.
     initiated_by: Literal["operator", "persona"] = "operator"
     consultation_memo_id: str | None = None
+    # Pool version the consultation was opened against (<= expected_version). The daily reweight
+    # appends versions, so it is valid only while the live membership is unchanged since then.
+    consultation_pool_version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _candidate_required(self):
@@ -603,14 +606,21 @@ class PersonaStrategyPoolStore:
                     # Paper only: the persona may not admit without the consultation owner's published risk memo.
                     if not request.consultation_memo_id:
                         raise ValueError("consultation_memo_required")
+                    bound = request.consultation_pool_version or current["pool_version"]
                     try:
-                        check = self._verify_memo(tenant_id, persona_id, candidate, current["pool_version"],
-                                                  request.consultation_memo_id)
+                        from services.persona.consult_triggers import pool_membership_signature
+                        if bound > current["pool_version"] or pool_membership_signature(
+                                self.version(persona_id, tenant_id, bound)["members"]) != pool_membership_signature(members):
+                            raise ValueError("consultation_stale_pool_membership_changed")
+                        check = self._verify_memo(tenant_id, persona_id, candidate, bound, request.consultation_memo_id)
+                    except ValueError:
+                        raise
                     except Exception as exc:  # noqa: BLE001 - unverifiable evidence is a refusal, never an admission
                         raise ValueError("consultation_unavailable:" + type(exc).__name__) from exc
                     if not check.ok:
                         raise ValueError("consultation_memo_not_verified:" + check.reason)
                     decision["consultation_memo_id"] = request.consultation_memo_id
+                    decision["consultation_pool_version"] = bound
                     decision["evidence_refs"] = [{"ref_type": "consultation_memo", "ref_id": request.consultation_memo_id}]
                 live = [m for m in members if m["stage"] != "removed"]
                 if candidate.artifact_ref in {m["artifact_ref"] for m in members}:
@@ -677,7 +687,7 @@ class PersonaStrategyPoolStore:
             raise
         except ValueError as exc:
             decision["reasons"] = [str(exc)]
-            for key in ("consultation_memo_id", "evidence_refs"):  # memo evidence only travels with an applied admission
+            for key in ("consultation_memo_id", "consultation_pool_version", "evidence_refs"):  # memo evidence only travels with an applied admission
                 decision.pop(key, None)
             members = [dict(m) for m in current["members"]]
         # Registry unavailability is 503, not a market verdict. A refused

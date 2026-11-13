@@ -24,7 +24,7 @@ class Ports:
         self.cand, self.recalled, self.demands = list(candidates), set(recalled), list(demands)
         self.families, self.pool_now = families or {}, pool_now
         self.calls, self.memory, self.opened = [], [], []
-        self.consult = {"state": "verified", "memo_id": "memo-1", "decision_id": "d-1", "request_id": "r-1"}
+        self.consult = {"state": "verified", "memo_id": "memo-1", "decision_id": "d-1", "request_id": "r-1", "pool_version": 3}
         self.consult_calls, self.operator_queue = [], []
 
     def current_pool(self, persona): return self.pool_now
@@ -287,6 +287,7 @@ def test_verified_memo_admits_with_memo_id_as_persona_initiated():
     out = _run(ports)
     call = ports.calls[0]
     assert call["initiated_by"] == "persona" and call["consultation_memo_id"] == "memo-1" and call["action"] == "admit"
+    assert call["consultation_pool_version"] == 3
     assert out["act"]["receipts"][0]["consultation_memo_id"] == "memo-1"
 
 
@@ -330,7 +331,7 @@ def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision(
         def open_persona_panel(self, requirement, **kw):
             opened.append((requirement, kw))
             requests.append({"request_id": kw["request_id"], "status": "submitted", "target_id": requirement.decision_id,
-                             "from_persona_id": kw["persona_id"]})
+                             "from_persona_id": kw["persona_id"], "metadata": {"panel": requirement.to_panel_metadata()}})
             return {"request_id": kw["request_id"]}
     seen_actor = []
     def factory(tenant, actor=None):
@@ -338,7 +339,9 @@ def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision(
         return Client()
     def transport(method, service, path, tenant, body=None):
         posts.append((service, path, body)); return {}
-    ports = HttpPoolCyclePorts(transport, consultation_factory=factory, env={})
+    versions = {3: pool(member("a"), version=3), 4: pool(member("a"), version=4), 5: pool(member("a"), member("z"), version=5)}
+    store = SimpleNamespace(version=lambda pid, tenant, n: versions[n])
+    ports = HttpPoolCyclePorts(transport, consultation_factory=factory, pool_store=store, env={})
     cand = {"artifact_ref": "cand", "checksum": "ck"}
     first = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-1")
     again = ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-2")
@@ -346,8 +349,14 @@ def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision(
     requirement, kw = opened[0]
     assert requirement.decision_type == "trial_admission" and requirement.risk_persona_id == ct.RISK_PERSONA_ID
     assert requirement.target_version == "3" and kw["persona_id"] == "p1" and "persona:p1" in seen_actor
-    # a new pool version is a different decision id, so it is a different consultation
+    # the daily reweight appends a version: same live membership keeps the same consultation (no duplicate)...
+    later = ports.trial_admission_consultation(PERSONA, versions[4], cand, "pk-2b")
+    assert later["state"] == "pending" and later["pool_version"] == 3 and len(opened) == 1
+    # ...while a membership change makes it a different decision and a new consultation
+    changed = ports.trial_admission_consultation(PERSONA, versions[5], cand, "pk-2c")
+    assert changed["state"] == "opened" and changed["pool_version"] == 5 and len(opened) == 2
     assert ct.trial_admission_decision_id("t1", "p1", "cand", "ck", 4) != requirement.decision_id
+    requests.pop()  # drop the version-5 request again; the rest of the scenario is on version 3
     requests[0]["status"] = "published"
     assert ports.trial_admission_consultation(PERSONA, pool(member("a"), version=3), cand, "pk-3")["state"] == "pending"  # no memo yet
     memos.append({"memo_id": "memo-9"})
@@ -360,7 +369,7 @@ def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision(
     finally:
         ct.verify_published_memo = original
     assert oppose["state"] == "operator" and ok == {"state": "verified", "memo_id": "memo-9", "decision_id": requirement.decision_id,
-                                                       "request_id": requests[0]["request_id"]}
+                                                       "request_id": requests[0]["request_id"], "pool_version": 3}
     queued = ports.queue_operator_decision(PERSONA, pool(member("a"), version=3), cand, oppose)
     assert queued["status"] == "queued" and posts[-1][1] == "/api/evolution/proposals"
     assert posts[-1][2]["metadata"]["operator_required"] is True and posts[-1][2]["metadata"]["candidate"]["artifact_ref"] == "cand"
