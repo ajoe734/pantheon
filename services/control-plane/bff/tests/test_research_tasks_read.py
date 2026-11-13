@@ -667,3 +667,34 @@ def test_research_experiments_and_post_experiments_are_unchanged_and_unmerged(
     task_ids = [item["task_id"] for item in tasks_list.json()["items"]]
     assert all(task_id.startswith("rtask-") for task_id in task_ids)
     assert "exp-existing-001" not in task_ids
+
+
+def test_collector_query_plan_task_exposes_exact_diff_and_other_tasks_do_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_task = {
+        "id": "rtask-collector-query-plan-tenant-dev-2026w46",
+        "task_id": "rtask-collector-query-plan-tenant-dev-2026w46",
+        "title": "Weekly collector query plan proposal",
+        "objective": "Proposal only; applying it is a reviewed fetch-policy.json PR.",
+        "tenant_id": "tenant-dev",
+        "task_type": "collector_query_plan",
+        "status": "proposed",
+        "created_by": "research-query-plan",
+        "created_at": "2026-11-13T09:00:00Z",
+        "updated_at": "2026-11-13T09:00:00Z",
+        "source_refs": [],
+        "constraints": {"tenant_id": "tenant-dev"},
+        "query_plan": {
+            "revision": 1,
+            "matched_terms": ["momentum"],
+            "diff": "--- a/deploy/collector/fetch-policy.json\n+++ b/deploy/collector/fetch-policy.json\n",
+        },
+    }
+    plain = deepcopy(HOSTED_TASK_FALLBACK_TO_TASK_ID)
+    _install_owner_urllib_stub(monkeypatch, tasks=[plan_task, plain], runs=[])
+    client = _build_client()
+    body = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev")).json()
+    by_id = {item["task_id"]: item for item in body["items"]}
+    assert by_id[plan_task["task_id"]]["query_plan"] == plan_task["query_plan"]
+    assert "query_plan" not in by_id[plain["task_id"]]
