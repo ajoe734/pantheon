@@ -239,3 +239,9 @@ child-source bundles. Gemini notes remain subject to the community test-volume c
 Books retain their existing operator hold. Actual hosted throughput/availability
 is accepted separately by `COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113`; synthetic
 rate evidence is in the throughput task's deployment evidence manifest.
+
+Ingest also reuses a thread-local distillation ledger connection for one native
+batch. Each record still uses the queue's existing FULL-synchronous transaction,
+identity validation, commit and rollback. Connection setup/teardown is amortized;
+no queued work or per-record durability is removed, and other threads/processes
+continue using independent connections to the same ledger.

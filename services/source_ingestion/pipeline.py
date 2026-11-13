@@ -12,6 +12,8 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -177,6 +179,36 @@ def with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRe
     )
 
 
+class IngestDistillationJobQueue(DistillationJobQueue):
+    """Reuse one thread-local connection per ingest batch, keeping every durable transaction.
+
+    The queue's schema, FULL synchronous setting, identity checks, per-record
+    commit/rollback and cross-process consumer API are inherited unchanged.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._ingest_connection: ContextVar[Any] = ContextVar("ingest_distillation_connection", default=None)
+        super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def _connect(self):
+        active = self._ingest_connection.get()
+        if active is not None:
+            yield active
+        else:
+            with super()._connect() as connection:
+                yield connection
+
+    @contextmanager
+    def admission_connection(self):
+        with self._connect() as connection:
+            token = self._ingest_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._ingest_connection.reset(token)
+
+
 def admit_normalized_records_to_distillation(
     distillation_job_queue: DistillationJobQueue,
     normalized_source_records: Iterable[SourceRecord],
@@ -186,25 +218,25 @@ def admit_normalized_records_to_distillation(
     # Never raises; catch_up remains the missed-event recovery path for
     # whatever admission could not enqueue here.
     admissions: dict[str, Any] = {}
-    for source in normalized_source_records:
-        if source.status != SourceRecordStatus.NORMALIZED:
-            continue
-        try:
-            job = distillation_job_queue.enqueue_source_record(
-                source,
-                requested_by="source-ingest",
-            )
-        except Exception as exc:  # noqa: BLE001 - ingest completion must remain non-blocking.
-            admissions[source.source_id] = {
-                "status": "admission_failed",
-                "error": str(exc)[:300],
-            }
-            continue
-        admissions[source.source_id] = {
-            "status": "admitted",
-            "job_id": job.job_id,
-            "source_digest": job.source_digest,
-        }
+    sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED)
+    if not sources:
+        return admissions
+    context = (distillation_job_queue.admission_connection()
+               if isinstance(distillation_job_queue, IngestDistillationJobQueue) else nullcontext())
+    try:
+        with context:
+            for source in sources:
+                try:
+                    job = distillation_job_queue.enqueue_source_record(source, requested_by="source-ingest")
+                except Exception as exc:  # noqa: BLE001 - admission remains non-blocking.
+                    admissions[source.source_id] = {"status": "admission_failed", "error": str(exc)[:300]}
+                    continue
+                admissions[source.source_id] = {
+                    "status": "admitted", "job_id": job.job_id, "source_digest": job.source_digest,
+                }
+    except Exception as exc:  # connection setup/teardown must preserve catch-up recovery too
+        for source in sources:
+            admissions.setdefault(source.source_id, {"status": "admission_failed", "error": str(exc)[:300]})
     return admissions
 
 

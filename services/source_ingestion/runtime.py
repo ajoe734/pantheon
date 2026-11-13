@@ -131,7 +131,7 @@ from .api_models import (
     SetConnectorLifecycleRequest,
     TriggerIngestJobRequest,
 )
-from .pipeline import IngestPipelineService
+from .pipeline import IngestDistillationJobQueue, IngestPipelineService
 from .strategy_seed_store import StrategySpecSeedStore
 
 
@@ -327,7 +327,7 @@ class SourceIngestionRuntime:
         self.audit_store_lock = threading.RLock()
         self.source_execution_lock = threading.RLock()
         self.market_data_storage_writer = MarketDataStorageWriter(self.MARKET_DATA_STORAGE_ROOT)
-        self.distillation_job_queue = DistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
+        self.distillation_job_queue = IngestDistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
         self.source_management_store = build_source_management_store(self.DATA_DIR)
         self._STRATEGY_SEED_STORE_PATH = Path(
             (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))

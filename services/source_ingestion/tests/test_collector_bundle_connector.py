@@ -1562,7 +1562,9 @@ def _intake_bundle(source, count, dataset, exchange, trade_date, *, newest=False
                            "data": [data], "record": normalized}, ensure_ascii=False, sort_keys=True).encode()
         sha = hashlib.sha256(body).hexdigest()
         item_id = f"{source}-{trade_date}-{symbol}"
-        url = f"https://example.test/{source}"
+        url = ("https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes" if exchange == "TPEX" else
+               "https://www.twse.com.tw/fund/T86" if dataset == "tw_institutional_flow" else
+               "https://www.twse.com.tw/exchangeReport/MI_INDEX")
         rows.append({"id": item_id, "url": url, "fetched_at": finished, **normalized})
         items.append({"item_id": item_id, "url": url, "http_status": 200,
                       "content_sha256": sha, "bytes": len(body), "raw_path": f"raw/{sha}.json"})

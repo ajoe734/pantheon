@@ -2646,7 +2646,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     ack_ids = [receipt["ingest_run_id"] for receipt in receipts]
     assert len(ack_ids) == len(sleeps) == len(set(ack_ids))
     assert all(receipt["status"] == "completed" for receipt in receipts)
-    assert 1 < peak[0] <= cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
+    assert 4 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
     records = list(module.runtime.evidence_repository.list_source_records())
     assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
     for record in records:
@@ -2814,3 +2814,137 @@ def test_host_offering_readback_skips_without_failure_or_dlq_and_recovers(steady
     selected, resumed = _steady_step(_steady_reconcile([source]))
     assert selected == [source] and resumed["summary"]["total_failed"] == 0
     assert resumed["ran"][0]["receipt"]["normalized_count"] == 2
+
+
+def test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget(steady_stack, monkeypatch, tmp_path):
+    """Cold latest rows plus a full 6000-row TPEx historical day through native persistence."""
+    import json
+    import threading
+    import time
+    import types
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _intake_bundle, FakeTransport
+
+    http, module, _ = steady_stack
+    files, entries, statuses, requirements = {}, [], {}, []
+    for source, count, exchange, day, newest in (
+        ("collector-tw-twse-price-history", 1, "TWSE", "2026-11-13", True),
+        ("collector-tw-tpex-price-history", 1, "TPEX", "2026-11-13", True),
+        ("collector-tw-tpex-price-history", 6000, "TPEX", "2024-11-12", False),
+    ):
+        f, entry = _intake_bundle(source, count, "tw_price_daily", exchange, day, newest=newest)
+        files.update(f); entries.append(entry)
+        if newest:
+            statuses[source] = {"status": "ok", "last_run_at": entry["finished_at"], "cadence_seconds": 86400,
+                                "offered": True, "offered_reason": None}
+            requirements.append({"dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
+                                 "source_class": "live_pull", "connector_candidates": [source], "policy_gates": []})
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": statuses}).encode()
+    clock, active, peak = [0.0], [0], [0]
+    lock = threading.Lock()
+    class Transport(FakeTransport):
+        def read(self, path, *, max_bytes):
+            with lock:
+                started = clock[0]; active[0] += 1; peak[0] = max(peak[0], active[0])
+            try:
+                time.sleep(0.005)
+                return super().read(path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    clock[0] = max(clock[0], started + 0.27); active[0] -= 1
+    transport = Transport(files)
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    personas = ({"persona_id": "history-persona", "required_data_sources": requirements},)
+    meta = {**tcw._desired_meta(), "requirement_count": 2,
+            "sha256": module.runtime._desired_state_digest(list(personas))}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kw: (personas, meta))
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, timeout_seconds=30)
+    state = tcw._state(); store = cw.ControllerStateStore(config.state_path)
+    elapsed, delivered, durations = 0.0, 0, []
+    for _ in range(30):
+        wall_start, model_start = time.perf_counter(), clock[0]
+        result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
+        duration = time.perf_counter() - wall_start + clock[0] - model_start
+        durations.append(duration); elapsed += duration + 1
+        assert result["status"] == "ok" and duration < config.timeout_seconds
+        delivered = sum(r.normalized_count for r in module.runtime.store.list_runs())
+        if delivered == 6002 and not result["continuation_pending"]:
+            break
+        time.sleep(1)
+    assert delivered == 6002 and not result["continuation_pending"]
+    assert active[0] == 0 and 4 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
+    # Apply the full 6000-row day's observed controller+transport cost per row to
+    # all 488*(1375+6000+1349) rows. The sample also includes cold newest sessions,
+    # duplicate newest replay, all API/readback/persistence work and 1s pauses.
+    shared_seconds = elapsed * (488*(1375+6000+1349))/6000 + 600
+    print("INTAKE_CONTROLLER_HISTORY " + json.dumps({"sample_history_rows": 6000, "delivered_rows": delivered,
+          "ticks": len(durations), "tick_seconds": durations, "sample_seconds": elapsed,
+          "peak_inflight": peak[0], "shared_488_days_seconds": shared_seconds}))
+    assert shared_seconds < 48*3600
+
+
+def test_ingest_queue_connection_reuse_preserves_each_commit_and_thread_isolation(tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue
+    def source(sid):
+        return SourceRecord(source_id=sid, connector_id="queue-test", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}", metadata={"body": sid})
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    reader = DistillationJobQueue(queue.path)
+    with queue.admission_connection():
+        first = queue.enqueue_source_record(source("first"))
+        assert reader.get("first").job_id == first.job_id  # committed before batch closes
+        assert queue.enqueue_source_record(source("first")).job_id == first.job_id
+        def other_thread():
+            assert queue._ingest_connection.get() is None
+            return queue.enqueue_source_record(source("thread"))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(other_thread).result(timeout=10).source_id == "thread"
+        queue.enqueue_source_record(source("last"))
+        assert reader.get("last") is not None
+    assert queue._ingest_connection.get() is None and reader.count() == 3
+
+
+def test_ingest_queue_reuse_rolls_back_collision_then_accepts_next_record(tmp_path):
+    import json
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.distillation_worker import DistillationError
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue
+    def source(sid):
+        return SourceRecord(source_id=sid, connector_id="queue-test", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}", metadata={"body": sid})
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    first = source("first"); queue.enqueue_source_record(first)
+    with queue._connect() as connection:
+        payload = first.to_dict(); payload["title"] = "tampered"
+        connection.execute("UPDATE distillation_source_versions SET payload_json = ? WHERE source_id = ?",
+                           (json.dumps(payload), "first"))
+    with queue.admission_connection():
+        with pytest.raises(DistillationError, match="collision"):
+            queue.enqueue_source_record(first)
+        queue.enqueue_source_record(source("second"))
+    assert queue.get("second") is not None and queue.count() == 2
+
+
+def test_ingest_queue_connection_failure_keeps_catch_up_admission_nonblocking(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue, admit_normalized_records_to_distillation
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    @contextmanager
+    def broken():
+        raise RuntimeError("test connection unavailable")
+        yield
+    monkeypatch.setattr(queue, "admission_connection", broken)
+    records = [SourceRecord(source_id=sid, connector_id="q", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}") for sid in ("one", "two")]
+    admissions = admit_normalized_records_to_distillation(queue, records)
+    assert set(admissions) == {"one", "two"}
+    assert all(a["status"] == "admission_failed" for a in admissions.values())
