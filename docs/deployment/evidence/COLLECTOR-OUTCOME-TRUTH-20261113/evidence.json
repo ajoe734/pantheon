@@ -3,8 +3,9 @@
   "owner": "Codex2",
   "assigned_independent_reviewer": "Claude",
   "scope": "Source code and local fixtures only; independent exact-head review is required before native integration and closeout",
-  "base_commit": "04947d53bcf3014389b530803c1551fa841d55e9",
+  "base_commit": "e8d87c3a54c978ab4cf9da66988bd247e42eb152",
   "reproduction": {
+    "baseline_commit": "04947d53bcf3014389b530803c1551fa841d55e9",
     "inputs": [
       "/tmp/pantheon-root01a15322-resume-20261111/COLLECTOR-OUTCOME-TRUTH-20261113-sanitized-source-facts.json",
       "/tmp/pantheon-root01a15322-resume-20261111/actual-Root433321-candidate-Source-20261113T001445.json"
@@ -53,6 +54,11 @@
       "result": "75 passed in 16.10s after the final dataclass positional-compatibility and provider docstring adjustments; terminal output collected."
     },
     {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_scheduled_connector.py::test_steady_controller_calls_drive_real_scheduler_and_collector_adapter services/source_ingestion/tests/test_scheduled_connector.py::test_collector_empty_then_paused_preserves_source_records_freshness_and_health",
+      "exit_code": 0,
+      "result": "77 passed, 1 Starlette/httpx deprecation warning in 27.25s after composing current dev e8d87c3a54c978ab4cf9da66988bd247e42eb152; terminal output collected."
+    },
+    {
       "command": "git diff --check",
       "exit_code": 0,
       "result": "Passed."
@@ -69,6 +75,7 @@
     "Existing Collector raw/derived cap, priority, partial resume, hash, entitlement and PIT tests and non-Collector configured/scheduler coverage pass."
   ],
   "limitations_and_handoff": [
+    "First handoff of PR #7282 was correctly rejected because dev advanced by four admitted persona-harness commits. Current dev e8d87c3a54c978ab4cf9da66988bd247e42eb152 was merged without Collector source overlap, preserving the published branch history and normal non-force push; the composed tree passed 77 focused tests before a fresh exact-head handoff.",
     "A missing or changed local verified raw boundary fails closed rather than treating a cursor as proof; recovery belongs to existing owner operations.",
     "Observed Collector health is retained in configured fetch-state and batch metadata. Existing SourceHealth persistence receives genuine scheduler success/failure; no new controller or product DTO protocol is introduced.",
     "The actual YouTube empty cause remains unknown. No worker VM, SSH, Collector host, provider, model, secrets, business/data service, real egress or deployment operation was performed.",
