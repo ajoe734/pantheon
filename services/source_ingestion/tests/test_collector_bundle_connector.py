@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -832,3 +833,140 @@ def test_public_path_never_exceeds_fetch_max_records_and_acks_accurately(tmp_pat
         connector=CollectorBundleAdapter(connector_id="conn-pub1", **config).connector(), fetch=fetch, trace_id="t"
     )
     assert len(one) == 1
+
+
+# COLLECTOR-NEWS-PUBLISHED-AT-20261113 ---------------------------------------------
+def _news_with_published(tmp_path, literal):
+    files, entry, _ = make_bundle(source_id="collector-x")
+    key = next(k for k in files if k.endswith("items.jsonl"))
+    rows = [json.loads(line) for line in files[key].decode().splitlines()]
+    for r in rows:
+        r["published_at"] = literal
+    files[key] = "\n".join(json.dumps(r) for r in rows).encode()
+    return adapter_for(files, [entry], tmp_path, source_id="collector-x", source_type="news",
+                       platform=None, publisher="cna")
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00 GMT", "2026-11-10T01:00:00Z",
+                                     "Tue, 10 Nov 2026 09:00:00 +0800"])
+def test_rss_rfc2822_and_iso_published_at_keep_the_same_instant(tmp_path, literal):
+    records = _news_with_published(tmp_path, literal).pull().records
+    assert {r.metadata["published_at"] for r in records} == {"2026-11-10T01:00:00Z"}
+
+
+@pytest.mark.parametrize("literal", ["Tue, 10 Nov 2026 01:00:00", "Tue, 10 Nov 2026 01:00:00 -0000",
+                                     "yesterday"])
+def test_rss_published_at_without_provable_timezone_or_malformed_still_fails(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def test_rss_rfc2822_replay_is_stable_and_hash_mismatch_still_rejected(tmp_path):
+    literal = "Tue, 10 Nov 2026 01:00:00 GMT"
+    first = _news_with_published(tmp_path / "a", literal).pull().records
+    again = _news_with_published(tmp_path / "b", literal).pull().records
+    assert [r.metadata["content_hash"] for r in first] == [r.metadata["content_hash"] for r in again]
+    files, entry, _ = make_bundle(source_id="collector-x")
+    files[next(k for k in files if "/raw/" in k)] = b"tampered"
+    with pytest.raises(SourceEvidenceError):
+        adapter_for(files, [entry], tmp_path / "c", source_id="collector-x", source_type="news",
+                    platform=None, publisher="cna").pull()
+
+
+def test_rss_published_after_fetch_time_keeps_pit_failure(tmp_path):
+    # the exact retained literal is later than this bundle's fetched_at: no time substitution
+    adapter = _news_with_published(tmp_path, "Wed, 11 Nov 2026 04:37:00 GMT")
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+_BAD_RFC2822 = ["Tue, 10 Nov 2026 01:00:00 +080", "Tue, 10 Nov 2026 01:00:00 +1260",
+                "Tue, 10 Nov 2026 01:00:00 GMT trailing", "Tue, 10 Nov 2026 01:00:00 EST",
+                "Wed, 10 Nov 2026 01:00:00 GMT", "Tue, 31 Nov 2026 01:00:00 GMT"]
+
+
+@pytest.mark.parametrize("literal", _BAD_RFC2822)
+def test_rss_malformed_or_contradictory_rfc2822_is_rejected_by_verified_reader(tmp_path, literal):
+    adapter = _news_with_published(tmp_path, literal)
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        adapter.pull()
+    assert raw_files(tmp_path) == []
+
+
+def _recorded_rss_bundle(literal, fetched="2026-11-11T05:00:00Z", raw_tamper=False):
+    item_id = "news-cna-202611110105-aspx"
+    body = (f"<item><guid>{item_id}</guid><title>t</title><link>https://x.test/{item_id}</link>"
+            f"<pubDate>{literal}</pubDate></item>").encode()
+    sha = hashlib.sha256(body).hexdigest()
+    src, run, date = "collector-news-rss", "run1", "2026-11-11"
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": src, "run_id": run, "collector_version": "1.0.0",
+        "started_at": "2026-11-11T04:59:00Z", "finished_at": fetched, "fetch_policy_hash": "fph",
+        "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "status": "complete",
+        "items": [{"item_id": item_id, "url": f"https://x.test/{item_id}", "http_status": 200,
+                   "content_sha256": sha, "raw_path": f"raw/{sha}.xml", "bytes": len(body)}],
+        "bundle_sha256": compute_bundle_sha256([sha]),
+    }
+    row = {"id": item_id, "url": f"https://x.test/{item_id}", "fetched_at": fetched, "published_at": literal,
+           "text": "t", "lang": "zh-TW", "hashed_author": "hmac-abc", "metrics": {}, "title": "t"}
+    base = f"bundles/{src}/{date}/{run}"
+    files = {f"{base}/manifest.json": json.dumps(manifest).encode(), f"{base}/items.jsonl": json.dumps(row).encode(),
+             f"{base}/raw/{sha}.xml": b"tampered" if raw_tamper else body}
+    return files, {"source_id": src, "date": date, "run_id": run, "finished_at": fetched}
+
+
+def _pull_rss(tmp_path, literal, **kw):
+    files, entry = _recorded_rss_bundle(literal, **kw)
+    return adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                       platform=None, publisher="cna").pull()
+
+
+def test_recorded_rss_bundle_exact_literal_and_equivalent_iso_yield_same_instant_and_hash(tmp_path):
+    exact = _pull_rss(tmp_path / "a", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    iso = _pull_rss(tmp_path / "b", "2026-11-11T04:37:00Z").records
+    assert {r.metadata["published_at"] for r in exact} == {"2026-11-11T04:37:00Z"}
+    assert {r.metadata["published_at"] for r in iso} == {"2026-11-11T04:37:00Z"}
+    assert exact[0].metadata["content_hash"] == "sha256:" + hashlib.sha256(
+        b"<item><guid>news-cna-202611110105-aspx</guid><title>t</title>"
+        b"<link>https://x.test/news-cna-202611110105-aspx</link>"
+        b"<pubDate>Wed, 11 Nov 2026 04:37:00 GMT</pubDate></item>").hexdigest()
+    replay = _pull_rss(tmp_path / "c", "Wed, 11 Nov 2026 04:37:00 GMT").records
+    assert replay[0].metadata["content_hash"] == exact[0].metadata["content_hash"]
+
+
+def test_recorded_rss_bundle_negatives_future_time_order_and_hash(tmp_path):
+    with pytest.raises(SourceEvidenceError, match="available_time must be >= event_time"):
+        _pull_rss(tmp_path / "f", "Wed, 11 Nov 2026 04:37:00 GMT", fetched="2026-11-11T04:00:00Z")
+    with pytest.raises(SourceEvidenceError, match="ISO-8601"):
+        _pull_rss(tmp_path / "n", "Wed, 11 Nov 2026 04:37:00")
+    with pytest.raises(SourceEvidenceError):
+        _pull_rss(tmp_path / "h", "Wed, 11 Nov 2026 04:37:00 GMT", raw_tamper=True)
+
+
+# Exact NATIVE bytes (not generated): private evidence pack extracted by the operator; set
+# PANTHEON_NATIVE_RSS_PACK_DIR to the extraction dir. Skipped when absent (pack is not in the repo).
+_NATIVE_PACK = os.environ.get("PANTHEON_NATIVE_RSS_PACK_DIR")
+_NATIVE_RUN = "bundles/collector-news-rss/2026-11-11/run-20261111T044920Z"
+
+
+@pytest.mark.skipif(not _NATIVE_PACK, reason="private native RSS pack not provided")
+def test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader(tmp_path):
+    root = Path(_NATIVE_PACK)
+    files = {str(p.relative_to(root)): p.read_bytes() for p in (root / _NATIVE_RUN).rglob("*") if p.is_file()}
+    entry = {"source_id": "collector-news-rss", "date": "2026-11-11", "run_id": "run-20261111T044920Z",
+             "finished_at": "2026-11-11T04:49:20Z"}
+    native_row = next(json.loads(l) for l in files[f"{_NATIVE_RUN}/items.jsonl"].decode().splitlines()
+                      if json.loads(l)["id"] == "news-cna-202611110105-aspx")
+    assert native_row["published_at"] == "Wed, 11 Nov 2026 04:37:00 GMT"  # exact retained literal
+    res = adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                      platform=None, publisher="cna").pull()
+    manifest = json.loads(files[f"{_NATIVE_RUN}/manifest.json"])
+    native_sha = next(i["content_sha256"] for i in manifest["items"] if i["item_id"] == "news-cna-202611110105-aspx")
+    rec = next(r for r in res.records if r.metadata["content_hash"] == "sha256:" + native_sha)
+    assert rec.metadata["collector"]["bundle_sha256"] == "d31fa3480140d40c59d6f54481dce8f17f15e128a173985abfd3179022800c2e"
+    assert rec.metadata["available_time"] == "2026-11-11T04:49:20Z"
+    assert rec.metadata["published_at"] == "2026-11-11T04:37:00Z"
+    assert len(res.records) == 20
