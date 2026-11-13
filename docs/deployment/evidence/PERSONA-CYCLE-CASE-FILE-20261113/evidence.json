@@ -14,7 +14,8 @@
       ".venv-pantheon/bin/python3 -m pytest -q services/knowledge integrations/openclaw --ignore=integrations/openclaw/test_dev_gates.py -> 177 passed (before the final scope reduction; the touched tests were rerun: 45 passed)",
       ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 5 passed",
       ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file_integration.py services/persona/test_persona_cycle_controller.py -> 33 passed",
-      ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py services/persona/test_pool_autonomy_cycle.py integrations/openclaw/test_persona_memory_bridge.py services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 56 passed (repair 2026-11-13)"
+      ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py services/persona/test_pool_autonomy_cycle.py integrations/openclaw/test_persona_memory_bridge.py services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 56 passed (repair 2026-11-13)",
+      "PYTHONPATH=. /tmp/v/bin/python -m pytest -q services/persona/test_persona_cycle_controller.py services/persona/test_pool_autonomy_cycle.py integrations/openclaw/test_persona_memory_bridge.py services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py -> 59 passed (2026-11-13 review repair: every final proposal revalidated against its own case file; test_revision_revalidates_every_final_proposal x3 kinds)"
     ],
     "not_run": "integrations/openclaw/test_dev_gates.py (needs a Postgres DSN; unrelated to this change)",
     "integration_scope": "real PersonaCycleController.consume_run, real persona/pool/telemetry owner stores, real memory service FastAPI app over HTTP, real memory bridge materialiser; only OpenClaw cron/agent-turn HTTP is a fixture. Local fixtures are not hosted, model or trading evidence."
@@ -28,7 +29,8 @@
   "fail_closed": [
     "no family/underlying -> canonical_memory unavailable (cycle_query_subject_missing), no turn",
     "every case-file group unavailable -> case_file_unavailable:all_case_file_groups_unavailable, no turn",
-    "bad citation -> case_file_citation_invalid, packet stays observing"
+    "bad citation -> case_file_citation_invalid, packet stays observing",
+    "after optional revision every final proposal (cycle-case or own case) is re-checked; invalid citation on any proposal -> case_file_citation_invalid, no decisions persisted"
   ],
   "known_limits": [
     "the route keeps the bridge bootstrap query when a caller omits query (agent sync/legacy callers); the cycle never omits it",
