@@ -666,3 +666,33 @@ def test_gdelt_filter_uses_policy_and_never_accepts_query_override(tmp_path, fix
     items = poller.collect()
     assert items == []  # the three Taiwan rows don't match a semiconductor-only policy
     assert poller.empty_reason == "no_matching_records"
+
+
+def test_gdelt_reviewed_vocabulary_change_reuses_cache(tmp_path, fixtures_dir, test_hasher):
+    from collector_stack.config import validate_collector_config
+    runner, _ = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="original-policy")
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    raw = json.loads(DEFAULT_POLICY_PATH.read_text())
+    raw["sources"]["collector-gdelt"]["query_terms"] = ["Taiwan"]
+    runner.config = validate_collector_config(raw, env={})
+    changed = runner.run_source("collector-gdelt", run_id="reviewed-policy")
+    assert len(changed.bundle.items_path.read_text().splitlines()) == 3
+    assert len(transport.calls) == 1
+
+
+def test_gdelt_rejects_corrupt_existing_cache(tmp_path, fixtures_dir, test_hasher):
+    runner, _ = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="good-cache")
+    cached = tmp_path / "state" / "gdelt-feed" / "20261113110000.export.CSV.zip"
+    cached.write_bytes(b"truncated cache")
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    corrupt = runner.run_source("collector-gdelt", run_id="corrupt-cache")
+    assert corrupt.status == "partial"
+    assert "gdelt_integrity_mismatch" in corrupt.bundle.manifest["paused_reason"]
+    assert len(transport.calls) == 1
+    assert not cached.exists()
+    runner, transport = _gdelt_runner(tmp_path, fixtures_dir, test_hasher)
+    runner.run_source("collector-gdelt", run_id="redownload-cache")
+    assert len(transport.calls) == 2
+    assert cached.is_file()
