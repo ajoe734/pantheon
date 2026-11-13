@@ -22,6 +22,7 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
 from services.control_plane.bff.personas.router import create_personas_router
 from services.control_plane.bff.personas.service import PersonaService
+from services.control_plane.bff.personas import cycle_views
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.ports import persona_pool as pool_port
 from services.control_plane.bff.ports.ooda_management import OodaPacketsPort
@@ -42,6 +43,9 @@ PATHS = [f"/bff/personas/{PERSONA}", f"/api/v1/operator/persona-management/{PERS
 
 @pytest.fixture
 def world(monkeypatch, tmp_path):
+    # D13 enrichment is tested with real owners in test_persona_cycle_views;
+    # pool tests keep their HTTP contract focused on the three pool reads.
+    monkeypatch.setattr(cycle_views, "http_request_json", lambda *a, **kw: {"status": "unavailable"})
     for env in ("PANTHEON_BFF_OODA_PACKET_STORE", "PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"):
         monkeypatch.delenv(env, raising=False)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "persona"))

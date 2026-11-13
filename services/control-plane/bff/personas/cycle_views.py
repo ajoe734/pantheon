@@ -32,7 +32,7 @@ def read_cycle_records(read_store, tenant_id):
             raise CycleReadUnavailable("cycle_owner_store_missing")
         records = list(read_packets(path).values())
     else:
-        if state.get("status") != "ok":
+        if state.get("status") not in {"ok", "degraded"}:
             raise CycleReadUnavailable("cycle_owner_unavailable")
         token = selected_tenant.set(tenant_id)
         try:
@@ -50,7 +50,7 @@ def persona_cycle_health(records, persona_id):
         raise CycleReadUnavailable("no_daily_cycle_packet")
     latest = max(matched, key=lambda p: ((p.get("producer") or {}).get("cron_run_at_ms") or 0,
                                          p.get("updated_at") or ""))
-    if (latest.get("status") not in {"observing", "oriented", "decided", "acted", "evolving", "closed"}
+    if (latest.get("status") not in {"open", "observing", "oriented", "decided", "acted", "evolving", "closed", "failed"}
             or latest["persona_cycle"].get("phase") not in {"claimed", "terminal"}):
         raise CycleReadUnavailable("cycle_record_invalid")
     return cycle_health(latest)
@@ -112,11 +112,14 @@ def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization,
     auth = authorization or caller_auth.get() or ""
     memory_client = MemoryReviewClient(auth, tenant_id)
 
-    def memories():
-        payload = memory_client.call("GET", "/api/memory/retrieve?" + urlencode({
+    def memories(*, experiences_only=False):
+        query = {
             "actor_id": identity.operator_id, "actor_roles": "", "scope": "persona", "limit": 100,
             "session_id": "bff-persona-cycle:" + persona_id, "persona_id": persona_id,
-        }))
+        }
+        if experiences_only:
+            query["tags"] = "harness_experience"
+        payload = memory_client.call("GET", "/api/memory/retrieve?" + urlencode(query))
         if not isinstance(payload.get("authz"), dict) or payload["authz"].get("allowed") is not True:
             raise CycleReadUnavailable("memory_retrieval_not_authorized")
         hits = payload.get("hits")
@@ -126,7 +129,8 @@ def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization,
         for h in hits:
             e = h.get("entry") if isinstance(h, dict) else None
             if (not isinstance(e, dict) or h.get("type") != "persona" or not e.get("memory_id")
-                    or e.get("tenant_id") != tenant_id or e.get("persona_id") != persona_id):
+                    or e.get("tenant_id") != tenant_id or e.get("persona_id") != persona_id
+                    or not isinstance(e.get("content"), dict)):
                 raise CycleReadUnavailable("memory_scope_or_identity_mismatch")
             entries.append(e)
         if not entries:
@@ -139,13 +143,15 @@ def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization,
                     | {"summary": (e.get("content") or {}).get("summary")} for e in entries]}
 
     def experiences():
-        if entries is None:
-            raise CycleReadUnavailable("memory_owner_unavailable")
-        values = [e for e in entries if e.get("source_event_type") == "harness_experience"
+        values = [e for e in memories(experiences_only=True) if e.get("source_event_type") == "harness_experience"
                   or e.get("memory_type") == "harness_experience"]
         if not values:
             raise CycleReadUnavailable("no_harness_experiences")
-        return values
+        return [{"memory_id": e["memory_id"], "source_event_id": e.get("source_event_id"),
+                 "written_at": e.get("written_at"), "summary": e["content"].get("summary"),
+                 "experience": {k: (e["content"].get("structured_payload") or {}).get(k)
+                                for k in ("cue", "lesson", "outcome", "confidence", "evidence_refs",
+                                          "harness_version", "proposal_ids")}} for e in values]
 
     experience = section("harness_experiences", "memory_owner", experiences)
 

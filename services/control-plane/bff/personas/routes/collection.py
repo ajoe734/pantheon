@@ -42,7 +42,6 @@ from ..service import (
     deterministic_provisioning_ids,
 )
 from .common import PersonaRouteContext, make_context_dependency
-from ..cycle_views import read_fleet_cycle_health
 
 log = logging.getLogger(__name__)
 
@@ -454,7 +453,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
             )
             items = result["data"]["items"]
             ids = [str(row.get("persona_id") or row.get("id")) for row in items]
-            health_by_persona = read_fleet_cycle_health(_service.get_read_store(), tenant_id, ids)
+            health_by_persona = _service.read_persona_cycle_health(tenant_id, ids)
             for row, pid in zip(items, ids):
                 row["persona_cycle_health"] = health_by_persona[pid]
             return result
