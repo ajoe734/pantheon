@@ -180,6 +180,16 @@ def test_lookback_resets_per_session_unless_cross_session():
     assert _artifact_cross_session({"parameters": {"cross_session": True}, "strategy_logic": {}}) is True
 
 
+def test_closes_window_reuse_is_identical_to_rebuilding_per_bar():
+    prepared = GovernedVectorbtInputAdapter().prepare(_dataset(closes=lambda k: float(k + 1)))
+    closes = [bar[3] for bar in prepared.ohlcv_by_instrument["2330"]]
+    starts = _session_start_indexes(prepared.dates_by_instrument["2330"])
+    for cross in (False, True):
+        for i in range(len(closes)):
+            assert _closes_window(prepared, "2330", i, cross, closes=closes, session_starts=starts) == \
+                _closes_window(prepared, "2330", i, cross)
+
+
 # --- order planning: next-bar-open, flat by 13:25 --------------------------------------------
 
 def test_plan_fills_on_next_bar_and_never_across_session_or_after_flatten():

@@ -1307,14 +1307,21 @@ def _artifact_holding(artifact: Mapping[str, Any], config_params: Mapping[str, A
 
 
 def _closes_window(
-    dataset: PreparedVectorbtDataset, instrument: str, index: int, cross_session: bool
+    dataset: PreparedVectorbtDataset, instrument: str, index: int, cross_session: bool,
+    *, closes: Sequence[float] | None = None, session_starts: Sequence[int] | None = None,
 ) -> list[float]:
-    """Closes visible at bar ``index``; intraday lookbacks reset at the session open unless cross_session."""
-    closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
+    """Closes visible at bar ``index``; intraday lookbacks reset at the session open unless cross_session.
+
+    ``closes`` / ``session_starts`` let a per-bar caller reuse the already-built full-series values
+    instead of rebuilding them for every bar; the result is identical to the default path.
+    """
+    if closes is None:
+        closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
     if _is_intraday(dataset) and not cross_session:
-        lo = _session_start_indexes(dataset.dates_by_instrument[instrument])[index]
-        return closes[lo : index + 1]
-    return closes[: index + 1]
+        if session_starts is None:
+            session_starts = _session_start_indexes(dataset.dates_by_instrument[instrument])
+        return list(closes[session_starts[index] : index + 1])
+    return list(closes[: index + 1])
 
 
 def _canonical_frequency(value: Any) -> str:
@@ -1459,7 +1466,8 @@ def _artifact_action_sequence(
                     # The existing Registry view exposes post-decision state. Its
                     # BUY/SELL direction alone cannot distinguish entry from close.
                     view = evaluate_factor_rule_view(
-                        artifact, _closes_window(dataset, instrument, index, cross_session),
+                        artifact, _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                         features=bar_features, decision_time=decision_time,
                         symbol=instrument, include_position_state=True,
                     )
@@ -1469,7 +1477,8 @@ def _artifact_action_sequence(
                 else:
                     action = evaluate_strategy_action(
                         artifact,
-                        _closes_window(dataset, instrument, index, cross_session),
+                        _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                         features=bar_features,
                         decision_time=decision_time,
                         symbol=instrument,
@@ -1670,7 +1679,8 @@ def _artifact_view_strength(
             try:
                 view = evaluate_strategy_view(
                     artifact,
-                    _closes_window(dataset, instrument, index, cross_session),
+                    _closes_window(
+                            dataset, instrument, index, cross_session, closes=closes, session_starts=session_starts),
                     features=bar_features,
                     decision_time=decision_time,
                     symbol=instrument,
