@@ -2764,7 +2764,7 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 from services.research.research_demand import DemandError, ResearchDemandStore  # noqa: E402
 from services.research.query_plan import QueryPlanError, QueryPlanStore  # noqa: E402
 
-research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json")
+research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json", influence_store=get_influence_store())
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
