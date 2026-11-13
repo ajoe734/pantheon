@@ -463,7 +463,16 @@ def verify_bundle(
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        try:
+            data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        except TimeoutError:
+            # A read that started inside the budget but was cut by the shared deadline
+            # discards only its own (never-accepted) bytes; already verified rows keep
+            # their progress and this row is re-read by the next pull's window.
+            if offset > 0 and deadline is not None and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            raise
         actual = _sha256(data)
         if declared != actual:
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")

@@ -3462,3 +3462,104 @@ def test_steady_request_carries_one_collector_pull_so_serial_pulls_fit_one_http_
     src = inspect.getsource(controller_worker.run_controller_tick)
     assert "limit=STEADY_PULLS_PER_REQUEST" in src
     assert "STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency" in src
+
+from services.source_ingestion.tests.test_scheduled_connector import (  # noqa: E402,F401
+    _configure_with_records,
+    _read_headers,
+    client,
+)
+
+
+def test_controller_disconnect_keeps_execution_lock_and_terminal_receipt_without_duplicates(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real uvicorn endpoint + real controller HTTP client with a short request timeout.
+
+    The configured fetch is held in flight past the controller's timeout, so the controller
+    disconnects. Execution must stay in flight under the source execution lock (a second
+    controller request cannot overlap it), finish with a terminal receipt, persist exactly one
+    run/record, and a later tick must see it as already run instead of executing it again.
+    """
+    import socket
+    import threading
+    import time
+    import urllib.error
+
+    import uvicorn
+    from services.source_ingestion import controller_worker
+
+    test_client, _, module = client
+    assert _configure_with_records(test_client, connector_id="conn-disconnect").status_code == 201
+    assert test_client.put(
+        "/api/source-ingest/connectors/conn-disconnect/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    ).status_code == 200
+
+    fetcher = module.runtime.configured_fetcher
+    real_fetch = fetcher.fetch_batch
+    entered, release, calls = threading.Event(), threading.Event(), []
+
+    def gated_fetch(*args, **kwargs):
+        calls.append(time.monotonic())
+        entered.set()
+        assert release.wait(timeout=20), "test never released the in-flight fetch"
+        return real_fetch(*args, **kwargs)
+
+    monkeypatch.setattr(fetcher, "fetch_batch", gated_fetch)
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(module.app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started
+    api_url = f"http://127.0.0.1:{port}"
+    token = _read_headers()["Authorization"].split(" ", 1)[1]
+    try:
+        with pytest.raises((TimeoutError, urllib.error.URLError, socket.timeout)):
+            controller_worker.run_schedule_tick(
+                api_url=api_url, max_concurrency=1, timeout_seconds=0.5, controller_token=token
+            )
+        assert entered.wait(timeout=5)
+        lock = module.runtime.source_execution_lock
+        assert not lock.acquire(blocking=False), "execution must still hold the source execution lock"
+
+        overlap: list[object] = []
+
+        def second_request() -> None:
+            try:
+                overlap.append(
+                    controller_worker.run_schedule_tick(
+                        api_url=api_url, max_concurrency=1, timeout_seconds=30.0, controller_token=token
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - surfaced by the assertions below
+                overlap.append(exc)
+
+        second = threading.Thread(target=second_request, daemon=True)
+        second.start()
+        time.sleep(0.5)
+        assert len(calls) == 1 and not overlap, "a second request must wait, not overlap the fetch"
+
+        release.set()
+        second.join(timeout=20)
+        assert not second.is_alive() and len(overlap) == 1 and isinstance(overlap[0], dict)
+        assert overlap[0]["summary"]["total_ran"] == 0, "the later tick must not re-run the connector"
+    finally:
+        release.set()
+        server.should_exit = True
+        thread.join(timeout=10)
+
+    assert len(calls) == 1
+    runs = module.runtime.store.list_runs()
+    assert len(runs) == 1 and runs[0].status.value == "completed"
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1
+    assert len(module.runtime.store.list_frontier(status="done")) == 1
+    assert module.runtime.connector_store.get_fetch_state("conn-disconnect")["attempts"] == 1
+    receipt = test_client.get(f"/api/source-ingest/receipts/{runs[0].ingest_run_id}")
+    assert receipt.status_code == 200 and receipt.json()["receipt"]["status"] == "completed"

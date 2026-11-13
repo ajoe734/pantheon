@@ -489,3 +489,34 @@ def test_deadline_watchdog_cuts_dribbled_headers_and_chunk_framing() -> None:
             peer.close()
         assert watchdog.expired
         assert time.monotonic() - started < 5.0
+
+
+def test_delayed_connect_then_stalled_tls_uses_remaining_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Connect consumes most of the budget; the handshake must not get a fresh per-recv timeout."""
+    import time
+
+    server, held = _stalled_listener()
+    real_connect = socket.create_connection
+
+    def slow_connect(target, timeout, source_address=None):
+        time.sleep(0.3)
+        return real_connect(("127.0.0.1", server.getsockname()[1]), timeout, source_address)
+
+    monkeypatch.setattr(socket, "create_connection", slow_connect)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            open_external_url(
+                "https://api.example.com/x",
+                caller="t",
+                timeout=30.0,
+                env=_allowlist("api.example.com"),
+                resolver=_resolver("8.8.8.8"),
+                deadline=started + 0.5,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+    assert elapsed < 0.65, elapsed

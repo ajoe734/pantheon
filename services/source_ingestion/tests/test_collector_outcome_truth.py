@@ -684,14 +684,7 @@ def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(t
 
 
 
-def test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without_duplicates(tmp_path, monkeypatch):
-    """Configured fetcher + scheduler over the real HttpBundleTransport and http.client bodies.
-
-    Each socket receive costs 4 fake seconds (inside the idle timeout). The first pull's second raw
-    body is cut by the 15s operation budget: the run fails truthfully (no records, no watermark, no
-    ack, elapsed bounded below the 30s controller request). After the network recovers, the retry
-    ingests both items once, advances the cursor only then, and the next run has no new data.
-    """
+def _trickle_env(tmp_path, monkeypatch, step):
     from types import SimpleNamespace
 
     import services.source_ingestion.connectors.collector_bundle as module
@@ -699,7 +692,6 @@ def test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without
 
     files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
     clock = [0.0]
-    step = [4.0]
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     monkeypatch.setenv(module.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only-token")
     monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: HttpBundleTransport(host=HOST))
@@ -708,20 +700,45 @@ def test_real_http_body_trickle_times_out_truthfully_then_retry_persists_without
     def fake_open(request, *, caller, timeout, **_kw):
         rel = request.full_url.split(HOST + "/", 1)[1]
         opened.append(rel)
-        body = files[rel]
-        response, _raw = _trickle_response(body, clock, step[0] if "/raw/" in rel else 0.0, chunk=8)
+        response, _raw = _trickle_response(files[rel], clock, step[0] if "/raw/" in rel else 0.0, chunk=65536)
         return response
 
     monkeypatch.setattr(module, "open_external_url", fake_open)
+    return store, clock, opened
+
+
+def test_stable_slow_raw_reads_persist_verified_prefix_and_progress_every_run(tmp_path, monkeypatch):
+    """Two raw bodies cost 8 fake seconds each under the 15s budget, unchanged on every run.
+
+    The second body is cut by the shared deadline: only its never-accepted bytes are dropped, the
+    verified first row persists with a partial cursor, and the next run (same latency) reads the
+    remainder, completes and advances the exact cursor. Then nothing is new.
+    """
+    store, clock, opened = _trickle_env(tmp_path, monkeypatch, [8.0])
     start = clock[0]
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed"
+    assert first.run.raw_count == 1 and first.watermark is not None and first.watermark.value != CURSOR
+    assert clock[0] - start <= 16.0
+    assert len([r for r in opened if "/raw/" in r]) == 2  # second body started, then cut
+    second = run_scheduler(tmp_path, store)
+    assert second.run.status.value == "completed"
+    assert second.run.raw_count == 1 and second.watermark.value == CURSOR
+    ids = [r.source_id for r in first.records] + [r.source_id for r in second.records]
+    assert len(ids) == 2 and len(set(ids)) == 2
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == CURSOR
+
+
+def test_single_raw_body_exceeding_budget_fails_truthfully_then_retry_persists(tmp_path, monkeypatch):
+    """A first (or only) body cut by the deadline is a truthful failure: no rows, no watermark."""
+    step = [16.0]
+    store, clock, _opened = _trickle_env(tmp_path, monkeypatch, step)
     failed = run_scheduler(tmp_path, store)
     assert failed.run.status.value != "completed"
     assert failed.run.raw_count == 0 and failed.watermark is None
-    assert clock[0] - start <= 16.0
-    assert len([r for r in opened if "/raw/" in r]) == 2  # second body was started, then cut
-    assert JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth") in (None, {}) or \
-        not JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth").get(
-            "collector_outcome", {}).get("complete")
+    state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth") or {}
+    assert not state.get("collector_outcome", {}).get("complete")
     step[0] = 0.0
     retry = run_scheduler(tmp_path, store)
     assert retry.run.status.value == "completed"

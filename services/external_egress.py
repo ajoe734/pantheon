@@ -543,14 +543,28 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             raise last_error
         watchdog = self._egress_policy.watchdog
         raw_sock = self.sock
-        try:
+        if watchdog is None:
             self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+            return
+        try:
+            # wrap_socket detaches the raw socket, so track the SSL socket BEFORE the
+            # handshake and bound the handshake by the actual remaining deadline.
+            ssl_sock = self._context.wrap_socket(
+                raw_sock, server_hostname=self.host, do_handshake_on_connect=False
+            )
+            self.sock = ssl_sock
+            watchdog.track(ssl_sock)
+            left = watchdog.remaining()
+            if left <= 0:
+                raise TimeoutError("external request exceeded the operation deadline")
+            steady_timeout = ssl_sock.gettimeout()
+            ssl_sock.settimeout(left if steady_timeout is None else min(steady_timeout, left))
+            ssl_sock.do_handshake()
+            ssl_sock.settimeout(steady_timeout)
         except OSError as exc:
-            if watchdog is not None and watchdog.expired:
+            if watchdog.expired or watchdog.remaining() <= 0:
                 raise TimeoutError("external request exceeded the operation deadline") from exc
             raise
-        if watchdog is not None and self.sock is not raw_sock:
-            watchdog.track(self.sock)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
