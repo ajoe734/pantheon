@@ -1,6 +1,9 @@
 """Measured usefulness, replay and isolation through canonical Memory routes."""
 from dataclasses import replace
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+import os
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,3 +134,35 @@ def test_batch_rejects_cross_tenant_and_direct_entry_injection(memory):
     data = persona(tenant_id="tenant-a").to_dict()
     data["usefulness_marks"] = {"forged": mark()}
     assert client.post("/api/memory/persona-entries", json=data, headers=auth("memory-writer")).status_code == 422
+
+
+@pytest.mark.parametrize("kind", ["persona", "institutional"])
+def test_postgres_marks_and_read_counters_compose_across_instances(kind, monkeypatch):
+    """Two service instances race on a real JSONB owner row, using production CAS."""
+    dsn = os.getenv("PANTHEON_USEFULNESS_TEST_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_USEFULNESS_TEST_DSN for PostgreSQL CAS integration")
+    import psycopg
+    from services.memory.persona_memory_store import PostgresPersonaMemoryStore
+    from services.memory.institutional_memory_store import PostgresInstitutionalMemoryStore
+    store_type = PostgresPersonaMemoryStore if kind == "persona" else PostgresInstitutionalMemoryStore
+    table = "public.usefulness_test_" + uuid.uuid4().hex
+    monkeypatch.setattr(retrieval, "get_search_retrieval_backend", lambda: None)
+    try:
+        one = store_type(dsn=dsn, table=table)
+        two = store_type(dsn=dsn, table=table)
+        entry = one.create((persona if kind == "persona" else institution)(tenant_id="tenant-a"))
+        key = getattr(entry, "memory_id", None) or entry.entry_id
+        def update(i):
+            store = one if i % 2 else two
+            return store.mark_usefulness(key, mark(f"d-{i}", "hurt")) if i < 4 else store.mark_reused(key)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(executor.map(update, range(8)))
+        actual = one.require(key)
+        assert len(actual.usefulness_marks) == 4
+        assert actual.reuse_count == 4
+        assert actual.memory_review["status"] == "pending"
+        assert two.mark_usefulness(key, mark("d-0", "hurt")).usefulness_marks == actual.usefulness_marks
+    finally:
+        with psycopg.connect(dsn) as connection:
+            connection.execute("DROP TABLE IF EXISTS " + table)

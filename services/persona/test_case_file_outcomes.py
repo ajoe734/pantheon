@@ -176,6 +176,16 @@ def test_delivery_retry_repairs_lost_receipt_without_double_counting(outcome):
     assert next(iter(o.owner.get("persona-1").metadata[STATE_KEY]["outbox"].values()))["status"] == "delivered"
 
 
+def test_repeated_proposals_for_one_owner_action_do_not_multiply_harm(outcome):
+    o = outcome
+    window(o, .01)
+    decisions = o.packets["decision-packet"]["persona_cycle"]["decisions"]
+    decisions.extend([copy.deepcopy(decisions[0]), copy.deepcopy(decisions[0])])
+    result = o.tracker.reconcile("persona-1", o.packets)
+    assert [r["outcome"] for r in result["decisions"].values()] == ["hurt", "confounded", "confounded"]
+    assert o.per.require(o.learned.memory_id).memory_review is None
+
+
 def test_production_lifespan_wires_owner_reconciliation_and_routes(outcome, monkeypatch):
     """Actual enabled Persona lifespan, with only cron registration/runner boundaries substituted."""
     o = outcome

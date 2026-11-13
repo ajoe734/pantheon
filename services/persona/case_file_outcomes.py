@@ -86,6 +86,7 @@ class CaseFileOutcomes:
                             target = lessons.setdefault((layer, item["source_id"]), [])
                             target.append(item_id)
                     row = {"decision_id": identity, "packet_id": pid, "case_file_id": decision.get("case_file_id"),
+                           "persona_id": persona_id, "tenant_id": persona.tenant_id,
                            "cited_item_ids": cited, "lessons": [{"layer": k[0], "entry_id": k[1], "item_ids": v}
                                                                 for k, v in lessons.items()],
                            "decided_at": packet["created_at"], "criterion": CRITERION,
@@ -97,6 +98,11 @@ class CaseFileOutcomes:
                         row["checks"].append("case_file_binding_invalid")
                     before = (cycle.get("observe_bundle") or {}).get("pool") or {}
                     receipt = (cycle.get("risk_result") or {}).get("receipt_ref", "")
+                    row["owner_receipt"] = receipt
+                    if receipt and any(r.get("owner_receipt") == receipt for r in state["decisions"].values()):
+                        # Several agent proposals may cite the same risk action.
+                        # They are not independent measured decision outcomes.
+                        row["checks"].append("owner_decision_already_attributed")
                     # Bind to the exact owner version, never whatever pool happens to be current.
                     prefix = f"/api/personas/{quote(persona_id, safe='')}/strategy-pool/versions/"
                     try:
@@ -167,7 +173,7 @@ class CaseFileOutcomes:
             refs.append(snapshot["packet_id"])
             bundle = snapshot["persona_cycle"].get("observe_bundle", {})
             window_packets = [p for p in future if p["created_at"] <= snapshot["created_at"]]
-            if (bundle.get("persona_id") != packets[row["packet_id"]]["persona_ids"][0]
+            if (bundle.get("persona_id") != row["persona_id"]
                     or bundle.get("unavailable") or bundle.get("incident_refs")
                     or bundle.get("incidents", {}).get("status") != "observed"
                     or snapshot["persona_cycle"].get("harness_version") != row["harness_version"]

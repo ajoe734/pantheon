@@ -555,8 +555,19 @@ class PostgresInstitutionalMemoryStore(InstitutionalMemoryStore):
         raise ValueError("concurrent_usefulness_update")
 
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
-        self._refresh_from_postgres()
-        return super().mark_reused(entry_id, count=count)
+        # A retrieval counter must not overwrite a concurrent usefulness mark.
+        if count <= 0:
+            raise InstitutionalMemoryError("count must be >= 1")
+        for _ in range(8):
+            raw = self._records.get(entry_id)
+            if raw is None:
+                raise InstitutionalMemoryError("Entry not found")
+            entry = InstitutionalMemoryEntry.from_dict(raw)
+            updated = InstitutionalMemoryEntry(**{**entry.to_dict(), "reuse_count": entry.reuse_count + count})
+            committed, _ = self._records.compare_and_set(entry_id, raw, updated.to_dict())
+            if committed:
+                return updated
+        raise InstitutionalMemoryError("concurrent_reuse_update")
 
     def supersede(self, entry_id: str, replacement_entry_id: str) -> InstitutionalMemoryEntry:
         self._refresh_from_postgres()

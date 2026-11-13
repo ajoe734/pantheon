@@ -542,8 +542,19 @@ class PostgresPersonaMemoryStore(PersonaMemoryStore):
         raise ValueError("concurrent_usefulness_update")
 
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
-        self._refresh_from_postgres()
-        return super().mark_reused(memory_id, count=count)
+        # A retrieval counter must not overwrite a concurrent usefulness mark.
+        if count <= 0:
+            raise PersonaMemoryError("count must be >= 1")
+        for _ in range(8):
+            raw = self._records.get(memory_id)
+            if raw is None:
+                raise PersonaMemoryError("Entry not found")
+            entry = PersonaMemoryEntry.from_dict(raw)
+            updated = PersonaMemoryEntry(**{**entry.to_dict(), "reuse_count": entry.reuse_count + count})
+            committed, _ = self._records.compare_and_set(memory_id, raw, updated.to_dict())
+            if committed:
+                return updated
+        raise PersonaMemoryError("concurrent_reuse_update")
 
     def supersede(self, memory_id: str, replacement_memory_id: str) -> PersonaMemoryEntry:
         self._refresh_from_postgres()
