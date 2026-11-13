@@ -270,6 +270,67 @@ human_correction:
 - risk tolerance
 - allowed tools
 
+#### 9.3.1 Paper persona harness amendment (2026-11-12, D10)
+
+The existing Persona write owner may adopt a versioned `persona_harness.v1`
+patch automatically while the persona is active and `paper_owner`. This narrow
+exception to the operator approval default requires all of the following:
+
+- A current-base static precheck passes, including resolved trajectory evidence
+  and the rule that the patch cannot become more permissive.
+- The latest stored, deny-all shadow comparison is complete and recommends
+  `CANDIDATE_BETTER`, with the exact base version/digest and candidate digest.
+  `KEEP_BASE` and unavailable evidence retain the base.
+- A published consultation request and memo bind the same persona, tenant,
+  patch, base version and candidate digest. The owner rechecks independent
+  persona contributions. The risk persona must support; guardrail or consult
+  policy changes also require red team participation. Missing answers, risk
+  opposition and unresolved conditional approvals require an operator decision.
+
+Only the harness surface is mutable: identity inputs, tighter guardrails,
+consult policy, tool guidance, skills, workflow cadence, cycle thresholds and
+memory retrieval policy. Risk/capital limits, environment ceiling, execution
+authority and live permissions remain outside this exception. Outside paper,
+the owner records and delivers a governance proposal; it never activates the
+patch. Persona governance proposals use the existing medium-risk
+`mutate_persona_route_policy` / `mutate_consult_policy` actions and retain the
+operator-required intent. The ordinary DSPy `prompt_bundle` path in
+`services/control-plane/persona/lp001/contract.md` retains its operator gate;
+this amendment applies only to the versioned harness owner path above.
+
+One experiment may be active per persona. The coordinator starting values are
+an observation window of **10 distinct trading days** and a component cooldown
+of **7 calendar days after observation or rollback**. Trusted owner construction
+can set the windows; each adoption freezes its observation window and criterion.
+Components are the actual surface keys, so aliases such as `memory` and
+`memory_policy` share a cooldown. Rollback can restore an observed version only
+while it remains the current version; it cannot overwrite a later experiment.
+
+Observation is an owner operation, outside the trade path. Its request supplies
+packet references rather than caller verdicts or scores. The owner resolves
+terminal paper Observe packets for the exact tenant, persona and adopted
+version. Paired owner measurements must carry a trading date, base/candidate
+version, `net_of_costs_total_return` criterion, evidence, confidence and any
+confounders. Missing packets, wrong versions, duplicate dates, changed criteria
+or an unfinished window record a refusal and keep the experiment active.
+Absent paired measurements or declared confounders yield `confounded` once a
+complete observation window exists; absent facts never become zero returns.
+
+The deterministic review records `helped`, `hurt`, `no_effect` or `confounded`
+and emits a `harness_experience` with cue, lesson, evidence and confidence to
+the existing Memory Plane. `hurt` automatically proposes restoring the recorded
+rollback target through governance; a proposal does not execute a rollback.
+Later proposals include relevant prior experience references for every changed
+component. Persona state retains the source event and replayable delivery intent,
+while Memory owns the learning entries. Missing service configuration, credentials
+or receipts leave deliveries pending with an error; replay through the owning
+operation repairs them without inventing successful publication. The existing
+owner read API exposes these statuses.
+
+This path introduces no trade-path model call or new credential. Naturally
+occurring paired book facts are required for hosted efficacy claims; local
+fixture results and a source merge do not prove hosted adoption or benefit.
+
 ### 9.4 `freeze`
 禁止該 strategy / artifact / persona 進一步 promotion 或新 deploy，直到解除。
 
