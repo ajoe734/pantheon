@@ -304,6 +304,9 @@
     "parameters": {
       "type": "object",
       "minProperties": 1,
+      "properties": {
+        "symbols": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
       "propertyNames": {
         "allOf": [
           {
@@ -529,7 +532,7 @@
           "const": "1.0"
         },
         "kind": {
-          "const": "notional_target_v1"
+          "enum": ["notional_target_v1", "target_position_v1"]
         },
         "parameters": {
           "type": "object",
@@ -545,6 +548,11 @@
             }
           },
           "properties": {
+            "rebalance_band_fraction": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
             "lever_min_strength": {
               "type": "number",
               "minimum": 0.0,
@@ -716,6 +724,7 @@
       },
       "else": {
         "properties": {
+          "parameters": {"properties": {"symbols": {"minItems": 1}}},
           "mutation_surface": {
             "properties": {
               "controls": {

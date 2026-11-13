@@ -643,3 +643,207 @@ def test_failed_legacy_pull_markers_and_cursor_cannot_acknowledge_unstored_featu
     assert len([r for r in result.records if r.source_type.value == "market"]) == (6 if kind == "macro" else 1)
     assert refs["storage_refs"]["feature_refs"]
     assert runtime.store.get_watermark(connector.connector_id).value == CURSOR
+
+
+def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(tmp_path, monkeypatch):
+    """Delayed multi-item transport through the real configured fetcher and scheduler.
+
+    Each raw read costs 20 fake seconds against the 15s whole-pull budget: the first scheduled
+    run returns one verified item with a partial cursor (bounded, never claiming completion),
+    the next resumes at the persisted cursor, and a final run proves no new data.
+    """
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as module
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    clock = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    reads: list[str] = []
+
+    class Slow(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            reads.append(relative_path)
+            if "/raw/" in relative_path:
+                clock[0] += 20.0
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: Slow(files))
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed"
+    assert first.run.raw_count == 1
+    assert first.watermark.value == CURSOR + "|items=1"
+    assert len([r for r in reads if "/raw/" in r]) == 1
+    second = run_scheduler(tmp_path, store)
+    assert second.run.raw_count == 1 and second.watermark.value == CURSOR
+    assert first.records[0].source_id != second.records[0].source_id
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == CURSOR
+    state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth")
+    assert state["collector_outcome"]["no_new_data"] is True
+
+
+
+def _trickle_env(tmp_path, monkeypatch, step):
+    from types import SimpleNamespace
+
+    import services.source_ingestion.connectors.collector_bundle as module
+    from services.source_ingestion.tests.test_collector_bundle_connector import _trickle_response
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    clock = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(module.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only-token")
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: HttpBundleTransport(host=HOST))
+    opened: list[str] = []
+
+    def fake_open(request, *, caller, timeout, **_kw):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        opened.append(rel)
+        response, _raw = _trickle_response(files[rel], clock, step[0] if "/raw/" in rel else 0.0, chunk=65536)
+        return response
+
+    monkeypatch.setattr(module, "open_external_url", fake_open)
+    return store, clock, opened
+
+
+def test_stable_slow_raw_reads_persist_verified_prefix_and_progress_every_run(tmp_path, monkeypatch):
+    """Two raw bodies cost 8 fake seconds each under the 15s budget, unchanged on every run.
+
+    The second body is cut by the shared deadline: only its never-accepted bytes are dropped, the
+    verified first row persists with a partial cursor, and the next run (same latency) reads the
+    remainder, completes and advances the exact cursor. Then nothing is new.
+    """
+    store, clock, opened = _trickle_env(tmp_path, monkeypatch, [8.0])
+    start = clock[0]
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed"
+    assert first.run.raw_count == 1 and first.watermark is not None and first.watermark.value != CURSOR
+    assert clock[0] - start <= 16.0
+    assert len([r for r in opened if "/raw/" in r]) == 2  # second body started, then cut
+    second = run_scheduler(tmp_path, store)
+    assert second.run.status.value == "completed"
+    assert second.run.raw_count == 1 and second.watermark.value == CURSOR
+    ids = [r.source_id for r in first.records] + [r.source_id for r in second.records]
+    assert len(ids) == 2 and len(set(ids)) == 2
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == CURSOR
+
+
+def test_single_raw_body_exceeding_budget_fails_truthfully_then_retry_persists(tmp_path, monkeypatch):
+    """A first (or only) body cut by the deadline is a truthful failure: no rows, no watermark."""
+    step = [16.0]
+    store, clock, _opened = _trickle_env(tmp_path, monkeypatch, step)
+    failed = run_scheduler(tmp_path, store)
+    assert failed.run.status.value != "completed"
+    assert failed.run.raw_count == 0 and failed.watermark is None
+    state = JsonlConfiguredConnectorStore(store.path).get_fetch_state("conn-truth") or {}
+    assert not state.get("collector_outcome", {}).get("complete")
+    step[0] = 0.0
+    retry = run_scheduler(tmp_path, store)
+    assert retry.run.status.value == "completed"
+    assert retry.run.raw_count == 2 and retry.watermark.value == CURSOR
+    assert len({r.source_id for r in retry.records}) == len(retry.records)
+    again = run_scheduler(tmp_path, store)
+    assert again.run.raw_count == 0 and again.watermark.value == CURSOR
+
+
+def test_verified_bundle_prefix_survives_next_bundle_deadline(tmp_path, monkeypatch):
+    """Two singleton bundles, constant per-raw-read latency over the shared budget.
+
+    Bundle 1 verifies and persists; bundle 2 is cut by the deadline at its first raw read
+    and stays pending. Retries resume without duplicates; the backlog must progress.
+    """
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_collector_bundle_connector import _trickle_response
+
+    files, _, _, store, _ = setup_path(tmp_path, monkeypatch)
+    entries = []
+    for num in (1, 2):
+        f, entry, manifest = make_bundle(run_id=f"run{num}", finished=f"2026-11-10T02:0{num + 4}:00Z")
+        base = f"bundles/{SOURCE}/2026-11-10/run{num}"
+        manifest["items"] = manifest["items"][:1]
+        manifest["bundle_sha256"] = cb.compute_bundle_sha256([manifest["items"][0]["content_sha256"]])
+        f[base + "/manifest.json"] = json.dumps(manifest).encode()
+        f[base + "/items.jsonl"] = f[base + "/items.jsonl"].splitlines()[0]
+        files.update(f)
+        entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {SOURCE: {
+        "status": "ok", "last_run_at": "2026-11-10T02:06:00Z", "last_run_id": "run2"}}}).encode()
+    clock = [0.0]
+    monkeypatch.setattr(cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setenv(cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: cb.HttpBundleTransport(host=HOST))
+
+    def fake_open(request, **kwargs):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        response, _ = _trickle_response(files[rel], clock, 8.0 if "/raw/" in rel else 0.0, chunk=65536)
+        return response
+
+    monkeypatch.setattr(cb, "open_external_url", fake_open)
+    first = run_scheduler(tmp_path, store)
+    assert first.run.status.value == "completed" and first.run.raw_count == 1
+    assert first.watermark.value == "2026-11-10T02:05:00Z#run1"  # run2 stays pending
+    second = run_scheduler(tmp_path, store)
+    assert second.run.status.value == "completed" and second.run.raw_count == 1
+    assert second.watermark.value == "2026-11-10T02:06:00Z#run2"
+    assert len(first.records) == len(second.records) == 1  # one bundle per attempt, none replayed
+    third = run_scheduler(tmp_path, store)
+    assert third.run.raw_count == 0 and third.watermark.value == "2026-11-10T02:06:00Z#run2"
+    assert third.run.status.value == "completed"
+
+
+from types import SimpleNamespace
+
+from services.source_ingestion.connectors import collector_bundle as _cb
+from services.source_ingestion.tests.test_collector_bundle_connector import _day_bundle, _trickle_response
+
+
+def test_priority_verified_prefix_survives_ordered_deadline(tmp_path, monkeypatch):
+    source_id = "collector-tw-twse-price-history"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(_cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
+    clock = [0.0]
+    monkeypatch.setattr(_cb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    files, entries, opened = {}, [], []
+    for num in (1, 2):
+        f, entry = _day_bundle(source_id, num, 1)
+        files.update(f)
+        entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {source_id: {
+        "status": "ok", "last_run_at": entries[-1]["finished_at"], "last_run_id": "run2"
+    }}}).encode()
+    real_observed = _cb.observed_from_collector_status
+    monkeypatch.setattr(_cb, "observed_from_collector_status", lambda *a, **kw: real_observed(
+        *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
+    monkeypatch.setattr(_cb.CollectorBundleAdapter, "_transport", lambda self: _cb.HttpBundleTransport(host=HOST))
+
+    def fake_open(request, **kwargs):
+        rel = request.full_url.split(HOST + "/", 1)[1]
+        opened.append(rel)
+        response, _ = _trickle_response(files[rel], clock, 8.0 if "/raw/" in rel else 0.0, chunk=65536)
+        return response
+
+    monkeypatch.setattr(_cb, "open_external_url", fake_open)
+    adapter = _cb.CollectorBundleAdapter(connector_id="conn-truth", source_id=source_id,
+        source_type="market", dataset="tw_price_daily", host=HOST, cadence_seconds=1800)
+    store = JsonlConfiguredConnectorStore(tmp_path / "configured.jsonl")
+    store.upsert_config(adapter.connector(), {
+        "mode": "provider_owned_adapter", "adapter": _cb.COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+        "adapter_config": {"source_id": source_id, "source_type": "market", "host": HOST,
+                           "dataset": "tw_price_daily", "cadence_seconds": 1800},
+        "max_records": 500,
+    })
+    results = []
+    for _ in range(3):
+        result = run_scheduler(tmp_path, store)
+        results.append((result.run.status.value, result.run.raw_count,
+                        result.watermark.value if result.watermark else None))
+    # constant-latency priority progress must be persisted, never discarded by the ordered sweep timeout
+    assert [r[0] for r in results] == ["completed"] * 3, results
+    assert results[0][1] == 1, results  # priority row persisted on first attempt
+    assert [r[1] for r in results] == [1, 1, 1], results  # bounded progress per attempt; priority replay is idempotent
+    assert results[-1][2] == "2026-11-10T02:02:00Z#run2", results

@@ -393,3 +393,130 @@ def test_only_source_ingest_may_use_collector_host_steady_egress() -> None:
 
 def test_unset_collector_host_leaves_steady_mode_deny() -> None:
     assert resolve_mode({"PANTHEON_EXTERNAL_EGRESS": ""}) == "deny"
+
+
+def _stalled_listener():
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    held: list[socket.socket] = []
+
+    def accept() -> None:
+        try:
+            while True:
+                conn, _ = server.accept()
+                held.append(conn)
+        except OSError:
+            return
+
+    threading.Thread(target=accept, daemon=True).start()
+    return server, held
+
+
+def test_operation_deadline_bounds_a_stalled_tls_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    server, held = _stalled_listener()
+    real_connect = socket.create_connection
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda target, timeout, source_address=None: real_connect(
+            ("127.0.0.1", server.getsockname()[1]), timeout, source_address
+        ),
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            # per-recv timeout (30s) alone would wait; the whole-operation deadline must not.
+            open_external_url(
+                "https://api.example.com/x",
+                caller="t",
+                timeout=30.0,
+                env=_allowlist("api.example.com"),
+                resolver=_resolver("8.8.8.8"),
+                deadline=time.monotonic() + 0.4,
+            )
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+    assert time.monotonic() - started < 5.0
+
+
+def test_deadline_watchdog_cuts_dribbled_headers_and_chunk_framing() -> None:
+    import http.client
+    import threading
+    import time
+
+    from services.external_egress import _DeadlineWatchdog
+
+    for payload in (
+        b"HTTP/1.1 200 OK\r\nX-A: 1\r\n",  # headers never finish
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab",  # chunk body stalls
+    ):
+        client, peer = socket.socketpair()
+        peer.sendall(payload)
+        watchdog = _DeadlineWatchdog(time.monotonic() + 0.3)
+        watchdog.track(client)
+        watchdog.start()
+        started = time.monotonic()
+        # keep dribbling bytes so a per-recv timeout would never fire
+        stop = threading.Event()
+
+        def dribble() -> None:
+            while not stop.is_set():
+                try:
+                    peer.sendall(b" ")
+                except OSError:
+                    return
+                time.sleep(0.05)
+
+        threading.Thread(target=dribble, daemon=True).start()
+        response = http.client.HTTPResponse(client)
+        try:
+            from services.external_egress import _WatchedResponse
+
+            with pytest.raises(TimeoutError):
+                # a deadline close may read as clean EOF; it must still never be data
+                response.begin()
+                _WatchedResponse(response, watchdog).read()
+        finally:
+            stop.set()
+            watchdog.stop()
+            peer.close()
+        assert watchdog.expired
+        assert time.monotonic() - started < 5.0
+
+
+def test_delayed_connect_then_stalled_tls_uses_remaining_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Connect consumes most of the budget; the handshake must not get a fresh per-recv timeout."""
+    import time
+
+    server, held = _stalled_listener()
+    real_connect = socket.create_connection
+
+    def slow_connect(target, timeout, source_address=None):
+        time.sleep(0.3)
+        return real_connect(("127.0.0.1", server.getsockname()[1]), timeout, source_address)
+
+    monkeypatch.setattr(socket, "create_connection", slow_connect)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            open_external_url(
+                "https://api.example.com/x",
+                caller="t",
+                timeout=30.0,
+                env=_allowlist("api.example.com"),
+                resolver=_resolver("8.8.8.8"),
+                deadline=started + 0.5,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+    assert elapsed < 0.65, elapsed
