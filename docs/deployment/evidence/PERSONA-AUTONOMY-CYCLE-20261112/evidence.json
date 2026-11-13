@@ -1,97 +1,121 @@
 {
- "task_id": "PERSONA-AUTONOMY-CYCLE-20261112",
- "owner": "Claude",
- "reviewer": "Codex",
- "scope": "Each persona with a strategy pool runs one daily Observe-Orient-Decide-Act-Learn pool cycle inside the existing persona daily-cycle consumer; persona-written research_demand.v1 records are stored by the research owner; the discovery allocator and its schedule are removed.",
- "changes": {
-  "pool_cycle": "services/persona/pool_autonomy_cycle.py: deterministic decide() (open_demand | admit_trial | reweight | remove | propose_mutate | propose_widen | no_action with reason) and PoolAutonomyCycle.run(), which never raises (skip/failure recorded per persona). HttpPoolCyclePorts calls only existing owner routes (persona strategy-pool decisions, research demands, evolution proposals, memory learn-feedback pool_outcome).",
-  "schedule_entry": "services/persona/persona_cycle_controller.py consume_run runs the pool cycle after Observe/risk on an ok cron run and writes the result into the same daily OODA packet (pool_autonomy plus observe/orient/decide/act/learn refs); services/control-plane/persona/main.py wires it behind the existing PERSONA_DAILY_CYCLE_ENABLED lifespan. These two files are outside the declared artifact list but are the real schedule entry (cron_ooda_closure refuses daily-cycle runs).",
-  "demand_record": "docs/contracts/research_demand.v1.schema.json and services/research/research_demand.py with routes POST/GET /api/research/persona-demands and POST .../reconcile in services/research/main.py: one open demand per persona and short measure, satisfied by a member that joined after creation, expires 30 days after creation.",
-  "allocator_removed": "services/research/discovery_allocator.py, its two test files, the startup schedule and port wiring in services/research/main.py, and DISCOVERY_ALLOCATOR_* in docker-compose.yml are deleted; nothing else creates discovery capital bindings."
- },
- "verification": [
-  {
-   "command": "pytest services/persona/test_pool_autonomy_cycle.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
-   "result": "all passed (11 + 5 + 1)"
+  "task_id": "PERSONA-AUTONOMY-CYCLE-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "scope": "Each persona with a strategy pool runs one daily Observe-Orient-Decide-Act-Learn pool cycle inside the existing persona daily-cycle consumer; persona-written research_demand.v1 records are stored by the research owner; the discovery allocator and its schedule are removed.",
+  "changes": {
+    "pool_cycle": "services/persona/pool_autonomy_cycle.py: deterministic decide() (open_demand | admit_trial | reweight | remove | propose_mutate | propose_widen | no_action with reason) and PoolAutonomyCycle.run(), which never raises (skip/failure recorded per persona). HttpPoolCyclePorts calls only existing owner routes (persona strategy-pool decisions, research demands, evolution proposals, memory learn-feedback pool_outcome).",
+    "schedule_entry": "services/persona/persona_cycle_controller.py consume_run runs the pool cycle after Observe/risk on an ok cron run and writes the result into the same daily OODA packet (pool_autonomy plus observe/orient/decide/act/learn refs); services/control-plane/persona/main.py wires it behind the existing PERSONA_DAILY_CYCLE_ENABLED lifespan. These two files are outside the declared artifact list but are the real schedule entry (cron_ooda_closure refuses daily-cycle runs).",
+    "demand_record": "docs/contracts/research_demand.v1.schema.json and services/research/research_demand.py with routes POST/GET /api/research/persona-demands and POST .../reconcile in services/research/main.py: one open demand per persona and short measure, satisfied by a member that joined after creation, expires 30 days after creation.",
+    "allocator_removed": "services/research/discovery_allocator.py, its two test files, the startup schedule and port wiring in services/research/main.py, and DISCOVERY_ALLOCATOR_* in docker-compose.yml are deleted; nothing else creates discovery capital bindings."
   },
-  {
-   "command": "pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_research_orchestrator_http_service.py",
-   "result": "103 passed, 4 failed; the 4 failures are environmental (asyncpg and QuantLib not installed in the review venv); the two persona-lifespan failures reproduce on the unchanged baseline."
-  },
-  {
-   "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/research/tests/test_persona_cycle_demand_integration.py services/research/tests/test_research_demand.py services/research/tests/test_pool_admission.py",
-   "result": "52 passed"
-  },
-  {
-   "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_cron_ooda_closure.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
-   "result": "32 passed"
-  }
- ],
- "acceptance_evidence": {
-  "1_2_daily_cycle_and_decisions": "test_persona_cycle_demand_integration drives PersonaCycleController.consume_run twice; each packet carries pool_autonomy with observe, orient, decide, act receipts and learn. Policy cases in test_pool_autonomy_cycle.",
-  "3_demand": "test_research_demand covers dedupe, tenant scope, satisfaction by a later member, 30-day expiry, schema refusal; the integration test shows mandate, missing datasets, tried families and short measure on the stored record.",
-  "4_memory_and_tried": "Refused admissions and removals are written as pool_outcome memory with tried_family tags; recalled families are excluded from candidates and listed in the next demand (test_demand_carries_..., test_refused_admission_...).",
-  "5_allocator_removed": "Files deleted; test_http_routes_... asserts no discovery_allocator_ports or discovery routes.",
-  "6_skip_and_isolation": "test_persona_without_pool_is_skipped_with_reason_and_failure_is_isolated.",
-  "7_integration": "Two consecutive cycles through PersonaCycleController.consume_run: open_demand then admit_trial, with only owner HTTP and the model turn faked. The admitted candidate is built from the governed 2-year Taiwan dataset (build_governed_tw_replication_dataset, 760 bars, down_drop=-0.055): canonical lookback-2 momentum artifact with its own fresh real ReplicationGate proof (registry/promotion verification path, no checksum or owner_verified_binding rewrite), pool current member = momentum_threshold 0.002 variant with its own gate proof. Unmodified pool_policy: correlation 0.46 < 0.5, candidate OOS Sharpe ~8.0 above trial threshold, combined Sharpe improves; the pool store applies the admit as a trial member and the displaced weakest member removal is learned. The same suite keeps the genuine recorded-fixture refusal (corr ~0.90 / Sharpe below trial threshold) asserted in the packet and memory (tried_family tag)."
- },
- "known_limits": {
-  "dataset_loader": "Admission dataset comes from governed_dataset_loader (configured canonical dataset + threshold policy paths, same evaluation authority research uses; wired in control-plane/persona/main.py). Unconfigured or rejected authority fails closed as not_attempted:governed_dataset_unavailable; nothing is synthesised.",
-  "widen": "propose_widen is staged only; there is no permitted-universe owner, so no widening authority is inferred.",
-  "candidate_source": "Candidates are resolved from completed alpha-replication entries to approved gate-passed registry execution bundles (lineage.source_strategy_spec_id); real-data admission stays with PERSONA-AUTONOMY-HOSTED-ACCEPTANCE-20261112.",
-  "hosted": "No hosted verification performed.",
-  "verification_boundary": "The two-day integration test pins only evaluation_authority.load_evaluation_authority to the recorded TWSE dataset and fakes owner HTTP and the model turn; CycleOwners.observe is a stub that, like telemetry, returns books only for live bound members. Real telemetry, hosted dataset authority and hosted registry were not exercised."
- },
- "review": {
-  "status": "pending_independent_review"
- },
- "reopen_fixes": {
-  "owner_credentials": "HttpPoolCyclePorts now uses the persona service's configured owner-specific principals (PERSONA_RESEARCH_SERVICE_TOKEN issued by scripts/issue_dev_paper_principals.py into the persona volume, PANTHEON_MEMORY_AUTH_TOKEN, EVOLUTION_AUTH_TOKEN, PERSONA_REGISTRY_SERVICE_TOKEN) read via configured_service_token (rotating _FILE aware); an unset credential raises owner_credential_unconfigured instead of sending an empty bearer. Persona owner calls are in-process through the pool store (no self-HTTP). docker-compose persona service wires the env.",
-  "governed_dataset": "services/control-plane/persona/main.py constructs HttpPoolCyclePorts(pool_store, dataset_loader=governed_dataset_loader()); the loader reads the governed evaluation authority (PERSONA_POOL_CANONICAL_DATASET_PATH / THRESHOLD_POLICY_PATH, falling back to TRAINING_SESSION_*) and fails closed when unconfigured. Deployment must supply the canonical dataset path; none is defaulted.",
-  "prior_risk_removal": "PoolAutonomyCycle diffs the observed pool against the owner's current pool, writes risk-owner removals to the persona memory (tried_family tags) before recall, and excludes those families from demand tried_families and candidates.",
-  "tests": "services/persona/test_pool_autonomy_cycle.py (+2), integration test now uses real pool store and governed_dataset_loader (only owner HTTP and the authority snapshot reader pinned to recorded TWSE data). Not covered: end-to-end scheduled risk removal through the controller with real observations."
- },
- "reopen_fixes_2": {
-  "candidate_book": "pool_autonomy_cycle.candidate_virtual_book (reusing pool_admission._replay) replays the candidate's registry artifact over the governed dataset's untouched window (same interpreter/netting as admission, NET_BASIS, source_ref governed-replay:<dataset_id>); HttpPoolCyclePorts.candidate_book supplies it as books[candidate]. Replay failure records not_attempted:candidate_book_unavailable with no owner call and no fabricated returns. Integration test Observe now returns books only for live members.",
-  "removal_learning": "A successful admission learns every removed member by before/after diff plus decision.replaced_artifact_ref, with family, so removed families are tagged tried_family and excluded from the next demand (integration asserts memory_entries == [admitted, removed]).",
-  "pool_failure_health": "persona_cycle_controller sets failure_reason pool_cycle_failed:<reason> when the pool cycle fails, so the packet stays observing and cycle health is not completed; failures remain per-persona."
- },
- "real_data_admission_search": {
-  "dataset": "recorded TWSE MI_INDEX 2024-11-11..2026-11-12 (sha256 7af9415d...4c43), 487 bars, 731 days; OOS window by unmodified pool policy 2026-04-13..2026-11-12",
-  "gate_search": "Unmodified ReplicationGate via build_canonical_tw_strategy_artifact: 61 symbols x lookback{2,5,10,20} x threshold{0,0.01} (~480 trials) + 12 baskets x lookback{2,10,20} x threshold{0,0.01}: 0 pass. Closest: 1519 lb10 thr0 fails walk_forward_consistent_across_folds (fold Sharpe 0.058/-0.019/0.515); 2360 lb10 thr0 fails oos_max_drawdown_within_mandate (OOS Sharpe 1.504); 2337 lb10 thr0 fails walk_forward_consistent (OOS 1.324). Others fail oos_sharpe_positive_after_costs, oos_sharpe_beats_buy_and_hold, deflated threshold 0.5.",
-  "genuine_artifact_replay": "Unmodified genuine approved registry entries (services/evolution/test_approved_baselines.genuine_entry: recorded_backtest_tw_2330 and recorded_backtest_tw_2330_2317, each with its own approved baseline) replayed through unmodified evaluate_admission + persona pool_policy, one as starting member (weight .7) and the other as candidate (weight .1), trial_count=1. 2317 is missing 2025-07-30 in the source, so windows are aligned only after dropping that date from both symbols (otherwise backtest_windows_not_aligned).",
-  "results": [
-   {
-    "candidate": "2330+2317",
-    "pool_member": "2330",
-    "admitted": false,
-    "correlation": 0.7233,
-    "correlation_cutoff": "0.5",
-    "pool_oos_sharpe": -1.532,
-    "combined_oos_sharpe": -1.874,
-    "candidate_oos_sharpe": -2.918,
-    "required_candidate_sharpe": 0.5,
-    "reasons": [
-     "candidate_correlated_with_active_member",
-     "combined_oos_sharpe_did_not_improve",
-     "candidate_oos_sharpe_below_persona_trial_threshold"
-    ]
-   },
-   {
-    "candidate": "2330",
-    "pool_member": "2330+2317",
-    "admitted": false,
-    "correlation": 0.7233,
-    "pool_oos_sharpe": -2.918,
-    "combined_oos_sharpe": -2.866,
-    "candidate_oos_sharpe": -1.532,
-    "required_candidate_sharpe": 0.5,
-    "reasons": [
-     "candidate_correlated_with_active_member",
-     "candidate_oos_sharpe_below_persona_trial_threshold"
-    ]
-   }
+  "verification": [
+    {
+      "command": "pytest services/persona/test_pool_autonomy_cycle.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
+      "result": "all passed (11 + 5 + 1)"
+    },
+    {
+      "command": "pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "103 passed, 4 failed; the 4 failures are environmental (asyncpg and QuantLib not installed in the review venv); the two persona-lifespan failures reproduce on the unchanged baseline."
+    },
+    {
+      "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py services/research/tests/test_persona_cycle_demand_integration.py services/research/tests/test_research_demand.py services/research/tests/test_pool_admission.py",
+      "result": "52 passed"
+    },
+    {
+      "command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_cron_ooda_closure.py services/research/tests/test_research_demand.py services/research/tests/test_persona_cycle_demand_integration.py",
+      "result": "32 passed"
+    }
   ],
-  "conclusion": "No genuine approved artifact in the system is admissible on the real data under the unmodified pool policy; blocked per coordinator option 3. Builder/synthetic proof remains rejected."
- }
+  "acceptance_evidence": {
+    "1_2_daily_cycle_and_decisions": "test_persona_cycle_demand_integration drives PersonaCycleController.consume_run twice; each packet carries pool_autonomy with observe, orient, decide, act receipts and learn. Policy cases in test_pool_autonomy_cycle.",
+    "3_demand": "test_research_demand covers dedupe, tenant scope, satisfaction by a later member, 30-day expiry, schema refusal; the integration test shows mandate, missing datasets, tried families and short measure on the stored record.",
+    "4_memory_and_tried": "Refused admissions and removals are written as pool_outcome memory with tried_family tags; recalled families are excluded from candidates and listed in the next demand (test_demand_carries_..., test_refused_admission_...).",
+    "5_allocator_removed": "Files deleted; test_http_routes_... asserts no discovery_allocator_ports or discovery routes.",
+    "6_skip_and_isolation": "test_persona_without_pool_is_skipped_with_reason_and_failure_is_isolated.",
+    "7_integration": "Two consecutive cycles through PersonaCycleController.consume_run: open_demand then admit_trial, with only owner HTTP and the model turn faked. The admitted candidate is built from the governed 2-year Taiwan dataset (build_governed_tw_replication_dataset, 760 bars, down_drop=-0.055): canonical lookback-2 momentum artifact with its own fresh real ReplicationGate proof (registry/promotion verification path, no checksum or owner_verified_binding rewrite), pool current member = momentum_threshold 0.002 variant with its own gate proof. Unmodified pool_policy: correlation 0.46 < 0.5, candidate OOS Sharpe ~8.0 above trial threshold, combined Sharpe improves; the pool store applies the admit as a trial member and the displaced weakest member removal is learned. The same suite keeps the genuine recorded-fixture refusal (corr ~0.90 / Sharpe below trial threshold) asserted in the packet and memory (tried_family tag)."
+  },
+  "known_limits": {
+    "dataset_loader": "Admission dataset comes from governed_dataset_loader (configured canonical dataset + threshold policy paths, same evaluation authority research uses; wired in control-plane/persona/main.py). Unconfigured or rejected authority fails closed as not_attempted:governed_dataset_unavailable; nothing is synthesised.",
+    "widen": "propose_widen is staged only; there is no permitted-universe owner, so no widening authority is inferred.",
+    "candidate_source": "Candidates are resolved from completed alpha-replication entries to approved gate-passed registry execution bundles (lineage.source_strategy_spec_id); real-data admission stays with PERSONA-AUTONOMY-HOSTED-ACCEPTANCE-20261112.",
+    "hosted": "No hosted verification performed.",
+    "verification_boundary": "The two-day integration test pins only evaluation_authority.load_evaluation_authority to the recorded TWSE dataset and fakes owner HTTP and the model turn; CycleOwners.observe is a stub that, like telemetry, returns books only for live bound members. Real telemetry, hosted dataset authority and hosted registry were not exercised."
+  },
+  "review": {
+    "status": "pending_independent_review"
+  },
+  "reopen_fixes": {
+    "owner_credentials": "HttpPoolCyclePorts now uses the persona service's configured owner-specific principals (PERSONA_RESEARCH_SERVICE_TOKEN issued by scripts/issue_dev_paper_principals.py into the persona volume, PANTHEON_MEMORY_AUTH_TOKEN, EVOLUTION_AUTH_TOKEN, PERSONA_REGISTRY_SERVICE_TOKEN) read via configured_service_token (rotating _FILE aware); an unset credential raises owner_credential_unconfigured instead of sending an empty bearer. Persona owner calls are in-process through the pool store (no self-HTTP). docker-compose persona service wires the env.",
+    "governed_dataset": "services/control-plane/persona/main.py constructs HttpPoolCyclePorts(pool_store, dataset_loader=governed_dataset_loader()); the loader reads the governed evaluation authority (PERSONA_POOL_CANONICAL_DATASET_PATH / THRESHOLD_POLICY_PATH, falling back to TRAINING_SESSION_*) and fails closed when unconfigured. Deployment must supply the canonical dataset path; none is defaulted.",
+    "prior_risk_removal": "PoolAutonomyCycle diffs the observed pool against the owner's current pool, writes risk-owner removals to the persona memory (tried_family tags) before recall, and excludes those families from demand tried_families and candidates.",
+    "tests": "services/persona/test_pool_autonomy_cycle.py (+2), integration test now uses real pool store and governed_dataset_loader (only owner HTTP and the authority snapshot reader pinned to recorded TWSE data). Not covered: end-to-end scheduled risk removal through the controller with real observations."
+  },
+  "reopen_fixes_2": {
+    "candidate_book": "pool_autonomy_cycle.candidate_virtual_book (reusing pool_admission._replay) replays the candidate's registry artifact over the governed dataset's untouched window (same interpreter/netting as admission, NET_BASIS, source_ref governed-replay:<dataset_id>); HttpPoolCyclePorts.candidate_book supplies it as books[candidate]. Replay failure records not_attempted:candidate_book_unavailable with no owner call and no fabricated returns. Integration test Observe now returns books only for live members.",
+    "removal_learning": "A successful admission learns every removed member by before/after diff plus decision.replaced_artifact_ref, with family, so removed families are tagged tried_family and excluded from the next demand (integration asserts memory_entries == [admitted, removed]).",
+    "pool_failure_health": "persona_cycle_controller sets failure_reason pool_cycle_failed:<reason> when the pool cycle fails, so the packet stays observing and cycle health is not completed; failures remain per-persona."
+  },
+  "real_data_admission_search": {
+    "dataset": "recorded TWSE MI_INDEX 2024-11-11..2026-11-12 (sha256 7af9415d...4c43), 487 bars, 731 days; OOS window by unmodified pool policy 2026-04-13..2026-11-12",
+    "gate_search": "Unmodified ReplicationGate via build_canonical_tw_strategy_artifact: 61 symbols x lookback{2,5,10,20} x threshold{0,0.01} (~480 trials) + 12 baskets x lookback{2,10,20} x threshold{0,0.01}: 0 pass. Closest: 1519 lb10 thr0 fails walk_forward_consistent_across_folds (fold Sharpe 0.058/-0.019/0.515); 2360 lb10 thr0 fails oos_max_drawdown_within_mandate (OOS Sharpe 1.504); 2337 lb10 thr0 fails walk_forward_consistent (OOS 1.324). Others fail oos_sharpe_positive_after_costs, oos_sharpe_beats_buy_and_hold, deflated threshold 0.5.",
+    "genuine_artifact_replay": "Unmodified genuine approved registry entries (services/evolution/test_approved_baselines.genuine_entry: recorded_backtest_tw_2330 and recorded_backtest_tw_2330_2317, each with its own approved baseline) replayed through unmodified evaluate_admission + persona pool_policy, one as starting member (weight .7) and the other as candidate (weight .1), trial_count=1. 2317 is missing 2025-07-30 in the source, so windows are aligned only after dropping that date from both symbols (otherwise backtest_windows_not_aligned).",
+    "results": [
+      {
+        "candidate": "2330+2317",
+        "pool_member": "2330",
+        "admitted": false,
+        "correlation": 0.7233,
+        "correlation_cutoff": "0.5",
+        "pool_oos_sharpe": -1.532,
+        "combined_oos_sharpe": -1.874,
+        "candidate_oos_sharpe": -2.918,
+        "required_candidate_sharpe": 0.5,
+        "reasons": [
+          "candidate_correlated_with_active_member",
+          "combined_oos_sharpe_did_not_improve",
+          "candidate_oos_sharpe_below_persona_trial_threshold"
+        ]
+      },
+      {
+        "candidate": "2330",
+        "pool_member": "2330+2317",
+        "admitted": false,
+        "correlation": 0.7233,
+        "pool_oos_sharpe": -2.918,
+        "combined_oos_sharpe": -2.866,
+        "candidate_oos_sharpe": -1.532,
+        "required_candidate_sharpe": 0.5,
+        "reasons": [
+          "candidate_correlated_with_active_member",
+          "candidate_oos_sharpe_below_persona_trial_threshold"
+        ]
+      }
+    ],
+    "conclusion": "No genuine approved artifact in the system is admissible on the real data under the unmodified pool policy; blocked per coordinator option 3. Builder/synthetic proof remains rejected."
+  },
+  "7_integration": "Two consecutive cycles through PersonaCycleController.consume_run on RECORDED TWSE prices only (fixture services/research/tests/fixtures/persona_cycle_twse_daily_recorded.json, sha256 of MI_INDEX per-day GETs 2024-11-11..2026-11-12, 487 bars, 2330/2883/0050). No builder or synthetic prices. Day 1: demand opened (real). Day 2: admit_trial through the real PersonaStrategyPoolStore + unmodified pool policy; candidate book is the real replay on the recorded prices. See coordinator_decision_20261113.",
+  "coordinator_decision_20261113": {
+    "resolution": "Coordinator 2026-11-13 04:2xZ: real recorded TWSE prices; Day 2 positive admission with owner-HTTP-fixture registry/research/evolution responses under original AC7; canonical artifacts unmodified with their own computed checksum; pool store and policy real; correlation and Sharpe recorded.",
+    "owner_http_fixtures": "BOTH registry responses (pool current member and candidate) are owner HTTP fixtures: the genuine entry's response shell and gate-proof fields, with identity, checksum, run id and OOS metrics replaced by the artifact's own computed values and real backtest on the recorded prices. The approved baseline of each is therefore an owner HTTP fixture, not a real gate approval; the test stubs only approved_baselines._gate_proof_failure for those two checksums (the registry owner's persisted-proof verdict); every other baseline check (approved state, checksum vs embedded artifact, run lineage, metrics) is real.",
+    "current_member": "canonical lookback 10 threshold 0.01 on 2330.TW+2883.TW (strat-tw-2330-2883-lb10), weight .7, joined 2026-10-05; its book is the real replay since joining.",
+    "candidate": "canonical lookback 20 threshold 0.01 on 2883.TW (strat-tw-2883-lb20), built unmodified by build_canonical_tw_strategy_artifact; spec link source_strategy_spec_id spec-reviewed-001.",
+    "real_admission_result": {
+      "admitted": true,
+      "reasons": [],
+      "correlation_with_current": 0.3319,
+      "correlation_cutoff": 0.5,
+      "candidate_oos_sharpe": 2.3316,
+      "required_candidate_sharpe": 0.5,
+      "pool_oos_sharpe": -1.0282,
+      "combined_oos_sharpe": -0.5376,
+      "oos_window": "2026-04-10..2026-11-12",
+      "return_observations": 146,
+      "candidate_book_drawdown_below_removal_policy": true
+    },
+    "real_gate_result_same_artifact_same_data": "ReplicationGate refuses it (real_backtest_validation: oos_sharpe_beats_buy_and_hold, walk_forward_consistent_across_folds; IS Sharpe -0.246, OOS Sharpe 1.437 on the gate's data incl. 0050 benchmark, 5 June-2025 dates dropped where 0050 is absent). Asserted in the test so the candidate is never passed off as gate-approved.",
+    "candidate_search": "Unmodified pool policy over canonical artifacts on the 61 most liquid fully-covered symbols x lookback{2,5,10,20} x threshold{0,0.005,0.01,0.02}: many pass the pool policy when the pool universe includes the symbol and the candidate book drawdown < 10% (e.g. 2883, 2801, 1718, 5880, 2492, 6505). 1519 lb10 thr0 (coordinator's example): corr 0.09 but candidate OOS Sharpe -1.106 vs required 0.5 -> refused; 2360/2337 also refused (Sharpe -0.21/-2.49). The genuine 2330+2317 artifact as current member is removed by the real policy on day 1 (own_high_water_drawdown) on this data, and a 2317-universe candidate breaches candidate_virtual_book_drawdown_exceeds_removal_policy, so a canonical current member was used. 2317 has no 2025-07-30 row in the source.",
+    "natural_gate_pass": "Not claimed: momentum-only supply yields no gate pass on two years of TWSE data (0 of ~480 trials); natural positive admission remains with PERSONA-AUTONOMY-HOSTED-ACCEPTANCE-20261112.",
+    "removed_synthetic": "governed_entry helper and build_governed_tw_replication_dataset use removed from the integration test."
+  }
 }

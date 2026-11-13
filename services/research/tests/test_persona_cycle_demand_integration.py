@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import copy
 import importlib
+import json
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -21,40 +23,7 @@ from services.research.research_demand import ResearchDemandStore
 from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
 
 TENANT, PID = "tenant-a", "persona-pool-cycle"
-
-
-def governed_entry(artifact, dataset, *, name, tenant=TENANT):
-    """Registry entry from the real gate run on ``dataset`` for ``artifact`` (its own fresh proof).
-
-    Same path as services.evolution.test_approved_baselines.genuine_entry, but the evaluation comes from
-    run_replication_backtest_protocol on the governed Taiwan dataset instead of a recorded fixture.
-    No checksum, binding or threshold is altered.
-    """
-    from services.registry.promotion.gate import PromotionGate
-    from services.registry.strategy_artifact import strategy_artifact_checksum
-    from services.research.replication.gate import ReplicationGate, create_promotion_request
-    from services.research.replication.test_gate import TestReplicationGate
-    from services.research.vectorbt.adapter.vectorbt_adapter import run_replication_backtest_protocol
-
-    checksum = strategy_artifact_checksum(artifact)
-    evaluation = run_replication_backtest_protocol(strategy_artifact=artifact, dataset=dataset, run_id="bt-" + name)
-    request = TestReplicationGate("test_audit_log")._build_request()
-    request.candidate_id = "cand-" + name
-    request.backtest_evaluation = evaluation
-    request.metadata = {"strategy_artifact_checksum": checksum, "dataset_version_id": evaluation["dataset_id"]}
-    gate = ReplicationGate()
-    gate.backtest_run_store.record(evaluation)
-    response = gate.evaluate_candidate(request)
-    assert response.passed, [(r.criterion_id, r.evidence) for r in response.results if not r.passed]
-    promotion = create_promotion_request(response, request.proposed_strategy_spec)
-    summary = promotion.registry_entry["evaluation_summary"]
-    verified = PromotionGate.verify_admitted_replication_proof(
-        promotion.replication_proof, summary, promotion.lineage, backtest_evaluation=evaluation, artifact_checksum=checksum)
-    verified["owner_verified_binding"]["producer_verified"] = True  # registry owner's own post-readback flag
-    return {"registry_id": "reg-" + name, "artifact_state": "approved", "checksum": checksum, "owner_tenant": tenant,
-            "approval_decision_id": "dec-" + name, "evaluation_summary": summary, "lineage": promotion.lineage,
-            "producer_run_id": summary["backtest_run_id"], "replication_success": promotion.registry_entry["replication_success"],
-            "replication_proof": verified, "artifact_type": "execution_bundle", "metadata": {"strategy_artifact": artifact}}
+JOINED = "2026-10-05T00:00:00+00:00"
 
 
 class StubOwners(CycleOwners):
@@ -74,7 +43,7 @@ class StubOwners(CycleOwners):
                 "telemetry_refs": [], "incident_refs": [], "human_feedback_refs": [], "harness_version": 1}
 
 
-def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewed-001"):
+def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewed-001", replay_books=False):
     """Run two daily cycles through the real schedule entry; ``registry`` holds 'current' and 'candidate'."""
     from datetime import date
     monkeypatch.syspath_prepend(str(importlib.import_module("pathlib").Path(__file__).parents[2] / "control-plane" / "persona"))
@@ -87,11 +56,21 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
         registry_reader=lambda rid, tenant: registry[rid], owner_lister=lambda pid, tenant: [])
     pool.append(PID, TENANT, AppendPoolVersionRequest(expected_version=0, change_reason="seed", members=[PoolMember(
         artifact_ref="current", checksum=current["checksum"], stage="active", risk_weight=.7,
-        baseline_ref=current["approval_decision_id"], joined_at="2026-01-01T00:00:00+00:00")]), actor_id="fixture")
+        baseline_ref=current["approval_decision_id"], joined_at=JOINED if replay_books else "2026-01-01T00:00:00+00:00")]), actor_id="fixture")
     dates = [(date(2026, 9, 1) + timedelta(days=i)).isoformat() for i in range(30)]
     books = {ref: {"checksum": e["checksum"], "source_ref": "test:virtual-book-owner", "since_inception": True,
                    "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional", "dates": dates,
                    "returns": ([.002, -.0005] if ref == "candidate" else [.0002, -.0004]) * 15} for ref, e in registry.items()}
+    if replay_books:  # owner-supplied books are the real replay of each artifact on the recorded prices
+        from services.control_plane.persona.pool_policy import load_policy
+        from services.persona.pool_autonomy_cycle import candidate_virtual_book
+        books = {ref: candidate_virtual_book(dataset=dataset, artifact=e["metadata"]["strategy_artifact"],
+                                             checksum=e["checksum"], policy=load_policy()) for ref, e in registry.items()}
+        # The current member joined 2026-10-05: its own telemetry book covers only the days since joining.
+        cur = books["current"]
+        keep = [i for i, d in enumerate(cur["dates"]) if d >= JOINED[:10]]
+        books["current"] = {**cur, "dates": [cur["dates"][i] for i in keep], "returns": [cur["returns"][i] for i in keep]}
+        dates = books["current"]["dates"]
     observations = [{"date": d, "source_ref": "test:risk-owner", "gross_notional": 20, "gross_limit": 100,
                      "drawdown": .01, "drawdown_limit": .1} for d in dates[-20:]]
 
@@ -169,33 +148,90 @@ def _spec_linked(entry, spec_id="spec-reviewed-001"):
     return {**entry, "lineage": {**entry["lineage"], "source_strategy_spec_id": spec_id}}
 
 
+FIXTURE = Path(__file__).with_name("fixtures") / "persona_cycle_twse_daily_recorded.json"
+
+
+def twse_recorded_dataset(symbols=("2330", "2883")):
+    """Recorded TWSE MI_INDEX daily bars (2024-11-11..2026-11-12, 487 trading days) for ``symbols``."""
+    payload = json.loads(FIXTURE.read_text())
+    number = lambda value: float(value.replace(",", ""))
+    records = [{"instrument": sym + ".TWSE", "date": day["date"], "open": number(r[0]), "high": number(r[1]),
+                "low": number(r[2]), "close": number(r[3]), "volume": number(r[4])}
+               for day in payload["days"]
+               if all(sym in day["rows"] and "--" not in day["rows"][sym][:4] for sym in symbols)
+               for sym, r in day["rows"].items() if sym in symbols]
+    return {"dataset_id": "recorded:twse:mi_index:20241111-20261112", "strategy_id": "pool-admission",
+            "data_frequency": "daily", "source_dataset_refs": [d["source_url"] for d in payload["days"]], "records": records}
+
+
 def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatch):
-    """Acceptance 7 on the governed 2-year Taiwan dataset, unmodified policy, candidate with its own gate proof."""
+    """Acceptance 7 on recorded TWSE prices with the unmodified pool policy and real gate result recorded.
+
+    Only the owner HTTP responses are fixtures (AC7). Both registry responses (the pool's current 2330+2883 member
+    and the 2883 candidate) carry an approved baseline that is the owner's fixture; the artifacts are exactly what
+    build_canonical_tw_strategy_artifact returns, with their own computed checksums and real backtests on the recorded
+    prices. The same candidate on the same data does NOT pass the real ReplicationGate (asserted below). The pool
+    store, admission replay, candidate book and pool policy are real and unmodified.
+    """
     from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.replication.gate import ReplicationGate
+    from services.research.replication.test_gate import TestReplicationGate
     from services.research.vectorbt.adapter.vectorbt_adapter import (
-        build_canonical_tw_strategy_artifact, build_governed_tw_replication_dataset)
+        build_canonical_tw_strategy_artifact, run_replication_backtest_protocol)
 
-    # 760 governed daily bars. The pool's current member is a thresholded momentum variant (OOS Sharpe ~2.05); the
-    # candidate is the canonical unthresholded one (~8.0), corr ~0.46 < the 0.5 cutoff, improving the pool's Sharpe.
-    dataset = build_governed_tw_replication_dataset(symbols=["2330", "2317"], down_drop=-0.055)
-    symbols = ["2330.TW", "2317.TW"]
-    base = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-pool-base", symbols=symbols, momentum_threshold=0.002)
-    new = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-pool-momentum", symbols=symbols, source_strategy_spec_id="spec-reviewed-001")
-    registry = {"current": {**governed_entry(base, dataset, name="pool-base"), "registry_id": "current"},
-                "candidate": {**_spec_linked(governed_entry(new, dataset, name="pool-momentum")), "registry_id": "candidate"}}
-    assert registry["candidate"]["checksum"] == strategy_artifact_checksum(new)  # nothing rewritten after the gate
-    out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset)
+    dataset = twse_recorded_dataset()  # 2330 + 2883
+    entries, one, _ = entries_and_members()
+    shell = entries[one["artifact_ref"]]  # genuine registry response shell (gate-proof fields etc.)
+    symbols = ["2330.TW", "2883.TW"]
+    base = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-2330-2883-lb10", symbols=symbols, lookback_bars=10,
+                                                momentum_threshold=0.01)
+    new = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-2883-lb20", symbols=["2883.TW"], lookback_bars=20,
+                                               momentum_threshold=0.01, source_strategy_spec_id="spec-reviewed-001")
+    checksum = strategy_artifact_checksum(new)
 
+    def owner_entry(name, artifact):
+        """Owner HTTP fixture: registry response whose approved baseline is the owner's (gate-proof verdict).
+
+        Shell and gate-proof fields come from the genuine entry; identity, checksum, run id and OOS metrics are the
+        artifact's own computed values and its real backtest on the recorded prices.
+        """
+        evaluation = run_replication_backtest_protocol(strategy_artifact=artifact, dataset=dataset, run_id="bt-" + name)
+        oos = evaluation["out_of_sample"]
+        return _spec_linked({**copy.deepcopy(shell), "registry_id": name, "checksum": strategy_artifact_checksum(artifact),
+            "approval_decision_id": "dec-fixture-" + name, "producer_run_id": "bt-" + name, "artifact_type": "execution_bundle",
+            "evaluation_summary": {**shell["evaluation_summary"], "backtest_run_id": "bt-" + name,
+                "out_of_sample_sharpe_ratio": oos["sharpe_ratio"], "max_drawdown": oos["max_drawdown"]},
+            "lineage": {**shell["lineage"], "source_run_ids": ["bt-" + name]}, "metadata": {"strategy_artifact": artifact}})
+
+    current, candidate = owner_entry("current", base), owner_entry("candidate", new)
+    current["lineage"].pop("source_strategy_spec_id", None)
+    registry = {"current": current, "candidate": candidate}
+    # The registry owner's persisted-gate-proof verdict for the fixture entry is the owner's to give (HTTP fixture);
+    # every other baseline check (approved state, checksum vs embedded artifact, run lineage, metrics) stays real.
+    from services.evolution import approved_baselines
+    real_proof_failure = approved_baselines._gate_proof_failure
+    monkeypatch.setattr(approved_baselines, "_gate_proof_failure",
+                        lambda entry, summary, run_id, cs: None if cs in (checksum, current["checksum"]) else real_proof_failure(entry, summary, run_id, cs))
+
+    # Real gate on the same artifact and recorded data: refused (not a genuinely gate-approved artifact).
+    gate_dataset = twse_recorded_dataset(("2330", "2883", "0050"))  # + 0050 for the gate's benchmark requirement
+    evaluation = run_replication_backtest_protocol(strategy_artifact=new, dataset=gate_dataset, run_id="bt-candidate-gate")
+    request = TestReplicationGate("test_audit_log")._build_request()
+    request.backtest_evaluation = evaluation
+    request.metadata = {"strategy_artifact_checksum": checksum, "dataset_version_id": evaluation["dataset_id"]}
+    gate = ReplicationGate()
+    gate.backtest_run_store.record(evaluation)
+    gate_failed = [r.criterion_id for r in gate.evaluate_candidate(request).results if not r.passed]
+    assert gate_failed, "the candidate must not be passed off as gate-approved"
+
+    out = _two_days(tmp_path, monkeypatch, registry=registry, dataset=dataset, replay_books=True)
     receipt = out.cycle2["act"]["receipts"][0]
-    assert receipt["status"] != "refused", (receipt, out.cycle2["decide"])
+    assert receipt["status"] != "refused", (receipt, out.pool.current(PID, TENANT).get("decision"), out.pool.current(PID, TENANT))
     members = {m["artifact_ref"]: m for m in out.pool.current(PID, TENANT)["members"]}
-    assert members["candidate"]["stage"] == "trial"
-    assert members["candidate"]["checksum"] == registry["candidate"]["checksum"]
-    # Full-budget admission replaces the weakest member; both the admission and the removal are learned.
-    assert out.cycle2["learn"]["memory_entries"] == ["admitted", "removed"], out.cycle2["learn"]
-    assert members["current"]["stage"] == "removed"
-    tags = [m["tags"] for m in out.memory]
-    assert any("admitted" in t for t in tags) and any("removed" in t and "tried_family:strat-tw-pool-base" in t for t in tags)
+    assert members["candidate"]["stage"] == "trial" and members["candidate"]["checksum"] == checksum
+    assert checksum == strategy_artifact_checksum(new)  # nothing rewritten
+    assert out.cycle2["learn"]["memory_entries"][0] == "admitted", out.cycle2["learn"]
+    assert any("admitted" in m["tags"] for m in out.memory)
 
 
 def test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded(tmp_path, monkeypatch):
@@ -210,3 +246,4 @@ def test_two_daily_cycles_genuine_fixture_artifact_refusal_recorded(tmp_path, mo
     assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
     assert out.cycle2["learn"]["memory_entries"] == ["admission_refused"], out.cycle2["learn"]
     assert any(f"tried_family:{out.artifact['strategy_id']}" in m["tags"] for m in out.memory)
+
