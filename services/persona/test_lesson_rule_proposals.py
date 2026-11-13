@@ -298,3 +298,43 @@ def test_other_tenant_or_missing_auth_is_refused(system):
     body = request("gate_check", [lesson["lesson_candidate_id"]], **GATE_SPEC)
     assert client.post(ROUTE, json=body, headers={"X-Tenant-Id": TENANT}).status_code in (401, 403)
     assert client.post(ROUTE, json=body, headers=headers(tenant="tenant-b")).status_code in (403, 404)
+
+
+def test_production_reader_passes_real_memory_read_route_for_persona_owner(tmp_path, monkeypatch):
+    """Regression: persona.admin caller JWT must be admitted by the real Memory GET, tenant-bound."""
+    import io
+    import json as _json
+    from urllib.error import HTTPError
+    from services.memory import main as memory_main
+    from services.persona.lesson_rule_proposals import MemoryLessonReader, LessonRuleError
+
+    monkeypatch.setenv("PANTHEON_TRADE_LESSON_CANDIDATE_STORE", str(tmp_path / "mem_lessons.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "pm.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "im.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", SECRET)
+    for fn in (memory_main._candidate_store, memory_main._persona_store, memory_main._store):
+        if hasattr(fn, "cache_clear"):
+            fn.cache_clear()
+    lesson = make_lesson()
+    memory_main._candidate_store().create(lesson)
+    mem = TestClient(memory_main.app)
+
+    def bridge(request, timeout=None):
+        url = request.full_url.split("://", 1)[1]
+        path = url[url.index("/"):]
+        resp = mem.get(path, headers={k: v for k, v in request.header_items()})
+        if resp.status_code != 200:
+            raise HTTPError(request.full_url, resp.status_code, "err", {}, io.BytesIO(resp.content))
+        return io.BytesIO(resp.content)
+
+    reader = MemoryLessonReader("http://memory.test", urlopen_fn=bridge)
+    auth = headers()["Authorization"]
+    got = reader.get(lesson["lesson_candidate_id"], TENANT, auth)
+    assert got["lesson_candidate_id"] == lesson["lesson_candidate_id"]
+    # tenant boundary preserved: another tenant's persona.admin cannot read it
+    other = headers("tenant-b")["Authorization"]
+    assert reader.get(lesson["lesson_candidate_id"], "tenant-b", other) is None
+    # persona.admin is not admitted to list/other read routes
+    assert mem.get("/api/memory/trade-lessons", headers={"Authorization": auth}).status_code == 403
