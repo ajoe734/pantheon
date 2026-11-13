@@ -1479,16 +1479,17 @@ curl_with_retry() {
   local url="$1"
   local attempts="${2:-12}"
   local delay="${3:-5}"
+  local curl_options=("${@:4}")
   local i
 
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "$url" >/dev/null; then
+    if curl -fsS "${curl_options[@]}" "$url" >/dev/null; then
       return 0
     fi
     sleep "$delay"
   done
 
-  curl -fsS "$url" >/dev/null
+  curl -fsS "${curl_options[@]}" "$url" >/dev/null
 }
 
 wait_for_exact_bff_lifecycle_readiness() {
@@ -2439,6 +2440,11 @@ elif action == "restore":
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
         "SOURCE_INGEST_CONTROLLER_MODE": steady_mode,
     })
+    # Replace the Compose environment, rather than merge today's defaults into
+    # yesterday's runtime. Keep host/process helper variables out of the container.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    restored_env = dict(x.split("=", 1) for x in pre_list if "=" in x)
+    restored_env.update({k: env[k] for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in restored_env})
 # "compose up --no-build" starts whatever image the Compose name resolves to, and
 # a stale plain tag left by an earlier failed deploy once pointed at a rejected
 # candidate. Pin source-ingest to the recorded running image ID with a Compose
@@ -2450,8 +2456,18 @@ if expected_img:
     atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
     pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
     with open(pin_file, "w", encoding="utf-8") as f:
+        os.chmod(pin_file, 0o600)
         json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
     cmd += ["-f", pin_file]
+    if action == "restore":
+        env_file = os.path.join(pin_dir, "source-ingest-env.yml")
+        with open(env_file, "w", encoding="utf-8") as f:
+            os.chmod(env_file, 0o600)
+            # !override is already used by repository Compose files. $$ protects
+            # captured literal dollars (including secrets) from interpolation.
+            literal_env = {k: v.replace("$", "$$") for k, v in restored_env.items()}
+            f.write("services:\n  source-ingest:\n    environment: !override " + json.dumps(literal_env) + "\n")
+        cmd += ["-f", env_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
@@ -2472,7 +2488,6 @@ if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
     # Compare against the intended restored environment: pre env with only the
     # restore-controlled keys replaced; image/other env invariants stay strict.
-    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
     intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
     # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
     # docker-compose.yml, never the source-ingest container, so it is expected
@@ -2480,8 +2495,18 @@ if action == "restore":
     pre_keys = {x.split("=", 1)[0] for x in pre_list}
     intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
     if set(intended) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
+        # Report only key names, including keys whose value changed; never values.
+        added = sorted({x.split("=", 1)[0] for x in set(post_list) - intended})
+        removed = sorted({x.split("=", 1)[0] for x in intended - set(post_list)})
+        raise SystemExit(f"restored container env mismatch: added={added}, removed={removed}")
 PY
+  local runtime_rc=$?
+  (( runtime_rc == 0 )) || return "${runtime_rc}"
+  if [[ "${action}" == "restore" ]]; then
+    # A recreated process is not ready for the next connector's preflight yet.
+    # Use the existing retry budget and the Source healthcheck's /readyz + 5s limit.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 12 5 --max-time 5 --connect-timeout 5
+  fi
 }
 
 recover_bounded_source_refresh_dlq() {
