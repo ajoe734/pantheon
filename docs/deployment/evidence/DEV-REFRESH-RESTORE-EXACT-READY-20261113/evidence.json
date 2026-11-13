@@ -4,7 +4,7 @@
   "assigned_independent_reviewer": "Claude",
   "delivery_scope": "Source and local regression tests only; no hosted success claimed",
   "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271",
-  "anchor_commit": "1893ec2ef",
+  "anchor_commit": "ca2419849048fd5aaf94bdf4dd8b7705bebd977e",
   "source_file_sha256": {
     "scripts/deploy_nonprod_vm.sh": "e78446dd8e24d2625e5b2021ebfe54306766bd3a67a6d206c4903117765287fb",
     "scripts/test_dev_tw_market_refresh.py": "e35a3e2173d89b04d7ad296d2208f23de1be405c4c7e0baaee8dd4af59fe2bec",
@@ -135,6 +135,22 @@
       "exit_status": 0,
       "result": "12 passed, 122 deselected in 5.97s",
       "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k 'refresh_entrypoint or bounded_refresh_restore or exact_restore or terminating_signal'",
+      "exit_status": 0,
+      "result": "35 passed, 81 deselected in 116.97s (0:01:56)",
+      "base_sha": "b01bb86562c976b39b293c8a041b4816b0212271"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_status": 0,
+      "result": "Checkout-scoped import mapping and pytest verified."
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh && git diff --check origin/dev...HEAD && git diff --check",
+      "exit_status": 0,
+      "result": "Shell syntax and scoped diff checks clean."
     }
   ],
   "preserved_baseline_workflow_failures": [
@@ -165,7 +181,8 @@
     "focused-resumed": "6bc77d05b79beb2e49cac8b8ff218a8a96a4971bbae1e6c56d3324d2a7f80b9d",
     "collector-current": "9e6f6ff51f52ab364db3a5f3dbed78bbaf0f4b585b6086577cf4e308c28102de",
     "prior-ci-failure": "9e4129641c76b23514475e7a0b251ddfd6398649b9fab1b9aa0bd9348e8d4b36",
-    "collector-fixed": "07bee7da9fbd45bbad06b2e89443290f10df48be5a6e5328d62cbe0f19efaaa6"
+    "collector-fixed": "07bee7da9fbd45bbad06b2e89443290f10df48be5a6e5328d62cbe0f19efaaa6",
+    "focused-final": "77927195740a3557382db5543f24049b1d5e2b6b706dfebc9649148dadc6c89a"
   },
   "regression_baseline_sha": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
   "scope_resume": {
@@ -173,7 +190,8 @@
     "implementation": "Changed the two existing diagnostic assertions to key-only added-key output and asserted the former values are absent from stdout/stderr. All source code and original restore/readiness tests unchanged.",
     "publication": "Rebased original task changes onto current dev, skipped duplicate original patch history, and retained original published tip as merge parent for a normal non-force push. Only the four scoped artifacts differ from dev.",
     "additional_grant": "Human/Ops 2026-11-13T03:39:35Z explicitly authorizes updating only the obsolete fallback assertion in test_collector_host_gate_steady_restore_and_refresh_guard in addition to the two diagnostic assertion changes.",
-    "additional_implementation": "Replace only the fallback-specific assertion with captured-environment-missing refusal and restore_rc=1 assertions; retain every other Collector identity/allowlist and official bounded-host assertion. Production behavior and original restore/readiness tests unchanged."
+    "additional_implementation": "Replace only the fallback-specific assertion with captured-environment-missing refusal and restore_rc=1 assertions; retain every other Collector identity/allowlist and official bounded-host assertion. Production behavior and original restore/readiness tests unchanged.",
+    "final_verification": "12 affected image-pin/Collector tests and 35 focused restore/readiness/signal cases pass against current dev. All terminal outputs collected with exit status 0 before handoff."
   },
   "resolved_changed_test_failure": {
     "test": "scripts/test_deploy_nonprod_vm.py::test_collector_host_gate_steady_restore_and_refresh_guard",
