@@ -35,6 +35,8 @@ class Ports:
         self.opened.append(body)
         return {"demand_id": "rd-1", "created": True}
     def admission_dataset(self, persona, candidate): return {"records": []}
+    def candidate_book(self, persona, candidate, dataset):
+        return {"checksum": candidate["checksum"], "source_ref": "governed-replay:test", "since_inception": True}
     def decide_pool(self, persona, body):
         self.calls.append(body)
         if body["action"] == "admit":
@@ -173,3 +175,25 @@ def test_http_ports_use_owner_specific_credentials_and_fail_closed(monkeypatch):
         HttpPoolCyclePorts(env={})._urllib("GET", "research", "/x", "t1")
     with pytest.raises(RuntimeError, match="governed_dataset_loader_unconfigured"):
         governed_dataset_loader({})(PERSONA, {"artifact_ref": "c"})
+
+
+def test_admit_sends_candidate_governed_book_and_learns_replaced_member():
+    cand = {"artifact_ref": "c", "checksum": "ck", "family": "newfam"}
+    ports = Ports(pool_now=pool(member("a")), candidates=[cand], families={"a": "oldfam"})
+    def decide_pool(persona, body):
+        ports.calls.append(body)
+        return {"pool_version": 5, "decision": {"status": "applied", "replaced_artifact_ref": "a", "reasons": []},
+                "members": [dict(member("a"), stage="removed"), member("c")]}
+    ports.decide_pool = decide_pool
+    out = PoolAutonomyCycle(ports, now=lambda: "2026-11-12T00:00:00Z").run(PERSONA, observe(pool(member("a"))), "pk-1")
+    assert ports.calls[0]["books"]["c"]["source_ref"] == "governed-replay:test"
+    removed = [e for e in ports.memory if e["outcome"] == "removed"]
+    assert [(e["artifact_ref"], e["family"]) for e in removed] == [("a", "oldfam")]
+    assert "oldfam" in out["learn"]["tried_families"]
+
+
+def test_missing_candidate_book_refuses_without_owner_call():
+    ports = Ports(pool_now=pool(member("a")), candidates=[{"artifact_ref": "c", "checksum": "ck", "family": "f"}])
+    ports.candidate_book = lambda persona, c, d: (_ for _ in ()).throw(ValueError("backtest_dates_missing_or_duplicate"))
+    out = PoolAutonomyCycle(ports, now=lambda: "2026-11-12T00:00:00Z").run(PERSONA, observe(pool(member("a"))), "pk-1")
+    assert ports.calls == [] and out["act"]["receipts"][0]["reason"].startswith("candidate_book_unavailable")

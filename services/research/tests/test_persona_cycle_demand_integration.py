@@ -32,8 +32,11 @@ class StubOwners(CycleOwners):
 
     def observe(self, persona, *, since=None):
         pool = self.pool_store.current(PID, TENANT)
-        return {"pool": pool, "pool_health": self.pool_store.health(PID, TENANT, self.books, self.observations),
-                "books": self.books, "observations": self.observations, "unavailable": [],
+        # Like telemetry's member_virtual_books: only bound (admitted, live) members have a book.
+        live = {m["artifact_ref"] for m in pool["members"] if m["stage"] != "removed"}
+        books = {ref: b for ref, b in self.books.items() if ref in live}
+        return {"pool": pool, "pool_health": self.pool_store.health(PID, TENANT, books, self.observations),
+                "books": books, "observations": self.observations, "unavailable": [],
                 "telemetry_refs": [], "incident_refs": [], "human_feedback_refs": [], "harness_version": 1}
 
 
@@ -61,7 +64,7 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
     dates = [(date(2026, 9, 1) + timedelta(days=i)).isoformat() for i in range(30)]
     books = {ref: {"checksum": e["checksum"], "source_ref": "test:virtual-book-owner", "since_inception": True,
                    "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional", "dates": dates,
-                   "returns": ([.002, -.0005] if ref == "candidate" else [.001, -.0005]) * 15} for ref, e in registry.items()}
+                   "returns": ([.002, -.0005] if ref == "candidate" else [.0002, -.0004]) * 15} for ref, e in registry.items()}
     observations = [{"date": d, "source_ref": "test:risk-owner", "gross_notional": 20, "gross_limit": 100,
                      "drawdown": .01, "drawdown_limit": .1} for d in dates[-20:]]
 
@@ -128,7 +131,12 @@ def test_two_daily_cycles_demand_then_admitted_trial_member(tmp_path, monkeypatc
     members = pool.current(PID, TENANT)["members"]
     trial = next(m for m in members if m["artifact_ref"] == "candidate")
     assert trial["stage"] == "trial"
-    assert cycle2["learn"]["memory_entries"] == ["admitted"] and memory[0]["source_event_type"] == "pool_outcome"
+    # Candidate book came from the governed replay, not from Observe (which only has bound members).
+    assert receipt["status"] == "applied" and memory[0]["source_event_type"] == "pool_outcome"
+    # A full-budget admission replaced the weakest member: that removal is learned and tagged as a tried family.
+    assert cycle2["learn"]["memory_entries"] == ["admitted", "removed"], cycle2["learn"]
+    removed_memory = next(m for m in memory if "removed" in m["tags"])
+    assert any(t.startswith("tried_family:") for t in removed_memory["tags"])
     # The member joined after the demand: the next reconcile satisfies it; no duplicate was opened.
     assert [d["status"] for d in demands.reconcile(TENANT, PID, members) if d["demand_id"] == open_rows[0]["demand_id"]] == ["satisfied"]
     assert len(demands.list(TENANT, PID)) == 1

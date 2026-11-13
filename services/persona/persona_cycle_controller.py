@@ -183,7 +183,9 @@ class PersonaCycleController:
                 from services.persona.pool_autonomy_cycle import apply_to_packet
                 pool_result = self.pool_cycle.run(persona, observe, packet_id)
                 apply_to_packet(packet, pool_result)
-                if pool_result["status"] == "completed" and not failure:
+                if pool_result["status"] == "failed" and not failure:
+                    failure = "pool_cycle_failed:" + str(pool_result.get("reason", ""))[:120]
+                elif pool_result["status"] == "completed" and not failure:
                     packet["status"], packet["closed_at"] = "closed", _utc_now()
             cycle.update(phase="terminal", failure_reason=failure)
             if failure:

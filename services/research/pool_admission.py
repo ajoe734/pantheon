@@ -60,6 +60,42 @@ def _replay(prepared, artifact, dates):
     return [statistics.mean(values) for values in zip(*series)]
 
 
+def candidate_virtual_book(*, dataset, artifact, checksum, policy):
+    """Governed replay book for a not-yet-admitted candidate (same replay as admission).
+
+    Dated net returns from the registry interpreter over the governed daily
+    bars' untouched window; nothing is invented, and unavailable data raises.
+    """
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    if prepared.data_frequency not in ("daily", "1d"):
+        raise ValueError("backtest_requires_daily_bars")
+    calendars = [tuple(prepared.dates_by_instrument[s]) for s in prepared.instruments]
+    if len(set(calendars)) != 1:
+        raise ValueError("backtest_windows_not_aligned")
+    dates = list(calendars[0][int(len(calendars[0]) * policy.in_sample_fraction):])
+    returns = _replay(prepared, artifact, dates)
+    return {"checksum": checksum, "source_ref": f"governed-replay:{prepared.dataset_id}", "basis": NET_BASIS,
+            "dates": dates[1:], "returns": returns, "since_inception": True, "book_kind": "governed_replay"}
+
+
+def candidate_virtual_book(*, dataset, artifact, checksum, policy):
+    """Governed replay book for a not-yet-admitted candidate (same replay as admission).
+
+    Dated net returns from the registry interpreter over the governed daily
+    bars' untouched window; nothing is invented, and unavailable data raises.
+    """
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    if prepared.data_frequency not in ("daily", "1d"):
+        raise ValueError("backtest_requires_daily_bars")
+    calendars = [tuple(prepared.dates_by_instrument[s]) for s in prepared.instruments]
+    if len(set(calendars)) != 1:
+        raise ValueError("backtest_windows_not_aligned")
+    dates = list(calendars[0][int(len(calendars[0]) * policy.in_sample_fraction):])
+    returns = _replay(prepared, artifact, dates)
+    return {"checksum": checksum, "source_ref": f"governed-replay:{prepared.dataset_id}", "basis": NET_BASIS,
+            "dates": dates[1:], "returns": returns, "since_inception": True, "book_kind": "governed_replay"}
+
+
 def _sharpe(values, periods):
     deviation = statistics.stdev(values) if len(values) > 1 else 0
     if deviation <= 0:

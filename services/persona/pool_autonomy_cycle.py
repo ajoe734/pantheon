@@ -164,18 +164,38 @@ class PoolAutonomyCycle:
                 receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
                                  "reason": "governed_dataset_unavailable:" + type(exc).__name__})
                 return receipts, learned
+            try:
+                cand_book = ports.candidate_book(persona, cand, dataset)
+            except Exception as exc:  # noqa: BLE001 - no replay, no admission; never fabricate returns
+                receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
+                                 "reason": "candidate_book_unavailable:" + type(exc).__name__})
+                return receipts, learned
+            try:
+                cand_book = ports.candidate_book(persona, cand, dataset)
+            except Exception as exc:  # noqa: BLE001 - no replay, no admission; never fabricate returns
+                receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
+                                 "reason": "candidate_book_unavailable:" + type(exc).__name__})
+                return receipts, learned
             result = ports.decide_pool(persona, {
                 "expected_version": pool["pool_version"], "execution_context": "paper", "action": "admit",
                 "candidate": {"artifact_ref": cand["artifact_ref"], "checksum": cand["checksum"],
                               **({"demand_ref": cand["demand_ref"]} if cand.get("demand_ref") else {})},
-                "books": observe.get("books", {}), "observations": observe.get("observations", []),
-                "dataset": dataset})
+                "books": {**observe.get("books", {}), cand["artifact_ref"]: cand_book},
+                "observations": observe.get("observations", []), "dataset": dataset})
             status = (result.get("decision") or {}).get("status")
             receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": status,
                              "pool_version": result.get("pool_version"), "reasons": (result.get("decision") or {}).get("reasons", [])})
             learned.append({"outcome": "admitted" if status == "applied" else "admission_refused",
                             "family": cand.get("family"), "artifact_ref": cand["artifact_ref"],
                             "detail": "; ".join((result.get("decision") or {}).get("reasons", []))})
+            if status == "applied":
+                # Full-budget admission replaces the weakest member: learn every removal by diff.
+                after_live = {m["artifact_ref"] for m in result.get("members") or [] if m["stage"] != "removed"}
+                gone = {m["artifact_ref"] for m in pool["members"] if m["stage"] != "removed"} - after_live
+                replaced = (result.get("decision") or {}).get("replaced_artifact_ref")
+                for ref in sorted(gone | ({replaced} if replaced else set())):
+                    learned.append({"outcome": "removed", "family": ports.family(persona, ref), "artifact_ref": ref,
+                                    "detail": "replaced_by_stronger_trial:" + cand["artifact_ref"]})
         elif kind in ("reweight", "remove"):
             result = ports.decide_pool(persona, {
                 "expected_version": pool["pool_version"], "execution_context": "paper", "action": "reweight",
@@ -331,6 +351,24 @@ class HttpPoolCyclePorts:
         if self.dataset_loader is None:
             raise RuntimeError("governed_dataset_loader_unconfigured")
         return self.dataset_loader(persona, candidate)
+
+    def candidate_book(self, persona, candidate, dataset):
+        """Candidate's governed replay book; the telemetry owner has none before admission."""
+        from services.control_plane.persona.pool_policy import load_policy
+        from services.research.pool_admission import candidate_virtual_book
+        artifact = (self._entry(persona, candidate["artifact_ref"]).get("metadata") or {}).get("strategy_artifact")
+        if not artifact:
+            raise RuntimeError("candidate_strategy_artifact_missing")
+        return candidate_virtual_book(dataset=dataset, artifact=artifact, checksum=candidate["checksum"], policy=load_policy())
+
+    def candidate_book(self, persona, candidate, dataset):
+        """Candidate's governed replay book; the telemetry owner has none before admission."""
+        from services.control_plane.persona.pool_policy import load_policy
+        from services.research.pool_admission import candidate_virtual_book
+        artifact = (self._entry(persona, candidate["artifact_ref"]).get("metadata") or {}).get("strategy_artifact")
+        if not artifact:
+            raise RuntimeError("candidate_strategy_artifact_missing")
+        return candidate_virtual_book(dataset=dataset, artifact=artifact, checksum=candidate["checksum"], policy=load_policy())
 
     def decide_pool(self, persona, body):
         import importlib
