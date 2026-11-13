@@ -1,0 +1,170 @@
+{
+  "task_id": "PERSONA-POOL-TARGET-POSITIONS-20261113",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-13",
+  "source_status": "implemented_pending_independent_review",
+  "review_decision": "pending_assigned_reviewer",
+  "integration_base": "bc8807e042d3e85f611ffe8a5564db2d60158353",
+  "authorization": {
+    "operator": "2026-11-13 approval of the three portfolio corrections, as recorded in the task brief",
+    "rebalance_band_fraction": 0.2,
+    "numeric_authority": "Coordinator starting proposal, not an operator numerical decision"
+  },
+  "acceptance": [
+    {
+      "id": 1,
+      "evidence": "Screen-only envelopes pin child rules/checksums/weights with symbols=[]; registry and publisher tests accept without daily picks.",
+      "tests": [
+        "test_screen_only_pins_rules_and_weights_not_daily_picks",
+        "test_publisher_pins_screen_rules_without_enumerating_picks"
+      ]
+    },
+    {
+      "id": 2,
+      "evidence": "Each screened member uses evaluate_screened_views over the complete governed market, with its own reconstructed history. Producer persists member snapshots and records per-member digests, including zero-weight screened trials. Union includes fixed symbols, picks, member exits and persona holdings.",
+      "tests": [
+        "test_recorded_paper_backtest_targets_replay_and_member_exits_match",
+        "test_producer_uses_production_book_shape_including_held_outside_fixed_symbols"
+      ]
+    },
+    {
+      "id": 3,
+      "evidence": "One frozen book/budget and complete net-view map precede allocation. Absolute gross budget, one common scale, canonical Decimal summation.",
+      "tests": [
+        "test_bar_allocation_is_order_independent_and_uses_full_budget",
+        "test_frozen_bar_reads_inputs_once_and_restart_reuses_expression_record"
+      ]
+    },
+    {
+      "id": 4,
+      "evidence": "New non-passthrough envelopes carry target_position_v1; flat closes every leg, weaker targets reduce, larger targets add scored risk-capped deltas, opposite targets close first.",
+      "tests": [
+        "test_flat_weaker_and_reverse_reduce_only",
+        "test_producer_flat_closes_every_held_leg",
+        "test_runtime_fills_net_zero_close_and_weak_target_reduction"
+      ]
+    },
+    {
+      "id": 5,
+      "evidence": "Band=max(one held unit notional, rebalance_band_fraction*target) is recorded with the exact parameter digest; unreadable inputs record a null band and an explicit unavailable reason.",
+      "tests": [
+        "test_flat_weaker_and_reverse_reduce_only",
+        "test_band_addition_risk_cap_and_invalid_reduce",
+        "test_unreadable_budget_replays_the_recorded_no_trade"
+      ]
+    },
+    {
+      "id": 6,
+      "evidence": "Unscreened factor members reconstruct their own interpreter state; screened members reconstruct their own membership and position history. Exit order direction is converted to a flat member target. HOLD retains the member target.",
+      "tests": [
+        "test_member_rule_exit_reduces_combined_target_through_runtime",
+        "test_member_hold_keeps_own_target"
+      ]
+    },
+    {
+      "id": 7,
+      "evidence": "Legacy notional_target_v1 decide implementation is unchanged. Positive execution-weight singleton selection preserves its active artifact policy even when a screened virtual trial comes first. Baseline producer comparison covers 12 byte-identical serialized standalone/singleton decisions.",
+      "tests": [
+        "PortfolioEnvelopeTests.test_singleton_preserves_exact_view_and_actions",
+        "PortfolioEnvelopeTests.test_singleton_expression_strength_is_identical",
+        "test_screened_zero_weight_trial_preserves_active_singleton_policy_and_view"
+      ]
+    },
+    {
+      "id": 8,
+      "evidence": "Reductions are trusted close_leg records capped by held units and validated by enforce. Existing max_units_by_risk builder and order risk gate remain unchanged. Missing budget/marks/market records fail closed. Paper producer environment guard remains active.",
+      "tests": [
+        "test_band_addition_risk_cap_and_invalid_reduce",
+        "test_missing_complete_market_and_budget_fail_closed",
+        "test_runtime_fills_net_zero_close_and_weak_target_reduction"
+      ]
+    },
+    {
+      "id": 9,
+      "evidence": "Vectorbt target order generation and combined pool admission replay share evaluate_portfolio_bar, allocate_targets and decide_for_policy with paper. Recorded real TWSE test has two fixed members with overlapping/non-overlapping underlyings plus one screened member and compares every per-bar target and decision. Admission also replays standalone screened candidates.",
+      "tests": [
+        "test_recorded_paper_backtest_targets_replay_and_member_exits_match",
+        "test_pool_admission_replays_screened_candidate_and_combined_targets"
+      ]
+    },
+    {
+      "id": 10,
+      "evidence": "Replay reads the exact book_before, policy kind and bar allocation; counterfactual parameter fractions recompute the common allocation. Counterfactual rows remain emitted. Evolution replay gate supports both policy kinds and rejects unknown kinds.",
+      "tests": [
+        "test_partial_reduce_replays_and_writes_counterfactual_rows",
+        "test_evolution_replay_gate_supports_target_positions_and_rejects_unknown_policy",
+        "test_unreadable_budget_replays_the_recorded_no_trade"
+      ]
+    },
+    {
+      "id": 11,
+      "evidence": "Production-shaped capital/telemetry HTTP readers feed PaperSignalProducer; real persisted expression records and in-process paper broker pass the unchanged order gate into runtime fills over three underlyings. Tests exercise weakened targets, flat targets, own-member rule exits and short-without-futures. Separate 40-underlying permutation test pins equal targets.",
+      "tests": [
+        "test_runtime_fills_net_zero_close_and_weak_target_reduction",
+        "test_member_rule_exit_reduces_combined_target_through_runtime",
+        "test_bar_allocation_is_order_independent_and_uses_full_budget"
+      ]
+    },
+    {
+      "id": 12,
+      "evidence": "DEV_PLAN section 4.4 and SD pool autonomy sections 4.2/4.3 now cite the 2026-11-13 operator approval, strategy weights, unpinned picks, allocation and reconciliation semantics."
+    }
+  ],
+  "recorded_market": {
+    "fixture": "services/research/tests/fixtures/candidate_pool_tw_recorded.json",
+    "provenance": "Recorded official TWSE STOCK_DAY responses for 2330 and 2317, 2026-09 through 2026-10; source URLs and response hashes live in the fixture.",
+    "production_data_rule": "No synthetic data was added to production code. Explicit synthetic prices/symbols in adversarial and 40-underlying tests are test-only."
+  },
+  "boundaries": [
+    "No deployment, live broker, risk-limit, model-call, credential, privilege or canonical task-state changes.",
+    "services/persona/pool_autonomy_cycle.py and the two MEMORY-WRITEBACK-owned parity test files were read as needed and not edited.",
+    "Target research replay supports recorded daily cash-share marks; an absent derivative catalogue remains explicitly unavailable and never invents contracts. Target intraday backtests fail closed.",
+    "Screened member state is reconstructed from governed history rather than aggregate holdings or process caches.",
+    "Existing virtual-book complete-mark requirements remain in force; missing return intervals are not filled with fabricated prices or returns."
+  ],
+  "validation": [
+    {
+      "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest services/registry/test_portfolio_envelope.py services/registry/test_strategy_artifact.py services/registry/test_candidate_pool.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_expression_replay.py services/execution/lean_runtime/test_expression_inputs.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_portfolio_target_positions.py -q --tb=short --show-capture=no",
+      "exit_status": 0,
+      "result": "422 passed; 63 subtests passed; 109.56 seconds",
+      "scope": "Broad core regression before the zero-weight screen-trial supplement"
+    },
+    {
+      "command": "timeout 300 /tmp/persona-portfolio-venv/bin/python -m pytest services/research/vectorbt/test_adapter.py services/research/tests/test_pool_admission.py services/research/tests/test_portfolio_target_parity.py services/research/tests/test_portfolio_envelope_parity.py services/research/tests/test_candidate_pool_parity.py services/control-plane/bff/test_persona_pool_publisher.py services/evolution/test_program_qualification.py -q --tb=short --show-capture=no",
+      "exit_status": 0,
+      "result": "122 passed; 5 subtests passed; 169.57 seconds",
+      "scope": "Broad research/regression before the zero-weight screen-trial supplement"
+    },
+    {
+      "command": "timeout 180 /tmp/persona-portfolio-venv/bin/python -m pytest services/registry/test_portfolio_envelope.py services/registry/test_strategy_artifact.py services/execution/lean_runtime/test_expression_policy.py services/execution/lean_runtime/test_expression_replay.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_portfolio_target_positions.py services/research/tests/test_pool_admission.py services/research/tests/test_portfolio_target_parity.py services/control-plane/bff/test_persona_pool_publisher.py services/evolution/test_program_qualification.py -q --tb=short --show-capture=no",
+      "exit_status": 0,
+      "result": "298 passed; 22 subtests passed; 121.29 seconds",
+      "validated_source_commit": "fec55807092bff70e3c665c57f34a20617b40bae",
+      "scope": "Final composed regression after every source change, including the screen-trial fix and recorded candidate admission replay"
+    },
+    {
+      "command": "PYTHONPATH=. /tmp/persona-portfolio-venv/bin/python /tmp/check_target_legacy.py",
+      "exit_status": 0,
+      "result": "12 byte-identical full serialized baseline/new decisions; reproducible probe source included below"
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "passed"
+    }
+  ],
+  "legacy_equivalence": {
+    "baseline": "bc8807e042d3e85f611ffe8a5564db2d60158353",
+    "byte_identical_decision_cases": 12,
+    "method": "Load baseline paper_signal_producer.py from git into a separate module; serialize complete old/new decisions including evaluated expression records on identical standalone/singleton inputs, for bullish/bearish/zero-momentum bars.",
+    "probe_source": "import importlib.util\nimport json\nfrom pathlib import Path\nimport subprocess\nimport sys\n\nfrom services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy\nfrom services.execution.lean_runtime.test_portfolio_target_positions import cash_candidates, BUDGET\nfrom services.execution.lean_runtime.test_current_artifact_signal import _binding\nfrom services.registry.test_strategy_artifact import _artifact_with_expression_policy\nfrom services.registry.test_portfolio_envelope import envelope, member_artifact\n\nbaseline = subprocess.check_output([\"git\", \"rev-parse\", \"origin/dev\"], text=True).strip()\nold = Path(\"/tmp/persona-target-baseline-producer.py\")\nold.write_bytes(subprocess.check_output([\"git\", \"show\", baseline + \":services/execution/lean_runtime/paper_signal_producer.py\"]))\nspec = importlib.util.spec_from_file_location(\"persona_target_baseline_producer\", old)\nmodule = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = module\nspec.loader.exec_module(module)\n\ndef result(strategy, binding):\n    out = strategy(binding, \"2026-11-13T06:00:00Z\")\n    expression = out.pop(\"expression\", None)\n    if expression:\n        out[\"evaluated_expression\"] = expression[\"evaluate\"]()\n        out[\"expression_view\"] = expression[\"view\"]\n    return json.dumps(out, sort_keys=True, separators=(\",\", \":\"), allow_nan=False)\n\ncount = 0\nfor art in (member_artifact(), _artifact_with_expression_policy()):\n    art[\"parameters\"][\"symbols\"] = [\"2330.TW\"]\n    for singleton in (False, True):\n        artifact = envelope([{\"member_id\": \"one\", \"artifact\": art, \"risk_weight\": 1}]) if singleton else art\n        for closes in ([100, 102], [102, 100], [100, 100]):\n            binding = _binding(artifact, binding_id=\"legacy-check\", include_market_input=False)\n            binding[\"market_input\"] = {\"symbol\": \"2330.TW\", \"closes\": closes,\n                \"event_time\": \"2026-11-13T05:30:00Z\", \"observed_at\": \"2026-11-13T06:00:00Z\",\n                \"source_ref\": \"verification:unchanged-input\"}\n            kwargs = dict(expression_layer=True, candidates_builder=cash_candidates,\n                          expression_inputs=lambda _: {\"persona_book\": {}, \"risk_budget\": BUDGET})\n            assert result(CurrentArtifactStrategy(**kwargs), binding) == result(module.CurrentArtifactStrategy(**kwargs), binding)\n            count += 1\nprint(json.dumps({\"baseline\": baseline, \"byte_identical_decision_cases\": count}))\n"
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "branch": "task/PERSONA-POOL-TARGET-POSITIONS-20261113",
+    "target": "dev",
+    "review_file": "docs/deployment/evidence/PERSONA-POOL-TARGET-POSITIONS-20261113/evidence.json",
+    "state": "ready_for_exact_head_handoff_to_assigned_reviewer"
+  }
+}
