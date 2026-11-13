@@ -430,6 +430,8 @@ def observed_from_collector_status(
     ``SourceObservedState``. ``degraded`` when the source is paused/failing on
     the host, the newest bundle is older than twice its cadence, or our cursor
     lags the host's newest bundle by more than seven days.
+    Producer ``complete`` additionally requires the verified latest bundle,
+    full delivery coverage, matching run/time/cursor and a known fresh cadence.
     """
 
     now = now or datetime.now(timezone.utc)
@@ -476,6 +478,8 @@ def observed_from_collector_status(
             reasons.append("collector_complete_cadence_missing")
         if last_run_at and last_run_at > now:
             reasons.append("collector_last_run_in_future")
+        if entry.get("paused_reason"):
+            reasons.append(f"collector_source_paused:{entry['paused_reason']}")
 
     lag_days: float | None = None
     cursor_at = None
@@ -1319,9 +1323,9 @@ class CollectorBundleAdapter:
     def _has_verified_boundary(self, bundle: VerifiedBundle, *, persisted_only: bool = False) -> bool:
         """A supplied cursor alone cannot prove that this exact bundle was consumed.
 
-        Reuse the raw evidence written only after verification. The manifest must
-        still match, and all of its window-verified raw files must be present.
-        This reads no raw files over the network and stays within the pull cap.
+        Reuse the raw evidence written only after verification. The manifest and
+        local raw hashes must still match. Configured ingestion also requires
+        the native persistence acknowledgement. No network raw reads are made.
         """
         root = self._raw_bundle_path(bundle)
         try:
@@ -1329,8 +1333,14 @@ class CollectorBundleAdapter:
                 return False
             if json.loads((root / "manifest.json").read_text(encoding="utf-8")) != bundle.manifest:
                 return False
-            return all((root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name).is_file()
-                       for item in bundle.manifest_items.values())
+            for item in bundle.manifest_items.values():
+                path = root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name
+                size = path.stat().st_size
+                if size > MAX_RAW_BYTES or ("bytes" in item and size != int(item["bytes"])):
+                    return False
+                if _sha256(path.read_bytes()) != str(item["content_sha256"]).lower():
+                    return False
+            return True
         except (OSError, ValueError):
             return False
 
