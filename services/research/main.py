@@ -2741,6 +2741,43 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
+def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the mandate universe and registered templates from their owners."""
+    tenant_id = demand["tenant_id"]
+    persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
+    persona = _retrain_call(
+        step="template_mandate", service="persona", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_PERSONA_SERVICE_TOKEN",
+        url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
+    if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
+        raise ValueError("template_mandate_owner_mismatch")
+    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
+    universe = scope.get("symbols")
+    if not universe:
+        raise ValueError("mandate_universe_missing")
+    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
+    if not dataset:
+        raise ValueError("governed_market_data_missing")
+    registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+    templates = _retrain_call(
+        step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=f"{registry_url}/api/registry/alpha-templates?scope=time_series")
+    return {"universe": universe, "dataset": dataset, "templates": templates}
+
+
+def _search_demand_templates(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from services.research.template_demand_search import TemplateDemandSearch
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(),
+                                 backtest_run_store=SharedBacktestRunStore(data_dir / "backtest_runs.json"))
+    search = TemplateDemandSearch(store=research_demand_store, gate=gate,
+                                  context_loader=_template_search_context, lock_path=data_dir / "template_search.lock",
+                                  run_budget=1)
+    return [search.run(row) if row["status"] == "open" else row for row in rows]
+
+
 def _refresh_collector_query_plan(tenant_id: str) -> None:
     try:
         query_plan_store.refresh(tenant_id, research_demand_store.list(tenant_id, status="open"))
@@ -2789,6 +2826,7 @@ def reconcile_persona_research_demands(
     if not persona_id:
         raise HTTPException(status_code=422, detail="persona_id is required")
     rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
+    rows = _search_demand_templates(rows)
     _refresh_collector_query_plan(tenant_id)
     return {"demands": rows, "count": len(rows)}
 
