@@ -343,6 +343,18 @@ CONFLICT = object()
 SURVIVORSHIP_LIMITED_STATUS = "survivorship_limited"
 
 
+DAILY_BAR_FREQUENCY = "1d"
+
+
+def family_trial_key(family_id: str, bar_frequency: Optional[str] = None) -> str:
+    """Trial-counter key.  Daily/undeclared keeps the legacy bare ``family_id``;
+    any other frequency is isolated under ``family_id@frequency`` (SD §9 K8)."""
+    freq = str(bar_frequency or "").strip().lower()
+    if not freq or freq == DAILY_BAR_FREQUENCY:
+        return family_id
+    return f"{family_id}@{freq}"
+
+
 class FamilyTrialCounterStore:
     """Tracks multiple-testing trial counts per strategy family."""
 
@@ -458,9 +470,10 @@ class ReplicationGate:
         self._canonical_spec_validator = self._build_strategy_spec_validator()
         self._trial_counter_store = FamilyTrialCounterStore(trial_counter_path)
 
-    def get_family_trial_count(self, family_id: str) -> int:
-        """Return the current number of evaluated trials for a strategy family."""
-        return self._trial_counter_store.get(family_id)
+    def get_family_trial_count(self, family_id: str, bar_frequency: Optional[str] = None) -> int:
+        """Return the current number of evaluated trials for a strategy family
+        (per bar_frequency; daily/undeclared is the legacy key)."""
+        return self._trial_counter_store.get(family_trial_key(family_id, bar_frequency))
 
     def evaluate_candidate(self, request: ReplicationRequest) -> ReplicationResponse:
         """
@@ -1522,9 +1535,14 @@ class ReplicationGate:
 
         # Increment family trial counter and compute deflated Sharpe threshold
         family_id = self._resolve_family_id(request)
+        trial_frequency = (
+            self._declared_bar_frequency(request)
+            or (backtest_eval.get("bar_frequency") if isinstance(backtest_eval.get("bar_frequency"), str) else None)
+        )
+        trial_key = family_trial_key(family_id, trial_frequency)
         preset_trials = backtest_eval.get("trial_count")
         trial_count = self._trial_counter_store.increment(
-            family_id,
+            trial_key,
             int(preset_trials) if isinstance(preset_trials, int) else None,
         )
         screen_contribution: Optional[Dict[str, Any]] = None
@@ -1547,7 +1565,7 @@ class ReplicationGate:
                 )
             # The screened evaluation above is a screen variant of the family; the
             # whole-boundary control below is an entry variant. Both are trials.
-            trial_count = self._trial_counter_store.increment(family_id)
+            trial_count = self._trial_counter_store.increment(trial_key)
             screen_contribution = self._measure_screen_contribution(
                 request, backtest_eval, screen_artifact, screen_dataset
             )
