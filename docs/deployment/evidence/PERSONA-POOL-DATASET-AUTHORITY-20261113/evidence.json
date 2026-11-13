@@ -21,8 +21,8 @@
   },
   "verification": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_pool_autonomy_cycle.py services/persona/test_pool_dataset_authority.py services/training-session/tests/test_source_dataset_authority.py services/training-session/tests/test_evaluation_authority.py scripts/test_issue_dev_paper_principals.py services/research/tests/test_pool_admission.py --disable-warnings",
-      "result": "190 passed, 279 warnings in 31.67s",
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/persona/test_pool_autonomy_cycle.py services/persona/test_pool_dataset_authority.py services/training-session/tests/test_source_dataset_authority.py services/training-session/tests/test_evaluation_authority.py scripts/test_issue_dev_paper_principals.py services/research/tests/test_pool_admission.py --disable-warnings",
+      "result": "190 passed, 279 warnings in 27.82s after fixture compaction",
       "exit_code": 0
     },
     {
@@ -34,6 +34,11 @@
       "command": "uv run --isolated --no-project --with-requirements dependencies/locks/services-control-plane-persona.txt python -c 'import importlib; importlib.import_module(\"services.training-session.source_dataset_authority\"); importlib.import_module(\"services.training-session.evaluation_authority\"); from services.persona.pool_autonomy_cycle import candidate_virtual_book; from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence; print(\"persona locked runtime imports passed\")'",
       "result": "persona locked runtime imports passed",
       "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head=--",
+      "result": "exit 0; production net +83, test net +234, docs/evidence net +307 before recording this verification; fixture adds 6 lines (cap 400)",
+      "exit_code": 0
     }
   ],
   "limitations": [
@@ -41,5 +46,13 @@
     "The unchanged paper risk policy refuses the candidate for candidate_virtual_book_drawdown_exceeds_removal_policy after the real replay; successful pool admission is not claimed.",
     "No hosted deployment, live trading or capital-affecting actions were performed."
   ],
-  "review_state_at_author_handoff": "Pending independent exact-head review by Claude and canonical supervisor integration."
+  "review_state_at_author_handoff": "Pending independent exact-head review by Claude and canonical supervisor integration.",
+  "fixture_integrity": {
+    "path": "fixtures/source-owner-http.json",
+    "encoding": "Compact JSON with one owner HTTP response per line; parsed contents unchanged from reviewed bb180b93a4f8d39491fd031846e7cd0df27a1c30.",
+    "sha256": "d20af521204959e0572f3cae1fb25de6b7ac518e945f86bcc446f022558101dd",
+    "canonical_json_sha256": "17e449b3fb7ef83c7e105c5d8c98557af0f36d9dd12fda9899b01aa2c1ce16ab",
+    "line_count": 6,
+    "verification": "Parsed JSON equals git show bb180b93a4f8d39491fd031846e7cd0df27a1c30:<fixture path>; file SHA-256 matches this manifest (exit 0)."
+  }
 }

@@ -46,6 +46,9 @@ Fixture provenance and limits:
   contract fixture, adapted from training-session's source authority test
   envelope. It is not a captured hosted controller response or deployment proof.
   Its `/fixture/source` paths are relocated into the temporary test volume.
+  Each owner response occupies one compact JSON line to meet the evidence
+  diff budget. `evidence.json` records its file and canonical JSON SHA-256;
+  the parsed contents are unchanged from the previous reviewed head.
 - `fixtures/policy.json` uses a bounded historical effective window and calendar
   day freshness for the recorded 2024 bars. Deployed compose continues to use
   the existing training policy, including Taiwan trading-day freshness.
