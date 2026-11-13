@@ -112,33 +112,48 @@ def create_persona_lab_router(
                    x_tenant_id: Optional[str] = Ten):
         scope = _scope(authorization, x_tenant_id, True)
         _owner("persona", "POST", _patch_path(persona_id, patch_id, "/precheck"), scope, authorization, {})
-        try:
-            record = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/shadow"), scope, authorization, {})
-        except HTTPException as exc:
-            if exc.status_code in (404, 405):
-                raise bff_error(501, "OWNER_UNAVAILABLE", "persona owner exposes no shadow comparison route",
-                                "shadow_owner_route_unavailable")
-            raise
-        return _wrap(scope, record)
+        return _wrap(scope, _owner("persona", "POST", _patch_path(persona_id, patch_id, "/shadow"), scope,
+                                   authorization, {}))
 
     @router.post(base + "/patches/{patch_id}/submit", status_code=201)
     def submit_patch(persona_id: str, patch_id: str, body: Dict[str, Any] = Body(default_factory=dict),
                      authorization: Optional[str] = Auth, x_tenant_id: Optional[str] = Ten):
-        """Same pre-check and adoption pipeline; hand off to persona management review."""
+        """Same pre-check and adoption pipeline; hand off to persona management review.
+
+        The owner's existing governance reference (outside paper or operator-required) is
+        resolved first and its delivery to the management review is confirmed from the owner
+        outbox; otherwise an adopted patch is committed through the owner's activation gate.
+        """
         scope = _scope(authorization, x_tenant_id, True)
-        checked = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/precheck"), scope, authorization, {})
-        state = _harness(persona_id, scope, authorization)
-        row = (state.get("patches") or {}).get(patch_id) or {}
         adoption_ref = body.get("adoption_ref")
-        result: Dict[str, Any] = {"handoff_kind": HANDOFF_KIND, "patch_id": patch_id, "precheck": checked,
-                                  "execution_authority": "none"}
-        if row.get("governance_proposal_ref"):
-            outbox = (state.get("outbox") or {}).get(row["governance_proposal_ref"]) or {}
-            result.update(review_ref=row["governance_proposal_ref"], review_status=outbox.get("status"),
-                          review_receipt=outbox.get("receipt"))
-        elif adoption_ref:
-            committed = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/activate"), scope, authorization,
-                               {"adoption_ref": adoption_ref})
+
+        def row_of() -> Dict[str, Any]:
+            return (_harness(persona_id, scope, authorization).get("patches") or {}).get(patch_id) or {}
+
+        row = row_of()
+        result: Dict[str, Any] = {"handoff_kind": HANDOFF_KIND, "patch_id": patch_id, "execution_authority": "none"}
+        committed = None
+        if not row.get("governance_proposal_ref"):
+            result["precheck"] = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/precheck"),
+                                        scope, authorization, {})
+            if adoption_ref:
+                try:
+                    committed = _owner("persona", "POST", _patch_path(persona_id, patch_id, "/activate"), scope,
+                                       authorization, {"adoption_ref": adoption_ref})
+                except HTTPException:
+                    row = row_of()  # the owner may have queued an operator-required review
+                    if not row.get("governance_proposal_ref"):
+                        raise
+        ref = row_of().get("governance_proposal_ref") if committed is None else None
+        if ref:
+            delivery = _owner("persona", "POST", f"/api/personas/{quote(persona_id, safe='')}/harness/deliver",
+                              scope, authorization, {})
+            outbox = (delivery.get("outbox") or {}).get(ref) or {}
+            if outbox.get("status") != "delivered":
+                raise bff_error(502, "REVIEW_NOT_DELIVERED", "management review has not consumed the handoff",
+                                "management_review_not_delivered")
+            result.update(review_ref=ref, review_status="delivered", review_receipt=outbox.get("receipt"))
+        elif committed is not None:
             result.update(review_ref=adoption_ref, review_status="committed", committed=committed)
         else:
             raise bff_error(409, "REVIEW_UNAVAILABLE", "no management review reference exists for this patch",
@@ -240,7 +255,11 @@ def create_persona_lab_router(
     def never_again(persona_id: str, patch_id: str, body: Dict[str, Any] = Body(...),
                     authorization: Optional[str] = Auth, x_tenant_id: Optional[str] = Ten):
         scope = _scope(authorization, x_tenant_id, True)
-        return _wrap(scope, _lesson("never_again", persona_id, patch_id, body, scope, authorization))
+        reason = str(body.get("reason") or "").strip()
+        if not reason:
+            raise bff_error(422, "VALIDATION", "reason is required", "reason_required")
+        return _wrap(scope, _owner("persona", "POST", _patch_path(persona_id, patch_id, "/negative-experience"),
+                                   scope, authorization, {"reason": reason}))
 
     @router.post(base + "/change-log/{patch_id}/tell-why", status_code=201)
     def tell_why(persona_id: str, patch_id: str, body: Dict[str, Any] = Body(...),

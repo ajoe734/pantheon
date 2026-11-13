@@ -8,33 +8,37 @@
   "hosted_behavior_claimed": false,
   "acceptance_evidence": {
     "1_lab_draft_shadow_submit": [
-      "test_draft_and_skill_coaching_forward_to_owner_patches",
-      "test_shadow_run_prechecks_then_runs_owner_shadow",
-      "test_submit_hands_off_to_management_review_or_fails_closed",
-      "shadow run fails closed 501 shadow_owner_route_unavailable when the owner has no shadow route"
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_outside_paper_submit_resolves_governance_review_and_confirms_delivery (governance ref resolved before precheck; owner outbox delivery confirmed; 502 when not delivered)"
     ],
     "2_skill_coaching": [
-      "test_draft_and_skill_coaching_forward_to_owner_patches (patch_type forced to skill, mismatch refused)"
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_skill_coaching_uses_the_same_owner_pipeline"
     ],
     "3_evaluation_lists": [
-      "test_evaluation_suites_runs_and_shadow_view"
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner (runs/suites list persisted owner comparison)"
     ],
     "4_change_log": [
       "test_change_log_lists_versions_with_evidence_and_actions",
-      "test_accept_and_undo_forward_and_require_inputs",
-      "test_never_again_and_tell_why_create_memory_candidates"
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner (undo rollback)",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_never_again_writes_owner_negative_experience_consumed_by_next_proposal",
+      "test_tell_why_creates_memory_candidate"
     ],
     "5_shadow_view": [
       "test_evaluation_suites_runs_and_shadow_view (base and candidate arms per frozen decision packet)"
     ],
     "6_forward_only": [
-      "test_routes_are_mounted_on_agora_router_and_hold_no_store",
+      "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py (every mutating route driven against the real persona owner app)",
+      "test_routes_are_mounted_in_app_factory_and_hold_no_store",
       "test_unconfigured_owner_and_owner_refusal_fail_closed"
     ]
   },
   "known_limits": [
-    "The persona owner (services/persona) exposes no route to run a shadow comparison; it was outside this task's artifact contract so none was added. The BFF shadow-run route pre-checks, forwards POST .../harness/patches/{id}/shadow and fails closed (501 shadow_owner_route_unavailable) until an owner task adds it. Reading recorded comparisons, suites, runs and the arm view works from owner harness state.",
-    "No in-repo consumer reads the literal trainer_feedback_to_persona_update kind. The submit handoff resolves to the owner's existing governance proposal (Evolution) for outside-paper patches, or to adoption of an approved panel memo in paper.",
-    "Never-again and tell-why both create memory lesson candidates (review_state=proposed, paper) through the Memory owner; the BFF cannot write harness experiences, which stay owner-written."
+    "The shadow runner uses a deny-all replay provider from PANTHEON_SHADOW_REPLAY_AGENT_ID + PANTHEON_SHADOW_REPLAY_POLICY_URL; unset, the owner persists an incomplete record (provider_unavailable), never a pass. Tests use scripted replay answers.",
+    "Governance/memory delivery receipts in the integration tests are fixtures; the downstream Evolution/Memory owners are covered by services/persona/test_harness_adoption.py.",
+    "No in-repo consumer reads the literal trainer_feedback_to_persona_update kind; handoff resolves to the owner's governance proposal or an approved panel adoption.",
+    "tell-why remains a Memory-owner lesson candidate (review_state=proposed)."
+  ],
+  "owner_changes": [
+    "services/persona/harness.py: POST .../patches/{id}/shadow (runs run_shadow_comparison, persists the record), POST .../patches/{id}/negative-experience (owner-written never_again harness experience, consumed via relevant_experiences/experience_refs), POST .../harness/deliver (outbox replay)"
   ]
 }

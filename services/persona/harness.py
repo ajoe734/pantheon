@@ -108,6 +108,10 @@ class RollbackPatch(StrictModel):
     reason: str = Field(min_length=1, pattern=r"\S")
 
 
+class NegativeExperienceRequest(StrictModel):
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
 class ObservationRequest(StrictModel):
     packet_ids: list[str] = Field(min_length=1, max_length=100)
 
@@ -225,11 +229,16 @@ def _reflection_evidence(persona: Any, ref: EvidenceReference) -> bool:
 
 class PersistentHarnessOwner:
     def __init__(self, persona_owner: Any, *, evidence_verifier: EvidenceVerifier | None = None,
-                 adoption_verifier: AdoptionVerifier | None = None, script_root: Path = REPOSITORY_ROOT):
+                 adoption_verifier: AdoptionVerifier | None = None, script_root: Path = REPOSITORY_ROOT,
+                 shadow_provider: Callable[[str], Any] | None = None,
+                 packet_store_path: Callable[[], Any] | None = None):
         from services.persona.harness_adoption import HarnessAdoption
         self.personas = persona_owner
         self.evidence_verifier = evidence_verifier or _reflection_evidence
         self.script_root = script_root
+        # Owner-connected shadow runner: provider factory (None = incomplete record) and frozen packet store.
+        self.shadow_provider = shadow_provider or env_shadow_provider
+        self.packet_store_path = packet_store_path
         self.adoption = HarnessAdoption(self)
         self.adoption_verifier = adoption_verifier or self.adoption.verify
 
@@ -330,6 +339,37 @@ class PersistentHarnessOwner:
             return state, {"patch_id": patch_id, "comparisons": len(row["comparisons"])}
         return self._mutate(persona_id, actor, reduce)
 
+    def record_negative_experience(self, persona_id: str, patch_id: str, reason: str, actor: str) -> dict[str, Any]:
+        """Owner-written negative experience ("never again"): consumed by later proposals' experience_refs."""
+        def reduce(persona: Any, state: Any) -> tuple[dict, dict]:
+            if not state or patch_id not in state["patches"]:
+                raise HarnessError("patch_not_found", 404)
+            row = state["patches"][patch_id]
+            if row.get("experience"):
+                return state, row  # idempotent; an observed experience stays authoritative
+            proposal = row["proposal"]
+            eid = "harness-experience-" + digest({"tenant": persona.tenant_id, "persona": persona_id,
+                                                  "patch": patch_id})
+            cue = "Harness component review: " + ", ".join(sorted(proposal["proposed_change"]))
+            lesson = "Operator: never propose this change again. " + reason.strip()
+            experience = {"source_event_type": "harness_experience", "source_event_id": eid,
+                "tenant_id": persona.tenant_id, "write_authority": "persona-svc",
+                "sponsor_persona_id": persona_id, "contributing_persona_ids": [persona_id],
+                "cue": cue, "lesson": lesson, "summary": cue + ": never_again. " + lesson,
+                "outcome": "never_again", "confidence": 1.0,
+                "evidence_refs": [r["ref"] for r in proposal["evidence_refs"]],
+                "harness_version": row.get("version"), "proposal_ids": [patch_id],
+                "body": json.dumps({"operator": actor, "reason": reason.strip()}, sort_keys=True),
+                "tags": ["harness_experience", "never_again", *sorted(proposal["proposed_change"])]}
+            row["experience"] = experience
+            state.setdefault("outbox", {})[eid] = {"kind": "memory", "payload": experience,
+                                                   "status": "pending", "attempts": 0}
+            self._event(state, "never_again", actor, patch_id=patch_id)
+            return state, row
+        self._mutate(persona_id, actor, reduce, paper_only=False)
+        self.adoption.deliver(persona_id, actor)
+        return self.read(persona_id)["patches"][patch_id]
+
     def _check(self, persona: Any, state: dict, row: dict) -> tuple[HarnessSurface | None, list[str]]:
         patch = PersonaPatch.model_validate(row["proposal"])
         if state["active_version"] != patch.base_version:
@@ -417,6 +457,24 @@ class PersistentHarnessOwner:
         return result
 
 
+def env_shadow_provider(persona_id: str) -> Any:
+    """Dedicated deny-all replay agent from owner config; None when not configured."""
+    import os
+    agent = os.getenv("PANTHEON_SHADOW_REPLAY_AGENT_ID", "").strip()
+    probe_url = os.getenv("PANTHEON_SHADOW_REPLAY_POLICY_URL", "").strip()
+    if not agent or not probe_url:
+        return None
+    from urllib.parse import quote
+    from urllib.request import Request, urlopen
+    from integrations.openclaw.persona_ooda_runtime import run_persona_ooda_turn
+    from services.persona.harness_shadow_eval import DenyAllReplayProvider
+
+    def probe(agent_id: str) -> dict:
+        with urlopen(Request(probe_url.rstrip("/") + "/" + quote(agent_id, safe="")), timeout=10) as response:
+            return json.load(response)
+    return DenyAllReplayProvider(agent, probe, lambda agent_id, prompt: run_persona_ooda_turn(agent_id, prompt))
+
+
 def register_harness_routes(app: Any, owner: Any, harness: PersistentHarnessOwner) -> None:
     from fastapi import Header, HTTPException
     from services.persona.write_owner import (
@@ -493,3 +551,31 @@ def register_harness_routes(app: Any, owner: Any, harness: PersistentHarnessOwne
                 tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
         authority = scope(persona_id, authorization, tenant_id, True)
         return call(lambda: harness.adoption.observe(persona_id, patch_id, body, authority.actor_id))
+
+    @app.post("/api/personas/{persona_id}/harness/patches/{patch_id}/shadow", status_code=201)
+    def shadow(persona_id: str, patch_id: str, authorization: str | None = Header(default=None),
+               tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
+        authority = scope(persona_id, authorization, tenant_id, True)
+        from services.persona.harness_shadow_eval import run_shadow_comparison
+
+        def run() -> dict:
+            store = harness.packet_store_path() if harness.packet_store_path else None
+            if store is None:
+                from services.persona.cron_ooda_closure import resolve_ooda_packet_store_path
+                store = resolve_ooda_packet_store_path()
+            return run_shadow_comparison(harness, persona_id, patch_id, packet_store_path=store,
+                                         provider=harness.shadow_provider(persona_id), actor=authority.actor_id)
+        return call(run)
+
+    @app.post("/api/personas/{persona_id}/harness/patches/{patch_id}/negative-experience", status_code=201)
+    def negative_experience(persona_id: str, patch_id: str, body: NegativeExperienceRequest,
+                            authorization: str | None = Header(default=None),
+                            tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
+        authority = scope(persona_id, authorization, tenant_id, True)
+        return call(lambda: harness.record_negative_experience(persona_id, patch_id, body.reason, authority.actor_id))
+
+    @app.post("/api/personas/{persona_id}/harness/deliver")
+    def deliver(persona_id: str, authorization: str | None = Header(default=None),
+                tenant_id: str = Header(alias="X-Tenant-Id")) -> dict:
+        authority = scope(persona_id, authorization, tenant_id, True)
+        return call(lambda: {"outbox": harness.adoption.deliver(persona_id, authority.actor_id)})

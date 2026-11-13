@@ -63,28 +63,8 @@ def test_draft_and_skill_coaching_forward_to_owner_patches(lab):
     assert bad.status_code == 422
 
 
-def test_shadow_run_prechecks_then_runs_owner_shadow(lab):
-    client, calls, _ = lab
-    assert client.post(P + "/patches/p1/shadow-runs", headers=H).status_code == 201
-    assert [c[1] for c in calls] == ["/api/personas/persona-a/harness/patches/p1/precheck",
-                                     "/api/personas/persona-a/harness/patches/p1/shadow"]
-    # an owner without the shadow route fails closed with a recorded reason
-    lab[2][("POST", "/api/personas/persona-a/harness/patches/p1/shadow")] = (404, {"detail": "Not Found"})
-    refused = client.post(P + "/patches/p1/shadow-runs", headers=H)
-    assert refused.status_code == 501 and refused.json()["detail"]["reason"] == "shadow_owner_route_unavailable"
-
-
-def test_submit_hands_off_to_management_review_or_fails_closed(lab):
-    client, calls, _ = lab
-    ok = client.post(P + "/patches/p2/submit", json={}, headers=H).json()["data"]
-    assert ok["handoff_kind"] == "trainer_feedback_to_persona_update"
-    assert ok["review_ref"] == "gov-1" and ok["review_status"] == "delivered"
-    done = client.post(P + "/patches/p1/submit", json={"adoption_ref": "memo-1"}, headers=H)
-    assert done.status_code == 200 or done.status_code == 201
-    assert calls[-1][1].endswith("/p1/activate") and calls[-1][2] == {"adoption_ref": "memo-1"}
-    # no review reference at all: refuse, never fabricate one
-    lab[2][("GET", "/api/personas/persona-a/harness")] = (200, {**HARNESS, "patches": {"p3": {"proposal": {}}}})
-    assert client.post(P + "/patches/p3/submit", json={}, headers=H).status_code == 409
+# shadow-runs, submit and never-again are proven against the real persona owner in
+# test_agora_persona_lab_owner_integration.py; the stand-in transport only covers read shaping.
 
 
 def test_evaluation_suites_runs_and_shadow_view(lab):
@@ -117,8 +97,8 @@ def test_accept_and_undo_forward_and_require_inputs(lab):
     assert calls[-1][:3] == ("POST", "/api/personas/persona-a/harness/rollback", {"patch_id": "p1", "reason": "worse"})
 
 
-@pytest.mark.parametrize("route,kind", [("never-again", "never_again"), ("tell-why", "operator_reason")])
-def test_never_again_and_tell_why_create_memory_candidates(lab, route, kind):
+@pytest.mark.parametrize("route,kind", [("tell-why", "operator_reason")])
+def test_tell_why_creates_memory_candidate(lab, route, kind):
     client, calls, _ = lab
     body = {"reflection_id": "r1", "trade_episode_ids": ["e1"], "reflection_version": "1",
             "text": "too aggressive", "expiry": "2027-01-01T00:00:00Z"}
