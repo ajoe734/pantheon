@@ -8,6 +8,7 @@
   "hosted_behavior_claimed": false,
   "acceptance_evidence": {
     "1_lab_draft_shadow_submit": [
+      "services/control-plane/bff/tests/test_agora_persona_lab_shadow_transport.py::test_default_transport_waits_for_long_shadow_run (production default transport, real owner over HTTP, 3 bundles x 0.6s replay > 3s read timeout; shadow uses PANTHEON_PERSONA_SHADOW_TIMEOUT_SECONDS default 120s, ordinary reads keep short timeout)",
       "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_draft_shadow_comparison_evaluation_and_submit_through_real_owner",
       "services/control-plane/bff/tests/test_agora_persona_lab_owner_integration.py::test_outside_paper_submit_resolves_governance_review_and_confirms_delivery (governance ref resolved before precheck; owner outbox delivery confirmed; 502 when not delivered)"
     ],
