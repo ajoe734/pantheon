@@ -5926,6 +5926,9 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
     return True
 
 
+_PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
+
+
 # --- _pm12_public_quarter_evidence_refs ---
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
@@ -5939,7 +5942,9 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            result = read_fn()
+            # One bounded owner request (newest page), never a stream of every
+            # owner evidence page: request cost must not grow with evidence count.
+            result = read_fn(page_size=_PM12_QUARTER_EVIDENCE_PAGE_SIZE)
             raw_evidence_refs = list(result.items or [])
             evidence_dataset_available = bool(result.available)
         elif store is not None:
