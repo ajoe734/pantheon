@@ -144,6 +144,9 @@ class PersonaMemoryEntry:
     relevance_scope: str = PersonaRelevanceScope.PERSONA_PRIVATE.value
     reuse_count: int = 0
     tenant_id: Optional[str] = None
+    expires_at: Optional[str] = None
+    archived_at: Optional[str] = None
+    archived_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         for enum_cls, val, label in (
@@ -166,7 +169,10 @@ class PersonaMemoryEntry:
 
     @property
     def is_active(self) -> bool:
-        return not bool(self.superseded_by)
+        return not bool(self.superseded_by or self.archived_at)
+
+    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+        return bool(self.expires_at and _parse_utc_timestamp(self.expires_at) <= (now or datetime.now(timezone.utc)))
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -200,6 +206,15 @@ def validate_persona_memory(entry: PersonaMemoryEntry) -> List[str]:
         _parse_utc_timestamp(entry.written_at)
     except ValueError:
         errors.append("written_at must be an ISO-8601 UTC timestamp")
+
+    for field_name in ("expires_at", "archived_at"):
+        if getattr(entry, field_name):
+            try:
+                _parse_utc_timestamp(getattr(entry, field_name))
+            except ValueError:
+                errors.append(f"{field_name} must be an ISO-8601 UTC timestamp")
+    if entry.archived_at and not entry.archived_reason:
+        errors.append("archived_reason is required when archived_at is set")
 
     if entry.write_authority != PersonaWriteAuthority.PERSONA_MEMORY_SVC.value:
         allowed = _WRITEBACK_RULES.get(entry.write_authority, set())
@@ -262,6 +277,7 @@ class PersonaMemoryStore:
                 raise PersonaMemoryError(f"Entry already exists: {entry.memory_id}")
             self._entries[entry.memory_id] = entry
             self._save()
+            self._project(entry)
             return entry
 
     def get(self, memory_id: str) -> Optional[PersonaMemoryEntry]:
@@ -286,6 +302,8 @@ class PersonaMemoryStore:
         relevance_scope: Optional[str] = None,
         active_only: bool = True,
     ) -> List[PersonaMemoryEntry]:
+        if active_only:
+            self.archive_expired()
         with self._lock:
             entries = list(self._entries.values())
 
@@ -338,6 +356,43 @@ class PersonaMemoryStore:
             )
             self._entries[memory_id] = updated
             self._save()
+            self._project(updated)
+            return updated
+
+    def archive_expired(self, *, now: Optional[str] = None, reason: Optional[str] = None) -> List[PersonaMemoryEntry]:
+        archive_time = _parse_utc_timestamp(now) if now else datetime.now(timezone.utc)
+        archived = []
+        with self._lock:
+            for memory_id, entry in list(self._entries.items()):
+                if not entry.is_active or not entry.is_expired(now=archive_time):
+                    continue
+                updated = PersonaMemoryEntry(**{**entry.to_dict(),
+                    "archived_at": archive_time.isoformat().replace("+00:00", "Z"),
+                    "archived_reason": reason or "retention_ttl_expired"})
+                self._entries[memory_id] = updated
+                archived.append(updated)
+            if archived:
+                self._save()
+                for entry in archived:
+                    self._project(entry)
+        return archived
+
+    @staticmethod
+    def _project(entry) -> None:
+        from .search_retrieval import sync_memory_projection
+        sync_memory_projection(entry)
+
+    def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
+        if not reason.strip():
+            raise ValueError("archive reason is required")
+        with self._lock:
+            entry = self._require_unlocked(memory_id)
+            updated = PersonaMemoryEntry(**{**entry.to_dict(),
+                "archived_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "archived_reason": reason})
+            self._entries[memory_id] = updated
+            self._save()
+            self._project(updated)
             return updated
 
     def retrieve(
@@ -468,6 +523,14 @@ class PostgresPersonaMemoryStore(PersonaMemoryStore):
     def supersede(self, memory_id: str, replacement_memory_id: str) -> PersonaMemoryEntry:
         self._refresh_from_postgres()
         return super().supersede(memory_id, replacement_memory_id)
+
+    def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
+        self._refresh_from_postgres()
+        return super().archive(memory_id, reason=reason)
+
+    def archive_expired(self, *, now=None, reason=None):
+        self._refresh_from_postgres()
+        return super().archive_expired(now=now, reason=reason)
 
     def _save(self) -> None:
         for entry in self._entries.values():

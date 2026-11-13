@@ -647,94 +647,44 @@ async def retrieve_memory(
             },
         )
 
+    from .search_retrieval import (
+        SearchServiceClient, get_search_retrieval_backend,
+        retrieve_institutional_with_backend, retrieve_persona_with_backend,
+    )
+    backend = get_search_retrieval_backend()
+    if isinstance(backend, SearchServiceClient):
+        backend.source_event_id = session_id
     ranked_hits = []
-    if scope in {"institutional", "both"}:
-        institutional_store = _store()
-        backend = None
-        try:
-            from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_institutional_with_backend
-            backend = get_search_retrieval_backend()
-        except Exception:
-            backend = None
-
-        if backend is not None:
-            for hit in retrieve_institutional_with_backend(
-                institutional_store,
-                backend=backend,
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-        else:
-            for hit in institutional_store.retrieve(
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-
-    persona_tenant = None
+    retrieval_details = {}
+    tenant_id = None
     if ctx is not None:
-        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
-        if token_tenant != "*":
-            persona_tenant = token_tenant
-    persona_fetch_limit = 1_000_000 if persona_tenant is not None else limit
-
+        tenant_id = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
+        if tenant_id == "*":
+            tenant_id = "default"
+    if scope in {"institutional", "both"}:
+        diagnostics = {}
+        for hit in retrieve_institutional_with_backend(
+            _store(), backend=backend, query=query, tenant_id=tenant_id,
+            persona_id=persona_id or effective_actor_id, workspace_id=session_id, knowledge_type=knowledge_type,
+            scope_filter=scope_filter, tags=tag_values, limit=limit, diagnostics=diagnostics,
+        ):
+            ranked_hits.append(("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry))
+        retrieval_details["institutional"] = diagnostics
     if scope in {"persona", "both"}:
+        diagnostics = {}
         try:
-            persona_store = _persona_store()
-            backend = None
-            try:
-                from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_persona_with_backend
-                backend = get_search_retrieval_backend()
-            except Exception:
-                backend = None
-
-            def _persona_hits():
-                # Tenant must be filtered before ranking/limit: fetch the full
-                # candidate set from the local store, then cut after filtering.
-                if backend is not None and query.strip():
-                    return retrieve_persona_with_backend(
-                        persona_store,
-                        persona_id=persona_id or "",
-                        backend=backend,
-                        query=query,
-                        tenant_id=persona_tenant,
-                        memory_type=memory_type,
-                        relevance_scope=persona_relevance_scope,
-                        tags=tag_values,
-                        limit=min(persona_fetch_limit, 100),
-                    )
-                return persona_store.retrieve(
-                    persona_id=persona_id or "",
-                    query=query,
-                    memory_type=memory_type,
-                    relevance_scope=persona_relevance_scope,
-                    tags=tag_values,
-                    limit=persona_fetch_limit,
-                )
-
-            persona_hits = _persona_hits()
-            if persona_tenant is not None:
-                persona_hits = [h for h in persona_hits if h.entry.tenant_id == persona_tenant]
-            for hit in persona_hits:
-                ranked_hits.append(
-                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
-                )
+            if not persona_id:
+                raise PersonaMemoryError("persona_id is required for persona memory retrieval")
+            for hit in retrieve_persona_with_backend(
+                _persona_store(), persona_id=persona_id, backend=backend, query=query, tenant_id=tenant_id,
+                workspace_id=session_id,
+                memory_type=memory_type, relevance_scope=persona_relevance_scope,
+                tags=tag_values, limit=limit, diagnostics=diagnostics,
+            ):
+                ranked_hits.append(("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry))
         except PersonaMemoryError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"error": "invalid_persona_retrieve", "message": str(exc)},
-            ) from exc
+            raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve", "message": str(exc)}) from exc
+        retrieval_details["persona"] = diagnostics
 
     ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
     selected_hits = ranked_hits[:limit]
@@ -762,6 +712,10 @@ async def retrieve_memory(
         "hits": response_hits,
         "count": len(response_hits),
         "scope": scope,
+        "retrieval_mode": min((d["retrieval_mode"] for d in retrieval_details.values()),
+                              key=lambda mode: {"keyword_fallback": 0, "lexical_only": 1, "hybrid": 2}[mode]),
+        "fallback_reason": ";".join(sorted({d["fallback_reason"] for d in retrieval_details.values() if d.get("fallback_reason")})) or None,
+        "retrieval_details": retrieval_details,
         "authz": {
             "allowed": True,
             "reason": str(decision.get("reason") or "authorized"),
