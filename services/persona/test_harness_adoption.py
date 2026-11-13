@@ -235,7 +235,10 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
     from services.consultation.workflow_state import WorkflowStateStore
     from services.memory.test_main import _make_jwt
     from services.persona.consult_triggers import RISK_PERSONA_ID
+    from services.evolution import main as evolution
     a = adoption
+    monkeypatch.setattr(evolution, "store", evolution.EvolutionDecisionStore(
+        storage_path=str(stack["root"] / "adoption-evolution.json")))
     monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a")
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", _make_jwt(roles=["memory-writer"], tenant_id="tenant-a"))
     monkeypatch.setenv("PANTHEON_MEMORY_API_URL", stack["memory"])

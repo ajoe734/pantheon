@@ -258,15 +258,19 @@ class HarnessAdoption:
             result = self.harness.read(persona_id)["patches"][patch_id]
         return result
 
-    def deliver(self, persona_id: str, actor: str) -> dict:
+    def deliver(self, persona_id: str, actor: str, *, max_intents: int = 4) -> dict:
         """Replay unfinished intents; failed delivery never rolls back owner evidence.
 
         Network I/O occurs outside CAS; receiving owners enforce stable identities.
         Concurrent/restarted callers can only redeliver the identical payload.
         """
+        attempted = 0
         for ref, intent in self.harness.read(persona_id).get("outbox", {}).items():
             if intent["status"] == "delivered":
                 continue
+            if attempted >= max(1, min(max_intents, 4)):
+                break
+            attempted += 1
             try:
                 receipt = self.sender(intent["kind"], copy.deepcopy(intent["payload"]))
                 self._validate_receipt(intent["kind"], intent["payload"], receipt)
@@ -275,6 +279,8 @@ class HarnessAdoption:
                 receipt, error = None, type(exc).__name__
                 if getattr(exc, "code", None):
                     error += ":" + str(exc.code)
+                elif isinstance(exc, HarnessError):
+                    error += ":" + str(exc)
 
             def reduce(persona: Any, state: dict) -> tuple[dict, dict]:
                 stored = state["outbox"][ref]
