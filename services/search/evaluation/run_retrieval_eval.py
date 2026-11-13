@@ -8,7 +8,7 @@ scope: each scope runs in its own RLS context (pantheon.current_persona set to
 that persona), so the owner's rows are visible and every other persona's are
 not. No RLS bypass exists. Without --persona only non-private rows are read.
 Run: python -m services.search.evaluation.run_retrieval_eval --persona <id> ...
-(needs ranx; install services/search/requirements-eval.txt).
+(ranx is pinned in services/search/requirements.lock and ships in the search image).
 Reports status=unavailable with a reason while fewer than MIN_QUERIES real
 labelled queries exist or when the set looks templated. Exit code 2 = unavailable.
 Scoring is evidence only, never authority to switch a model.

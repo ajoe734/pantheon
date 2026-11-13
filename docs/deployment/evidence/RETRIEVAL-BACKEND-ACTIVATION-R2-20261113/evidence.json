@@ -26,8 +26,8 @@
   },
   "review_round_3_fixes": {
     "P1_AC6": "run_retrieval_eval.py gains repeatable --persona scopes; each scope runs in its own RLS context (no bypass). Real pgvector test: owner scope sees 1 private row+1 label; no-persona and nonowner scopes see 0.",
-    "P2_validation": "services/search/tests/conftest.py sets PANTHEON_SEARCH_BACKEND=jsonl explicitly for legacy fixtures; production default stays fail-closed postgres_pgvector (default test still passes). Plain `pytest services/search` (CI invocation) 157 passed/22 skipped; with real pgvector DSN 161 passed/18 skipped.",
-    "P2_ranx": "services/search/requirements-eval.txt pins ranx==0.3.21 and its closure on top of requirements.lock; Dockerfile installs it; eval invocation documented in run_retrieval_eval.py docstring. Above-threshold fixture test is wiring regression only, not quality evidence.",
+    "P2_validation": "test_retrieval_activation.py sets PANTHEON_SEARCH_BACKEND=jsonl via setdefault at collection (conftest.py is outside the artifact contract; single-file runs of legacy modules must set it explicitly); production default stays fail-closed postgres_pgvector (default test still passes). Plain `pytest services/search` (CI invocation) 157 passed/22 skipped; with real pgvector DSN 161 passed/18 skipped.",
+    "P2_ranx": "ranx==0.3.21 and its closure are pinned in services/search/requirements.lock, installed by the Dockerfile; eval invocation documented in run_retrieval_eval.py docstring. Above-threshold fixture test is wiring regression only, not quality evidence.",
     "also": "deploy/artifacts suites 264 passed/4 skipped"
   }
 }

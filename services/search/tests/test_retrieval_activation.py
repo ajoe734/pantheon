@@ -10,6 +10,12 @@ import yaml
 
 from services.search.local_embeddings import LocalEmbeddingEngine
 
+# Legacy search suites exercise the explicit JSONL fallback; the production default stays
+# fail-closed postgres_pgvector (tests below delete/override this per-test). Set at collection
+# so a whole-suite run (CI: pytest services/search) covers every module; an explicit
+# PANTHEON_SEARCH_BACKEND in the environment wins.
+os.environ.setdefault("PANTHEON_SEARCH_BACKEND", "jsonl")
+
 
 @pytest.fixture
 def app_factory(tmp_path, monkeypatch):

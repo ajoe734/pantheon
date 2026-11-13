@@ -79,9 +79,9 @@ def test_search_dockerfile_exposes_service_port_and_uses_service_requirements() 
     dockerfile = (ROOT / "services/search/Dockerfile").read_text(encoding="utf-8")
     requirements = (ROOT / "services/search/requirements.lock").read_text(encoding="utf-8").splitlines()
 
-    assert "COPY services/search/requirements.lock services/search/requirements-eval.txt /tmp/" in dockerfile
-    assert "RUN pip install --no-cache-dir -r /tmp/requirements-eval.txt" in dockerfile
-    assert "ranx==" in (ROOT / "services/search/requirements-eval.txt").read_text(encoding="utf-8")
+    assert "COPY services/search/requirements.lock /tmp/requirements.lock" in dockerfile
+    assert "RUN pip install --no-cache-dir -r /tmp/requirements.lock" in dockerfile
+    assert any(line.startswith("ranx==") for line in requirements)
     assert "ENV PORT=8098" in dockerfile
     assert "EXPOSE 8098" in dockerfile
     assert "uvicorn services.search.main:app" in dockerfile
