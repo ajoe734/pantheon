@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from integrations.openclaw.persona_memory_bridge import DEFAULT_MEMORY_QUERY, materialize_persona_memory_from_api
 from integrations.openclaw.persona_ooda_runtime import CycleTurnOutput
 from services.control_plane.cron.persona_cron_registrar import AdapterCronRuntime, PersonaCronRegistrar
 from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_ID as WORKFLOW_ID
@@ -46,13 +47,86 @@ SURFACE = {
                                 "minimum_confidence": 0.8},
 }
 OUTPUT = {"orient": "Insufficient paper market inputs; propose no action.",
-          "proposals": [{"kind": "no_action", "reason": "No validated signal", "evidence_refs": []}],
+          "proposals": [{"kind": "no_action", "reason": "No validated signal", "evidence_refs": [],
+                         "none_applicable_reason": "No case-file item bears on staying flat today."}],
           "memory_candidates": []}
+TENANT_A = "tenant-a"
+
+
+def _private(mid, pid, summary, tags):
+    return {"memory_id": f"pmem-{mid:08d}-1111-1111-1111-111111111111", "persona_id": pid,
+            "memory_type": "strategy_lesson", "content": {"summary": summary, "tags": tags},
+            "source_event_type": "postmortem_published", "source_event_id": f"PM-{mid}",
+            "written_at": "2026-06-09T01:00:00Z", "write_authority": "incident-svc",
+            "relevance_scope": "persona_private", "reuse_count": 0, "tenant_id": TENANT_A}
+
+
+def _institutional(mid, headline, tags, family):
+    return {"entry_id": f"mem-{mid:08d}-1111-1111-1111-111111111111", "knowledge_type": "research_finding",
+            "content": {"headline": headline, "body": headline, "tags": tags},
+            "source_event_type": "research_task_completed", "source_event_id": f"rt-{mid}",
+            "written_at": "2026-04-20T04:00:00Z", "write_authority": "research-svc",
+            "scope": "strategy_family", "scope_filter": family, "contributing_persona_ids": [],
+            "reuse_count": 0}
+
+
+@pytest.fixture(scope="module")
+def memory_service(tmp_path_factory):
+    """The production Memory Plane app over real HTTP; entries go in through its write routes."""
+    import importlib
+    import os
+    import socket
+    import time
+    import uvicorn
+    from services.knowledge import case_file as cf
+    tmp = tmp_path_factory.mktemp("memory")
+    keys = ("PANTHEON_MEMORY_STORE", "PANTHEON_PERSONA_MEMORY_STORE", "PANTHEON_MEMORY_STORE_BACKEND",
+            "PANTHEON_PERSONA_MEMORY_STORE_BACKEND", "PANTHEON_MEMORY_AUTHZ_MODE", "PANTHEON_RUNTIME_AUTH_MODE")
+    saved = {k: os.environ.get(k) for k in keys}
+    os.environ.update({"PANTHEON_MEMORY_STORE": str(tmp / "inst.json"),
+                       "PANTHEON_PERSONA_MEMORY_STORE": str(tmp / "persona.json"),
+                       "PANTHEON_MEMORY_STORE_BACKEND": "json", "PANTHEON_PERSONA_MEMORY_STORE_BACKEND": "json",
+                       "PANTHEON_MEMORY_AUTHZ_MODE": "local"})
+    os.environ.pop("PANTHEON_RUNTIME_AUTH_MODE", None)
+    memory = importlib.import_module("services.memory.main")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(memory.app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started, "memory service did not start"
+    endpoint = cf.OwnerEndpoint(f"http://127.0.0.1:{port}")
+    post = lambda path, body: cf.http_json(endpoint, path, tenant_id=TENANT_A, method="POST", body=body)
+    post("/api/memory/entries", _institutional(1, "momentum 2330 sizing institutional lesson",
+                                              ["family:momentum", "underlying:2330"], "momentum"))
+    post("/api/memory/entries", _institutional(2, "carry 2882 utilisation institutional lesson",
+                                              ["family:carry", "underlying:2882"], "carry"))
+    post("/api/memory/persona-entries", _private(1, "persona-cycle-test", "ONE-PRIVATE momentum 2330 sizing",
+                                                 ["family:momentum", "underlying:2330"]))
+    post("/api/memory/persona-entries", _private(2, "persona-cycle-two", "TWO-PRIVATE carry 2882 low utilisation",
+                                                 ["family:carry", "underlying:2882", "shortfall:low_risk_budget_utilisation"]))
+    # Each persona's private memory matches the OTHER persona's query terms and tags.
+    post("/api/memory/persona-entries", _private(3, "persona-cycle-two", "TWO-SECRET momentum 2330 sizing",
+                                                 ["family:momentum", "underlying:2330"]))
+    post("/api/memory/persona-entries", _private(4, "persona-cycle-test", "ONE-SECRET carry 2882 utilisation",
+                                                 ["family:carry", "underlying:2882"]))
+    try:
+        yield endpoint.base_url
+    finally:
+        server.should_exit = True
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 @pytest.fixture
-def system(tmp_path, monkeypatch):
-    state = {"jobs": [], "runs": {}, "turns": 0, "outage": False, "paths": [], "answer": OUTPUT}
+def system(tmp_path, monkeypatch, memory_service):
+    state = {"jobs": [], "runs": {}, "turns": 0, "outage": False, "paths": [], "answer": OUTPUT,
+             "answer_fn": None, "materialize": [], "prompts": {}, "obs": {}, "workspaces": tmp_path / "ws"}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -83,15 +157,20 @@ def system(tmp_path, monkeypatch):
                     raise AssertionError(method)
                 result = {"status": "ok", "data": data}
             elif self.path == "/api/openclaw-adapter/agents/persona/memory/materialize":
-                assert body["persona_id"] == "persona-cycle-test"
-                result = {"status": "ok", "memory": {"persona_id": body["persona_id"],
-                          "hit_count": 0, "source_refs": [], "generated_at": "2026-11-12T10:00:00Z"}}
+                # The real bridge against the real Memory Plane, with the request's own query.
+                state["materialize"].append(body)
+                materialized = materialize_persona_memory_from_api(
+                    memory_api_url=memory_service, persona_id=body["persona_id"],
+                    workspace=str(state["workspaces"] / body["persona_id"]), query=body["query"], tags=body["tags"])
+                result = {"status": "ok", "memory": materialized.to_dict()}
             elif self.path == "/v1/responses":
                 state["turns"] += 1
-                assert body["model"] == "openclaw/persona-cycle-test"
+                pid = body["model"].split("/", 1)[1]
                 assert '"harness_version": 1' in body["input"]
+                state["prompts"][pid] = body["input"]
                 status = 503 if state["outage"] else 200
-                result = {"output": [{"content": [{"type": "output_text", "text": json.dumps(state["answer"])}]}]}
+                answer = state["answer_fn"](pid, body["input"]) if state["answer_fn"] else state["answer"]
+                result = {"output": [{"content": [{"type": "output_text", "text": json.dumps(answer)}]}]}
             else:
                 raise AssertionError(self.path)
             raw = json.dumps(result).encode()
@@ -119,7 +198,8 @@ def system(tmp_path, monkeypatch):
     entry = {"registry_id": "artifact-cycle", "artifact_state": "approved", "checksum": checksum,
              "owner_tenant": "tenant-a", "approval_decision_id": "fixture-baseline", "approved_at": "2026-11-01T00:00:00Z",
              "metadata": {"persona_id": "persona-cycle-test", "execution_context": "paper",
-                          "persona_capital_binding_id": "pcb-cycle"}}
+                          "persona_capital_binding_id": "pcb-cycle",
+                          "strategy_artifact": {"strategy_id": "momentum", "parameters": {"symbols": ["2330.TW"]}}}}
     assert entries.compare_and_set("artifact-cycle", None, entry)[0]
     pool = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"),
         registry_reader=lambda rid, tenant: entries.get(rid), owner_lister=lambda pid, tenant: entries.list_all())
@@ -136,10 +216,15 @@ def system(tmp_path, monkeypatch):
         "capital_pool_id": "pool-cycle", "artifact_id": "artifact-cycle", "metrics": {"heartbeat": 1},
         "metadata": {"member_virtual_books": [book]}})
     state["telemetry"] = telemetry
+    state["entries"] = entries
+    state["pool_store"] = pool
     state["book"] = book
     owners = CycleOwners(owner, pool, env={"PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": base,
-                                         "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "fixture-adapter-token"},
-                         telemetry_reader=lambda tenant: telemetry.list(tenant_id=tenant),
+                                         "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "fixture-adapter-token",
+                                         "PANTHEON_MEMORY_API_URL": memory_service},
+                         telemetry_reader=lambda tenant: [
+                             {**row, "pool_observations": state["obs"].get(row["persona_capital_binding_id"], [])}
+                             for row in telemetry.list(tenant_id=tenant)],
                          feedback_owner=AgoraEvidenceStore(AgoraDatasetStore(backend="memory")))
     registrar = PersonaCronRegistrar(AdapterCronRuntime(base, service_token="fixture-adapter-token"))
     controller = PersonaCycleController(registrar, owners, store_path=tmp_path / "packets.jsonl")
@@ -394,7 +479,7 @@ def test_deployed_persona_lifespan_consumes_cycle_and_stops(system, monkeypatch,
     controller, state, owner, pool = system
     persona = owner._records.get("persona-cycle-test")
     assert owner._records.compare_and_set("persona-cycle-test", persona,
-        {**persona, "lifecycle_state": "consultable"})[0]
+        {**persona, "lifecycle_state": "consultable", "strategy_family": "momentum"})[0]
     state["runs"]["job-1"] = [run(1)]
     base = controller.owners.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"]
     for key, value in {
@@ -403,6 +488,7 @@ def test_deployed_persona_lifespan_consumes_cycle_and_stops(system, monkeypatch,
         "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "fixture-adapter-token",
         "PANTHEON_BFF_OODA_PACKET_STORE": str(controller.path),
         "DATABASE_URL": "postgresql://unused-fixture/no-network",
+        "PANTHEON_MEMORY_API_URL": controller.owners.env["PANTHEON_MEMORY_API_URL"],
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(write_owner, "build_persona_owner", lambda: owner)
@@ -470,3 +556,247 @@ class _StubLessonRegistrar:
 def _stub_lesson_registrar(monkeypatch):
     import services.persona.write_owner as write_owner
     monkeypatch.setattr(write_owner, "MemoryLessonRegistrar", _StubLessonRegistrar)
+
+
+# --- decision-specific retrieval and case files (PERSONA-CYCLE-CASE-FILE-20261113) ---------------
+
+def _add_second_persona(state, owner, pool):
+    """A second persona with its own family, underlying, binding and a low-utilisation pool window."""
+    checksum = "sha256:" + "b" * 64
+    entry = {"registry_id": "artifact-two", "artifact_state": "approved", "checksum": checksum,
+             "owner_tenant": TENANT_A, "approval_decision_id": "fixture-baseline-two", "approved_at": "2026-11-01T00:00:00Z",
+             "metadata": {"persona_id": "persona-cycle-two", "execution_context": "paper",
+                          "persona_capital_binding_id": "pcb-two",
+                          "strategy_artifact": {"strategy_id": "carry", "parameters": {"symbols": ["2882.TW"]}}}}
+    assert state["entries"].compare_and_set("artifact-two", None, entry)[0]
+    owner.create(CreatePersonaRequest(actor_id="fixture-operator", persona_id="persona-cycle-two", name="Two",
+        mandate="Consult only", tenant_id=TENANT_A, workspace_ref="/fixture/persona-cycle-two"))
+    raw = owner._records.get("persona-cycle-two")
+    assert owner._records.compare_and_set("persona-cycle-two", raw, {**raw, "lifecycle_state": "paper_owner"})[0]
+    PersistentHarnessOwner(owner).initialize("persona-cycle-two", HarnessSurface.model_validate(SURFACE), "fixture-operator")
+    # The fixture lister is unfiltered; the real owner lister returns only the persona's own artifacts.
+    pool._lister = lambda pid, tenant: [e for e in state["entries"].list_all()
+                                        if (e.get("metadata") or {}).get("persona_id") == pid]
+    pool.seed_from_owner_records("persona-cycle-two", TENANT_A, actor_id="fixture-operator")
+    dates = [(date(2026, 10, 1) + timedelta(days=i)).isoformat() for i in range(30)]
+    book = {**state["book"], "member_id": "artifact-two", "checksum": checksum, "dates": dates,
+            "returns": [.002, -.001] * 15}
+    assert state["telemetry"].project_event({"event_id": "fixture-telemetry-two", "event_type": "heartbeat",
+        "created_at": datetime.now(timezone.utc).isoformat(), "tenant_id": TENANT_A, "runtime_id": "runtime-two",
+        "deployment_stage": "paper", "binding_id": "rb-two", "persona_capital_binding_id": "pcb-two",
+        "capital_pool_id": "pool-two", "artifact_id": "artifact-two", "metrics": {"heartbeat": 1},
+        "metadata": {"member_virtual_books": [book]}})
+    # Own utilisation of 10% against a 60% floor: a real, known risk-budget shortfall.
+    state["obs"]["pcb-two"] = [{"date": d, "source_ref": "fixture:obs", "gross_notional": 1.0, "gross_limit": 10.0,
+                                "drawdown": 0.001, "drawdown_limit": 0.1} for d in dates[-20:]]
+    return next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-two")
+
+
+def _cite_first_lesson(pid, prompt):
+    case = json.loads(prompt.rsplit("\n", 1)[1])
+    lessons = [i["item_id"] for i in case["groups"]["lessons"]["items"]]
+    assert lessons, "case file carried no lessons into the turn"
+    return {"orient": "Lessons reviewed.", "memory_candidates": [], "proposals": [
+        {"kind": "no_action", "reason": "Stay flat.", "evidence_refs": [], "case_file_item_ids": lessons[:1]}]}
+
+
+def _lesson_summaries(packet):
+    case = next(iter(packet["persona_cycle"]["case_files"].values()))
+    return {i["source_id"]: i["excerpt"] for i in case["groups"]["lessons"]["items"]}
+
+
+def test_two_personas_with_different_shortfalls_get_different_lessons_and_never_each_others_private_memory(system):
+    controller, state, owner, pool = system
+    two = _add_second_persona(state, owner, pool)
+    one = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    state["answer_fn"] = _cite_first_lesson
+    packets = {}
+    for persona in (one, two):
+        runs = {**run(1), "runId": "run-" + persona["persona_id"]}
+        packets[persona["persona_id"]] = controller.consume_run(persona, "job-1", runs)
+    one_packet, two_packet = packets["persona-cycle-test"], packets["persona-cycle-two"]
+    for packet in packets.values():
+        assert packet["persona_cycle"]["failure_reason"] is None and packet["status"] == "closed"
+
+    # The cycle's own query: shortfall + families + underlyings, never the generic default.
+    queries = {b["persona_id"]: b for b in state["materialize"]}
+    assert len(state["materialize"]) == 2
+    assert all(b["query"] != DEFAULT_MEMORY_QUERY for b in queries.values())
+    assert "momentum" in queries["persona-cycle-test"]["query"] and "2330" in queries["persona-cycle-test"]["query"]
+    assert "shortfall:health_inputs_unknown" in queries["persona-cycle-test"]["tags"]
+    assert "carry" in queries["persona-cycle-two"]["query"] and "2882" in queries["persona-cycle-two"]["query"]
+    assert "low risk budget utilisation" in queries["persona-cycle-two"]["query"]
+    assert "shortfall:low_risk_budget_utilisation" in queries["persona-cycle-two"]["tags"]
+    assert queries["persona-cycle-test"]["tags"] != queries["persona-cycle-two"]["tags"]
+
+    # Materialised workspace caches: own lessons, never the other persona's private memory.
+    one_cache = (state["workspaces"] / "persona-cycle-test" / "MEMORY.md").read_text()
+    two_cache = (state["workspaces"] / "persona-cycle-two" / "MEMORY.md").read_text()
+    assert "ONE-PRIVATE" in one_cache and "TWO-PRIVATE" not in one_cache and "TWO-SECRET" not in one_cache
+    assert "TWO-PRIVATE" in two_cache and "ONE-PRIVATE" not in two_cache and "ONE-SECRET" not in two_cache
+
+    # The case file each agent turn received: different lessons, no foreign private memory.
+    one_lessons, two_lessons = _lesson_summaries(one_packet), _lesson_summaries(two_packet)
+    assert one_lessons != two_lessons
+    assert any("ONE-PRIVATE" in text for text in one_lessons.values())
+    assert any("TWO-PRIVATE" in text for text in two_lessons.values())
+    for text in one_lessons.values():
+        assert "TWO-" not in text
+    for text in two_lessons.values():
+        assert "ONE-" not in text
+    assert "TWO-" not in state["prompts"]["persona-cycle-test"]
+    assert "ONE-" not in state["prompts"]["persona-cycle-two"]
+    assert "CaseFile" in state["prompts"]["persona-cycle-test"]
+    assert '"none_applicable_reason"' in state["prompts"]["persona-cycle-test"]  # the schema the turn must follow
+
+    # The OODA packet records the case file id and digest, for the cycle and for each proposal.
+    for packet in (one_packet, two_packet):
+        cycle = packet["persona_cycle"]
+        stored = cycle["case_files"][cycle["case_file"]["case_file_id"]]
+        assert stored["digest"] == cycle["case_file"]["digest"] and stored["execution_may_read"] is False
+        decision = cycle["decisions"][0]
+        assert decision["case_file_id"] in cycle["case_files"] and decision["case_file_digest"]
+        assert decision["cited_case_file_item_ids"]
+        assert any(ref.endswith("case_files/" + stored["case_file_id"]) for ref in packet["orient"]["evidence_bundle_refs"])
+    assert one_packet["persona_cycle"]["case_file"]["digest"] != two_packet["persona_cycle"]["case_file"]["digest"]
+
+
+def test_each_proposal_gets_its_own_case_file_composed_for_its_decision(system):
+    controller, state, owner, _ = system
+    state["answer"] = {"orient": "Pool review.", "memory_candidates": [], "proposals": [
+        {"kind": "remove", "reason": "Drawdown.", "evidence_refs": [], "parameters": {"artifact_ref": "artifact-cycle"},
+         "none_applicable_reason": "Nothing retrieved applies."},
+        {"kind": "demand", "reason": "Short utilisation.", "evidence_refs": [], "none_applicable_reason": "None."}]}
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None
+    removal, demand = cycle["decisions"]
+    assert cycle["case_files"][removal["case_file_id"]]["subject"]["decision_type"] == "member_removal"
+    assert cycle["case_files"][removal["case_file_id"]]["subject"]["member_artifact_refs"] == ["artifact-cycle"]
+    assert cycle["case_files"][demand["case_file_id"]]["subject"]["decision_type"] == "research_demand"
+    assert removal["case_file_id"] != demand["case_file_id"]
+    assert removal["case_file_scope"] == demand["case_file_scope"] == "proposal"
+
+
+@pytest.mark.parametrize("proposal,reason", [
+    ({"kind": "no_action", "reason": "x", "evidence_refs": []}, "neither"),
+    ({"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": ["lessons:memory_x:not-there"]}, "stranger"),
+    ({"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": ["facts:strategy_pool:p"],
+      "none_applicable_reason": "both"}, "both"),
+])
+def test_proposal_must_cite_case_file_items_or_state_none_applicable(system, proposal, reason):
+    controller, state, owner, _ = system
+    state["answer"] = {"orient": "o", "memory_candidates": [], "proposals": [proposal]}
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["status"] == "observing"
+
+
+def test_no_family_or_underlying_fails_closed_with_reason_and_buys_no_turn_or_default_query(system):
+    controller, state, owner, _ = system
+    raw = state["entries"].get("artifact-cycle")
+    metadata = {k: v for k, v in raw["metadata"].items() if k != "strategy_artifact"}
+    assert state["entries"].compare_and_set("artifact-cycle", raw, {**raw, "metadata": metadata})[0]
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == "observe_prerequisites_unavailable:canonical_memory"
+    assert "cycle_query_subject_missing" in packet["persona_cycle"]["observe_bundle"]["canonical_memory_reason"]
+    assert state["materialize"] == [] and state["turns"] == 0
+
+
+def test_case_file_with_every_group_unavailable_fails_closed_before_the_turn(system, monkeypatch):
+    controller, state, owner, _ = system
+    for key in ("PANTHEON_MEMORY_API_URL",):
+        controller.owners.env = {k: v for k, v in controller.owners.env.items() if k != key}
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_unavailable:all_case_file_groups_unavailable"
+    assert state["turns"] == 0
+
+
+def _seed_decision_lessons(controller, owner, memory_service, base=90):
+    from services.knowledge import case_file as cf
+    persona = owner.list_json()[0]
+    cycle_type, _ = controller._cycle_decision(controller.owners.observe(persona))
+    for mid, summary, decision in ((base, "CYCLE-ONLY " + cycle_type.replace("_", " "), cycle_type),
+                                   (base + 1, "REMOVAL-ONLY member removal", "member_removal")):
+        entry = _private(mid, persona["persona_id"], summary, ["decision:" + decision])
+        cf.http_json(cf.OwnerEndpoint(memory_service), "/api/memory/persona-entries", tenant_id=TENANT_A,
+                     method="POST", body=entry)
+    return persona
+
+
+def _remove_citing(marker, seen_prompts):
+    def answer(pid, prompt):
+        seen_prompts.append(prompt)
+        revision = "ProposalCaseFiles: " in prompt
+        text = prompt.split("ProposalCaseFiles: ", 1)[1] if revision else prompt.rsplit("\n", 1)[1]
+        items = []
+        stack = [json.loads(text)]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if "item_id" in node and "excerpt" in node and marker in node["excerpt"]:
+                    items.append(node["item_id"])
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        assert items, "marker item not shown to the turn"
+        return {"orient": "Remove.", "memory_candidates": [], "proposals": [
+            {"kind": "remove", "reason": "Review.", "evidence_refs": [],
+             "parameters": {"artifact_ref": "artifact-cycle"}, "case_file_item_ids": items[:1]}]}
+    return answer
+
+
+def test_proposal_case_content_is_shown_before_finalising_and_citations_bind_to_it(system, memory_service):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service)
+    prompts = []
+
+    def answer(pid, prompt):
+        # first turn only sees the cycle case (CYCLE-ONLY); revision shows the removal case.
+        return _remove_citing("REMOVAL-ONLY" if "ProposalCaseFiles: " in prompt else "CYCLE-ONLY", prompts)(pid, prompt)
+    state["answer_fn"] = answer
+    packet = controller.consume_run(persona, "job-1", run(90))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None and packet["status"] == "closed"
+    assert len(prompts) == 2 and "REMOVAL-ONLY" in prompts[1]
+    decision = cycle["decisions"][0]
+    attached = cycle["case_files"][decision["case_file_id"]]
+    assert attached["subject"]["decision_type"] == "member_removal"
+    attached_ids = {i["item_id"] for g in attached["groups"].values() for i in g["items"]}
+    assert decision["cited_case_file_item_ids"] and set(decision["cited_case_file_item_ids"]) <= attached_ids
+
+
+def test_citation_outside_the_proposal_case_file_is_rejected_after_revision(system, memory_service):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service, base=95)
+    prompts = []
+    state["answer_fn"] = lambda pid, prompt: _remove_citing("CYCLE-ONLY", prompts)(
+        pid, prompt.split("\nRevision:")[0] if "ProposalCaseFiles: " in prompt else prompt)
+    packet = controller.consume_run(persona, "job-1", run(90))
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["status"] == "observing"
+
+
+@pytest.mark.parametrize("second_kind", ["demand", "no_action", "harness_patch"])
+def test_revision_revalidates_every_final_proposal(system, memory_service, second_kind):
+    controller, state, owner, _ = system
+    persona = _seed_decision_lessons(controller, owner, memory_service,
+                                     base=100 + 10 * ["demand", "no_action", "harness_patch"].index(second_kind))
+
+    def answer(pid, prompt):
+        revision = "ProposalCaseFiles: " in prompt
+        result = _remove_citing("REMOVAL-ONLY" if revision else "CYCLE-ONLY", [])(pid, prompt)
+        second = {"kind": second_kind, "reason": "Review another proposal.", "evidence_refs": []}
+        if revision:
+            second["case_file_item_ids"] = ["lessons:memory_x:not-in-any-case-file"]
+        else:
+            second["none_applicable_reason"] = "No lesson applies to this second proposal."
+        result["proposals"].append(second)
+        return result
+
+    state["answer_fn"] = answer
+    packet = controller.consume_run(persona, "job-1", run(100))
+    assert state["turns"] == 2
+    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["status"] == "observing"
+    assert "decisions" not in packet["persona_cycle"]

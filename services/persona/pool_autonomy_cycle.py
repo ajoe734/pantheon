@@ -6,7 +6,11 @@ deterministic policy over the observed pool health, never a model output, and
 every action goes through an existing owner route, paper only:
 
   open_demand      research owner  POST /api/research/persona-demands
-  admit_trial      persona owner   POST .../strategy-pool/decisions (admit)
+  admit_trial      consultation owner opens a risk persona panel (trial_admission, via
+                   consult_triggers) and the cycle does not admit; a LATER cycle admits
+                   through persona owner POST .../strategy-pool/decisions (admit) only
+                   with the verified published memo. Oppose / missing / ambiguous risk
+                   answer queues an operator decision (evolution proposal) instead.
   reweight/remove  persona owner   POST .../strategy-pool/decisions (reweight; the
                                    owner removes members past its drawdown rule)
   propose_mutate   evolution owner proposal (same builder as the pool scheduler)
@@ -30,6 +34,8 @@ from urllib.request import Request, urlopen
 DECISIONS = ("open_demand", "admit_trial", "reweight", "remove", "propose_mutate", "propose_widen", "no_action")
 MEASURE_BY_REASON = {"low_risk_budget_utilisation": "gross_utilisation",
                      "too_few_independent_bets": "effective_bets"}
+# Only these outcomes make a family "tried"; a pending or operator-held admission is not a failure.
+TRIED_OUTCOMES = ("admission_refused", "removed")
 WIDEN_AFTER_TRIED_FAMILIES = 3
 TRIAL_REVIEW_DAYS = 20
 
@@ -139,7 +145,7 @@ class PoolAutonomyCycle:
                 "decide": {k: v for k, v in decision.items() if k not in ("candidate", "member")}
                          | ({"candidate_ref": decision["candidate"]["artifact_ref"]} if "candidate" in decision else {}),
                 "act": {"receipts": receipts, "paper_only": True, "discovery": discovery}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
-                "tried_families": sorted({e["family"] for e in learned if e.get("family")})}}
+                "tried_families": sorted({e["family"] for e in learned if e.get("family") and e["outcome"] in TRIED_OUTCOMES})}}
 
     def _discover(self, persona, pool) -> list[dict[str, Any]]:
         """Run discovery for every open demand; one demand's failure never stops the others.
@@ -201,6 +207,47 @@ class PoolAutonomyCycle:
             except Exception as exc:  # noqa: BLE001 - the action already happened; record, do not hide
                 errors.append(f"{entry['outcome']}:{type(exc).__name__}")
 
+    def _consult_gate(self, persona, pool, cand, packet_id) -> dict[str, Any]:
+        """Trial admission goes through the risk persona consultation (design D6 / 6.4).
+
+        Asynchronous: one cycle opens the panel, a later cycle verifies the published memo.
+        Returns ``memo_id`` only when the memo verified; otherwise the receipts and memory
+        entries (pending / operator decision / unavailable) and no admission. A pending
+        consultation is never recorded as a refusal or a tried family.
+        """
+        ports, route = self.ports, "consultation:trial_admission"
+        out: dict[str, Any] = {"receipts": [], "learned": []}
+        base = {"route": route, "action": "admit", "artifact_ref": cand["artifact_ref"]}
+        try:
+            if not hasattr(ports, "trial_admission_consultation"):
+                raise RuntimeError("consultation_owner_unconfigured")
+            consult = ports.trial_admission_consultation(persona, pool, cand, packet_id)
+        except Exception as exc:  # noqa: BLE001 - missing consultation data fails closed with the reason recorded
+            out["receipts"].append({**base, "status": "not_attempted",
+                                    "reason": f"consultation_unavailable:{type(exc).__name__}: {str(exc)[:120]}"})
+            return out
+        state = consult["state"]
+        ids = {k: consult.get(k) for k in ("decision_id", "request_id")}
+        if state in ("opened", "pending"):
+            out["receipts"].append({**base, **ids, "status": "consultation_" + state})
+            out["learned"].append({"outcome": "admission_pending", "family": cand.get("family"),
+                                   "artifact_ref": cand["artifact_ref"],
+                                   "detail": f"risk consultation {state}: {consult.get('request_id')}"})
+        elif state == "operator":
+            receipt = {**base, **ids, "status": "operator_decision_required", "reason": consult["reason"]}
+            try:
+                receipt["operator_decision"] = ports.queue_operator_decision(persona, pool, cand, consult)
+            except Exception as exc:  # noqa: BLE001 - still never auto-admitted
+                receipt["queue_error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+            out["receipts"].append(receipt)
+            out["learned"].append({"outcome": "admission_operator_decision", "family": cand.get("family"),
+                                   "artifact_ref": cand["artifact_ref"], "detail": consult["reason"]})
+        elif state == "verified":
+            out["memo_id"], out["pool_version"] = consult["memo_id"], consult["pool_version"]
+        else:
+            out["receipts"].append({**base, **ids, "status": "not_attempted", "reason": "consultation_state_unknown:" + str(state)})
+        return out
+
     def _act(self, persona, pool, observe, health, decision, tried, packet_id):
         ports, kind = self.ports, decision["kind"]
         receipts: list[dict[str, Any]] = []
@@ -214,6 +261,11 @@ class PoolAutonomyCycle:
             receipts.append({"route": "research:persona-demands", "demand_id": result["demand_id"], "created": result.get("created", True)})
         elif kind == "admit_trial":
             cand = decision["candidate"]
+            gate = self._consult_gate(persona, pool, cand, packet_id)
+            receipts.extend(gate["receipts"])
+            learned.extend(gate["learned"])
+            if not gate.get("memo_id"):
+                return receipts, learned
             try:
                 dataset = ports.admission_dataset(persona, cand)
             except Exception as exc:  # noqa: BLE001 - missing data fails closed, never synthetic
@@ -228,13 +280,15 @@ class PoolAutonomyCycle:
                 return receipts, learned
             result = ports.decide_pool(persona, {
                 "expected_version": pool["pool_version"], "execution_context": "paper", "action": "admit",
+                "initiated_by": "persona", "consultation_memo_id": gate["memo_id"],
+                "consultation_pool_version": gate["pool_version"],
                 "candidate": {"artifact_ref": cand["artifact_ref"], "checksum": cand["checksum"],
                               **({"demand_ref": cand["demand_ref"]} if cand.get("demand_ref") else {})},
                 "books": {**observe.get("books", {}), cand["artifact_ref"]: cand_book},
                 "observations": observe.get("observations", []), "dataset": dataset})
             status = (result.get("decision") or {}).get("status")
             receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": status,
-                             "pool_version": result.get("pool_version"), "reasons": (result.get("decision") or {}).get("reasons", [])})
+                             "consultation_memo_id": gate["memo_id"], "pool_version": result.get("pool_version"), "reasons": (result.get("decision") or {}).get("reasons", [])})
             learned.append({"outcome": "admitted" if status == "applied" else "admission_refused",
                             "family": cand.get("family"), "artifact_ref": cand["artifact_ref"],
                             "detail": "; ".join((result.get("decision") or {}).get("reasons", []))})
@@ -370,7 +424,9 @@ class HttpPoolCyclePorts:
 
     def __init__(self, transport: Callable[..., Any] | None = None, *, pool_store: Any = None,
                  dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None,
-                 discovery_loader: Callable[[Mapping], dict] | None = None):
+                 discovery_loader: Callable[[Mapping], dict] | None = None,
+                 consultation_factory: Callable[..., Any] | None = None):
+        self.consultation_factory = consultation_factory or self._consultation
         self.env = os.environ if env is None else env
         self.transport = transport or self._urllib
         self.pool_store = pool_store
@@ -570,6 +626,87 @@ class HttpPoolCyclePorts:
         if not artifact:
             raise RuntimeError("candidate_strategy_artifact_missing")
         return candidate_virtual_book(dataset=dataset, artifact=artifact, checksum=candidate["checksum"], policy=load_policy())
+
+    @staticmethod
+    def _consultation(tenant: str, service_actor: str | None = None) -> Any:
+        from services.consultation.client import ConsultationServiceClient
+        return ConsultationServiceClient(tenant_id=tenant, **({"service_actor": service_actor} if service_actor else {}))
+
+    CONSULT_FAILED_STATES = ("canceled", "cancelled", "rejected", "failed", "expired")
+
+    def trial_admission_consultation(self, persona, pool, cand, packet_id):
+        """Open (once) or read the risk panel for this exact candidate and pool version.
+
+        The consultation owner is called as ``persona:<id>`` (service caller carrying the persona id);
+        the decision id binds artifact_ref + checksum + pool version, so a repeat cycle finds the same
+        request instead of opening another. Verification is the shared published-memo check.
+        """
+        from services.persona.consult_triggers import (
+            candidate_digest, pool_membership_signature, trial_admission_requirement, verify_published_memo)
+        pid, tenant = persona["persona_id"], persona["tenant_id"]
+        digest = candidate_digest(cand["artifact_ref"], cand["checksum"])
+        reader = self.consultation_factory(tenant)
+        signature = pool_membership_signature(pool["members"])
+        # The daily risk reweight appends a pool version every cycle, so the consultation is the newest one for
+        # this exact candidate whose pool version still has today's live membership (weights are not membership).
+        found = []
+        for r in reader.list_requests(target_type="trial_admission", tenant_id=tenant) or []:
+            gated = (r.get("metadata") or {}).get("panel", {}).get("gated_decision", {})
+            if r.get("from_persona_id") != pid or gated.get("candidate_digest") != digest:
+                continue
+            version = int(gated.get("target_version") or 0)
+            if 1 <= version <= pool["pool_version"] and pool_membership_signature(
+                    self.pool_store.version(pid, tenant, version)["members"]) == signature:
+                found.append((version, r))
+        if not found:
+            requirement = trial_admission_requirement(tenant, pid, cand["artifact_ref"], cand["checksum"], pool["pool_version"])
+            created = self.consultation_factory(tenant, f"persona:{pid}").open_persona_panel(
+                requirement, persona_id=pid, trace_id=f"ooda://{packet_id}", tenant_id=tenant,
+                task=f"Risk review of paper trial admission of {cand['artifact_ref']} (pool v{pool['pool_version']})",
+                evidence_refs=[f"ooda://{packet_id}", cand["artifact_ref"]],
+                request_id="consult-" + requirement.decision_id)
+            return {"state": "opened", "request_id": created["request_id"], "decision_id": requirement.decision_id,
+                    "pool_version": pool["pool_version"]}
+        bound, request = max(found, key=lambda item: item[0])
+        requirement = trial_admission_requirement(tenant, pid, cand["artifact_ref"], cand["checksum"], bound)
+        ids = {"decision_id": requirement.decision_id, "request_id": request["request_id"], "pool_version": bound}
+        status = str(request.get("status") or "")
+        if status in self.CONSULT_FAILED_STATES:
+            return {"state": "operator", "reason": "consultation_" + status, **ids}
+        if status != "published":
+            return {"state": "pending", **ids}
+        memos = reader.list_memos(request_id=request["request_id"], status="published")
+        if not memos:
+            return {"state": "pending", **ids}
+        check = None
+        for memo in memos:
+            check = verify_published_memo(reader, memo["memo_id"], tenant_id=tenant, persona_id=pid, requirement=requirement)
+            if check.ok:
+                return {"state": "verified", "memo_id": memo["memo_id"], **ids}
+        return {"state": "operator", "reason": check.reason, **ids}
+
+    def queue_operator_decision(self, persona, pool, cand, consult):
+        """Turn the admission into an operator decision through the existing governance queue (evolution proposals)."""
+        decision_id = "trial-admission-op-" + hashlib.sha256(
+            f"{consult['decision_id']}|{consult['reason']}".encode()).hexdigest()[:24]
+        body = {"decision_id": decision_id, "tenant_id": persona["tenant_id"], "target_type": "persona",
+                "target_id": persona["persona_id"], "target_version": str(pool["pool_version"]),
+                "action_type": "flag_for_review", "created_by_id": "persona-svc", "created_by_role": "evolution_controller",
+                "persona_id": persona["persona_id"],
+                "rationale": f"Paper trial admission of {cand['artifact_ref']} needs an operator decision: {consult['reason']}",
+                "evidence_refs": [{"ref_type": "service_handoff", "ref_id": consult.get("request_id") or consult["decision_id"],
+                                   "storage_ref": {"owner": "consultation-svc", "persona_id": persona["persona_id"],
+                                                   "kind": "trial_admission_consultation"}}],
+                "metadata": {"operator_required": True, "reason": consult["reason"], "candidate": {
+                    "artifact_ref": cand["artifact_ref"], "checksum": cand["checksum"]},
+                    "consultation_decision_id": consult["decision_id"], "paper_only": True}}
+        try:
+            self._call("POST", "evolution", "/api/evolution/proposals", persona, body)
+        except Exception as exc:  # noqa: BLE001 - a repeated id is the existing queue entry, not a new one
+            if getattr(exc, "code", None) != 409:
+                raise
+            return {"decision_id": decision_id, "status": "already_queued"}
+        return {"decision_id": decision_id, "status": "queued"}
 
     def decide_pool(self, persona, body):
         import importlib

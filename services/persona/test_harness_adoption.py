@@ -224,12 +224,14 @@ def test_outside_paper_is_governance_proposal_without_activation(adoption):
 # The multi-service fixture runs actual Consultation, Memory, Governance and
 # Evolution applications. Only provider HTTP supplies scripted persona answers.
 from services.consultation.tests.test_persona_panel_integration import (  # noqa: E402,F401
-    stack, _config, _provider, _provider_fake,
+    stack, _config, _provider, _provider_fake, _serve,
 )
 
 
-def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, stack, monkeypatch):
+@pytest.mark.parametrize("binding_source", ["complete", "missing", "other-persona"])
+def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, stack, monkeypatch, binding_source):
     from dataclasses import replace
+    from fastapi import FastAPI, Header
     from services.consultation.client import ConsultationServiceClient
     from services.consultation.workflow_executor import run_tick
     from services.consultation.workflow_state import WorkflowStateStore
@@ -237,11 +239,17 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
     from services.persona.consult_triggers import RISK_PERSONA_ID
     from services.evolution import main as evolution
     a = adoption
+    complete_sources = binding_source == "complete"
     monkeypatch.setattr(evolution, "store", evolution.EvolutionDecisionStore(
         storage_path=str(stack["root"] / "adoption-evolution.json")))
     monkeypatch.setenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS", "tenant-a")
-    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", _make_jwt(roles=["memory-writer"], tenant_id="tenant-a"))
+    # The signed test identity has explicit committee read and write roles;
+    # real Memory authn/authz still verifies both retrieval and writeback.
+    roles = ["memory-writer", "consultation_session"]
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", _make_jwt(roles=roles, tenant_id="tenant-a"))
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", ",".join(roles))
     monkeypatch.setenv("PANTHEON_MEMORY_API_URL", stack["memory"])
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", stack["governance"])
     monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", stack["api"])
     monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", stack["evolution"])
     monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
@@ -253,13 +261,66 @@ def test_real_panel_and_authenticated_memory_and_governance_transport(adoption, 
     requirement = required_consultation("harness_patch", "patch-1", initiator_persona_id="p-alpha",
         touches=["cycle_thresholds"], target_version="1", candidate_digest=panel["gated_decision"]["candidate_digest"])
     consult = ConsultationServiceClient(base_url=stack["api"], tenant_id="tenant-a")
-    with _provider_fake({"p-alpha": "approve", RISK_PERSONA_ID: "approve"}) as provider:
+    facts = FastAPI()
+
+    @facts.get("/api/registry/entries/{ref}")
+    def registry(ref: str, tenant: str = Header(alias="X-Tenant-Id")):
+        assert tenant == "tenant-a"
+        return {"registry_id": ref, "tenant_id": tenant, "strategy_id": "momentum",
+                "artifact_type": "strategy_spec", "version": "1", "artifact_state": "candidate",
+                "metadata": {"persona_id": "p-other" if binding_source == "other-persona" else "p-alpha",
+                    "underlyings": ["2330"],
+                    **({"persona_capital_binding_id": "pcb-alpha"} if binding_source != "missing" else {})},
+                "lineage": {"source_run_ids": ["bt-alpha"]}}
+
+    @facts.get("/api/registry/strategies/{family}/entries")
+    def history(family: str):
+        return []
+
+    @facts.get("/api/research-orchestrator/backtest-runs/{run}/owner-binding")
+    def backtest(run: str):
+        assert run == "bt-alpha"
+        return {"status": "done", "gate_verdict": {"passed": True}, "evaluation_digest": "fixture-backtest"}
+
+    @facts.get("/api/telemetry/runtime-summaries")
+    def telemetry(tenant: str = Header(alias="X-Tenant-Id")):
+        assert tenant == "tenant-a"
+        return {"summaries": [{"tenant_id": tenant, "persona_capital_binding_id": "pcb-alpha",
+            "deployment_stage": "paper", "member_virtual_books": [
+                {"member_id": "reg-member", "net_of_costs": {"pnl": 12}}]}]}
+
+    @facts.post("/api/search/v2/query")
+    def search(body: dict, tenant: str = Header(alias="X-Tenant-Id")):
+        assert tenant == body["workspace_id"] == "tenant-a"
+        assert body["purpose"] == "decision_case_file" and body["require_citations"]
+        return {"retrieval_mode": "keyword", "results": [{"result_id": "fixture-note",
+            "relevance_score": 0.7, "citations": ["doc-alpha"], "matched_items": [
+                {"object_id": "doc-alpha", "excerpt": "momentum 2330 research note"}]}]}
+
+    with _serve(facts) as facts_url, _provider_fake({"p-alpha": "approve", RISK_PERSONA_ID: "approve"}) as provider:
+        for service in ("REGISTRY", "RESEARCH", "TELEMETRY", "SEARCH"):
+            monkeypatch.setenv(f"PANTHEON_{service}_API_URL", facts_url)
         cfg = replace(_config(stack, f"http://127.0.0.1:{provider.server_address[1]}/contribute"), tenant_id="tenant-a")
         created = consult.open_persona_panel(requirement, persona_id="p-alpha", trace_id="adoption-integration")
         result = run_tick(config=cfg, state=WorkflowStateStore(cfg.state_path), provider=_provider(cfg))
         assert result["completed"] == 1, result
+        case = provider.calls[0]["payload"]["request"]["case_file"]
+        missing = [u for g in case["groups"].values() for u in g["unavailable"] if not u.get("expected")]
+        assert missing == ([] if complete_sources else [
+            {"owner": "telemetry", "reason": "persona_capital_binding_id_not_supplied"}])
+        item_ids = {item["item_id"] for g in case["groups"].values() for item in g["items"]}
+        transcript = next(t for t in consult.list_transcripts() if t["request_id"] == created["request_id"])
+        contributions = [e for e in transcript["events"] if e["event_type"] == "persona_contribution"]
+        assert len(contributions) == 2
+        assert all(set(c["evidence_refs"]) <= item_ids and c["evidence_refs"]
+                   for e in contributions for c in e["content"]["claims"])
     memo = consult.list_memos(request_id=created["request_id"], status="published")[0]
     response = a.client.post(ROOT + "/patches/patch-1/activate", headers=headers(), json={"adoption_ref": memo["memo_id"]})
+    if not complete_sources:
+        assert response.status_code == 422, response.text
+        assert "panel_conditions_require_operator" in response.text
+        assert a.harness.read("p-alpha")["active_version"] == 1
+        return
     assert response.status_code == 200, response.text
     ids = observations(a, delta=-0.01)
     response = observe(a, ids)

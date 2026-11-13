@@ -33,6 +33,7 @@ class MemoryMaterializationResult:
     hit_count: int
     source_refs: List[Dict[str, str]] = field(default_factory=list)
     rejected_hits: List[Dict[str, str]] = field(default_factory=list)
+    retrieval: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -44,7 +45,29 @@ class MemoryMaterializationResult:
             "hit_count": self.hit_count,
             "source_refs": list(self.source_refs),
             "rejected_hits": list(self.rejected_hits),
+            "retrieval": dict(self.retrieval),
         }
+
+
+def build_cycle_memory_query(
+    *,
+    shortfall: Iterable[str],
+    families: Iterable[str],
+    underlyings: Iterable[str],
+) -> tuple[str, List[str]]:
+    """Daily-cycle retrieval query from pool-health shortfall, member families and underlyings.
+
+    Fails closed: a query with no family and no underlying would be the generic
+    query this replaces, so it is refused instead of padded with a default.
+    """
+    fams = sorted({str(f).strip().lower() for f in families if str(f or "").strip()})
+    unds = sorted({str(u).strip() for u in underlyings if str(u or "").strip()})
+    short = sorted({str(s).strip() for s in shortfall if str(s or "").strip()})
+    if not fams and not unds:
+        raise ValueError("cycle_query_subject_missing: no member family or underlying")
+    terms = [*fams, *unds, *(s.replace("_", " ") for s in short)]
+    tags = [f"family:{f}" for f in fams] + [f"underlying:{u}" for u in unds] + [f"shortfall:{s}" for s in short]
+    return " ".join(terms), tags
 
 
 def utc_now() -> str:
@@ -63,6 +86,7 @@ def fetch_canonical_memory(
     limit: int = DEFAULT_MEMORY_LIMIT,
     timeout_seconds: float = 5.0,
     auth_token: Optional[str] = None,
+    tags: Iterable[str] = (),
 ) -> Dict[str, Any]:
     """Call the canonical Memory Plane retrieval facade."""
     base = memory_api_url.rstrip("/")
@@ -75,6 +99,9 @@ def fetch_canonical_memory(
         "query": query,
         "limit": int(limit),
     }
+    tag_list = [str(t) for t in tags if str(t).strip()]
+    if tag_list:
+        params["tags"] = tag_list
     url = f"{base}/api/memory/retrieve?{urllib.parse.urlencode(params, doseq=True)}"
     headers = {"Accept": "application/json"}
     if auth_token:
@@ -98,6 +125,7 @@ def materialize_persona_memory_from_api(
     timeout_seconds: float = 5.0,
     auth_token: Optional[str] = None,
     generated_at: Optional[str] = None,
+    tags: Iterable[str] = (),
 ) -> MemoryMaterializationResult:
     payload = fetch_canonical_memory(
         memory_api_url,
@@ -110,6 +138,7 @@ def materialize_persona_memory_from_api(
         limit=limit,
         timeout_seconds=timeout_seconds,
         auth_token=auth_token,
+        tags=tags,
     )
     return materialize_openclaw_memory_context(
         persona_id=persona_id,
@@ -119,6 +148,7 @@ def materialize_persona_memory_from_api(
         scope=scope,
         limit=limit,
         generated_at=generated_at,
+        tags=tags,
     )
 
 
@@ -131,6 +161,7 @@ def materialize_openclaw_memory_context(
     scope: str = DEFAULT_MEMORY_SCOPE,
     limit: int = DEFAULT_MEMORY_LIMIT,
     generated_at: Optional[str] = None,
+    tags: Iterable[str] = (),
 ) -> MemoryMaterializationResult:
     """Render canonical retrieval hits into OpenClaw workspace cache files."""
     generated = generated_at or utc_now()
@@ -139,6 +170,7 @@ def materialize_openclaw_memory_context(
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     hits, rejected = normalize_retrieval_hits(retrieval_payload, persona_id=persona_id, max_hits=limit)
+    tag_list = [str(t) for t in tags if str(t).strip()]
     context = {
         "schema_version": MEMORY_CONTEXT_SCHEMA_VERSION,
         "persona_id": persona_id,
@@ -149,6 +181,7 @@ def materialize_openclaw_memory_context(
             "query": query,
             "limit": int(limit),
             "count": len(hits),
+            "tags": tag_list,
         },
         "mutation_policy": {
             "workspace_is_cache": True,
@@ -178,6 +211,7 @@ def materialize_openclaw_memory_context(
         hit_count=len(hits),
         source_refs=[{"type": hit["type"], "ref": hit["canonical_ref"]} for hit in hits],
         rejected_hits=rejected,
+        retrieval={"query": query, "tags": tag_list, "scope": scope, "limit": int(limit)},
     )
 
 
