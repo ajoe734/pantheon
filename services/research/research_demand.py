@@ -18,6 +18,11 @@ from typing import Any, Mapping
 
 from jsonschema import Draft202012Validator
 
+from services.knowledge.case_file import Caller, CaseFileError, Owners, Subject, compose_case_file
+from services.research.retrieval_influence import (
+    ResearchRetrievalInfluenceError, ResearchRetrievalInfluenceStore, demand_case_file_influence,
+)
+
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "research_demand.v1.schema.json"
 DEMAND_TTL = timedelta(days=30)
 
@@ -47,9 +52,44 @@ def validate_demand(record: Mapping[str, Any]) -> None:
 class ResearchDemandStore:
     """Tenant-partitioned JSON document store with a cross-process lock."""
 
-    def __init__(self, path: Path | str, *, now=None) -> None:
+    def __init__(self, path: Path | str, *, now=None, influence_store=None) -> None:
         self.path = Path(path)
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self.influence_store = influence_store or ResearchRetrievalInfluenceStore(self.path.parent)
+
+    def _attach_case_file(self, record: dict[str, Any]) -> None:
+        """Compose as the configured service; request bodies cannot supply identity or citations."""
+        case_file, reason = None, None
+        families = record["tried_families"]
+        try:
+            if not families:
+                raise CaseFileError("strategy_families_missing")
+            case_file = compose_case_file(
+                Subject(decision_type="research_demand", tenant_id=record["tenant_id"],
+                        persona_id=record["persona_id"], strategy_family=families[0],
+                        strategy_families=tuple(families), missing_datasets=tuple(record["missing_datasets"])),
+                Caller(actor_id=os.getenv("RESEARCH_CASE_FILE_ACTOR_ID", ""),
+                       actor_roles=tuple(r.strip() for r in os.getenv("RESEARCH_CASE_FILE_ACTOR_ROLES", "").split(",")
+                                         if r.strip()), session_id=record["demand_id"]),
+                Owners.from_env(), now=self._now,
+            )
+            influence = demand_case_file_influence(record, case_file)
+        except (CaseFileError, ResearchRetrievalInfluenceError) as exc:
+            reason = "case_file_" + exc.reason if isinstance(exc, CaseFileError) else str(exc)
+            case_file = None
+            influence = demand_case_file_influence(record, None, unavailable_reason=reason)
+        record.update(case_file=case_file,
+                      case_file_id=case_file["case_file_id"] if case_file else None,
+                      case_file_digest=case_file["digest"] if case_file else None,
+                      case_file_unavailable_reason=reason,
+                      retrieval_influence_id=influence.retrieval_id, retrieval_influence=influence.to_dict(),
+                      retrieval_influence_unavailable_reason=None)
+        # The demand retains the canonical snapshot even if the secondary
+        # influence index cannot be written. Never silently drop that failure.
+        try:
+            self.influence_store.create_record(influence)
+        except OSError as exc:
+            record["retrieval_influence_unavailable_reason"] = f"influence_store_unavailable:{type(exc).__name__}"
 
     def _locked(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +145,8 @@ class ResearchDemandStore:
                     if changed:
                         self._save(rows)
                     return {**row, "created": False}
+            self._attach_case_file(record)
+            validate_demand(record)
             rows.append(record)
             self._save(rows)
             return {**record, "created": True}

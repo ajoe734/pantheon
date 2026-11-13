@@ -66,6 +66,8 @@ class Subject:
     backtest_run_refs: tuple = ()
     persona_capital_binding_id: str = ""
     regime_tag: str = ""
+    strategy_families: tuple = ()
+    missing_datasets: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -203,9 +205,11 @@ def _validate(subject: Subject, caller: Caller) -> None:
 
 def lesson_query(subject: Subject) -> tuple:
     """Query text and tag filters built from the decision content (no fixed query)."""
-    terms = [subject.strategy_family, *subject.underlyings, subject.instrument_class,
+    families = tuple(dict.fromkeys((subject.strategy_family, *subject.strategy_families)))
+    terms = [*families, *subject.underlyings, *subject.missing_datasets, subject.instrument_class,
              subject.decision_type.replace("_", " "), subject.regime_tag]
-    tags = [f"family:{subject.strategy_family}", f"decision:{subject.decision_type}"]
+    tags = [*(f"family:{f}" for f in families), f"decision:{subject.decision_type}"]
+    tags += [f"dataset:{d}" for d in subject.missing_datasets]
     tags += [f"underlying:{u}" for u in subject.underlyings]
     if subject.instrument_class:
         tags.append(f"instrument:{subject.instrument_class}")
@@ -350,20 +354,21 @@ def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
 
 def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
     tenant, q = subject.tenant_id, urllib.parse.quote
-    try:
-        entries = http_json(owners.registry, f"/api/registry/strategies/{q(subject.strategy_family, safe='')}/entries",
-                            tenant_id=tenant) or []
-        for e in entries:
-            e = e.get("entry", e)
-            if str(e.get("artifact_state")) != "retired" or e.get("registry_id") in subject.member_artifact_refs:
-                continue
-            g.items.append(_item("similar_history", "retired_strategy", "registry", e.get("registry_id"), {
-                "strategy_id": e.get("strategy_id"), "version": e.get("version"),
-                "evaluation_summary": e.get("evaluation_summary")},
-                score=None, mode="owner_read", budgets=budgets,
-                subject_fields={"strategy_id": e.get("strategy_id")}))
-    except OwnerUnavailable as exc:
-        g.missing("registry:strategy_family", exc.reason)
+    for family in dict.fromkeys((subject.strategy_family, *subject.strategy_families)):
+        try:
+            entries = http_json(owners.registry, f"/api/registry/strategies/{q(family, safe='')}/entries",
+                                tenant_id=tenant) or []
+            for e in entries:
+                e = e.get("entry", e)
+                if str(e.get("artifact_state")) != "retired" or e.get("registry_id") in subject.member_artifact_refs:
+                    continue
+                g.items.append(_item("similar_history", "retired_strategy", "registry", e.get("registry_id"), {
+                    "strategy_id": e.get("strategy_id"), "version": e.get("version"),
+                    "evaluation_summary": e.get("evaluation_summary")},
+                    score=None, mode="owner_read", budgets=budgets,
+                    subject_fields={"strategy_id": e.get("strategy_id")}))
+        except OwnerUnavailable as exc:
+            g.missing("registry:strategy_family", exc.reason)
     try:
         versions = http_json(owners.pool, f"/api/personas/{q(subject.persona_id, safe='')}/strategy-pool/versions",
                              tenant_id=tenant) or {}
@@ -390,7 +395,7 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
     try:  # negative memory: institutional entries tagged negative_memory
         resp = _memory_hits(owners, subject, caller, scope="institutional", query=query,
                             tags=[*tags, "negative_memory"], limit=budgets.max_items_per_group)
-        subject_tags = {t.lower() for t in tags if t.startswith(("family:", "underlying:"))}
+        subject_tags = {t.lower() for t in tags if t.startswith(("family:", "underlying:", "dataset:"))}
         for hit in resp.get("hits", []):
             etags = {str(t).strip().lower() for t in ((hit.get("entry") or {}).get("content") or {}).get("tags") or []}
             # require an actual negative marker AND subject relevance (not just the OR-matched marker)
@@ -474,5 +479,9 @@ def compose_case_file(subject: Subject, caller: Caller, owners: Owners, *,
         "groups": rendered,
         "execution_may_read": False,
     }
+    if subject.strategy_families:
+        body["subject"]["strategy_families"] = list(subject.strategy_families)
+    if subject.missing_datasets:
+        body["subject"]["missing_datasets"] = list(subject.missing_datasets)
     digest = _digest(body)
     return {"case_file_id": f"casefile-{digest[:24]}", "digest": digest, **body}

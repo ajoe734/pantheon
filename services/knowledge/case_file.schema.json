@@ -22,6 +22,8 @@
         "persona_id": {"type": "string", "minLength": 1},
         "tenant_id": {"type": "string", "minLength": 1},
         "strategy_family": {"type": "string", "minLength": 1},
+        "strategy_families": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "missing_datasets": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "underlyings": {"type": "array", "items": {"type": "string"}},
         "instrument_class": {"type": "string"},
         "member_artifact_refs": {"type": "array", "items": {"type": "string"}},
