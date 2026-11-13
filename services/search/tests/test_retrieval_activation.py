@@ -311,3 +311,63 @@ def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_fact
         [t.join() for t in threads]
     assert statuses == [200, 200, 200]
     assert state["runs"] == 3 and state["max_active"] == 1
+
+
+def test_readback_reload_never_overlaps_pipeline_store_mutation(app_factory, monkeypatch):
+    # A readback reload clears the store's runs before refilling; if a refresh reads the store in
+    # that window it sees no checkpoint and turns an unchanged refresh into a full rebuild.
+    import threading
+    import time
+    from services.search import main as search_main
+
+    backend = Mock()
+    backend.check_health.return_value = {"status": "ok", "backend": "postgres_pgvector"}
+    store_cls = search_main.JsonlIndexPipelineStore
+    real_reload = store_cls.reload
+    real_record = store_cls.record_run
+    state = {"active": 0, "overlap": False, "reloads": 0}
+    guard = threading.Lock()
+
+    def enter():
+        with guard:
+            state["active"] += 1
+            if state["active"] > 1:
+                state["overlap"] = True
+
+    def leave():
+        with guard:
+            state["active"] -= 1
+
+    def slow_reload(self):
+        enter()
+        try:
+            state["reloads"] += 1
+            time.sleep(0.1)
+            return real_reload(self)
+        finally:
+            leave()
+
+    def slow_record(self, snapshot):
+        enter()
+        try:
+            time.sleep(0.1)
+            return real_record(self, snapshot)
+        finally:
+            leave()
+
+    with TestClient(app_factory(retrieval_backend=backend, durable_index_only=True)) as client:
+        monkeypatch.setattr(store_cls, "reload", slow_reload)
+        monkeypatch.setattr(store_cls, "record_run", slow_record)
+        # Re-wrap is not needed: app wrappers captured the originals, so patch via a fresh app.
+        client2 = TestClient(app_factory(retrieval_backend=backend, durable_index_only=True))
+        calls = [
+            lambda: client2.get("/api/search/index/freshness"),
+            lambda: client2.get("/api/search/index/pipeline-runs"),
+            lambda: client2.post("/api/search/index/refresh", json={"triggered_by": "scheduled_refresh"}),
+            lambda: client2.get("/api/search/index/freshness"),
+        ]
+        threads = [threading.Thread(target=c) for c in calls]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    assert state["reloads"] >= 4
+    assert state["overlap"] is False
