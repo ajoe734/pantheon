@@ -397,6 +397,8 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
                             tags=[*tags, "negative_memory"], limit=budgets.max_items_per_group)
         subject_tags = {t.lower() for t in tags if t.startswith(("family:", "underlying:", "dataset:"))}
         for hit in resp.get("hits", []):
+            if hit.get("type") == "persona":
+                continue  # negative history only consumes the institutional read
             etags = {str(t).strip().lower() for t in ((hit.get("entry") or {}).get("content") or {}).get("tags") or []}
             # require an actual negative marker AND subject relevance (not just the OR-matched marker)
             if "negative_memory" not in etags or not (etags & subject_tags):

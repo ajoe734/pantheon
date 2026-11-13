@@ -78,6 +78,10 @@ class ResearchDemandStore:
             reason = "case_file_" + exc.reason if isinstance(exc, CaseFileError) else str(exc)
             case_file = None
             influence = demand_case_file_influence(record, None, unavailable_reason=reason)
+        except (OSError, TypeError, ValueError, KeyError, AttributeError) as exc:
+            reason = f"case_file_composition_failed:{type(exc).__name__}"
+            case_file = None
+            influence = demand_case_file_influence(record, None, unavailable_reason=reason)
         record.update(case_file=case_file,
                       case_file_id=case_file["case_file_id"] if case_file else None,
                       case_file_digest=case_file["digest"] if case_file else None,

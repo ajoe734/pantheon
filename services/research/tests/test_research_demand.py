@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,6 +35,17 @@ def test_invalid_record_is_refused(tmp_path):
         store(tmp_path, [T0]).open("t1", {**BODY, "short_measure": "vibes"})
     with pytest.raises(DemandError):
         store(tmp_path, [T0]).open("t1", {**BODY, "mandate": ""})
+
+
+def test_legacy_demand_without_context_still_reconciles(tmp_path):
+    s = store(tmp_path, [T0])
+    row = s.open("t1", BODY)
+    legacy = {k: v for k, v in row.items()
+              if not k.startswith(("case_file", "retrieval_influence")) and k != "created"}
+    s.path.write_text(json.dumps([legacy]))
+    assert not s.open("t1", BODY)["created"]
+    later = {"artifact_ref": "new", "joined_at": (T0 + timedelta(days=1)).isoformat()}
+    assert s.reconcile("t1", "p1", [later])[0]["status"] == "satisfied"
 
 
 def test_satisfied_only_by_later_member_of_same_persona(tmp_path):
