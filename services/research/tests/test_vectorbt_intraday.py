@@ -482,6 +482,104 @@ def test_bridge_session_reset_and_cross_session_for_minute_factor_rule():
     assert crossing[n] is None
 
 
+@pytest.mark.parametrize("mode", ["reset", "cross_session", "lag", "alias", "crossing_clock"])
+def test_reused_replay_prefix_resolves_identical_pit_inputs_at_every_bar(mode):
+    from services.registry.factor_rule import resolve_point_in_time_inputs
+    from services.research.vectorbt.adapter.vectorbt_adapter import _prepared_replay_features
+
+    ds = _dataset()
+    if mode == "crossing_clock":
+        ds["records"][0]["bar_end"] = "2026-11-10T09:01:00+08:00"
+        _resnap(ds)
+    prepared = GovernedVectorbtInputAdapter().prepare(ds)
+    art = _minute_art("5m", **({"cross_session": True} if mode == "cross_session" else {}))
+    if mode == "lag":
+        art["strategy_logic"]["inputs"][0]["availability_lag_minutes"] = 7
+    if mode == "alias":
+        # A dated alias takes priority over the generated column; retain its actual availability.
+        prepared.features_by_instrument["2330"]["px"] = [
+            {"value": 123.0, "event_time": "2026-11-09T09:00:00+08:00",
+             "available_time": "2026-11-10T10:00:00+08:00"},
+        ]
+    columns, reset = _prepared_replay_features(prepared, "2330", art)
+    assert reset is (mode == "reset")
+    starts = _session_start_indexes(prepared.dates_by_instrument["2330"])
+    for i in range(prepared.bars_per_instrument["2330"]):
+        old, clock = _bar_features_for_index(prepared, "2330", i)
+        new, new_clock = _bar_features_for_index(
+            prepared, "2330", i, replay_features=columns, session_start=starts[i] if reset else 0,
+        )
+        assert clock == new_clock
+        obs = new["tw_price_5m"]["close"]
+        assert obs[-1] == old["tw_price_5m"]["close"][-1]
+        assert len(obs) == i + 1 - (starts[i] if reset else 0)
+        assert all(o["event_time"] <= clock for o in obs)
+        args = dict(decision_time=clock, bar_frequency="5m")
+        try:
+            expected = resolve_point_in_time_inputs(art["strategy_logic"], None, features=old, **args)
+        except ValueError as exc:
+            with pytest.raises(type(exc), match="no visible observations"):
+                resolve_point_in_time_inputs(art["strategy_logic"], None, features=new, **args)
+        else:
+            assert resolve_point_in_time_inputs(art["strategy_logic"], None, features=new, **args) == expected
+    with pytest.raises(TypeError):
+        columns["tw_price_5m"]["close"][0]["value"] = -1
+
+
+@pytest.mark.parametrize("short,overnight", [(False, False), (True, False), (False, True)])
+def test_reuse_matches_corrected_engine_signals_actual_fills_costs_and_positions(monkeypatch, short, overnight):
+    import services.research.vectorbt.adapter.vectorbt_adapter as adapter
+    import numpy as np
+
+    net, gross = _capture_actual_portfolios(monkeypatch)
+    ds, art = _actual_fill_case(short=short, overnight=overnight)
+    # Two instruments with distinct paths expose accidental sharing across instrument identities.
+    art["parameters"]["symbols"] = ["2330", "2317"]
+    for row in ds["records"]:
+        if row["instrument"] == "2317":
+            row.update(open=610.0, high=611.0, low=609.0, close=610.0)
+    _resnap(ds)
+    prepared = GovernedVectorbtInputAdapter().prepare(ds)
+    cfg = BacktestConfig(strategy_artifact=art, apply_taiwan_fill_costs=True)
+    def execute():
+        net_start, gross_start = len(net), len(gross)
+        closes = {}
+        actions = adapter._artifact_action_sequence(prepared, art, close_actions=closes)
+        try:
+            result = adapter.VectorbtBackend().run(prepared, cfg)
+            outcome = (result.per_instrument_metrics, result.aggregate_metrics)
+        except IntradayExecutionError as exc:
+            # A legitimate insolvent short cover must fail identically and preserve its account.
+            outcome = (str(exc), exc.instrument, exc.bar_start, exc.cash, exc.position)
+        portfolios = [(pf.orders.records.copy(), pf.cash().to_numpy(), pf.assets().to_numpy(),
+                       pf.value().to_numpy()) for pf in net[net_start:] + gross[gross_start:]]
+        return actions, closes, outcome, portfolios
+
+    current = execute()
+    monkeypatch.setattr(adapter, "_prepared_replay_features", lambda *args: (None, False))
+    reuse_closes = adapter._closes_window
+    monkeypatch.setattr(adapter, "_closes_window", lambda *args, **kwargs: reuse_closes(*args))
+    baseline = execute()  # Same corrected engine, rebuilding every original visible prefix.
+    assert current[:2] == baseline[:2]
+    assert current[2] == baseline[2]
+    assert len(current[3]) == len(baseline[3])
+    for left, right in zip(current[3], baseline[3]):
+        assert left[0].equals(right[0])
+        for a, b in zip(left[1:], right[1:]):
+            np.testing.assert_array_equal(a, b)
+
+
+def test_session_prefix_does_not_hide_invalid_older_observations():
+    from services.research.vectorbt.adapter.vectorbt_adapter import _prepared_replay_features
+
+    ds = _dataset()
+    ds["records"][0]["close"] = float("nan")
+    _resnap(ds)
+    prepared = GovernedVectorbtInputAdapter().prepare(ds)
+    with pytest.raises(VectorbtWorkflowError, match="must carry value"):
+        _prepared_replay_features(prepared, ds["records"][0]["instrument"], _minute_art("5m"))
+
+
 # --- governed evaluator boundary + production entry-point wiring ----------------------------------
 
 def test_standalone_minute_ic_rejects_quarantined_future_unavailable_and_unsnapshotted():
