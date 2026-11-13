@@ -142,3 +142,52 @@ class ResearchDemandStore:
             return [r for r in rows if r["tenant_id"] == tenant_id and r["persona_id"] == persona_id]
         finally:
             lock.close()
+
+    def record_discovery(self, tenant_id: str, demand_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Record one discovery run on an open demand.
+
+        ``record`` carries ``run_at``, ``matched``/``excluded`` counts, an optional ``reason`` and
+        ``actions`` (receipts). An action already recorded for the same ``(match_id, action)`` is
+        kept as first recorded, so a later run never repeats or overwrites an executed receipt.
+        """
+        lock = self._locked()
+        try:
+            rows = self._load()
+            changed = self._expire(rows)
+            for row in rows:
+                if row["tenant_id"] != tenant_id or row["demand_id"] != demand_id:
+                    continue
+                if row["status"] != "open":
+                    if changed:
+                        self._save(rows)
+                    raise DemandError(f"demand {demand_id} is {row['status']}, not open")
+                known = dict(row.get("discovery") or {})
+                actions = list(known.get("actions") or [])
+                index = {(a.get("match_id"), a.get("action")): i for i, a in enumerate(actions)}
+                run_at = record.get("run_at")
+                for action in record.get("actions") or []:
+                    key = (action.get("match_id"), action.get("action"))
+                    attempt = {"run_at": run_at, "status": action.get("status"), "reason": action.get("reason")}
+                    if key not in index:
+                        index[key] = len(actions)
+                        actions.append({**action, "attempts": [attempt]})
+                        continue
+                    kept = actions[index[key]]
+                    history = list(kept.get("attempts") or [{"run_at": None, "status": kept.get("status"), "reason": kept.get("reason")}])
+                    if kept.get("status") != "failed":
+                        continue  # an executed receipt is authoritative: never repeated, never overwritten
+                    # a failed attempt stays in the history; a later outcome (success or failure) becomes current
+                    actions[index[key]] = {**action, "attempts": history + [attempt]}
+                row["discovery"] = {
+                    "actions": actions,
+                    "last_run": {k: v for k, v in record.items() if k != "actions"},
+                    "run_count": int(known.get("run_count") or 0) + 1,
+                }
+                validate_demand(row)
+                self._save(rows)
+                return dict(row)
+            if changed:
+                self._save(rows)
+            raise DemandError(f"demand {demand_id} not found")
+        finally:
+            lock.close()
