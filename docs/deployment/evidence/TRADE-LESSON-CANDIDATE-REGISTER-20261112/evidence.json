@@ -19,6 +19,7 @@
     "No hosted PASS claimed."
   ],
   "reopen_fixes": {
+    "paper_scope_fail_closed": "is_sensitive_change = not is_paper_only_eligible; exact allowlist scopes {strategy,regime,pattern,execution} and no sensitive wording (position size/equity/sizing/etc.) in proposed_change; compound/unknown scopes stay pending human endorsement; tests test_paper_shortcut_fails_closed_for_capital_and_unknown_scope",
     "unconfigured_registration": "write_owner.register_lessons now raises retryable 503 when PANTHEON_MEMORY_API_URL unset; persona docker-compose service sets PANTHEON_MEMORY_API_URL=http://memory:8086; test_unconfigured_memory_registration_fails_closed_and_persists_nothing",
     "risk_review": "POST /trade-lessons/{id}/risk-review mints a durable review from verified risk-role identity (distinct from candidate persona); paper-endorse resolves review by id, bound to tenant/candidate/reflection_version; tests test_risk_review_is_bound_to_candidate_and_tenant",
     "supporting_evidence": "check_evaluation_gates counts regimes only from episodes whose id is a candidate episode id with exact tenant/persona, deduped; test_pattern_gate_ignores_unrelated_episodes"

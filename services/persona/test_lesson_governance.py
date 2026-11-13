@@ -11,6 +11,7 @@ from services.persona.lesson_governance import (
     LessonGovernanceService,
     TradeLessonCandidateError,
     TradeLessonCandidateStore,
+    is_paper_only_eligible,
     is_sensitive_change,
     check_evaluation_gates,
     utc_now,
@@ -390,3 +391,25 @@ class _LessonCandidateProvider:
             "lesson_candidates": [{"scope": "execution", "proposed_change": "enter on pullbacks", "confidence": 0.8}],
             "mistakes": [], "what_worked": [], "unknowns": [], "followups": [],
         }
+
+
+@pytest.mark.parametrize(
+    "scope,change",
+    [
+        ("capital allocation", "Increase position size from 1% to 10% of account equity"),
+        ("strategy", "Increase position size from 1% to 10% of account equity"),
+        ("strategy/capital", "enter on pullbacks"),
+        ("unknown_scope", "enter on pullbacks"),
+        ("", "enter on pullbacks"),
+        ("Risk", "enter on pullbacks"),
+    ],
+)
+def test_paper_shortcut_fails_closed_for_capital_and_unknown_scope(scope: str, change: str) -> None:
+    candidate = make_valid_candidate({"scope": scope, "proposed_change": change})
+    assert not is_paper_only_eligible(candidate)
+    assert is_sensitive_change(candidate)
+
+
+def test_paper_shortcut_allows_explicit_paper_only_scope() -> None:
+    candidate = make_valid_candidate({"scope": " Strategy ", "proposed_change": "enter on pullbacks"})
+    assert is_paper_only_eligible(candidate)

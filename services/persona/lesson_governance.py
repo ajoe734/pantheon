@@ -127,14 +127,27 @@ class MemoryLessonRegistrar:
         return result
 
 
-def is_sensitive_change(candidate: Dict[str, Any]) -> bool:
-    """Check if the lesson candidate proposes changes to policy, risk, capital, or live behaviors."""
-    scope = str(candidate.get("scope", "")).lower()
+_SENSITIVE_KEYWORDS = (
+    "policy", "risk", "capital", "live", "allocation", "allocat", "leverage", "limit", "position size",
+    "position-size", "sizing", "equity", "margin", "exposure", "drawdown", "stop loss", "stop-loss",
+    "notional", "portfolio", "budget", "guardrail", "kill switch", "production", "real money",
+)
+# Fail-closed allowlist: only these plain scope labels may use the paper-only shortcut.
+PAPER_ONLY_SCOPES = frozenset({"strategy", "regime", "pattern", "execution"})
+
+
+def is_paper_only_eligible(candidate: Dict[str, Any]) -> bool:
+    """True only for an explicitly allowlisted, exact scope label with no sensitive wording anywhere."""
+    scope = str(candidate.get("scope", "")).strip().lower()
+    if scope not in PAPER_ONLY_SCOPES:
+        return False
     change = str(candidate.get("proposed_change", "")).lower()
-    sensitive_keywords = {"policy", "risk", "capital", "live", "allocation", "leverage", "limit"}
-    if scope in sensitive_keywords:
-        return True
-    return any(keyword in change for keyword in sensitive_keywords)
+    return not any(keyword in change for keyword in _SENSITIVE_KEYWORDS)
+
+
+def is_sensitive_change(candidate: Dict[str, Any]) -> bool:
+    """Fail closed: anything not explicitly paper-only eligible is treated as sensitive."""
+    return not is_paper_only_eligible(candidate)
 
 
 def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, Any]]) -> List[str]:

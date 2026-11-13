@@ -148,6 +148,7 @@ lesson state：`proposed → pending_review → endorsed → merged`，或 `quar
   由 memory service 產生 review_id 並持久化，綁定 tenant、candidate、reflection_version；paper-endorse 只信任
   review_id，並從 store 還原 review，偽造、他 candidate、他 tenant、版本過期者一律拒絕。支持證據的 regime 只計算
   屬於該 candidate 的 episode id（且 tenant／persona 完全相符、id 去重）。review id 記入 endorsement receipt。
+- 資格判定 fail-closed：scope 必須精確等於 allowlist（strategy／regime／pattern／execution），且 proposed_change 不得含 position size／equity／sizing／exposure 等敏感字樣；複合或未知 scope（如 capital allocation）一律視為敏感。
 - 涉及 risk、capital、policy、live 的 lesson，或 target_env 非 paper 者，維持 pending，需人工背書
   與既有 governance approval；expired、quarantined、rejected 的 candidate 一律不得背書或 merge。
 
