@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -943,3 +944,29 @@ def test_recorded_rss_bundle_negatives_future_time_order_and_hash(tmp_path):
         _pull_rss(tmp_path / "n", "Wed, 11 Nov 2026 04:37:00")
     with pytest.raises(SourceEvidenceError):
         _pull_rss(tmp_path / "h", "Wed, 11 Nov 2026 04:37:00 GMT", raw_tamper=True)
+
+
+# Exact NATIVE bytes (not generated): private evidence pack extracted by the operator; set
+# PANTHEON_NATIVE_RSS_PACK_DIR to the extraction dir. Skipped when absent (pack is not in the repo).
+_NATIVE_PACK = os.environ.get("PANTHEON_NATIVE_RSS_PACK_DIR")
+_NATIVE_RUN = "bundles/collector-news-rss/2026-11-11/run-20261111T044920Z"
+
+
+@pytest.mark.skipif(not _NATIVE_PACK, reason="private native RSS pack not provided")
+def test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader(tmp_path):
+    root = Path(_NATIVE_PACK)
+    files = {str(p.relative_to(root)): p.read_bytes() for p in (root / _NATIVE_RUN).rglob("*") if p.is_file()}
+    entry = {"source_id": "collector-news-rss", "date": "2026-11-11", "run_id": "run-20261111T044920Z",
+             "finished_at": "2026-11-11T04:49:20Z"}
+    native_row = next(json.loads(l) for l in files[f"{_NATIVE_RUN}/items.jsonl"].decode().splitlines()
+                      if json.loads(l)["id"] == "news-cna-202611110105-aspx")
+    assert native_row["published_at"] == "Wed, 11 Nov 2026 04:37:00 GMT"  # exact retained literal
+    res = adapter_for(files, [entry], tmp_path, source_id="collector-news-rss", source_type="news",
+                      platform=None, publisher="cna").pull()
+    manifest = json.loads(files[f"{_NATIVE_RUN}/manifest.json"])
+    native_sha = next(i["content_sha256"] for i in manifest["items"] if i["item_id"] == "news-cna-202611110105-aspx")
+    rec = next(r for r in res.records if r.metadata["content_hash"] == "sha256:" + native_sha)
+    assert rec.metadata["collector"]["bundle_sha256"] == "d31fa3480140d40c59d6f54481dce8f17f15e128a173985abfd3179022800c2e"
+    assert rec.metadata["available_time"] == "2026-11-11T04:49:20Z"
+    assert rec.metadata["published_at"] == "2026-11-11T04:37:00Z"
+    assert len(res.records) == 20

@@ -19,9 +19,19 @@
     "raw hash mismatch"
   ],
   "commands": {
-    "result": "158 passed, exit 0",
+    "result": "159 passed, exit 0 (with PANTHEON_NATIVE_RSS_PACK_DIR set); 58 passed + 1 skipped without it",
     "all": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py deploy/collector/tests/test_spiders_and_pollers.py"
   },
   "scope": "source-only; no network/provider/host operations",
-  "recorded_rss_bundle": "NOT PROVIDED: the named retained sanitized RSS proof/native bundle for run ingest-de7de36ab114 (item news-cna-202611110105-aspx) is not in the repo or worktree. test_recorded_rss_bundle_* use a GENERATED synthetic fixture (title t, x.test URL, run1, fph, freshly computed hashes) through CollectorBundleAdapter.pull() only; they are NOT native bytes and do not prove original raw/hash/time provenance. Required artifact: sanitized native bundle (manifest.json, items.jsonl, raw/<sha>.xml) with original content_sha256/bundle_sha256/fetched_at and the exact 'Wed, 11 Nov 2026 04:37:00 GMT' literal, to replay through the configured ingestion path with isolated local stores."
+  "recorded_rss_bundle": {
+    "status": "NATIVE BYTES REPLAYED",
+    "test": "test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader (env PANTHEON_NATIVE_RSS_PACK_DIR; skipped in CI because the private pack is not in the repo)",
+    "pack": "native-collector-news-rss-exact-timestamp-bundle-20261113.zip sha256 0c07642f45472cef9419a373729f9bea057a8576c06adc13be4ff083ee82d91d (verified before extraction), 22 files, original bytes not regenerated",
+    "native_run": "collector-news-rss/2026-11-11/run-20261111T044920Z, bundle_sha256 d31fa3480140d40c59d6f54481dce8f17f15e128a173985abfd3179022800c2e, finished 2026-11-11T04:49:20Z",
+    "native_item": "news-cna-202611110105-aspx published_at literal 'Wed, 11 Nov 2026 04:37:00 GMT', fetched_at 2026-11-11T04:49:20Z",
+    "old_fails": "reader at f76e4dba6: SourceEvidenceError 'collector bundle item news-cna-202611110105-aspx published_at must be ISO-8601: 'Wed, 11 Nov 2026 04:37:00 GMT'' (1 failed)",
+    "new_passes": "all 20 native items pull via CollectorBundleAdapter.pull(); item event_time/published_at 2026-11-11T04:37:00Z, available_time 2026-11-11T04:49:20Z, content_hash = original raw sha256",
+    "generated_fixture_note": "test_recorded_rss_bundle_* remain GENERATED synthetic variants (not native) for ISO-equivalent/negative/replay cases.",
+    "scope": "local isolated stores via pull(); no network/provider/host access; configured scheduled path not separately exercised."
+  }
 }
