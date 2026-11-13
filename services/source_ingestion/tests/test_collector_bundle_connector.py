@@ -1078,7 +1078,7 @@ def _slow_setup(tmp_path, monkeypatch, *, n_rows=12, cost=5.0, budget=15.0, tamp
         return CollectorBundleAdapter(
             connector_id="conn-x", raw_root=str(tmp_path / "store"), transport=transport, host=HOST,
             source_id=source_id, source_type="market", attribution_required=True, dataset="tw_price_daily",
-            max_records=500, read_budget_seconds=budget,
+            max_records=500, read_budget_seconds=budget, history_raw_read_concurrency=1,
         )
 
     return make, transport, clock
@@ -1577,8 +1577,7 @@ def _intake_bundle(source, count, dataset, exchange, trade_date, *, newest=False
     return files, {"source_id": source, "date": date, "run_id": run, "finished_at": finished}
 
 
-@pytest.mark.parametrize("spec", _INTAKE_SIZES, ids=[s[0] for s in _INTAKE_SIZES])
-def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_path, monkeypatch, spec):
+def _measure_real_size_sweep(tmp_path, monkeypatch, spec):
     import threading
     import types
     import time as real_time
@@ -1601,11 +1600,11 @@ def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_pat
                 start = now[0]
                 active[0] += 1; peak[0] = max(peak[0], active[0])
             try:
-                real_time.sleep(0.0005)  # real overlapping I/O; clock accounts 50ms per receive
+                real_time.sleep(0.005)  # allow all sixteen readers to enter before charging 270ms
                 return super().read(path, max_bytes=max_bytes)
             finally:
                 with lock:
-                    now[0] = max(now[0], start + 0.05)
+                    now[0] = max(now[0], start + 0.27)
                     active[0] -= 1
                     raw_reads[0] += int("/raw/" in path)
 
@@ -1614,10 +1613,20 @@ def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_pat
                                      max_records=cap, cadence_seconds=cadence, attribution_required=True,
                                      transport=Transport(files), raw_root=str(tmp_path / "store"))
     cursor, seen, durations, batches = None, set(), [], []
+    startup_seconds, history_seconds, history_rows = 0.0, 0.0, 0
+    startup_wall, history_wall = 0.0, 0.0
     wall_start = real_time.perf_counter()
     for _ in range(150):
-        start = now[0]
+        start, wall_pull = now[0], real_time.perf_counter()
         result = adapter.pull(cursor=cursor)
+        wall_pull = real_time.perf_counter() - wall_pull
+        if result.priority_key:
+            startup_seconds += now[0] - start + 1
+            startup_wall += wall_pull
+        else:
+            history_seconds += now[0] - start + 1
+            history_wall += wall_pull
+            history_rows += len(result.records)
         durations.append(now[0] - start); batches.append(len(result.records))
         if dataset == "tw_price_daily" and not seen:
             assert {r.metadata["trade_date"] for r in result.records} == {"2026-11-13"}
@@ -1632,14 +1641,27 @@ def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_pat
     assert result.complete and len(seen) == count * 3
     assert "|items=" not in cursor and cursor.endswith("#close-2026-11-13")
     assert max(durations) < 17  # one 15-second pull, small metadata/read floor overhead
-    assert 1 < peak[0] <= 4
-    # Conservatively scale *all* reads including newest replay and metadata to 488 dates.
-    extrapolated = (sum(durations) + len(durations)) * 488 / 3
+    assert 1 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
+    # Allow two newest sessions during 48 hours. Scale the measured ordered
+    # row rate (including metadata, newest replay and mixed-bundle overhead),
+    # rather than multiplying a cold newest-session startup 488 times.
+    extrapolated = 2*(startup_seconds + startup_wall) + (history_seconds + history_wall)*488*count/history_rows
     assert extrapolated < 48 * 3600
     print("INTAKE_RATE " + json.dumps({"source": source, "days": 3, "unique_rows": len(seen),
           "pulls": len(batches), "rows_per_pull": batches, "model_seconds": sum(durations),
           "max_pull_seconds": max(durations), "wall_seconds": real_time.perf_counter() - wall_start,
-          "raw_reads": raw_reads[0], "peak_inflight": peak[0], "extrapolated_488_days_seconds": extrapolated}))
+          "raw_reads": raw_reads[0], "peak_inflight": peak[0], "startup_model_seconds_with_pauses": startup_seconds,
+          "startup_wall_seconds": startup_wall, "history_model_seconds_with_pauses": history_seconds,
+          "history_wall_seconds": history_wall, "history_rows": history_rows,
+          "extrapolated_488_days_seconds": extrapolated}))
+    return extrapolated
+
+
+def test_real_size_two_day_sweep_continues_and_preserves_newest_priority(tmp_path, monkeypatch):
+    # Steady pulls share one controller slot: sum all sources, never claim that
+    # three individually sub-48h sweeps necessarily fit the shared 48h budget.
+    total = sum(_measure_real_size_sweep(tmp_path / spec[0], monkeypatch, spec) for spec in _INTAKE_SIZES)
+    assert total + 600 < 48*3600  # include one worst-phase source-admission delay
 
 
 def test_market_partial_producer_bundle_does_not_retry_hot(tmp_path):
@@ -1727,12 +1749,12 @@ def test_candidate_and_current_real_size_ordered_pull_measurement(tmp_path, monk
                     with lock:
                         start = clock[0]
                     if "/raw/" in path:
-                        real_time.sleep(0.001)  # permits real overlap, 50ms model cost
+                        real_time.sleep(0.005)  # permits all sixteen reads to overlap, 270ms model cost
                     try:
                         return super().read(path, max_bytes=max_bytes)
                     finally:
                         with lock:
-                            clock[0] = max(clock[0], start + 0.05)
+                            clock[0] = max(clock[0], start + 0.27)
                             reads[0] += int("/raw/" in path)
             monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
             adapter = module.CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
@@ -1750,7 +1772,8 @@ def test_candidate_and_current_real_size_ordered_pull_measurement(tmp_path, monk
                                  "continuation_pending": result.observed.get("continuation_pending", False)})
             assert len(result.records) > 0 and clock[0] < 16
         assert measurements[0]["rows"] < cap  # 15 seconds binds the candidate
-        assert measurements[1]["rows"] == cap  # overlap makes the output cap bind instead
+        assert measurements[1]["rows"] > measurements[0]["rows"]
+        assert measurements[1]["rows"] <= cap  # cap and shared deadline both remain binding
         if dataset == "tw_institutional_flow":
             assert measurements[0]["continuation_pending"] is False
             assert measurements[1]["continuation_pending"] is True

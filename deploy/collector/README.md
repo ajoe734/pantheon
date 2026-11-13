@@ -211,7 +211,7 @@ prefix capped by rows or time now requests a continuation after one second,
 until its ordered sweep completes. Newest price-session rows still precede the
 history sweep; held symbols retain their existing ordering. Producer partial or
 paused bundles and failed pulls retain normal cadence. At most four guarded raw
-reads overlap, including history; bundle order, verification, cursor acknowledgement
+reads overlap for newest sessions and sixteen for historical sweeps; bundle order, verification, cursor acknowledgement
 and persistence remain ordered. This does not change Collector requests to exchanges.
 
 Each status publication includes **all fetch-policy sources**, including sources

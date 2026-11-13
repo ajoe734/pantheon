@@ -79,9 +79,10 @@ _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # every transport read share it, so one request can never run past the controller boundary.
 COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
 # Market raw reads overlap. Metadata and bundle/cursor traversal remain
-# ordered; at most four guarded Collector requests are in flight, with no queue
+# ordered; newest closes use four readers, historical sweeps at most sixteen, with no queue
 # beyond that batch and no reader surviving the pull.
 LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
+HISTORY_RAW_READ_CONCURRENCY = 16
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
@@ -404,8 +405,8 @@ def verify_bundle(
     further raw file is fetched (at least one is always read so every pull progresses) and
     ``verified_through`` records how far verification got. Nothing is skipped or assumed.
 
-    ``raw_read_concurrency`` overlaps at most four reads per bounded batch for
-    newest closes. Every reader shares the operation context/deadline and joins
+    ``raw_read_concurrency`` overlaps a bounded batch (four for newest closes,
+    sixteen for historical market sweeps). Every reader shares the operation context/deadline and joins
     before return; a timeout can retain only an ordered verified prefix.
     """
 
@@ -501,7 +502,7 @@ def verify_bundle(
             raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
         return actual, data
 
-    width = max(1, min(raw_read_concurrency, LATEST_CLOSE_RAW_READ_CONCURRENCY))
+    width = max(1, min(raw_read_concurrency, HISTORY_RAW_READ_CONCURRENCY))
     # A separate context per worker preserves the *same* operation deadline and
     # egress policy. Never acknowledge out of order or discard a genuine failure
     # from a later parallel read merely because an earlier read timed out.
@@ -669,6 +670,7 @@ class CollectorBundleAdapter:
     # Whole-pull raw read budget, kept below the controller's per-request timeout; the
     # remainder stays pending behind a partial cursor. None disables the budget.
     read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    history_raw_read_concurrency: int = HISTORY_RAW_READ_CONCURRENCY
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -984,7 +986,7 @@ class CollectorBundleAdapter:
                 bundle = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
                     deadline=deadline,
-                    raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY if self.source_type == "market" else 1,
+                    raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
                 )
             except TimeoutError:
                 # A later bundle cut by the shared deadline before any of its rows verified
