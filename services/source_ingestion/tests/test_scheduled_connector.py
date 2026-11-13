@@ -2584,7 +2584,7 @@ def test_full_size_close_through_controller_main_with_persistence(
                 "sha256": module.runtime._desired_state_digest(list(personas))}
     config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
                      state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, interval_seconds=60,
-                     max_concurrency=1)
+                     max_concurrency=1, timeout_seconds=30)
     monkeypatch.setattr(cw, "config_from_env", lambda: config)
     monkeypatch.setattr(cw, "_new_state", tcw._state)
     monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
@@ -2598,11 +2598,14 @@ def test_full_size_close_through_controller_main_with_persistence(
     monkeypatch.setattr(cw, "_request_json", timed_request)
     sleeps, progress, completed_at, receipts = [], {cid: [] for cid in paths}, {}, []
     tick_request = cw._request_json
+    schedule_elapsed = []
 
     def record_receipts(*args, **kwargs):
+        wall_started, model_started = time.perf_counter(), clock[0]
         response = tick_request(*args, **kwargs)
         if args[0].endswith("/run-scheduled"):
             receipts.extend(item["receipt"] for item in response["ran"])
+            schedule_elapsed.append(time.perf_counter() - wall_started + clock[0] - model_started)
         return response
 
     monkeypatch.setattr(cw, "_request_json", record_receipts)
@@ -2667,9 +2670,11 @@ def test_full_size_close_through_controller_main_with_persistence(
             assert fetch["max_records"] == 1000
     assert cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths))) == []
     assert active[0] == 0
+    assert max(schedule_elapsed) < config.timeout_seconds
     elapsed = clock[0] + time.monotonic() - real_start
     print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
-           "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2)})
+           "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2),
+           "max_schedule_request_seconds": max(schedule_elapsed)})
     assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"
 
 
@@ -2726,14 +2731,7 @@ def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack,
     counts, durations = [], []
     for n in range(3):
         start = time.monotonic()
-        try:
-            result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
-        except cw.ControllerTickError as exc:
-            item = exc.context["actual_readback"]["connectors"][0]
-            from collections import Counter
-            print("T86_FAILURE", n, item["freshness"]["latest_run"], item["latest_source_record"]["provenance"], item["latest_source_record_receipt"])
-            print("T86_RUNS", Counter(r.metadata.get("source_ingest_run_id") for r in module.runtime.evidence_repository.list_source_records()), [(r.ingest_run_id,r.finished_at) for r in module.runtime.store.read_freshness_snapshot()["receipts"]])
-            raise
+        result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
         durations.append(time.monotonic() - start)
         assert result["status"] == "ok"
         runs = module.runtime.store.list_runs()

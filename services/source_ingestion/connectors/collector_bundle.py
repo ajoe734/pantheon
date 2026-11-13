@@ -965,6 +965,7 @@ class CollectorBundleAdapter:
         # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
+        window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
         deadline = _OP_DEADLINE.get()
@@ -994,6 +995,7 @@ class CollectorBundleAdapter:
                     break
                 raise
             verified.append(bundle)
+            window_stops[bundle.cursor] = skip + remaining
             if bundle.verified_through is not None:
                 # Read budget exhausted mid-window: later rows/bundles stay pending.
                 unverified_pending = True
@@ -1012,7 +1014,9 @@ class CollectorBundleAdapter:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            stop = len(bundle.items) if bundle.verified_through is None else bundle.verified_through
+            stop = min(len(bundle.items), window_stops[bundle.cursor])
+            if bundle.verified_through is not None:
+                stop = min(stop, bundle.verified_through)
             for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
@@ -1393,7 +1397,9 @@ class CollectorBundleAdapter:
         # bundles fully represented in `records`. A bundle larger than the remaining
         # budget is consumed partially (``<key>|items=<n>``) so a bundle bigger than the
         # public cap still makes bounded progress instead of starving every later pull.
-        if len(records) < len(all_records):
+        if len(records) < len(all_records) or len(records) < sum(
+            max(len(b.items) - skips.get(b.cursor, 0), 0) for b in verified if b.status != "paused"
+        ):
             kept = len(records)
             next_cursor = cursor
             running = 0

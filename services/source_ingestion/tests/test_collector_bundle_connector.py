@@ -1692,3 +1692,88 @@ def test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback(tmp_pat
         assert adapter._priority_key_path().is_file()
     finally:
         sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize("spec", _INTAKE_SIZES, ids=[s[0] for s in _INTAKE_SIZES])
+def test_candidate_and_current_real_size_ordered_pull_measurement(tmp_path, monkeypatch, spec):
+    """AC1 ordered-sweep comparison after the separately acknowledged latest session."""
+    import importlib.util
+    import subprocess
+    import sys
+    import threading
+    import time as real_time
+    import types
+    from services.source_ingestion.connectors import collector_bundle as cb
+    source_text = subprocess.run(["git", "show", "3ed0ea555:services/source_ingestion/connectors/collector_bundle.py"],
+                                 capture_output=True, text=True, timeout=10)
+    if source_text.returncode:
+        pytest.skip("candidate object unavailable in shallow clone; use full release history")
+    path = tmp_path / "candidate.py"; path.write_text(source_text.stdout)
+    name = "services.source_ingestion.connectors.candidate_measurement"
+    loader = importlib.util.spec_from_file_location(name, path)
+    candidate = importlib.util.module_from_spec(loader); sys.modules[name] = candidate
+    loader.loader.exec_module(candidate)
+    source, count, dataset, exchange, cap, cadence = spec
+    files, entry = _intake_bundle(source, count, dataset, exchange, "2024-11-12")
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": entry["finished_at"]}}}).encode()
+    measurements = []
+    try:
+        for label, module in (("3ed0ea555", candidate), ("current", cb)):
+            clock, reads = [0.0], [0]
+            lock = threading.Lock()
+            class Transport(FakeTransport):
+                def read(self, path, *, max_bytes):
+                    with lock:
+                        start = clock[0]
+                    if "/raw/" in path:
+                        real_time.sleep(0.001)  # permits real overlap, 50ms model cost
+                    try:
+                        return super().read(path, max_bytes=max_bytes)
+                    finally:
+                        with lock:
+                            clock[0] = max(clock[0], start + 0.05)
+                            reads[0] += int("/raw/" in path)
+            monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+            adapter = module.CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
+                        dataset=dataset, attribution_required=True, max_records=cap, cadence_seconds=cadence,
+                        raw_root=str(tmp_path / label), transport=Transport(files))
+            if dataset == "tw_price_daily":
+                priority = adapter._priority_key_path()
+                priority.parent.mkdir(parents=True, exist_ok=True)
+                priority.write_text(json.dumps({"source_id": source, "key": entry["finished_at"] + "#" + entry["run_id"],
+                                                "delivered": count, "done": True, "held": []}))
+            start = real_time.perf_counter(); result = adapter.pull()
+            measurements.append({"version": label, "source": source, "bundle_rows": count,
+                                 "rows": len(result.records), "raw_reads": reads[0], "wall_seconds": real_time.perf_counter()-start,
+                                 "model_seconds": clock[0], "cap": cap, "cadence_seconds": cadence,
+                                 "continuation_pending": result.observed.get("continuation_pending", False)})
+            assert len(result.records) > 0 and clock[0] < 16
+        assert measurements[0]["rows"] < cap  # 15 seconds binds the candidate
+        assert measurements[1]["rows"] == cap  # overlap makes the output cap bind instead
+        if dataset == "tw_institutional_flow":
+            assert measurements[0]["continuation_pending"] is False
+            assert measurements[1]["continuation_pending"] is True
+        print("INTAKE_ORDERED_PULL " + json.dumps(measurements))
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_capped_history_maps_only_verified_window_and_retains_partial_cursor(tmp_path, monkeypatch):
+    source, count, dataset, exchange, cap, cadence = _INTAKE_SIZES[1]
+    files, entry = _intake_bundle(source, count, dataset, exchange, "2024-11-12")
+    adapter = adapter_for(files, [entry], tmp_path, source_id=source, source_type="market", dataset=dataset,
+                          max_records=cap, cadence_seconds=86400)  # ordered path
+    mapped = []
+    record = CollectorBundleAdapter._record
+    def count_record(self, bundle, row, **kw):
+        mapped.append(row["id"])
+        assert bundle.manifest_items[row["id"]]["content_sha256"] in bundle.raw_bytes
+        return record(self, bundle, row, **kw)
+    monkeypatch.setattr(CollectorBundleAdapter, "_record", count_record)
+    first = adapter.pull()
+    assert len(mapped) == len(first.records) == cap
+    assert first.next_cursor.endswith("|items=1000") and not first.complete
+    second = adapter.pull(cursor=first.next_cursor)
+    assert len(mapped) == 2*cap and second.next_cursor.endswith("|items=2000")
+    assert {r.source_id for r in first.records}.isdisjoint(r.source_id for r in second.records)
