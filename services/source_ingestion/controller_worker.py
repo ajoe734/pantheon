@@ -39,6 +39,7 @@ CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
 # own cadence. Deliberately outside CONTROLLER_MODES: the finite one-shot entry
 # (run_controller_once / scheduler_once) must never accept it.
 COLLECTOR_STEADY_PULL_MODE = "collector_steady_pull"
+STEADY_PULLS_PER_REQUEST = 1
 CONFIGURABLE_CONTROLLER_MODES = CONTROLLER_MODES | {COLLECTOR_STEADY_PULL_MODE}
 UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
 MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
@@ -700,6 +701,49 @@ def _collector_cover_session_close(trade_date: str) -> datetime:
     return datetime(day.year, day.month, day.day, 5, 30, tzinfo=timezone.utc)  # 13:30 Asia/Taipei
 
 
+def _iso_date_after(run_date: str, session_date: Any) -> bool:
+    from datetime import date as _date
+
+    if session_date is None:
+        return False
+    try:
+        return _date.fromisoformat(run_date) > session_date
+    except ValueError:
+        return False
+
+
+_TAIWAN_SESSION_CONNECTOR_IDS = frozenset(
+    {"tw-finmind-broker-daily-report", "tw-taifex-futures-options-chip", "tw-twse-tpex-official-market"}
+)
+
+
+def _latest_eligible_session(connector_id: str, now: datetime | None) -> Any:
+    """Latest closed (TWSE/TAIFEX 13:30) or published (FinMind 18:00) Taipei session.
+
+    None for connectors without governed Taiwan session eligibility: nothing is deferred."""
+    if connector_id not in _TAIWAN_SESSION_CONNECTOR_IDS:
+        return None
+    from datetime import time as _time, timedelta
+
+    from .connectors.finmind_taiwan import latest_published_broker_session
+    from .connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def is_session_day(day: Any) -> bool:
+        evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and (not evidence or day.isoformat() not in (evidence.get("holidays") or {}))
+
+    current = now or datetime.now(timezone.utc)
+    if connector_id == "tw-finmind-broker-daily-report":
+        return latest_published_broker_session(current, is_session_day=is_session_day)
+    taipei = current.astimezone(timezone(timedelta(hours=8)))
+    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if is_session_day(cursor):
+            break
+        cursor -= timedelta(days=1)
+    return cursor
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -711,6 +755,8 @@ def _validate_terminal_readback(
     expected_exclusive_connector_ids: Sequence[str] = (),
     collector_connector_ids: Sequence[str] = (),
     now: datetime | None = None,
+    frontier_items: Sequence[Mapping[str, Any]] = (),
+    session_selected_at: datetime | None = None,
 ) -> int:
     collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
@@ -912,6 +958,59 @@ def _validate_terminal_readback(
         if exclusive_connector_ids
         else frontier_backlog
     )
+    if validated_frontier_backlog and exclusive_connector_ids and frontier_items:
+        # Reconcile the aggregate against the unique per-connector frontier items
+        # read separately; any disagreement (e.g. a concurrent enqueue) fails closed.
+        # Only queued, never-attempted work for a session after the latest
+        # closed/published one is deferred (visible, not proof for that session);
+        # every other unresolved item still counts.
+        unique: dict[str, Mapping[str, Any]] = {}
+        for item in frontier_items:
+            connector_id = str(item.get("connector_id") or "")
+            if connector_id in exclusive_connector_ids and item.get("status") in {"queued", "retry", "running"}:
+                frontier_id = item.get("frontier_id")
+                if not isinstance(frontier_id, str) or not frontier_id or frontier_id in unique:
+                    raise ControllerTickError(
+                        "actual_readback",
+                        "authoritative frontier items are malformed or duplicated",
+                        reconcile=reconcile,
+                        schedule=schedule,
+                        actual_readback=actual,
+                    )
+                unique[frontier_id] = item
+        per_connector: dict[str, int] = {}
+        for item in unique.values():
+            per_connector[str(item["connector_id"])] = per_connector.get(str(item["connector_id"]), 0) + 1
+        if per_connector != {
+            connector_id: frontier_backlog_by_connector[connector_id]
+            for connector_id in exclusive_connector_ids
+            if connector_id in frontier_backlog_by_connector
+        }:
+            raise ControllerTickError(
+                "actual_readback",
+                "authoritative frontier items contradict the readback frontier counts",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        validated_frontier_backlog = sum(
+            1
+            for item in unique.values()
+            if not (
+                item.get("status") == "queued"
+                and item.get("attempts") == 0
+                and not item.get("last_error")
+                and _iso_date_after(
+                    str((item.get("job_parameters") or {}).get("run_date") or ""),
+                    # Bind to the session selected at refresh start (same as the
+                    # preparation step) so crossing a close does not retarget it.
+                    _latest_eligible_session(
+                        str(item["connector_id"]),
+                        min(now_dt, session_selected_at) if session_selected_at else now_dt,
+                    ),
+                )
+            )
+        )
     if validated_frontier_backlog:
         scope = "selected connector scope" if exclusive_connector_ids else "global scope"
         raise ControllerTickError(
@@ -1480,6 +1579,17 @@ class ControllerConfig:
     force_connector_ids: tuple[str, ...] = ()
     exclusive_connector_ids: tuple[str, ...] = ()
     frontier_recovery_connector_ids: tuple[str, ...] = ()
+    session_selected_at: datetime | None = None
+
+
+def _env_session_selected_at() -> datetime | None:
+    raw = str(os.getenv("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT") or "").strip()
+    if not raw:
+        return None
+    parsed = parse_utc(raw)
+    if parsed is None or parsed > datetime.now(timezone.utc):
+        raise ValueError("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT must be an aware, non-future timestamp")
+    return parsed
 
 
 def config_from_env() -> ControllerConfig:
@@ -1546,6 +1656,7 @@ def config_from_env() -> ControllerConfig:
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
         frontier_recovery_connector_ids=frontier_recovery_connector_ids,
+        session_selected_at=_env_session_selected_at(),
     )
 
 
@@ -1944,7 +2055,10 @@ def run_controller_tick(
             steady_pull_ids = limit_collector_pull_batch(
                 steady_actual,
                 select_collector_pull_connectors(steady_actual, reconcile),
-                limit=config.max_concurrency,
+                # Claimed connectors run serially inside ONE scheduler HTTP request, so a steady
+                # tick carries exactly one Collector pull (bounded by its own read budget);
+                # the rest stay due for following ticks.
+                limit=STEADY_PULLS_PER_REQUEST,
             )
         provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
         if config.mode == RECONCILE_ONLY_MODE or (
@@ -1995,7 +2109,7 @@ def run_controller_tick(
             )
             schedule = run_schedule_tick(
                 api_url=config.api_url,
-                max_concurrency=config.max_concurrency,
+                max_concurrency=STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency,
                 timeout_seconds=config.timeout_seconds,
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,
@@ -2011,6 +2125,16 @@ def run_controller_tick(
                 expected_deployment=state.deployment,
                 expected_exclusive_connector_ids=exclusive_connector_ids,
                 collector_connector_ids=steady_pull_ids if steady else (),
+                session_selected_at=None if steady else config.session_selected_at,
+                frontier_items=(
+                    read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                    if exclusive_connector_ids
+                    and any(
+                        (actual.get("frontier_backlog_by_connector") or {}).get(connector_id)
+                        for connector_id in exclusive_connector_ids
+                    )
+                    else ()
+                ),
             )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [

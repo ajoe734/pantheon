@@ -252,7 +252,7 @@ def test_rendered_compose_gives_persona_the_bff_jwt_verifier_config():
         env.pop(key, None)
     out = subprocess.run(
         ["docker", "compose", "-f", str(Path(__file__).parents[2] / "docker-compose.yml"),
-         "config", "--format", "json"],
+         "--profile", "core", "config", "--format", "json"],
         env=env, capture_output=True, text=True, check=True,
     ).stdout
     persona = json.loads(out)["services"]["persona"]["environment"]

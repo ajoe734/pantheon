@@ -35,6 +35,15 @@ class GateConfig:
     # after costs by strictly more than this Sharpe margin.
     DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT = 0.0
     # SD_DISCOVERY_DEMAND §3.2: fixed in-sample mechanism tests of card predictions.
+    # SD_INTRADAY_MINUTE_BARS §7 / §9 K6 (operator Q3 default): intraday replication windows are
+    # counted in clean sessions and trades, not days.  These are FLOORS: a GateConfig may raise
+    # them but never lower them, so thin minute history can never relax the gate.
+    DEFAULT_MIN_CLEAN_SESSIONS = 60
+    DEFAULT_MIN_IN_SAMPLE_TRADES = 300
+    DEFAULT_MIN_OOS_SESSIONS = 20
+    DEFAULT_MIN_OOS_TRADES = 100
+    # No walk-forward window longer than 12 months in-sample + 6 months out of sample is claimed.
+    INTRADAY_WALK_FORWARD_CLAIM_LIMIT_MONTHS = (12, 6)
     DEFAULT_MECHANISM_ALPHA = 0.05  # Holm-corrected within the card
     DEFAULT_MECHANISM_MIN_EVENTS = 5
     DEFAULT_MECHANISM_MIN_OBSERVATIONS = 30
@@ -56,6 +65,10 @@ class GateConfig:
         out_of_sample_ratio: float = DEFAULT_OUT_OF_SAMPLE_RATIO,
         walk_forward_folds: int = DEFAULT_WALK_FORWARD_FOLDS,
         min_screen_oos_sharpe_improvement: float = DEFAULT_MIN_SCREEN_OOS_SHARPE_IMPROVEMENT,
+        min_clean_sessions: int = DEFAULT_MIN_CLEAN_SESSIONS,
+        min_in_sample_trades: int = DEFAULT_MIN_IN_SAMPLE_TRADES,
+        min_oos_sessions: int = DEFAULT_MIN_OOS_SESSIONS,
+        min_oos_trades: int = DEFAULT_MIN_OOS_TRADES,
         mechanism_alpha: float = DEFAULT_MECHANISM_ALPHA,
         mechanism_min_events: int = DEFAULT_MECHANISM_MIN_EVENTS,
         mechanism_min_observations: int = DEFAULT_MECHANISM_MIN_OBSERVATIONS,
@@ -78,6 +91,21 @@ class GateConfig:
         self.out_of_sample_ratio = float(out_of_sample_ratio)
         self.walk_forward_folds = int(walk_forward_folds)
         self.min_screen_oos_sharpe_improvement = float(min_screen_oos_sharpe_improvement)
+        for name, value, floor in (
+            ("min_clean_sessions", min_clean_sessions, self.DEFAULT_MIN_CLEAN_SESSIONS),
+            ("min_in_sample_trades", min_in_sample_trades, self.DEFAULT_MIN_IN_SAMPLE_TRADES),
+            ("min_oos_sessions", min_oos_sessions, self.DEFAULT_MIN_OOS_SESSIONS),
+            ("min_oos_trades", min_oos_trades, self.DEFAULT_MIN_OOS_TRADES),
+        ):
+            if int(value) < floor:
+                raise ValueError(
+                    f"{name}={value} is below the intraday replication floor {floor}; "
+                    "insufficient minute history must not lower the gate"
+                )
+        self.min_clean_sessions = int(min_clean_sessions)
+        self.min_in_sample_trades = int(min_in_sample_trades)
+        self.min_oos_sessions = int(min_oos_sessions)
+        self.min_oos_trades = int(min_oos_trades)
         self.mechanism_alpha = float(mechanism_alpha)
         self.mechanism_min_events = int(mechanism_min_events)
         self.mechanism_min_observations = int(mechanism_min_observations)
@@ -194,6 +222,12 @@ class GateConfig:
         return {
             "admission_threshold_required": self.ADMISSION_THRESHOLD_REQUIRED,
             "admission_threshold_optional": self.ADMISSION_THRESHOLD_OPTIONAL,
+            "intraday_thresholds": {
+                "min_clean_sessions": self.min_clean_sessions,
+                "min_in_sample_trades": self.min_in_sample_trades,
+                "min_oos_sessions": self.min_oos_sessions,
+                "min_oos_trades": self.min_oos_trades,
+            },
             "required_criteria": [c.to_dict() for c in self.required_criteria],
             "optional_criteria": [c.to_dict() for c in self.optional_criteria],
         }

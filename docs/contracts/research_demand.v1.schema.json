@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/contracts/research_demand.v1.schema.json",
+  "title": "research_demand.v1",
+  "description": "A persona-written request for new strategy candidates. Written by the persona's daily pool cycle; stored and served by the research owner. Satisfied when a later candidate joins that persona's pool; expires 30 days after creation; at most one open demand per persona and short measure.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "demand_id", "tenant_id", "persona_id", "mandate", "missing_datasets",
+               "tried_families", "short_measure", "status", "created_at", "expires_at", "pool_version"],
+  "properties": {
+    "schema_version": {"const": "research_demand.v1"},
+    "demand_id": {"type": "string", "minLength": 1},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "persona_id": {"type": "string", "minLength": 1},
+    "mandate": {"type": "string", "minLength": 1},
+    "missing_datasets": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "tried_families": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "short_measure": {"enum": ["gross_utilisation", "drawdown_utilisation", "effective_bets", "idle_day_share", "no_live_members", "health_inputs_unknown"]},
+    "pool_version": {"type": "integer", "minimum": 0},
+    "evidence_ref": {"type": ["string", "null"]},
+    "status": {"enum": ["open", "satisfied", "expired"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "satisfied_at": {"type": ["string", "null"]},
+    "satisfied_by": {"type": ["string", "null"], "description": "artifact_ref of the later candidate that joined the pool"},
+    "discovery": {"type": ["object", "null"], "description": "Persona strategy discovery runs for this demand: executed action receipts, and the last run's counts and reason. Written only through the research owner's discovery route."}
+  }
+}

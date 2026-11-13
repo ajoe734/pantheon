@@ -31,8 +31,11 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import urllib.request
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -68,6 +71,93 @@ MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 
+# Configured ingestion owns persistence; tuple adapter callers retain their
+# existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
+_DEFER_ACK = ContextVar("collector_defer_ack", default=False)
+# Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
+# every transport read share it, so one request can never run past the controller boundary.
+COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
+_OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+
+
+class _DeadlineBody:
+    """Response wrapper: a body stream never outlives the operation deadline.
+
+    Raises TimeoutError between chunks once the deadline passes; partial bytes are never
+    returned as data.
+    """
+
+    def __init__(self, response: Any, deadline: float) -> None:
+        self._response = response
+        self._deadline = deadline
+        self.headers = getattr(response, "headers", None)
+
+    def read(self, size: int = -1) -> bytes:
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        # read1 performs at most one underlying receive, so the deadline is re-checked
+        # after every socket receive instead of once per (possibly many-recv) buffered
+        # read; the caller loops until EOF and Content-Length truncation is still checked.
+        read1 = getattr(self._response, "read1", None)
+        if read1 is None:
+            return self._response.read(size)
+        chunk = read1(size)
+        if chunk and time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        return chunk
+
+
+@contextmanager
+def operation_deadline(seconds: float | None):
+    if seconds is None or _OP_DEADLINE.get() is not None:
+        yield
+        return
+    token = _OP_DEADLINE.set(time.monotonic() + max(seconds, 0.0))
+    try:
+        yield
+    finally:
+        _OP_DEADLINE.reset(token)
+
+
+@contextmanager
+def deferred_collector_acknowledgement():
+    token = _DEFER_ACK.set(True)
+    try:
+        yield
+    finally:
+        _DEFER_ACK.reset(token)
+
+
+@dataclass(frozen=True)
+class CollectorDelivery:
+    """In-process verified delivery, never accepted from serialized batch metadata."""
+
+    expected: tuple[SourceRecord, ...]
+    acknowledge: Callable[[], None]
+    _payloads: tuple[str, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # SourceRecord metadata contains mutable nested mappings. Snapshot the
+        # verified payload so an in-place change cannot mutate its own proof.
+        object.__setattr__(self, "_payloads", tuple(
+            json.dumps(r.to_dict(), sort_keys=True, default=str) for r in self.expected))
+
+    def validate(self, records: Sequence[SourceRecord]) -> None:
+        if len(records) != len(self._payloads):
+            raise SourceEvidenceError("collector delivery record coverage mismatch")
+        for actual, snapshot in zip(records, self._payloads):
+            payload = json.loads(json.dumps(actual.to_dict(), sort_keys=True, default=str))
+            original = json.loads(snapshot)
+            metadata = payload.pop("metadata")
+            expected_metadata = original.pop("metadata")
+            # The maintained provider wrapper adds these defaults after pull;
+            # it cannot overwrite any value already verified by the adapter.
+            for key in ("tenant_id", "provider_owned_adapter", "ingest_job", "as_of_date", "dataset", "symbol"):
+                if key not in expected_metadata:
+                    metadata.pop(key, None)
+            if payload != original or metadata != expected_metadata:
+                raise SourceEvidenceError("collector delivery identity/hash/PIT/schema mismatch")
+
 
 def collector_host() -> str:
     return (os.environ.get(COLLECTOR_HOST_ENV) or COLLECTOR_HOST_PLACEHOLDER).strip().lower()
@@ -81,14 +171,51 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _utc(value: Any, field_name: str) -> datetime:
+_RFC2822_RE = re.compile(
+    r"^(?:(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?P<d>\d{1,2}) "
+    r"(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?P<y>\d{4}) "
+    r"(?P<H>\d{2}):(?P<M>\d{2}):(?P<S>\d{2}) (?:(?P<utc>GMT|UTC?)|(?P<sign>[+-])(?P<oh>\d{2})(?P<om>\d{2}))$"
+)
+_RFC2822_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_RFC2822_DOWS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _strict_rfc2822_utc(text: str) -> datetime | None:
+    """Strictly parse a full RFC 2822 date with GMT/UT/UTC or a 4-digit numeric offset.
+
+    Anything else (no zone, -0000, short/oversized offsets, named zones, trailing text,
+    impossible calendar values, weekday mismatch) returns None; never guesses.
+    """
+    m = _RFC2822_RE.match(text)
+    if not m:
+        return None
+    if m["utc"]:
+        offset = timedelta(0)
+    else:
+        oh, om = int(m["oh"]), int(m["om"])
+        if oh > 23 or om > 59 or (m["sign"] == "-" and oh == 0 and om == 0):
+            return None
+        offset = (1 if m["sign"] == "+" else -1) * timedelta(hours=oh, minutes=om)
+    try:
+        local = datetime(int(m["y"]), _RFC2822_MONTHS.index(m["mon"]) + 1, int(m["d"]),
+                         int(m["H"]), int(m["M"]), int(m["S"]))
+    except ValueError:
+        return None
+    if m["dow"] and _RFC2822_DOWS[local.weekday()] != m["dow"]:
+        return None
+    return (local - offset).replace(tzinfo=timezone.utc)
+
+
+def _utc(value: Any, field_name: str, *, allow_rfc2822: bool = False) -> datetime:
     text = str(value or "").strip()
     if not text:
         raise SourceEvidenceError(f"collector bundle {field_name} is required")
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
+        parsed = _strict_rfc2822_utc(text) if allow_rfc2822 else None
+        if parsed is None:
+            raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -122,7 +249,18 @@ class HttpBundleTransport(BundleTransport):
             url,
             headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=self.timeout_seconds) as response:
+        timeout = self.timeout_seconds
+        op_deadline = _OP_DEADLINE.get()
+        if op_deadline is not None:
+            # A read never outlives the operation budget (1s floor keeps it a real read);
+            # the body stream is held to the same floored deadline, chunk by chunk.
+            timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
+            op_deadline = max(op_deadline, time.monotonic() + 1.0)
+        with open_external_url(
+            request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+        ) as response:
+            if op_deadline is not None:
+                response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)
 
 
@@ -156,6 +294,9 @@ class VerifiedBundle:
     manifest_items: Mapping[str, Mapping[str, Any]]
     raw_bytes: Mapping[str, bytes]  # sha256 -> bytes
     cursor: str
+    # Absolute items.jsonl row index up to which raw files were verified this pull;
+    # None means the whole requested window was verified (no read-budget cut).
+    verified_through: int | None = None
 
     @property
     def status(self) -> str:
@@ -175,6 +316,7 @@ class CollectorPullResult:
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
     no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
+    delivery: CollectorDelivery | None = None
 
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
@@ -232,6 +374,7 @@ def verify_bundle(
     expected_source_id: str,
     entry: Mapping[str, Any],
     item_window: tuple[int, int] | None = None,
+    deadline: float | None = None,
 ) -> VerifiedBundle:
     """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
@@ -239,8 +382,14 @@ def verify_bundle(
     manifest, items.jsonl, id coverage and bundle_sha256 (declared hashes) are always
     verified, but raw files are fetched and hash/size checked only for the windowed rows.
     Rows outside the window are verified when a later pull's window reaches them.
+
+    ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
+    further raw file is fetched (at least one is always read so every pull progresses) and
+    ``verified_through`` records how far verification got. Nothing is skipped or assumed.
     """
 
+    if deadline is None:
+        deadline = _OP_DEADLINE.get()
     source_id = str(entry.get("source_id") or "").strip()
     date = str(entry.get("date") or "").strip()
     run_id = str(entry.get("run_id") or "").strip()
@@ -305,11 +454,25 @@ def verify_bundle(
     else:
         wanted_ids = item_ids[max(item_window[0], 0) : max(item_window[1], 0)]
     raw_bytes: dict[str, bytes] = {}
-    for item_id in wanted_ids:
+    verified_through: int | None = None
+    window_start = max(item_window[0], 0) if item_window is not None else 0
+    for offset, item_id in enumerate(wanted_ids):
+        if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+            verified_through = window_start + offset
+            break
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        try:
+            data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
+        except TimeoutError:
+            # A read that started inside the budget but was cut by the shared deadline
+            # discards only its own (never-accepted) bytes; already verified rows keep
+            # their progress and this row is re-read by the next pull's window.
+            if offset > 0 and deadline is not None and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            raise
         actual = _sha256(data)
         if declared != actual:
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
@@ -327,6 +490,7 @@ def verify_bundle(
         manifest_items=manifest_items,
         raw_bytes=raw_bytes,
         cursor=_cursor_key(finished_at, run_id),
+        verified_through=verified_through,
     )
 
 
@@ -337,6 +501,8 @@ def observed_from_collector_status(
     cursor: str | None,
     cadence_seconds: int | None = None,
     now: datetime | None = None,
+    verified_bundle: VerifiedBundle | None = None,
+    delivery_complete: bool = False,
 ) -> dict[str, Any]:
     """Project the host ``status.json`` + our cursor into health fields.
 
@@ -344,6 +510,8 @@ def observed_from_collector_status(
     ``SourceObservedState``. ``degraded`` when the source is paused/failing on
     the host, the newest bundle is older than twice its cadence, or our cursor
     lags the host's newest bundle by more than seven days.
+    Producer ``complete`` additionally requires the verified latest bundle,
+    full delivery coverage, matching run/time/cursor and a known fresh cadence.
     """
 
     now = now or datetime.now(timezone.utc)
@@ -362,7 +530,7 @@ def observed_from_collector_status(
     host_status = str(entry.get("status") or "")
     if host_status in {"paused", "failed", "failing", "unavailable"}:
         reasons.append(f"collector_source_{host_status}" + (f":{entry.get('paused_reason')}" if entry.get("paused_reason") else ""))
-    elif host_status not in {"ok", "healthy"}:
+    elif host_status not in {"ok", "healthy", "complete"}:
         reasons.append(f"collector_source_status_unverified:{host_status or 'missing'}")
 
     last_run_at = None
@@ -373,6 +541,25 @@ def observed_from_collector_status(
     cadence = int(cadence_seconds or entry.get("cadence_seconds") or 0)
     if last_run_at and cadence and now - last_run_at > timedelta(seconds=2 * cadence):
         reasons.append("newest_bundle_older_than_twice_cadence")
+
+    if host_status == "complete":
+        # BundleWriter publishes completion of one exact run, not a blanket
+        # health assertion. A status-only observation has no verified delivery.
+        if (verified_bundle is None or verified_bundle.source_id != source_id
+                or verified_bundle.status != "complete" or not delivery_complete
+                or cursor != verified_bundle.cursor):
+            reasons.append("collector_complete_boundary_unverified")
+        if verified_bundle is not None:
+            if last_run_at != verified_bundle.finished_at:
+                reasons.append("collector_complete_time_mismatch")
+            if entry.get("last_run_id") != verified_bundle.run_id:
+                reasons.append("collector_complete_run_mismatch")
+        if cadence <= 0:
+            reasons.append("collector_complete_cadence_missing")
+        if last_run_at and last_run_at > now:
+            reasons.append("collector_last_run_in_future")
+        if entry.get("paused_reason"):
+            reasons.append(f"collector_source_paused:{entry['paused_reason']}")
 
     lag_days: float | None = None
     cursor_at = None
@@ -415,6 +602,9 @@ class CollectorBundleAdapter:
     host: str | None = None
     raw_root: str | None = None
     max_records: int = 500
+    # Whole-pull raw read budget, kept below the controller's per-request timeout; the
+    # remainder stays pending behind a partial cursor. None disables the budget.
+    read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -474,7 +664,7 @@ class CollectorBundleAdapter:
         )
         if derived is None:
             return {}
-        original = [self.dataset] if self.dataset != derived else []
+        original = [self.dataset if self.dataset != derived else "collector_bundle_items"]
         return {
             "normalized_datasets": [derived, *original],
             "feature_targets": [derived],
@@ -520,6 +710,16 @@ class CollectorBundleAdapter:
         the cursor sweep continues with whatever output cap remains. Replays are idempotent.
         """
 
+        with operation_deadline(self.read_budget_seconds):
+            return self._pull_bounded(cursor=cursor, trace_id=trace_id, max_records=max_records)
+
+    def _pull_bounded(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+    ) -> CollectorPullResult:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         priority = self._pull_priority_latest(
             cursor, trace_id=trace_id, total_cap=total_cap
@@ -528,18 +728,26 @@ class CollectorBundleAdapter:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
         records, key, paused, delivered, done = priority
         remaining = total_cap - len(records)
-        if remaining <= 0:
+        op_deadline = _OP_DEADLINE.get()
+        base = None
+        if remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
+            try:
+                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
+            except TimeoutError:
+                # The shared deadline cut the ordered sweep before any of its rows verified:
+                # keep the already verified priority prefix; ordered work stays pending.
+                if op_deadline is None or time.monotonic() < op_deadline:
+                    raise
+        if base is None:
             base = CollectorPullResult(
                 records=(), next_cursor=cursor, bundle_count=0, complete=False,
                 observed=observed_from_collector_status(
                     self.read_status(), source_id=self.source_id, cursor=cursor, cadence_seconds=self._health_cadence_seconds()
                 ),
             )
-        else:
-            base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
         seen = {r.source_id for r in records}
         merged = (*records, *(r for r in base.records if r.source_id not in seen))
-        return CollectorPullResult(
+        result = CollectorPullResult(
             records=merged,
             next_cursor=base.next_cursor,
             bundle_count=base.bundle_count + 1,
@@ -552,6 +760,10 @@ class CollectorBundleAdapter:
             priority_delivered=delivered,
             priority_done=done,
         )
+        if _DEFER_ACK.get():
+            result = replace(result, delivery=CollectorDelivery(
+                result.records, lambda: self.save_resume_cursor(result)))
+        return result
 
     def _priority_latest_enabled(self) -> bool:
         # A sub-hourly Pantheon pull cadence (price-history definitions: 30 min) means the newest
@@ -629,7 +841,8 @@ class CollectorBundleAdapter:
         )
         if bundle.status == "paused":
             return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False
-        window = bundle.items[delivered:delivered + total_cap]
+        stop = delivered + total_cap if bundle.verified_through is None else bundle.verified_through
+        window = bundle.items[delivered:stop]
         rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
         self._write_raw([(bundle, {})], rows)
         new_delivered = delivered + len(window)
@@ -669,15 +882,36 @@ class CollectorBundleAdapter:
         verified: list[VerifiedBundle] = []
         remaining = max(total_cap, 1)
         unverified_pending = False
+        deadline = _OP_DEADLINE.get()
+        if deadline is None and self.read_budget_seconds is not None:
+            deadline = time.monotonic() + max(self.read_budget_seconds, 0.0)
         for _, key, entry in pending:
+            if verified and deadline is not None and time.monotonic() >= deadline:
+                # Budget spent between bundles: the rest stays pending behind the cursor.
+                unverified_pending = True
+                break
             if remaining <= 0:
                 unverified_pending = True
                 break
             skip = partial_skip if key == base_cursor else 0
-            bundle = verify_bundle(
-                transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining)
-            )
+            try:
+                bundle = verify_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                    deadline=deadline,
+                )
+            except TimeoutError:
+                # A later bundle cut by the shared deadline before any of its rows verified
+                # keeps the already verified prefix; that bundle stays pending (no skip, no
+                # forged completion). With nothing verified yet, the timeout is not progress.
+                if verified and deadline is not None and time.monotonic() >= deadline:
+                    unverified_pending = True
+                    break
+                raise
             verified.append(bundle)
+            if bundle.verified_through is not None:
+                # Read budget exhausted mid-window: later rows/bundles stay pending.
+                unverified_pending = True
+                break
             if bundle.status in {"paused", "partial"}:
                 # Material after an unresolved bundle must remain pending.
                 unverified_pending = True
@@ -692,7 +926,8 @@ class CollectorBundleAdapter:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            for row in bundle.items[skip:]:
+            stop = len(bundle.items) if bundle.verified_through is None else bundle.verified_through
+            for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
         # The caller's output cap covers raw + derived feature records together. Shrink the
@@ -703,6 +938,10 @@ class CollectorBundleAdapter:
             records, next_cursor, raw_plan = self._select_raw(
                 verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
             )
+            cut = verified[-1] if verified and verified[-1].verified_through is not None else None
+            if cut is not None and len(records) == len(all_records):
+                # Everything verified is returned; resume exactly where the budget stopped.
+                next_cursor = f"{cut.cursor}{_PARTIAL_CURSOR_MARK}{cut.verified_through}"
             plan = self._plan_governed_features(records)
             # Already-acknowledged replays are idempotent and droppable; only pending
             # rows must fit alongside the raw items.
@@ -719,26 +958,41 @@ class CollectorBundleAdapter:
             first = next((b for b in verified if b.status != "paused"), None)
             if first is not None:
                 first_skip = partial_skip if first.cursor == base_cursor else 0
-                candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
+                # Only the raw window verified by this pull may contribute to
+                # derived rows, even when a bundle exceeds the public cap.
+                candidate = list(all_records[: min(max(len(first.items) - first_skip, 0), total_cap)])
                 plan = self._plan_governed_features(candidate)
-        feature_records, feature_rejected = self._commit_governed_features(
-            plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
-        )
-        self._write_raw(raw_plan, records)
-        observed = observed_from_collector_status(
-            self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self._health_cadence_seconds()
-        )
+        limit = max(total_cap - len(records), 0)
+        selected = self._select_feature_rows(plan, limit)
+        if _DEFER_ACK.get():
+            feature_records = feature_rows_to_records(selected, connector_id=self.connector_id,
+                                                     trace_id=trace_id, license_scope=self.license_scope)
+            feature_rejected = plan.rejected
+        else:
+            feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
+        # Cache the verified window even for a feature-only capped delivery.
+        # Its provenance must already resolve; this cache is not a cursor ack.
+        self._write_raw([(b, {}) for b in verified if b.status != "paused"], records)
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
+        latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0]) if source_entries else (None, None)
+        boundary = verified[-1] if verified and verified[-1].cursor == latest_key else None
+        if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
+            # The cache alone cannot acknowledge a configured delivery; the
+            # persistence owner must also have committed this exact boundary.
+            boundary = verify_bundle(transport, expected_source_id=self.source_id,
+                                     entry=latest_entry, item_window=(0, 0))
+        observed = observed_from_collector_status(
+            self.read_status(), source_id=self.source_id, cursor=next_cursor,
+            cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
+            delivery_complete=complete and not feature_rejected,
+        )
         no_new_data = False
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
             # Revalidate the exact consumed boundary over the guarded transport. No raw
             # rows are fetched here: the acknowledged cursor represents their previous
             # consumption; manifest hashes and item coverage are verified again.
-            latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0])
             if cursor == latest_key:
-                boundary = verify_bundle(transport, expected_source_id=self.source_id,
-                                         entry=latest_entry, item_window=(0, 0))
                 if boundary.status == "paused":
                     paused.append(f"{boundary.run_id}:{boundary.manifest.get('paused_reason') or 'paused'}")
                 no_new_data = (
@@ -746,12 +1000,15 @@ class CollectorBundleAdapter:
                     and observed["health_state"] == "healthy"
                     and observed["freshness"]["collector_last_run_at"] == _iso(boundary.finished_at)
                     and not feature_rejected
-                    and self._has_verified_boundary(boundary)
+                    and self._has_verified_boundary(boundary, persisted_only=_DEFER_ACK.get())
                 )
+                if not no_new_data:
+                    observed = {**observed, "health_state": "degraded",
+                                "reasons": (*observed["reasons"], "collector_consumed_boundary_unverified")}
         if paused:
             observed = {**observed, "health_state": "degraded",
                         "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
-        return CollectorPullResult(
+        result = CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
             bundle_count=len(verified),
@@ -761,12 +1018,25 @@ class CollectorBundleAdapter:
             complete=complete,
             no_new_data=no_new_data,
         )
+        if _DEFER_ACK.get():
+            def acknowledge() -> None:
+                self._commit_governed_features(replace(plan, rows=selected), limit=None,
+                                               trace_id=trace_id, persisted=True)
+                if complete and boundary is not None and next_cursor == boundary.cursor and not feature_rejected:
+                    self._acknowledge_boundary(boundary)
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
+        return result
 
     # -- durable resume cursor (capped public pulls) -------------------------------
     def _resume_cursor_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "resume_cursor.json"
 
     def load_resume_cursor(self) -> str | None:
+        if _DEFER_ACK.get():
+            # Only the schedule store proves configured ingestion committed.
+            # Legacy adapter cursors may have been saved by a failed raw job.
+            return None
         path = self._resume_cursor_path()
         if not path.is_file():
             return None
@@ -783,6 +1053,8 @@ class CollectorBundleAdapter:
         Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
         like an un-cursored pull (idempotent downstream).
         """
+        if _DEFER_ACK.get():
+            return
         if result.priority_key:
             pri = self._priority_key_path()
             pri.parent.mkdir(parents=True, exist_ok=True)
@@ -815,7 +1087,7 @@ class CollectorBundleAdapter:
             raise SourceEvidenceError(f"collector item {item_id} has no url")
         fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
         published_raw = row.get("published_at")
-        published_at = _utc(published_raw, f"item {item_id} published_at") if published_raw else fetched_at
+        published_at = _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True) if published_raw else fetched_at
         if self.source_type == "market" and row.get("trade_date"):
             published_at = self._market_event_time(item_id, row, published_raw, published_at)
         text = row.get("text")
@@ -893,6 +1165,11 @@ class CollectorBundleAdapter:
         ):
             if row.get(optional) not in (None, "", [], {}):
                 metadata[optional] = row[optional]
+
+        if self.source_type in {"macro", "social"}:
+            # Provider item labels cannot turn raw evidence into a governed row.
+            metadata["dataset"] = (self.dataset if self.dataset not in {
+                TW_MACRO_SERIES_DATASET, TW_COMMUNITY_DAILY_DATASET} else "collector_bundle_items")
 
         if self.source_type == "social":
             author = str(row.get("hashed_author") or "").strip()
@@ -1053,12 +1330,13 @@ class CollectorBundleAdapter:
         return self._raw_root() / "state" / _slug(self.connector_id) / "macro_emitted.jsonl"
 
     @staticmethod
-    def _read_markers(path: Path) -> list[tuple[str, str, str]]:
+    def _read_markers(path: Path, *, persisted_only: bool = False) -> list[tuple[str, str, str]]:
         if not path.is_file():
             return []
         return [
             (d["symbol"], d["day"], d["step"])
             for d in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+            if not persisted_only or d.get("persisted") is True
         ]
 
     def _community_ledger_path(self) -> Path:
@@ -1085,11 +1363,11 @@ class CollectorBundleAdapter:
             for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
                 extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
             rows, rejected = macro_feature_rows(records, extra_series_map=extra)
-            known = frozenset(self._read_markers(self._macro_emitted_path()))
+            known = frozenset(self._read_markers(self._macro_emitted_path(), persisted_only=_DEFER_ACK.get()))
             return _FeaturePlan(tuple(rows), tuple(rejected), (), known)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
-            ledger = dict(load_community_ledger(path))
+            ledger = dict(load_community_ledger(path, persisted_only=_DEFER_ACK.get()))
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
             entries, rejected_list = community_ledger_entries(
                 records, authority=self._instrument_authority(), seen_at=now
@@ -1098,12 +1376,7 @@ class CollectorBundleAdapter:
             for entry in fresh:
                 ledger[entry["key"]] = entry
             emitted_path = path.with_name("community_emitted.jsonl")
-            done = []
-            if emitted_path.is_file():
-                done = [
-                    (d["symbol"], d["day"], d["step"])
-                    for d in (json.loads(x) for x in emitted_path.read_text(encoding="utf-8").splitlines() if x.strip())
-                ]
+            done = self._read_markers(emitted_path, persisted_only=_DEFER_ACK.get())
             rows = community_daily_rows_from_ledger(
                 ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
             )
@@ -1112,50 +1385,47 @@ class CollectorBundleAdapter:
         return _FeaturePlan((), (), (), frozenset())
 
     def _commit_governed_features(
-        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
+        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = "", persisted: bool = False
     ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
         """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
-        rows = plan.rows
-        if limit is not None and len(rows) > limit:
-            # An output cap must never starve unacknowledged revisions: keep those first
-            # (then already-acknowledged replays), preserving chronological order.
-            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
-            rows = tuple(rows[i] for i in sorted(ranked))
+        rows = self._select_feature_rows(plan, limit)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
             if plan.fresh_entries:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
                     for entry in plan.fresh_entries:
-                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = path.with_name("community_emitted.jsonl")
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+                        handle.write(json.dumps({**entry, "persisted": persisted}, sort_keys=True) + "\n")
+            emitted_path = path.with_name("community_emitted.jsonl")
         elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = self._macro_emitted_path()
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
-        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
+            emitted_path = self._macro_emitted_path()
+        else:
+            return (), plan.rejected
+        known = set(self._read_markers(emitted_path, persisted_only=persisted))
+        new_markers = []
+        for r in rows:
+            marker = (r["symbol"], r["event_time"], r["available_time"])
+            if marker not in known:
+                known.add(marker)
+                new_markers.append(marker)
+        if new_markers:
+            emitted_path.parent.mkdir(parents=True, exist_ok=True)
+            with emitted_path.open("a", encoding="utf-8") as handle:
+                for m in new_markers:
+                    handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2],
+                                             "persisted": persisted}) + "\n")
+        return feature_rows_to_records(rows, connector_id=self.connector_id,
+                                       trace_id=trace_id, license_scope=self.license_scope), plan.rejected
+
+    @staticmethod
+    def _select_feature_rows(plan: "_FeaturePlan", limit: int | None) -> tuple:
+        rows = tuple(r for r in plan.rows if not plan.is_acked(r)) if _DEFER_ACK.get() else plan.rows
+        if limit is not None and len(rows) > limit:
+            # An output cap must never starve unacknowledged revisions: keep those first
+            # (then already-acknowledged replays), preserving chronological order.
+            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
+            rows = tuple(rows[i] for i in sorted(ranked))
+        return tuple(rows)
 
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)
@@ -1165,19 +1435,40 @@ class CollectorBundleAdapter:
         return (self._raw_root() / "raw" / _slug(self.connector_id) / _slug(self.dataset)
                 / f"date={bundle.date}" / f"bundle-{bundle.run_id}")
 
-    def _has_verified_boundary(self, bundle: VerifiedBundle) -> bool:
+    def _boundary_ack(self, bundle: VerifiedBundle) -> dict[str, str]:
+        return {"source_id": self.source_id, "connector_id": self.connector_id, "cursor": bundle.cursor,
+                "manifest_sha256": _sha256(json.dumps(dict(bundle.manifest), sort_keys=True).encode())}
+
+    def _acknowledge_boundary(self, bundle: VerifiedBundle) -> None:
+        # Called only by the native delivery acknowledgement, after the
+        # scheduler/pipeline's existing persistence checks. Raw caching and
+        # legacy eager pulls never create this receipt.
+        path = self._raw_bundle_path(bundle) / "persisted_boundary.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(self._boundary_ack(bundle), sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _has_verified_boundary(self, bundle: VerifiedBundle, *, persisted_only: bool = False) -> bool:
         """A supplied cursor alone cannot prove that this exact bundle was consumed.
 
-        Reuse the raw evidence written only after verification. The manifest must
-        still match, and all of its window-verified raw files must be present.
-        This reads no raw files over the network and stays within the pull cap.
+        Reuse the raw evidence written only after verification. The manifest and
+        local raw hashes must still match. Configured ingestion also requires
+        the native persistence acknowledgement. No network raw reads are made.
         """
         root = self._raw_bundle_path(bundle)
         try:
+            if persisted_only and json.loads((root / "persisted_boundary.json").read_text()) != self._boundary_ack(bundle):
+                return False
             if json.loads((root / "manifest.json").read_text(encoding="utf-8")) != bundle.manifest:
                 return False
-            return all((root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name).is_file()
-                       for item in bundle.manifest_items.values())
+            for item in bundle.manifest_items.values():
+                path = root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name
+                size = path.stat().st_size
+                if size > MAX_RAW_BYTES or ("bytes" in item and size != int(item["bytes"])):
+                    return False
+                if _sha256(path.read_bytes()) != str(item["content_sha256"]).lower():
+                    return False
+            return True
         except (OSError, ValueError):
             return False
 
@@ -1260,7 +1551,8 @@ def _feature_time(value: Any) -> datetime:
 
 
 def _feature_iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    # Distinct same-second ingestion steps must remain distinct PIT revisions.
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _month_end(year: int, month: int) -> date:
@@ -1375,6 +1667,8 @@ def macro_feature_rows(
                     "unit": str(meta.get("unit") or ""),
                     "source_id": record.source_id,
                     "connector_id": record.connector_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return tuple(rows), tuple(rejected)
@@ -1496,18 +1790,23 @@ def community_ledger_entries(
                     "engagement": engagement,
                     "available": _feature_iso(available),
                     "first_seen": seen_at,
+                    "source_id": record.source_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return entries, rejected
 
 
-def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
+def load_community_ledger(path: Path, *, persisted_only: bool = False) -> dict[str, dict[str, Any]]:
     ledger: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return ledger
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             entry = json.loads(line)
+            if persisted_only and entry.get("persisted") is not True:
+                continue
             ledger.setdefault(str(entry["key"]), entry)  # first sight wins: replays never rewrite history
     return ledger
 
@@ -1592,6 +1891,8 @@ def community_daily_rows_from_ledger(
                 "ingest_time": max(str(e["first_seen"]) for e in visible),
                 "availability_lag_days": 0,
                 "post_volume": float(len(visible)),
+                "source_records": [{k: e.get(k) for k in ("source_id", "content_hash", "raw_uri")}
+                                   for e in visible],
             }
             authors = {e.get("author") for e in visible if e.get("author")}
             if authors:
@@ -1650,13 +1951,15 @@ def feature_rows_to_records(
     *,
     connector_id: str,
     trace_id: str = "",
+    license_scope: str = "collector_public_web",
 ) -> tuple[SourceRecord, ...]:
     """Wrap governed macro/community feature rows so the storage writer can persist them."""
     out: list[SourceRecord] = []
     for row in rows:
         dataset = str(row["dataset"])
         entity = str(row.get("series_id") or row.get("symbol") or "")
-        row_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()[:24]
+        content_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()
+        row_hash = content_hash[:24]
         out.append(
             SourceRecord(
                 source_id=f"{connector_id}:{dataset}:{entity}:{row.get('field') or 'daily'}:{row['event_time']}:{row_hash}",
@@ -1676,8 +1979,13 @@ def feature_rows_to_records(
                     "availability_lag_days": row["availability_lag_days"],
                     "normalized_row": dict(row),
                     "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
-                    "access_scope": ["public", "research"],
-                    "license_scope": "collector_public_web",
+                    "content_hash": f"sha256:{content_hash}",
+                    "access_scope": ["research"],
+                    "allowed_use": ["research", "search_index", "experiment"],
+                    "entitlement_tags": ["collector-research"],
+                    "direct_execution_allowed": False,
+                    "redistribution_allowed": False,
+                    "license_scope": license_scope,
                     "schema_hash": f"{dataset}.v1",
                 },
                 trace_id=trace_id,

@@ -1,0 +1,39 @@
+{
+  "task_id": "SD-MEMORY-KNOWLEDGE-INTEGRATION-20261113",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-13",
+  "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md",
+  "hosted_behavior_claimed": false,
+  "repo_base": "bc8807e04",
+  "operator_statements_2026_11_13": [
+    "記憶的部分你再詳細說明，跟知識庫怎樣合作?",
+    "我感覺你現在知識庫跟記憶並沒有整合到你會議以及persona交易策略優化內? 感覺起來是單獨功能阿",
+    "當然阿，而且奇怪你rag為什麼要自己做?",
+    "不是應該有很多做得不錯的opensource嗎?"
+  ],
+  "changes_to_original_plan": [
+    "M6 lesson-to-rule proposals through existing owners (operator direction 2026-11-13)",
+    "M7 usefulness replaces raw reuse count in ranking",
+    "4.5 dedicated retrieval-postgres instead of changing the main Postgres image"
+  ],
+  "coordinator_proposed_values_not_operator_decisions": [
+    "gold set size 150-300 queries",
+    "reranker window top 30-50",
+    "three hurt marks route a lesson to memory review"
+  ],
+  "hosted_read_only_observations_2026_11_13": [
+    "postgres extensions: plpgsql and pg_trgm only; no retrieval table",
+    "pantheon-search-svc-1 serves JSONL files; SEARCH_VECTOR_EMBEDDING_ENABLED unset",
+    "pantheon-memory-1: PANTHEON_SEARCH_POSTGRES_DSN unset; data directory empty",
+    "backend still bee62bc29; twelve Dev releases since 2026-11-12T04:17Z failed"
+  ],
+  "verify_on_delivery": "Owner re-checks every repository reference in sections 2 and 3 on the delivered base and corrects moved line numbers in place; hosted observations are coordinator context and are not claimed as delivery evidence.",
+  "delivery_verification": {
+    "base": "bc8807e04",
+    "result": "all file and line references in sections 2 and 3 resolved on the delivered base",
+    "corrected_in_place": [
+      "services/research/main.py: finding writeback at 2844-2904, retrieval-influence endpoint stays 3412",
+      "services/evolution/main.py: 2078-2082"
+    ]
+  }
+}

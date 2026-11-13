@@ -348,13 +348,17 @@ class ExtractionLedger:
     def reserve_call(self) -> bool:
         """Atomically consume one call; False once the daily cap is reached."""
         with self._lock, self._conn() as c:
-            row = c.execute("SELECT n FROM calls WHERE day=?", (_today(),)).fetchone()
+            # Serialize the read/check/increment across processes sharing the
+            # production ledger, not only threads in this extractor instance.
+            c.execute("BEGIN IMMEDIATE")
+            day = _today()
+            row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             used = row[0] if row else 0
             if used >= self._daily_cap:
                 return False
             c.execute(
                 "INSERT INTO calls(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1",
-                (_today(),),
+                (day,),
             )
             return True
 

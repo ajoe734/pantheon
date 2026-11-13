@@ -1,0 +1,8 @@
+{
+  "task": "DEV-ROOT-GATE-CONTROLLER-PIN-20261113",
+  "scope": "source-only; no VM/SSH/provider/secret access, no workflow dispatch or deployment",
+  "root_cause": "Root43352550870 job131646854166: payload checkout used env.TARGET_REF but gate controller checkout used literal ref dev; dev advanced (PR7269 merge e877b671) between checkouts so the exact controller==backend admission guard correctly rejected the pair before any switch.",
+  "fix": ".github/workflows/nonprod-deploy.yml: 'Checkout accepted Agora gate controller' ref changed from dev to ${{ env.TARGET_REF }} (inputs.ref || github.sha). Exact current-dev/workflow-ref validation, controller-to-backend equality guard, gate-before-switch ordering unchanged.",
+  "tests": "scripts/test_agora_compat_manifest.py: tests read the real deploy-dev env TARGET_REF and the maintained gate-controller checkout ref, evaluating inputs.ref||github.sha with explicit-SHA (inputs.ref=A, github.sha=B) and default (empty input, github.sha=A) contexts; dev advances A->B between checkouts and controller stays A. Mutation witnesses: removing the github.sha fallback fails; old literal 'ref: dev' fails the real extracted guard; stale payload SHA rejected. Full scripts/test_agora_compat_manifest.py: 26 passed; git diff --check clean.",
+  "not_claimed": "No actual deployment; original hosted publisher retains corrected exact-current-dev publication and QA. Root433516 older1558 selection error remains separate."
+}
