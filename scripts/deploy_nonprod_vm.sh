@@ -4436,6 +4436,7 @@ REMOTE_DB
 dump_dev_root_failure_diagnostics() {
   local source_ingest_container_id=""
   local search_container_id=""
+  local search_scheduler_container_id=""
   local paper_signal_producer_container_id=""
 
   info "dev root compose ps after failure"
@@ -4461,6 +4462,51 @@ dump_dev_root_failure_diagnostics() {
     docker inspect --format \
       'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
       "$search_container_id" || true
+  fi
+  # The scheduler can fail while search-svc stays healthy. Capture its own
+  # evidence before compensation removes the candidate container. Successful
+  # ticks contain business snapshots: emit only failure structure, never their
+  # result bodies, traceback source lines, or arbitrary exception messages.
+  search_scheduler_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q search-index-scheduler 2>/dev/null || true
+  )"
+  if [[ -n "$search_scheduler_container_id" ]]; then
+    info "search-index-scheduler failure structure from last 200 log lines (redacted)"
+    { docker logs --tail 200 "$search_scheduler_container_id" 2>/dev/null || true; } \
+      | redact_bounded_refresh_log \
+      | python3 -c '
+import json
+import re
+import sys
+
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    try:
+        event = json.loads(line)
+    except ValueError:
+        event = None
+    if isinstance(event, dict):
+        if event.get("status") == "failed":
+            failure = {"status": "failed"}
+            tick = event.get("tick")
+            if type(tick) is int and 0 < tick <= 2147483647:
+                failure["tick"] = tick
+            error_type = event.get("error_type", "")
+            if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", error_type):
+                failure["error_type"] = error_type
+            print(json.dumps(failure, sort_keys=True))
+        continue
+    if line == "Traceback (most recent call last):":
+        print(line)
+    elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}(?:Error|Exception|Interrupt|Exit)(?::.*)?", line):
+        print(line.split(":", 1)[0] + ": [details omitted]")
+' || true
+    info "search-index-scheduler container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}' \
+      "$search_scheduler_container_id" 2>/dev/null | redact_bounded_refresh_log || true
+  else
+    info "search-index-scheduler container unavailable after failure"
   fi
   info "paper-signal-producer service logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-signal-producer || true
