@@ -444,11 +444,7 @@ class HttpPoolCyclePorts:
                           data=None if body is None else json.dumps(body).encode(),
                           headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant,
                                    "Content-Type": "application/json"})
-        # Reconcile may evaluate one registered template on the real §10
-        # backtest. Keep this bounded, but allow its CPU work to finish before
-        # the daily cycle retries the same owner operation.
-        timeout = 180 if service == "research" and path == "/api/research/persona-demands/reconcile" else 15
-        with urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=15) as response:
             return json.load(response)
 
     def _call(self, method, service, path, persona, body=None):
