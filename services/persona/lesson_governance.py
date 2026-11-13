@@ -136,9 +136,14 @@ _SENSITIVE_KEYWORDS = (
 PAPER_ONLY_SCOPES = frozenset({"strategy", "regime", "pattern", "execution"})
 
 
+def canonical_scope(candidate: Dict[str, Any]) -> str:
+    """Single scope normalization shared by eligibility and evaluation gates."""
+    return str(candidate.get("scope", "")).strip().lower()
+
+
 def is_paper_only_eligible(candidate: Dict[str, Any]) -> bool:
     """True only for an explicitly allowlisted, exact scope label with no sensitive wording anywhere."""
-    scope = str(candidate.get("scope", "")).strip().lower()
+    scope = canonical_scope(candidate)
     if scope not in PAPER_ONLY_SCOPES:
         return False
     change = str(candidate.get("proposed_change", "")).lower()
@@ -156,7 +161,7 @@ def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, A
     Returns a list of validation errors; empty list means all gates passed.
     """
     errors = []
-    scope = str(candidate.get("scope", "")).lower()
+    scope = canonical_scope(candidate)
 
     # 1. Sample size gate (Pattern lessons require at least 3 supporting episodes)
     if scope in {"strategy", "regime", "pattern"}:

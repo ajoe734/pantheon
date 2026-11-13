@@ -969,3 +969,17 @@ def test_pattern_gate_ignores_unrelated_episodes(client):
     good = [ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")]
     done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": good})
     assert done.status_code == 200 and done.json()["review_state"] == "merged"
+
+
+@pytest.mark.parametrize("scope", ["strategy", "regime", "pattern"])
+def test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates(client, tmp_path, monkeypatch, scope):
+    lessons = [{"scope": padded, "proposed_change": f"prefer pullbacks {n}", "confidence": 0.7} for n, padded in enumerate((f" {scope} ", f"  {scope.upper()}\t"))]
+    _run_reflection(monkeypatch, tmp_path, client, lessons)
+    auth = _memory_auth(client)
+    for cand in client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]:
+        cid = cand["lesson_candidate_id"]
+        review = _record_review(client, cid)
+        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": []}, headers=auth)
+        assert resp.status_code == 422, resp.text
+        assert client.get(f"/api/memory/trade-lessons/{cid}", headers=auth).json()["review_state"] != "merged"
+        assert main._persona_store().get(f"pmem-lesson-{cid}") is None
