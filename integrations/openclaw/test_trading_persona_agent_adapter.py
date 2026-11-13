@@ -174,9 +174,9 @@ def test_on_request_memory_refresh_before_a_cycle_turn_is_private_and_bound(env)
     with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen",
                return_value=_Memory(memory)):
         ok = client.post("/api/openclaw-adapter/agents/persona/memory/materialize", headers=HEADERS,
-                         json={"persona_id": "persona-a", "workspace_ref": str(root / "persona-a")})
+                         json={"persona_id": "persona-a", "workspace_ref": str(root / "persona-a"), "query": "momentum 2330", "tags": ["family:momentum"]})
         foreign = client.post("/api/openclaw-adapter/agents/persona/memory/materialize", headers=HEADERS,
-                              json={"persona_id": "persona-a", "workspace_ref": str(root / "persona-b")})
+                              json={"persona_id": "persona-a", "workspace_ref": str(root / "persona-b"), "query": "momentum 2330"})
     assert ok.status_code == 200 and ok.json()["memory"]["hit_count"] == 1
     text = (root / "persona-a" / "MEMORY.md").read_text(encoding="utf-8")
     assert "persona_memory:mem-new" in text and "LEAK" not in text
