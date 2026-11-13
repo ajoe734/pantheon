@@ -2268,17 +2268,18 @@ _CLOSE_HELD = {531: "2317", 538: "2330"}  # captured positions beyond the first 
 _CLOSE_READ_SECONDS = 0.27  # finite per-read latency: the 15s whole-request budget verifies ~55 rows
 
 
-def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None = None):
+def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None = None,
+                 n_rows: int = _CLOSE_ROWS, source: str = _CLOSE_SOURCE, exchange: str = "TWSE"):
     import hashlib
     import json
 
     from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
 
     run_id, finished = f"close-{_CLOSE_DATE}", "2026-11-13T07:30:00Z"
-    base = f"bundles/{_CLOSE_SOURCE}/{_CLOSE_DATE}/{run_id}"
+    base = f"bundles/{source}/{_CLOSE_DATE}/{run_id}"
     items, rows, files = [], [], {}
-    for n in range(_CLOSE_ROWS):
-        code = _CLOSE_HELD.get(n, f"{1000 + n}")
+    for n in range(n_rows):
+        code = _CLOSE_HELD.get(n, f"{(1000 if n_rows == _CLOSE_ROWS else 10000) + n}")
         item_id = f"twse-price-history-{_CLOSE_DATE}-{code}"
         body = f"<r>{_CLOSE_DATE}-{code}</r>".encode()
         sha = hashlib.sha256(body).hexdigest()
@@ -2286,13 +2287,13 @@ def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None 
                       "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
         rows.append({
             "id": item_id, "url": "https://www.twse.com.tw/exchangeReport/MI_INDEX", "fetched_at": "2026-11-13T07:00:00Z",
-            "symbol": code, "security_name": f"name {code}", "exchange": "TWSE", "dataset": "tw_price_daily",
+            "symbol": code, "security_name": f"name {code}", "exchange": exchange, "dataset": "tw_price_daily",
             "trade_date": "2026-11-12" if code == wrong_date_code else _CLOSE_DATE,
             "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0 + n, "volume_shares": 1000, "transactions": 10,
         })
         files[f"{base}/raw/{sha}.html"] = b"tampered" if code == tamper_code else body
     manifest = {
-        "schema_version": "collector_bundle.v1", "source_id": _CLOSE_SOURCE, "run_id": run_id, "collector_version": "1.0.0",
+        "schema_version": "collector_bundle.v1", "source_id": source, "run_id": run_id, "collector_version": "1.0.0",
         "started_at": "2026-11-13T07:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
         "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "attribution": "TWSE", "items": items,
         "status": "complete", "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in items]),
@@ -2300,23 +2301,23 @@ def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None 
     files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
     files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
     files["bundles/index.json"] = json.dumps({"bundles": [
-        {"source_id": _CLOSE_SOURCE, "date": _CLOSE_DATE, "run_id": run_id, "finished_at": finished}]}).encode()
-    files["status.json"] = json.dumps({"sources": {_CLOSE_SOURCE: {"status": "ok", "last_run_at": finished}}}).encode()
+        {"source_id": source, "date": _CLOSE_DATE, "run_id": run_id, "finished_at": finished}]}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": finished}}}).encode()
     return files
 
 
-def _close_config(connector_id: str) -> dict:
+def _close_config(connector_id: str, source: str = _CLOSE_SOURCE) -> dict:
     from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
 
     adapter = CollectorBundleAdapter(
-        connector_id=connector_id, source_id=_CLOSE_SOURCE, source_type="market", host=_STEADY_HOST,
+        connector_id=connector_id, source_id=source, source_type="market", host=_STEADY_HOST,
         attribution_required=True, dataset="tw_price_daily", max_records=1000, cadence_seconds=600,
     )
     full = adapter.connector().to_dict()
     allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
                "rate_limit_policy", "license_policy", "source_metadata", "metadata")
     connector = {key: full[key] for key in allowed if key in full}
-    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": _CLOSE_SOURCE}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": source}
     fetch = dict(adapter.fetch_config())
     fetch["adapter_config"] = {
         **fetch["adapter_config"], "source_type": "market", "host": _STEADY_HOST, "dataset": "tw_price_daily",
@@ -2435,3 +2436,119 @@ def test_held_close_with_invalid_raw_or_wrong_date_never_publishes_a_snapshot(st
     except Exception:  # truthful failure is acceptable; a published snapshot is not
         pass
     assert _snapshot_date(module, "2330.TW") != _CLOSE_DATE
+
+
+@pytest.mark.parametrize("n_rows,exchange", [(1377, "TWSE"), (6090, "TPEX")])
+def test_full_size_close_through_controller_main_with_persistence(
+    steady_stack, monkeypatch, tmp_path, capsys, n_rows, exchange,
+) -> None:
+    """Captured cardinalities; finite 270ms reads, actual loop sleeps and real disk stores.
+
+    Network time is virtual: overlapping transport calls share a start time and
+    charge the maximum finish time. A short real wait allows actual reader threads
+    to overlap; sequential implementations still pay the full 270ms per item.
+    All real API/controller/normalization/disk time is added conservatively, as is
+    50ms per local API round trip and an initial 60s polling delay. No hosted claim.
+    """
+    import json
+    import threading
+    import time
+    import types
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _ = steady_stack
+    source = f"collector-tw-{exchange.lower()}-price-history"
+    cid = f"conn-close-{exchange.lower()}"
+    files = _close_files(n_rows=n_rows, source=source, exchange=exchange)
+    clock, reads, peak, active = [60.0], [], [0], [0]
+    lock = threading.Lock()
+    real_start = time.monotonic()
+
+    class LatencyTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            with lock:
+                start = clock[0]
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+                reads.append(relative_path)
+            try:
+                time.sleep(0.002)  # actual overlapping I/O; no executor/worker mocked
+                return super().read(relative_path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    clock[0] = max(clock[0], start + _CLOSE_READ_SECONDS)
+                    active[0] -= 1
+
+    transport = LatencyTransport(files)
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    # Whole-session delivery must work without optional priority/holdings provisioning.
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    assert http.post("/api/source-ingest/connectors", json=_close_config(cid, source)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule",
+                    json={"interval_seconds": 600, "enabled": True}).status_code == 200
+    personas = ({"persona_id": "close-persona", "required_data_sources": [{
+        "dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
+        "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+    }]},)
+    metadata = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, interval_seconds=60,
+                     max_concurrency=1)
+    monkeypatch.setattr(cw, "config_from_env", lambda: config)
+    monkeypatch.setattr(cw, "_new_state", tcw._state)
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+    monkeypatch.setattr(cw, "build_loop_writer", lambda **kwargs: tcw.RecordingWriter([]))
+    request = cw._request_json
+
+    def timed_request(*args, **kwargs):
+        clock[0] += 0.05
+        return request(*args, **kwargs)
+
+    monkeypatch.setattr(cw, "_request_json", timed_request)
+    sleeps, progress = [], []
+    priority_path = Path(os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"]) / "state" / cid / "latest_priority.json"
+
+    class SessionFinished(Exception):
+        pass
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+        time.sleep(1)  # real persisted run timestamps must advance between loop ticks
+        assert len(sleeps) < 150, "bounded controller regression"
+        assert priority_path.is_file(), capsys.readouterr().out[-3000:]
+        state = json.loads(priority_path.read_text())
+        progress.append(state["delivered"])
+        if state["done"]:
+            assert seconds == 60  # normal cadence resumes after newest-session persistence
+            raise SessionFinished
+        assert seconds == cw.CONTINUATION_PAUSE_SECONDS
+
+    monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
+    with pytest.raises(SessionFinished):
+        cw.main()  # genuine main -> run_controller_tick -> handler -> scheduler -> pipeline
+    logs = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert all(log.get("status") == "ok" for log in logs if "tick" in log), logs[-2:]
+    assert progress[-1] == n_rows and all(a < b for a, b in zip(progress, progress[1:]))
+    assert len(progress) > 1 and not cb._DEFER_ACK.get()
+    records = list(module.runtime.evidence_repository.list_source_records())
+    assert len(records) == n_rows and len({r.source_id for r in records}) == n_rows
+    for code in ("2317", "2330", "10000", str(10000 + n_rows - 1)):
+        assert _snapshot_date(module, f"{code}.TW") == _CLOSE_DATE
+    # Freshly reloaded store verifies disk persistence rather than only an in-memory view.
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+    snapshots = LatestMarketSnapshotStore(module.runtime.latest_market_snapshot_store.path)
+    assert snapshots.get("2330.TW").points[-1].event_time[:10] == _CLOSE_DATE
+    actual = cw.read_actual_state_with_fetch_bindings(api_url=config.api_url)
+    assert cw.select_collector_pull_connectors(actual, _steady_reconcile([cid])) == []
+    assert active[0] == 0
+    elapsed = clock[0] + time.monotonic() - real_start
+    print({"rows": n_rows, "exchange": exchange, "ticks": len(progress), "reads": len(reads),
+           "peak_inflight": peak[0], "elapsed_seconds": round(elapsed, 2)})
+    assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"

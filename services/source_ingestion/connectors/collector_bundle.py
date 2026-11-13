@@ -33,8 +33,9 @@ import shutil
 import tempfile
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
@@ -77,6 +78,10 @@ _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
 # every transport read share it, so one request can never run past the controller boundary.
 COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
+# Only newest-session raw reads overlap. Metadata and the historical sweep remain
+# ordered; at most four guarded Collector requests are in flight, with no queue
+# beyond that batch and no reader surviving the pull.
+LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
@@ -382,6 +387,7 @@ def verify_bundle(
     item_window: tuple[int, int] | None = None,
     deadline: float | None = None,
     priority_codes: Collection[str] = (),
+    raw_read_concurrency: int = 1,
 ) -> VerifiedBundle:
     """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
@@ -479,29 +485,47 @@ def verify_bundle(
     raw_bytes: dict[str, bytes] = {}
     verified_through: int | None = None
     window_start = max(item_window[0], 0) if item_window is not None else 0
-    for offset, item_id in enumerate(wanted_ids):
-        if deadline is not None and offset > 0 and time.monotonic() >= deadline:
-            verified_through = window_start + offset
-            break
+    def read_verified(item_id: str) -> tuple[str, bytes]:
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
-        try:
-            data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
-        except TimeoutError:
-            # A read that started inside the budget but was cut by the shared deadline
-            # discards only its own (never-accepted) bytes; already verified rows keep
-            # their progress and this row is re-read by the next pull's window.
-            if offset > 0 and deadline is not None and time.monotonic() >= deadline:
-                verified_through = window_start + offset
-                break
-            raise
+        data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
         actual = _sha256(data)
         if declared != actual:
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
         if "bytes" in item and int(item["bytes"]) != len(data):
             raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
-        raw_bytes[actual] = data
+        return actual, data
+
+    width = max(1, min(raw_read_concurrency, LATEST_CLOSE_RAW_READ_CONCURRENCY))
+    # A separate context per worker preserves the *same* operation deadline and
+    # egress policy. Never acknowledge out of order or discard a genuine failure
+    # from a later parallel read merely because an earlier read timed out.
+    with ThreadPoolExecutor(max_workers=width) as readers:
+        for offset in range(0, len(wanted_ids), width):
+            if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            group = wanted_ids[offset:offset + width]
+            futures = [readers.submit(copy_context().run, read_verified, item_id) for item_id in group]
+            outcomes: list[tuple[str, bytes] | TimeoutError] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result())
+                except TimeoutError as exc:
+                    outcomes.append(exc)
+            for index, outcome in enumerate(outcomes):
+                if isinstance(outcome, TimeoutError):
+                    # Only a contiguous verified prefix can survive a deadline cut.
+                    # The missing item and any later prefetched items replay next pull.
+                    if offset + index > 0 and deadline is not None and time.monotonic() >= deadline:
+                        verified_through = window_start + offset + index
+                        break
+                    raise outcome
+                actual, data = outcome
+                raw_bytes[actual] = data
+            if verified_through is not None:
+                break
 
     return VerifiedBundle(
         source_id=source_id,
@@ -873,6 +897,7 @@ class CollectorBundleAdapter:
         bundle = verify_bundle(
             transport, expected_source_id=self.source_id, entry=newest, item_window=(delivered, delivered + total_cap),
             priority_codes=held,
+            raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY,
         )
         if bundle.status == "paused":
             return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False, held
