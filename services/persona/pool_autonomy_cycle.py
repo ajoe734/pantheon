@@ -155,14 +155,19 @@ class PoolAutonomyCycle:
             if demand.get("status") != "open":
                 continue
             entry: dict[str, Any] = {"demand_id": demand["demand_id"]}
+            done = {(a.get("match_id"), a.get("action")) for a in (demand.get("discovery") or {}).get("actions") or []
+                    if a.get("status") != "failed"}
             try:
                 found = ports.discover_for_demand(persona, demand)
-                actions = [self._execute_match(persona, demand, m) for m in found["matches"]]
+                # An action an owner already took is not executed again; only failures are retried.
+                actions = [self._execute_match(persona, demand, m) for m in found["matches"]
+                           if (m["match_id"], m["recommended_action"]["type"]) not in done]
                 backfill = list(found.get("backfill_datasets") or [])
-                if backfill and not found["matches"]:
-                    actions.append({"action": "request_data_backfill", "match_id": None, "owner": "l1-desired-state",
-                                    "status": "requested", "datasets": backfill,
-                                    "reason": found.get("reason") or "required_data_unavailable"})
+                if backfill and not found["matches"] and (None, "request_data_backfill") not in done:
+                    actions.append(self._execute_match(persona, demand, {
+                        "match_id": None, "matched_object_id": None, "matched_object_type": "demand", "score": None,
+                        "recommended_action": {"type": "request_data_backfill", "reason": found.get("reason") or "required_data_unavailable"},
+                        "missing_data": [{"dataset": d} for d in backfill]}))
                 record = {"run_at": self.now(), "matched": len(found["matches"]), "excluded": found["excluded"],
                           "candidates_considered": found["candidates_considered"], "reason": found.get("reason"),
                           "actions": actions}
@@ -184,9 +189,6 @@ class PoolAutonomyCycle:
         action = match["recommended_action"]["type"]
         base = {"action": action, "match_id": match["match_id"], "matched_object_id": match["matched_object_id"],
                 "score": match["score"]}
-        if action == "request_data_backfill":
-            return {**base, "owner": "l1-desired-state", "status": "requested",
-                    "datasets": sorted(d["dataset"] for d in match.get("missing_data", []))}
         try:
             return {**base, **self.ports.execute_match_action(persona, demand, match)}
         except Exception as exc:  # noqa: BLE001 - the owner refused or was down: record, do not retry blindly
@@ -339,7 +341,7 @@ def governed_dataset_loader(env: Mapping[str, str] | None = None) -> Callable[[M
     return load
 
 
-def governed_discovery_loader(*, seeds: Callable[[], list], specs: Callable[[Mapping], list],
+def governed_discovery_loader(*, seeds: Callable[[Mapping], list], specs: Callable[[Mapping], list] | None = None,
                               route_policy: Callable[[Mapping], Mapping | None],
                               capability_snapshot: Callable[[Mapping], Mapping | None]) -> Callable[[Mapping], dict]:
     """Discovery inputs from the existing owners (seed store, registry specs, persona route policy / capability).
@@ -347,7 +349,7 @@ def governed_discovery_loader(*, seeds: Callable[[], list], specs: Callable[[Map
     Each source is an owner read; one that raises makes the demand's discovery fail closed with that reason.
     """
     def load(persona: Mapping) -> dict:
-        return {"seeds": seeds(), "specs": specs(persona), "route_policy": route_policy(persona) or {},
+        return {"seeds": seeds(persona), "specs": specs(persona) if specs else None, "route_policy": route_policy(persona) or {},
                 "capability_snapshot": capability_snapshot(persona) or {}}
     return load
 
@@ -418,38 +420,63 @@ class HttpPoolCyclePorts:
         # own failed families arrive through the demand's tried_families.
         return module.discover_for_demand(
             persona, demand, route_policy=sources.get("route_policy"), capability_snapshot=sources.get("capability_snapshot"),
-            strategy_seeds=sources.get("seeds") or [], strategy_specs=sources.get("specs") or [],
+            strategy_seeds=sources.get("seeds") or [],
+            strategy_specs=(self.read_strategy_specs(persona) if sources.get("specs") is None else sources["specs"]),
             created_at=self.now_iso(), discovery_session_id="psd-demand-" + demand["demand_id"])
 
     @staticmethod
     def now_iso():
         return _now()
 
+    def read_strategy_specs(self, persona):
+        """StrategySpec candidates from the registry owner (tenant-scoped service read), not retired."""
+        rows = self._call("GET", "registry", "/api/registry/strategy-specs", persona)
+        specs = []
+        for view in rows or []:
+            entry = view.get("entry") if isinstance(view, Mapping) else None
+            if not isinstance(entry, Mapping) or str(entry.get("artifact_state") or "").lower() in {"retired", "rejected"}:
+                continue
+            specs.append({"strategy_id": entry.get("strategy_id"), "strategy_spec_registry_id": entry.get("registry_id"),
+                          "lifecycle_state": entry.get("artifact_state"), "metadata": dict(entry.get("metadata") or {}),
+                          "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}})
+        return specs
+
+    # Each supported action is admitted by the research owner as a durable ticket (its request queue).
+    # The persona cycle only asks: seed promotion stays with the seed reviewer, rapid evaluation with
+    # the governed training session and data backfill with the data owners; the ticket is their gate.
+    ACTION_REQUEST = {
+        "create_research_ticket": ("created", "Research"),
+        "promote_seed_candidate": ("review_requested", "Seed promotion review (reviewer decision required)"),
+        "run_rapid_eval": ("eval_requested", "Rapid evaluation request (governed dataset and session required)"),
+        "request_data_backfill": ("backfill_requested", "Data backfill request"),
+    }
+
     def execute_match_action(self, persona, demand, match):
         """Execute a recommended action through its existing owner (paper/research only)."""
         action = match["recommended_action"]["type"]
-        if action == "create_research_ticket":
-            ticket_id = "rt-demand-" + hashlib.sha256(f"{demand['demand_id']}:{match['match_id']}".encode()).hexdigest()[:16]
-            try:  # the owner overwrites on a repeated id: never post an existing ticket again
-                existing = self._call("GET", "research", "/api/research/tickets/" + ticket_id, persona)
-            except Exception:  # noqa: BLE001 - absent ticket (404) or unreadable owner; the POST below decides
-                existing = None
-            if existing:
-                return {"owner": "research:tickets", "status": "already_exists", "ticket_id": ticket_id}
-            ticket = self._call("POST", "research", "/api/research/tickets", persona, {
-                "ticket_id": ticket_id, "owner": persona["persona_id"], "actor_id": "persona-pool-cycle", "priority": "medium",
-                "title": f"Research demand {demand['demand_id']}: {match['matched_object_type']} {match['matched_object_id']}",
-                "description": (f"Persona {persona['persona_id']} is short on {demand['short_measure']}. Discovery score "
-                                f"{match['score']} ({match['recommended_action']['reason']}) Demand evidence: {demand.get('evidence_ref')}.")})
-            return {"owner": "research:tickets", "status": "created", "ticket_id": (ticket or {}).get("ticket_id", ticket_id)}
-        if action == "promote_seed_candidate":
-            # The seed store only moves a seed after a reviewer's decision; the cycle is not a reviewer.
-            return {"owner": "seed-store", "status": "requires_operator_review",
-                    "reason": "seed review decisions are made by a reviewer, never by the persona cycle"}
-        if action == "run_rapid_eval":
-            return {"owner": "training-session", "status": "not_executed",
-                    "reason": "rapid eval needs a training session and governed dataset; no cycle-level entry exists"}
-        return {"owner": "none", "status": "not_executed", "reason": "unsupported_action:" + action}
+        if action not in self.ACTION_REQUEST:
+            return {"owner": "none", "status": "refused", "reason": "unsupported_action:" + action}
+        done_status, label = self.ACTION_REQUEST[action]
+        key = f"{demand['demand_id']}:{match.get('match_id')}:{action}"
+        ticket_id = "rt-demand-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+        try:  # the owner overwrites on a repeated id: never post an existing ticket again
+            existing = self._call("GET", "research", "/api/research/tickets/" + ticket_id, persona)
+        except Exception:  # noqa: BLE001 - absent ticket (404) or unreadable owner; the POST below decides
+            existing = None
+        if existing:
+            return {"owner": "research:tickets", "status": "already_exists", "ticket_id": ticket_id}
+        datasets = sorted(d["dataset"] for d in match.get("missing_data", []))
+        subject = f"{match.get('matched_object_type')} {match.get('matched_object_id')}" if match.get("matched_object_id") else "demand datasets " + ",".join(datasets)
+        ticket = self._call("POST", "research", "/api/research/tickets", persona, {
+            "ticket_id": ticket_id, "owner": persona["persona_id"], "actor_id": "persona-pool-cycle", "priority": "medium",
+            "title": f"{label}: demand {demand['demand_id']}: {subject}",
+            "description": (f"Persona {persona['persona_id']} is short on {demand['short_measure']}. Action {action}"
+                            f" (score {match.get('score')}): {match['recommended_action'].get('reason')} "
+                            f"Datasets: {datasets or 'n/a'}. Demand evidence: {demand.get('evidence_ref')}.")})
+        receipt = {"owner": "research:tickets", "status": done_status, "ticket_id": (ticket or {}).get("ticket_id", ticket_id)}
+        if datasets:
+            receipt["datasets"] = datasets
+        return receipt
 
     def candidates(self, persona, pool):
         """Gate-passed StrategyArtifact candidates resolved through owner evidence.

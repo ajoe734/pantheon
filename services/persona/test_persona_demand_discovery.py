@@ -44,12 +44,13 @@ class World:
         self.demands = ResearchDemandStore(tmp_path / "demands.json")
         self.tickets = ResearchWriteOwner(tickets_store=_InMemoryStore(), experiments_store=_InMemoryStore(), notes_store=_InMemoryStore())
         self.memory, self.http = [], []
+        self.registry_specs, self.ticket_failures = [], 0
         self.seeds, self.loader_fails = seeds, loader_fails
-        loader = governed_discovery_loader(seeds=self._seeds, specs=lambda p: [], route_policy=lambda p: {}, capability_snapshot=lambda p: {})
+        loader = governed_discovery_loader(seeds=self._seeds, route_policy=lambda p: {}, capability_snapshot=lambda p: {})
         self.ports = HttpPoolCyclePorts(self.transport, pool_store=self, discovery_loader=loader, env={})
         self.cycle = PoolAutonomyCycle(self.ports)
 
-    def _seeds(self):
+    def _seeds(self, persona):
         if self.loader_fails:
             raise RuntimeError("seed_store_unconfigured")
         return self.seeds
@@ -72,7 +73,12 @@ class World:
             if found is None:
                 raise LookupError("404")
             return found
+        if service == "registry" and path == "/api/registry/strategy-specs":
+            return self.registry_specs
         if service == "research" and path == "/api/research/tickets":
+            if self.ticket_failures:
+                self.ticket_failures -= 1
+                raise ConnectionError("research owner down")
             return self.tickets.create_research_ticket(
                 title=body["title"], description=body["description"], priority=body["priority"], owner=body["owner"],
                 actor_id=body["actor_id"], ticket_id=body.get("ticket_id"))
@@ -102,7 +108,9 @@ def test_cycle_demand_to_discovery_match_to_research_ticket(tmp_path):
     assert found[0]["recorded"] and found[0]["matched"] == 1
     action = demand["discovery"]["actions"][0]
     # a strong seed fit is promoted only for operator review; the cycle never reviews its own seeds
-    assert (action["action"], action["owner"], action["status"]) == ("promote_seed_candidate", "seed-store", "requires_operator_review")
+    assert (action["action"], action["owner"], action["status"]) == ("promote_seed_candidate", "research:tickets", "review_requested")
+    ticket = world.tickets.get_research_ticket(action["ticket_id"])
+    assert "reviewer decision required" in ticket["title"]  # the approval gate stays with the seed reviewer
     assert demand["discovery"]["last_run"]["reason"] is None
 
 
@@ -146,7 +154,8 @@ def test_no_match_records_reason_and_requests_backfill_when_data_is_missing(tmp_
     last = demand["discovery"]["last_run"]
     assert last["matched"] == 0 and last["reason"].startswith("all_candidates_excluded:missing_datasets_not_required")
     backfill = [a for a in demand["discovery"]["actions"] if a["action"] == "request_data_backfill"]
-    assert backfill and backfill[0]["datasets"] == ["ohlcv"] and backfill[0]["status"] == "requested"
+    assert backfill and backfill[0]["datasets"] == ["ohlcv"] and backfill[0]["status"] == "backfill_requested"
+    assert world.tickets.get_research_ticket(backfill[0]["ticket_id"])["title"].startswith("Data backfill request")
 
 
 def test_unavailable_sources_fail_closed_with_recorded_reason(tmp_path):
@@ -170,3 +179,76 @@ def test_record_discovery_refuses_a_closed_or_unknown_demand(tmp_path):
     store = ResearchDemandStore(tmp_path / "d.json")
     with pytest.raises(Exception, match="not found"):
         store.record_discovery(TENANT, "rd-missing", {"run_at": "2026-11-13T00:00:00Z", "actions": []})
+
+
+def test_failed_action_is_retried_and_the_success_receipt_replaces_it_with_history(tmp_path):
+    weak = seed("seed-weak", family="carry", required=("ohlcv",), market_scope=["NYSE"], holding_period="intraday")
+    world = World(tmp_path, [weak])
+    world.ticket_failures = 1
+    world.run()
+    failed = only_demand(world)["discovery"]["actions"][0]
+    assert failed["status"] == "failed" and "ticket_id" not in failed
+    world.run("pk2")
+    action = only_demand(world)["discovery"]["actions"][0]
+    assert action["status"] == "created" and action["ticket_id"]
+    assert [a["status"] for a in action["attempts"]] == ["failed", "created"]
+    assert len(world.tickets.list_research_tickets()) == 1
+    world.run("pk3")  # a completed action is neither re-executed nor rewritten
+    assert only_demand(world)["discovery"]["actions"] == [action]
+    assert len(world.tickets.list_research_tickets()) == 1
+
+
+def test_spec_match_requests_rapid_eval_from_registry_owner_specs(tmp_path):
+    world = World(tmp_path, [])
+    world.registry_specs = [{"entry": {"registry_id": "reg-1", "strategy_id": "spec-mom", "artifact_state": "approved",
+                                       "metadata": {"strategy_family": "momentum"}}}]
+    assert world.ports.read_strategy_specs(PERSONA)[0]["strategy_spec_registry_id"] == "reg-1"
+    receipt = world.ports.execute_match_action(PERSONA, {"demand_id": "d1", "short_measure": "m"}, {
+        "match_id": "m1", "matched_object_id": "spec-mom", "matched_object_type": "strategy_spec", "score": 0.9,
+        "recommended_action": {"type": "run_rapid_eval", "reason": "fits"}})
+    assert receipt["status"] == "eval_requested" and receipt["owner"] == "research:tickets"
+    assert world.tickets.get_research_ticket(receipt["ticket_id"])["title"].startswith("Rapid evaluation request")
+    refused = world.ports.execute_match_action(PERSONA, {"demand_id": "d1", "short_measure": "m"}, {
+        "match_id": "m2", "recommended_action": {"type": "delete_everything"}})
+    assert refused["status"] == "refused"
+
+
+def test_lifespan_seed_reader_binds_persona_tenant_and_service_credential(tmp_path, monkeypatch):
+    """The real lifespan wiring (no injected seed loader) reads seeds with the background-bound identity."""
+    from services.control_plane.bff import source_management_client as smc
+    seen = []
+
+    def fake_list_all(self):
+        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+        seen.append((authorization.get(), selected_tenant.get()))
+        return []
+    monkeypatch.setattr(smc.SourceManagementClient, "list_all", fake_list_all)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.invalid")
+    monkeypatch.setenv("PERSONA_SOURCE_INGEST_SERVICE_TOKEN", "svc-token")
+    monkeypatch.setenv("PERSONA_DAILY_CYCLE_ENABLED", "true")
+    captured = {}
+    import services.persona.pool_autonomy_cycle as pac
+    real = pac.HttpPoolCyclePorts
+    monkeypatch.setattr(pac, "HttpPoolCyclePorts", lambda *a, **k: captured.setdefault("ports", real(*a, **k)))
+    monkeypatch.setattr("services.persona.persona_cycle_controller.run_controller", lambda *a, **k: asyncio.sleep(0))
+    import asyncio
+    import importlib.util
+    import sys
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "control-plane/persona/main.py"
+    spec = importlib.util.spec_from_file_location("persona_demand_lifespan_test", path)
+    main = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, main)
+    monkeypatch.syspath_prepend(str(path.parent))
+    spec.loader.exec_module(main)
+
+    async def boot():
+        async with main.persona_lifespan(main.app):
+            pass
+    asyncio.run(boot())
+    loader = captured["ports"].discovery_loader
+    loader(PERSONA)
+    assert seen == [("Bearer svc-token", TENANT)]
+    monkeypatch.delenv("PERSONA_SOURCE_INGEST_SERVICE_TOKEN")
+    with pytest.raises(RuntimeError, match="seed_store_credential_unconfigured"):
+        loader(PERSONA)

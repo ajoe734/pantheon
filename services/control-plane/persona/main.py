@@ -63,18 +63,29 @@ async def persona_lifespan(app):
         from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
         from services.persona.pool_autonomy_cycle import governed_discovery_loader
 
-        def _seed_store_reads() -> list:
-            # Seeds come from the source-ingest owner with its own negative-memory verdicts; unconfigured fails closed.
+        def _seed_store_reads(persona) -> list:
+            # Background-safe owner read: no request is in flight, so the persona's tenant and the
+            # persona service's own admitted source-ingest credential are bound for this read only.
+            from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
             from services.control_plane.bff.source_management_client import SourceManagementClient
+            from services.service_token_file import configured_service_token
             client = SourceManagementClient()
             if not client.configured:
                 raise RuntimeError("seed_store_unconfigured")
-            return client.list_all()
+            token = configured_service_token("PERSONA_SOURCE_INGEST_SERVICE_TOKEN")
+            if not token:
+                raise RuntimeError("seed_store_credential_unconfigured")
+            auth_mark = authorization.set("Bearer " + token)
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return client.list_all()
+            finally:
+                selected_tenant.reset(tenant_mark)
+                authorization.reset(auth_mark)
 
-        # StrategySpec candidates are not read here: no spec-detail reader exists on the persona owner yet,
-        # so spec matches (rapid eval) stay with the operator route until one does.
+        # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
         discovery_loader = governed_discovery_loader(
-            seeds=_seed_store_reads, specs=lambda persona: [],
+            seeds=_seed_store_reads,
             route_policy=lambda persona: persona.get("route_policy"),
             capability_snapshot=lambda persona: persona.get("capability_snapshot"))
         controller = PersonaCycleController(

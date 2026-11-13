@@ -163,11 +163,21 @@ class ResearchDemandStore:
                     raise DemandError(f"demand {demand_id} is {row['status']}, not open")
                 known = dict(row.get("discovery") or {})
                 actions = list(known.get("actions") or [])
-                seen = {(a.get("match_id"), a.get("action")) for a in actions}
+                index = {(a.get("match_id"), a.get("action")): i for i, a in enumerate(actions)}
+                run_at = record.get("run_at")
                 for action in record.get("actions") or []:
-                    if (action.get("match_id"), action.get("action")) not in seen:
-                        actions.append(dict(action))
-                        seen.add((action.get("match_id"), action.get("action")))
+                    key = (action.get("match_id"), action.get("action"))
+                    attempt = {"run_at": run_at, "status": action.get("status"), "reason": action.get("reason")}
+                    if key not in index:
+                        index[key] = len(actions)
+                        actions.append({**action, "attempts": [attempt]})
+                        continue
+                    kept = actions[index[key]]
+                    history = list(kept.get("attempts") or [{"run_at": None, "status": kept.get("status"), "reason": kept.get("reason")}])
+                    if kept.get("status") != "failed":
+                        continue  # an executed receipt is authoritative: never repeated, never overwritten
+                    # a failed attempt stays in the history; a later outcome (success or failure) becomes current
+                    actions[index[key]] = {**action, "attempts": history + [attempt]}
                 row["discovery"] = {
                     "actions": actions,
                     "last_run": {k: v for k, v in record.items() if k != "actions"},
