@@ -14216,7 +14216,8 @@ def _pm12_quarterly_recommendation_item(
         "evaluator_run_id": saved.get("evaluator_run_id"),
         "evaluated_at": saved.get("evaluated_at"),
         "governance_request": saved.get("governance_request"),
-        "routing": saved.get("routing"),
+        "routing": {k: v for k, v in (saved.get("routing") or {}).items() if k in
+                    {"owner", "status", "reason", "ranking_snapshot_id", "rebalance_id"}},
         "panel_memo": saved.get("panel_memo"),
         "mapping_version": saved.get("mapping_version"),
         "rationale_codes": [

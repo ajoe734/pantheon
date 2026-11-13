@@ -144,13 +144,14 @@ def required_consultation(
     ]
     scopes = {str(item).strip() for item in touches}
     hit = sorted(scopes & RED_TEAM_SCOPES)
-    if (decision_type == DECISION_HARNESS_PATCH and hit) or (
-        decision_type == DECISION_TRIAL_ADMISSION and "paper_canary_candidacy" in scopes
-    ):
+    if decision_type == DECISION_HARNESS_PATCH and hit:
         participants.append(PanelParticipant(red_team_persona_id, ROLE_RED_TEAM))
         reasons.append(
-            "harness guardrail patch or paper canary candidacy; red team required"
+            "harness patch touches " + ", ".join(hit) + "; red team required"
         )
+    if decision_type == DECISION_TRIAL_ADMISSION and "paper_canary_candidacy" in scopes:
+        participants.append(PanelParticipant(red_team_persona_id, ROLE_RED_TEAM))
+        reasons.append("paper canary candidacy requires the red team persona")
     index: dict[str, int] = {}
     unique: list[PanelParticipant] = []
     for item in participants:

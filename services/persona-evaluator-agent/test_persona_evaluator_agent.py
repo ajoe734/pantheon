@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -15,9 +16,9 @@ NOW = 1790000000.0  # 2026-Q3
 QUARTER = pea.quarter_of(pea.datetime.fromtimestamp(NOW, pea.timezone.utc))
 
 
-def _item(pid, state="paper_owner", score=20.0):
+def _item(pid, state="paper_owner", score=40.0):
     return {"persona_id": pid, "name": pid, "owner_lifecycle_state": state, "stage": "paper_running", "score": score,
-            "tier": "tier-4", "eligible": True, "components": {"risk_score": 30},
+            "tier": "tier-4", "eligible": True, "components": {"risk_score": 60, "execution_score": 70, "activity_score": 70},
             "evidence_refs": [{"refId": f"ev-{pid}"}]}
 
 
@@ -78,7 +79,15 @@ def _sid(label="snap-1"):
 
 
 @pytest.fixture(autouse=True)
-def ranking_owner(monkeypatch):
+def ranking_owner(monkeypatch, request):
+    monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", "http://consult")
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "test-panel-token")
+    real_dsn = os.getenv("PANTHEON_PM12_TEST_POSTGRES_DSN")
+    if real_dsn:
+        import uuid
+        monkeypatch.setenv("RANKING_STORE_DSN", real_dsn)
+        monkeypatch.setenv("RANKING_STORE_TABLE", "rankings.pm12_" + uuid.uuid4().hex[:12])
+        return
     from services.rankings.test_store import _FakeConnection, _fake_psycopg
     from services.rankings.store import RankingWriteStore
     monkeypatch.setattr(_FakeConnection, "rows", {})
@@ -115,23 +124,24 @@ def test_lifecycle_recommendation_creates_one_governance_request_and_saves_resul
     assert saved["items"][0]["governance_request"]["to_state"] == "frozen"
 
 
-def test_score_alone_creates_nothing(tmp_path):
+def test_rationale_writer_cannot_omit_fixed_low_score_actions(tmp_path):
     fetch, log = _fetch([_item("p1", score=1.0)], [])
-    assert _run(tmp_path, fetch)["created"] == 0
-    assert _proposals(log) == []
+    assert _run(tmp_path, fetch)["created"] == 2
+    assert {p["subject"]["to_state"] for p in _proposals(log)} == {"frozen"}
 
 
 def test_advisory_and_unsupported_transitions_never_create_requests(tmp_path):
     items = [_item("p1"), _item("p2", state="retired")]
     fetch, log = _fetch(items, [_rec("p1", "reduce_capital_access"), _rec("p1", "suspend_persona"), _rec("p2")])
     out = _run(tmp_path, fetch)
-    assert out["recommendations"] == 3 and out["created"] == 0 and _proposals(log) == []
+    assert out["recommendations"] == 6 and out["created"] == 1
+    assert len(_proposals(log)) == 1  # the agent cannot remove the fixed freeze for p1
 
 
 def test_unsourced_or_unknown_agent_output_is_dropped(tmp_path):
     bad = [{**_rec("p1"), "evidence_ref_ids": ["forged"]}, {**_rec("p1"), "rationale": " "}, _rec("ghost")]
     fetch, log = _fetch([_item("p1")], bad)
-    assert _run(tmp_path, fetch)["recommendations"] == 0
+    assert _run(tmp_path, fetch)["recommendations"] == 3  # fixed actions survive bad rationale output
 
 
 def test_dedupes_per_persona_and_target_state_and_reuses_saved_result(tmp_path):
@@ -161,15 +171,14 @@ def test_rate_limit_per_run_and_per_hour(tmp_path):
     assert _run(tmp_path, fetch, now=NOW + 40)["created"] == 0
 
 
-def test_degraded_runs_create_nothing_and_are_recorded(tmp_path):
-    for kwargs in ({"ranking_down": True}, {"agent_down": True}):
-        fetch, log = _fetch([_item("p1")], [_rec("p1")], **kwargs)
-        out = _run(tmp_path, fetch)
-        assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
+def test_ranking_outage_is_recorded_but_rationale_outage_cannot_veto_mapping(tmp_path):
+    fetch, log = _fetch([_item("p1")], [_rec("p1")], ranking_down=True)
+    assert _run(tmp_path, fetch)["status"] == "degraded"
+    assert _proposals(log) == []
+    fetch, log = _fetch([_item("p1")], [_rec("p1")], agent_down=True)
+    assert _run(tmp_path, fetch)["created"] == 1
     state = pea.Store(tmp_path / "state.json").load()
-    assert state["last_run"]["status"] == "degraded"
-    assert next(iter(state["results"].values()))["items"] == []
-    assert next(iter(state["results"].values()))["agent_status"] == "unavailable"
+    assert next(iter(state["results"].values()))["provider"] == "fixed_rule"
 
 
 def test_unavailable_evidence_records_degraded_and_creates_nothing(tmp_path):
@@ -474,7 +483,7 @@ def test_explicit_ineligible_missing_evidence_rows_are_skipped_and_snapshot_is_f
     full = pea.snapshot_record([{**i, "formula_version": "snap-1"} for i in items], surface="quarterly", period=QUARTER)
     assert snap.ranking_snapshot_id == full.ranking_snapshot_id
     out = _run(tmp_path, fetch)
-    assert out["status"] != "degraded" and out["created"] == 1
+    assert out["status"] != "degraded" and out["created"] == 2
     assert [p["persona_id"] for p in _prompt_ids(log)[0]] == ["p1", "p2"]
 
 
@@ -617,7 +626,7 @@ def _promotion_item(pid="p1", *, days=30, orders=20, score=90, rank=1):
     start = pea.datetime(2026, 7, 1, tzinfo=pea.timezone.utc)
     refs = [{"ref_id": f"event-{n}", "source_type": "quarter_equity",
              "observed_at": (start + timedelta(days=n)).isoformat()} for n in range(days)]
-    return {**_item(pid, score=score), "rank": rank, "exclusion_codes": [],
+    return {**_item(pid, score=score), "components": {"risk_score": 80, "execution_score": 80, "activity_score": 80}, "rank": rank, "exclusion_codes": [],
             "formula_version": "pm12-return-on-capital-v2", "evidence_ref_ids": ["ev-" + pid],
             "metrics": {"pnl_return_status": "known", "pnl_return": 0.9,
                         "drawdown_status": "known", "drawdown": 0.01,
@@ -639,9 +648,25 @@ def _seed_promotion(tmp_path, items=None):
     return store, snapshot
 
 
-def _promotion_fetch(log, *, agent_down=False, gov_down=False, probe=False, tenant="t1"):
+def _promotion_fetch(log, *, agent_down=False, gov_down=False, probe=False, tenant="t1", panel_pending=False):
+    panel = {}
     def fetch(url, data=None, headers=None, timeout=20):
         log.append((url, data))
+        if "/api/consult/requests" in url:
+            if url.endswith("/requests"):
+                panel.update(data)
+                return {**data, "status": "submitted"}
+            if url.endswith("/transcript"):
+                from services.persona.consult_triggers import RISK_PERSONA_ID, RED_TEAM_PERSONA_ID
+                return {"request_id": panel["request_id"], "events": [] if panel_pending else [
+                    {"actor": {"actor_type": "persona", "actor_id": pid},
+                     "content": {"recommendation": "approve", "claim": "Recorded panel conclusion"},
+                     "evidence_refs": ["panel-evidence-" + pid]} for pid in (RISK_PERSONA_ID, RED_TEAM_PERSONA_ID)]}
+        if "/api/consult/memos" in url:
+            return [{"request_id": panel["request_id"], "memo_id": "memo-panel-1", "status": "published",
+                     "memo_type": "committee_summary", "author_ref": "consult-panel:" + panel["request_id"],
+                     "target_type": "trial_admission", "target_id": "p1", "summary": "Risk and red team reviewed",
+                     "recommendation": "approve"}]
         if "/api/personas/" in url:
             return {"persona_id": "p1", "tenant_id": tenant, "metadata": {"acceptance_probe": probe}}
         if "/structured" in url:
@@ -730,7 +755,8 @@ def test_promotion_config_and_sample_identity_deduplication(tmp_path):
 def test_agent_cannot_choose_promotion():
     assert "promote_to_canary_candidate" not in pea.ACTIONS
     fetch, _ = _fetch([_item("p1")], [_rec("p1", "promote_to_canary_candidate")])
-    assert pea.ask_agent([{"persona_id": "p1", "evidence_ref_ids": ["ev-p1"]}], "http://ad", "t", fetch) == []
+    assert all(r["action_id"] != "promote_to_canary_candidate" for r in pea.ask_agent(
+        [{**_item("p1"), "evidence_ref_ids": ["ev-p1"]}], "http://ad", "t", fetch))
 
 
 @pytest.mark.parametrize('metadata', [{'data_scope': 'acceptance'}, {'is_acceptance': 'true'}, {'release_probe': True}])
@@ -749,3 +775,204 @@ def test_promotion_threshold_environment_is_configurable_and_invalid_values_fail
     log = []
     assert _promote(store, _promotion_fetch(log))['reason'] == 'invalid_sample_thresholds'
     assert _proposals(log) == []
+
+
+@pytest.mark.parametrize("score,risk,execution,activity,expected", [
+    (90, 80, 80, 80, {"increase_research_budget", "grant_tool_access"}),
+    (70, 60, 55, 45, {"increase_research_budget", "grant_tool_access"}),
+    (69, 60, 55, 45, set()),
+    (60, 54, 55, 45, {"reduce_capital_access"}),
+    (60, 55, 54, 45, {"require_retraining"}),
+    (60, 55, 55, 44, {"require_retraining"}),
+    (55, 55, 55, 45, set()),
+    (54, 55, 55, 45, {"require_retraining", "reduce_capital_access"}),
+    (45, 55, 55, 45, {"require_retraining", "reduce_capital_access"}),
+    (44, 55, 55, 45, {"require_retraining", "reduce_capital_access", "freeze_persona"}),
+    (34, 55, 55, 45, {"require_retraining", "reduce_capital_access", "freeze_persona", "suspend_persona"}),
+    (24, 55, 55, 45, {"require_retraining", "reduce_capital_access", "freeze_persona", "suspend_persona", "retire_persona"}),
+])
+def test_fixed_governance_mapping_boundaries(score, risk, execution, activity, expected):
+    item = {**_item("p1", score=score), "components": {
+        "risk_score": risk, "execution_score": execution, "activity_score": activity}}
+    assert set(pea.fixed_actions(item)) == expected
+
+
+@pytest.mark.parametrize("changes", [
+    {"score": None}, {"score": True}, {"score": float("nan")}, {"score": 101},
+    {"components": {}}, {"components": None}, {"components": "unknown"},
+])
+def test_missing_metrics_record_reason_and_make_no_recommendation(tmp_path, changes):
+    fetch, log = _fetch([{**_item("p1"), **changes}], [_rec("p1")])
+    result = _run(tmp_path, fetch)
+    assert result["status"] == "degraded" and result["reason"]
+    assert _proposals(log) == [] and not _prompt_ids(log)
+    state = pea.Store(tmp_path / "state.json").load()
+    assert all(not entry["items"] for entry in state["results"].values())
+    assert state["last_run"]["reason"] == result["reason"]
+
+
+def test_candidacy_waits_for_real_panel_and_fixed_thresholds(tmp_path):
+    store, _ = _seed_promotion(tmp_path)
+    log = []
+    result = _promote(store, _promotion_fetch(log, panel_pending=True))
+    assert result["reason"] == "canary_panel_conclusions_pending" and not _proposals(log)
+    assert _promote(store, _promotion_fetch(log))["status"] == "proposed"
+    store, _ = _seed_promotion(tmp_path / "low", [_promotion_item(score=84)])
+    assert _promote(store, _promotion_fetch([]))["reason"] == "fixed_mapping_canary_threshold_not_met"
+
+
+def test_candidacy_panel_policy_includes_risk_and_red_team():
+    from services.persona.consult_triggers import required_consultation, RISK_PERSONA_ID, RED_TEAM_PERSONA_ID
+    requirement = required_consultation("trial_admission", "p1", initiator_persona_id="p1",
+                                       touches=[pea.PROMOTION_TARGET], target_version="snapshot")
+    assert {p.persona_id for p in requirement.participants} == {"p1", RISK_PERSONA_ID, RED_TEAM_PERSONA_ID}
+    assert requirement.to_panel_metadata()["gated_decision"]["target_version"] == "snapshot"
+
+
+@pytest.mark.skipif(not os.getenv("PANTHEON_PM12_TEST_POSTGRES_DSN"), reason="requires isolated real Rankings PostgreSQL")
+def test_real_postgres_ranking_to_each_owner_over_http(tmp_path, monkeypatch):
+    """Real evaluator entry points and Rankings persistence; only owner HTTP is faked."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, urlparse
+    from services.persona.harness import PersonaPatch
+    from services.evolution.models import ProposeRequest
+
+    items = [_promotion_item(),
+             _item("research", score=75),
+             {**_item("retrain", score=60), "components": {"risk_score": 60, "execution_score": 40, "activity_score": 70}},
+             {**_item("reduce", score=60), "components": {"risk_score": 50, "execution_score": 70, "activity_score": 70}},
+             _item("freeze", score=40), _item("suspend", score=30), _item("retire", state="frozen", score=20)]
+    for n, item in enumerate(items, 1):
+        item.update(rank=n, session_id="session-" + item["persona_id"], formula_version="pm12-return-on-capital-v2",
+                    evidence_ref_ids=["ev-" + item["persona_id"]])
+    snapshot = pea.snapshot_record(items, surface="quarterly", period=QUARTER)
+    calls, panels, errors = [], {}, []
+
+    def dispatch(path, data):
+        url = urlparse(path)
+        calls.append((url.path, data))
+        if url.path == "/bff/management/quarterly-ranking":
+            return {"data": {"ranking_snapshot_id": snapshot.ranking_snapshot_id, "items": items}}, 200
+        if url.path.endswith("/structured"):
+            return {"data": {"output": {"structured_data": {"recommendations": [
+                {**_rec("research", "retire_persona"), "rationale": "model tries to override"}],
+                "rationale": "Evidence supports the already fixed candidate"}}}}, 200
+        if url.path.endswith("/harness/patches"):
+            assert PersonaPatch.model_validate(data).model_dump(mode="json") == data
+            return {"proposal": data, "status": "draft", "checks": []}, 201
+        if url.path.endswith("/harness"):
+            return {"active_version": 1, "versions": [{"version": 1, "surface": {
+                "tool_guidance": {"research.read": "Read existing governed research"}}}]}, 200
+        if url.path.endswith("/strategy-pool"):
+            pid = url.path.split("/")[3]
+            return {"persona_id": pid, "tenant_id": "t1", "pool_version": 1, "members": [
+                {"artifact_ref": "strong", "checksum": "sum-strong", "joined_at": "2026-07-01", "stage": "active"},
+                {"artifact_ref": "weak", "checksum": "sum-weak", "joined_at": "2026-07-01", "stage": "active"}]}, 200
+        if url.path == "/api/bindings":
+            return [{"persona_id": i["persona_id"], "tenant_id": "t1", "status": "active",
+                     "binding_id": "binding-" + i["persona_id"]} for i in items], 200
+        if url.path == "/api/telemetry/runtime-summaries":
+            return [{"persona_capital_binding_id": "binding-" + i["persona_id"], "tenant_id": "t1",
+                     "deployment_stage": "paper", "member_virtual_books": [
+                         {"member_id": ref, "checksum": "sum-" + ref, "source_ref": "telemetry:" + ref,
+                          "dates": ["2026-07-02"], "net_of_costs": {"sharpe_ratio": sharpe}}
+                         for ref, sharpe in (("strong", 1.5), ("weak", -0.4))]} for i in items], 200
+        if url.path.startswith("/api/registry/strategy-artifacts/"):
+            ref = url.path.rsplit("/", 1)[1]
+            return {"entry": {"registry_id": ref, "owner_tenant": "t1", "checksum": "sum-" + ref,
+                              "version": "1", "artifact_state": "approved"}}, 200
+        if url.path == "/api/evolution/proposals":
+            ProposeRequest.model_validate(data)
+            assert data["target_id"] == "weak" and data["metadata"]["pool_member"]["checksum"] == "sum-weak"
+            assert data["metadata"]["member_book_source_ref"] == "telemetry:weak"
+            return {**data, "decision_state": "proposed"}, 201
+        if url.path == "/api/governance/approvals":
+            return {**data, "metadata": {"subject": data["subject"]}, "decision_state": "proposed"}, 201
+        if url.path == pea.PAPER_CYCLE_PATH:
+            inputs = data["pool_health"]["reduce"]["recommendation_inputs"]
+            assert inputs[0]["action_id"] == "reduce_capital_access"
+            assert inputs[0]["ranking_snapshot_id"] == snapshot.ranking_snapshot_id
+            return {"data": {"applied": True, "rebalance": {"rebalance_id": "paper-rebalance-1"}}}, 200
+        if url.path == "/api/consult/requests":
+            panels[data["request_id"]] = data
+            return {**data, "status": "submitted"}, 201
+        if url.path.endswith("/transcript"):
+            rid = url.path.split("/")[-2]
+            assert panels[rid]["metadata"]["panel"]["gated_decision"]["target_version"] == snapshot.ranking_snapshot_id
+            return {"request_id": rid, "events": [
+                {"actor": {"actor_type": "persona", "actor_id": pid},
+                 "content": {"recommendation": "approve", "claim": pid + " conclusion"},
+                 "evidence_refs": ["evidence:" + pid]} for pid in ("persona-risk-officer", "persona-red-team")]}, 200
+        if url.path == "/api/consult/memos":
+            rid = parse_qs(url.query)["request_id"][0]
+            return [{"memo_id": "memo-real-panel", "request_id": rid, "status": "published",
+                     "memo_type": "committee_summary", "author_ref": "consult-panel:" + rid,
+                     "target_type": "trial_admission", "target_id": "p1", "summary": "Both personas reviewed",
+                     "recommendation": "approve"}], 200
+        if url.path.startswith("/api/personas/"):
+            return {"persona_id": url.path.split("/")[3], "tenant_id": "t1"}, 200
+        raise AssertionError(path)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.respond(None)
+
+        def do_POST(self):
+            self.respond(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+
+        def respond(self, data):
+            try:
+                body, status = dispatch(self.path, data)
+            except Exception as exc:
+                errors.append(str(exc))
+                body, status = {"error": str(exc)}, 500
+            encoded = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    for owner in ("TELEMETRY", "CAPITAL", "REGISTRY", "EVOLUTION"):
+        monkeypatch.setenv("AUTO_CONSUMER_" + owner + "_URL", base)
+        monkeypatch.setenv("AUTO_CONSUMER_" + owner + "_TOKEN", "owner-test-token")
+    monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base)
+    store = pea.Store(tmp_path / "state.json")
+    try:
+        for n in range(6):
+            result = pea.run_once(store=store, bff_url=base, bff_headers={}, adapter_url=base,
+                                  adapter_token="a", governance_url=base, governance_token="g", tenant="t1",
+                                  actor="evaluator", persona_url=base, persona_token="p", now=lambda: NOW + n)
+            assert result["ranking_snapshot_id"] == snapshot.ranking_snapshot_id
+        saved = next(iter(store.load()["results"].values()))
+        assert {r["action_id"] for r in saved["items"]} == set(pea.ACTIONS)
+        assert not any(r["persona_id"] == "research" and r["action_id"] == "retire_persona" for r in saved["items"])
+        for rec in saved["items"]:
+            if rec["action_id"] in {"increase_research_budget", "grant_tool_access", "require_retraining"}:
+                assert rec["routing"]["status"] == "proposed", rec
+        assert {d["subject"]["to_state"] for p, d in calls if p == "/api/governance/approvals"} == {"frozen", "retired"}
+        cycle = pea.paper_cycle_once(store=store, bff_url=base, bff_headers={}, persona_url=base, persona_token="p",
+                                     tenant="t1", paper_pool_id="paper-pool", now=lambda: NEXT_QUARTER_NOW)
+        assert cycle["status"] == "applied"
+        nomination = pea.promotion_once(store=store, tenant="t1", actor="evaluator", governance_url=base,
+                                        governance_token="g", persona_url=base, persona_token="p", adapter_url=base,
+                                        adapter_token="a", now=lambda: NEXT_QUARTER_NOW)
+        assert nomination["status"] == "proposed", nomination
+        rec = nomination["recommendation"]
+        assert rec["panel_memo"]["memo_id"] == "memo-real-panel"
+        assert rec["panel_memo"]["evidence_ref"] in rec["evidence_ref_ids"]
+        assert json.loads(nomination["request"]["body"]["subject"]["panel_memo"]) == rec["panel_memo"]
+        assert pea.build_rankings_store().get_ranking_snapshot(snapshot.ranking_snapshot_id) is not None
+        assert not errors, errors
+        assert "owner-test-token" not in store.path.read_text()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

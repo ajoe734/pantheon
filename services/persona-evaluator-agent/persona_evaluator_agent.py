@@ -196,8 +196,11 @@ def build_prompt(items: list[dict[str, Any]]) -> str:
 
 
 def fixed_actions(item: dict[str, Any]) -> list[str]:
-    """All applicable advice; the most severe lifecycle condition takes precedence."""
-    values = [item.get("score"), *((item.get("components") or {}).get(k)
+    """Every matching condition in the fixed governance table contributes advice."""
+    components = item.get("components")
+    if not isinstance(components, dict):
+        raise Degraded("missing_or_invalid_ranking_metrics")
+    values = [item.get("score"), *(components.get(k)
               for k in ("risk_score", "execution_score", "activity_score"))]
     if any(_fraction(v) is None or not 0 <= v <= 100 for v in values):
         raise Degraded("missing_or_invalid_ranking_metrics")
@@ -211,9 +214,9 @@ def fixed_actions(item: dict[str, Any]) -> list[str]:
         actions.append("require_retraining")
     if overall < 25:
         actions.append("retire_persona")
-    elif overall < 35:
+    if overall < 35:
         actions.append("suspend_persona")
-    elif overall < 45:
+    if overall < 45:
         actions.append("freeze_persona")
     return sorted(actions, key=lambda a: (a not in LIFECYCLE_TARGETS, ACTIONS.index(a)))
 
@@ -246,6 +249,8 @@ def ask_agent(
     by_persona = {i["persona_id"]: i for i in items}
     for rec in raw:
         if not isinstance(rec, dict):
+            continue
+        if not isinstance(rec.get("persona_id"), str) or not isinstance(rec.get("action_id"), str):
             continue
         item = by_persona.get(rec.get("persona_id"))
         rationale = str(rec.get("rationale") or "").strip()
@@ -334,7 +339,7 @@ def route_paper_advice(rec: dict[str, Any], *, tenant: str, persona_url: str, pe
         # No allowed_tools are invented or granted by the evaluator.
         guidance = {k: v + "\n" + rec["rationale"] for k, v in guidance.items()}
         key = hashlib.sha256(f"{tenant}|{rec['ranking_snapshot_id']}|{rec['recommendation_id']}".encode()).hexdigest()
-        body = {"patch_id": f"pm12-{key[:32]}", "persona_id": rec["persona_id"], "session_id": rec["session_id"],
+        body = {"schema_version": "persona_harness_patch.v1", "patch_id": f"pm12-{key[:32]}", "persona_id": rec["persona_id"], "session_id": rec["session_id"],
                 "base_version": base, "rollback_target": base, "patch_type": "tool_profile",
                 "proposed_change": {"tool_guidance": guidance}, "expected_effect": rec["action_id"] + "; paper cap applies",
                 "evidence_refs": [{"kind": "packet", "ref": r, "moment": rec["ranking_snapshot_id"]}
@@ -342,35 +347,70 @@ def route_paper_advice(rec: dict[str, Any], *, tenant: str, persona_url: str, pe
         return {"url": f"{persona_url}/api/personas/{pid}/harness/patches", "body": body, "key": key,
                 "owner": "persona_harness", "headers": headers}
     if rec["action_id"] == "require_retraining":
-        from services.evolution.auto_consumer_runtime import PoolOwner
-        from services.evolution.pool_evolution_scheduler import member_days, proposal
+        # Same owner HTTP contracts as Evolution's PoolOwner, kept stdlib-only
+        # so the scheduled evaluator image carries no research executor.
+        def read(owner, path):
+            url, token = os.getenv(f"AUTO_CONSUMER_{owner}_URL", ""), os.getenv(f"AUTO_CONSUMER_{owner}_TOKEN", "")
+            if not url or not token:
+                raise Degraded(f"{owner.lower()}_owner_credential_missing")
+            return fetch(url.rstrip("/") + path,
+                         headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant})
 
-        def transport(method, url, auth, body):
-            response = fetch(url, data=body, headers=auth)
-            return response.get("_http_status", 200) if isinstance(response, dict) else 200, response
-
-        env = {**os.environ, "EVOLUTION_SCHEDULER_TENANT_ID": tenant,
-               "AUTO_CONSUMER_PERSONA_URL": persona_url, "AUTO_CONSUMER_PERSONA_TOKEN": persona_token}
-        owner = PoolOwner(env, transport=transport)
-        pool = owner.pool(rec["persona_id"])
-        books = owner.books(pool)
+        if not persona_url or not persona_token:
+            raise Degraded("persona_owner_credential_missing")
+        pool = fetch(f"{persona_url}/api/personas/{pid}/strategy-pool", headers=headers)
+        if pool.get("tenant_id") != tenant or pool.get("persona_id") != rec["persona_id"]:
+            raise Degraded("pool_owner_identity_mismatch")
+        bindings = [b for b in read("CAPITAL", "/api/bindings") if b.get("persona_id") == rec["persona_id"]
+                    and b.get("tenant_id") == tenant and b.get("status") == "active"]
+        if len(bindings) != 1:
+            raise Degraded("unique_active_paper_binding_required")
+        payload = read("TELEMETRY", "/api/telemetry/runtime-summaries")
+        rows = payload if isinstance(payload, list) else payload.get("summaries", [])
+        rows = [r for r in rows if r.get("persona_capital_binding_id") == bindings[0]["binding_id"]
+                and r.get("deployment_stage") == "paper" and r.get("tenant_id") == tenant]
+        if len(rows) != 1:
+            raise Degraded("unique_paper_runtime_summary_required")
+        raw_books = rows[0].get("member_virtual_books") or []
+        books = {b.get("member_id") or b.get("artifact_id"): {**b, **b.get("net_of_costs", {})} for b in raw_books}
+        if len(books) != len(raw_books):
+            raise Degraded("ambiguous_member_books")
         members = [m for m in pool["members"] if m["stage"] == "active"]
         if not members:
             raise Degraded("no_active_pool_member")
         for member in members:
             book = books.get(member["artifact_ref"], {})
-            if _fraction(book.get("sharpe_ratio")) is None or not member_days(member, book):
+            dates = book.get("dates") or []
+            from datetime import date
+            observed = [date.fromisoformat(d) for d in dates]
+            joined = date.fromisoformat(member["joined_at"][:10])
+            if (_fraction(book.get("sharpe_ratio")) is None or not book.get("source_ref")
+                    or book.get("checksum") != member["checksum"] or not observed
+                    or observed != sorted(set(observed)) or observed[-1] > datetime.now(timezone.utc).date()
+                    or not any(d > joined for d in observed)):
                 raise Degraded("pool_member_ranking_metric_missing")
         member = min(members, key=lambda m: (books[m["artifact_ref"]]["sharpe_ratio"], m["artifact_ref"]))
-        entry = owner.entry(member["artifact_ref"])
-        if entry.get("artifact_state") != "approved" or entry.get("checksum") != member["checksum"]:
+        entry = read("REGISTRY", "/api/registry/strategy-artifacts/" + quote(member["artifact_ref"], safe=""))["entry"]
+        if (entry.get("artifact_state") != "approved" or entry.get("checksum") != member["checksum"]
+                or entry.get("owner_tenant") != tenant or entry.get("registry_id") != member["artifact_ref"]
+                or not entry.get("version")):
             raise Degraded("pool_member_registry_binding_mismatch")
-        body = proposal(pool, member, entry, "retrain", "quarter:" + rec["quarter"])
+        identity = [tenant, rec["persona_id"], member["artifact_ref"], member["checksum"],
+                    member["joined_at"], "retrain", "quarter:" + rec["quarter"]]
+        body = {"decision_id": "evd-pool-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:24],
+                "tenant_id": tenant, "target_type": "candidate_artifact", "target_id": member["artifact_ref"],
+                "target_version": entry["version"], "target_stage": "paper", "risk_level": "low",
+                "persona_id": rec["persona_id"], "action_type": "retrain",
+                "created_by_role": "evolution_controller", "created_by_id": "persona-evaluator-agent",
+                "metadata": {"discovery_auto_scope": True, "variants": 50, "pool_member": {
+                    "persona_id": rec["persona_id"], "pool_version": pool["pool_version"],
+                    **{k: member[k] for k in ("artifact_ref", "checksum", "joined_at")}}}}
         body.update(rationale=rec["rationale"], evidence_refs=[
-            {"ref_type": "telemetry_summary", "ref_id": r} for r in rec["evidence_ref_ids"]])
+            {"ref_type": "telemetry_summary", "ref_id": r, "storage_ref": {}, "note": None}
+            for r in rec["evidence_ref_ids"]])
         body["metadata"].update(ranking_snapshot_id=rec["ranking_snapshot_id"],
                                 member_book_source_ref=books[member["artifact_ref"]]["source_ref"])
-        url, token = env.get("AUTO_CONSUMER_EVOLUTION_URL", ""), env.get("AUTO_CONSUMER_EVOLUTION_TOKEN", "")
+        url, token = os.getenv("AUTO_CONSUMER_EVOLUTION_URL", ""), os.getenv("AUTO_CONSUMER_EVOLUTION_TOKEN", "")
         if not url or not token:
             raise Degraded("evolution_owner_credential_missing")
         return {"url": url.rstrip("/") + "/api/evolution/proposals", "body": body, "key": body["decision_id"],
@@ -461,17 +501,25 @@ def run_once(
                         request = {**request, "headers": {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}}
                     if not request["headers"]["Authorization"].removeprefix("Bearer "):
                         raise Degraded("owner_route_credential_missing")
+                    if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
+                        raise Degraded("owner_route_rate_limited")
+                    attempts += 1
+                    state["created"].append(now())
+                    store.save(state)
                     response = fetch(request["url"], data=request["body"],
                                      headers={**request["headers"], "Idempotency-Key": request["key"]})
                     body = request["body"]
+                    if response.get("_http_status") == 409 and request["owner"] == "pool_member_evolution":
+                        response = fetch(request["url"] + "/" + quote(body["decision_id"], safe=""), headers=request["headers"])
                     if request["owner"] == "persona_harness":
                         valid = response.get("proposal") == body and response.get("status") == "draft"
                     else:
                         valid = all(response.get(k) == body[k] for k in
-                                    ("decision_id", "tenant_id", "target_id", "target_version", "action_type"))
+                                    ("decision_id", "tenant_id", "target_id", "target_version", "action_type", "metadata", "evidence_refs", "rationale"))
                     if not valid or response.get("_http_status", 201) not in (200, 201):
                         raise Degraded("owner_route_readback_mismatch")
                     route.update(status="proposed", owner=request["owner"])
+                    created += 1
                     route.pop("reason", None)
                 except Exception as exc:
                     route.update(status="degraded", reason=str(exc))
@@ -481,16 +529,19 @@ def run_once(
                 rec["routing"] = {"owner": "operator_lifecycle", "status": "degraded", "reason": "lifecycle_transition_unavailable"}
                 continue  # advisory entry: persisted, never executable
             digest = proposal_digest(rec)
-            dedupe_key = f"{rec['persona_id']}|{to_state}"
+            rec["routing"] = {"owner": "operator_lifecycle", "status": "pending"}
+            dedupe_key = f"{rec['persona_id']}|{to_state}" + ("|suspend" if action == "suspend_persona" else "")
             entry = state["requests"].get(dedupe_key)
             if entry and not entry.get("pending"):
                 if entry.get("content_digest") == digest:
                     deduped += 1
                     rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+                    rec["routing"]["status"] = "proposed"
                     continue
                 entry = None
             if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
                 skipped += 1
+                rec["routing"].update(status="degraded", reason="owner_route_rate_limited")
                 continue
             if entry is None:  # identity persisted before the possibly-creating POST; unknown outcomes replay it
                 request = lifecycle_request(rec, to_state, snapshot_id=snapshot_id, tenant=tenant, actor=actor)
@@ -504,6 +555,7 @@ def run_once(
                 resp = propose_lifecycle(entry["pending"], governance_url=governance_url, token=governance_token, fetch=fetch)
             except Exception:
                 skipped += 1  # outcome unknown: slot and pending identity stay reserved
+                rec["routing"].update(status="degraded", reason="lifecycle_owner_outcome_unknown")
                 continue
             req_body = entry["pending"]["body"]
             req_digest = req_body["proposal_content_digest"]
@@ -530,6 +582,7 @@ def run_once(
                 gov_req = {"decision_id": dec_id, "to_state": to_state}
                 if digest == req_digest:
                     rec["governance_request"] = gov_req
+                    rec["routing"]["status"] = "proposed"
                 for res in state["results"].values():
                     for item in res.get("items", []):
                         if item.get("persona_id") == pid and lifecycle_target(item) == to_state and proposal_digest(item) == req_digest:
@@ -537,6 +590,7 @@ def run_once(
             else:
                 conflicts += 1
                 skipped += 1
+                rec["routing"].update(status="degraded", reason="lifecycle_owner_readback_mismatch")
                 if status != 201 and status < 500:
                     state["created"].pop()
                 entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
@@ -546,6 +600,7 @@ def run_once(
     record = {"status": status_label, "quarter": quarter, "ranking_snapshot_id": snapshot_id, "run_id": run_id,
               "reused": reused, "recommendations": len(recs), "created": created, "deduped": deduped,
               "skipped": skipped, "at": moment.isoformat()}
+    record["routing_failures"] = sum((r.get("routing") or {}).get("status") == "degraded" for r in recs)
     if conflicts > 0:
         record["conflicts"] = conflicts
     store.update(lambda s: s.update(last_run=record))
@@ -651,6 +706,11 @@ def paper_cycle_once(
     saved = state["results"].get(f"{quarter}|{snapshot_id}") or {}
     health = collect_pool_health(saved.get("paper_persona_ids") or [], persona_url=persona_url, token=persona_token,
                                  tenant=tenant, fetch=fetch)
+    for rec in saved.get("items") or []:
+        if rec.get("action_id") == "reduce_capital_access" and rec.get("stage") == "paper_running":
+            health.setdefault(rec["persona_id"], {}).setdefault("recommendation_inputs", []).append({
+                "action_id": rec["action_id"], "recommendation_id": rec["recommendation_id"],
+                "ranking_snapshot_id": snapshot_id, "evidence_ref_ids": rec["evidence_ref_ids"]})
     body = {"authority_mode": PAPER_CYCLE_MODE, "quarter": quarter, "ranking_snapshot_id": snapshot_id,
             "capital_pool_id": paper_pool_id, "pool_health": health}
     headers = {**bff_headers, "X-Tenant-Id": tenant, "Idempotency-Key": f"paper-cycle:{tenant}:{quarter}:{paper_pool_id}"}
@@ -659,10 +719,19 @@ def paper_cycle_once(
         data = resp["data"]
         record = {"status": "applied" if data.get("applied") else "pending", "quarter": quarter, "ranking_snapshot_id": snapshot_id,
                   "rebalance_id": data["rebalance"]["rebalance_id"], "replayed": bool(data.get("replayed")), "at": at}
+        reductions = [r for r in saved.get("items") or [] if r.get("action_id") == "reduce_capital_access"]
+        record["recommendation_ids"] = [r["recommendation_id"] for r in reductions]
     except Exception as exc:
         record = {"status": "degraded", "reason": f"paper allocation cycle failed: {exc}", "quarter": quarter,
                   "ranking_snapshot_id": snapshot_id, "at": at}
-    store.update(lambda s: s.setdefault("paper_cycles", {}).__setitem__(cycle_key, record))
+    def remember(state):
+        state.setdefault("paper_cycles", {})[cycle_key] = record
+        for rec in (state["results"].get(f"{quarter}|{snapshot_id}") or {}).get("items") or []:
+            if rec.get("action_id") == "reduce_capital_access":
+                rec["routing"] = {"owner": "paper_allocation", "status": record["status"],
+                                  "ranking_snapshot_id": snapshot_id,
+                                  **{k: record[k] for k in ("rebalance_id", "reason") if k in record}}
+    store.update(remember)
     return record
 
 
