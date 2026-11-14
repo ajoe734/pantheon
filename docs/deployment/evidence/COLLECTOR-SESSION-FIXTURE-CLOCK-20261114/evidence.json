@@ -1,0 +1,82 @@
+{
+  "task_id": "COLLECTOR-SESSION-FIXTURE-CLOCK-20261114",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "stage": "author_validation_passed_pending_independent_review_and_ci",
+  "delivery_scope": "Source-only test-clock correction; no hosted, deployment, provider or business-operation proof claimed.",
+  "primary_failure": {
+    "provenance": "Direct GitHub run metadata and terminal job log fetched by this worker with gh run view.",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7348",
+    "pr_task": "DEV-LEASE-RATE-LIMIT-WAIT-20261114",
+    "head_sha": "d58fcbc55d3d6e41ce2501e7728d3f0acd317231",
+    "workflow": "Branch CI Gate",
+    "run_id": 43599762680,
+    "job_id": 132462430157,
+    "job_name": "Smoke acceptance",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/43599762680/job/132462430157",
+    "step": "Run source ingestion tests",
+    "terminal_exit_code": 1,
+    "terminal_summary": "1 failed, 1963 passed, 2 skipped, 15 warnings in 395.61s (0:06:35)",
+    "sole_failed_test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
+    "assertion_line_before_fix": 92,
+    "assertion_result": "records=(), priority_done=True, no_new_data=False",
+    "failure_log_timestamp": "2026-11-14T13:41:57Z",
+    "fetched_job_log_sha256": "068475d43a47aecdc0eb877a90271a796fa0a51b8f753b476106bc5d539fd63d"
+  },
+  "source_identity": {
+    "dev_base": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+    "comparison": "git rev-parse <dev-base>:<path> <Rate-head>:<path> returned the same blob for each path.",
+    "unchanged_test_blob": "d7350f8dc1d2413fff5067059df3e8884e9573c4",
+    "unchanged_adapter_path": "services/source_ingestion/connectors/collector_bundle.py",
+    "unchanged_adapter_blob": "675dc76b64862132288d88b6727204096ba48674",
+    "classification": "Inherited expiring fixture in an existing collector test, not a new Rate or development-tooling product defect.",
+    "prior_task": "COLLECTOR-NEWEST-SESSION-30MIN-20261114",
+    "prior_task_disposition": "Task-scoped dispatch context reports archived terminal DONE; this bounded follow-up does not reopen it or take adapter/controller throughput ownership."
+  },
+  "original_worker_report": {
+    "provenance": "Supervisor-generated task-scoped brief, relaying the original Rate worker's same-source reproduction. Distinct from the primary CI evidence above.",
+    "healthy_pass_at": "2026-11-14T07:00:00Z",
+    "degraded_failure_at": "2026-11-14T13:41:57Z",
+    "reason": "newest_bundle_older_than_twice_cadence"
+  },
+  "author_diagnosis": {
+    "unmodified_test_command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
+    "unmodified_exit_code": 1,
+    "unmodified_summary": "1 failed, 1 warning in 3.61s; same line 92 no_new_data assertion as primary CI",
+    "clock_reproduction": "Before editing, invoke the unmodified test with a temporary raw root at each supplied observation time, wrapping only observed_from_collector_status through its existing now parameter. Both invocations completed in a timeout 60 foreground batch, exit 0 for the diagnostic script; the late AssertionError was caught and reported, not counted as a passed test.",
+    "observations": [
+      {"now": "2026-11-14T07:00:00Z", "original_test": "passed", "health_state": "healthy", "reasons": []},
+      {"now": "2026-11-14T13:41:57Z", "original_test": "assertion_failed", "health_state": "degraded", "reasons": ["newest_bundle_older_than_twice_cadence"]}
+    ],
+    "fixture_last_run_at": "2026-11-14T00:19:33Z",
+    "host_cadence_seconds": 21600,
+    "freshness_limit_seconds": 43200,
+    "fresh_through": "2026-11-14T12:19:33Z"
+  },
+  "correction": {
+    "mechanism": "Test-local pytest monkeypatch wraps the real observed_from_collector_status and supplies now one minute after each recorded run's finished_at. Advance that local observation time when the newer same-session bundle is installed; pytest restores the function after this test.",
+    "observed_times": ["2026-11-13T12:19:42Z", "2026-11-14T00:20:33Z"],
+    "preserved_assertions": ["No emitted records, priority_done and no_new_data", "No raw-file reads on completed same-session replay", "Persisted latest-priority key ends with the latest run_id"],
+    "unchanged": ["Production freshness and expired-data behavior", "All stale and future-clock negative controls", "Recorded fixture bytes and adapter helper", "Product source, controller, shared tooling, configuration, endpoints and workflows", "Timeouts, budgets, assertions, skips and xfails", "Global/session clocks, scheduler and ingestion timestamps", "VMs, providers and business operations"]
+  },
+  "validation": {
+    "environment": "Checkout-scoped .venv-pantheon provisioned by python3 scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON; provisioning exit 0 and foreign-cwd mapping verification passed.",
+    "pre_provisioning_probe": "System python lacked pytest; an existing /tmp/pt-venv-droot interpreter collected no test because fastapi was missing (exit 4). Neither probe is test-pass evidence; the governed checkout environment above was then provisioned.",
+    "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q --junitxml=/tmp/collector-clock-focused.xml services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend services/source_ingestion/tests/test_collector_bundle_connector.py::test_status_healthy_paused_and_lagging services/source_ingestion/tests/test_collector_bundle_connector.py::test_complete_status_never_overrides_unverified_or_contradictory_evidence services/source_ingestion/tests/test_collector_outcome_truth.py::test_consumed_cursor_cannot_hide_unhealthy_source services/source_ingestion/tests/test_collector_outcome_truth.py::test_empty_without_matching_complete_evidence_is_failure services/source_ingestion/tests/test_scheduled_connector.py::test_unknown_or_future_source_time_is_never_reported_fresh",
+    "exit_code": 0,
+    "summary": "56 passed, 1 warning in 10.12s",
+    "passed": 56,
+    "failed": 0,
+    "skipped": 0,
+    "xfail": 0,
+    "controls": "Same process runs the corrected replay first, then unchanged healthy/paused/lagging, stale/future complete-status, unhealthy consumed-cursor, invalid empty-evidence and unknown/future source-time checks, exercising monkeypatch teardown as well as retained rejection behavior.",
+    "log_sha256": "62e340feb610161541686f1a074b0cb8a1a76835a876e67535fe226e947f9e75",
+    "junit_sha256": "8982b97be0f60041cdf1d64d728b416cd1b8a89934f86c7b675a1555e14fa2d1"
+  },
+  "remaining_delivery": {
+    "independent_review": "Antigravity2 must review the exact frozen PR head and committed manifest through the native handoff/approve flow.",
+    "ci_and_merge": "Required GitHub checks and canonical supervisor integration into dev remain required; this manifest is author evidence, not review approval or a merge claim.",
+    "owner_closeout": "Codex runs governed done only after the exact approved head is merged, without a post-approval bookkeeping commit.",
+    "downstream": "Existing PRs blocked by this inherited failure should rebase onto the genuine dev fix after merge; do not copy this fixture change into each PR."
+  }
+}
