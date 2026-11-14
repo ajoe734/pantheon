@@ -21,7 +21,7 @@
   },
   "fix_summary": {
     "persistence_design": "Replaced per-event full file rewrites in RuntimeSummaryProjectionStore with an append-only, fsync-backed delta journal (runtime_summaries.json.delta.jsonl) and a bounded periodic full checkpoint (_FULL_PERSIST_INTERVAL_SECONDS = 60.0s), keeping a persistent append file descriptor (_delta_fd) across delta appends and closing it before full checkpoint/unlink/close.",
-    "cpu_reduction_and_read_isolation": "Consolidated _rebuild_positions() to run once per project_event() (always delegating mark freshness to authoritative is_portfolio_mark_fresh() with zero financial freshness shortcuts) and preserved pointer identity on positions and positions_by_underlying when their rebuilt values equal prior_summary, allowing _json_value_equal() in _persist_summary_change() to short-circuit via `left is right`. Preserved full deep-copy isolation via _clone_json_value() on all public read/return surfaces (_apply_staleness() for get()/list(), project_event(), _reject_binding_reclaim(), preserved_identity fields, and mark_lineage/mark_calendar_evidence in _rebuild_positions()).",
+    "cpu_reduction_and_read_isolation": "Consolidated _rebuild_positions() to run once per project_event() (always delegating mark freshness to authoritative is_portfolio_mark_fresh() with zero financial freshness shortcuts, and always delegating fill_rate recomputation to canonical period_fill_rate() on every non-echo event with zero cached-fill-rate shortcuts) and preserved pointer identity on positions, positions_by_underlying, and fill_rate_details when their rebuilt values equal prior_summary, allowing _json_value_equal() in _persist_summary_change() to short-circuit via `left is right`. Preserved full deep-copy isolation via _clone_json_value() on all public read/return surfaces (_apply_staleness() for get()/list(), project_event(), _reject_binding_reclaim(), preserved_identity fields, and mark_lineage/mark_calendar_evidence in _rebuild_positions()).",
     "durability_on_202": "When runtime_summaries.json already exists and the 60s full-checkpoint interval has not elapsed, _persist_summary_change() computes only the changed/removed top-level fields of the affected runtime summary and appends a compact JSONL patch record to runtime_summaries.json.delta.jsonl followed by os.fsync(self._delta_fd) before returning from project_event(), guaranteeing that every HTTP 202 acknowledgement survives SIGKILL.",
     "startup_and_graceful_shutdown_compatibility": "On startup (_load()), RuntimeSummaryProjectionStore cleans up any orphaned runtime_summaries.json.*.tmp files, loads runtime_summaries.json, replays any pending records from runtime_summaries.json.delta.jsonl, and folds them into runtime_summaries.json. On graceful stop (RuntimeSummaryProjectionStore.flush()/close(), atexit hook, and services/telemetry/main.py shutdown() + SIGTERM/SIGINT handlers), any pending delta journal is folded into runtime_summaries.json with exact indent=2, sort_keys=True formatting and the .delta.jsonl file is unlinked, leaving runtime_summaries.json 100% readable by the previous telemetry version."
   },
@@ -34,6 +34,30 @@
       "get_readyz_per_minute": 5
     },
     "current_honest_single_run_window_12s": {
+      "before": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 12.0001,
+        "cpu_seconds": 2.8586,
+        "cpu_cores": 0.2382,
+        "proc_io_write_bytes": 165421056,
+        "write_bytes_per_sec": 13784949.73,
+        "write_mb_per_sec": 13.1464,
+        "full_rewrites_during_window": 40,
+        "delta_appends_during_window": 0
+      },
+      "after": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 12.0001,
+        "cpu_seconds": 0.8267,
+        "cpu_cores": 0.0689,
+        "proc_io_write_bytes": 684032,
+        "write_bytes_per_sec": 57002.1,
+        "write_mb_per_sec": 0.0544,
+        "full_rewrites_during_window": 0,
+        "delta_appends_during_window": 40
+      }
+    },
+    "historical_0a86281f1_single_run_window_12s_retained": {
       "before": {
         "store_initial_bytes": 4123890,
         "duration_seconds": 12.0001,
@@ -127,12 +151,12 @@
     "ac_4_identical_reads_and_bff_responses_on_4mb_store": {
       "status": "passed",
       "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac4_reads_and_bff_responses_identical_on_4mb_store",
-      "proof": "Across heartbeats, trade_decision, paper_fill_simulated, pnl_snapshot with mark_refs, and binding reclaim rejection on the 4.12 MB store, project_event(), get(), list(), GET /api/telemetry/runtime-summaries, and GET /api/telemetry/runtime-summaries/<runtime_id> matched the legacy per-event full-rewrite store byte-for-byte, and caller mutations to returned dicts (including last_lifecycle_identity.metadata and positions[].mark_lineage with zero projected events) do not alias or mutate internal store state."
+      "proof": "Across heartbeats, trade_decision, paper_fill_simulated, pnl_snapshot with mark_refs, and binding reclaim rejection on the 4.12 MB store, project_event(), get(), list(), GET /api/telemetry/runtime-summaries, and GET /api/telemetry/runtime-summaries/<runtime_id> matched both _LegacyFullRewriteStore and the exact original 9f071ac48ac6ffa4c98dd242df5852c83d49cf22 RuntimeSummaryProjectionStore byte-for-byte on both the unprimed generated 4 MB fixture (4,123,890 bytes, 23 runtimes, canonically recomputing fill_rate_at and fill_rate_details.window.as_of to 2026-10-27T01:53:10Z on the first heartbeat 7cf8079f-9e84-5549-92e7-eb7aa9fe50f3) and the old-projector-primed canonical 4 MB fixture (4,123,338 bytes, 23 runtimes), and caller mutations to returned dicts (including last_lifecycle_identity.metadata and positions[].mark_lineage with zero projected events) do not alias or mutate internal store state."
     },
     "ac_5_local_measurement_cpu_below_0_1_core_and_writes_below_0_5_mb_per_sec": {
       "status": "passed",
       "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac5_local_measurement_4mb_store_cpu_and_write_bytes_before_and_after",
-      "proof": "Single-run honest measurement over 12.0s (40 ingest, 14 infra-health, 1 runtime-summaries GET, 1 readyz GET) recorded before (0.2733 CPU cores, 13.1464 MB/s writes) vs after (0.0819 CPU cores < 0.1 core, 0.0488 MB/s writes < 0.5 MB/s)."
+      "proof": "Single-run honest measurement over 12.0s (40 ingest, 14 infra-health, 1 runtime-summaries GET, 1 readyz GET) recorded before (0.2382 CPU cores, 13.1464 MB/s writes) vs after (0.0689 CPU cores < 0.1 core, 0.0544 MB/s writes < 0.5 MB/s; 0a86281f1 single-run: 0.0819 CPU cores < 0.1 core, 0.0488 MB/s writes < 0.5 MB/s)."
     },
     "ac_6_no_new_endpoint_service_db_or_env_and_existing_tests_pass": {
       "status": "passed",
@@ -176,14 +200,32 @@
       "services/telemetry/test_runtime_summary_persist_cost.py": "7e6ef0dd17f4d1ba7beee4e00061019851cce6738120b20c918fa3239b6ca020"
     }
   },
+  "operator_qa_ac4_reopen_resolution_20261114": {
+    "reopened_head_sha": "0a86281f1d2848eb0da2cc63f7d6f468712f1661",
+    "reopened_by": "Human/Ops",
+    "cause_and_control_analysis": "In 0a86281f1d2848eb0da2cc63f7d6f468712f1661, project_event() gated period_fill_rate() behind `if facts or not isinstance(current.get('fill_rate_details'), dict):`. On the unprimed generated 4 MB fixture (_build_real_shaped_4mb_summaries(), 4,123,890 bytes, 23 runtimes), fill_rate_at ('2026-10-27T13:02:38Z' inherited from _REAL_D551_SUMMARY) and fill_rate_details.window.as_of ('2026-10-27T01:56:10Z') disagreed with the 12 retained order_execution_observations (whose max timestamp for k=0..11 is '2026-10-27T01:53:10Z'). When _LegacyFullRewriteStore was replaced by the exact real base 9f071ac48ac6ffa4c98dd242df5852c83d49cf22 RuntimeSummaryProjectionStore, the first heartbeat 7cf8079f-9e84-5549-92e7-eb7aa9fe50f3 for rt-d5519621 recomputed fill_rate_at and fill_rate_details.window.as_of to '2026-10-27T01:53:10Z' in the old reference while 0a86281f1 reused the cached unprimed values ('2026-10-27T13:02:38Z' and '2026-10-27T01:56:10Z'). When the same 4 MB fixture was primed once per runtime through the exact real old projector (4,123,338 bytes, 23 runtimes), 0a86281f1 passed the entire AC4 sequence against the real old reference.",
+    "resolution": "Removed the `if facts or not isinstance(current.get('fill_rate_details'), dict):` conditional from services/telemetry/runtime_summary.py so project_event() unconditionally calls the canonical period_fill_rate([runtime_id], [{**current, 'runtime_id': runtime_id}]) authority on every non-echo event (identical to 9f071ac48ac6ffa4c98dd242df5852c83d49cf22 / origin/dev), while preserving pointer identity on fill_rate_details when equal to prior_summary so _persist_summary_change() short-circuits via `left is right` when unchanged. Also removed the `if new_lfc != prev_lfc...` conditional around rebuild_positions_needed when fill_count is reported. Added an explicit assertion in test_ac4_reads_and_bff_responses_identical_on_4mb_store verifying that the first heartbeat 7cf8079f-9e84-5549-92e7-eb7aa9fe50f3 canonically recomputes fill_rate_at and fill_rate_details.window.as_of to '2026-10-27T01:53:10Z'.",
+    "controls_verified": {
+      "original_9f071ac48_get_isolated": true,
+      "known_bad_78d4e5c42_alias_control_reproduced": true,
+      "repaired_candidate_get_isolated": true,
+      "unprimed_4mb_fixture_ac4_with_exact_real_old_9f071ac48_reference": "PASS",
+      "old_projector_primed_4mb_fixture_ac4_with_exact_real_old_9f071ac48_reference": "PASS"
+    },
+    "updated_source_sha256": {
+      "services/telemetry/runtime_summary.py": "45a322d64b714c450c5cdc48e22fe669c4ec3f5f1bb3453bc22ccdac60fb7d3b",
+      "services/telemetry/main.py": "c5699769e09de3129065a6f0b876b1739602c0f6b5532320c9794ec64d3336a1",
+      "services/telemetry/test_runtime_summary_persist_cost.py": "7086f0c86fd54b573eb0670b6b9b86847c919f2e28ed575eb543085191fd0ad5"
+    }
+  },
   "verification_commands": [
     "timeout 90 .venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_runtime_summary_persist_cost.py",
     "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_runtime_summary_projection.py",
     "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/telemetry"
   ],
   "verification_results": {
-    "persist_cost_suite": "5 passed in 32.74s (exit 0)",
-    "runtime_summary_projection_suite": "119 passed, 19 subtests passed in 5.41s (exit 0)",
-    "full_telemetry_suite": "561 passed, 1 skipped, 47 warnings, 54 subtests passed in 130.43s (exit 0)"
+    "persist_cost_suite": "5 passed in 32.17s (exit 0)",
+    "runtime_summary_projection_suite": "119 passed, 19 subtests passed in 5.28s (exit 0)",
+    "full_telemetry_suite": "561 passed, 1 skipped, 47 warnings, 54 subtests passed (exit 0)"
   }
 }

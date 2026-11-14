@@ -1426,16 +1426,18 @@ class RuntimeSummaryProjectionStore:
                     history = list(current.get("order_execution_observations") or [])
                     history.extend(fact for fact in facts if fact not in history)
                     current["order_execution_observations"] = history
-                if facts or not isinstance(current.get("fill_rate_details"), dict):
-                    # Recompute from retained facts, never from a heartbeat's scalar.
-                    current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
-                    for field in ("fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id"):
-                        current.pop(field, None)
-                    if current["fill_rate_details"]["status"] == "known":
-                        current["fill_rate_at"] = current["fill_rate_details"]["window"]["as_of"]
-                        current["fill_rate_binding_id"] = binding_id
-                else:
-                    current.pop("fill_rate_event_id", None)
+                # Recompute from retained facts, never from a heartbeat's scalar.
+                current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
+                for field in ("fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id"):
+                    current.pop(field, None)
+                if current["fill_rate_details"]["status"] == "known":
+                    current["fill_rate_at"] = current["fill_rate_details"]["window"]["as_of"]
+                    current["fill_rate_binding_id"] = binding_id
+                if (
+                    isinstance(prior_summary, dict)
+                    and current.get("fill_rate_details") == prior_summary.get("fill_rate_details")
+                ):
+                    current["fill_rate_details"] = prior_summary["fill_rate_details"]
 
             # Keep owner valuations independently of the latest-metric view.
             # A heartbeat or rolling-window eviction must not erase an earlier
@@ -1487,11 +1489,11 @@ class RuntimeSummaryProjectionStore:
                     and reported_fill_count >= 0
                 ):
                     # Ledger fill counts only grow within a binding generation.
-                    prev_lfc = int(current.get("ledger_fill_count") or 0)
-                    new_lfc = max(prev_lfc, reported_fill_count)
-                    current["ledger_fill_count"] = new_lfc
-                    if new_lfc != prev_lfc or current.get("positions_status") == "unavailable":
-                        rebuild_positions_needed = True
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        reported_fill_count,
+                    )
+                    rebuild_positions_needed = True
 
             # Surface executed paper fills so trade activity is visible end-to-end.
             # ``bracket_order_logged`` only records order intent and must never
@@ -1816,11 +1818,11 @@ class RuntimeSummaryProjectionStore:
                     and not isinstance(hb_fill_count, bool)
                     and hb_fill_count >= 0
                 ):
-                    prev_lfc = int(current.get("ledger_fill_count") or 0)
-                    new_lfc = max(prev_lfc, hb_fill_count)
-                    current["ledger_fill_count"] = new_lfc
-                    if new_lfc != prev_lfc or current.get("positions_status") == "unavailable":
-                        rebuild_positions_needed = True
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        hb_fill_count,
+                    )
+                    rebuild_positions_needed = True
                 perf_diag = (
                     perf.get("diagnostic")
                     if isinstance(perf.get("diagnostic"), dict)

@@ -1026,10 +1026,20 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
                 "services.telemetry.runtime_summary.utc_now_rfc3339",
                 return_value=fixed_updated_at,
             ):
-                for ev in events:
+                for idx_ev, ev in enumerate(events):
                     res_legacy = legacy_store.project_event(copy.deepcopy(ev))
                     res_new = new_store.project_event(copy.deepcopy(ev))
                     self.assertEqual(res_new, res_legacy)
+                    if idx_ev == 0:
+                        assert res_new is not None
+                        self.assertEqual(
+                            res_new["fill_rate_at"],
+                            "2026-10-27T01:53:10Z",
+                        )
+                        self.assertEqual(
+                            res_new["fill_rate_details"]["window"]["as_of"],
+                            "2026-10-27T01:53:10Z",
+                        )
                     if isinstance(res_new, dict):
                         res_new["mutated_project_return"] = "caller_mutation"
                         if isinstance(res_new.get("last_lifecycle_identity"), dict):
