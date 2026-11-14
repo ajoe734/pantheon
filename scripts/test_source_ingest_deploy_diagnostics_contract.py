@@ -764,7 +764,7 @@ def test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_t
             env_map = step.get("env") or {}
             if "SOURCE_INGEST_BOUNDED_CONNECTOR_ID" in env_map:
                 cid = str(env_map["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"])
-                assert cid in ("tw-twse-tpex-official-market", "tw-taifex-futures-options-chip")
+                assert cid in ("tw-twse-tpex-official-market", "tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report")
                 assert "," not in cid
                 assert "${{" not in cid
 
@@ -957,7 +957,7 @@ def test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_
     assert res_fresh["dataset"] == "taifex_ssf_contracts"
 
 
-def test_taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_dataset_missing() -> None:
+def test_taifex_preflight_skips_weekend_holiday_and_recovers_latest_closed_session() -> None:
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 
     fresh_friday_twse_snapshot = {
@@ -983,14 +983,15 @@ def test_taifex_preflight_skips_weekend_holiday_and_session_not_closed_before_da
     assert res_sun["dataset"] == "taifex_ssf_contracts"
     assert not any("/api/source-ingest/controller/readback" in p for p in paths_sun)
 
-    # 2. Weekday before 13:30 Asia/Taipei close with missing TAIFEX dataset skips with reason=session_not_closed
+    # 2. Morning recovery must pull the previous closed session when its dataset is missing.
     res_open, _ = _run_embedded_preflight(
         now_utc="2026-11-06T04:00:00Z",
         twse_snapshot=fresh_friday_twse_snapshot,
         taifex_readback_connector=None,
     )
-    assert res_open["status"] == "skipped"
-    assert res_open["reason"] == "session_not_closed"
+    assert res_open["status"] == "proceed"
+    assert res_open["reason"] == "dataset_missing"
+    assert res_open["session_date"] == "2026-11-05"
 
     # 3. Evidenced Taiwan holiday (2026-10-09 Double Ten observed) skips with reason=holiday
     holiday_prev_snapshot = {

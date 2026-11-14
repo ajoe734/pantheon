@@ -1945,6 +1945,7 @@ class DistillationWorker:
             raise DistillationError("source record set contains foreign or unowned tenant scope")
         normalized = [
             s for s in source_records if s.status == SourceRecordStatus.NORMALIZED
+            and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
         ][:limit]
 
         enqueued = 0
@@ -2014,6 +2015,11 @@ class DistillationWorker:
                 claim_token=job.lease_token,
             )
             return "skipped", None
+
+        if source.source_type == SourceType.MARKET and source.metadata.get("collector_market_bundle"):
+            self._queue.mark_skipped(job.job_id, reason=MARKET_SOURCE_SKIP_REASON,
+                                     processed_at=now, claim_token=job.lease_token)
+            return "skipped", "market_source"
 
         # Check existing seed status to enforce mutable-draft-only invariant.
         # A versioned job's materialization identity is fixed at admission.

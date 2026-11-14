@@ -261,12 +261,16 @@ def test_exact_candidate_restarts_same_session_on_recorded_run_keys(tmp_path, mo
     module = importlib.util.module_from_spec(spec); sys.modules[name] = module
     spec.loader.exec_module(module)
     clock, lock = [0.0], threading.Lock()
+    read_batch = threading.Barrier(module.LATEST_CLOSE_RAW_READ_CONCURRENCY, timeout=10)
     files, entries, measurements, identities = {}, [], [], []
     class Transport(FakeTransport):
         def read(self, path, *, max_bytes):
             with lock:
                 start = clock[0]
             if "/raw/" in path:
+                # All readers capture the same simulated batch start before any
+                # advances the clock, independent of OS thread scheduling.
+                read_batch.wait()
                 time.sleep(0.002)
             try:
                 return super().read(path, max_bytes=max_bytes)
