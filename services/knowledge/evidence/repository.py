@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
@@ -13,9 +14,39 @@ from .models import (
     EvidenceItem,
     EvidenceValidationError,
     KnowledgeObject,
+    iso,
     strip_list_heavy_metadata,
     summarize_evidence_items_collection,
 )
+
+
+
+def _capture_datetime(value: Any) -> datetime | None:
+    """Parse a capture time like the BFF does: naive means UTC, bad means None."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def evidence_item_in_capture_window(
+    item: EvidenceItem, captured_from: str | None, captured_before: str | None
+) -> bool:
+    """True when the item's capture time is in ``[captured_from, captured_before)``."""
+    captured = _capture_datetime(iso(item.available_time) or iso(item.event_time))
+    if captured is None:
+        return False
+    start = _capture_datetime(captured_from) if captured_from is not None else None
+    end = _capture_datetime(captured_before) if captured_before is not None else None
+    if (captured_from is not None and start is None) or (captured_before is not None and end is None):
+        return False
+    return (start is None or start <= captured) and (end is None or captured < end)
 
 
 class _Unscoped:
@@ -180,13 +211,22 @@ class InMemoryEvidenceRepository:
         *,
         limit: int,
         offset: int = 0,
+        captured_from: str | None = None,
+        captured_before: str | None = None,
     ) -> Tuple[List[EvidenceItem], int]:
-        """Newest-first page of list-weight evidence items plus the full total.
+        """Newest-first page of list-weight evidence items plus the total.
 
+        With ``captured_from`` / ``captured_before`` only items whose capture
+        time (``available_time`` then ``event_time``) lies in
+        ``[captured_from, captured_before)`` are paged, and ``total`` counts
+        that matching population; items without a parsable capture time never
+        match. Without them the page is the unfiltered tenant population.
         Heavy metadata keys (``EVIDENCE_LIST_OMITTED_METADATA_KEYS``) are
         omitted; ``get_evidence_item`` still returns the full record.
         """
         items = self.list_evidence_items(tenant_id=tenant_id)
+        if captured_from is not None or captured_before is not None:
+            items = [i for i in items if evidence_item_in_capture_window(i, captured_from, captured_before)]
         total = len(items)
         window = list(reversed(items))[offset: offset + limit]
         return [strip_list_heavy_metadata(i) for i in window], total
