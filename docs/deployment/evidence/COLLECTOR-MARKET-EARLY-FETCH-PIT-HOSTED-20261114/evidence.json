@@ -1,0 +1,83 @@
+{
+  "task_id": "COLLECTOR-MARKET-EARLY-FETCH-PIT-HOSTED-20261114",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Hosted-side collector adapter mapping and ordered-sweep temporal quarantine; source change only",
+  "recorded_hosted_diagnosis": {
+    "evidence_origin": ".orchestrator/worker-runtime/task-context/collector-market-early-fetch-pit-hosted-20261114.md and canonical task acceptance; supplied read-only incident observations, not a new VM probe",
+    "candidate": "15bee6816457fdb2188d01b2fd02e6d1aab9b336",
+    "incident_date": "2026-11-14",
+    "failures_since_utc": "20:03:43Z",
+    "source_id": "collector-tw-twse-price-history",
+    "failure_type": "source_evidence_rejected",
+    "error": "available_time must be >= event_time for PIT external source records",
+    "newest_session_delivered": 1340,
+    "newest_session_total": 1377,
+    "affected_bundle": "collector-tw-twse-price-history/2026-11-11/run-20261111T061605Z",
+    "bundle_rows": 2751,
+    "trade_date_counts": {"2026-11-10": 1375, "2026-11-11": 1376},
+    "affected_rows": 1376,
+    "stated_published_at": "2026-11-11T06:30:00Z",
+    "fetched_at": "2026-11-11T06:16:05Z",
+    "producer_cause": "deploy/collector/collector_stack/spiders.py gives price rows the conventional trade_date T06:30:00Z publish label, even when observed earlier",
+    "baseline_reproduction": "The actual adapter loaded by git show 15bee6816 verifies the newest session's remaining 37 rows, then its ordered sweep reaches the reconstructed 2751-row bundle and raises the original PIT error; latest_priority.json remains at 1340 and no result is returned"
+  },
+  "implementation": {
+    "event_time_rule": "For tw_price_daily, reject observations before trade_date 13:30 Taipei (05:30 UTC). When the conventional publication time exceeds a same-trade-date observation after close, event_time equals fetched_at. Keep normal 14:40 captures at the stated 14:30 event time and preserve historical rows' trade dates",
+    "available_time_rule": "Unchanged original fetched_at; external_sources.py and its available_time >= event_time enforcement are unchanged",
+    "typed_rejections": ["market_price_fetched_before_session_close", "market_price_published_before_session_close"],
+    "isolation": "Preflight all rows of a metadata-verified complete daily-price bundle before emitting any capped prefix. Typed session-time failures yield a zero-row traversal entry, durable quarantine evidence and observed.rejected_bundles, and advance the ordered sweep. No rejected raw bundle or persistence boundary is written",
+    "integrity_boundary": "Hash/source/schema errors and other unclassified evidence errors retain fail-closed behavior. Invalid newest-priority price rows are rejected; ordered temporal quarantine cannot manufacture newest-session data",
+    "acknowledgement": "Existing in-process CollectorDelivery and pipeline persistence own watermark/priority acknowledgement. Quarantine evidence records a rejection only. A sweep containing quarantine plus an already acknowledged valid newest boundary can return healthy verified no-new-data",
+    "metadata_reads": "Temporal preflight and raw-window verification reuse the same verified metadata; existing capped-read bounds are preserved",
+    "state_compatibility": "No cursor/priority schema changes. Quarantine JSON is in a separate state/<connector>/rejected_bundles/<cursor-and-digest-hash>.json directory, keyed by bundle cursor and digest; old readers ignore it",
+    "composition": "Independent of collector-side COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114; accepts today's unchanged collector output"
+  },
+  "acceptance_coverage": [
+    "Recorded 2751-row two-date shape admits 1376 early-fetched rows at event_time=available_time=2026-11-11T06:16:05Z and leaves 1375 prior-date event times at 2026-11-10T06:30:00Z",
+    "Normal 14:40 Taipei fetch keeps the 14:30 publish event; 13:30 boundary is admitted, 13:29:59 is typed rejection",
+    "Real configured endpoint, scheduler and pipeline first persist 1340 of 1377 newest rows, then persist the remaining 37 with either the early bundle admitted or its pre-close variant entirely quarantined",
+    "Completed receipt storage_refs identify real normalized JSONL partitions: all 1376 admitted early rows retain exact PIT times; quarantined rows are absent",
+    "Repeated rebuilt adapters and disk store/snapshot reloads reach complete healthy progress and a subsequent healthy zero-row no-new-data pull",
+    "Actual readers loaded from bee62bc29 and 15bee6816 parse the persisted cursor/priority state after recovery",
+    "Direct external-source validation still rejects available_time earlier than the mapped event_time"
+  ],
+  "fixture_provenance": "Incident counts/timestamps/run identity are recorded facts from the supplied brief. Native index/manifest/items/raw shapes are reconstructed using the checked-in TWSE MI_INDEX fixture through the existing recorded_run helper. No synthetic fixture is claimed as a downloaded hosted raw bundle",
+  "validation": {
+    "validated_source_commit": "9dbaf0f70b871e129ed73250c9560c03b00a5e1d",
+    "total_passed": 157,
+    "total_skipped": 1,
+    "focused": {
+      "command": "timeout 90s \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short",
+      "exit_status": 0,
+      "passed": 9,
+      "duration_seconds": 44.02
+    },
+    "regressions": {
+      "command": "timeout 900s \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_collector_source_alignment_contract.py -q --tb=short",
+      "exit_status": 0,
+      "passed": 148,
+      "skipped": 1,
+      "skip_reason": "Existing private native RSS pack not provided",
+      "duration_seconds": 298.77
+    },
+    "static_checks": [
+      {"command": "git diff --check", "exit_status": 0},
+      {"command": "python3 -m json.tool docs/deployment/evidence/COLLECTOR-MARKET-EARLY-FETCH-PIT-HOSTED-20261114/evidence.json > /dev/null", "exit_status": 0}
+    ],
+    "prior_attempts": [
+      {"command": "timeout 120s python3 -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short", "exit_status": 1, "result": "System Python has no pytest; used existing test interpreters"},
+      {"command": "timeout 150s /tmp/pt-venv-droot/bin/python -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short", "exit_status": 2, "result": "Collection failed because that unrelated venv lacks fastapi"},
+      {"command": "timeout 180s /tmp/cvenv-b8e3/bin/python -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short", "exit_status": 0, "passed": 8, "result": "Initial anchor coverage, before additional empty-sweep and partition assertions"},
+      {"batch": "all six required files, timeout 300s, governed dependency Python", "exit_status": 124, "result": "Incomplete; one interim metadata-read-bound failure observed before metadata reuse correction, no pass claim"},
+      {"batch": "focused tests plus capped-read test, timeout 120s", "exit_status": 1, "passed": 8, "failed": 2, "result": "Additional persistence assertions initially queried schedule-store API; corrected to completed receipt normalized partitions"},
+      {"batch": "five files excluding hosted throughput, timeout 150s", "exit_status": 124, "result": "Incomplete; intermediate persistence assertions still failed while other tests ran; no pass claim"}
+    ]
+  },
+  "delivery_boundary": {
+    "hosted_deployment_verified": false,
+    "vm_ssh_or_deploy_actions": "none; task authors have no VM/SSH/deploy authority",
+    "next_authorized_action": "Independent Claude exact-head source review, canonical supervisor integration, then existing authorized deployment lane verifies the hosted candidate",
+    "required_by": "2026-11-16T14:40:00+08:00"
+  }
+}
