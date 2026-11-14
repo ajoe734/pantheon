@@ -57,7 +57,9 @@ def evidence_item_linked_entity_types(item: EvidenceItem) -> set[str]:
     if isinstance(linked, Mapping):
         values.append(linked.get("entity_type"))
     for key in ("linked_decisions", "linked_entities", "related_entities"):
-        values.extend(x.get("entity_type") for x in metadata.get(key) or [] if isinstance(x, Mapping))
+        links = metadata.get(key)
+        if isinstance(links, (list, tuple)):
+            values.extend(x.get("entity_type") for x in links if isinstance(x, Mapping))
     return {str(v).strip().lower() for v in values if v}
 
 

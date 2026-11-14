@@ -187,8 +187,29 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 "ELSE FALSE "
                 "END"
             )
+            entity_values = " || ".join([
+                "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
+                "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
+                *[
+                    f"CASE WHEN jsonb_typeof(document->'metadata'->'{key}') = 'array' "
+                    f"THEN jsonb_path_query_array(document, '$.metadata.{key}[*].entity_type') ELSE '[]'::jsonb END"
+                    for key in ("linked_decisions", "linked_entities", "related_entities")
+                ],
+            ])
+            link_types_fn = _quote_pg(f"{self.schema or 'public'}.source_evidence_link_types")
+            # SQL functions allow the immutable array reduction a generated
+            # column cannot express with a subquery. Normalize at write time so
+            # overlap reads use GIN without parsing/detoasting any payload.
+            conn.execute(
+                f"CREATE OR REPLACE FUNCTION {link_types_fn}(document JSONB) RETURNS TEXT[] "
+                "LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$ "
+                "SELECT COALESCE(array_agg(DISTINCT LOWER(BTRIM(value))) FILTER (WHERE value IS NOT NULL), ARRAY[]::text[]) "
+                f"FROM jsonb_array_elements_text({entity_values}) links(value) $$"
+            )
             projections = {
                 "evidence_tenant_id": ("TEXT", "payload->'metadata'->>'tenant_id'"),
+                "evidence_capture_time": ("TEXT", "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"),
+                "evidence_linked_types": ("TEXT[]", f"{link_types_fn}(payload)"),
                 "evidence_source_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal')"),
                 "evidence_link_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting')"),
                 "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
@@ -203,6 +224,10 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
                 "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
                 "evidence_credibility_tier, evidence_verified) WHERE record_type = 'evidence_item'"
+            )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS source_evidence_linked_types_idx ON {self.table} "
+                "USING GIN (evidence_linked_types) WHERE record_type = 'evidence_item'"
             )
 
     def reload(self) -> None:
@@ -421,22 +446,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 linked_entity_types=linked_entity_types,
             )
         if tenant_id is not _UNSCOPED:
-            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            where = "evidence_tenant_id = %s" if tenant_id is not None else "(evidence_tenant_id IS NULL OR evidence_tenant_id = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
         if linked_entity_types is not None:
-            # Bind the requested types. Link arrays use an EXISTS predicate so
-            # evidence with several links is still counted/paged exactly once.
-            where += " AND (" + " OR ".join([
-                "LOWER(BTRIM(payload->'metadata'->>'linked_entity_type')) = ANY(%s)",
-                "LOWER(BTRIM(payload->'metadata'->'linked_object_summary'->>'entity_type')) = ANY(%s)",
-                *[
-                    f"EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload->'metadata'->'{key}') = 'array' THEN payload->'metadata'->'{key}' ELSE '[]'::jsonb END) link WHERE LOWER(BTRIM(link->>'entity_type')) = ANY(%s))"
-                    for key in ("linked_decisions", "linked_entities", "related_entities")
-                ],
-            ]) + ")"
-            scope_params += (list(linked_entity_types),) * 5
+            # Array overlap counts/paginates each item once even with many links.
+            where += " AND evidence_linked_types && %s::text[]"
+            scope_params += (list(linked_entity_types),)
         windowed = captured_from is not None or captured_before is not None
         if windowed:
             try:
@@ -496,7 +513,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             return [strip_list_heavy_metadata(i) for i in window], len(items)
         # No BTRIM: legacy selection only falls back on an absent/empty value, so a
         # blank or padded string stays "odd" and is judged by the Python predicate.
-        raw_ts = "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"
+        raw_ts = "evidence_capture_time"
         # Strict: hours 00-23, a zone only after a time, <=6 fraction digits. Anything
         # else (date+zone, 24:00, compact forms, ...) goes to the Python predicate.
         iso_guard = (
