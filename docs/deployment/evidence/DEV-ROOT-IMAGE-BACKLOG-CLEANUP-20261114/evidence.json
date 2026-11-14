@@ -1,0 +1,14 @@
+{
+  "task": "DEV-ROOT-IMAGE-BACKLOG-CLEANUP-20261114",
+  "changes": [
+    "run_bounded_docker_prune now captures the real timeout status (124/137) and reports a timeout as a timeout",
+    "remove_dev_untagged_unreferenced_images_for_build: per-image non-forced docker rmi of untagged, container-unreferenced images after container image protection; own budget PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS (default 900, capped at deadline/4); logs candidates/removed/refused/not_attempted/free bytes before+after"
+  ],
+  "tests": {
+    "scripts/test_deploy_nonprod_vm.py (new, 4)": "passed",
+    "scripts/test_dev_release_artifact_retention.py": "11 passed",
+    "scripts/test_deploy_nonprod_vm.py (rest)": "passed except finmind tests that need pydantic, absent from the local venv (environmental)"
+  },
+  "not_changed": ["builder prune -a", "volume prune", "release-artifacts retention", "rollback image restore"],
+  "hosted_operations": "none"
+}
