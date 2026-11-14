@@ -1300,3 +1300,27 @@ def test_exited_zero_initializer_image_still_fails_exact_stack_readback(stack_ca
     with pytest.raises(artifacts.StackMixedError) as caught:
         artifacts.readback_stack(stack, docker=docker, check_lease=lambda: None)
     assert ONE_SHOT in caught.value.services
+
+
+def test_memory_index_pair_survives_capture_and_whole_stack_rollback(tmp_path, monkeypatch):
+    # Exercise the existing arbitrary-service restore path with both new images.
+    # Keep total fixture scale unchanged and preserve the sealed three-image bundle.
+    monkeypatch.setattr(sys.modules[__name__], "OTHERS", (*OTHERS[:-2], "hindsight", "memory-index-postgres"))
+    case = stack_case.__wrapped__(tmp_path)
+    _, docker, _, _, stack, _, _ = case
+    for name in artifacts.MEMORY_INDEX_SERVICES:
+        assert name in stack["services"]
+        assert docker.tags[artifacts._protect_tag(name, stack["services"][name]["image_id"])]
+    docker.mutate_to_candidate()
+    restore_stack(case)
+    for name in artifacts.MEMORY_INDEX_SERVICES:
+        assert docker.containers[name]["image_id"] == stack["services"][name]["image_id"]
+    assert not any(call[0] in ("volume", "rm") or "--volumes" in call for call in docker.calls)
+
+
+@pytest.mark.parametrize("remaining", ["hindsight", "memory-index-postgres"])
+def test_half_memory_index_cannot_become_a_rollback_baseline(stack_case, remaining):
+    stack = copy.deepcopy(stack_case[4])
+    stack["services"][remaining] = copy.deepcopy(stack["services"]["svc-01"])
+    with pytest.raises(artifacts.ArtifactError, match="requires both"):
+        artifacts.validate_stack(stack)

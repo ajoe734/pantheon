@@ -97,6 +97,74 @@ services:
       timeout: 5s
       retries: 10
 
+  memory-index-postgres:
+    profiles: ["core", "root"]
+    build:
+      context: .
+      dockerfile: deploy/memory-index-postgres/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: memory_index_owner
+      POSTGRES_PASSWORD: ${MEMORY_INDEX_POSTGRES_PASSWORD:-memory_index_dev_only}
+      POSTGRES_DB: pantheon_memory_index
+    volumes:
+      - memory-index-postgres-data:/var/lib/postgresql/data
+    networks: [memory-index-storage]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory_index_owner -d pantheon_memory_index"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  hindsight:
+    profiles: ["core", "root"]
+    build:
+      context: .
+      dockerfile: deploy/hindsight/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://memory_index_owner:${MEMORY_INDEX_POSTGRES_PASSWORD:-memory_index_dev_only}@memory-index-postgres:5432/pantheon_memory_index
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION: pgroonga
+      HINDSIGHT_API_VECTOR_EXTENSION: pgvector
+      HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP: "true"
+      HINDSIGHT_API_MCP_ENABLED: "false"
+      HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+      HINDSIGHT_API_TENANT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      HINDSIGHT_API_LLM_PROVIDER: none
+      HINDSIGHT_API_RETAIN_EXTRACTION_MODE: chunks
+      HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "false"
+      # No background refresh or async retain until the LLM layers are enabled.
+      HINDSIGHT_API_WORKER_ENABLED: "false"
+      HINDSIGHT_API_RETAIN_LLM_PROVIDER: ${HINDSIGHT_RETAIN_LLM_PROVIDER:-none}
+      HINDSIGHT_API_RETAIN_LLM_MODEL: ${HINDSIGHT_RETAIN_LLM_MODEL:-}
+      HINDSIGHT_API_RETAIN_LLM_API_KEY: ${HINDSIGHT_RETAIN_LLM_API_KEY:-}
+      HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER: ${HINDSIGHT_CONSOLIDATION_LLM_PROVIDER:-none}
+      HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: ${HINDSIGHT_CONSOLIDATION_LLM_MODEL:-}
+      HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY: ${HINDSIGHT_CONSOLIDATION_LLM_API_KEY:-}
+      HINDSIGHT_API_REFLECT_LLM_PROVIDER: ${HINDSIGHT_REFLECT_LLM_PROVIDER:-none}
+      HINDSIGHT_API_REFLECT_LLM_MODEL: ${HINDSIGHT_REFLECT_LLM_MODEL:-}
+      HINDSIGHT_API_REFLECT_LLM_API_KEY: ${HINDSIGHT_REFLECT_LLM_API_KEY:-}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER:-none}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL:-}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_API_KEY:-}
+      HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE: "4"
+      HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE: "4"
+      OMP_NUM_THREADS: "2"
+    networks: [memory-index, memory-index-storage]
+    depends_on:
+      memory-index-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "hindsight_api.http_probe", "http://127.0.0.1:8888/health", "5"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
   nats:
     profiles: ["core", "root"]
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
@@ -988,6 +1056,9 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Provisioning verifies participant identities against the Persona owner.
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       # Committee-visible memory reader (tenant-filtered in the provider).
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
@@ -1842,6 +1913,8 @@ services:
     restart: unless-stopped
     environment:
       PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      # Match the consultation executor's deployment tenant; no invented tenant.
+      PERSONA_DEFAULT_TENANT_ID: ${PERSONA_DEFAULT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
       PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
@@ -2051,6 +2124,8 @@ services:
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
+      PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
+      PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
       # Without this, retrieve denies with governance_authz_unconfigured.
@@ -2059,6 +2134,7 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - memory-data:/data/memory
+    networks: [default, memory-index]
     depends_on:
       postgres:
         condition: service_healthy
@@ -3240,6 +3316,7 @@ services:
         required: false
 volumes:
   retrieval-postgres-data:
+  memory-index-postgres-data:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
   dev-paper-governance-tokens:
@@ -3283,3 +3360,10 @@ volumes:
   lineage-data:
   telemetry-data:
   worker-health-data:
+
+networks:
+  default: {}
+  memory-index:
+    internal: true
+  memory-index-storage:
+    internal: true

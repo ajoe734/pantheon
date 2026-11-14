@@ -1031,6 +1031,18 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
+  # Preserve an existing host .env when no override was supplied. Explicit
+  # memory-index secrets/settings use the same private transport as BFF auth.
+  local memory_index_env
+  for memory_index_env in MEMORY_INDEX_POSTGRES_PASSWORD HINDSIGHT_API_KEY \
+    HINDSIGHT_RETAIN_LLM_PROVIDER HINDSIGHT_RETAIN_LLM_MODEL HINDSIGHT_RETAIN_LLM_API_KEY \
+    HINDSIGHT_CONSOLIDATION_LLM_PROVIDER HINDSIGHT_CONSOLIDATION_LLM_MODEL HINDSIGHT_CONSOLIDATION_LLM_API_KEY \
+    HINDSIGHT_REFLECT_LLM_PROVIDER HINDSIGHT_REFLECT_LLM_MODEL HINDSIGHT_REFLECT_LLM_API_KEY \
+    HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_API_KEY; do
+    if [[ -v "$memory_index_env" ]]; then
+      command_prefix+=" ${memory_index_env}=$(shell_quote "${!memory_index_env}")"
+    fi
+  done
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}")"
@@ -1453,6 +1465,9 @@ REQUIRED_LOOP_WORKERS=(
   retrieval-postgres
   search-svc
   search-index-scheduler
+  # Rebuildable memory index; gate both before accepting a root release.
+  memory-index-postgres
+  hindsight
 )
 
 validate_required_loop_workers() {

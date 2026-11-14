@@ -105,7 +105,55 @@ not resolve this veto.
 
 ## 9. Panel personas
 
-`bootstrap_consult_personas` idempotently creates `persona-risk-officer` and
-`persona-red-team` through `POST /api/personas` in `draft` with `metadata.trading=false`,
-`consultable=true`. Advancing their lifecycle to `consultable` is a governed step and is not
-automated here.
+The existing Persona service lifespan runs `bootstrap_consult_personas` through
+its local persistent owner's normal create/CAS path before serving HTTP. It
+creates `persona-risk-officer` and `persona-red-team` for
+`PERSONA_DEFAULT_TENANT_ID` (fallback `PANTHEON_TENANT_ID`), with policy
+`consult-panel.non-trading`. Compose binds this tenant to the same deployment
+tenant as the consultation executor. Restart and concurrent replicas reuse the
+same identities; a conflicting tenant or unsafe existing persona blocks bootstrap.
+A partial record's consultation policy/metadata can be repaired through the owner
+patch path; trading policies and tenant/lifecycle changes are never repaired automatically.
+
+These personas remain **draft**, with `metadata.persona_class=consult_panel`,
+`trading=false` and `consultable=true`. Consultation eligibility comes from the
+panel policy, without lifecycle promotion. The owner refuses trading policies,
+class removal, trading metadata and lifecycle advancement for panel identities.
+Drafts are excluded from daily-cycle registration and paper admission; the fleet
+classifier explicitly excludes `consult_panel` from quarterly trading ranking,
+so no ranking-derived paper allocation or canary nomination is produced.
+
+Before asking anyone, the consultation executor ensures **every** required
+participant, including the initiating trading persona, through authenticated
+`POST /api/openclaw-adapter/consultation/agents/ensure`. The body contains
+`tenant_id` and `persona_id`; the existing consultation provider bearer token,
+allowed service actor and matching `X-Pantheon-Tenant-Id` are required. The adapter
+reads the real tenant-bound Persona owner record before any Gateway mutation.
+It requires `PANTHEON_PERSONA_API_URL` and the existing Persona service token
+(`PANTHEON_PERSONA_SERVICE_TOKEN` or its `_FILE` setting).
+
+Each consultation agent has the exact admission ID
+`consult-<sha256(tenant + NUL + persona)[:12]>-<persona>` and its own
+`<gateway-state>/workspaces/<agent-id>` workspace. It has deny-all tools,
+exec security deny/ask always, empty skills, disabled memory search and no context
+injection. Gateway `config.patch` changes only this ID, guarded by `baseHash` and
+the shared registry lock. Explicit array replacement paths allow removal of old
+tools/skills during repair. No trading/default agent or private memory workspace
+is written. The unchanged live admission check runs again before each contribution;
+an agent with tools remains inadmissible. The Gateway is pinned at 2026.7.1;
+its [config patch handler](https://github.com/openclaw/openclaw/blob/v2026.7.1/src/gateway/server-methods/config.ts)
+and [ID-keyed merge contract](https://github.com/openclaw/openclaw/blob/v2026.7.1/src/config/merge-patch.ts)
+define revision fencing and targeted agent patches.
+
+Read startup status at `GET /healthz`, `details.panel_personas`: `ready` includes
+per-persona `created`, `exists` or `repaired`; `blocked` includes a reason.
+The owner retries a blocked bootstrap every 30 seconds, without changing lifecycle.
+The ensure route returns `ready`, exact `agent_id`, `workspace_ref` and `changed`;
+it revalidates live admission and workspace even on an unchanged attempt.
+Failures return a typed retryable `blocked` envelope. The executor records
+`panel_agent_provisioning_blocked` with a readable reason on the consultation
+transcript and preserves a retryable workflow hold, renewing its lease during
+provisioning. It repeats ensure on the next attempt rather than caching failure
+or automatically adopting the gated decision. Contribution/adoption gates and
+operator authority are unchanged. Hosted deployment proof belongs to
+`PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112` AC3.

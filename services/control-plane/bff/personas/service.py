@@ -200,7 +200,7 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
 from services.rankings.snapshots import (
     RETURN_ON_CAPITAL_FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
-    snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
+    snapshot_record, snapshot_content_digest, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
@@ -5926,6 +5926,143 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
     return True
 
 
+_PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
+_PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
+_PM12_RANKING_EVIDENCE_ENTITY_TYPES = (
+    "artifact", "capital_pool", "capital_sleeve", "paper_ledger", "persona",
+    "persona_binding", "persona_capital_binding", "runtime", "runtime_binding",
+    "strategy", "strategy_spec",
+)
+
+
+def _pm12_read_fn_accepts(read_fn: Any, name: str) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(read_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def _pm12_read_all_evidence_pages(
+    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None,
+    *, _legacy: bool = False, _deadline: Optional[float] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Read every owner evidence page exactly (no truncation, no ordering
+    assumption), or return ``None`` when the owner is unavailable.
+
+    Every read, including the first, runs under one overall deadline equal to
+    the evidence owner read timeout; the caller never blocks past it (worker
+    threads are abandoned, not joined). The first page yields the owner total
+    and an offset page token; the remaining offset pages are requested
+    concurrently so a slow owner is waited on about once per request. A page
+    that is empty after tenant filtering still carries a continuation token and
+    is followed. Any unavailable page, or exceeding the deadline, marks the
+    whole surface unavailable.
+    """
+    import concurrent.futures
+    import contextvars
+    import time
+
+    try:
+        from ..ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+
+        deadline = time.monotonic() + max(evidence_owner_read_timeout_seconds(), 0.05)
+    except Exception:
+        deadline = time.monotonic() + 4.0
+    if _deadline is not None:
+        deadline = _deadline
+    page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
+    # Ask the owner to page only the quarter's rows so the request count follows
+    # the quarter population, not the total evidence count. An owner that
+    # predates the window ignores it and the quarter filter downstream still
+    # makes the output identical, only with more pages.
+    window_kwargs: Dict[str, Any] = {}
+    if quarter_window and _pm12_read_fn_accepts(read_fn, "captured_from"):
+        start_at = _audit_datetime(quarter_window.get("start_at"))
+        end_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
+        if start_at is not None and end_at is not None:
+            window_kwargs = {
+                "captured_from": start_at.isoformat(),
+                "captured_before": end_at.isoformat(),
+            }
+    if _pm12_read_fn_accepts(read_fn, "include_summary"):
+        window_kwargs["include_summary"] = False
+    if quarter_window and page_size and _pm12_read_fn_accepts(read_fn, "linked_entity_types"):
+        window_kwargs["linked_entity_types"] = _PM12_RANKING_EVIDENCE_ENTITY_TYPES
+    if _legacy:
+        window_kwargs = {}
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
+
+    def _submit(token: Optional[str]) -> Any:
+        return pool.submit(
+            contextvars.copy_context().run,
+            lambda: read_fn(page_size=page_size, page_token=token, **window_kwargs),
+        )
+
+    def _sorted(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # The unpaged read returns rows newest-first; paged owner reads keep
+        # append order, so restore the same order for identical output.
+        from ..ports.research_knowledge_source import evidence_ref_sort_key
+
+        return sorted(all_rows, key=evidence_ref_sort_key, reverse=True)
+
+    def _wait(future: Any) -> Any:
+        return future.result(timeout=max(deadline - time.monotonic(), 0.0))
+
+    try:
+        first = _wait(_submit(None))
+        if not first.available:
+            return None
+        if not getattr(first, "owner_hints_applied", True):
+            # First page already contains the full legacy population. Keep all
+            # subsequent pages on it, with no repeated capability probes.
+            window_kwargs = {}
+        rows: List[Dict[str, Any]] = list(first.items or [])
+        token = first.next_page_token
+        if not token:
+            return _sorted(rows)
+        total = first.total
+        step = int(token) if str(token).isdigit() else 0
+        if isinstance(total, int) and not isinstance(total, bool) and step == page_size:
+            futures = [_submit(str(o)) for o in range(step, total, step)]
+            for future in futures:
+                page = _wait(future)
+                if not page.available:
+                    return None
+                if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                    # Mixed-version owner replicas must never mix offsets from
+                    # different populations. Restart the complete legacy stream
+                    # under the original request deadline.
+                    return _pm12_read_all_evidence_pages(
+                        read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                    )
+                rows.extend(page.items or [])
+            return _sorted(rows)
+        # Opaque or short-page tokens: sequential follow, still complete.
+        seen = {str(token)}
+        while token:
+            page = _wait(_submit(str(token)))
+            if not page.available:
+                return None
+            if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                return _pm12_read_all_evidence_pages(
+                    read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                )
+            rows.extend(page.items or [])
+            token = page.next_page_token
+            if token is not None and str(token) in seen:
+                return None
+            if token is not None:
+                seen.add(str(token))
+        return _sorted(rows)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 # --- _pm12_public_quarter_evidence_refs ---
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
@@ -5939,9 +6076,10 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            result = read_fn()
-            raw_evidence_refs = list(result.items or [])
-            evidence_dataset_available = bool(result.available)
+            all_rows = _pm12_read_all_evidence_pages(read_fn, quarter_window)
+            if all_rows is not None:
+                raw_evidence_refs = all_rows
+                evidence_dataset_available = True
         elif store is not None:
             raw_evidence_refs = list(store.list_evidence_refs() or [])
             evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")
@@ -14110,7 +14248,12 @@ def _pm12_evidence_ref_key(ref: Any) -> str:
 
 def _pm12_attach_ranking_snapshot(items, *, surface, period):
     """Attach a content identity only; scheduled evaluator admission owns persistence."""
-    snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+    # Only the identity is attached. Build it from the content digest alone:
+    # snapshot_record() additionally rebuilds the content, deep-freezes every
+    # item and hashes evidence assertions, then the record is discarded.
+    digest = snapshot_content_digest(items, surface=surface, period=period)
+    clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
+    snapshot_id = f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
     return ([{**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"},
               "ranking_snapshot_id": snapshot_id} for item in items], snapshot_id)
 
@@ -15198,6 +15341,7 @@ def _build_persona_health_items_impl(
                 data_source_status,
                 data_sources,
                 required_data_sources=required_data_sources,
+                thin=True,
             )
         else:
             source_health_bindings = []
@@ -17287,7 +17431,15 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        # Ranking blocks never read the per-persona route-policy / health /
+        # allowed-actions summaries; skipping them removes 2-3 store reads per
+        # persona from this read path without changing any ranking field.
+        rows = _pm12_persona_league_rows(
+            tenant_id=caller_tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(

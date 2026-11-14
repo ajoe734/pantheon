@@ -56,9 +56,52 @@ from services.persona.write_owner import (
 _OWNER_READ_SURFACE = None
 
 
+def _bootstrap_panel_personas(app):
+    """Local startup uses the owner's normal create/CAS path, before HTTP listens."""
+    from services.persona.consult_triggers import bootstrap_consult_personas
+    from services.persona.write_owner import CreatePersonaRequest, PatchPersonaRequest, PersonaAlreadyExists
+    tenant = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    try:
+        if not tenant or tenant == "*":
+            raise RuntimeError("deployment tenant is not configured")
+        owner = PERSONA_OWNER_API.state.persona_owner
+        def local_owner(method, url, body):
+            if method == "GET":
+                if "/api/personas/" in url:
+                    return owner.get(url.rsplit("/", 1)[1]).model_dump(mode="json")
+                return owner.list_json()
+            if method == "PATCH":
+                return owner.patch(url.rsplit("/", 1)[1], PatchPersonaRequest(**body)).model_dump(mode="json")
+            try:
+                return owner.create(CreatePersonaRequest(**body)).model_dump(mode="json")
+            except PersonaAlreadyExists:
+                return {"_conflict": True}
+        result = bootstrap_consult_personas(persona_url="local-owner:", tenant_id=tenant, http=local_owner)
+        app.state.panel_personas = {"status": "ready", "tenant_id": tenant, "personas": result}
+    except Exception as exc:
+        # Keep the owner available for diagnostics/repair; admission remains closed.
+        # Owner/store exceptions can carry connection details. Only our
+        # bootstrap validation messages are safe to expose on health.
+        reason = str(exc) if type(exc) is RuntimeError else type(exc).__name__
+        app.state.panel_personas = {"status": "blocked", "tenant_id": tenant,
+                                   "reason": f"panel persona bootstrap: {reason}"}
+    return app.state.panel_personas
+
+
+async def _retry_panel_bootstrap(app, stop):
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            if app.state.panel_personas["status"] != "ready":
+                await asyncio.to_thread(_bootstrap_panel_personas, app)
+
+
 @asynccontextmanager
 async def persona_lifespan(app):
     stop = asyncio.Event()
+    await asyncio.to_thread(_bootstrap_panel_personas, app)
+    bootstrap_worker = asyncio.create_task(_retry_panel_bootstrap(app, stop))
     worker = None
     if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
         from services.persona.persona_cycle_controller import CycleOwners, run_controller
@@ -141,6 +184,7 @@ async def persona_lifespan(app):
         yield
     finally:
         stop.set()
+        await bootstrap_worker
         if worker is not None:
             await worker
 
@@ -176,6 +220,7 @@ def _standard_health_payload() -> dict[str, Any]:
         },
         "metrics": {"service_up": 1},
         "details": {
+            "panel_personas": getattr(app.state, "panel_personas", {"status": "unobserved"}),
             "llm_backend": LLM_BACKEND,
             "runtime_backend": "openclaw-gateway",
             "persona_id": DEFAULT_PERSONA_ID,

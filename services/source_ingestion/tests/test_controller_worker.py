@@ -3619,3 +3619,11 @@ def test_selection_continuation_negatives_keep_finished_cadence(overrides: dict[
     assert controller_worker.select_collector_pull_connectors(
         actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
     ) == []
+
+
+def test_host_not_offered_is_excluded_even_if_due_or_continuing():
+    actual = _continuing(_collector_actual(is_due=True))
+    actual["connectors"][0]["collector_offering"] = {"offered": False, "reason": "missing_credential"}
+    assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == []
+    actual["connectors"][0]["collector_offering"] = {"offered": True, "reason": None}
+    assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == [COLLECTOR_CONNECTOR_ID]

@@ -431,21 +431,38 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
     def list_evidence_items(
         page_size: int = Query(default=_EVIDENCE_PAGE_DEFAULT, ge=1, le=_EVIDENCE_PAGE_MAX),
         page_token: str | None = Query(default=None),
+        captured_from: str | None = Query(default=None),
+        captured_before: str | None = Query(default=None),
+        linked_entity_types: str | None = Query(default=None),
+        include_summary: bool | None = Query(default=None),
         authorization: str | None = Header(default=None),
         tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     ) -> dict[str, Any]:
+        windowed = captured_from is not None or captured_before is not None
+        if windowed:
+            from services.knowledge.evidence.repository import _capture_datetime
+
+            if any(v is not None and _capture_datetime(v) is None for v in (captured_from, captured_before)):
+                raise HTTPException(status_code=400, detail="invalid captured_from/captured_before")
         try:
             offset = max(int(page_token), 0) if page_token else 0
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid page_token") from None
         tenant = _source_read_tenant(authorization, tenant_id)
+        entity_types = tuple(sorted({v.strip().lower() for v in linked_entity_types.split(",") if v.strip()})) if linked_entity_types is not None else None
         try:
-            items, total = runtime.evidence_repository.list_evidence_items_page(tenant_id=tenant, limit=page_size, offset=offset)
+            window_kwargs = {"captured_from": captured_from, "captured_before": captured_before} if windowed else {}
+            if entity_types is not None:
+                window_kwargs["linked_entity_types"] = entity_types
+            items, total = runtime.evidence_repository.list_evidence_items_page(
+                tenant_id=tenant, limit=page_size, offset=offset, **window_kwargs
+            )
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
         summary: dict[str, Any] | None = None
         summarize_fn = getattr(runtime.evidence_repository, "summarize_evidence_items", None)
-        if callable(summarize_fn):
+        # Omission preserves the legacy summary contract. Ranking explicitly opts out.
+        if include_summary is not False and callable(summarize_fn):
             try:
                 raw_summary = summarize_fn(tenant_id=tenant)
                 if isinstance(raw_summary, dict):
@@ -459,6 +476,14 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             "page_size": page_size,
             "next_page_token": str(next_offset) if next_offset < total else None,
             "summary": summary,
+            # Echoed only when the window was applied, so a caller can tell an
+            # owner that honoured it from an older owner that ignored it. The
+            # summary stays the whole-tenant population summary either way.
+            **({"filters": {
+                **({"captured_from": captured_from, "captured_before": captured_before} if windowed else {}),
+                **({"linked_entity_types": list(entity_types)} if entity_types is not None else {}),
+                **({"include_summary": include_summary} if include_summary is not None else {}),
+            }} if windowed or entity_types is not None or include_summary is not None else {}),
         }
 
     @router.get("/api/source-ingest/evidence/items/{evidence_item_id}")
