@@ -3,9 +3,9 @@
   "change": "personas/service.py: _pm12_persona_league_rows_shared = single-flight + tenant-keyed memo (10s, hard cap 30s, measured from computation start, failures never stored, deep-copied per caller) used by get_persona_league, get_persona_league_rankings, _compose_quarterly_ranking_context.",
   "standard_approach": "request coalescing / single-flight plus short TTL memo",
   "acceptance_status": {
-    "AC1_p95_under_2s_hosted_sized_fixture": "NOT PROVEN on hosted. Local fixture (170 personas, injected 100ms delay on 4 store calls) meets <2s p95, but that fixture has no runtime bindings so it never exercised the per-persona telemetry reads that explain hosted quarterly-ranking 13.4s. A fix for that path is in (see quarterly_ranking_hosted_gap); hosted re-measure after deploy is required to close AC1.",
-    "AC2_hosted_fixture_sizes": "PARTIAL, waiver or data requested from Human/Ops: personas 170 (11 active/159 archived), evidence refs 0 supplied. Still missing: bindings, runtime bindings, sessions, league entries (read-only authenticated GETs on hosted dev; this worker has no hosted credentials).",
-    "AC3_before_after": "recorded for the local fixture only; no improvement observed under concurrent cold start",
+    "AC1_p95_under_2s_hosted_sized_fixture": "MET on hosted-sized padded fixture (see hosted_sized_padded_bench); hosted five-way proof deferred to next dev Root FE gate per operator decision.",
+    "AC2_hosted_fixture_sizes": "MET: see hosted_sizes_ac2",
+    "AC3_before_after": "recorded in hosted_sized_padded_bench with exact commands",
     "AC4_body_parity": "test_bodies_identical_to_unmemoized_code",
     "AC5_tenant_scope": "test_memo_is_tenant_scoped",
     "AC6_window": "test_reuse_window_is_bounded_and_store_change_visible_after_window",
@@ -274,5 +274,95 @@
     "test_result": "70 passed, 1 skipped (concurrent_read + pm12_persona_league + pm12_request_scoped_reads)",
     "hosted_remeasure": "PENDING: not done; no hosted access from this worker. Command to run on hosted dev after deploy: 5-way concurrent GET of the five cockpit routes x >=20 rounds, compare to 13.4s/14.8s baseline.",
     "confidence": "cause is inferred from code reading plus the 13.4s-vs-1.3s asymmetry; not confirmed by a hosted profile."
+  },
+  "operator_delegated_decision_verbatim": "OPERATOR-DELEGATED DECISION 2026-11-14T23:45Z (operator told the Claude chatbox to fix all known release risks before the next dev Root and to handle it directly): (a) AC2 hosted sizes, measured read-only 2026-11-14T23:43:39Z on hosted dev bee62bc via GET /bff/management/persona-league?page_size=200, /bff/runtimes, /bff/capital-pools with an admin read role: league personas 170 (states {\"research_only\": 1, \"retired\": 159, \"draft\": 5, \"paper_running\": 5}), distinct binding_ids 5, distinct runtime_ids on league rows 5, distinct session_ids 5, runtimes total 162, capital pools total 167, /bff/personas total 172, current-quarter evidence refs 0. Quote these in evidence.json as the AC2 hosted sizes and size the bench fixture to them. (b) AC1 is judged on the hosted-sized fixture as written; the hosted five-way confirmation is NOT this task's obligation - it is performed by the next dev Root FE gate and tracked by MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114. This is a clarification of where hosted proof lives, not a waiver: the concurrent fixture run must still show p95 under 2s and before/after numbers must be recorded honestly.",
+  "hosted_sizes_ac2": {
+    "measured": "2026-11-14T23:43:39Z read-only on hosted dev bee62bc",
+    "league_personas": 170,
+    "league_states": {
+      "research_only": 1,
+      "retired": 159,
+      "draft": 5,
+      "paper_running": 5
+    },
+    "distinct_binding_ids": 5,
+    "distinct_runtime_ids_on_league_rows": 5,
+    "distinct_session_ids": 5,
+    "runtimes_total": 162,
+    "capital_pools_total": 167,
+    "personas_total": 172,
+    "current_quarter_evidence_refs": 0,
+    "operator_supplied_db_counts": {
+      "persona.personas": 171,
+      "persona_provisioning": 164,
+      "capital_bindings": 165,
+      "runtime_bindings": 162,
+      "league_entries": 170,
+      "active_sessions": 5,
+      "capability_snapshots": 8
+    },
+    "record_sizes": "persona median 14.8KB max 24KB (metadata ~10.5KB readback); runtime binding ~9KB metadata; capital binding ~1KB"
+  },
+  "hosted_sized_padded_bench": {
+    "command_before": "LEAGUE_BENCH=before HOSTED_PAD=1 PERSONAS=170 ROUNDS=20 python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "command_after": "LEAGUE_BENCH=after HOSTED_PAD=1 PERSONAS=170 ROUNDS=20 python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "seconds_p50_p95_max": {
+      "before": {
+        "persona-league": [
+          0.639,
+          1.066,
+          1.066
+        ],
+        "persona-league/rankings": [
+          0.646,
+          1.056,
+          1.056
+        ],
+        "quarterly-ranking": [
+          0.645,
+          1.059,
+          1.059
+        ],
+        "quarterly-ranking/formula": [
+          0.346,
+          0.657,
+          0.657
+        ],
+        "persona-fleet": [
+          0.631,
+          1.055,
+          1.055
+        ]
+      },
+      "after": {
+        "persona-league": [
+          0.548,
+          0.637,
+          0.637
+        ],
+        "persona-league/rankings": [
+          0.533,
+          0.632,
+          0.632
+        ],
+        "quarterly-ranking": [
+          0.542,
+          0.635,
+          0.635
+        ],
+        "quarterly-ranking/formula": [
+          0.418,
+          0.518,
+          0.518
+        ],
+        "persona-fleet": [
+          0.527,
+          0.628,
+          0.628
+        ]
+      }
+    },
+    "fixture": "170 personas (5 paper_running, 165 retired) each ~13.8KB padded metadata; 162 runtime bindings ~7.5KB metadata each (1.2MB total); 165 capital bindings; 5 concurrent routes x 20 cold rounds",
+    "verdict": "AC1 met on the hosted-sized fixture: every route p95 <= 0.637s after (<2s). Before p95 was already ~1.07s on this local fixture, so the local fixture does not reproduce the hosted 2.9-4.2s five-way; the gain here is ~40% on p95. Local fixture has no real downstream latency or hosted CPU contention. Hosted five-way confirmation is deferred to the next dev Root FE gate / MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114 per the operator decision, not claimed here."
   }
 }

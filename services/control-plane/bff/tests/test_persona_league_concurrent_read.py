@@ -285,8 +285,45 @@ def test_cockpit_concurrent_bench(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(ps, "_pm12_persona_league_rows_shared", lambda *, tenant_id: _direct(tenant_id=tenant_id))
     with tempfile.TemporaryDirectory() as td:
         store = _CountingPm12LeagueTestStore(fallback=True)
+        # HOSTED_PAD=1 sizes records like hosted dev (operator-measured 2026-11-14):
+        # persona metadata ~10.5 KB nested dicts (median persona 14.8 KB), 162 runtime
+        # bindings with ~9 KB metadata (object_store + authoritative_loader_attestation),
+        # 165 capital bindings, 5 active personas (rest retired), 5 sessions.
+        pad = _os.environ.get("HOSTED_PAD") == "1"
+
+        def _blob(nbytes: int) -> Dict[str, Any]:
+            return {f"k{i}": {"v": "x" * 90, "n": [i, i + 1], "ts": "2026-11-14T00:00:00Z"} for i in range(max(1, nbytes // 140))}
+
         for n in range(personas):
-            store.create_persona(persona_id=f"p-{n:03d}", name=f"Persona {n:03d}", archetype=("trend", "mean_reversion", "carry")[n % 3])
+            meta: Dict[str, Any] = {}
+            extra: Dict[str, Any] = {}
+            if pad:
+                meta = {
+                    "provisioning_authoritative_readback": _blob(10500),
+                    "openclaw_agent_reconcile": _blob(800),
+                    "provisioning_compensation": _blob(1300),
+                }
+                if n >= 5:
+                    extra = {"status": "archived", "lifecycle_state": "retired"}
+                else:
+                    extra = {"lifecycle_state": "paper_running"}
+            store.create_persona(persona_id=f"p-{n:03d}", name=f"Persona {n:03d}", archetype=("trend", "mean_reversion", "carry")[n % 3], metadata=meta, **extra)
+        if pad:
+            store.raw_data["runtime_bindings"] = [
+                {
+                    "runtime_id": f"rt-{n:03d}",
+                    "id": f"rt-{n:03d}",
+                    "binding_id": f"cb-{n % 165:03d}",
+                    "persona_id": f"p-{n % personas:03d}",
+                    "state": "active" if n < 5 else "retired",
+                    "metadata": {"object_store": _blob(3500), "authoritative_loader_attestation": _blob(3300)},
+                }
+                for n in range(162)
+            ]
+            store.raw_data["bindings"] = [
+                {"binding_id": f"cb-{n:03d}", "id": f"cb-{n:03d}", "persona_id": f"p-{n % personas:03d}", "state": "active" if n < 5 else "retired", "metadata": _blob(900)}
+                for n in range(165)
+            ]
         delay = float(_os.environ.get("STORE_DELAY_MS", "0")) / 1000.0
         if delay > 0:
             # Per-call downstream latency on the bulk/per-persona store reads the
