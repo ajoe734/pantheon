@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import math
 import os
 import threading
+import time
 import uuid
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -651,16 +654,12 @@ def _rebuild_positions(
                 if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                     row["last_known_mark_observed_at"] = mark["observed_at"]
                 if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                    row["last_known_mark_lineage"] = json.loads(
-                        json.dumps(mark["lineage"])
-                    )
+                    row["last_known_mark_lineage"] = mark["lineage"]
                 if (
                     isinstance(mark.get("calendar_evidence"), dict)
                     and mark["calendar_evidence"]
                 ):
-                    row["last_known_mark_calendar_evidence"] = json.loads(
-                        json.dumps(mark["calendar_evidence"])
-                    )
+                    row["last_known_mark_calendar_evidence"] = mark["calendar_evidence"]
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
@@ -691,16 +690,12 @@ def _rebuild_positions(
                 if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                     row["last_known_mark_observed_at"] = mark["observed_at"]
                 if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                    row["last_known_mark_lineage"] = json.loads(
-                        json.dumps(mark["lineage"])
-                    )
+                    row["last_known_mark_lineage"] = mark["lineage"]
                 if (
                     isinstance(mark.get("calendar_evidence"), dict)
                     and mark["calendar_evidence"]
                 ):
-                    row["last_known_mark_calendar_evidence"] = json.loads(
-                        json.dumps(mark["calendar_evidence"])
-                    )
+                    row["last_known_mark_calendar_evidence"] = mark["calendar_evidence"]
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
@@ -718,14 +713,12 @@ def _rebuild_positions(
             if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                 row["mark_observed_at"] = mark["observed_at"]
             if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                row["mark_lineage"] = json.loads(json.dumps(mark["lineage"]))
+                row["mark_lineage"] = mark["lineage"]
             if (
                 isinstance(mark.get("calendar_evidence"), dict)
                 and mark["calendar_evidence"]
             ):
-                row["mark_calendar_evidence"] = json.loads(
-                    json.dumps(mark["calendar_evidence"])
-                )
+                row["mark_calendar_evidence"] = mark["calendar_evidence"]
             if mark.get("quote_currency"):
                 row["currency"] = mark["quote_currency"]
         rows.append(row)
@@ -796,6 +789,44 @@ def _json_safe_object(value: Any) -> Optional[dict[str, Any]]:
     except (TypeError, ValueError):
         return None
     return cloned if isinstance(cloned, dict) else None
+
+
+def _clone_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _clone_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clone_json_value(item) for item in value]
+    return value
+
+
+def _json_value_equal(left: Any, right: Any) -> bool:
+    if left is right:
+        return True
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if len(left) != len(right):
+            return False
+        return all(k in right and _json_value_equal(v, right[k]) for k, v in left.items())
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(_json_value_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+_OPEN_SUMMARY_STORES: weakref.WeakSet[RuntimeSummaryProjectionStore] = weakref.WeakSet()
+
+
+def _flush_open_summary_stores() -> None:
+    for store in list(_OPEN_SUMMARY_STORES):
+        try:
+            store.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+atexit.register(_flush_open_summary_stores)
 
 
 def _append_recent_lifecycle_event_id(
@@ -978,6 +1009,8 @@ def period_fill_rate(
 class RuntimeSummaryProjectionStore:
     """Small telemetry-owned read model for BFF runtime status surfaces."""
 
+    _FULL_PERSIST_INTERVAL_SECONDS: float = 60.0
+
     def __init__(
         self,
         path: Optional[str | Path] = None,
@@ -986,11 +1019,22 @@ class RuntimeSummaryProjectionStore:
         recent_lifecycle_event_limit: int = _DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT,
     ) -> None:
         self._path = Path(path) if path else None
+        self._delta_path = (
+            self._path.with_name(f"{self._path.name}.delta.jsonl")
+            if self._path is not None
+            else None
+        )
         self._heartbeat_stale_after_seconds = max(int(heartbeat_stale_after_seconds), 1)
         self._recent_lifecycle_event_limit = max(int(recent_lifecycle_event_limit), 1)
         self._lock = threading.RLock()
         self._summaries: dict[str, dict[str, Any]] = {}
+        self._dirty_since_full_persist = False
+        self._last_full_persist_at: Optional[float] = None
+        self._full_persist_count = 0
+        self._delta_persist_count = 0
         self._load()
+        if self._path is not None:
+            _OPEN_SUMMARY_STORES.add(self)
 
     @property
     def path(self) -> Optional[str]:
@@ -1089,7 +1133,8 @@ class RuntimeSummaryProjectionStore:
         is_derived_metric_echo = metadata.get("derived_from_threshold_evaluation") is True
 
         with self._lock:
-            current = dict(self._summaries.get(summary_key, {}))
+            prior_summary = self._summaries.get(summary_key)
+            current = dict(prior_summary) if isinstance(prior_summary, dict) else {}
             existing_binding = str(
                 current.get("binding_id") or current.get("runtime_binding_id") or ""
             ).strip()
@@ -1226,7 +1271,7 @@ class RuntimeSummaryProjectionStore:
             )
             if is_lifecycle_identity:
                 lifecycle_identity = {
-                    field: json.loads(json.dumps(event[field]))
+                    field: _clone_json_value(event[field])
                     for field in _LIFECYCLE_IDENTITY_FIELDS
                     if event.get(field) not in (None, "", [], {})
                 }
@@ -1247,7 +1292,7 @@ class RuntimeSummaryProjectionStore:
                 for field in _SUMMARY_LIFECYCLE_IDENTITY_FIELDS:
                     value = preserved_identity.get(field)
                     if value not in (None, "", [], {}):
-                        current[field] = json.loads(json.dumps(value))
+                        current[field] = _clone_json_value(value)
             else:
                 if trace_id:
                     current["trace_id"] = trace_id
@@ -1370,13 +1415,16 @@ class RuntimeSummaryProjectionStore:
                     history = list(current.get("order_execution_observations") or [])
                     history.extend(fact for fact in facts if fact not in history)
                     current["order_execution_observations"] = history
-                # Recompute from retained facts, never from a heartbeat's scalar.
-                current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
-                for field in ("fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id"):
-                    current.pop(field, None)
-                if current["fill_rate_details"]["status"] == "known":
-                    current["fill_rate_at"] = current["fill_rate_details"]["window"]["as_of"]
-                    current["fill_rate_binding_id"] = binding_id
+                if facts or not isinstance(current.get("fill_rate_details"), dict):
+                    # Recompute from retained facts, never from a heartbeat's scalar.
+                    current.update(period_fill_rate([runtime_id], [{**current, "runtime_id": runtime_id}]))
+                    for field in ("fill_rate_at", "fill_rate_binding_id", "fill_rate_event_id"):
+                        current.pop(field, None)
+                    if current["fill_rate_details"]["status"] == "known":
+                        current["fill_rate_at"] = current["fill_rate_details"]["window"]["as_of"]
+                        current["fill_rate_binding_id"] = binding_id
+                else:
+                    current.pop("fill_rate_event_id", None)
 
             # Keep owner valuations independently of the latest-metric view.
             # A heartbeat or rolling-window eviction must not erase an earlier
@@ -1415,6 +1463,10 @@ class RuntimeSummaryProjectionStore:
                 history.sort(key=lambda item: str(item.get("as_of") or ""))
                 current["quarter_equity_observations"] = history
 
+            rebuild_positions_needed = bool(
+                isinstance(current.get("_positions_by_symbol"), dict)
+                and current.get("_positions_by_symbol")
+            )
             if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:
                 reported_fill_count = metrics.get("fill_count")
                 if (
@@ -1427,7 +1479,7 @@ class RuntimeSummaryProjectionStore:
                         int(current.get("ledger_fill_count") or 0),
                         reported_fill_count,
                     )
-                    _rebuild_positions(current)
+                    rebuild_positions_needed = True
 
             # Surface executed paper fills so trade activity is visible end-to-end.
             # ``bracket_order_logged`` only records order intent and must never
@@ -1537,15 +1589,21 @@ class RuntimeSummaryProjectionStore:
                             raw_currency = metadata.get("currency")
                             if isinstance(raw_currency, str) and raw_currency.strip():
                                 currency_by_symbol = current.get("_currency_by_symbol")
-                                if not isinstance(currency_by_symbol, dict):
-                                    currency_by_symbol = {}
+                                currency_by_symbol = (
+                                    dict(currency_by_symbol)
+                                    if isinstance(currency_by_symbol, dict)
+                                    else {}
+                                )
                                 currency_by_symbol[pos_key] = raw_currency.strip()
                                 current["_currency_by_symbol"] = currency_by_symbol
                             raw_broker = metadata.get("broker")
                             if isinstance(raw_broker, str) and raw_broker.strip():
                                 broker_by_symbol = current.get("_broker_by_symbol")
-                                if not isinstance(broker_by_symbol, dict):
-                                    broker_by_symbol = {}
+                                broker_by_symbol = (
+                                    dict(broker_by_symbol)
+                                    if isinstance(broker_by_symbol, dict)
+                                    else {}
+                                )
                                 broker_by_symbol[pos_key] = raw_broker.strip()
                                 current["_broker_by_symbol"] = broker_by_symbol
                             fill_identity = self._fill_decision_identity(
@@ -1562,13 +1620,19 @@ class RuntimeSummaryProjectionStore:
                                 current["_decision_by_key"] = decision_by_key
                             if fill_descriptor.get("instrument_id"):
                                 instrument_meta = current.get("_instrument_by_key")
-                                if not isinstance(instrument_meta, dict):
-                                    instrument_meta = {}
+                                instrument_meta = (
+                                    dict(instrument_meta)
+                                    if isinstance(instrument_meta, dict)
+                                    else {}
+                                )
                                 instrument_meta[pos_key] = dict(fill_descriptor)
                                 current["_instrument_by_key"] = instrument_meta
                         positions = current.get("_positions_by_symbol")
-                        if not isinstance(positions, dict):
-                            positions = {}
+                        positions = (
+                            dict(positions)
+                            if isinstance(positions, dict)
+                            else {}
+                        )
                         if isinstance(fill_qty, (int, float)) and not isinstance(
                             fill_qty, bool
                         ):
@@ -1636,7 +1700,7 @@ class RuntimeSummaryProjectionStore:
                         _withhold_cost(current)
 
                     if symbol is not None:
-                        _rebuild_positions(current)
+                        rebuild_positions_needed = True
 
             # Counterfactual grading rows never touch fills, positions or cost
             # basis: they are an append-only set keyed (decision_id,
@@ -1718,7 +1782,7 @@ class RuntimeSummaryProjectionStore:
                                 current["_cost_by_symbol"] = cost_by_symbol
                             else:
                                 _withhold_cost(current)
-                            _rebuild_positions(current)
+                            rebuild_positions_needed = True
 
             # The producer reports a failed/expired valuation attempt through its
             # heartbeat performance_telemetry. Only its own attempt time orders
@@ -1744,7 +1808,7 @@ class RuntimeSummaryProjectionStore:
                         int(current.get("ledger_fill_count") or 0),
                         hb_fill_count,
                     )
-                    _rebuild_positions(current)
+                    rebuild_positions_needed = True
                 perf_diag = (
                     perf.get("diagnostic")
                     if isinstance(perf.get("diagnostic"), dict)
@@ -1787,10 +1851,10 @@ class RuntimeSummaryProjectionStore:
                             if isinstance(missing, list)
                             else [],
                         }
-                        _rebuild_positions(current)
+                        rebuild_positions_needed = True
                     elif perf_status in ("valued", "unchanged", "emitted") and prior is not None:
                         current.pop("_valuation_failure", None)
-                        _rebuild_positions(current)
+                        rebuild_positions_needed = True
 
             # Producer valuation snapshots carry the actual quote marks. Each
             # mark keeps its own quote as-of (never the event/heartbeat time)
@@ -1803,8 +1867,7 @@ class RuntimeSummaryProjectionStore:
                 and isinstance(mark_refs, list)
             ):
                 marks = current.get("_marks_by_symbol")
-                if not isinstance(marks, dict):
-                    marks = {}
+                marks = dict(marks) if isinstance(marks, dict) else {}
                 changed = False
                 valid_ref_seen = False
                 for ref in mark_refs:
@@ -1943,9 +2006,12 @@ class RuntimeSummaryProjectionStore:
                         prior_attempt_at = _parse_rfc3339(current.get("_valuation_attempt_at"))
                         if prior_attempt_at is None or event_boundary_at > prior_attempt_at:
                             current["_valuation_attempt_at"] = event_boundary_at.isoformat().replace("+00:00", "Z")
-                    _rebuild_positions(current)
+                    rebuild_positions_needed = True
 
-            if isinstance(current.get("_positions_by_symbol"), dict) and current.get("_positions_by_symbol"):
+            if rebuild_positions_needed or (
+                isinstance(current.get("_positions_by_symbol"), dict)
+                and current.get("_positions_by_symbol")
+            ):
                 _rebuild_positions(current)
 
             if bridge_repo is not None:
@@ -1965,8 +2031,8 @@ class RuntimeSummaryProjectionStore:
 
             current["health_summary"] = self._health_summary(current)
             self._summaries[summary_key] = current
-            self._persist()
-            return json.loads(json.dumps(current))
+            self._persist_summary_change(summary_key, prior_summary, current)
+            return _clone_json_value(current)
 
     def _binding_rollover_is_newer(
         self,
@@ -2110,10 +2176,11 @@ class RuntimeSummaryProjectionStore:
             or current.get("last_event_at"),
             "recorded_at": utc_now_rfc3339(),
         }
+        prior_summary = self._summaries.get(summary_key)
         current["projection_diagnostics"] = diagnostics
         self._summaries[summary_key] = current
-        self._persist()
-        return json.loads(json.dumps(current))
+        self._persist_summary_change(summary_key, prior_summary, current)
+        return _clone_json_value(current)
 
     def backfill_missing_trade_episodes(
         self, trade_episode_store: Any, binding_events_reader: Any
@@ -2607,7 +2674,7 @@ class RuntimeSummaryProjectionStore:
         *,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        projected = json.loads(json.dumps(summary))
+        projected = _clone_json_value(summary)
         if (
             now is not None
             and isinstance(projected.get("_positions_by_symbol"), dict)
@@ -2637,46 +2704,224 @@ class RuntimeSummaryProjectionStore:
             }
         return projected
 
-    def _load(self) -> None:
-        if self._path is None or not self._path.exists():
-            return
-        try:
-            payload = json.loads(self._path.read_text(encoding="utf-8").strip() or "{}")
-        except (OSError, json.JSONDecodeError):
-            return
-        if isinstance(payload, dict) and isinstance(payload.get("summaries"), dict):
-            payload = payload["summaries"]
-        normalized: dict[str, dict[str, Any]] = {}
-        if isinstance(payload, dict):
-            records = payload.values()
-        elif isinstance(payload, list):
-            records = payload
+    def _normalize_loaded_summary(self, item: dict[str, Any]) -> None:
+        recent_lifecycle_event_ids = _append_recent_lifecycle_event_id(
+            item.get("recent_lifecycle_event_ids"),
+            None,
+            limit=self._recent_lifecycle_event_limit,
+        )
+        if recent_lifecycle_event_ids:
+            item["recent_lifecycle_event_ids"] = recent_lifecycle_event_ids
         else:
-            records = []
-        for item in records:
-            if not isinstance(item, dict):
+            item.pop("recent_lifecycle_event_ids", None)
+
+    def _cleanup_stale_tmp_files(self) -> None:
+        if self._path is None:
+            return
+        parent = self._path.parent
+        if not parent.exists():
+            return
+        prefix = f"{self._path.name}."
+        for candidate in parent.glob(f"{self._path.name}.*.tmp"):
+            if candidate.name.startswith(prefix) and candidate.name.endswith(".tmp"):
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+
+    def _replay_delta_journal(self, normalized: dict[str, dict[str, Any]]) -> int:
+        if self._delta_path is None or not self._delta_path.exists():
+            return 0
+        try:
+            raw_text = self._delta_path.read_text(encoding="utf-8")
+        except OSError:
+            return 0
+        replayed = 0
+        for raw_line in raw_text.splitlines():
+            line = raw_line.strip()
+            if not line:
                 continue
-            key = _summary_key(item)
-            if key:
-                recent_lifecycle_event_ids = _append_recent_lifecycle_event_id(
-                    item.get("recent_lifecycle_event_ids"),
-                    None,
-                    limit=self._recent_lifecycle_event_limit,
-                )
-                if recent_lifecycle_event_ids:
-                    item["recent_lifecycle_event_ids"] = recent_lifecycle_event_ids
-                else:
-                    item.pop("recent_lifecycle_event_ids", None)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            op = record.get("op")
+            raw_key = record.get("key")
+            if op == "set":
+                summary = record.get("summary")
+                if not isinstance(summary, dict):
+                    continue
+                item = dict(summary)
+                key = str(raw_key).strip() if isinstance(raw_key, str) and raw_key.strip() else _summary_key(item)
+                if not key:
+                    continue
+                self._normalize_loaded_summary(item)
                 normalized[key] = item
+                replayed += 1
+            elif op == "patch":
+                if not isinstance(raw_key, str) or not raw_key.strip():
+                    continue
+                key = raw_key.strip()
+                target = dict(normalized.get(key, {}))
+                unset_fields = record.get("unset")
+                if isinstance(unset_fields, list):
+                    for field in unset_fields:
+                        if isinstance(field, str):
+                            target.pop(field, None)
+                set_fields = record.get("set")
+                if isinstance(set_fields, dict):
+                    target.update(set_fields)
+                resolved_key = _summary_key(target) or key
+                self._normalize_loaded_summary(target)
+                normalized[resolved_key] = target
+                replayed += 1
+        return replayed
+
+    def _load(self) -> None:
+        if self._path is None:
+            return
+        self._cleanup_stale_tmp_files()
+        path_exists = self._path.exists()
+        delta_exists = self._delta_path is not None and self._delta_path.exists()
+        if not path_exists and not delta_exists:
+            return
+        normalized: dict[str, dict[str, Any]] = {}
+        if path_exists:
+            try:
+                payload = json.loads(self._path.read_text(encoding="utf-8").strip() or "{}")
+            except (OSError, json.JSONDecodeError):
+                if not delta_exists:
+                    return
+                payload = None
+            if payload is not None:
+                if isinstance(payload, dict) and isinstance(payload.get("summaries"), dict):
+                    payload = payload["summaries"]
+                if isinstance(payload, dict):
+                    records = payload.values()
+                elif isinstance(payload, list):
+                    records = payload
+                else:
+                    records = []
+                for item in records:
+                    if not isinstance(item, dict):
+                        continue
+                    key = _summary_key(item)
+                    if key:
+                        self._normalize_loaded_summary(item)
+                        normalized[key] = item
+        replayed_deltas = 0
+        if delta_exists:
+            replayed_deltas = self._replay_delta_journal(normalized)
         self._summaries = normalized
+        if replayed_deltas > 0:
+            self._persist()
+        elif delta_exists and self._delta_path is not None:
+            try:
+                self._delta_path.unlink()
+            except OSError:
+                pass
+        if self._path.exists():
+            self._last_full_persist_at = time.monotonic()
+
+    def _append_delta_record(self, record: dict[str, Any]) -> None:
+        if self._delta_path is None:
+            return
+        self._delta_path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = (
+            json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode("utf-8")
+        fd = os.open(
+            self._delta_path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+            0o644,
+        )
+        try:
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        self._dirty_since_full_persist = True
+        self._delta_persist_count += 1
+
+    def _persist_summary_change(
+        self,
+        summary_key: str,
+        prior_summary: Optional[dict[str, Any]],
+        current: dict[str, Any],
+    ) -> None:
+        if self._path is None:
+            return
+        with self._lock:
+            now = time.monotonic()
+            if not self._path.exists():
+                self._persist()
+                return
+            if (
+                self._last_full_persist_at is not None
+                and (now - self._last_full_persist_at) >= self._FULL_PERSIST_INTERVAL_SECONDS
+            ):
+                self._persist()
+                return
+            if self._last_full_persist_at is None:
+                self._last_full_persist_at = now
+            if prior_summary is None:
+                record: dict[str, Any] = {
+                    "op": "set",
+                    "key": summary_key,
+                    "summary": current,
+                }
+            else:
+                changed_fields = {
+                    k: v
+                    for k, v in current.items()
+                    if k not in prior_summary or not _json_value_equal(prior_summary[k], v)
+                }
+                removed_fields = [k for k in prior_summary if k not in current]
+                record = {
+                    "op": "patch",
+                    "key": summary_key,
+                    "set": changed_fields,
+                }
+                if removed_fields:
+                    record["unset"] = removed_fields
+            self._append_delta_record(record)
+
+    def flush(self) -> None:
+        """Fold any pending delta records into the main summary file."""
+        if self._path is None:
+            return
+        with self._lock:
+            delta_exists = self._delta_path is not None and self._delta_path.exists()
+            if self._dirty_since_full_persist or delta_exists:
+                self._persist()
+
+    def close(self) -> None:
+        """Flush pending summary updates on graceful stop."""
+        self.flush()
 
     def _persist(self) -> None:
         if self._path is None:
             return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
-        tmp_path.write_text(
-            json.dumps(self._summaries, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        os.replace(tmp_path, self._path)
+        with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._cleanup_stale_tmp_files()
+            tmp_path = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
+            payload = json.dumps(self._summaries, indent=2, sort_keys=True)
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._path)
+            if self._delta_path is not None:
+                try:
+                    self._delta_path.unlink()
+                except FileNotFoundError:
+                    pass
+            self._dirty_since_full_persist = False
+            self._last_full_persist_at = time.monotonic()
+            self._full_persist_count += 1

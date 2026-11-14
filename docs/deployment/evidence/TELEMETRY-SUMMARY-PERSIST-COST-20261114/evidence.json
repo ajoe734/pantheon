@@ -1,0 +1,127 @@
+{
+  "task_id": "TELEMETRY-SUMMARY-PERSIST-COST-20261114",
+  "title": "Telemetry rewrites its 4 MB runtime summary file on every event",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "in_review",
+  "scoped_artifacts": [
+    "services/telemetry/runtime_summary.py",
+    "services/telemetry/main.py",
+    "services/telemetry/test_runtime_summary_persist_cost.py",
+    "docs/deployment/evidence/TELEMETRY-SUMMARY-PERSIST-COST-20261114/evidence.json"
+  ],
+  "root_cause_analysis": {
+    "telemetry_persist_cost": "RuntimeSummaryProjectionStore.project_event() and _reject_binding_reclaim() in services/telemetry/runtime_summary.py called self._persist() on every projected event. _persist() serialized all runtime summaries via json.dumps(self._summaries, indent=2, sort_keys=True) into a temporary file (runtime_summaries.json.<uuid>.tmp) and atomically replaced runtime_summaries.json. With a ~4.06 MB runtime_summaries.json and ~203 ingest events/min (~3.38 events/s), telemetry serialized and wrote ~4.06 MB 3.38 times per second (~13.7 MB/s write_bytes and ~0.63 CPU core on the background asyncio loop thread). Additionally, if the process was killed mid-write, orphaned runtime_summaries.json.<uuid>.tmp files remained on disk.",
+    "non_trading_saturday_203_ingest_calls_per_minute": {
+      "is_continuous_saturday_heartbeat_expected": true,
+      "is_203_per_minute_rate_expected_from_15s_config": false,
+      "explanation": "Continuous heartbeat emission on a non-trading Saturday is expected by design so active paper runtime bindings do not exceed TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS (default 90s) and degrade on weekends. However, the observed ~203 POST /api/telemetry/ingest calls/min (~3.38/s across the active paper runtime processes managed by paper-fleet-reconciler) is higher than the configured PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS=15.0s cadence because in services/execution/lean_runtime/paper_runtime.py, _run_loop() invokes drain_once() every PANTHEON_RUNTIME_POLL_INTERVAL_SECONDS (default 1.0s, lines 5202-5205 and 5592-5595), and drain_once() unconditionally calls _maybe_emit_heartbeat() (line 5335) even when 0 signals were drained. _maybe_emit_heartbeat() (lines 6340-6342) only deduplicates within the same whole UTC second (if self._last_heartbeat_at == now: return) instead of checking elapsed time against heartbeat_interval_seconds. Per task brief instructions, the ingest rate of paper-fleet-reconciler / paper_runtime and the BFF downstream health monitor was not modified in this task."
+    }
+  },
+  "fix_summary": {
+    "persistence_design": "Replaced per-event full file rewrites in RuntimeSummaryProjectionStore with an append-only, fsync-backed delta journal (runtime_summaries.json.delta.jsonl) and a bounded periodic full checkpoint (_FULL_PERSIST_INTERVAL_SECONDS = 60.0s).",
+    "durability_on_202": "When runtime_summaries.json already exists and the 60s full-checkpoint interval has not elapsed, _persist_summary_change() computes only the changed/removed top-level fields of the affected runtime summary and appends a compact JSONL patch record to runtime_summaries.json.delta.jsonl followed by os.fsync(fd) before returning from project_event(), guaranteeing that every HTTP 202 acknowledgement survives SIGKILL.",
+    "startup_and_graceful_shutdown_compatibility": "On startup (_load()), RuntimeSummaryProjectionStore cleans up any orphaned runtime_summaries.json.*.tmp files, loads runtime_summaries.json, replays any pending records from runtime_summaries.json.delta.jsonl, and folds them into runtime_summaries.json. On graceful stop (RuntimeSummaryProjectionStore.flush()/close(), atexit hook, and services/telemetry/main.py shutdown() + SIGTERM/SIGINT handlers), any pending delta journal is folded into runtime_summaries.json with exact indent=2, sort_keys=True formatting and the .delta.jsonl file is unlinked, leaving runtime_summaries.json 100% readable by the previous telemetry version."
+  },
+  "local_benchmark_4mb_store": {
+    "store_shape": "23 runtimes x 8 TW symbols built from frozen hosted _REAL_D551_SUMMARY with full Taiwan official market mark_lineage (50 content_refs, 50 source_ids, 11 ingest_run_ids per symbol), calendar_evidence, positions, _cost_by_symbol, last_lifecycle_identity, recent_lifecycle_event_ids, and order_execution_observations (4,123,890 bytes serialized).",
+    "workload_rate": {
+      "post_api_telemetry_ingest_per_minute": 200,
+      "post_api_v1_telemetry_infrastructure_health_per_minute": 70,
+      "get_api_telemetry_runtime_summaries_per_minute": 5,
+      "get_readyz_per_minute": 5
+    },
+    "window_6s": {
+      "before": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 6.0001,
+        "cpu_seconds": 1.4724,
+        "cpu_cores": 0.2454,
+        "proc_io_write_bytes": 82710528,
+        "write_bytes_per_sec": 13784856.48,
+        "write_mb_per_sec": 13.1463,
+        "full_rewrites_during_window": 20,
+        "delta_appends_during_window": 0
+      },
+      "after": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 6.0001,
+        "cpu_seconds": 0.4486,
+        "cpu_cores": 0.0748,
+        "proc_io_write_bytes": 307200,
+        "write_bytes_per_sec": 51199.18,
+        "write_mb_per_sec": 0.0488,
+        "full_rewrites_during_window": 0,
+        "delta_appends_during_window": 20
+      }
+    },
+    "window_12s_exact_rates": {
+      "before": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 12.0001,
+        "cpu_seconds": 3.5483,
+        "cpu_cores": 0.2957,
+        "proc_io_write_bytes": 165421056,
+        "write_bytes_per_sec": 13784977.78,
+        "write_mb_per_sec": 13.1464,
+        "full_rewrites_during_window": 40,
+        "delta_appends_during_window": 0
+      },
+      "after": {
+        "store_initial_bytes": 4123890,
+        "duration_seconds": 12.0001,
+        "cpu_seconds": 0.9985,
+        "cpu_cores": 0.0832,
+        "proc_io_write_bytes": 614400,
+        "write_bytes_per_sec": 51199.51,
+        "write_mb_per_sec": 0.0488,
+        "full_rewrites_during_window": 0,
+        "delta_appends_during_window": 40
+      }
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac_1_no_per_event_full_rewrite_and_bounded_at_300_events_per_min": {
+      "status": "passed",
+      "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac1_300_events_per_minute_bounded_full_rewrites",
+      "proof": "300 real-shaped events projected over a 60s window against a 4.12 MB store performed 1 full rewrite at the 60s boundary and 299 compact delta appends."
+    },
+    "ac_2_202_updates_survive_sigkill_and_restart": {
+      "status": "passed",
+      "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac2_202_acknowledged_updates_survive_sigkill_and_restart",
+      "proof": "Subprocess running services.telemetry.main received a burst of 24 ingest events (all HTTP 202), was immediately killed with SIGKILL, and on restart recovered 100% of acknowledged updates from runtime_summaries.json + runtime_summaries.json.delta.jsonl while cleaning up orphaned .tmp files."
+    },
+    "ac_3_exact_path_format_and_previous_version_compatibility_after_graceful_stop": {
+      "status": "passed",
+      "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac3_exact_path_and_format_and_previous_version_reads_after_graceful_stop",
+      "proof": "After SIGTERM graceful stop of services.telemetry.main, runtime_summaries.json remained at its exact path with indent=2, sort_keys=True formatting, no .delta.jsonl or .tmp files remained, and the previous telemetry version's _load() implementation read every update identically."
+    },
+    "ac_4_identical_reads_and_bff_responses_on_4mb_store": {
+      "status": "passed",
+      "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac4_reads_and_bff_responses_identical_on_4mb_store",
+      "proof": "Across heartbeats, trade_decision, paper_fill_simulated, pnl_snapshot with mark_refs, and binding reclaim rejection on the 4.12 MB store, project_event(), get(), list(), GET /api/telemetry/runtime-summaries, and GET /api/telemetry/runtime-summaries/<runtime_id> matched the legacy per-event full-rewrite store byte-for-byte."
+    },
+    "ac_5_local_measurement_cpu_below_0_1_core_and_writes_below_0_5_mb_per_sec": {
+      "status": "passed",
+      "test": "services/telemetry/test_runtime_summary_persist_cost.py::TestRuntimeSummaryPersistCost::test_ac5_local_measurement_4mb_store_cpu_and_write_bytes_before_and_after",
+      "proof": "Measured before (0.2454-0.2957 CPU cores, 13.15 MB/s writes) vs after (0.0748-0.0832 CPU cores < 0.1 core, 0.0488 MB/s writes < 0.5 MB/s)."
+    },
+    "ac_6_no_new_endpoint_service_db_or_env_and_existing_tests_pass": {
+      "status": "passed",
+      "proof": "Zero new endpoints, services, databases, or environment variables added. Full services/telemetry pytest suite passed (524 passed, 1 skipped, 54 subtests passed)."
+    },
+    "ac_7_no_existing_test_weakened_or_deleted": {
+      "status": "passed",
+      "changed_assertions": [],
+      "proof": "No existing test file was modified, weakened, or deleted."
+    }
+  },
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_runtime_summary_persist_cost.py",
+    ".venv-pantheon/bin/python3 -m pytest -q services/telemetry"
+  ],
+  "verification_results": {
+    "persist_cost_suite": "5 passed in 13.50s",
+    "full_telemetry_suite": "524 passed, 1 skipped, 54 subtests passed"
+  }
+}
