@@ -219,6 +219,42 @@ jobs:
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
             ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" --output "${REFRESH_OUTPUT_PATH}"
 
+      - name: Execute bounded Taiwan chip refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
+        id: chip_refresh
+        timeout-minutes: 15
+        env:
+          SOURCE_INGEST_MAX_RECORDS: 500
+          SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: 120
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FORCE_REFRESH: ${{ inputs.force || false }}
+        run: |
+          force_arg=()
+          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+          failed=0
+          while read -r connector dataset hosts; do
+            .lease-controller/scripts/run_with_dev_environment_lease.sh \
+              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
+              --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
+              --output "${RUNNER_TEMP}/${connector}-refresh-outcome.json" </dev/null || failed=1
+          done <<'PROFILES'
+          tw-official-twse-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
+          tw-official-tpex-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
+          tw-official-tpex-institutional-flow tw_institutional_flow openapi.twse.com.tw,www.tpex.org.tw
+          tw-taifex-institutional-positions taifex_futures_chip openapi.taifex.com.tw,www.taifex.com.tw
+          tw-taifex-put-call taifex_options_chip openapi.taifex.com.tw,www.taifex.com.tw
+          PROFILES
+          exit "${failed}"
+
       - name: Upload refresh outcome artifact
         if: ${{ always() && steps.refresh.outcome != 'cancelled' }}
         uses: actions/upload-artifact@v4
@@ -228,6 +264,11 @@ jobs:
             ${{ runner.temp }}/tw-refresh-outcome.json
             ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
             ${{ runner.temp }}/finmind-broker-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-twse-margin-balances-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-tpex-margin-balances-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-tpex-institutional-flow-refresh-outcome.json
+            ${{ runner.temp }}/tw-taifex-institutional-positions-refresh-outcome.json
+            ${{ runner.temp }}/tw-taifex-put-call-refresh-outcome.json
 
       - name: Stop heartbeat and release lease
         if: ${{ always() && steps.lease.outcome == 'success' }}
@@ -236,6 +277,7 @@ jobs:
           LD: ${{ steps.lease.outputs.ld }}
           REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
           TAIFEX_REFRESH_OUTCOME: ${{ steps.taifex_refresh.outcome }}
+          CHIP_REFRESH_OUTCOME: ${{ steps.chip_refresh.outcome }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           heartbeat_pid="$(tr -d '[:space:]' < "${LD}/heartbeat.pid")" || exit 0
@@ -245,7 +287,7 @@ jobs:
             kill -0 "${heartbeat_pid}" 2>/dev/null || break
             sleep 0.25
           done
-          [[ "${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$ && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
+          [[ "${REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${TAIFEX_REFRESH_OUTCOME}" =~ ^(success|skipped)$ && "${CHIP_REFRESH_OUTCOME}" =~ ^(success|skipped)$ && ! -e "${LD}/heartbeat-failure.json" ]] || exit 0
           [[ -s "${LD}/heartbeat-stop.json" ]] || { echo "No graceful heartbeat stop; refusing release." >&2; exit 75; }
           python3 "${CONTROLLER}/scripts/dev_environment_lease.py" release \
             --repository ajoe734/execute-plans \
