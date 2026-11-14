@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -207,7 +207,7 @@ def run_backfill(
         reason = outcome.bundle.manifest.get("reason")
         if outcome.status == "complete":
             # The current month is still growing: refresh it on the next invocation.
-            current_month = (stamp or datetime.now()).strftime("%Y-%m")
+            current_month = (stamp or datetime.now(timezone.utc)).strftime("%Y-%m")
             if source_id != MONTHLY_SOURCE or trade_date < current_month:
                 ledger.mark(trade_date, outcome="fetched", run_id=run_id)
             result.fetched.append(trade_date)
