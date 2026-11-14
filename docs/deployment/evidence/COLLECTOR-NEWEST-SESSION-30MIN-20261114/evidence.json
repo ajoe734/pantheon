@@ -263,7 +263,7 @@
       "exit_code": 0,
       "summary": "1 passed in 4.38s"
     },
-    "required_validation": "Six-file contract suite passed; initial directory-only full batch failed for missing pyarrow. Dependency repaired; exact CI source suite including root test_*.py and task-local PostgreSQL is next.",
+    "required_validation": "Six-file contract suite passed; exact full CI suite pending after checkout-only pyarrow installation, task-local PostgreSQL and task-owned temporary filesystem placement to avoid host ENOSPC.",
     "validation": [
       {
         "command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-outcome-contract-20261114.xml services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py",
@@ -298,7 +298,15 @@
         "summary": "17 passed in 7.27s",
         "log_sha256": "061506557586a8b7469b63c938443c6e36b44c6d5250c1f85087583767e76ddf"
       },
-      "ci_parity": "Use the exact branch-ci source scope (services/source_ingestion/tests plus services/source_ingestion/test_*.py), a fresh data directory and dedicated localhost-only postgres:16 test container. No VM/provider/deployment/product service changes."
+      "ci_parity": "Use the exact branch-ci source scope (services/source_ingestion/tests plus services/source_ingestion/test_*.py), a fresh data directory and dedicated localhost-only postgres:16 test container. No VM/provider/deployment/product service changes.",
+      "disk_exhaustion_batch": {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=<task-local postgres16> SOURCE_INGEST_DATA_DIR=<fresh task tmp dir> timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-ci-source-20261114.xml services/source_ingestion/tests services/source_ingestion/test_*.py",
+        "exit_code": 2,
+        "summary": "1 failed, 569 passed, 1 skipped, 13 warnings in 217.62s (0:03:37); interrupted and terminal-collected after confirming ENOSPC",
+        "cause": "Root filesystem reached 100%, about 280 MB free; newest-session controller state write raised OSError errno28. Not a passed or complete suite.",
+        "log_sha256": "9ce6e867a22630e58f95462c2de7f34aa4607068ec5de86e3ff452d1feb0dbb2",
+        "response": "Confirmed /dev/shm has 24GB free and host has 40GiB available RAM. Next batch uses a unique task-owned TMPDIR and pytest basetemp there, with the same code and CI test scope. No unrelated filesystem deletion performed."
+      }
     }
   }
 }
