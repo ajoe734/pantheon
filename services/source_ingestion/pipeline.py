@@ -332,7 +332,11 @@ def persist_source_evidence_refs(
                 **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
             })
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
-        source_owner = (
+        # Verified collector market dedupe keys contain the complete native source id
+        # (including the item hash). Their owner can only be this same source id.
+        # Avoid a PostgreSQL metadata/dedupe scan per row; retain normal validation,
+        # per-item evidence ids and all repository writes below.
+        source_owner = candidate_source if verified_market else (
             evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=candidate_source.tenant_id)
             or source_owner_by_dedupe_key.get(source_dedupe_key)
             or candidate_source
