@@ -374,7 +374,7 @@
     "review_status": "Pending independent review by assigned reviewer Claude; owner has not approved or marked done."
   },
   "source_rework": {
-    "recorded_at": "2026-11-14T15:54:58.854165+00:00",
+    "recorded_at": "2026-11-14T16:03:18.767146+00:00",
     "reason": "Original task/PR reopened to admit the existing scheduled-connector test path and correct classification of five builtin chip profiles as external Collector requirements.",
     "base_commit": "7b0c226d92acbc8f15eadb6682f416af0504acb3",
     "integration": "Merged current dev into the original published branch, preserving original PR #7341 and normal non-force push. Preserved both appended deploy-test blocks and inherited scheduled-connector history/throughput assertions.",
@@ -400,7 +400,60 @@
         "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py -q --disable-warnings --maxfail=2",
         "exit_code": 124,
         "result": "Timed out after 240s while executing the real-size backfill test. This batch is NOT passed. Split reruns cover the rest of the file and the unchanged real-size backfill separately with bounded timeouts."
+      },
+      {
+        "command": "timeout 300 .venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 300s; NOT passed. Split reruns cover deploy separately from refresh/workflow/diagnostics without changing assertions."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py -k 'not real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget' -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "72 passed, 1 deselected, 1 warning in 178.75s. The deselected real-size backfill is covered by its separate completed batch."
+      },
+      {
+        "command": "timeout 420 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py::test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget -q --disable-warnings --maxfail=1",
+        "exit_code": 0,
+        "result": "1 passed, 1 warning in 36.21s. Together with the other split batch, all 73 tests in the scheduled-connector file passed."
+      },
+      {
+        "command": "timeout 300 .venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "142 passed, 2 skipped in 128.14s."
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id REGIME-DATA-TW-CHIP-SCHEDULE-20261114 --skip-merge && git diff --check && git merge-base --is-ancestor origin/dev HEAD",
+        "exit_code": 0,
+        "result": "Commit trailers, whitespace and current-dev ancestry passed."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 240s; NOT passed. Final reruns split refresh tests by the complementary bounded_refresh/not bounded_refresh selectors and run workflow/diagnostics separately."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "51 passed in 29.91s."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k bounded_refresh -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "26 passed, 104 deselected in 135.48s."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k 'not bounded_refresh' -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "104 passed, 26 deselected in 115.90s. The complementary selectors cover all 130 tests without omissions."
       }
-    ]
+    ],
+    "final_validation_summary": {
+      "passed": 776,
+      "skipped": 3,
+      "coverage": "Nonoverlapping completed batches cover the five source/controller/registry files, all 73 scheduled-connector tests, and all four scoped deploy/refresh/workflow/diagnostics files.",
+      "timeouts": "Three oversized initial batches exited 124 and are not counted as passed. Every test file in those batches has completed split reruns with exit 0.",
+      "review": "Pending fresh independent exact-head review by Claude on original PR #7341; no owner approval or done claim.",
+      "hosted_behavior_claimed": false
+    }
   }
 }
