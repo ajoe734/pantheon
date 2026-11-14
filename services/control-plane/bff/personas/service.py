@@ -5926,6 +5926,116 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
     return True
 
 
+_PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
+_PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
+
+
+def _pm12_read_fn_accepts_window(read_fn: Any) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(read_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "captured_from" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
+def _pm12_read_all_evidence_pages(
+    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None
+) -> Optional[List[Dict[str, Any]]]:
+    """Read every owner evidence page exactly (no truncation, no ordering
+    assumption), or return ``None`` when the owner is unavailable.
+
+    Every read, including the first, runs under one overall deadline equal to
+    the evidence owner read timeout; the caller never blocks past it (worker
+    threads are abandoned, not joined). The first page yields the owner total
+    and an offset page token; the remaining offset pages are requested
+    concurrently so a slow owner is waited on about once per request. A page
+    that is empty after tenant filtering still carries a continuation token and
+    is followed. Any unavailable page, or exceeding the deadline, marks the
+    whole surface unavailable.
+    """
+    import concurrent.futures
+    import contextvars
+    import time
+
+    try:
+        from ..ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+
+        deadline = time.monotonic() + max(evidence_owner_read_timeout_seconds(), 0.05)
+    except Exception:
+        deadline = time.monotonic() + 4.0
+    page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
+    # Ask the owner to page only the quarter's rows so the request count follows
+    # the quarter population, not the total evidence count. An owner that
+    # predates the window ignores it and the quarter filter downstream still
+    # makes the output identical, only with more pages.
+    window_kwargs: Dict[str, Any] = {}
+    if quarter_window and _pm12_read_fn_accepts_window(read_fn):
+        start_at = _audit_datetime(quarter_window.get("start_at"))
+        end_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
+        if start_at is not None and end_at is not None:
+            window_kwargs = {
+                "captured_from": start_at.isoformat(),
+                "captured_before": end_at.isoformat(),
+            }
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
+
+    def _submit(token: Optional[str]) -> Any:
+        return pool.submit(
+            contextvars.copy_context().run,
+            lambda: read_fn(page_size=page_size, page_token=token, **window_kwargs),
+        )
+
+    def _sorted(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # The unpaged read returns rows newest-first; paged owner reads keep
+        # append order, so restore the same order for identical output.
+        from ..ports.research_knowledge_source import evidence_ref_sort_key
+
+        return sorted(all_rows, key=evidence_ref_sort_key, reverse=True)
+
+    def _wait(future: Any) -> Any:
+        return future.result(timeout=max(deadline - time.monotonic(), 0.0))
+
+    try:
+        first = _wait(_submit(None))
+        if not first.available:
+            return None
+        rows: List[Dict[str, Any]] = list(first.items or [])
+        token = first.next_page_token
+        if not token:
+            return _sorted(rows)
+        total = first.total
+        step = int(token) if str(token).isdigit() else 0
+        if isinstance(total, int) and not isinstance(total, bool) and step == page_size:
+            futures = [_submit(str(o)) for o in range(step, total, step)]
+            for future in futures:
+                page = _wait(future)
+                if not page.available:
+                    return None
+                rows.extend(page.items or [])
+            return _sorted(rows)
+        # Opaque or short-page tokens: sequential follow, still complete.
+        seen = {str(token)}
+        while token:
+            page = _wait(_submit(str(token)))
+            if not page.available:
+                return None
+            rows.extend(page.items or [])
+            token = page.next_page_token
+            if token is not None and str(token) in seen:
+                return None
+            if token is not None:
+                seen.add(str(token))
+        return _sorted(rows)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 # --- _pm12_public_quarter_evidence_refs ---
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
@@ -5939,9 +6049,10 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            result = read_fn()
-            raw_evidence_refs = list(result.items or [])
-            evidence_dataset_available = bool(result.available)
+            all_rows = _pm12_read_all_evidence_pages(read_fn, quarter_window)
+            if all_rows is not None:
+                raw_evidence_refs = all_rows
+                evidence_dataset_available = True
         elif store is not None:
             raw_evidence_refs = list(store.list_evidence_refs() or [])
             evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")
