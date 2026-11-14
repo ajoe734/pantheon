@@ -141,33 +141,13 @@
       "exit_code": 0,
       "terminal_output": "419 passed, 1 skipped, 1 warning in 581.02s (0:09:41)",
       "tested_source_commit": "34b88eb40f2baf8302094d279503ddb89c5a71e8",
-      "counts_by_file": {
-        "services.source_ingestion.tests.test_collector_newest_session_hosted_throughput": {
-          "passed": 13
-        },
-        "services.source_ingestion.tests.test_collector_newest_session_progress": {
-          "passed": 14
-        },
-        "services.source_ingestion.tests.test_collector_bundle_connector": {
-          "passed": 103,
-          "skipped": 1
-        },
-        "services.source_ingestion.tests.test_controller_worker": {
-          "passed": 200
-        },
-        "services.source_ingestion.tests.test_scheduled_connector": {
-          "passed": 73
-        },
-        "services.source_ingestion.tests.test_tw_close_reconcile": {
-          "passed": 16
-        }
-      },
       "summary": {
         "passed": 419,
         "skipped": 1
       },
       "provisioning": "python3 scripts/dev/provision_python_distribution.py; checkout-scoped editable install verified from a foreign working directory without PYTHONPATH.",
-      "skip": "Existing native recorded RSS fixture pack is unavailable; no new skip or xfail."
+      "skip": "Existing native recorded RSS fixture pack is unavailable; no new skip or xfail.",
+      "immutable_counts_by_file_manifest": "a065af81000d547265e799719819a147b2556964:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json"
     }
   ],
   "delivery": {
@@ -203,66 +183,9 @@
     "current_resolution": "Inherit CLOCK PR7353 per-run observed_at monkeypatch. First run is observed one minute after completion; next run is observed one minute after completion (healthy) or thirteen hours after completion (stale). Preserve no-resend, exact timestamp, 21600s cadence and real health/freshness assertions."
   },
   "clock_fix_controller_model": {
-    "cpu_affinity": [
-      0,
-      1
-    ],
-    "index_bytes": 504000,
-    "index_entries": 1721,
-    "fresh_connection_seconds": [
-      0.14,
-      0.19
-    ],
-    "transfer_bytes_per_second": 3000000,
-    "metadata_sizes": {
-      "collector-tw-twse-price-history": [
-        570000,
-        1240000
-      ],
-      "collector-tw-tpex-price-history": [
-        2500000,
-        5700000
-      ]
-    },
-    "counts": {
-      "collector-tw-twse-price-history": 1377,
-      "collector-tw-tpex-price-history": 6090
-    },
-    "elapsed_with_worst_cadence_phase_seconds": 1126.5308745689013,
-    "pull_columns": "source,rows,seconds,start_seconds,same_source_gap_seconds,metadata_remote_seconds",
-    "pull_rows_csv": [
-      "collector-tw-tpex-price-history,44,16.357148639001934,3.860000106215011e-06,null,12.053333333333335",
-      "collector-tw-tpex-price-history,256,14.933023303342452,17.365563369001848,17.36555950900174,0",
-      "collector-tw-tpex-price-history,256,15.400149277343644,33.34078788934448,15.975224520342636,0",
-      "collector-tw-tpex-price-history,256,15.078216374341991,49.86981908968846,16.52903120034398,0",
-      "collector-tw-tpex-price-history,256,15.153316352343609,66.11168638403069,16.241867294342228,0",
-      "collector-tw-tpex-price-history,256,15.243844337344399,82.42681767637441,16.31513129234372,0",
-      "collector-tw-tpex-price-history,256,15.21541761634353,98.85584903271865,16.42903135634424,0",
-      "collector-tw-tpex-price-history,256,15.130898624343445,115.29333374506223,16.437484712343576,0",
-      "collector-tw-tpex-price-history,256,15.313284180343544,131.67894099340538,16.38560724834315,0",
-      "collector-tw-tpex-price-history,256,15.18236896434746,148.34002515274915,16.661084159343773,0",
-      "collector-tw-tpex-price-history,256,15.27274028634747,164.9625161300969,16.622490977347752,0",
-      "collector-tw-tpex-price-history,256,15.593657379011347,181.59774813444437,16.635232004347472,0",
-      "collector-tw-tpex-price-history,256,15.498660344348536,198.64034734545567,17.042599211011293,0",
-      "collector-tw-tpex-price-history,256,15.32470423134464,215.60724326080435,16.966895915348687,0",
-      "collector-tw-tpex-price-history,256,15.813312993347154,232.4324565511488,16.825213290344436,0",
-      "collector-tw-tpex-price-history,256,15.57320599534387,249.78171357249585,17.349257021347057,0",
-      "collector-tw-tpex-price-history,256,15.986456138345147,266.9207986738397,17.13908510134388,0",
-      "collector-tw-tpex-price-history,256,15.64605538334672,284.5471925131851,17.626393839345383,0",
-      "collector-tw-tpex-price-history,256,15.605423277342652,301.83570944653184,17.288516933346727,0",
-      "collector-tw-tpex-price-history,256,15.742253346345933,319.22507590587475,17.38936645934291,0",
-      "collector-tw-tpex-price-history,256,15.943270095342541,336.66427037022095,17.4391944643462,0",
-      "collector-tw-tpex-price-history,256,15.92579239634324,354.33514665156326,17.670876281342316,0",
-      "collector-tw-tpex-price-history,256,15.92576036234459,372.0367242899065,17.701577638343224,0",
-      "collector-tw-tpex-price-history,256,15.958397402345781,389.7666262132507,17.729901923344187,0",
-      "collector-tw-tpex-price-history,158,11.56383183734215,407.8489125165961,18.082286303345427,0",
-      "collector-tw-twse-price-history,236,18.54952955232784,421.49972157793854,null,3.533333333333333",
-      "collector-tw-twse-price-history,256,16.13413300732418,441.94624544526596,20.446523867327414,0",
-      "collector-tw-twse-price-history,256,16.468781887993828,460.03828116359,18.09203571832404,0",
-      "collector-tw-twse-price-history,256,16.27005310132745,478.44223279458356,18.40395163099356,0",
-      "collector-tw-twse-price-history,256,16.404829255324785,496.95116783991125,18.50893504532769,0",
-      "collector-tw-twse-price-history,117,9.893438073664583,515.5625903512364,18.611422511325145,0"
-    ]
+    "immutable_manifest": "a065af81000d547265e799719819a147b2556964:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json",
+    "field": "clock_fix_controller_model",
+    "scope": "Historical CLOCK-integrated measurements, unchanged product source. Summary retained below; all 31 per-pull rows/timings remain at this immutable reference."
   },
   "clock_fix_controller_model_summary": {
     "total_rows": 7467,
@@ -384,116 +307,21 @@
       {
         "path": "/tmp/pantheon-root01a11-scope-audit-20261114/legacy-replay-bounded-diagnostic.json",
         "sha256": "247ea4c9f4a3b9e04d3935705820ead6ed8d0a9e3ad416b86f8f11f96920827f",
-        "data": {
-          "scope": "one bounded diagnostic of unchanged legacy-only test; no current product code or test modification",
-          "max_trials": 3,
-          "stop_on_first_failure": true,
-          "results": [
-            {
-              "trial": 1,
-              "outcome": "passed",
-              "measurements": [
-                {
-                  "run_id": "run-20261113T121842Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.5069757390001541,
-                  "transport_seconds": 15.189999999999989
-                },
-                {
-                  "run_id": "run-20261113T181844Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.5211241679999148,
-                  "transport_seconds": 15.190000000000095
-                },
-                {
-                  "run_id": "run-20261114T001933Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.4150125140004093,
-                  "transport_seconds": 15.189999999999852
-                }
-              ]
-            },
-            {
-              "trial": 2,
-              "outcome": "passed",
-              "measurements": [
-                {
-                  "run_id": "run-20261113T121842Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.38545638600044185,
-                  "transport_seconds": 15.189999999999989
-                },
-                {
-                  "run_id": "run-20261113T181844Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.3928997370003344,
-                  "transport_seconds": 15.190000000000095
-                },
-                {
-                  "run_id": "run-20261114T001933Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.3881393060000846,
-                  "transport_seconds": 15.189999999999852
-                }
-              ]
-            },
-            {
-              "trial": 3,
-              "outcome": "passed",
-              "measurements": [
-                {
-                  "run_id": "run-20261113T121842Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.3782966259996101,
-                  "transport_seconds": 15.189999999999989
-                },
-                {
-                  "run_id": "run-20261113T181844Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.36849870800051576,
-                  "transport_seconds": 15.190000000000095
-                },
-                {
-                  "run_id": "run-20261114T001933Z",
-                  "rows": 308,
-                  "delivered": 308,
-                  "done": false,
-                  "wall_seconds": 0.37564050699984364,
-                  "transport_seconds": 15.189999999999852
-                }
-              ]
-            }
-          ],
-          "not_counted_as_passing_CI": true
-        },
-        "counts_as_CI": false
+        "counts_as_CI": false,
+        "scope": "one bounded diagnostic of unchanged legacy-only test; no current product code or test modification",
+        "columns": "trial; rows per three runs; wall seconds per three runs; transport seconds per three runs",
+        "measurements_csv": [
+          "1;308,308,308;0.5069757390001541,0.5211241679999148,0.4150125140004093;15.189999999999989,15.190000000000095,15.189999999999852",
+          "2;308,308,308;0.38545638600044185,0.3928997370003344,0.3881393060000846;15.189999999999989,15.190000000000095,15.189999999999852",
+          "3;308,308,308;0.3782966259996101,0.36849870800051576,0.37564050699984364;15.189999999999989,15.190000000000095,15.189999999999852"
+        ]
       },
       {
         "path": "/tmp/pantheon-root01a11-scope-audit-20261114/legacy-replay-real-pytest-diagnostic.json",
         "sha256": "f83be29f37ab334b17b85462fdc22ce651a74a37e14bb364d1efe12a1b5f2fa7",
-        "data": {
-          "method": "one unchanged pytest case with its actual fixtures; observation-only failure hook",
-          "source_or_test_modified": false,
-          "records": [],
-          "pytest_exit_code": 0
-        },
-        "counts_as_CI": false
+        "counts_as_CI": false,
+        "scope": "one unchanged pytest case with its actual fixtures; observation-only failure hook",
+        "result": "One unchanged case, real fixtures; pytest exit 0; records empty. Not CI and not evidence that original failures disappeared."
       }
     ],
     "validation": "pending one bounded six-file AC6 regression; no retry-until-green loop"
