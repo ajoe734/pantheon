@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from services.memory import main, search_retrieval as retrieval
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
 from services.memory.persona_memory_store import PersonaMemoryStore
-from services.memory.test_memory_index_projection import institution, persona
+from services.memory.test_hindsight_index import institution, persona
 from services.memory.test_main import JWT_SECRET, _make_jwt
 from services.memory.usefulness import usefulness_score
 
@@ -76,11 +76,12 @@ def test_backend_reranks_all_candidates_before_limit_and_read_counts_never_boost
     entries = [store.create(factory(tenant_id="tenant-a", reuse_count=999 if i == 0 else 0)) for i in range(3)]
     key = lambda e: getattr(e, "memory_id", None) or e.entry_id
     store.mark_usefulness(key(entries[-1]), mark())
-    backend = SimpleNamespace(search=lambda **kw: [SimpleNamespace(id=key(e), score=1.0) for e in entries])
+    client = SimpleNamespace(recall=lambda bank, body: {"results": [
+        {"document_id": key(e), "scores": {"final": 1.0}} for e in entries]})
     if scope == "persona":
-        hits = retrieval.retrieve_persona_with_backend(store, "persona-alpha", backend, query="風控", limit=1)
+        hits = retrieval.retrieve_persona(store, "persona-alpha", client=client, query="風控", limit=1)
     else:
-        hits = retrieval.retrieve_institutional_with_backend(store, backend, query="風控", limit=1)
+        hits = retrieval.retrieve_institutional(store, client=client, query="風控", limit=1)
     assert key(hits[0].entry) == key(entries[-1])
     assert hits[0].relevance_score == pytest.approx(101.6667)
     assert usefulness_score(replace(entries[0], reuse_count=10**9)) == 0

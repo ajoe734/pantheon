@@ -1,0 +1,268 @@
+{
+  "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-11-14T07:54:00Z",
+  "scope": "H3-H7, H9 route, H11 in services/memory (plus consumer fixture import update in services/persona/test_case_file_outcomes.py). Search-service side of H7, case file, cycle and panel are other tasks.",
+  "commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests services/memory",
+      "result": "142 passed, 9 skipped, 1 warning, 2 subtests passed in 18.27s (real-container tests skipped without env)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py",
+      "result": "14 passed, 1 warning in 8.03s (all original Persona pool/case/outcome/usefulness-ranking and durable/PIT/tenant assertions preserved)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests services/memory services/persona",
+      "result": "500 passed, 10 skipped, 233 warnings, 2 subtests passed in 123.99s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_main.py -k test_reflect_route_unavailable_reasons_and_scoped_citation_hydration",
+      "result": "1 passed (AC6 fail-closed HTTP regressions: 503 canonical_source_inactive/canonical_source_expired/canonical_source_missing/canonical_source_unverified and 403 tenant_scope_mismatch/persona_scope_mismatch/committee_scope_mismatch without returning generated text)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c \"import sys; sys.path[0] = '/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113'; exec(open('/tmp/pantheon-goal-resume-20261111/Memory7337-AC1-frozen-isolated-probe-20261114T0310/probe.py').read())\"",
+      "result": "exit 0 (AC1_nonblocking_expectation_failed: false for both institutional and persona)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c \"import sys; from pathlib import Path; code = Path('/tmp/pantheon-goal-resume-20261111/Memory7337-14c-current-rebuild-counterexample-20261114T0405/probe.py').read_text().replace('Path(__file__).with_name(\\\"hindsight_index.py\\\")', 'Path(\\\"/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113/services/memory/hindsight_index.py\\\")'); exec(code)\"",
+      "result": "exit 0 (rebuild_dropped_bank_and_reported_success_despite_undrained_mirror: false; failures=[{reason: hindsight_mirror_drain_timeout}])"
+    },
+    {
+      "command": "PYTHONPATH=/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/source PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:<port> PANTHEON_HINDSIGHT_IT_KEY=<key> /tmp/bffvenv/bin/python -m pytest -q services/memory/test_hindsight_integration.py (via guarded foreground /tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/run_existing_six.py against composed images sha256:47cb923e7f72b20feac7441f16d7e6301a4d1d8851dd454a5b6b80c10f839929 and sha256:a4a2682c273cbc7a7d96a5a11f19071cbf6acdd491f2e611718c5a21ee611d85)",
+      "result": "6 passed, 0 failed, 0 skipped, 1 warning in 9.77s (pytest_exit: 0, guarded_job_exit: 0; proof /tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/AC8-existing-six-final-proof.json SHA256 f7f61aa0c7c1e3fb9ea96473c6088f76d327f1d43f118eb2b80c994f3f22fddb)"
+    },
+    {
+      "command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:18888 PANTHEON_HINDSIGHT_IT_KEY=<key> python -m pytest -v services/memory/test_hindsight_integration.py",
+      "result": "6 passed (earlier upstream image probe retained as historical reference)"
+    }
+  ],
+  "integration_tests": [
+    "test_traditional_chinese_recall_through_http_route_with_anchor_filtering",
+    "test_supersede_and_archive_invalidate_in_the_index",
+    "test_persona_never_sees_other_persona_and_committee_only_gets_committee_scope",
+    "test_rebuild_restores_a_dropped_bank_idempotently",
+    "test_reflect_reports_unavailable_with_reason",
+    "test_unreachable_index_falls_back_explicitly_without_blocking_canonical_state"
+  ],
+  "containers_used": {
+    "hindsight": "sha256:47cb923e7f72b20feac7441f16d7e6301a4d1d8851dd454a5b6b80c10f839929 (built from revision a9284b68c1150ab11efe5ae6d3d7039d960b2b9f with identical deploy/hindsight/Dockerfile sha256:d9cf4810da85a06d295c237c312468b81967e876e0d90e9a6b007b8b067feec0 and deploy/hindsight/model-manifest.json sha256:e9c1ddae56d0a76cdb237acab03ee0f5f4ab2986a184c5263e1a66d98c7e1246; ONNX embedding intfloat/multilingual-e5-large 1024-d, ONNX reranker BAAI/bge-reranker-v2-m3, all LLM layers none)",
+    "postgres": "sha256:a4a2682c273cbc7a7d96a5a11f19071cbf6acdd491f2e611718c5a21ee611d85 (built from revision a9284b68c1150ab11efe5ae6d3d7039d960b2b9f with identical deploy/memory-index-postgres/Dockerfile sha256:aa430ba9f14613014f7a07ed03b64c9b9fe1db4973636ff88388032ffd6719b0 and deploy/memory-index-postgres/init.sql sha256:d28b267be8eb1a680e2ba408935af4ea57be7b4d9f92a82bcee110d03603292f)",
+    "run_as": "isolated private two-service Compose project pantheon-ac8-root01a11-20261114t0546 under guarded dev qualification lease adcefc7b-fbd1-4be7-8c6e-2f6203e4424f; unique per-test tenant banks deleted after each test; own containers, networks, and volumes removed and lease released"
+  },
+  "ac8_composed_image_proof": {
+    "proof_path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/AC8-existing-six-final-proof.json",
+    "proof_sha256": "f7f61aa0c7c1e3fb9ea96473c6088f76d327f1d43f118eb2b80c994f3f22fddb",
+    "at": "2026-11-14T06:51:25.609426+00:00",
+    "task": "MEMORY-HINDSIGHT-INDEX-20261113",
+    "generation": 6,
+    "source_sha": "033b862271b6cf38aaef59c41e69102a2224af47",
+    "source_pr": 7337,
+    "cases": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "pytest_exit": 0,
+    "pytest_summary": "6 passed, 1 warning in 9.77s",
+    "guarded_job_exit": 0,
+    "model": "intfloat/multilingual-e5-large",
+    "dimensions": 1024,
+    "reranker": "BAAI/bge-reranker-v2-m3",
+    "providers": "onnx embedding/reranker; all LLM layers none",
+    "actual_images": [
+      {
+        "image": "sha256:47cb923e7f72b20feac7441f16d7e6301a4d1d8851dd454a5b6b80c10f839929",
+        "revision": "a9284b68c1150ab11efe5ae6d3d7039d960b2b9f",
+        "embedding_and_reranker": {
+          "HINDSIGHT_API_EMBEDDINGS_PROVIDER": "onnx",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID": "intfloat/multilingual-e5-large",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH": "/opt/hindsight/embeddings/model.onnx",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS": "1024",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING": "mean",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE": "true",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX": "query: ",
+          "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX": "passage: ",
+          "HINDSIGHT_API_RERANKER_PROVIDER": "onnx",
+          "HINDSIGHT_API_RERANKER_ONNX_MODEL_ID": "BAAI/bge-reranker-v2-m3",
+          "HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH": "/opt/hindsight/reranker/model.onnx"
+        }
+      },
+      {
+        "image": "sha256:a4a2682c273cbc7a7d96a5a11f19071cbf6acdd491f2e611718c5a21ee611d85",
+        "revision": "a9284b68c1150ab11efe5ae6d3d7039d960b2b9f",
+        "embedding_and_reranker": {}
+      }
+    ],
+    "running_pair": [
+      {
+        "id": "df60615e4ccb01563ee880132a8714c1ce175ed3cb1c1f6fe29ccd233b41af28",
+        "name": "pantheon-ac8-root01a11-20261114t0546-hindsight-1",
+        "image": "sha256:47cb923e7f72b20feac7441f16d7e6301a4d1d8851dd454a5b6b80c10f839929",
+        "status": "running",
+        "health": "healthy",
+        "project": "pantheon-ac8-root01a11-20261114t0546"
+      },
+      {
+        "id": "1bcfbc5da7ea29cd6e600f2ff98c0916cd1d695507ce67a70eb98ea91c54307d",
+        "name": "pantheon-ac8-root01a11-20261114t0546-memory-index-postgres-1",
+        "image": "sha256:a4a2682c273cbc7a7d96a5a11f19071cbf6acdd491f2e611718c5a21ee611d85",
+        "status": "running",
+        "health": "healthy",
+        "project": "pantheon-ac8-root01a11-20261114t0546"
+      }
+    ],
+    "source_identity": [
+      {
+        "path": "services/memory/test_hindsight_integration.py",
+        "sha256": "cce90d306b9a0858fbbb1445ccc69bc6dfcc1243e83d43b8301c6c4e4c2d49c4",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/hindsight_index.py",
+        "sha256": "c57363ced8c71cbea1a483b4bfbe5c6d68e161516f1ad4374db11da09c13c740",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/main.py",
+        "sha256": "40411ce8fdd81fc305a1f07628c4442cd3a5d2c89fbf66cbc67795634cbacbc7",
+        "current_head_sha256": "5e58d70dfc414e071e31c2c53a1037dcc07059225ffa85ef31d172893683147d",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/institutional_memory_store.py",
+        "sha256": "ff1bf4000893c69a8da233b1a6bad1ae0f4198260610bc225ff553bb67e327cc",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/persona_memory_store.py",
+        "sha256": "541b5f12419ddc3e9c207abbc83d02435e1cc36e0a7f08074e9f7a62dec2d909",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/search_retrieval.py",
+        "sha256": "3700af45db86cbfa72d051144346ad54bdca2d6c45aadce9287361895b010d0c",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/test_hindsight_index.py",
+        "sha256": "b96bc6c5f60d85fd8807ba721ae51c8d8ac85ea96a054c0b62940394759496f2",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "services/memory/test_main.py",
+        "sha256": "3074ab77c1492b5da896a8acf25b9942caf370b7c1bf53973fd2a531cafcb82d",
+        "current_head_sha256": "d9deee93018a0659c6d2762aa16f18869127037762c9794925029865319e5b0e",
+        "snapshot_matches_frozen": true
+      },
+      {
+        "path": "deploy/hindsight/Dockerfile",
+        "sha256": "d9cf4810da85a06d295c237c312468b81967e876e0d90e9a6b007b8b067feec0",
+        "snapshot_matches_frozen": true,
+        "image_source_inputs_identical": true
+      },
+      {
+        "path": "deploy/hindsight/model-manifest.json",
+        "sha256": "e9c1ddae56d0a76cdb237acab03ee0f5f4ab2986a184c5263e1a66d98c7e1246",
+        "snapshot_matches_frozen": true,
+        "image_source_inputs_identical": true
+      },
+      {
+        "path": "deploy/memory-index-postgres/Dockerfile",
+        "sha256": "aa430ba9f14613014f7a07ed03b64c9b9fe1db4973636ff88388032ffd6719b0",
+        "snapshot_matches_frozen": true,
+        "image_source_inputs_identical": true
+      },
+      {
+        "path": "deploy/memory-index-postgres/init.sql",
+        "sha256": "d28b267be8eb1a680e2ba408935af4ea57be7b4d9f92a82bcee110d03603292f",
+        "snapshot_matches_frozen": true,
+        "image_source_inputs_identical": true
+      }
+    ],
+    "isolated_project": "pantheon-ac8-root01a11-20261114t0546",
+    "original_container_count": 62,
+    "original_container_ids_images_and_states_unchanged": true,
+    "own_containers_networks_volumes_remaining": false,
+    "lease_id": "adcefc7b-fbd1-4be7-8c6e-2f6203e4424f",
+    "lease_release_exit": 0,
+    "authoritative_post_release_contents_read": "GitHub connector returned404 on exact execute-plans environment-coordination path after release",
+    "source_modified_by_parent": false,
+    "source_merged": false,
+    "hosted_delivery_claimed": false,
+    "comparison150_run": false,
+    "ordinary_repair_release_prerequisite": false,
+    "previous_attempt": "attempt1-response-failure/honest-attempt-outcome.json: zero tests run; own cleanup completed; exact lease released; not counted as pass",
+    "artifacts": {
+      "existing-six-pytest.log": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/existing-six-pytest.log",
+        "sha256": "3a23770c13ec92560e51ca87d1fc179df1095a9616a5a29091d882448382209f"
+      },
+      "existing-six-result.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/existing-six-result.json",
+        "sha256": "79dd538d721bcaa1c5e4675de645146b0abdb897d77b7c188a5bdffb7ba3a976"
+      },
+      "actual-model-image-metadata.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/actual-model-image-metadata.json",
+        "sha256": "621ae2572631da65628a361ecc5ccc6a0eb9f0b4197d950c0873a453d46f0240"
+      },
+      "running-pair.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/running-pair.json",
+        "sha256": "fa976c8b5d3869f0c9ac1b176c492a8f3d773b3ea5581907e87053e74bce9ca4"
+      },
+      "containers-before.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/containers-before.json",
+        "sha256": "29b243e673998231575e86ec9fcf69ad92f45909379cf2311ff51b6d3fea4783"
+      },
+      "containers-after.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/containers-after.json",
+        "sha256": "29b243e673998231575e86ec9fcf69ad92f45909379cf2311ff51b6d3fea4783"
+      },
+      "owned-resource-final-readback.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/owned-resource-final-readback.json",
+        "sha256": "b0139938b69d3c16099d7b8e1f9819ed70ec2b9a66f74d9fd7985a5fa7948ff1"
+      },
+      "cleanup-command.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/cleanup-command.json",
+        "sha256": "251a9b075ceb25d9ce179fabe197728bbe13565fdf77209c60b30fde7554c99a"
+      },
+      "cleanup-result.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/cleanup-result.json",
+        "sha256": "7c0fb133a99b43e9e95a9874b539e12c4971f1aabbf83db8a3dec279a7abc35f"
+      },
+      "lease-state.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/lease-state.json",
+        "sha256": "ea22e1c4bb370260aada85946c779357d38b3e5fbd92812c2d34d8036582c08c"
+      },
+      "lease-release.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/lease-release.json",
+        "sha256": "dbf87c74e6eef542b7407787ee5a1e10c3a76436599cb50865ceab5c5eeb7641"
+      },
+      "heartbeat-shutdown.json": {
+        "path": "/tmp/pantheon-goal-resume-20261111/Memory033-AC8-resource-n5nx5w9f/heartbeat-shutdown.json",
+        "sha256": "321eff081806ba383482aa35ff8bc06a48aa94e2fed78bbe090c496131499bc1"
+      }
+    }
+  },
+  "ci_repair_20261114t074500z": {
+    "prior_head": "2aa2822800363681145f71bc925c5a5deca20984",
+    "prior_approval_status": "historical_for_prior_head_2aa2822800363681145f71bc925c5a5deca20984",
+    "original_ci_run_id": 43571208422,
+    "original_ci_job_id": 132375994896,
+    "original_ci_failure": "Service suites (misc) / Run persona service tests failed on ModuleNotFoundError: No module named 'services.memory.test_memory_index_projection' in services/persona/test_case_file_outcomes.py line 20 (from services.memory.test_memory_index_projection import persona)",
+    "repair_file": "services/persona/test_case_file_outcomes.py",
+    "repair_sha256": "8af407422124c6dbc7356f1557649c7378d34d31308e38c19d8089f7f54067b9",
+    "repair_change": "Updated import from deleted services.memory.test_memory_index_projection.persona to AST-identical fixture helper services.memory.test_hindsight_index.persona; preserved all original Persona pool/case/outcome/usefulness-ranking and durable/PIT/tenant assertions without skip/delete/xfail or business behavior change."
+  },
+  "known_gaps": [
+    "Observation-to-canonical-id mapping through source_fact_ids is covered by a fake-transport unit test only; consolidation is disabled (no LLM provider), so no real observations exist.",
+    "Reflect low temperature is pinned on the hindsight service via HINDSIGHT_API_LLM_TEMPERATURE_REFLECT=${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1} in docker-compose.yml (Hindsight 1.2.1 static config field; ReflectRequest has budget='low' and no per-request temperature field). Scoped citation validation, fail-closed rejection of stale/inactive/expired/missing/unmapped and unauthorized tenant/persona/committee sources, and unavailable reasons are verified by HTTP tests in test_main.py, while the live reflect LLM success path remains untested against a real LLM provider because the default provider is `none`."
+  ],
+  "api_facts_verified_on_real_container": [
+    "retain with document_id replaces; caller entities kept with resolve_entities false",
+    "memories/list supports document_id and state filters; PATCH state=invalidated removes units from recall and is reversible (state=valid)",
+    "tag_groups leaf with match any_strict filters recall",
+    "DELETE bank drops it; retain recreates it",
+    "reflect with provider none returns HTTP 400"
+  ]
+}

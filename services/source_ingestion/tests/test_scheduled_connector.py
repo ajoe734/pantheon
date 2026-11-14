@@ -2627,9 +2627,8 @@ def test_full_size_close_through_controller_main_with_persistence(
             if state["done"]:
                 completed_at.setdefault(cid, clock[0] + time.monotonic() - real_start)
         if len(completed_at) == len(paths):
-            # Newest-session proof ends here. The newly eligible ordered sweep
-            # continues in subsequent ticks, covered by the history regressions.
-            assert seconds == cw.CONTINUATION_PAUSE_SECONDS
+            # Every row in these newest-only bundles is acknowledged; restore cadence.
+            assert seconds == config.interval_seconds
             raise SessionFinished
         assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
 
@@ -2646,7 +2645,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     ack_ids = [receipt["ingest_run_id"] for receipt in receipts]
     assert len(ack_ids) == len(sleeps) == len(set(ack_ids))
     assert all(receipt["status"] == "completed" for receipt in receipts)
-    assert 4 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
+    assert peak[0] == cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
     records = list(module.runtime.evidence_repository.list_source_records())
     assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
     for record in records:
@@ -2672,7 +2671,7 @@ def test_full_size_close_through_controller_main_with_persistence(
             fetch = module.runtime.connector_store.get_config(item["connector_id"]).fetch
             assert fetch["max_records"] == 1000
     pending = cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths)))
-    assert pending and set(pending) <= set(paths)  # ordered history remains eligible
+    assert pending == []  # acknowledged newest-only bundles have no remaining history
     assert active[0] == 0
     assert max(schedule_elapsed) < config.timeout_seconds
     elapsed = clock[0] + time.monotonic() - real_start
@@ -2758,6 +2757,7 @@ def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack,
 def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack, monkeypatch, spec_index):
     import json
     from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
     from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
     http, module, _ = steady_stack
     spec = _INTAKE_SIZES[spec_index]; source, _, dataset, _, _, cadence = spec
@@ -2782,11 +2782,25 @@ def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack,
     stored = module.runtime.connector_store.get_config(source)
     fetch = {**stored.fetch, "request": {**stored.fetch.get("request", {}), "cursor": "2020-01-01T00:00:00Z#start"}}
     module.runtime.connector_store.upsert_config(stored.connector, fetch)
+    replayed = []
+    original_pull = CollectorBundleAdapter.pull
+    def capture_pull(self, *args, **kwargs):
+        outcome = original_pull(self, *args, **kwargs)
+        replayed.extend(outcome.records)
+        return outcome
+    monkeypatch.setattr(CollectorBundleAdapter, "pull", capture_pull)
     replay = pull()
     assert replay["summary"]["total_failed"] == 0
     receipt = replay["ran"][0]["receipt"]
-    assert receipt["raw_count"] == 20
-    assert receipt["storage_refs"]["summary"]["reused_record_count"] == 20
+    replay_count = 10 if dataset == "tw_price_daily" else 20
+    # Rewind replays older history, retaining the newest item/hash acknowledgements.
+    assert receipt["raw_count"] == replay_count
+    assert receipt["storage_refs"]["summary"]["reused_record_count"] == replay_count
+    assert len(replayed) == replay_count
+    identity_fields = ("content_hash", "event_time", "available_time")
+    assert {(r.source_id, *(r.metadata.get(k) for k in identity_fields)) for r in replayed} == {
+        (r["source_id"], *(r["metadata"].get(k) for k in identity_fields)) for r in rows
+        if dataset != "tw_price_daily" or r["metadata"]["event_time"][:10] == "2024-11-12"}
     assert receipt["storage_refs"]["summary"]["new_normalized_row_count"] == 0
     after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
     assert after == before
