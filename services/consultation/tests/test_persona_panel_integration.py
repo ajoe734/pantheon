@@ -86,6 +86,15 @@ class _ProviderHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if self.path.endswith("/consultation/agents/ensure"):
+            raw = json.dumps({"status": "ready", "tenant_id": payload["tenant_id"],
+                              "persona_id": payload["persona_id"]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         participant = payload["request"]["participant"]
         persona_id = participant["persona_id"]
         self.server.calls.append(

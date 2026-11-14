@@ -16,6 +16,16 @@ from services.consultation.tests.test_persona_panel_integration import (
 )
 from services.consultation.workflow_state import WorkflowStateStore
 
+# Capture all adapter-local modules together so root pytest's service isolation
+# restores the same provider/provisioner pair when this module runs.
+import sys
+from pathlib import Path
+_ADAPTER = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
+sys.path.insert(0, str(_ADAPTER))
+import consult_agent_provisioning as provisioning
+from consultation_provider import create_app, consult_agent_id, CONSULTATION_CONTRIBUTION_PATH
+from main import _OPENCLAW_AGENT_WORKSPACE_ROOT, _PERSONA_OPINION_RUNTIME_POLICY
+
 
 @pytest.mark.parametrize("canary", [False, True], ids=["trial-admission", "canary-candidacy"])
 def test_panel_composes_case_and_rejects_uncited_answer(stack, canary):
@@ -132,14 +142,10 @@ def test_missing_owner_records_reason_and_calls_no_agent(stack, monkeypatch):
 
 
 @pytest.mark.parametrize("canary,memory_available", [(False, True), (True, True), (True, False)])
-def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, canary, memory_available):
-    """Only OpenClaw itself and the retrieval response are boundary doubles."""
+def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, canary, memory_available, monkeypatch):
+    """Case-file routing with preprovisioned agent/owner-read boundary doubles."""
     from types import SimpleNamespace
     from services.consultation.tests.test_persona_panel_integration import _serve, PROVIDER_TOKEN
-    # Imports the adapter through the existing test setup for its local modules.
-    from services.consultation.tests.test_persona_own_agent_routing import (
-        DENY_ALL, create_app, consult_agent_id, CONSULTATION_CONTRIBUTION_PATH,
-    )
 
     requirement = triggers.required_consultation(
         "trial_admission", INITIATOR if canary else "reg-trial", initiator_persona_id=INITIATOR,
@@ -159,10 +165,17 @@ def test_real_adapter_receives_case_and_queries_each_personas_own_memory(stack, 
                          hit(persona, "persona_private", "PRIVATE-SENTINEL"),
                          hit("persona-stranger", "persona_and_committee", "OTHER-PERSONA-SENTINEL")]}
 
+    monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(stack["root"] / "agents.lock"))
+    monkeypatch.setattr(provisioning, "_persona_record", lambda tenant, persona: {"tenant_id": tenant})
+
     class Gateway:
         def _gateway_call(self, method, **kwargs):
-            return {"valid": True, "config": {"agents": {"list": [
-                {"id": consult_agent_id(TENANT, p), **DENY_ALL} for p in personas]}}}
+            assert method == "config.get"  # already provisioned: ensure must be a no-op
+            return {"valid": True, "hash": "ready", "config": {"agents": {"list": [
+                {"id": "main", "default": True}, *[
+                    {"id": consult_agent_id(TENANT, p), **_PERSONA_OPINION_RUNTIME_POLICY,
+                     "workspace": str(_OPENCLAW_AGENT_WORKSPACE_ROOT / consult_agent_id(TENANT, p))}
+                    for p in personas]]}}}
 
         def gateway_agents_list(self, **kwargs):
             return [{"id": consult_agent_id(TENANT, p)} for p in personas]

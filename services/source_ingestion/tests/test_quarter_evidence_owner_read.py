@@ -239,7 +239,7 @@ def test_postgres_window_filters_in_sql_with_a_strict_guard_and_bound_instants()
     # (judged in Python); the COUNT statement carries the window.
     assert "COUNT(*)" not in log[0][0] and "append_id" in log[0][0]
     sql, params = next(entry for entry in log if "COUNT(*)" in entry[0])
-    assert "COUNT(*)" in sql and "timestamptz" in sql and "COALESCE(NULLIF(payload->>'available_time'" in sql
+    assert "COUNT(*)" in sql and "timestamptz" in sql and "evidence_capture_time" in sql
     assert ">= %s" in sql and "< %s" in sql
     assert params[0] == "evidence_item" and params[1] == TENANT
     assert [p.isoformat() for p in params[2:4]] == ["2026-01-01T00:00:00+00:00", "2026-04-01T00:00:00+00:00"]

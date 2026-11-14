@@ -19,6 +19,8 @@ This module is deliberately stdlib-only so any service can import it.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -91,7 +93,27 @@ _INST_FIELDS = (
     ("dealer_net_shares", "dealer_net", "Dealer net shares"),
 )
 
+# Market aggregates have their own namespace. Per-symbol field contracts remain
+# unchanged. Zero-day lag still requires the provider release and first acquisition.
+MARKET_CHIP_DATASETS = {
+    "tw_market_margin_balances": "tw_margin_short_balance",
+    "tw_market_institutional_flows": "tw_institutional_flow",
+    "taifex_market_positions": "taifex_futures_chip",
+    "taifex_market_put_call": "taifex_options_chip",
+}
+
 DATASET_SPECS: tuple[DatasetSpec, ...] = (
+    _ds("tw_market_margin_balances", "tw_margin_short_balance", "market", "daily", "date", 0,
+        ("twse:exchangeReport/MI_MARGN", "tpex:tpex_mainboard_margin_balance"),
+        "Complete governed TWSE/TPEx reported margin and short balance counts; not TWD credit"),
+    _ds("tw_market_institutional_flows", "tw_institutional_flow", "market", "daily", "date", 0,
+        ("twse:fund/T86 via collector bundle", "tpex:tpex_3insti_daily_trading"),
+        "Complete same-session market foreign, trust and dealer net shares"),
+    _ds("taifex_market_positions", "taifex_futures_chip", "market", "daily", "date", 0,
+        ("taifex:MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",),
+        "TX/MTX institutional net open interest by investor type"),
+    _ds("taifex_market_put_call", "taifex_options_chip", "market", "daily", "date", 0,
+        ("taifex:PutCallRatio",), "Official TXO put/call volume and open-interest percentages"),
     _ds("tw_industry_classification", "tw_industry_classification", "symbol", "daily", "event_time", 0,
         ("twse:opendata/t187ap03_L", "tpex:mopsfin_t187ap03_O"),
         "Official industry code observed prospectively; available only from acquisition, never backfilled"),
@@ -168,6 +190,20 @@ _FIELDS.append(
     CatalogueField("tpex_institutional_flows", "total_inst_net_shares", "total_net", "shares",
                    "TPEx total 3-institution net shares")
 )
+for _f in ("margin_balance", "short_balance"):
+    _FIELDS.append(CatalogueField("tw_market_margin_balances", _f, _f, "reported_trading_units",
+                                  "Complete governed market balance; no partial totals"))
+for _f, _src, _d in _INST_FIELDS:
+    _FIELDS.append(CatalogueField("tw_market_institutional_flows", _f, _src, "shares", _d))
+for _contract in ("tx", "mtx"):
+    for _investor in ("foreign", "trust", "dealer"):
+        _f = f"{_contract}_{_investor}_net_open_interest"
+        _FIELDS.append(CatalogueField("taifex_market_positions", _f, _f, "contracts",
+                                      "Official institutional net open interest, not volume"))
+for _f, _src in (("volume_ratio", "PutCallVolumeRatio%"), ("open_interest_ratio", "PutCallOIRatio%")):
+    _FIELDS.append(CatalogueField("taifex_market_put_call", _f, _src, "percent",
+                                  "Official reported put/call percentage; never inferred from a missing value"))
+
 _MACRO: tuple[tuple[str, str, int, str, str], ...] = (
     ("tw_macro_cbc", "policy_rate", 1, "percent", "CBC policy discount rate"),
     ("tw_macro_cbc", "m1b_yoy", 25, "percent", "CBC M1B money supply YoY"),
@@ -381,6 +417,8 @@ def observations_from_row(
     are missing are skipped rather than imputed.
     """
     spec = get_dataset_spec(dataset)
+    if dataset in MARKET_CHIP_DATASETS:
+        raise FeatureCatalogueError("market chip observations require market_chip_observations completeness checks")
     if spec.venue and str(row.get("venue") or "").upper() != spec.venue.upper():
         return []
     if row.get("dataset") not in (None, spec.normalized_dataset, dataset):
@@ -436,6 +474,138 @@ def observations_from_row(
     if spec.key_kind == "series" and not out:
         return []
     return out
+
+
+def market_chip_observations(
+    dataset: str, rows: Iterable[Mapping[str, Any]], *,
+    required_entities: Sequence[str] | None = None,
+    record_cap: int = 500, truncated: bool = False,
+) -> dict[str, Any]:
+    """Convert one session only, with a recorded fail-closed completeness result.
+
+    Equity entities are canonical venue-qualified symbols supplied by the caller's
+    governed universe, never inferred from the returned slice. TAIFEX's governed
+    sets are the six TX/MTX investor cells or the single TXO market row. Run this
+    separately for each session in a historical response. A saturated cap cannot
+    prove completeness, even when the requested subset happens to be present.
+    Raw normalized rows and their raw_row values are never changed.
+    """
+    if dataset not in MARKET_CHIP_DATASETS:
+        raise FeatureCatalogueError(f"unsupported market chip dataset: {dataset}")
+    items = list(rows)
+
+    def withheld(reason: str, **details: Any) -> dict[str, Any]:
+        return {"dataset": dataset, "status": "withheld", "reason": reason,
+                "observations": [], **details}
+
+    if isinstance(record_cap, bool) or not isinstance(record_cap, int) or record_cap <= 0:
+        raise FeatureCatalogueError("record_cap must be a positive integer")
+    if truncated or len(items) >= record_cap:
+        return withheld("record_cap_prevents_complete_market", record_cap=record_cap, received=len(items))
+    if not items:
+        return withheld("missing_session_rows")
+    if any(not isinstance(row, Mapping) for row in items):
+        return withheld("malformed_session_rows")
+    dates = set()
+    for row in items:
+        event = str(row.get("date") or "")
+        try:
+            if len(event) != 10 or date.fromisoformat(event).isoformat() != event:
+                return withheld("missing_or_invalid_source_event_time")
+        except ValueError:
+            return withheld("missing_or_invalid_source_event_time")
+        if row.get("dataset") != MARKET_CHIP_DATASETS[dataset]:
+            return withheld("source_dataset_mismatch")
+        dates.add(event)
+    if len(dates) != 1:
+        return withheld("mixed_session_rows")
+    day = dates.pop()
+    values: dict[str, float] = {}
+    constituents = []
+    if dataset in {"tw_market_margin_balances", "tw_market_institutional_flows"}:
+        entities = set(required_entities or ())
+        if not entities or any(not isinstance(e, str) or not e.endswith((".TWSE", ".TPEX")) for e in entities):
+            return withheld("governed_entity_set_missing")
+        by_entity = {}
+        for row in items:
+            entity = str(row.get("symbol_canonical") or "")
+            if entity in by_entity:
+                return withheld("duplicate_entity_rows", entity=entity)
+            by_entity[entity] = row
+        if entities - by_entity.keys():
+            return withheld("incomplete_governed_entity_set", missing_entities=sorted(entities - by_entity.keys()))
+        constituents = [by_entity[e] for e in sorted(entities)]
+        for f in catalogue_fields():
+            if f.dataset != dataset:
+                continue
+            nums = [_number(row.get(f.source_field)) for row in constituents]
+            if any(v is None or not math.isfinite(v) for v in nums):
+                return withheld("missing_or_invalid_constituent_value", field=f.field)
+            try:
+                values[f.field] = math.fsum(nums)
+            except OverflowError:
+                return withheld("nonfinite_market_total")
+    elif dataset == "taifex_market_positions":
+        investor_names = {"外資及陸資": "foreign", "外資": "foreign", "投信": "trust", "自營商": "dealer",
+                          "foreign_investors": "foreign", "investment_trust": "trust", "dealers": "dealer"}
+        by_entity = {}
+        for row in items:
+            contract = str(row.get("contract") or "").lower()
+            investor = investor_names.get(str(row.get("participant_group") or ""))
+            if contract not in {"tx", "mtx"} or investor is None:
+                return withheld("ungoverned_contract_or_investor")
+            entity = f"{contract}_{investor}_net_open_interest"
+            if entity in by_entity:
+                return withheld("duplicate_entity_rows", entity=entity)
+            raw = row.get("raw_row") or {}
+            if not isinstance(raw, Mapping):
+                return withheld("malformed_source_row")
+            # The legacy adapter defaults absent numbers to zero. Require the
+            # actual source net field before admitting that normalized value.
+            reported = next((raw[k] for k in ("OpenInterest(Net)", "多空未平倉口數淨額", "NetOpenInterest", "net_oi") if k in raw), None)
+            number = _number(reported)
+            if number is None or not math.isfinite(number) or number != _number(row.get("net_open_interest")):
+                return withheld("missing_or_invalid_constituent_value", field=entity)
+            by_entity[entity] = row
+            values[entity] = number
+        expected = {f.field for f in catalogue_fields() if f.dataset == dataset}
+        if expected != set(by_entity):
+            return withheld("incomplete_governed_entity_set", missing_entities=sorted(expected - by_entity.keys()))
+        constituents = list(by_entity.values())
+        entities = set(by_entity)
+    else:
+        if len(items) != 1 or items[0].get("contract") != "TXO":
+            return withheld("incomplete_or_duplicate_txo_market_row")
+        constituents = items
+        entities = {"TXO"}
+        raw = items[0].get("raw_row") or {}
+        if not isinstance(raw, Mapping):
+            return withheld("malformed_source_row")
+        # Use the two distinct published ratios. The adapter's legacy
+        # put_call_ratio field represents OI and cannot stand in for volume.
+        for f in catalogue_fields():
+            if f.dataset == dataset:
+                number = _number(raw.get(f.source_field))
+                if number is None or not math.isfinite(number):
+                    return withheld("missing_or_invalid_constituent_value", field=f.field)
+                values[f.field] = number
+    if any(not math.isfinite(v) for v in values.values()):
+        return withheld("nonfinite_market_total")
+    try:
+        if any(not row.get("available_time") or not row.get("ingest_time") for row in constituents):
+            return withheld("missing_point_in_time_provenance")
+        available = max(max(parse_time(row["available_time"]), parse_time(row["ingest_time"]),
+                            parse_time(default_available_time(day, 0))) for row in constituents)
+        ingest = max(parse_time(row["ingest_time"]) for row in constituents)
+    except (ValueError, TypeError):
+        return withheld("invalid_point_in_time_provenance")
+    observations = [{"schema_version": FEATURE_OBSERVATION_SCHEMA_VERSION,
+                     "dataset": dataset, "field": field, "entity": "TW", "event_time": day,
+                     "available_time": iso_utc(available), "ingest_time": iso_utc(ingest),
+                     "availability_lag_days": lag_days_for(dataset, field), "value": value,
+                     "constituent_entities": sorted(entities)} for field, value in sorted(values.items())]
+    return {"dataset": dataset, "status": "complete", "reason": "governed_session_complete",
+            "observations": observations}
 
 
 def read_feature_series(

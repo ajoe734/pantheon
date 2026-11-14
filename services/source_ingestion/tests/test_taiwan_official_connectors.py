@@ -2377,3 +2377,36 @@ def test_company_profile_missing_industry_is_not_imputed():
     row.pop("SecuritiesIndustryCode")  # explicit missing-field fault on real response
     assert normalize_industry_classification_rows("TPEx", [row], source_dataset="mopsfin_t187ap03_O",
         api_endpoint=recording["source_url"], ingest_time=recording["recorded_at"]) == ()
+
+
+def test_recorded_chip_profiles_dispatch_existing_adapters_and_store_raw_values(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.persona_source_reconciler import chip_profile_provider
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    evidence = json.loads((Path(__file__).parents[3] / 'docs/deployment/evidence/REGIME-DATA-TW-CHIP-SCHEDULE-20261114/evidence.json').read_text())
+    monkeypatch.delenv('SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS', raising=False)
+    monkeypatch.delenv('SOURCE_INGEST_TW_HISTORY_SYMBOLS', raising=False)
+    writer = MarketDataStorageWriter(tmp_path / 'market')
+    for index, (cid, profile) in enumerate(TW_CHIP_REFRESH_PROFILES.items()):
+        adapter = chip_profile_provider(cid)
+        fetch = dict(adapter.fetch_config())
+        fetch['request'] = {**fetch['request'], **{k: v for k, v in profile.items() if k in ('dataset', 'venues', 'contracts')}}
+        venue = profile.get('venues', ['TAIFEX'])[0]
+        recorded = next(r for r in evidence['recorded_responses'] if (r['dataset'], r['venue']) == (profile['dataset'], venue))
+        fetch['request']['payload'] = recorded['payload']
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id='recorded-chip')
+        assert records
+        assert all(r.connector_id == cid and r.metadata['dataset'] == profile['dataset'] for r in records)
+        assert all(r.metadata['raw_row'] in recorded['payload'] for r in records)
+        if venue == 'TWSE':
+            assert all(not r.metadata['date'] for r in records)  # Missing source date is not guessed.
+        result = SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id=f'chip-{index}'))
+        # Use the existing persistence contract; no fixture-generated market observations.
+        manifest = writer.write_run(connector=adapter.connector(), result=result)
+        assert manifest.normalized_refs
+        assert manifest.raw_refs

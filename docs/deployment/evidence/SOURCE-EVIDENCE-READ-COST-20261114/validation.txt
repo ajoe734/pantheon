@@ -1,0 +1,20 @@
+........................................................................ [ 67%]
+..................................                                       [100%]
+=============================== warnings summary ===============================
+services/research/strategy_spec/normalizer.py:21
+services/research/strategy_spec/normalizer.py:21
+  /tmp/pantheon-worker-worktrees/pantheon/source-evidence-read-cost-20261114/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 5 durations ==============================
+9.56s call     services/control-plane/bff/tests/test_evidence_source_backend.py::test_real_owner_518_bounded_reads_and_page2_succeed_across_610ms_latency_window
+6.73s call     services/control-plane/bff/tests/test_evidence_source_backend.py::test_real_owner_answering_after_three_seconds_is_ok_on_list_and_page_two
+4.67s call     services/control-plane/bff/tests/test_evidence_source_backend.py::test_hung_owner_is_unavailable_inside_route_budget_with_null_summary
+4.57s setup    services/source_ingestion/tests/test_evidence_read_cost.py::test_real_pg_summary_exact_fast_and_updated_by_independent_writes
+4.11s setup    services/control-plane/bff/tests/test_quarter_evidence_linked_filter.py::test_real_postgres_owner_and_four_concurrent_bff_routes
+106 passed, 3 warnings in 95.34s (0:01:35)

@@ -45,6 +45,10 @@ class ContributionBlocked(ContributionProviderError):
         self.retryable = retryable
 
 
+class AgentProvisioningBlocked(ContributionBlocked):
+    """Retryable dependency hold; no participant has been dispatched yet."""
+
+
 def _blocked_http_response(exc: urllib.error.HTTPError) -> ContributionBlocked:
     """Translate the provider endpoint's typed blocked envelope when present."""
 
@@ -211,6 +215,30 @@ class HttpContributionProvider:
         self.bearer_token = bearer_token.strip()
         self.service_actor = service_actor.strip()
         self.timeout_seconds = timeout_seconds
+
+    def ensure_agents(self, *, tenant_id: str, persona_ids: list[str]) -> None:
+        """Reconcile each panel participant on every attempt before asking anyone."""
+        from urllib.parse import urlsplit, urlunsplit
+        if not self.endpoint or not self.bearer_token:
+            raise ContributionBlocked("consultation agent ensure: provider URL/token is not configured")
+        parts = urlsplit(self.endpoint)
+        endpoint = urlunsplit((parts.scheme, parts.netloc,
+                               "/api/openclaw-adapter/consultation/agents/ensure", "", ""))
+        for persona_id in dict.fromkeys(persona_ids):
+            request = urllib.request.Request(endpoint, method="POST",
+                data=json.dumps({"tenant_id": tenant_id, "persona_id": persona_id}).encode(),
+                headers={"Authorization": f"Bearer {self.bearer_token}", "Content-Type": "application/json",
+                         "X-Pantheon-Service-Actor": self.service_actor, "X-Pantheon-Tenant-Id": tenant_id})
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    result = json.load(response)
+            except urllib.error.HTTPError as exc:
+                raise _blocked_http_response(exc) from exc
+            except (OSError, ValueError) as exc:
+                raise ContributionBlocked(f"consultation agent ensure transport failed for {persona_id}") from exc
+            if (not isinstance(result, Mapping) or result.get("status") != "ready"
+                or result.get("tenant_id") != tenant_id or result.get("persona_id") != persona_id):
+                raise ContributionBlocked(f"consultation agent ensure did not acknowledge {persona_id}")
 
     def obtain(
         self,

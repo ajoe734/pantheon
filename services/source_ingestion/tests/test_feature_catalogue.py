@@ -849,3 +849,104 @@ def test_canonical_collector_fields_feed_authors_and_sentiment(tmp_path) -> None
     )
     row2 = mixed[-1].metadata["normalized_row"]
     assert row2["unique_authors"] == 2 and row2["bull_bear_ratio"] == pytest.approx(1.0)
+
+
+CHIP_EVIDENCE = REPO / 'docs/deployment/evidence/REGIME-DATA-TW-CHIP-SCHEDULE-20261114/evidence.json'
+
+
+def _recorded_chip_rows(dataset, venue):
+    from services.source_ingestion.connectors.taiwan_official import (
+        TaiwanOfficialMarketDatasetAdapter, TaifexDerivativesChipAdapter,
+    )
+    evidence = json.loads(CHIP_EVIDENCE.read_text())
+    sample = next(r for r in evidence['recorded_responses'] if (r['dataset'], r['venue']) == (dataset, venue))
+    if venue == 'TAIFEX':
+        rows = TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+            sample['payload'], dataset=dataset,
+            contracts=['TX', 'MTX'] if dataset == 'taifex_futures_chip' else ['TXO'],
+        )
+    else:
+        rows = TaiwanOfficialMarketDatasetAdapter().normalized_rows_from_payload(
+            dataset, venue, sample['payload'], source_dataset=dataset, api_endpoint=sample['url'],
+        )
+    # Acquisition is known from the recording. Never fill a missing source date.
+    return [{**row, 'ingest_time': evidence['recorded_at']} for row in rows]
+
+
+@pytest.mark.parametrize('target,source,venue', [
+    ('tw_market_margin_balances', 'tw_margin_short_balance', 'TPEx'),
+    ('tw_market_institutional_flows', 'tw_institutional_flow', 'TPEx'),
+    ('taifex_market_positions', 'taifex_futures_chip', 'TAIFEX'),
+    ('taifex_market_put_call', 'taifex_options_chip', 'TAIFEX'),
+])
+def test_recorded_market_chip_series_complete_and_point_in_time(target, source, venue):
+    rows = _recorded_chip_rows(source, venue)
+    # Put/call responds with historical sessions: each session is converted independently.
+    rows = [r for r in rows if r['date'] == rows[0]['date']]
+    entities = [r['symbol_canonical'] for r in rows] if venue != 'TAIFEX' else None
+    result = fc.market_chip_observations(target, rows, required_entities=entities)
+    assert result['status'] == 'complete', result
+    obs = result['observations']
+    assert {o['field'] for o in obs} == {f.field for f in fc.catalogue_fields() if f.dataset == target}
+    assert all(o['event_time'] == '2026-11-13' and o['entity'] == 'TW' for o in obs)
+    assert all(fc.parse_time(o['available_time']) >= fc.parse_time(o['ingest_time']) for o in obs)
+    assert fc.read_feature_series(obs, target, obs[0]['field'], decision_time='2026-11-13') == ()
+    if target == 'taifex_market_put_call':
+        assert {o['field']: o['value'] for o in obs} == {'volume_ratio': 98.66, 'open_interest_ratio': 57.75}
+    elif target == 'taifex_market_positions':
+        assert len(obs) == 6
+        assert next(o['value'] for o in obs if o['field'] == 'tx_dealer_net_open_interest') == -2771
+    else:
+        for o in obs:
+            src = fc.get_field(target, o['field']).source_field
+            assert o['value'] == sum(r[src] for r in rows)
+
+
+def test_market_chip_withholds_cap_missing_entities_and_mixed_sessions():
+    rows = _recorded_chip_rows('tw_institutional_flow', 'TPEx')
+    entities = [r['symbol_canonical'] for r in rows]
+    target = 'tw_market_institutional_flows'
+    cases = [
+        (rows, {'truncated': True}, 'record_cap_prevents_complete_market'),
+        (rows, {'record_cap': len(rows)}, 'record_cap_prevents_complete_market'),
+        (rows[:-1], {}, 'incomplete_governed_entity_set'),
+        ([rows[0], {**rows[1], 'date': '2026-11-12'}], {}, 'mixed_session_rows'),
+        ([rows[0], {**rows[1], 'foreign_net': None}], {}, 'missing_or_invalid_constituent_value'),
+        ([rows[0], rows[0]], {}, 'duplicate_entity_rows'),
+    ]
+    for batch, opts, reason in cases:
+        result = fc.market_chip_observations(target, batch, required_entities=entities, **opts)
+        assert (result['status'], result['reason'], result['observations']) == ('withheld', reason, [])
+    assert fc.market_chip_observations(target, rows)['reason'] == 'governed_entity_set_missing'
+
+
+def test_recorded_twse_margin_missing_source_date_never_gets_execution_date():
+    rows = _recorded_chip_rows('tw_margin_short_balance', 'TWSE')
+    assert all(not r['date'] for r in rows)  # Actual official response is undated.
+    result = fc.market_chip_observations('tw_market_margin_balances', rows,
+                                         required_entities=[r['symbol_canonical'] for r in rows])
+    assert result['reason'] == 'missing_or_invalid_source_event_time'
+    assert result['observations'] == []
+
+
+def test_market_chip_rejects_legacy_default_zero_and_incomplete_taifex_cells():
+    rows = _recorded_chip_rows('taifex_futures_chip', 'TAIFEX')
+    assert fc.market_chip_observations('taifex_market_positions', rows[:-1])['reason'] == 'incomplete_governed_entity_set'
+    broken = [{**rows[0], 'raw_row': {}, 'net_open_interest': 0}, *rows[1:]]
+    assert fc.market_chip_observations('taifex_market_positions', broken)['reason'] == 'missing_or_invalid_constituent_value'
+    options = _recorded_chip_rows('taifex_options_chip', 'TAIFEX')[:1]
+    broken_ratio = [{**options[0], 'raw_row': {'PutCallOIRatio%': '57.75'}}]
+    assert fc.market_chip_observations('taifex_market_put_call', broken_ratio)['observations'] == []
+    with pytest.raises(fc.FeatureCatalogueError, match='completeness'):
+        fc.observations_from_row('tw_market_margin_balances', rows[0])
+
+
+def test_market_chip_records_malformed_payloads_and_overflow_as_withheld():
+    rows = _recorded_chip_rows('tw_institutional_flow', 'TPEx')
+    entities = [r['symbol_canonical'] for r in rows]
+    huge = [{**row, 'foreign_net': 1e308} for row in rows]
+    assert fc.market_chip_observations('tw_market_institutional_flows', huge,
+                                     required_entities=entities)['reason'] == 'nonfinite_market_total'
+    assert fc.market_chip_observations('taifex_market_put_call', [None])['reason'] == 'malformed_session_rows'
+    options = _recorded_chip_rows('taifex_options_chip', 'TAIFEX')[:1]
+    assert fc.market_chip_observations('taifex_market_put_call', [{**options[0], 'raw_row': 5}])['reason'] == 'malformed_source_row'

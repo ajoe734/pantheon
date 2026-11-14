@@ -5928,22 +5928,26 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
 
 _PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
 _PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
+_PM12_RANKING_EVIDENCE_ENTITY_TYPES = (
+    "artifact", "capital_pool", "capital_sleeve", "paper_ledger", "persona",
+    "persona_binding", "persona_capital_binding", "runtime", "runtime_binding",
+    "strategy", "strategy_spec",
+)
 
 
-def _pm12_read_fn_accepts_window(read_fn: Any) -> bool:
+def _pm12_read_fn_accepts(read_fn: Any, name: str) -> bool:
     import inspect
 
     try:
         params = inspect.signature(read_fn).parameters
     except (TypeError, ValueError):
         return False
-    return "captured_from" in params or any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _pm12_read_all_evidence_pages(
-    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None
+    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None,
+    *, _legacy: bool = False, _deadline: Optional[float] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Read every owner evidence page exactly (no truncation, no ordering
     assumption), or return ``None`` when the owner is unavailable.
@@ -5967,13 +5971,15 @@ def _pm12_read_all_evidence_pages(
         deadline = time.monotonic() + max(evidence_owner_read_timeout_seconds(), 0.05)
     except Exception:
         deadline = time.monotonic() + 4.0
+    if _deadline is not None:
+        deadline = _deadline
     page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
     # Ask the owner to page only the quarter's rows so the request count follows
     # the quarter population, not the total evidence count. An owner that
     # predates the window ignores it and the quarter filter downstream still
     # makes the output identical, only with more pages.
     window_kwargs: Dict[str, Any] = {}
-    if quarter_window and _pm12_read_fn_accepts_window(read_fn):
+    if quarter_window and _pm12_read_fn_accepts(read_fn, "captured_from"):
         start_at = _audit_datetime(quarter_window.get("start_at"))
         end_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
         if start_at is not None and end_at is not None:
@@ -5981,6 +5987,12 @@ def _pm12_read_all_evidence_pages(
                 "captured_from": start_at.isoformat(),
                 "captured_before": end_at.isoformat(),
             }
+    if _pm12_read_fn_accepts(read_fn, "include_summary"):
+        window_kwargs["include_summary"] = False
+    if quarter_window and page_size and _pm12_read_fn_accepts(read_fn, "linked_entity_types"):
+        window_kwargs["linked_entity_types"] = _PM12_RANKING_EVIDENCE_ENTITY_TYPES
+    if _legacy:
+        window_kwargs = {}
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
 
     def _submit(token: Optional[str]) -> Any:
@@ -6003,6 +6015,10 @@ def _pm12_read_all_evidence_pages(
         first = _wait(_submit(None))
         if not first.available:
             return None
+        if not getattr(first, "owner_hints_applied", True):
+            # First page already contains the full legacy population. Keep all
+            # subsequent pages on it, with no repeated capability probes.
+            window_kwargs = {}
         rows: List[Dict[str, Any]] = list(first.items or [])
         token = first.next_page_token
         if not token:
@@ -6015,6 +6031,13 @@ def _pm12_read_all_evidence_pages(
                 page = _wait(future)
                 if not page.available:
                     return None
+                if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                    # Mixed-version owner replicas must never mix offsets from
+                    # different populations. Restart the complete legacy stream
+                    # under the original request deadline.
+                    return _pm12_read_all_evidence_pages(
+                        read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                    )
                 rows.extend(page.items or [])
             return _sorted(rows)
         # Opaque or short-page tokens: sequential follow, still complete.
@@ -6023,6 +6046,10 @@ def _pm12_read_all_evidence_pages(
             page = _wait(_submit(str(token)))
             if not page.available:
                 return None
+            if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                return _pm12_read_all_evidence_pages(
+                    read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                )
             rows.extend(page.items or [])
             token = page.next_page_token
             if token is not None and str(token) in seen:

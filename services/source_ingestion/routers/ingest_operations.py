@@ -433,6 +433,8 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         page_token: str | None = Query(default=None),
         captured_from: str | None = Query(default=None),
         captured_before: str | None = Query(default=None),
+        linked_entity_types: str | None = Query(default=None),
+        include_summary: bool | None = Query(default=None),
         authorization: str | None = Header(default=None),
         tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     ) -> dict[str, Any]:
@@ -447,8 +449,11 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid page_token") from None
         tenant = _source_read_tenant(authorization, tenant_id)
+        entity_types = tuple(sorted({v.strip().lower() for v in linked_entity_types.split(",") if v.strip()})) if linked_entity_types is not None else None
         try:
             window_kwargs = {"captured_from": captured_from, "captured_before": captured_before} if windowed else {}
+            if entity_types is not None:
+                window_kwargs["linked_entity_types"] = entity_types
             items, total = runtime.evidence_repository.list_evidence_items_page(
                 tenant_id=tenant, limit=page_size, offset=offset, **window_kwargs
             )
@@ -456,7 +461,8 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
         summary: dict[str, Any] | None = None
         summarize_fn = getattr(runtime.evidence_repository, "summarize_evidence_items", None)
-        if callable(summarize_fn):
+        # Omission preserves the legacy summary contract. Ranking explicitly opts out.
+        if include_summary is not False and callable(summarize_fn):
             try:
                 raw_summary = summarize_fn(tenant_id=tenant)
                 if isinstance(raw_summary, dict):
@@ -473,7 +479,11 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             # Echoed only when the window was applied, so a caller can tell an
             # owner that honoured it from an older owner that ignored it. The
             # summary stays the whole-tenant population summary either way.
-            **({"filters": {"captured_from": captured_from, "captured_before": captured_before}} if windowed else {}),
+            **({"filters": {
+                **({"captured_from": captured_from, "captured_before": captured_before} if windowed else {}),
+                **({"linked_entity_types": list(entity_types)} if entity_types is not None else {}),
+                **({"include_summary": include_summary} if include_summary is not None else {}),
+            }} if windowed or entity_types is not None or include_summary is not None else {}),
         }
 
     @router.get("/api/source-ingest/evidence/items/{evidence_item_id}")

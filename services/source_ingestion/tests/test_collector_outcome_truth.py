@@ -802,6 +802,10 @@ from services.source_ingestion.tests.test_collector_bundle_connector import _day
 
 
 def test_priority_verified_prefix_survives_ordered_deadline(tmp_path, monkeypatch):
+    import hashlib
+    from pathlib import Path
+    from services.source_ingestion.runtime import create_runtime
+
     source_id = "collector-tw-twse-price-history"
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv(_cb.COLLECTOR_BUNDLE_TOKEN_ENV, "fixture-only")
@@ -837,13 +841,66 @@ def test_priority_verified_prefix_survives_ordered_deadline(tmp_path, monkeypatc
                            "dataset": "tw_price_daily", "cadence_seconds": 1800},
         "max_records": 500,
     })
-    results = []
+    config = store.get_config("conn-truth")
+    runtime = create_runtime(data_dir=tmp_path)
+    runtime.connector_store.upsert_config(config.connector, config.fetch)
+    expected = {}
+    for entry in entries:
+        base = f"bundles/{source_id}/{entry['date']}/{entry['run_id']}"
+        item = json.loads(files[base + "/manifest.json"])["items"][0]
+        expected[entry["run_id"]] = (
+            f"collector:{source_id}:{item['item_id']}:{item['content_sha256'][:12]}",
+            item["item_id"], "sha256:" + item["content_sha256"], entry["date"],
+        )
+    results, delivered, persisted, prefixes, watermarks, raw_reads = [], [], [], [], [], []
+    root = tmp_path / "market_data_store"
     for _ in range(3):
-        result = run_scheduler(tmp_path, store)
+        # Restart the real persistence owner as well as the configured adapter.
+        runtime = create_runtime(data_dir=tmp_path)
+        runtime._register_or_validate_connector(config.connector)
+        start = len(opened)
+        result, refs, _ = runtime.pipeline.run_job(connector=config.connector,
+            trace_id="trace-priority-deadline", trigger_type="scheduled",
+            fetch_batch=runtime.pipeline.configured_fetch("conn-truth", trace_id="trace-priority-deadline"))
         results.append((result.run.status.value, result.run.raw_count,
                         result.watermark.value if result.watermark else None))
+        raw_reads.append([p for p in opened[start:] if "/raw/" in p])
+        delivered.extend(result.records)
+        receipt = runtime.store.get_receipt(result.run.ingest_run_id)
+        assert receipt.status == "completed"
+        assert receipt.normalized_count == result.run.normalized_count == len(result.records)
+        for ref in refs["storage_refs"]["normalized_refs"]:
+            persisted.extend(json.loads(line) for line in Path(ref["uri"]).read_text().splitlines())
+        prefixes.append(json.loads((root / "state/conn-truth/latest_priority.json").read_text()))
+        watermarks.append(runtime.store.get_watermark("conn-truth").value)
+        assert watermarks[-1] == results[-1][2]
     # constant-latency priority progress must be persisted, never discarded by the ordered sweep timeout
     assert [r[0] for r in results] == ["completed"] * 3, results
     assert results[0][1] == 1, results  # priority row persisted on first attempt
-    assert [r[1] for r in results] == [1, 1, 1], results  # bounded progress per attempt; priority replay is idempotent
+    assert [r[1] for r in results] == [1, 1, 0], results  # acknowledged newest item is not replayed
+    assert watermarks == [None, "2026-11-10T02:02:00Z#run2", "2026-11-10T02:02:00Z#run2"]
     assert results[-1][2] == "2026-11-10T02:02:00Z#run2", results
+    assert [r.metadata["collector"]["run_id"] for r in delivered] == ["run2", "run1"]
+    assert len({r.source_id for r in delivered}) == len(delivered) == 2
+    assert len(persisted) == 2
+    for record, saved in zip(delivered, persisted):
+        identity = (record.source_id, record.source_id.split(":")[-2],
+                    record.metadata["content_hash"], record.metadata["normalized_row"]["trade_date"])
+        assert identity == expected[record.metadata["collector"]["run_id"]]
+        assert saved["source_id"] == record.source_id
+        assert saved["metadata"] == record.metadata
+        assert record.metadata["pit"]["validated"] is True
+        assert record.metadata["event_time"].startswith(identity[-1])
+        assert "sha256:" + hashlib.sha256((root / record.metadata["raw_uri"]).read_bytes()).hexdigest() == identity[2]
+    # The first pull verifies newest run2, then hits the unchanged shared deadline
+    # on historical run1. Its committed prefix survives both continuation restarts.
+    assert len(raw_reads[0]) == 2 and "/run2/" in raw_reads[0][0] and "/run1/" in raw_reads[0][1]
+    assert len(raw_reads[1]) == 1 and "/run1/" in raw_reads[1][0]
+    assert raw_reads[2] == []
+    assert prefixes[0] == prefixes[1] == prefixes[2]
+    assert prefixes[0]["key"] == "2026-11-10T02:02:00Z#run2"
+    assert prefixes[0]["delivered"] == 1 and prefixes[0]["done"] is True
+    assert prefixes[0]["trade_date"] == expected["run2"][-1]
+    assert prefixes[0]["items"] == {expected["run2"][1]: expected["run2"][2].removeprefix("sha256:")}
+    boundary = next(root.rglob("bundle-run2/persisted_boundary.json"))
+    assert json.loads(boundary.read_text())["cursor"] == watermarks[-1]
