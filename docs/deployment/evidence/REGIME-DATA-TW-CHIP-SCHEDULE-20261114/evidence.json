@@ -372,5 +372,35 @@
     "raw_date_policy": "TWSE MI_MARGN is requested and its raw rows can be persisted, but the recorded response is undated. Terminal verification and market-series conversion refuse valid-session claims for it; the current run date is never substituted.",
     "cap_policy": "Official equity response counts (1309 / 922 / 896) exceed the unchanged 500-row bound. No whole-market margin/flow value is claimed or produced from those capped pulls.",
     "review_status": "Pending independent review by assigned reviewer Claude; owner has not approved or marked done."
+  },
+  "source_rework": {
+    "recorded_at": "2026-11-14T15:54:58.854165+00:00",
+    "reason": "Original task/PR reopened to admit the existing scheduled-connector test path and correct classification of five builtin chip profiles as external Collector requirements.",
+    "base_commit": "7b0c226d92acbc8f15eadb6682f416af0504acb3",
+    "integration": "Merged current dev into the original published branch, preserving original PR #7341 and normal non-force push. Preserved both appended deploy-test blocks and inherited scheduled-connector history/throughput assertions.",
+    "invariants": "All requirements remain single-candidate live pulls, connector ids are unique, admitted Collector ids match deployed definitions minus held sources, held ids stay absent, and all five builtin chip requirements retain exact dataset/cadence/policy contracts.",
+    "hosted_behavior_claimed": false,
+    "validation": [
+      {
+        "command": "timeout 120 python3 scripts/dev/provision_python_distribution.py",
+        "exit_code": 0,
+        "result": "Checkout-scoped interpreter provisioned; foreign-cwd import ownership verified."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_controller_worker.py services/registry/test_factor_rule.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "380 passed, 1 skipped, 1 warning in 63.51s."
+      },
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh && git diff --check && python3 scripts/dev/provision_python_distribution.py --check-only",
+        "exit_code": 0,
+        "result": "Shell syntax, whitespace and checkout-scoped imports passed."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 240s while executing the real-size backfill test. This batch is NOT passed. Split reruns cover the rest of the file and the unchanged real-size backfill separately with bounded timeouts."
+      }
+    ]
   }
 }
