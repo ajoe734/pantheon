@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-MARKET-PROVENANCE-BOUND-20261114",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "ready_for_independent_review",
+  "status": "blocked_on_human_ops_candidate_clock_scope",
   "scope": "Verified Collector market bundles only; normalized rows, snapshots, official connectors, request cadence and legacy evidence retained.",
   "baseline": {
     "source_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
@@ -197,15 +197,38 @@
     "projection": "488 * (1375 + 6000 + 1349) = 4257312 normalized rows; 488 * 3 = 1464 bundle/date groups; 5856 new evidence-table rows; 0 automatic jobs; predicted 0 new numeric embedding calls.",
     "evidence_size_projection_bytes": 19455454,
     "extrapolation_note": "Relation-size estimate scales measured 30-day storage linearly; exact TOAST/vacuum/index sizes may differ. Conservative 165609472-byte existing-plus-new startup model separately exceeds the supplied 67-MB legacy table plus this estimate.",
-    "followup_validation": "The earlier thirty-day controller/PostgreSQL terminal pass is retained. This follow-up changes the five authorized scheduled count blocks and close dedupe prefix precedence only; normalized grouping, persistence and provenance cardinality paths are unchanged. The final batch reruns real PostgreSQL legacy compatibility and the padded existing-plus-two-year reload model."
+    "followup_validation": "CI repair retains every AC2 full-size source day and AC3 thirty-day bundle count, plus the original full-volume measured pass. Same-second run/receipt pairing now has deterministic live/reload coverage. No snapshot decoder or projection is mocked.",
+    "measured_ci_controller": {
+      "controller_ticks": 11,
+      "days_per_source": 30,
+      "distillation_jobs": 0,
+      "full_size_days_per_source": 1,
+      "new_embedding_calls": 0,
+      "normalized_rows": 8811,
+      "postgres_bytes": 958464,
+      "postgres_counts": {
+        "evidence_bundle": 90,
+        "evidence_item": 90,
+        "knowledge_object": 90,
+        "source_record": 90
+      },
+      "snapshot_harness": "valid two-close projection window; lossless latest-envelope journal compaction between ticks; all normalized history retained",
+      "two_year_bundles": 1464,
+      "two_year_normalized_rows": 4257312,
+      "two_year_reload_peak_bytes": 54648682,
+      "two_year_reload_seconds": 3.541418786000577,
+      "wall_seconds": 35.996995378000065,
+      "embedding_basis": "Structural bound; separate real index pipeline backend no-call test verifies numeric summaries are excluded. No search service is running in the controller fixture."
+    },
+    "ci_matrix": "Each source has 30 trade-date bundles: one full-size day (1375/6000/1349 rows) plus 29 one-row days. All 8811 normalized rows and all 90 exact bundle row counts are checked through the real controller/pipeline/PostgreSQL, alongside the existing 1/full-size row-cardinality test. Earlier full-volume 261720-row/90-bundle terminal passes remain recorded."
   },
   "readers": [
     {
       "reader": "latest connector record/readback",
       "path": "services/source_ingestion/runtime.py:_latest_source_record_by_connector",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression; test_same_second_runs_pair_latest_receipt_and_record",
       "file_line_refs": [
-        "services/source_ingestion/runtime.py:1242"
+        "services/source_ingestion/runtime.py:1257"
       ]
     },
     {
@@ -280,7 +303,7 @@
       "path": "services/source_ingestion/runtime.py:collector_market_record_from_partition; services/source_ingestion/routers/ingest_operations.py:get_source_record",
       "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence compares original normalized row/hash, rejects foreign tenant, and checks missing partition 503 without foreign existence disclosure.",
       "file_line_refs": [
-        "services/source_ingestion/runtime.py:1174",
+        "services/source_ingestion/runtime.py:1189",
         "services/source_ingestion/routers/ingest_operations.py:426"
       ]
     }
@@ -350,6 +373,33 @@
       "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 1200 .venv-pantheon/bin/python -m pytest -q -rs services/source_ingestion/tests/test_collector_market_provenance_bound.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/test_pg_store.py services/search/test_index_pipeline.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py -k 'not real_pg_30_day'",
       "result": "368 passed, 1 skipped, 1 deselected, 3 warnings in 471.63s (0:07:51); exit 0. Includes real PostgreSQL legacy/rollback reader and padded two-year startup model, all touched test modules, and all three required regression modules. The one deselection is the already-passed thirty-day PostgreSQL scale case; no failed or interrupted run is counted as a pass.",
       "log_sha256": "1906811c7de0960486ff8512ec9f14c366ea8ffa4d75e940016ef821e0ff5b1b"
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 180 .venv-pantheon/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_market_provenance_bound.py -k real_pg_30_day",
+      "result": "1 passed, 11 deselected in 64.80s; exit 0. Real 90-bundle/8811-row CI matrix, 11 controller ticks, drain 35.997s, two-year reload 3.541s / 54648682 peak bytes.",
+      "log_sha256": "3fa7e6b191b4220170c125bbd5877cee21d0ba0c66b6a4cd49f407066db93afd"
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python -m pytest -q services/search/test_index_pipeline.py",
+      "result": "30 passed, 1 warning in 3.55s; exit 0"
+    },
+    {
+      "command": "SOURCE_INGEST_DATA_DIR=$(mktemp -d /tmp/collector-bound-full-source.XXXXXX) SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 900 .venv-pantheon/bin/python -m pytest -q --durations=12 services/source_ingestion/tests services/source_ingestion/test_*.py",
+      "result": "9 failed, 1967 passed, 2 skipped, 15 warnings in 753.06s; exit 1. All nine failures are in test_finmind_broker_backfill.py due missing pyarrow in the newly provisioned local venv. All task-touched modules plus newest-session, scheduled, and tw-close regressions passed, including real PostgreSQL tests.",
+      "skips": [
+        "test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader (private capture)",
+        "test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol (live opt-in)"
+      ],
+      "log_sha256": "f58171ce836d21eae6e27b56f31cb392d9fef5e90e864ed0fb5570d86bc4cda0"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pip install \"pyarrow>=15,<30\"; timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py",
+      "result": "Installed pyarrow==26.0.1 only in the task-local venv; then 17 passed in 3.97s, exit 0. No repository requirements or shared interpreter changed."
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 120 .venv-pantheon/bin/python -m pytest --lf --last-failed-no-failures none -q services/source_ingestion/tests services/source_ingestion/test_*.py",
+      "result": "Exactly the 9 failures from the full batch: 9 passed in 4.35s; exit 0. Aggregate full-source coverage: 1976 passing cases and 2 opt-in/private skips across these terminal batches; not a single all-green full-suite result.",
+      "log_sha256": "6fb7c7cd4b7c771677612d13782c9f7b2e4c99a28399073ebb07f6eb722c355e"
     }
   ],
   "holds": {
@@ -364,24 +414,26 @@
       "services/source_ingestion/tests/test_scheduled_connector.py:2749 test_real_controller_drains_1349_t86_rows_before_daily_cadence: expected 1349 sources, actual 1 bundle",
       "services/source_ingestion/tests/test_scheduled_connector.py:2902 test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget: expected 6002 sources, actual 3 bundles"
     ],
-    "historical_assertion_resolution": "All five historical per-row source count conflicts are resolved with bounded bundle counts plus exact metadata and on-disk row counts. The subsequently exposed close dedupe prefix regression is corrected in pipeline.py; the existing dedupe assertion remains intact. The final batch passed."
+    "historical_assertion_resolution": "All five historical per-row source count conflicts are resolved with bounded bundle counts plus exact metadata and on-disk row counts. The subsequently exposed close dedupe prefix regression is corrected in pipeline.py; the existing dedupe assertion remains intact. The final batch passed.",
+    "candidate_clock_scope": "Pending Human/Ops: frozen a9284b68c TPEx timing test reproduced at line 280; deterministic 4-line clock synchronization patch is proposed and validated in ci_repair.candidate_clock_proposal but the read-only repository test is unchanged."
   },
   "delivery": {
     "pr": 7356,
     "url": "https://github.com/ajoe734/pantheon/pull/7356",
     "base": "dev",
-    "composed_dev": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+    "composed_dev": "7b0c226d92acbc8f15eadb6682f416af0504acb3",
     "draft": false,
     "merge_commit": null,
-    "hold": null,
-    "required_actor": "Claude",
-    "review_status": "Owner validation complete; ready for exact-head canonical handoff. Independent reviewer approval, CI completion and merge are not claimed."
+    "hold": "Historical candidate-clock repair requires Human/Ops scope authorization and artifact-contract addition.",
+    "required_actor": "Human/Ops",
+    "review_status": "Blocked before re-handoff: scoped implementation and local verification complete; known historical candidate race needs Human/Ops scope and canonical artifact-contract authorization. No independent approval, CI completion, merge or done claim."
   },
   "reproducibility": {
     "scale_log_sha256": "53c2aa3e6772c6793b51035c56f8ca6658b044bbb4f20213920ed334ee7c56f4",
     "startup_log_sha256": "e5264dc49e25bb92938274d3362846e69ca36bb616080fe2d9758de14c04d756",
     "isolated_newest_log_sha256": "cb867a63376042ffb837ab62fe80c877d56fe9000368ef322ea066eba5c7ffa0",
-    "authorized_full_validation_log_sha256": "1906811c7de0960486ff8512ec9f14c366ea8ffa4d75e940016ef821e0ff5b1b"
+    "authorized_full_validation_log_sha256": "1906811c7de0960486ff8512ec9f14c366ea8ffa4d75e940016ef821e0ff5b1b",
+    "ci_repair_scale_log_sha256": "3fa7e6b191b4220170c125bbd5877cee21d0ba0c66b6a4cd49f407066db93afd"
   },
   "operator_authorized_assertions": {
     "authorization": "Canonical artifact-contract updated by Human/Ops at 2026-11-14T15:00:39Z; owner resumed at 15:00:47Z.",
@@ -436,7 +488,7 @@
       "Resolve second-resolution run/receipt timestamp ties by durable run insertion order in runtime freshness and latest-record readback; UUID lexical order is not time order.",
       "Add deterministic live/reloaded same-second readback regression with descending UUIDs."
     ],
-    "status": "Same-second runtime fix anchored; current-dev compose and full validation pending. Historical candidate clock scope authorization pending.",
+    "status": "Authorized repairs implemented, composed with current dev and validated. Blocked on Human/Ops authorization/artifact-contract revision for the frozen-candidate clock test; no new reviewer handoff or merge claimed.",
     "attempts": [
       {
         "change": "6000-row test cap",
@@ -468,6 +520,21 @@
         "command": "timeout 90 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k same_second",
         "result": "Before fix: 1 failed, 11 deselected in 2.17s; old ingest-ffffffffffff selected instead of latest ingest-aaaaaaaaaaaa. After fix: 1 passed, 11 deselected in 2.18s; exit 0, live and reloaded pairing verified."
       }
-    ]
+    ],
+    "candidate_clock_proposal": {
+      "target": "services/source_ingestion/tests/test_collector_newest_session_progress.py:test_exact_candidate_restarts_same_session_on_recorded_run_keys",
+      "authority": "Not applied: AC6 marks this test module read-only; artifact contract excludes it. Human/Ops contract revision and scope authorization required.",
+      "patch": "--- a/services/source_ingestion/tests/test_collector_newest_session_progress.py\n+++ b/services/source_ingestion/tests/test_collector_newest_session_progress.py\n@@ -249,12 +249,16 @@\n     module = importlib.util.module_from_spec(spec); sys.modules[name] = module\n     spec.loader.exec_module(module)\n     clock, lock = [0.0], threading.Lock()\n+    read_batch = threading.Barrier(module.LATEST_CLOSE_RAW_READ_CONCURRENCY, timeout=10)\n     files, entries, measurements, identities = {}, [], [], []\n     class Transport(FakeTransport):\n         def read(self, path, *, max_bytes):\n             with lock:\n                 start = clock[0]\n             if \"/raw/\" in path:\n+                # All readers capture the same simulated batch start before any\n+                # advances the clock, independent of OS thread scheduling.\n+                read_batch.wait()\n                 time.sleep(0.002)\n             try:\n                 return super().read(path, max_bytes=max_bytes)\n",
+      "validation_command": "timeout 150 bash -c 'for attempt in {1..10}; do .venv-pantheon/bin/python -m pytest -q /tmp/collector-bound-candidate-proposal/test_candidate.py -k exact_candidate || exit $?; done'",
+      "validation_result": "10 consecutive terminal runs, each 2 passed / 11 deselected; total 20 passes, exit 0. Temporary copy only; all original identity assertions and frozen a9284b68c code preserved."
+    },
+    "current_dev_compose": "9f98bd4c0 merged dev 7b0c226d9 without conflicts; source-ingest CI-equivalent suite and search index tests run on this composed head.",
+    "source_step_budget": {
+      "budget_seconds": 900,
+      "measured_full_step_seconds": 753.06,
+      "result": "Finished within budget. First full batch had nine local missing-pyarrow failures; after installing repository-declared pyarrow in the checkout-local venv, all nine failed cases passed. This is aggregate local verification, not a claim of a single all-green full-suite run or GitHub CI success.",
+      "provenance_scale_call_seconds_in_full_suite": 32.28,
+      "historical_candidate_clock": "Original repository test happened to pass in this full batch but independently reproduced a four-row mismatch on repeat 3; its known race remains an explicit hold."
+    }
   }
 }
