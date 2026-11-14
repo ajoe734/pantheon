@@ -929,6 +929,17 @@ class CollectorBundleAdapter:
                     _METADATA_CACHE.popitem(last=False)
         return bundle
 
+    def _verify_ordered_bundle(self, transport: BundleTransport, *, expected_source_id: str,
+                               entry: Mapping[str, Any], item_window: tuple[int, int],
+                               deadline: float | None = None, raw_read_concurrency: int = 1) -> VerifiedBundle:
+        if not self._priority_latest_enabled():
+            return verify_bundle(transport, expected_source_id=expected_source_id, entry=entry,
+                                 item_window=item_window, deadline=deadline, raw_read_concurrency=raw_read_concurrency)
+        bundle = self._verified_metadata(transport, entry)
+        return _verify_raw_window(transport, bundle, item_window=item_window,
+                                  deadline=deadline if deadline is not None else _OP_DEADLINE.get(),
+                                  raw_read_concurrency=raw_read_concurrency)
+
     def _load_priority_state(self) -> tuple[str | None, int, bool, tuple[str, ...]]:
         path = self._priority_key_path()
         try:
@@ -1122,7 +1133,7 @@ class CollectorBundleAdapter:
             try:
                 metadata_bundle = None
                 if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
-                    metadata_bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+                    metadata_bundle = self._verify_ordered_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
                     if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
                             and all(str(row["id"]) in priority_state["items"] for row in metadata_bundle.items)):
                         # Every identity of this session was persisted by the newer priority run.
@@ -1131,7 +1142,7 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
-                bundle = verify_bundle(
+                bundle = self._verify_ordered_bundle(
                     transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
                     deadline=deadline,
                     raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
@@ -1220,7 +1231,7 @@ class CollectorBundleAdapter:
         if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
             # The cache alone cannot acknowledge a configured delivery; the
             # persistence owner must also have committed this exact boundary.
-            boundary = verify_bundle(transport, expected_source_id=self.source_id,
+            boundary = self._verify_ordered_bundle(transport, expected_source_id=self.source_id,
                                      entry=latest_entry, item_window=(0, 0))
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor,
