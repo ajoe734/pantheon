@@ -2,7 +2,16 @@
   "task_id": "DEV-LEASE-RATE-LIMIT-WAIT-20261114",
   "owner": "Codex2",
   "reviewer": "Antigravity",
-  "delivery_scope": "Existing source repair only; independent review and canonical integration pending",
+  "delivery_scope": "Existing source repair only; independent review and integration pending, with an external inherited collector regression blocking green validation",
+  "dependency_resumption": {
+    "task_id": "COLLECTOR-SESSION-FIXTURE-CLOCK-20261114",
+    "canonical_status": "done",
+    "canonical_done_at": "2026-11-14T14:34:27Z",
+    "dependency_pr": 7353,
+    "dev_merge_commit": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+    "composition_commit": "8941bbe8fe7f83590ed56fd4f0a523c8e26e2ea5",
+    "method": "Merged current dev into the original PR #7348 branch, preserving the immutable controller ancestor and enabling normal non-force publication. The collector fix is inherited from dev, with no duplicate source edit; the original eight acceptance criteria, twelve changed paths, owner and reviewer remain unchanged."
+  },
   "incident_reference": {
     "run_id": 43569948128,
     "source": "canonical task acceptance and task-scoped continuation brief",
@@ -87,7 +96,7 @@
     "environment": "Checkout-scoped Python 3.12.3 provisioned by python3 scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON; package mappings verified from foreign cwd without PYTHONPATH",
     "focused_suites": {
       "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 300 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_paper_diagnostics_failure_path.py",
-      "result": "549 passed, 56 subtests passed in 124.22s",
+      "result": "549 passed, 56 subtests passed in 123.50s after current dev composition",
       "exit_code": 0
     },
     "workflow_syntax": {
@@ -99,6 +108,30 @@
     "commit_trailers": {
       "command": ".venv-pantheon/bin/python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
       "result": "passed",
+      "exit_code": 0
+    },
+    "supplemental_collector_regression": {
+      "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
+      "result": "1 failed, 12 passed in 155.61s; terminal exit 1, no timeout",
+      "exit_code": 1,
+      "failed_test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]",
+      "assertion": "identities[0] == identities[1] == identities[2], line 280; different replay item sets while loading immutable legacy candidate a9284b68c",
+      "isolated_confirmation": {
+        "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 120 .venv-pantheon/bin/python3 -m pytest -q 'services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]' services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
+        "result": "1 failed, 1 passed in 4.09s; terminal exit 1, no timeout. The CLOCK-corrected completed-same-session test passed; the legacy TPEX replay failed again.",
+        "exit_code": 1
+      },
+      "inherited_source_identity": {
+        "base_commit": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+        "test_blob_at_dev_and_task": "d5ca37c4de9cee196d56980cbeda9bd589fbbdbd",
+        "collector_adapter_blob_at_dev_and_task": "675dc76b64862132288d88b6727204096ba48674",
+        "task_diff_for_both_paths": "empty"
+      },
+      "scope_and_next": "The legacy replay fixture runs in required Smoke acceptance. No collector source, test, budget, assertion or skip was changed in this task. Preserve the original eight AC/twelve paths/PR7348 and report this distinct inherited failure to collector source owner Codex via the existing external-blocker path. CLOCK remains genuinely done; do not block on that satisfied task or claim all validation passed. No fresh independent review, merge or done is claimed."
+    },
+    "diff_whitespace": {
+      "command": "git diff --check origin/dev...HEAD",
+      "result": "Removed a trailing blank line in the task-owned guard test; whitespace check passed before publication",
       "exit_code": 0
     }
   },

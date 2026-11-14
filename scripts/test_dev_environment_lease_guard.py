@@ -669,4 +669,3 @@ def test_rate_limited_heartbeat_loss_preserves_rate_limit_failure_json_for_compe
         persisted = json.loads(paths["failure"].read_text(encoding="utf-8"))
         assert persisted["reason"] == "rate_limited"
         assert persisted["rateLimitResetAt"] == "2026-11-14T07:58:56Z"
-
