@@ -25,13 +25,13 @@
 2. 記憶庫對應：每個租戶一個「事實庫」（共用層）；每個 persona 一個「解讀庫」（私人記憶，可在會議分享的另加標籤）。
 3. 錨點（策略、父代、類型、標的、商品、資料集、盤勢、決定類型）由我們提供，同時當實體與標籤，名稱不讓 AI 改。
 4. 讀取：先依錨點標籤嚴格篩（關聯先篩）→ Hindsight 四路搜尋（語意、關鍵字、關聯圖、時間）＋重新評分＋新舊/時間加成 → 最後用我們的「有沒有用」調整。
-5. 讓 AI 控制讀取：記憶服務提供 recall 與 reflect（AI 讀記憶後回答並附出處）；每日循環的 persona 先說要查什麼（最多 3 個查詢）＋一次 reflect，由控制器經記憶服務執行後交回，再提案；會議前每個參加者用 reflect 整理自己的解讀，全文帶進會議。
+5. 讓 AI 控制讀取（11/14 修訂，見第 10 節）：persona 的操作改成工具呼叫——查記憶、讀自己的常設問題答案、提案三個工具，由轉接層逐項檢查權限並留紀錄；persona 自己想，不再由 Hindsight 的 AI 代為反思；會議前由每個參加者自己的 agent 查可分享的記憶後寫解讀，全文帶進會議。Hindsight 背景用的 AI（拆解、整理、更新常設問題答案）經 OpenClaw 一個沒有工具的 agent 呼叫，Hindsight 不放任何模型金鑰。
 6. 淘汰：我們取代/封存/到期時，同步在 Hindsight 標成失效；有害 3 次送審照舊；不靠刪除提升效果。
 7. 拿掉自製的記憶排序與「記憶寫進搜尋索引」那段，只留一套記憶索引；知識庫的文件與證據檢索不變。
 
 **不變的界線：** 交易執行不讀記憶；AI 只提候選；只有記憶服務能連 Hindsight（Hindsight 只有一把共用金鑰、沒有逐庫權限，所以不能讓 agent 直接連）；私人解讀不跨 persona；會議只拿標成可分享的解讀。
 
-**待操作者決定：** AI 拆解／整理／reflect 用哪個模型（決定前先用不呼叫 AI 的模式上線）；私人記憶期限；盤勢錨點來源；是否啟用心智模型。
+**待操作者決定（11/14 更新）：** 私人記憶期限仍待定。已定：AI 經 OpenClaw 呼叫；常設問題（心智模型）啟用；盤勢錨點來源改由盤勢設計 `SD-REGIME-STATE-ENGINE-20261114` 提供，在那之前不帶盤勢錨點。
 
 ---
 
@@ -144,14 +144,15 @@ Numeric values are coordinator starting values, not operator decisions.
 | H2 | **Models offline.** Embeddings use the ONNX provider with the same `multilingual-e5-large` files already packaged and checksummed for the search service, with `query: ` and `passage: ` prefixes; the reranker is a local multilingual cross-encoder packaged with checksums (starting candidate `BAAI/bge-reranker-v2-m3`, Apache-2.0). No model is downloaded at runtime; checksum failure keeps the service not ready. The image variant (slim or full) is whichever runs these ONNX providers; the deploy task records the choice and image size. |
 | H3 | **Banks and mapping.** One facts bank per tenant holds institutional entries; one interpretation bank per persona holds that persona's entries. Each canonical entry is one Hindsight document: `document_id` is the canonical id; `metadata` carries source event type and id, write authority, memory type and relevance scope; `timestamp` is the event time; `context` is the source event type; `entities` are the anchors (H4) with `resolve_entities=false`; tags are the anchors plus `scope:private` or `scope:committee` and the memory type. Canonical supersede, archive and expiry invalidate the document's memories; a compliance deletion deletes the document. A rebuild entry point drops a bank and re-retains every active canonical entry. Canonical stores remain the only truth. |
 | H4 | **Anchors.** Anchors are derived deterministically from canonical structured fields and tags by one mapping function: strategy, parent strategy, family, underlying, instrument class, dataset, decision type and regime when present. They are never produced by an LLM. Entries without an anchor are retained with tag `anchor:none` and counted in diagnostics. |
-| H5 | **Extraction and LLM layers.** Retain, consolidation (observations), reflect and mental-model refresh each use their own LLM settings. Until the operator chooses a provider, retain uses `chunks` mode (no LLM call; caller entities only), consolidation and reflect are off, and responses report `llm_layers: disabled`. After the choice, retain uses `verbatim` (original text kept with extracted entities and dates) so the stored text stays the owner's text. Observations are per bank, so they are that persona's consolidated interpretations; they are derived, always carry `source_fact_ids`, and are never written back as canonical memory. Mental models stay off until the operator enables them. |
+| H5 | **Extraction and LLM layers (amended 2026-11-14, section 10).** Hindsight's own model calls (retain extraction, consolidation into observations, mental-model refresh) go through OpenClaw. The hindsight service uses its OpenAI-compatible provider against an internal adapter endpoint that admits only a dedicated deny-all OpenClaw agent `memory-index`; Hindsight holds no model credential and never receives the gateway token. `memory-index` uses pooled model slots (coordinator proposal: `openai/gpt-5.5` primary, `anthropic/claude-sonnet-4-6` fallback). Until that bridge is live, retain uses `chunks` mode (no LLM call; caller entities only) and responses report `llm_layers: disabled`. Once live, retain uses `verbatim` (original text kept with extracted entities and dates) so the stored text stays the owner's text. Observations are per bank, so they are that persona's consolidated interpretations; they are derived, always carry `source_fact_ids`, and are never written back as canonical memory. A bridge failure or quota refusal defers the background work and never blocks canonical writes or recall. |
 | H6 | **Read facade.** The memory service remains the only retrieval entry point. `/api/memory/retrieve` calls Hindsight recall on each bank the caller may read (own interpretation bank with private items only for the persona itself; facts bank; other personas' banks never), with `tag_groups` requiring at least one subject anchor (`any_strict`) when the request carries subject anchors, then maps results to canonical ids (documents directly, observations through `source_fact_ids`), hydrates and authorises from the canonical stores, applies `usefulness_score` as the final re-rank, and states `retrieval_mode` (`hindsight`, or `keyword_fallback` with its reason). Starting request values: `budget=mid`, `max_tokens` sized to the caller's budget, types per caller. |
 | H7 | **One memory index.** The memory-to-search projection is removed: store `_project` hooks, `sync_memory_projection`, `backfill_memory_index`, `project_*_entry`, `retrieve_*_with_backend`, and the search service's memory record kinds. The keyword ranking in the stores remains only as the explicit fallback. |
 | H8 | **Case file.** `lesson_query` callers pass anchors as subject anchors so lessons and negative memory use H6 association-first filtering; `regime` is included when the subject carries it. Budgets, groups and citation rules are unchanged. |
-| H9 | **LLM-controlled reads.** The memory service adds read-only `POST /api/memory/reflect` scoped exactly like H6 (one bank per call; the facts bank and the caller's own bank are separate calls), with low temperature, returning text plus citations mapped to canonical ids. In the daily cycle the persona agent controls what it reads through the controller, not through new agent tools (persona agents today have only `read` and the proposal tool, and the proposal is structured output validated by the controller): a first structured step returns up to 3 memory queries with subject anchors and one reflect question; the controller runs them through memory-svc recall and reflect for that persona's own bank and the facts bank, persists the results with canonical ids beside the case file, and the proposal step may cite those ids as well as case-file items. The citation check verifies every cited id against the persisted case file and read record of that cycle. No agent receives Hindsight access or a write path. |
-| H10 | **Meeting interpretations.** Before a panel call, each participant's interpretation is produced by `reflect` on that participant's own bank restricted to `scope:committee`, with the decision query, and is passed to the panel in full with its cited canonical ids. Length is controlled by count (one interpretation per participant, at most 12 cited items), never by truncating text. Participants stay deny-all; interpretations are produced by the memory service, not by giving participants tools. The meeting record stores each interpretation and its citations; the existing `consultation_outcome` writer records what each participant took away. While reflect is off (H5), the participant's committee-visible entries are passed in full instead. |
+| H9 | **Agent-controlled reads are tool calls (amended 2026-11-14, section 10).** Persona agents read memory through brokered OpenClaw tools: `persona_memory_recall` (own bank and the tenant facts bank, as separate scoped calls like H6) and `persona_mental_model_read` (own standing-question answers, H13); they submit proposals with `persona_proposal_submit`. A Pantheon OpenClaw plugin forwards each call with the host-provided agent id and run id to an adapter broker, which resolves the persona, enforces the per-persona tool profile deny-first, calls memory-svc and records every call per run. The agent does its own reasoning: there is no reflect tool, because a second model reasoning on the persona's behalf would not be that persona's interpretation and would nest one gateway run inside another. `POST /api/memory/reflect` has no caller and is removed. The daily-cycle controller takes proposals only from the broker's per-run record, and the citation check accepts case-file items and canonical ids returned to that run. No agent receives Hindsight access or a write path. |
+| H10 | **Meeting interpretations (amended 2026-11-14, section 10).** Before a panel call, each participant's own persona agent writes its interpretation of the decision in a separate interpretation turn. In that turn `persona_memory_recall` is restricted by the broker to the participant's `scope:committee` entries and the facts bank, and the mental-model and proposal tools are refused. The interpretation is passed to the panel in full with its cited canonical ids. Length is controlled by count (one interpretation per participant, at most 12 cited items), never by truncating text. In the panel call itself participants stay deny-all. The meeting record stores each interpretation and its citations; the existing `consultation_outcome` writer records what each participant took away. If a participant's interpretation turn fails, its committee-visible entries are passed in full instead and the record states which mode was used. |
 | H11 | **Invalidation and review.** H3 mirrors every canonical state change. The three-hurt review is unchanged; an archive decision from that review invalidates the document. No eviction for performance. Persona memory retention stays as today until the operator decides. |
 | H12 | **Boundaries.** Execution never reads memory, case files or Hindsight; agents only propose; private interpretations never cross personas; meetings receive only `scope:committee` interpretations; any authorisation or availability failure fails closed with a recorded reason. |
+| H13 | **Mental models (standing questions; added 2026-11-14, section 10).** Enabled once the H5 bridge is live. The persona service declares them deterministically from the pool: one per strategy family in the pool and one for risk lessons; a market-regime question is added only when a governed regime record exists (`SD-REGIME-STATE-ENGINE-20261114`). Agents cannot create or edit them. memory-svc is the only caller of Hindsight's mental-model API; refresh runs after consolidation with a minimum interval of one day (coordinator proposal). Answers are derived, carry citations mapped to canonical ids, are never written back as canonical memory, and are readable only by the owning persona (through H9) and by operator read surfaces. |
 
 ---
 
@@ -164,8 +165,9 @@ owner event ends ──► canonical memory (owner-written; facts = institutiona
                     memory-svc ──retain/invalidate──► Hindsight (internal)
                                                       facts bank per tenant · interpretation bank per persona
 decision point ──► case file (owner facts + evidence search + memory via memory-svc recall)
-daily cycle agent ──query plan──► controller ──► memory-svc recall / reflect (own bank + facts bank) ──► results back to the agent
-panel ──► memory-svc reflect per participant (own bank, scope:committee) ──► full interpretations to panel
+daily cycle agent ──tool calls──► OpenClaw plugin ──► adapter broker ──► memory-svc recall / mental-model read (own bank + facts bank)
+panel ──► interpretation turn per participant (own agent; recall limited to scope:committee) ──► full interpretations to panel
+hindsight background LLM ──► adapter memory-index endpoint ──► OpenClaw deny-all agent memory-index ──► pooled model
 outcome window ──► usefulness marks ──► final re-rank in memory-svc
 ```
 
@@ -182,8 +184,11 @@ Every task keeps the standing rules: production entry point exercised by an inte
 | 2 | `MEMORY-HINDSIGHT-INDEX` | H3–H7, H9 route, H11 |
 | 3 | `SEARCH-MEMORY-PROJECTION-REMOVAL` | H7 search-service side |
 | 3 | `CASE-FILE-HINDSIGHT-ANCHORS` | H8 |
-| 3 | `PERSONA-CYCLE-LLM-RECALL` | H9 daily-cycle query plan, read record and citation check |
-| 3 | `PANEL-FULL-INTERPRETATIONS` | H10 |
+| 2 | `OPENCLAW-MEMORY-INDEX-LLM-BRIDGE-20261114` | H5 bridge and the `memory-index` agent |
+| 3 | `MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114` | H5 verbatim switch, H13, removal of the reflect route |
+| 3 | `OPENCLAW-PERSONA-TOOL-BROKER-R2-20261114` | H9 plugin and broker |
+| 3 | `PERSONA-CYCLE-TOOL-CALLS-R2-20261114` | H9 daily cycle |
+| 3 | `PANEL-FULL-INTERPRETATIONS-R2-20261114` | H10 |
 | 4 | `MEMORY-HINDSIGHT-HOSTED-ACCEPTANCE` | operator-side hosted acceptance after an accepted Dev release |
 
 ---
@@ -199,12 +204,37 @@ Every task keeps the standing rules: production entry point exercised by an inte
 | R5 | Index drift from canonical | every canonical mutation mirrored; rebuild entry point; hosted acceptance compares counts |
 | R6 | Upstream project direction | MIT licence; version pinned by digest; canonical data stays in our stores, so the index can be replaced |
 | R7 | Shared files with blocked owners (`MEMORY-WRITEBACK-WIRING-20261112`, `PERSONA-AGENT-PROVISION-20261112`) | ordered after them on the functional track |
+| R8 | The `memory-index` agent shares model capacity with product agents | per-day call budget on the bridge; a refusal defers background work; usage reported per operation |
 
 ---
 
 ## 9. Pending operator decisions
 
-1. LLM provider and model for retain, consolidation and reflect (until then H5 runs without LLM layers).
-2. Persona memory retention (no default today).
-3. Source of the regime anchor.
-4. Whether to enable mental models and which standing questions.
+1. Resolved 2026-11-14: model calls go through OpenClaw (H5).
+2. Persona memory retention (no default today). Coordinator recommendation recorded at transcript line 3112 onward, not yet confirmed: no uniform expiry for lessons, risk observations, preferences, consultation outcomes and semantic entries; archive episodic entries after 180 days; shared facts do not expire.
+3. Resolved 2026-11-14: the governed regime record of `SD-REGIME-STATE-ENGINE-20261114`; no regime anchor until it exists.
+4. Resolved 2026-11-14: enabled (H13).
+
+
+---
+
+## 10. Amendment record 2026-11-14
+
+Operator statements (verbatim, same transcript):
+
+| Line | Time (UTC) | uuid | Text |
+| --- | --- | --- | --- |
+| 2969 | 2026-11-13 23:57:18.325Z | 00cddf54-423f-477c-aa01-0fa652866616 | 你這應該要改為agent 的操作轉成工具呼叫的機制 |
+| 3154 | 2026-11-14 01:50:22.742Z | 80bc73d7-1343-4110-b188-14d55f584af6 | 啟用，但是ai模型不是直接用agent工具例如openclaw就好了？還是直接設定key進去即可？ |
+| 3647 | 2026-11-14 03:21:32.806Z | 9045b98f-59d1-453a-b108-8bd3b3fa5979 | 處理啊 |
+
+Coordinator interpretation (not operator text): line 2969 quoted the coordinator's note that the daily cycle would use controller-run queries. Line 3154 answers the four recommendations given after line 3112: "啟用" enables mental models, and the question directs model calls through OpenClaw instead of a key inside Hindsight. The coordinator's answer at line 3275 (uuid d0009d7b-157b-4b93-85c1-c7a9a06a12ab) proposed the bridge, the removal of the reflect tool and persona-written meeting interpretations; line 3647 answers the coordinator's statement that these memory-side changes were next.
+
+What changed and why:
+
+- H5: the earlier coordinator suggestion to give Hindsight its own subscription login is withdrawn. Hindsight's own source warns that its Claude Code provider "runs automated model calls on your Claude subscription, which may conflict with Anthropic's terms" and recommends an API key for servers (`hindsight_api/engine/providers/claude_code_llm.py`, read 2026-11-14). Pantheon already routes pure inference through the adapter to a deny-all OpenClaw agent (`structured-extraction`: `scripts/openclaw-configure-shared-model-pool.sh:94-125`, `services/openclaw-gateway-adapter/main.py:1831`), and model credentials live only in the gateway (`integrations/openclaw/model-pool-and-persona-routing.md`).
+- Fit: Hindsight never sends `tools` to a provider; tool calls are expressed as replies to a response schema (`hindsight_api/engine/providers/tools_via_schema.py`), so a schema-in, JSON-out endpoint is sufficient. Not confirmed by running: latency per call through an agent run, and JSON compliance of the pooled models on Hindsight's prompts.
+- H9 and H10: with model calls going through the gateway, a reflect tool would make a persona's gateway run wait on a second gateway run, and the answer would be a generic model's reading rather than the persona's. The persona agent therefore reasons itself over recall results.
+- H13: enabled by the operator. The regime question waits for a governed regime record.
+- `MEMORY-HINDSIGHT-INDEX-20261113` was already in progress and is not changed; the reflect route it adds is removed by `MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114`.
+- Superseded: `OPENCLAW-PERSONA-TOOL-BROKER-20261114`, `PERSONA-CYCLE-TOOL-CALLS-20261114`, `PANEL-FULL-INTERPRETATIONS-20261113`, each replaced by its `-R2-20261114` task.
