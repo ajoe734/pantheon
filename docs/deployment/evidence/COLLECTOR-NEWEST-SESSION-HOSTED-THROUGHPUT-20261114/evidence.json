@@ -171,7 +171,7 @@
     }
   ],
   "delivery": {
-    "state": "rebased_source_validated_ready_for_fresh_exact_head_independent_review",
+    "state": "historical_reproducer_corrected_validation_pending_fresh_exact_head_review_required",
     "merge": "not_claimed_fresh_review_required_checks_and_native_supervisor_merge_outstanding",
     "deployment": "not_performed_author_has_no_authority",
     "deadline": "2026-11-16T06:40:00Z"
@@ -361,5 +361,141 @@
     "max_tick_seconds": 18.526619380653756,
     "max_same_source_gap_seconds": 20.52413819465437,
     "elapsed_including_600_second_cadence_phase": 1135.5614725794612
+  },
+  "legacy_reproducer_followup": {
+    "scope": "Same PR7352, original owner/reviewer, five artifacts and six ACs. Only the historical a9284b68c reproducer assertions and this manifest change; product/cache/controller/throughput model, old source pin, read deadline, transport harness and current-product acceptance are unchanged from a065af810.",
+    "reported_failures": {
+      "provenance": "Human/Ops canonical task next at 2026-11-14T15:05:15Z, inherited by owned_in_progress_dispatch",
+      "author": "original Rate7348 g4 author",
+      "count": 2,
+      "case": "test_exact_candidate_restarts_same_session_on_recorded_run_keys[TPEX6090]",
+      "assertion": "identities[0] == identities[1] == identities[2]",
+      "failing_window_sizes": "not captured; no reconstruction claimed",
+      "later_result": "Rate author retained these failures and reported a clean 13-pass full-file resumption at ec0de447. That does not erase the earlier failures or prove intermittent behavior resolved."
+    },
+    "assessment": "Immutable a9284b68c loads latest_priority.json then sets delivered=0 whenever the run key advances. Its four concurrent raw readers share a 15s monotonic deadline. Exact equality of three limited identity sets is stronger than the AC1 historical replay invariant: different window lengths can still replay acknowledged native items. The existing harness does not guarantee identical window lengths. Thread/deadline scheduling is a possible cause of the original failures, not a proven cause; failing windows are unavailable. No harness timing or production logic was changed.",
+    "assertions": "For all three recorded runs, require distinct matching priority run keys, nonempty incomplete delivery and priority_delivered==this-pull rows, and exact saved state. Before each later pull require loading the prior saved nonzero progress. Require the same first native identity and positive overlap with the first pull. This proves actual persisted progress resets and native replay without requiring equal window lengths. Print all per-source counts, wall/transport timings, prior/saved state and replay counts before assertions so any future failure preserves diagnostics.",
+    "unchanged_source_sha256": {
+      "services/source_ingestion/connectors/collector_bundle.py": "a68a0c60eb574f66c839cc58b7650e9a1978ca64a16d8fb331f21a83b723fd35",
+      "services/source_ingestion/controller_worker.py": "fd1dd7dc9d093966bae95385d342919acc364eec1d0dd24c0d8b0403b3b5346e",
+      "services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py": "51dc8fa4136258369a3db4994b923f0edfc88946ddea544628d5362ad47e8d32"
+    },
+    "independent_diagnostics": [
+      {
+        "path": "/tmp/pantheon-root01a11-scope-audit-20261114/legacy-replay-bounded-diagnostic.json",
+        "sha256": "247ea4c9f4a3b9e04d3935705820ead6ed8d0a9e3ad416b86f8f11f96920827f",
+        "data": {
+          "scope": "one bounded diagnostic of unchanged legacy-only test; no current product code or test modification",
+          "max_trials": 3,
+          "stop_on_first_failure": true,
+          "results": [
+            {
+              "trial": 1,
+              "outcome": "passed",
+              "measurements": [
+                {
+                  "run_id": "run-20261113T121842Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.5069757390001541,
+                  "transport_seconds": 15.189999999999989
+                },
+                {
+                  "run_id": "run-20261113T181844Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.5211241679999148,
+                  "transport_seconds": 15.190000000000095
+                },
+                {
+                  "run_id": "run-20261114T001933Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.4150125140004093,
+                  "transport_seconds": 15.189999999999852
+                }
+              ]
+            },
+            {
+              "trial": 2,
+              "outcome": "passed",
+              "measurements": [
+                {
+                  "run_id": "run-20261113T121842Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.38545638600044185,
+                  "transport_seconds": 15.189999999999989
+                },
+                {
+                  "run_id": "run-20261113T181844Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.3928997370003344,
+                  "transport_seconds": 15.190000000000095
+                },
+                {
+                  "run_id": "run-20261114T001933Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.3881393060000846,
+                  "transport_seconds": 15.189999999999852
+                }
+              ]
+            },
+            {
+              "trial": 3,
+              "outcome": "passed",
+              "measurements": [
+                {
+                  "run_id": "run-20261113T121842Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.3782966259996101,
+                  "transport_seconds": 15.189999999999989
+                },
+                {
+                  "run_id": "run-20261113T181844Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.36849870800051576,
+                  "transport_seconds": 15.190000000000095
+                },
+                {
+                  "run_id": "run-20261114T001933Z",
+                  "rows": 308,
+                  "delivered": 308,
+                  "done": false,
+                  "wall_seconds": 0.37564050699984364,
+                  "transport_seconds": 15.189999999999852
+                }
+              ]
+            }
+          ],
+          "not_counted_as_passing_CI": true
+        },
+        "counts_as_CI": false
+      },
+      {
+        "path": "/tmp/pantheon-root01a11-scope-audit-20261114/legacy-replay-real-pytest-diagnostic.json",
+        "sha256": "f83be29f37ab334b17b85462fdc22ce651a74a37e14bb364d1efe12a1b5f2fa7",
+        "data": {
+          "method": "one unchanged pytest case with its actual fixtures; observation-only failure hook",
+          "source_or_test_modified": false,
+          "records": [],
+          "pytest_exit_code": 0
+        },
+        "counts_as_CI": false
+      }
+    ],
+    "validation": "pending one bounded six-file AC6 regression; no retry-until-green loop"
   }
 }

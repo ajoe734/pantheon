@@ -283,16 +283,37 @@ def test_exact_candidate_restarts_same_session_on_recorded_run_keys(tmp_path, mo
             a = module.CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
                 dataset="tw_price_daily", cadence_seconds=600, max_records=1000, raw_root=str(tmp_path / "store"),
                 attribution_required=True, transport=Transport(files))
+            prior_state = a._load_priority_state()
             start, wall = clock[0], time.perf_counter()
             pull = a.pull(); a.save_resume_cursor(pull)
             measurements.append({"run_id": entry["run_id"], "rows": len(pull.records),
                 "delivered": pull.priority_delivered, "done": pull.priority_done,
-                "wall_seconds": time.perf_counter() - wall, "transport_seconds": clock[0] - start})
+                "wall_seconds": time.perf_counter() - wall, "transport_seconds": clock[0] - start,
+                "priority_key": pull.priority_key, "prior_priority_state": prior_state,
+                "saved_priority_state": a._load_priority_state(),
+                "first_identity": pull.records[0].source_id if pull.records else None})
             identities.append({r.source_id for r in pull.records})
-        assert identities[0] == identities[1] == identities[2]
-        assert not any(m["done"] for m in measurements)
+        for measured, ids in zip(measurements, identities):
+            measured["replayed_first_pull_rows"] = len(ids & identities[0])
+        # Print even when an invariant fails, so the actual windows/timings survive.
         print("CANDIDATE_SESSION_TIMING " + json.dumps({"candidate": "a9284b68c", "source": source,
                                                       "rows_in_bundle": count, "pulls": measurements}))
+        # The historical bug resets acknowledged progress on each new run key.
+        # Concurrent reads share a deadline; their window lengths need not match.
+        # Prove that saved nonzero progress was loaded, then restarted at the
+        # same native item with real overlap instead of continuing after it.
+        assert measurements[0]["prior_priority_state"] == (None, 0, False, ())
+        assert len({m["priority_key"] for m in measurements}) == 3
+        for index, measured in enumerate(measurements):
+            assert measured["priority_key"].endswith("#" + measured["run_id"])
+            assert 0 < measured["delivered"] == measured["rows"] < count
+            assert not measured["done"]
+            assert measured["saved_priority_state"] == (measured["priority_key"], measured["rows"], False, ())
+            assert measured["first_identity"] == measurements[0]["first_identity"]
+            assert measured["replayed_first_pull_rows"] > 0
+            if index:
+                previous = measurements[index - 1]
+                assert measured["prior_priority_state"] == previous["saved_priority_state"]
     finally:
         sys.modules.pop(name, None)
 
