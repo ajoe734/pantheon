@@ -468,7 +468,15 @@ def bootstrap_consult_personas(
     for spec in PANEL_PERSONA_SPECS:
         persona_id = spec["persona_id"]
         if persona_id in existing:
-            if existing[persona_id].get("consult_policy_id") == CONSULT_PANEL_POLICY_ID:
+            record = existing[persona_id]
+            if tenant_id and record.get("tenant_id") != tenant_id:
+                raise RuntimeError(f"panel persona {persona_id}: tenant binding mismatch")
+            metadata = record.get("metadata") or {}
+            if record.get("lifecycle_state", "draft") != "draft" or metadata.get("trading") is True:
+                raise RuntimeError(f"panel persona {persona_id}: non-trading draft required")
+            if record.get("tool_profile_id") or record.get("route_policy_id"):
+                raise RuntimeError(f"panel persona {persona_id}: trading policy attached")
+            if record.get("consult_policy_id") == CONSULT_PANEL_POLICY_ID and metadata.get("persona_class") == "consult_panel" and metadata.get("trading") is False and metadata.get("consultable") is True:
                 result[persona_id] = "exists"
             else:
                 # Complete a previously half-provisioned persona through the
@@ -479,6 +487,8 @@ def bootstrap_consult_personas(
                     {
                         "actor_id": actor_id,
                         "consult_policy_id": CONSULT_PANEL_POLICY_ID,
+                        "metadata": {**metadata, "persona_class": "consult_panel", "trading": False,
+                                     "consultable": True, "panel_role": spec["panel_role"]},
                     },
                 )
                 result[persona_id] = "repaired"
@@ -501,7 +511,11 @@ def bootstrap_consult_personas(
         }
         created = call("POST", f"{base}/api/personas", body)
         if isinstance(created, dict) and created.get("_conflict"):
-            result[persona_id] = "exists"
+            # A concurrent replica won the CAS; validate the winner rather than
+            # assuming an arbitrary conflicting identity is our panel persona.
+            return {**result, **bootstrap_consult_personas(
+                persona_url=persona_url, actor_id=actor_id, tenant_id=tenant_id,
+                http=call, timeout_seconds=timeout_seconds)}
         else:
             result[persona_id] = "created"
     return result

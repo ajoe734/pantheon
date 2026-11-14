@@ -1146,6 +1146,16 @@ def _execute_panel_claim(
     phase_hook: Callable[[str], None] | None,
 ) -> dict[str, str]:
     participants, decision = _validated_panel(request, panel)
+    try:
+        provider.ensure_agents(tenant_id=config.tenant_id,
+                               persona_ids=[p["persona_id"] for p in participants])
+    except ContributionProviderError as exc:
+        _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+            "request_id": claim.request_id, "event_type": "panel_agent_provisioning_blocked",
+            "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+            "content": {"reason": str(exc), "gated_decision": decision},
+            "idempotency_key": f"{claim.request_id}:agents-blocked:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
+        raise
     trace_id = str(
         request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
     )
