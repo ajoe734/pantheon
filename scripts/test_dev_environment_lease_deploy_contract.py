@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -19,9 +20,9 @@ if str(SCRIPTS) not in sys.path:
 import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870"
+CONTROLLER_SHA = "081075781d28a6563c731909667b98b7b5c153f9"
 CONTROLLER_SCRIPT_SHA256 = (
-    "89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4"
+    "c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa"
 )
 CONTROLLER_WRAPPER_SHA256 = (
     "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"
@@ -1404,7 +1405,7 @@ def test_validate_required_loop_workers_logic() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 28
+    assert len(required) == len(set(required)) == 31
     assert "source-ingest" in required
     assert "operator-bff" in required
     assert "paper-fleet-reconciler" in required
@@ -2383,6 +2384,109 @@ def test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_base
     assert "RELEASED" in lease_events
 
 
+@pytest.mark.parametrize("scenario,exit_code", [("primary403", 0), ("secondary429", 0),
+                                                ("permission403", 75), ("pending", 79)])
+def test_rate_limited_compensation_runs_real_lease_cli_before_exact_baseline_restore(tmp_path, scenario, exit_code):
+    """Execute the workflow shell and real acquire/verify code; only clock,
+    GitHub authority, heartbeat transport and hosted artifact I/O are fixtures.
+    This is source acceptance, not a claim of hosted recovery.
+    """
+    env, invocations, summary = _setup_mock_compensation_environment(
+        tmp_path, initial_bff_sha="c" * 40, initial_fe_sha="f" * 40,
+        rollback_bff_sha="a" * 40, rollback_fe_sha="f" * 40)
+    cli = tmp_path / ".lease-controller/scripts/dev_environment_lease.py"
+    authority = tmp_path / "rate-authority.json"
+    deploy = tmp_path / ".agora-gate-controller/scripts/deploy_nonprod_vm.sh"
+    authorize_restore = (
+        f"import json; from pathlib import Path; p=Path({str(authority)!r}); "
+        'd=json.loads(p.read_text()); assert d["verified"]; '
+        'assert d["writes"] == ["1"*40, "2"*40]; '
+        'd["restore_authorized"]=True; p.write_text(json.dumps(d))'
+    )
+    deploy.write_text(deploy.read_text().replace(
+        "set -euo pipefail\n", "set -euo pipefail\npython3 -c " + shlex.quote(authorize_restore) + "\n", 1))
+    prelude = r'''
+if command in ("acquire", "verify"):
+    from datetime import datetime, timedelta
+    sys.path.insert(0, SCRIPTS_PATH)
+    import dev_environment_lease as production
+    import test_dev_environment_lease as fixtures
+    ledger_path = Path(AUTHORITY_PATH)
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {
+        "now": fixtures.NOW.isoformat(), "state": fixtures.state_for(
+            owner="previous-deploy", heartbeat=fixtures.NOW - timedelta(seconds=400)),
+        "sha": "1" * 40, "writes": [], "waits": [], "verified": False}
+    client = fixtures.FakeClient()
+    client.now = datetime.fromisoformat(ledger["now"])
+    client.state, client.content_sha = ledger["state"], ledger["sha"]
+    def advance(seconds):
+        ledger["waits"].append(seconds)
+        client.now += timedelta(seconds=seconds)
+    client.sleep = advance
+    original_ref, original_get, original_put = client.get_ref, client.get_content, client.put_content
+    def limited_ref(*args):
+        if not ledger.get("acquire_limit_seen"):
+            ledger["acquire_limit_seen"] = True
+            if SCENARIO == "permission403":
+                raise production.classify_github_http_error(403, "Permission denied")
+            status = 429 if SCENARIO == "secondary429" else 403
+            reset = client.now + timedelta(seconds=4000 if SCENARIO == "pending" else 60)
+            raise production.GitHubRateLimitError(status, "API rate limit exceeded",
+                remaining=0, reset_at=reset, server_now=client.now,
+                retry_after_seconds=60 if status == 429 else None)
+        return original_ref(*args)
+    client.get_ref = limited_ref
+    def limited_get(*args):
+        if command == "verify" and not ledger.get("verify_limit_seen"):
+            ledger["verify_limit_seen"] = True
+            raise production.GitHubRateLimitError(429, "secondary rate limit",
+                retry_after_seconds=400, server_now=client.now)
+        return original_get(*args)
+    client.get_content = limited_get
+    def put(*args, **kwargs):
+        ledger["writes"].append(kwargs["expected_sha"])
+        _, written_at = original_put(*args, **kwargs)
+        client.content_sha = str(len(ledger["writes"]) + 1) * 40
+        return client.content_sha, written_at
+    client.put_content = put
+    production.manager_from_args = lambda args: fixtures.manager(client)
+    try:
+        result = production.run()
+        if command == "verify": ledger["verified"] = True
+        raise SystemExit(result)
+    except production.RateLimitedRollbackPending as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(79)
+    except production.LeaseError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(75)
+    finally:
+        ledger.update(now=client.now.isoformat(), state=client.state, sha=client.content_sha)
+        ledger_path.write_text(json.dumps(ledger))
+'''.replace("SCRIPTS_PATH", repr(str(SCRIPTS))).replace("AUTHORITY_PATH", repr(str(authority))).replace("SCENARIO", repr(scenario))
+    cli.write_text(FAKE_DEV_ENVIRONMENT_LEASE_CLI.replace('if command == "acquire":', prelude + '\nif command == "acquire":', 1))
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", _extract_deploy_compensation_run_script()],
+                            cwd=tmp_path, env=env, text=True, capture_output=True, timeout=30)
+    assert result.returncode == exit_code, result.stderr
+    ledger = json.loads(authority.read_text())
+    if exit_code == 0:
+        assert ledger["writes"] == ["1" * 40, "2" * 40]  # two fresh CAS acquisitions
+        assert len(ledger["waits"]) == 2
+        assert ledger["waits"][0] >= 60 and ledger["waits"][1] >= 400
+        assert ledger["verified"]
+        assert ledger["restore_authorized"]
+        assert '--artifact-restore' in invocations.read_text()
+        assert (tmp_path / "mock_bff_sha.txt").read_text().strip() == "a" * 40
+        assert (tmp_path / "mock_fe_sha.txt").read_text().strip() == "f" * 40
+        assert "Artifact restore proved exact prior images and FE bytes" in summary.read_text()
+    else:
+        assert ledger["writes"] == [] and not ledger["verified"]
+        assert not invocations.exists()
+        if exit_code == 79:
+            assert "rate_limited_rollback_pending" in result.stderr
+            assert "rollback incomplete" not in result.stderr
+
+
 def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recovered_e2e(tmp_path: Path) -> None:
     """Positive E2E test proving that when an optional hosted probe fails before public_smoke
     while the predecessor heartbeat is STILL ACTIVE and renewing in the background, deploy_compensation
@@ -3164,6 +3268,7 @@ def _run_compensation_verify(tmp_path: Path, relative: str, scenario: str, *, fl
         "state_file": str(state_file),
         "rollback_state_file": str(state_file),
         "LEASE_STATE_FILE": str(state_file),
+        "rollback_rate_wait": "3900",
     }
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", command + ">/dev/null"],
@@ -3359,8 +3464,8 @@ def test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_image
     for step in ("id: deploy_compensation", "id: compensation"):
         assert "PANTHEON_DEV_ARTIFACT_SCOPE" not in workflow.split(step, 1)[1].split("\n      - name:", 1)[0]
     compensation = workflow.split("id: compensation\n", 1)[1].split("- name:", 1)[0]
-    assert "timeout-minutes: 60" in compensation
-    # The shared compensation script bounds its deploy inside the 60 minute step.
+    assert "timeout-minutes: 100" in compensation
+    # The shared compensation script bounds its deploy inside the 100 minute step.
     assert '--deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}"' in (
         SCRIPTS / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
 
