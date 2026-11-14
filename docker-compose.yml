@@ -566,6 +566,8 @@ services:
   search-svc:
     profiles: ["core", "root"]
     stop_grace_period: 30s
+    cpus: 2.0
+    cpu_shares: 256
     build:
       context: .
       dockerfile: services/search/Dockerfile
