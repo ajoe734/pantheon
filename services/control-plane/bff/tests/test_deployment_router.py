@@ -21,8 +21,8 @@ def _page_slice(
     return items, None
 
 
-def _build_router(queries: Any = None):
-    return create_deployment_router(
+def _build_router(queries: Any = None, **overrides: Any):
+    callbacks = dict(
         queries=object() if queries is None else queries,
         extract_identity=lambda _authorization: object(),
         require_read_role=lambda _identity: None,
@@ -50,6 +50,8 @@ def _build_router(queries: Any = None):
         stream_generic_events=lambda *_args, **_kwargs: iter(()),
         surface_degradation_reason=lambda *_args, **_kwargs: None,
     )
+    callbacks.update(overrides)
+    return create_deployment_router(**callbacks)
 
 
 def test_deployment_router_owns_all_deployment_routes() -> None:

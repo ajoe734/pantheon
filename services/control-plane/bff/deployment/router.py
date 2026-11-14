@@ -418,10 +418,7 @@ def create_deployment_router(
             total = 0
         else:
             plans, next_page_token = page_slice(plans, page_token, page_size)
-            plans = [
-                service.deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-                for plan in plans
-            ]
+            plans = service.deployment_plans_with_stage_truth(plans, snapshot_at=snapshot_at)
 
         meta = snapshot_meta(snapshot_at)
         stage_surfaces = (
