@@ -19,9 +19,9 @@ if str(SCRIPTS) not in sys.path:
 import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870"
+CONTROLLER_SHA = "081075781d28a6563c731909667b98b7b5c153f9"
 CONTROLLER_SCRIPT_SHA256 = (
-    "89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4"
+    "c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa"
 )
 CONTROLLER_WRAPPER_SHA256 = (
     "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"
@@ -1404,7 +1404,7 @@ def test_validate_required_loop_workers_logic() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 28
+    assert len(required) == len(set(required)) == 31
     assert "source-ingest" in required
     assert "operator-bff" in required
     assert "paper-fleet-reconciler" in required
@@ -3359,8 +3359,8 @@ def test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_image
     for step in ("id: deploy_compensation", "id: compensation"):
         assert "PANTHEON_DEV_ARTIFACT_SCOPE" not in workflow.split(step, 1)[1].split("\n      - name:", 1)[0]
     compensation = workflow.split("id: compensation\n", 1)[1].split("- name:", 1)[0]
-    assert "timeout-minutes: 60" in compensation
-    # The shared compensation script bounds its deploy inside the 60 minute step.
+    assert "timeout-minutes: 100" in compensation
+    # The shared compensation script bounds its deploy inside the 100 minute step.
     assert '--deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}"' in (
         SCRIPTS / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
 
