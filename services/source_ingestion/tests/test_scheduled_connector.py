@@ -2454,7 +2454,13 @@ def test_completed_close_keeps_native_boundary_ack_and_replays_as_empty(steady_s
     selected, first = _steady_step(reconcile)
     assert selected == [cid] and first["summary"]["total_failed"] == 0
     before = [r.source_id for r in module.runtime.evidence_repository.list_source_records()]
-    assert len(before) == 8
+    assert len(before) == 1
+    records = module.runtime.evidence_repository.list_source_records()
+    assert [r.metadata["collector_market_bundle"]["row_count"] for r in records] == [8]
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 8
     # Simulate the next due tick without sleeping ten minutes. A completed native
     # persistence boundary is required; cached raw bytes alone are never an ack.
     replay = cw.run_schedule_tick(
@@ -2511,7 +2517,14 @@ def test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots(steady
     assert _snapshot_date(module, "2317.TWSE") == _CLOSE_DATE
     # Same original exchange URL across sessions must not freeze source evidence on Nov 12.
     records = list(module.runtime.evidence_repository.list_source_records())
-    assert len(records) == 16
+    assert len(records) == 2
+    assert [r.metadata["collector_market_bundle"]["row_count"] for r in records] == [8, 8]
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 16
+    assert {day: sum(r["metadata"]["event_time"][:10] == day for r in rows)
+            for day in ("2026-11-12", _CLOSE_DATE)} == {"2026-11-12": 8, _CLOSE_DATE: 8}
     assert {r.metadata["collector_close"]["trade_date"] for r in records} == {"2026-11-12", _CLOSE_DATE}
 
 
@@ -2647,7 +2660,15 @@ def test_full_size_close_through_controller_main_with_persistence(
     assert all(receipt["status"] == "completed" for receipt in receipts)
     assert peak[0] == cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
     records = list(module.runtime.evidence_repository.list_source_records())
-    assert len(records) == 7467 and len({r.source_id for r in records}) == 7467
+    assert len(records) == len({r.source_id for r in records}) == 2
+    assert {r.connector_id: r.metadata["collector_market_bundle"]["row_count"] for r in records} == {
+        "collector-tw-twse-price-history": 1377, "collector-tw-tpex-price-history": 6090}
+    rows = [json.loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 7467
+    assert {cid: sum(r["connector_id"] == cid for r in rows) for cid in paths} == {
+        "collector-tw-twse-price-history": 1377, "collector-tw-tpex-price-history": 6090}
     for record in records:
         assert record.tenant_id == "tenant-test"  # native controller tenant is retained
         expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if "twse" in record.connector_id
@@ -2746,7 +2767,13 @@ def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack,
     fetch_state = module.runtime.connector_store.get_fetch_state(source)
     assert fetch_state["collector_outcome"]["complete"] is True
     assert "|items=" not in fetch_state["collector_outcome"]["next_cursor"]
-    assert len(module.runtime.evidence_repository.list_source_records()) == 1349
+    records = module.runtime.evidence_repository.list_source_records()
+    assert len(records) == 1
+    assert records[0].metadata["collector_market_bundle"]["row_count"] == 1349
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_institutional_flow").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 1349
     assert max(durations) < config.timeout_seconds
     assert cw.select_collector_pull_connectors(cw.read_actual_state_with_fetch_bindings(api_url=config.api_url),
                                                _steady_reconcile([source])) == []
@@ -2895,11 +2922,22 @@ def test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget(s
         duration = time.perf_counter() - wall_start + clock[0] - model_start
         durations.append(duration); elapsed += duration + 1
         assert result["status"] == "ok" and duration < config.timeout_seconds
-        delivered = len(module.runtime.evidence_repository.list_source_records())
+        delivered = sum(r.metadata["collector_market_bundle"]["row_count"]
+                        for r in module.runtime.evidence_repository.list_source_records())
         if delivered == 6002 and not result["continuation_pending"]:
             break
         time.sleep(1)
     assert delivered == 6002 and not result["continuation_pending"]
+    records = module.runtime.evidence_repository.list_source_records()
+    assert len(records) == 3
+    assert {(r.connector_id, r.metadata["trade_date"]): r.metadata["collector_market_bundle"]["row_count"]
+            for r in records} == {("collector-tw-twse-price-history", "2026-11-13"): 1,
+                                  ("collector-tw-tpex-price-history", "2026-11-13"): 1,
+                                  ("collector-tw-tpex-price-history", "2024-11-12"): 6000}
+    rows = [json.loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 6002
     partition = module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily/date=2024-11-12"
     history_rows = [json.loads(line) for path in partition.glob("*.jsonl") for line in path.read_text().splitlines()]
     assert len(history_rows) == len({r["source_id"] for r in history_rows}) == 6000

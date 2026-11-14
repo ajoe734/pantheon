@@ -1171,6 +1171,53 @@ class SourceIngestionRuntime:
             "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
         }
 
+    def collector_market_record_from_partition(self, source_id: str, tenant_id: str) -> SourceRecord | None:
+        """Resolve a snapshot's row lineage without storing per-row evidence.
+
+        Only completed owner receipts authorize a partition read. Tenant and
+        native Collector identity are checked on the row before returning it.
+        """
+        if not source_id.startswith("collector:"):
+            return None
+        native_source = source_id.split(":", 2)[1]
+        day_match = re.search(r"\d{4}-\d{2}-\d{2}", source_id)
+        owned_partitions = {
+            str(Path(ref["uri"]).resolve())
+            for summary in self.evidence_repository.list_source_records(tenant_id=tenant_id)
+            if summary.metadata.get("collector_market_bundle")
+            and (summary.metadata.get("collector") or {}).get("source_id") == native_source
+            for ref in summary.metadata.get("normalized_partition_refs", ())
+            if not day_match or ref.get("date") == day_match.group()
+        }
+        if not owned_partitions:
+            return None
+        seen: set[str] = set()
+        for receipt in reversed(self.store.read_freshness_snapshot()["receipts"]):
+            if receipt.status != "completed":
+                continue
+            for ref in receipt.storage_refs.get("normalized_refs", ()):
+                if day_match and ref.get("date") != day_match.group():
+                    continue
+                uri = str(ref["uri"])
+                if uri in seen or str(Path(uri).parent.resolve()) not in owned_partitions:
+                    continue
+                seen.add(uri)
+                with Path(uri).open() as handle:
+                    for line in handle:
+                        row = json.loads(line)
+                        metadata = row.get("metadata") or {}
+                        if (row.get("source_id") != source_id or metadata.get("tenant_id") != tenant_id
+                                or (metadata.get("collector") or {}).get("source_id") != native_source):
+                            continue
+                        return SourceRecord.from_dict({
+                            **row, "source_type": "market", "status": "normalized",
+                            "title": source_id.removeprefix(f"collector:{native_source}:").rsplit(":", 1)[0],
+                            "trace_id": metadata.get("trace_id"), "created_at": metadata.get("ingest_time"),
+                            "metadata": {**metadata, "source_ingest_run_id": receipt.ingest_run_id,
+                                         "source_record_projection": "normalized_partition"},
+                        })
+        return None
+
     @staticmethod
     def _record_run_receipt_readback(
         record: SourceRecord | None, receipts: Sequence[IngestReceipt]
