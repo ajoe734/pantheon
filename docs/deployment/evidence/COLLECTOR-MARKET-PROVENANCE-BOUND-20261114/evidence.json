@@ -67,7 +67,66 @@
     "head_note": "The process imported the unmodified pipeline before the anchor commit. Its end-of-run git HEAD field reports e491739d7, not the already-loaded module version; immutable module source is identified above.",
     "hosted_observation": "Task-provided read-only psql observation, 2026-11-14 13:30-13:55Z: TWSE history 442 source records, 1495 evidence items, 1495 knowledge objects; table 22701 rows / 67 MB. This worker did not run hosted SSH or SQL.",
     "local_vs_hosted": "A single pass through the merged pipeline reproduces linear 1:1:1 source/item/knowledge growth plus one job per row. The roughly 3.38 hosted item/source ratio is historical accumulated evidence; it was not reproduced by a clean single-pass ingest and is not claimed as a local result.",
-    "distillation_note": "The existing market worker synthesizes evidence and materializes a local seed before marking a job skipped, but that path alone does not add PostgreSQL evidence rows in this version."
+    "distillation_note": "The existing market worker synthesizes evidence and materializes a local seed before marking a job skipped, but that path alone does not add PostgreSQL evidence rows in this version.",
+    "immutable_reproduction": {
+      "command": ".venv-pantheon/bin/python /tmp/collector-provenance-frozen-baseline.py",
+      "source_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+      "script_sha256": "4b68268de07f637e33268ab36a2c46e0129f18396d13799b0e41eb14dda87a5c",
+      "output_sha256": "5fb6ffee5d49c9b317a2e66a4abc919e6b9e1d0e8922f8042f97b846f56ce24a",
+      "samples": [
+        {
+          "rows": 1,
+          "after_pipeline": {
+            "evidence_bundle": 1,
+            "evidence_item": 1,
+            "source_record": 1,
+            "knowledge_object": 1
+          },
+          "jobs": 1,
+          "after_distillation": {
+            "evidence_bundle": 1,
+            "evidence_item": 1,
+            "source_record": 1,
+            "knowledge_object": 1
+          },
+          "distillation": "DistillationRunResult(processed=1, created=0, refreshed=0, skipped=1, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+        },
+        {
+          "rows": 10,
+          "after_pipeline": {
+            "evidence_bundle": 1,
+            "evidence_item": 10,
+            "source_record": 10,
+            "knowledge_object": 10
+          },
+          "jobs": 10,
+          "after_distillation": {
+            "evidence_bundle": 1,
+            "evidence_item": 10,
+            "source_record": 10,
+            "knowledge_object": 10
+          },
+          "distillation": "DistillationRunResult(processed=10, created=0, refreshed=0, skipped=10, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+        },
+        {
+          "rows": 100,
+          "after_pipeline": {
+            "evidence_bundle": 1,
+            "evidence_item": 100,
+            "source_record": 100,
+            "knowledge_object": 100
+          },
+          "jobs": 100,
+          "after_distillation": {
+            "evidence_bundle": 1,
+            "evidence_item": 100,
+            "source_record": 100,
+            "knowledge_object": 100
+          },
+          "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+        }
+      ]
+    }
   },
   "contract": {
     "identity": "connector + tenant + collector source + verified bundle SHA256 + dataset + trade date; content-identical collector reruns share the record, corrected bundles retain distinct hashes.",
@@ -98,48 +157,87 @@
     "health_budget_seconds": 120,
     "health_budget_reference": "docker-compose.yml source-ingest healthcheck start_period:120s (plus 10 retries at 10s).",
     "search_limit_reference": "SEARCH-EMBED-CPU-BOUND-20261114: <=2 compute threads/CPUs and >=300 embeddings/hour; new numeric bundles add zero embedding calls.",
-    "harness_boundary": "Local PostgreSQL and real controller, API, pipeline, partitions, queue and snapshot writer. Test uses <=1000-row historical batches and daily cadence; separate default-cadence newest-session and held-symbol tests preserve current behavior. Lossless latest-envelope snapshot journal compaction between scale ticks preserves every retained point/checksum; this is test-only and not a production repair."
+    "harness_boundary": "Local PostgreSQL and real controller, API, pipeline, partitions, queue and snapshot writer. Test uses <=1000-row historical batches and daily cadence; separate default-cadence newest-session and held-symbol tests preserve current behavior. Lossless latest-envelope snapshot journal compaction between scale ticks preserves every retained point/checksum; this is test-only and not a production repair. The final scale run uses the supported two-close projection window; default 60-close/held/intraday behavior is verified separately, and all normalized history remains persisted.",
+    "conservative_startup_model": {
+      "existing_rows": 22704,
+      "two_year_new_rows": 5856,
+      "total_rows": 28560,
+      "postgres_bytes": 165609472,
+      "reload_seconds": 8.256588532000023,
+      "reload_peak_bytes": 321481427,
+      "budget_seconds": 120,
+      "process_peak_rss_kib_including_fixture_setup": 936752,
+      "notes": "22704 synthetic existing rows (>=22701 observed), with deterministic incompressible padding, plus 5856 new two-year objects. 165609472-byte PostgreSQL relation exceeds the observed 67-MB legacy relation plus estimated additions. Tracemalloc reports Python allocations; process RSS upper bound includes all model setup. This measures evidence reload, not full hosted startup."
+    }
   },
   "readers": [
     {
       "reader": "latest connector record/readback",
       "path": "services/source_ingestion/runtime.py:_latest_source_record_by_connector",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression"
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression",
+      "file_line_refs": [
+        "services/source_ingestion/runtime.py:1195"
+      ]
     },
     {
       "reader": "latest/held-symbol close and intraday projection",
       "path": "services/source_ingestion/pipeline.py:persist_latest_market_snapshots; services/source_ingestion/requirement_state.py:append_normalized_records",
-      "proof": "test_latest_market_snapshot.py; test_latest_market_snapshot_state.py; test_intraday_snapshot_projection.py; held-symbol controller regression"
+      "proof": "test_latest_market_snapshot.py; test_latest_market_snapshot_state.py; test_intraday_snapshot_projection.py; held-symbol controller regression",
+      "file_line_refs": [
+        "services/source_ingestion/pipeline.py:537"
+      ]
     },
     {
       "reader": "normalized storage replay",
       "path": "services/source_ingestion/pipeline.py:_persist_collector_market_storage",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence (including foreign-tenant negative)"
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence (including foreign-tenant negative)",
+      "file_line_refs": [
+        "services/source_ingestion/pipeline.py:1175"
+      ]
     },
     {
       "reader": "market distillation",
       "path": "services/source_ingestion/distillation_worker.py:catch_up,_distill_one; services/source_ingestion/distillation_controller.py:eligible_records",
-      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_distillation_worker.py"
+      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_distillation_worker.py",
+      "file_line_refs": [
+        "services/source_ingestion/distillation_worker.py:1920",
+        "services/source_ingestion/distillation_worker.py:1997"
+      ]
     },
     {
       "reader": "management router",
       "path": "services/source_ingestion/routers/management.py:list_management_sources,list_management_strategy_seeds",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence"
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence",
+      "file_line_refs": [
+        "services/source_ingestion/routers/management.py:170",
+        "services/source_ingestion/routers/management.py:249"
+      ]
     },
     {
       "reader": "ingest operations router",
       "path": "services/source_ingestion/routers/ingest_operations.py:list_source_records,get_latest_market_snapshot",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; test_latest_market_snapshot.py"
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; test_latest_market_snapshot.py",
+      "file_line_refs": [
+        "services/source_ingestion/routers/ingest_operations.py:422",
+        "services/source_ingestion/routers/ingest_operations.py:151"
+      ]
     },
     {
       "reader": "search",
       "path": "services/search/index_pipeline.py:IncrementalIndexPipeline.run",
-      "proof": "test_bundle_provenance_does_not_reach_embedding_engine; test_index_pipeline.py"
+      "proof": "test_bundle_provenance_does_not_reach_embedding_engine; test_index_pipeline.py",
+      "file_line_refs": [
+        "services/search/index_pipeline.py:272"
+      ]
     },
     {
       "reader": "knowledge and PostgreSQL evidence repository",
       "path": "services/knowledge/evidence/repository.py:list_source_records; services/source_ingestion/pg_store.py:reload",
-      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_pg_store.py; real 30-day PG scale"
+      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_pg_store.py; real 30-day PG scale",
+      "file_line_refs": [
+        "services/knowledge/evidence/repository.py:212",
+        "services/source_ingestion/pg_store.py:416"
+      ]
     },
     {
       "reader": "bee62bc29 rollback codec",
@@ -150,7 +248,7 @@
   "validation": [
     {
       "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\"",
-      "result": "8 passed before router checks; final rerun pending"
+      "result": "9 passed including actual bee62bc29 PostgreSQL reader and untouched legacy object payload checks; additional padded startup model 1 passed; complete final module rerun pending."
     },
     {
       "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 900 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/test_pg_store.py services/search/test_index_pipeline.py",
@@ -158,11 +256,23 @@
     },
     {
       "command": "PYTHONPATH=/tmp timeout 900 .venv-pantheon/bin/python -m pytest -p collector_fixture_clock -q services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_latest_market_snapshot.py",
-      "result": "104 passed, 6 failed, exit 1; all failures listed below. Subsequent namespace compatibility fix resolves the first assertion; final rerun pending."
+      "result": "Final run: 105 passed, 5 failed, exit 1; all five failures are old per-row storage-count assumptions. Native collector: namespace fix restored the previous sixth failing reader assertion."
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_distillation_controller.py",
+      "result": "16 passed, exit 0"
+    },
+    {
+      "command": "/usr/bin/time -v env SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 300 .venv-pantheon/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_market_provenance_bound.py -k two_year_reload",
+      "result": "1 passed, 10 deselected, exit 0; complete result in conservative_startup_model"
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python -m pytest -q services/search",
+      "result": "Collection stopped, exit 2: optional qdrant_client unavailable. Required touched index_pipeline module passed in the focused service batch."
     }
   ],
   "holds": {
-    "readonly_tests": "Task explicitly requires test_scheduled_connector.py unchanged. Five tests assert/derive per-row source-record counts (8,16,7467,1349,6002); these contradict bounded physical provenance. Operator clarification requested; no assertion weakened and no read-only test edited.",
+    "readonly_tests": "Task explicitly requires test_scheduled_connector.py unchanged. Five unmodified tests assert/derive per-row source-record counts (8,16,7467,1349,6002), contradicting bounded physical provenance. Final required batch is 105 passed / 5 failed. Operator clarification remains pending; no assertion weakened and no read-only test edited.",
     "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact.",
     "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes.",
     "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt."

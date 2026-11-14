@@ -226,7 +226,9 @@ def collector_market_bundle_records(result: Any, storage_refs: Mapping[str, Any]
                 "available_time_min": min(available_times), "available_time_max": max(available_times)},
             "dataset": dataset, "trade_date": day, "event_time": max(event_times),
             "available_time": max(available_times), "content_hash": "sha256:" + group[3],
-            "raw_uri": str(Path(str(meta["raw_uri"])).parent),
+            # Identical bundles can resume from a later Collector run directory.
+            # The exact per-row raw URI stays in the selected normalized rows.
+            "raw_uri": str(Path(str(meta["raw_uri"])).parents[2]),
             "normalized_partition_refs": [{"uri": directories[0], "dataset": dataset, "date": day,
                 "selector": {"connector_id": group[0], "tenant_id": first.tenant_id,
                              "collector_source_id": group[2], "bundle_sha256": group[3]}}],

@@ -42,13 +42,13 @@ def bundle(tmp_path, spec, *, count=None, day="2024-11-12", cap=None):
         max_records=cap or count, transport=FakeTransport(files), raw_root=str(tmp_path / "raw")), files, entry
 
 
-def ingest(adapter, records, root, repo, queue):
+def ingest(adapter, records, root, repo, queue, *, verified=True):
     manager = IngestManager()
     manager.register_connector(adapter.connector())
     run = manager.start_ingest_run(connector_id=adapter.connector_id, trace_id="bound-test", trigger_type="manual")
     records = tuple(replace(r, status="normalized") for r in records)
     result = ScheduledIngestResult(run=run, records=records, audit_actions=(), watermark=None,
-                          collector_delivery=CollectorDelivery(records, lambda: None))
+                          collector_delivery=CollectorDelivery(records, lambda: None) if verified else None)
     refs = MarketDataStorageWriter(root).write_run(result=result, connector=adapter.connector()).to_dict()
     return persist_source_evidence_refs(manager, repo, EvidenceBundleBuilder(repo), queue, result, refs), refs
 
@@ -69,6 +69,7 @@ def test_real_size_day_has_constant_evidence_and_no_distillation(tmp_path, spec)
         assert summary.metadata["pit"]["validated"]
         assert summary.metadata["trade_date"] == "2024-11-12"
         assert len(summary.metadata["normalized_partition_refs"]) == 1
+        assert all(Path(r.metadata["raw_uri"]).is_relative_to(summary.metadata["raw_uri"]) for r in records)
         assert "normalized_row" not in summary.metadata and "symbol" not in summary.metadata
         assert sum(r["row_count"] for r in stored["normalized_refs"]) == size
         actual = sum(len(Path(r["uri"]).read_text().splitlines()) for r in stored["normalized_refs"])
@@ -210,6 +211,90 @@ def pg_repo():
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
 
 
+def test_pg_legacy_records_and_bee_reader(pg_repo, tmp_path):
+    adapter, _, _ = bundle(tmp_path, SPECS[0], count=3)
+    rows = adapter.pull().records
+    queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+    ingest(adapter, rows[:1], tmp_path / "legacy", pg_repo, queue, verified=False)
+    with pg_repo._get_connection() as conn:
+        before = {(kind, key): payload for kind, key, payload in conn.execute(
+            f"SELECT record_type,record_id,payload FROM {pg_repo.table}")}
+    ingest(adapter, rows, tmp_path / "bounded", pg_repo, queue)
+    with pg_repo._get_connection() as conn:
+        after = {(kind, key): payload for kind, key, payload in conn.execute(
+            f"SELECT record_type,record_id,payload FROM {pg_repo.table}")}
+    assert len(before) == 4 and all(after[key] == payload for key, payload in before.items())
+    assert len(after) == 8 and queue.count() == 1  # only the pre-existing row job
+    raw = subprocess.run(["git", "show", "bee62bc29:services/source_ingestion/pg_store.py"],
+                         check=True, capture_output=True).stdout
+    name = "services.source_ingestion._bee_pg_reader"
+    module = types.ModuleType(name)
+    sys.modules[name] = module
+    try:
+        exec(compile(raw, name, "exec"), module.__dict__)
+        reader = module.PostgresSourceEvidenceRepository(pg_repo.dsn, table=pg_repo.table.replace('"', ''), bootstrap=False)
+        try:
+            loaded = reader.list_source_records()
+            assert len(loaded) == 2 and len(reader.list_knowledge_objects()) == 2
+            summary = next(r for r in loaded if r.metadata.get("collector_market_bundle"))
+            assert summary.metadata["collector_market_bundle"]["row_count"] == 3
+        finally:
+            reader.close()
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_pg_two_year_reload_budget_with_existing_population(pg_repo, tmp_path):
+    """Model >=22701 existing rows plus all 5856 new two-year provenance rows."""
+    adapter, _, _ = bundle(tmp_path, SPECS[0], count=2)
+    ingest(adapter, adapter.pull().records, tmp_path / "partitions", pg_repo,
+           DistillationJobQueue(tmp_path / "queue.jsonl"))
+    with pg_repo._get_connection() as conn:
+        templates = dict(conn.execute(f"SELECT record_type,payload FROM {pg_repo.table}"))
+        conn.execute(f"TRUNCATE {pg_repo.table}")
+        # One atomic SQL batch per object type avoids test setup fsync costs.
+        for kind, template in templates.items():
+            values = []
+            for index in range(5676 + 1464):
+                key = f"existing-{index}" if index < 5676 else f"two-year-{index}"
+                payload = json.loads(json.dumps(template))
+                id_key = {"source_record": "source_id", "evidence_item": "evidence_item_id",
+                          "evidence_bundle": "evidence_bundle_id", "knowledge_object": "knowledge_object_id"}[kind]
+                payload[id_key] = key
+                if kind in {"evidence_item", "knowledge_object"}:
+                    payload["source_id"] = key
+                if kind == "evidence_bundle":
+                    payload.update(source_ids=[key], evidence_item_ids=[key])
+                if kind == "knowledge_object":
+                    payload.update(evidence_item_id=key, evidence_bundle_id=key)
+                for field in ("source_dedupe_key", "evidence_dedupe_key", "evidence_owner_id", "source_owner_id"):
+                    if field in payload.get("metadata", {}):
+                        payload["metadata"][field] = key
+                if index < 5676:
+                    payload.get("metadata", {}).pop("collector_market_bundle", None)
+                    # Incompressible deterministic padding makes this model
+                    # larger than the observed 67-MB legacy table plus new rows.
+                    payload["metadata"]["legacy_payload_padding"] = hashlib.shake_256(
+                        f"{kind}:{index}".encode()).hexdigest(1536)
+                values.append({"record_id": key, "record_type": kind, "payload": payload})
+            conn.execute(f"INSERT INTO {pg_repo.table}(record_id,record_type,payload) "
+                "SELECT record_id,record_type,payload FROM jsonb_to_recordset(%s::jsonb) "
+                "AS records(record_id text, record_type text, payload jsonb)", (json.dumps(values),))
+        size = conn.execute(f"SELECT pg_total_relation_size('{pg_repo.table}')").fetchone()[0]
+    del values, templates
+    tracemalloc.start()
+    start = time.perf_counter(); pg_repo.reload()
+    elapsed = time.perf_counter() - start
+    _, peak = tracemalloc.get_traced_memory(); tracemalloc.stop()
+    assert len(pg_repo.list_source_records()) == 7140
+    assert len(pg_repo.list_knowledge_objects()) == 7140
+    assert size >= 80 * 1024 * 1024
+    assert elapsed < 120 and peak < 1024 * 1024 * 1024
+    print("PROVENANCE_STARTUP " + json.dumps({"existing_rows": 22704, "two_year_new_rows": 5856,
+        "total_rows": 28560, "postgres_bytes": size, "reload_seconds": elapsed,
+        "reload_peak_bytes": peak, "budget_seconds": 120}))
+
+
 def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_repo, tmp_path):
     """Opt-in full-size 261720-row integration; no fake storage/queue/repository."""
     from services.source_ingestion import controller_worker as cw
@@ -217,6 +302,10 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     http, module, reads, wanted, files, transport, tick = admission_stack
     monkeypatch.setattr(module.runtime, "evidence_repository", pg_repo)
     monkeypatch.setattr(module.runtime, "evidence_builder", EvidenceBundleBuilder(pg_repo))
+    # Scale the provenance store with a valid two-close projection window. The
+    # default 60-close, held-symbol and intraday readers run in separate suites;
+    # normalized partitions below retain every row of all thirty sessions.
+    monkeypatch.setattr(module.runtime.latest_market_snapshot_store, "max_closes", 2)
     # The controller still uses its real desired-state/reconcile/frontier/receipt path.
     enabled = {s[0] for s in SPECS}
     from services.source_ingestion import persona_source_reconciler as reconciler
@@ -314,5 +403,5 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
         "two_year_bundles": 488 * 3, "two_year_normalized_rows": 488 * 8724,
         "two_year_reload_seconds": reload_seconds, "two_year_reload_peak_bytes": peak,
         "new_embedding_calls": 0, "distillation_jobs": 0,
-        "snapshot_harness": "lossless latest-envelope journal compaction between ticks; full retained series preserved"}
+        "snapshot_harness": "valid two-close projection window; lossless latest-envelope journal compaction between ticks; all normalized history retained"}
     print("PROVENANCE_SCALE " + json.dumps(report, sort_keys=True))
