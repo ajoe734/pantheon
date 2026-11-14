@@ -166,8 +166,8 @@
     }
   ],
   "delivery": {
-    "state": "source_validated_ready_for_fresh_exact_head_independent_review",
-    "merge": "not_claimed_fresh_review_required_checks_and_native_supervisor_merge_outstanding",
+    "state": "native_ordering_contract_blocker_required_before_source_repair",
+    "merge": "not_claimed_authoritative_Source_CI_failed_native_scope_repair_and_fresh_review_outstanding",
     "deployment": "not_performed_author_has_no_authority",
     "deadline": "2026-11-16T06:40:00Z"
   },
@@ -347,5 +347,143 @@
       "collector-tw-twse-price-history,117,9.545497550660912,514.224449637516,18.217172741326976,0"
     ]
   },
-  "followup_evidence_utc": "2026-11-14T15:18:08.863693+00:00"
+  "followup_evidence_utc": "2026-11-14T15:18:08.863693+00:00",
+  "native_run_order_diagnosis": {
+    "recorded_at": "2026-11-14T16:03:33.748971+00:00",
+    "source_head": "ff7937c5361ced6920f7a184fdb77baff93a6867",
+    "scope": "Diagnosis only on the same original PR7352/task/generation/owner/reviewer. No product or test source changed. Native ordering repair is outside the current five-path artifact contract.",
+    "authoritative_failure": {
+      "pr": 7352,
+      "head": "ff7937c5361ced6920f7a184fdb77baff93a6867",
+      "workflow_run": 43609494869,
+      "job": 132494225316,
+      "command": "python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py",
+      "result": "1977 passed, 2 skipped, 1 failed in 399.14s; terminal failure 2026-11-14T15:52:48Z",
+      "failed_test": "test_full_hosted_size_sessions_use_real_controller_ticks",
+      "sequence": 3,
+      "connector": "collector-tw-tpex-price-history",
+      "error": "health_run_mismatch",
+      "official_log": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-evidence/ROOT01a10-ARCHITECTURE-20261112/Collector7352-Branch43609494869-Source132494225316-official-failure-20261114.log",
+      "official_log_sha256": "ab34ea493808baedf16c02b8de8135d3e561d25b0f0c6deb200983cb3392aaa6",
+      "prior_419_pass_scope": "Historical six-file focused results remain above; they do not supersede this complete Source CI failure."
+    },
+    "mechanism": [
+      "connectors/base.py::_utc_now drops microseconds, so separate runs may have identical finished_at values.",
+      "scheduler.py::read_freshness_snapshot returns runs in native dict insertion order. runtime.py::_connector_freshness_summary_from_snapshot line567 uses max(runs, key=self._run_effective_at); equal completion timestamps select the FIRST inserted run.",
+      "pipeline.py::update_source_health_and_usage writes last_ingest_run_id from the just-completed result, so the second successful run updates health while freshness.latest_run retains the first successful run.",
+      "controller_worker.py::_validate_terminal_readback correctly rejects this native identity mismatch. Its guard must stay unchanged. No missing task dependency or CLOCK-expiry conclusion is asserted.",
+      "The hosted-size harness charges virtual network latency while native run timestamps use real wall seconds; on a fast runner successive pulls can complete within the same real second. Local throughput passes on a slower host cannot disprove the tied-timestamp defect.",
+      "Receipt ordering separately sorts equal finished_at values by random ingest_run_id in scheduler.py. A native correction must assess consistency with that contract; copying health identity into freshness or delaying the model to hide the tie is not a repair."
+    ],
+    "deterministic_native_proof": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q -s /tmp/collector_same_second_probe.py > /tmp/collector-same-second-probe-status.log 2>&1",
+      "exit_code": 0,
+      "terminal_output": "1 passed, 1 warning in 3.11s",
+      "meaning": "Diagnostic asserts the existing bug, not corrected behavior. Real admitted connector, scheduler, pipeline, journal, health store and authoritative HTTP readback; only base._utc_now is held to one second to force the native collision. This is not AC4 throughput or hosted deployment proof.",
+      "observations": [
+        {
+          "pull": 1,
+          "health_status": "ok",
+          "health_run": "ingest-03b91bba1a27",
+          "freshness_latest_run": {
+            "ingest_run_id": "ingest-03b91bba1a27",
+            "status": "completed",
+            "trigger_type": "scheduled",
+            "finished_at": "2026-11-14T16:01:32Z",
+            "raw_count": 8,
+            "normalized_count": 8,
+            "rejected_count": 0
+          },
+          "runs_in_native_snapshot_order": [
+            {
+              "ingest_run_id": "ingest-03b91bba1a27",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 8
+            }
+          ],
+          "receipts_in_native_snapshot_order": [
+            {
+              "ingest_run_id": "ingest-03b91bba1a27",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 8
+            }
+          ]
+        },
+        {
+          "pull": 2,
+          "health_status": "ok",
+          "health_run": "ingest-878abc5a0a9e",
+          "freshness_latest_run": {
+            "ingest_run_id": "ingest-03b91bba1a27",
+            "status": "completed",
+            "trigger_type": "scheduled",
+            "finished_at": "2026-11-14T16:01:32Z",
+            "raw_count": 8,
+            "normalized_count": 8,
+            "rejected_count": 0
+          },
+          "runs_in_native_snapshot_order": [
+            {
+              "ingest_run_id": "ingest-03b91bba1a27",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 8
+            },
+            {
+              "ingest_run_id": "ingest-878abc5a0a9e",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 0
+            }
+          ],
+          "receipts_in_native_snapshot_order": [
+            {
+              "ingest_run_id": "ingest-03b91bba1a27",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 8
+            },
+            {
+              "ingest_run_id": "ingest-878abc5a0a9e",
+              "started_at": "2026-11-14T16:01:32Z",
+              "finished_at": "2026-11-14T16:01:32Z",
+              "status": "completed",
+              "normalized_count": 0
+            }
+          ]
+        }
+      ],
+      "probe_source": "import json\nfrom datetime import datetime, timezone\nfrom services.source_ingestion import controller_worker as cw\nfrom services.source_ingestion.connectors import base\nfrom services.source_ingestion.tests.test_scheduled_connector import admission_stack, client\nfrom services.source_ingestion.tests.test_collector_newest_session_progress import TPEX, recorded_run\n\ndef test_native_same_second_order(admission_stack, monkeypatch):\n    http, module, reads, wanted, files, transport, tick = admission_stack\n    more, entry = recorded_run(TPEX, fetched='2026-11-14T06:19:33Z')\n    files.update(more)\n    files['bundles/index.json'] = json.dumps({'bundles':[entry]}).encode()\n    files['status.json'] = json.dumps({'sources':{TPEX:{'status':'ok', 'last_run_at':entry['finished_at'], 'cadence_seconds':21600}}}).encode()\n    tick(cw.RECONCILE_ONLY_MODE)\n    fixed = datetime.now(timezone.utc).replace(microsecond=0)\n    monkeypatch.setattr(base, '_utc_now', lambda: fixed)\n    observed = []\n    for n in range(2):\n        response = http.post('/api/source-ingest/run-scheduled', json={'force_connector_ids':[TPEX], 'exclusive_connector_ids':[TPEX]}, headers={'Authorization':f'Bearer {module.runtime.controller_token}'})\n        assert response.status_code == 200, response.text\n        assert response.json()['summary']['total_failed'] == 0, response.text\n        item = next(c for c in http.get('/api/source-ingest/controller/readback').json()['connectors'] if c['connector_id'] == TPEX)\n        snapshot = module.runtime.store.read_freshness_snapshot()\n        observed.append({'pull':n+1, 'health':item['source_health'], 'freshness':item['freshness'],\n                         'runs':[r.to_dict() for r in snapshot['runs'] if r.connector_id == TPEX],\n                         'receipts':[r.to_dict() for r in snapshot['receipts'] if r.connector_id == TPEX]})\n    with open('/tmp/collector-same-second-native.json', 'w') as out:\n        json.dump(observed, out, indent=2, default=str)\n    first, second = observed\n    first_id = first['health']['metadata']['last_ingest_run_id']\n    second_id = second['health']['metadata']['last_ingest_run_id']\n    assert first_id != second_id\n    assert second['freshness']['latest_run']['ingest_run_id'] == first_id\n    assert second['runs'][0]['finished_at'] == second['runs'][1]['finished_at']\n    assert second['runs'][0]['status'] == second['runs'][1]['status'] == 'completed'\n    print('NATIVE_ORDER_PROOF '+json.dumps({'run_order':[r['ingest_run_id'] for r in second['runs']], 'finished_at':[r['finished_at'] for r in second['runs']], 'health_run':second_id, 'freshness_latest_run':second['freshness']['latest_run']['ingest_run_id']}))\n",
+      "probe_sha256": "019bd5adc858a2309c38cf13f40d0d7094b6860344c4dc03dc36b4ca84ffdc69",
+      "readback_sha256": "e8f13f3936e7789df63a1a061ead3bab8552af3a2f95b58f396fb8a7976ba77f",
+      "log_sha256": "6b06e82d861bbc3921650d6bcd53bd5856ea15e68c4561916d4b31c9e5607c2a"
+    },
+    "probe_setup_failures": [
+      {
+        "log": "/tmp/collector-same-second-probe.log",
+        "exit_code": 1,
+        "result": "1 failed in 2.80s",
+        "reason": "Diagnostic omitted the required controller bearer token; 403 before exercising source ordering."
+      },
+      {
+        "log": "/tmp/collector-same-second-probe-authorized.log",
+        "exit_code": 1,
+        "result": "1 failed in 3.07s",
+        "reason": "Second diagnostic pull lacked status.json, correctly rejected an unverified empty outcome; setup corrected with a real recorded run and healthy status."
+      }
+    ],
+    "required_next_step": "Formally block this same task for Human/Ops native artifact-contract maintenance before editing runtime.py (definite freshness selection owner); assess scheduler.py receipt tie ordering. Preserve all six ACs, five existing paths, owner/reviewer/generation, native guard, original required full Source CI and fresh exact-head independent review. No new helper task, writer, service or queue.",
+    "bounded_full_model_diagnostic": {
+      "status": "running_not_acceptance",
+      "command": "timeout 720 .venv-pantheon/bin/python3 -m pytest -q -s /tmp/collector_order_probe.py > /tmp/collector-order-probe.log 2>&1",
+      "scope": "Two discovered model cases (imported original plus diagnostic wrapper), same product source; wrapper records native readbacks only. Terminal output will be collected before blocker/final."
+    }
+  }
 }
