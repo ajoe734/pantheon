@@ -415,3 +415,21 @@ def test_quarter_window_makes_request_count_follow_the_quarter_not_the_total() -
     )
     assert personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs, far) == []
     assert len(empty.calls) == 1
+
+
+
+@pytest.mark.parametrize("out_of_window", [0, 1600, 6000])
+@pytest.mark.parametrize("in_window", [50, 500, 501, 1200])
+def test_requests_equal_ceil_in_window_and_ignore_out_of_window_volume(in_window: int, out_of_window: int) -> None:
+    import math
+
+    rows = [{"id": f"o-{i}", "available_time": "2026-06-01T00:00:00+00:00"} for i in range(out_of_window)]
+    rows += [{"id": f"q-{i}", "available_time": "2026-02-15T00:00:00+00:00"} for i in range(in_window)]
+    window = {"start_at": "2026-01-01T00:00:00Z", "end_exclusive_at": "2026-04-01T00:00:00Z"}
+    owner = _WindowOwner(rows)
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+    )
+    got = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs, window)
+    assert got is not None and len(got) == in_window
+    assert len(owner.calls) == math.ceil(in_window / 500)

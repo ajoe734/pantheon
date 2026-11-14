@@ -460,16 +460,45 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             f"(CASE WHEN {raw_ts} ~ {has_zone} THEN REPLACE({raw_ts}, 'Z', '+00:00')::timestamptz "
             f"ELSE ({raw_ts})::timestamp AT TIME ZONE 'UTC' END) END)"
         )
-        clauses = [f"{captured} IS NOT NULL"]
-        params: list[Any] = []
-        for value, op in ((captured_from, ">="), (captured_before, "<")):
-            if value is None:
-                continue
-            parsed = _capture_datetime(value)
-            if parsed is None:
+        # Stored timestamps the strict ISO guard does not recognise (compact
+        # dates, ``+0000`` offsets, ...) still parse under the legacy
+        # ``datetime.fromisoformat`` rule. Those rare rows are judged in Python
+        # with the shared predicate and joined into the SQL window by id.
+        bounds: list[Any] = []
+        for value in (captured_from, captured_before):
+            parsed = _capture_datetime(value) if value is not None else None
+            if value is not None and parsed is None:
                 return [], 0
-            clauses.append(f"{captured} {op} %s")
+            bounds.append(parsed)
+        try:
+            with self._get_connection() as conn:
+                odd_rows = conn.execute(
+                    f"SELECT append_id, {raw_ts} FROM {self.table} "
+                    f"WHERE record_type = %s AND {where} AND {raw_ts} IS NOT NULL AND NOT ({raw_ts} ~ {iso_guard})",
+                    ("evidence_item", *scope_params),
+                ).fetchall()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        odd_ids: list[int] = []
+        for row in odd_rows:
+            append_id, raw = (row[0], row[1]) if isinstance(row, tuple) else list(row.values())[:2]
+            moment = _capture_datetime(raw)
+            if moment is None:
+                continue
+            if (bounds[0] is None or bounds[0] <= moment) and (bounds[1] is None or moment < bounds[1]):
+                odd_ids.append(append_id)
+        in_window = [f"{captured} IS NOT NULL"]
+        params: list[Any] = []
+        for parsed, op in ((bounds[0], ">="), (bounds[1], "<")):
+            if parsed is None:
+                continue
+            in_window.append(f"{captured} {op} %s")
             params.append(parsed)
+        clause = "(" + " AND ".join(in_window) + ")"
+        if odd_ids:
+            clause = f"({clause} OR append_id = ANY(%s))"
+            params.append(odd_ids)
+        clauses = [clause]
         stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
         base = f"FROM {self.table} WHERE record_type = %s AND {where} AND " + " AND ".join(clauses)
         base_params = ("evidence_item", *scope_params, *params)

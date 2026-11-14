@@ -235,7 +235,10 @@ def test_postgres_window_filters_in_sql_with_a_strict_guard_and_bound_instants()
     log: list = []
     repo = _pg_stub([], log, fail_window=False)
     repo.list_evidence_items_page(TENANT, limit=500, offset=0, captured_from=Q1[0], captured_before=Q1[1])
-    sql, params = log[0]
+    # The first statement lists only the rare non-ISO stored timestamps
+    # (judged in Python); the COUNT statement carries the window.
+    assert "COUNT(*)" not in log[0][0] and "append_id" in log[0][0]
+    sql, params = next(entry for entry in log if "COUNT(*)" in entry[0])
     assert "COUNT(*)" in sql and "timestamptz" in sql and "COALESCE(NULLIF(BTRIM(payload->>'available_time')" in sql
     assert ">= %s" in sql and "< %s" in sql
     assert params[0] == "evidence_item" and params[1] == TENANT
@@ -275,10 +278,15 @@ def test_real_postgres_matches_in_memory_window_semantics() -> None:
     with psycopg.connect(dsn) as conn:
         conn.execute(f'CREATE SCHEMA "{schema}"')
     try:
-        repo = PostgresSourceEvidenceRepository(dsn=dsn, table=f'"{schema}".evidence_log', bootstrap=True)
+        repo = PostgresSourceEvidenceRepository(dsn=dsn, table=f"{schema}.evidence_log", bootstrap=True)
         from services.source_ingestion.connectors.base import SourceRecord  # noqa: F401
 
-        rows = _mixed()
+        rows = _mixed() + [
+            _item("compact-date", available="20260215"),
+            _item("basic-offset", available="2026-02-15T00:00:00+0000"),
+            _item("standard", available="2026-02-15T00:00:00+00:00"),
+            _item("compact-outside", available="20260515"),
+        ]
         memory = _repo(rows)
         for it in rows:
             repo.add_source_record(_source_for(it))
