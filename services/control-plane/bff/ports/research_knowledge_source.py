@@ -27,6 +27,10 @@ class _EvidenceOwnerReadError(RuntimeError):
     """The evidence owner read failed or timed out."""
 
 
+class _EvidenceOwnerHintsUnsupported(_EvidenceOwnerReadError):
+    """The owner did not confirm the requested population hints."""
+
+
 class ResearchWriteOwnerUnavailableError(RuntimeError):
     """Raised when the Postgres-backed ResearchWriteOwner is not configured.
 
@@ -88,6 +92,7 @@ class EvidenceReadResult:
     next_page_token: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
     summary_unavailable: bool = False
+    owner_hints_applied: bool = True
 
     @property
     def available(self) -> bool:
@@ -1350,7 +1355,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             # A mixed-version owner may implement only part of the hints. Retry
             # the complete legacy population, never trust a partially filtered
             # total or retain per-instance capability state across requests.
-            return self._read_owner_evidence_page(start=start, page_size=page_size)
+            raise _EvidenceOwnerHintsUnsupported("source-ingest owner did not echo read hints")
         total = payload.get("total")
         total = int(total) if isinstance(total, int) and not isinstance(total, bool) else start + len(items)
         summary = _normalize_owner_evidence_summary(payload.get("summary"), default_total=total)
@@ -1485,15 +1490,23 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                         tenant_tok = selected_tenant.set(effective_tenant)
                 except Exception:
                     tenant_tok = None
+            owner_hints_applied = True
             try:
-                items, total, owner_summary = self._read_owner_evidence_page(
-                    start=start,
-                    page_size=page_size,
-                    captured_from=captured_from,
-                    captured_before=captured_before,
-                    linked_entity_types=linked_entity_types,
-                    include_summary=include_summary,
-                )
+                try:
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                        captured_from=captured_from,
+                        captured_before=captured_before,
+                        linked_entity_types=linked_entity_types,
+                        include_summary=include_summary,
+                    )
+                except _EvidenceOwnerHintsUnsupported:
+                    owner_hints_applied = False
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                    )
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             finally:
@@ -1520,6 +1533,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 str(nxt) if nxt < total else None,
                 summary=owner_summary,
                 summary_unavailable=owner_summary is None,
+                owner_hints_applied=owner_hints_applied,
             )
 
         tenant_tok = None

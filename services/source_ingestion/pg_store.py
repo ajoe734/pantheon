@@ -675,7 +675,7 @@ def read_source_records_for_tenant(
             conn.execute("SET TRANSACTION READ ONLY")
             rows = conn.execute(
                 f"SELECT payload FROM {table} "
-                "WHERE record_type = %s AND evidence_tenant_id = %s "
+                "WHERE record_type = %s AND payload->'metadata'->>'tenant_id' = %s "
                 "ORDER BY append_id ASC",
                 ("source_record", tenant),
             ).fetchall()
