@@ -222,3 +222,16 @@ def test_gdelt_requires_single_official_hourly_raw_feed(override):
     data["sources"]["collector-gdelt"].update(override)
     with pytest.raises(CollectorConfigError, match="official hourly export feed"):
         validate_collector_config(data, env={})
+
+
+@pytest.mark.parametrize('sid', ['collector-tw-twse-index-breadth', 'collector-tw-twse-taiex-history'])
+@pytest.mark.parametrize('field,value', [('min_interval_seconds', 1.0), ('max_connections', 2)])
+def test_regime_sources_refuse_unsafe_policy_before_fetch(tmp_path, test_hasher, sid, field, value):
+    raw = _raw_policy()
+    raw['sources'][sid][field] = value
+    config = validate_collector_config(raw, env={})
+    transport = FixtureTransport()
+    runner = CollectorRunner(config, root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
+        runner.run_source(sid, run_id='unsafe')
+    assert transport.calls == []
