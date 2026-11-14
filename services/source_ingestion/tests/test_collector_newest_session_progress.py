@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import types
+from datetime import datetime
 
 import pytest
 
@@ -80,7 +81,18 @@ def test_recorded_weekend_and_preclose_runs_use_rows_and_same_date_never_resets(
     assert p.priority_trade_date == "2026-11-12"
 
 
-def test_completed_same_session_new_run_has_no_raw_resend(tmp_path):
+@pytest.mark.parametrize("observation_time,fresh", [
+    ("2026-11-14T10:00:00Z", True),
+    ("2026-11-14T13:00:00Z", False),
+], ids=["healthy", "stale"])
+def test_completed_same_session_new_run_has_no_raw_resend(tmp_path, monkeypatch, observation_time, fresh):
+    # Recorded runs must be judged at a fixed observation time, independent of
+    # the test runner's clock. Exercise the real health guard on both sides of
+    # the latest run's twice-cadence expiry (2026-11-14T12:19:33Z).
+    now = datetime.fromisoformat(observation_time.replace("Z", "+00:00"))
+    real_observed = cb.observed_from_collector_status
+    monkeypatch.setattr(cb, "observed_from_collector_status",
+                        lambda *a, **kw: real_observed(*a, **{**kw, "now": now}))
     files, first = recorded_run(count=2, fetched="2026-11-13T12:18:42Z")
     a = adapter(tmp_path, files, [first]); pull = a.pull(); a.save_resume_cursor(pull)
     more, entry = recorded_run(count=2); files.update(more)
@@ -89,7 +101,16 @@ def test_completed_same_session_new_run_has_no_raw_resend(tmp_path):
     original = a.transport.read
     a.transport.read = lambda path, **kw: (reads.append(path), original(path, **kw))[1]
     pull = a.pull(cursor=pull.next_cursor)
-    assert pull.records == () and pull.priority_done and pull.no_new_data
+    if fresh:
+        assert pull.records == () and pull.priority_done and pull.no_new_data
+        assert pull.observed["health_state"] == "healthy"
+        assert pull.observed["reasons"] == ()
+    else:
+        assert pull.records == () and pull.priority_done and not pull.no_new_data
+        assert pull.observed["health_state"] == "degraded"
+        assert "newest_bundle_older_than_twice_cadence" in pull.observed["reasons"]
+    assert pull.observed["freshness"]["collector_last_run_at"] == "2026-11-14T00:19:33Z"
+    assert pull.observed["freshness"]["cadence_seconds"] == 21600
     assert not any("/raw/" in path for path in reads)
     a.save_resume_cursor(pull)
     assert json.loads(a._priority_key_path().read_text())["key"].endswith(entry["run_id"])
