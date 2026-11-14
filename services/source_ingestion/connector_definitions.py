@@ -11,7 +11,7 @@ Every definition is stable-sorted, validated, and fingerprinted with a SHA-256 h
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
@@ -1167,6 +1167,37 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
     for spec in COLLECTOR_SOURCE_SPECS
 )
 
+# Separate configured instances keep each daily requirement's watermark and schedule
+# independent; these reuse the existing adapters, never the TWSE collector flow path.
+TW_CHIP_REFRESH_PROFILES = {
+    "tw-official-margin-balances": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
+        "venues": ["TWSE", "TPEx"],
+    },
+    "tw-official-tpex-institutional-flow": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_institutional_flow",
+        "venues": ["TPEx"],
+    },
+    "tw-taifex-institutional-positions": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_futures_chip",
+        "contracts": ["TX", "MTX"],
+    },
+    "tw-taifex-put-call": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_options_chip",
+        "contracts": ["TXO"],
+    },
+}
+_BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
+_CANONICAL_DEFINITIONS += tuple(
+    replace(_BASE_DEFINITIONS[profile["base"]], definition_id=connector_id,
+            datasets=(profile["dataset"],),
+            test_manifest_ref="evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114",
+            metadata={**_BASE_DEFINITIONS[profile["base"]].metadata,
+                      "refresh_profile": profile})
+    for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
+)
+
+
 DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEFINITIONS
 
 _DEFINITION_ID_ALIASES: dict[str, str] = {
@@ -1190,6 +1221,7 @@ _DEFINITIONS_BY_ADAPTER: dict[str, ConnectorDefinition] = {
     defn.adapter_token: defn
     for defn in _CANONICAL_DEFINITIONS
     if defn.adapter_token != COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    and defn.definition_id not in TW_CHIP_REFRESH_PROFILES
 }
 
 # Verify at import time that no definition duplicates exist

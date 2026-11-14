@@ -23,8 +23,11 @@ from .connectors.taiwan_official import (
     TAIWAN_OFFICIAL_ENDPOINTS,
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
+    TaifexDerivativesChipAdapter,
 )
-from .connector_definitions import ConnectorDefinition, get_connector_definition, list_connector_definitions
+from .connector_definitions import (
+    ConnectorDefinition, get_connector_definition, list_connector_definitions, TW_CHIP_REFRESH_PROFILES,
+)
 from .connectors.collector_bundle import (
     COLLECTOR_BUNDLE_ADAPTER_TOKEN,
     COLLECTOR_HOST_ENV,
@@ -81,7 +84,8 @@ _FINMIND_DATASET_BY_NORMALIZED = {
 _OFFICIAL_TW_DATASETS = {
     str(endpoint["dataset"])
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS
-    if endpoint.get("dataset") and str(endpoint.get("status") or "").startswith("implemented")
+    if endpoint.get("dataset") and endpoint.get("venue") in {"TWSE", "TPEx"}
+    and str(endpoint.get("status") or "").startswith("implemented")
 }
 
 
@@ -277,6 +281,20 @@ class CollectorDefinitionProvider:
         return fetch
 
 
+def chip_profile_provider(connector_id: str) -> SourceConnectorProvider:
+    """Existing official adapters with a dedicated, bounded configured identity."""
+    profile = TW_CHIP_REFRESH_PROFILES[connector_id]
+    metadata = {"definition_id": connector_id, "refresh_profile": profile}
+    if profile["base"] == TW_OFFICIAL_CONNECTOR_ID:
+        return TaiwanOfficialMarketDatasetAdapter(
+            connector_id=connector_id, max_records=500, connector_metadata=metadata,
+        )
+    return TaifexDerivativesChipAdapter(
+        connector_id=connector_id, dataset=profile["dataset"],
+        contracts=profile["contracts"], max_records=500, connector_metadata=metadata,
+    )
+
+
 class SourceProvisioningReconciler:
     """Idempotent controller for Persona.required_data_sources."""
 
@@ -297,6 +315,8 @@ class SourceProvisioningReconciler:
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
             TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
         }
+        for connector_id in TW_CHIP_REFRESH_PROFILES:
+            self.provider_factories[connector_id] = chip_profile_provider
         # Every deployed Collector definition is an allowlisted provider; whether it can be
         # provisioned right now (collector host configured) is decided per requirement.
         for defn in deployed_collector_definitions():
@@ -541,6 +561,9 @@ class SourceProvisioningReconciler:
         return []
 
     def _provider_supports(self, connector_id: str, requirement: PersonaDataSourceRequirement) -> bool:
+        profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+        if profile is not None:
+            return requirement.market.upper() == "TW" and requirement.dataset == profile["dataset"]
         definition = collector_definition(connector_id)
         if definition is not None:
             return collector_host_configured() and requirement.dataset in definition.datasets
@@ -580,6 +603,14 @@ class SourceProvisioningReconciler:
             # The Collector adapter pulls real bundles; an empty pull must not be masked.
             return payload
         request = dict(payload.get("request") or {})
+        profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+        if profile is not None:
+            request.update({k: v for k, v in profile.items() if k in {"dataset", "venues", "contracts"}})
+            payload["request"] = request
+            # Empty or changed tables are provider failures, never provisioning success.
+            payload["allow_empty"] = False
+            payload.pop("empty_reason", None)
+            return payload
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
             request["dataset"] = requirement.dataset
         elif connector_id == "tw-finmind-datasets":

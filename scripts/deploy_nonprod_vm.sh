@@ -1357,6 +1357,7 @@ validate_source_refresh_profile() {
 import sys
 
 from services.external_egress import allowed_hosts
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
 
 hosts = allowed_hosts(
     {
@@ -1367,7 +1368,16 @@ hosts = allowed_hosts(
 if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 dataset = sys.argv[3] if len(sys.argv) > 3 else ""
-if sys.argv[2] == "tw-twse-tpex-official-market":
+profile = TW_CHIP_REFRESH_PROFILES.get(sys.argv[2])
+if profile is not None:
+    required = ({"openapi.taifex.com.tw", "www.taifex.com.tw"}
+                if profile["base"] == "tw-taifex-futures-options-chip"
+                else {"openapi.twse.com.tw", "www.tpex.org.tw"})
+    if hosts != required:
+        raise SystemExit("chip refresh requires exact hosts: " + ",".join(sorted(required)))
+    if dataset != profile["dataset"]:
+        raise SystemExit(f"chip refresh dataset mismatch: {dataset!r} != {profile['dataset']!r}")
+elif sys.argv[2] == "tw-twse-tpex-official-market":
     required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
     if hosts != required:
         raise SystemExit(
@@ -1779,6 +1789,10 @@ bounded_dataset = (
 expected_dataset = bounded_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip" else ""
 )
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+if profile is not None and expected_dataset != profile["dataset"]:
+    raise SystemExit("bounded chip dataset is outside the governed profile")
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1819,12 +1833,26 @@ if freshness.get("source_timestamp_status") != "valid":
 if provenance.get("source_ingest_run_id") != run_id or not source_id:
     raise SystemExit("controller source record does not bind the new ingest run")
 actual_dataset = str(provenance.get("dataset") or record_metadata.get("dataset") or "").strip()
-if expected_dataset and (connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
+if expected_dataset and (profile is not None or connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
     if actual_dataset != expected_dataset:
         raise SystemExit(
             f"controller source record dataset mismatch for {connector_id}: "
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
+if profile is not None:
+    expected_schema = {
+        "tw_margin_short_balance": "tw_margin_short_balance.v1",
+        "tw_institutional_flow": "tw_institutional_flow.v1",
+        "taifex_futures_chip": "tw_taifex_futures_chip.v1",
+        "taifex_options_chip": "tw_taifex_options_chip.v1",
+    }[expected_dataset]
+    if (provenance.get("schema_hash") or record_metadata.get("schema_hash")) != expected_schema:
+        raise SystemExit("bounded chip schema mismatch")
+    row = record_metadata.get("normalized_row") or {}
+    if not (row.get("date") or record_metadata.get("date")):
+        raise SystemExit("bounded chip provider session is missing")
+    if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
+        raise SystemExit("bounded chip venue is outside the governed profile")
 if connector_id == "tw-taifex-futures-options-chip":
     req_ds = expected_dataset or "taifex_ssf_contracts"
     expected_source_prefix = f"tw-taifex:{req_ds}:"
@@ -2195,7 +2223,8 @@ raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
 connector_id = raw_connector or (
     "tw-taifex-futures-options-chip" if raw_dataset == "taifex_ssf_contracts" else "tw-twse-tpex-official-market"
 )
-CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report", *TW_CHIP_REFRESH_PROFILES}
 bounded_dataset = raw_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
     else "tw_broker_top" if connector_id == "tw-finmind-broker-daily-report"
@@ -2741,6 +2770,10 @@ RECOVER_DLQ_PY
 
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
+  case "${connector_id}:${dataset}" in
+    tw-official-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
+      return 0 ;;
+  esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
     [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
   elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
