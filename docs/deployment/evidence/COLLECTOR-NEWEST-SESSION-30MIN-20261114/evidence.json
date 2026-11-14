@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-NEWEST-SESSION-30MIN-20261114",
   "owner": "Codex",
   "reviewer": "Antigravity2",
-  "stage": "authorized_outcome_truth_regression_correction_validation_in_progress",
+  "stage": "author_validation_passed_ready_for_independent_review",
   "recorded_hosted_evidence": {
     "provenance": "Task-scoped brief and governed show at 2026-11-14; operator read-only observations, not re-probed by this worker.",
     "candidate": "a9284b68c",
@@ -68,9 +68,8 @@
     "method": "Load the actual git objects. a9284b68c parses the additive latest_priority.json using its original reader; bee62bc29 predates the sidecar and still reads the original resume-cursor format."
   },
   "validation": [
-    {"command": "timeout 300 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-fast.xml services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 0, "summary": "319 passed, 1 skipped, 1 warning in 97.33s (0:01:37)", "counts": {"passed": 319, "skipped": 1}, "failures": []},
-    {"command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s --junitxml=/tmp/collector-contract-newest.xml services/source_ingestion/tests/test_collector_newest_session_progress.py", "exit_code": 0, "summary": "13 passed, 1 warning in 213.81s (0:03:33)", "counts": {"passed": 13}, "failures": []},
-    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 0, "summary": "73 passed, 1 warning in 318.42s (0:05:18)", "counts": {"passed": 73}, "failures": []}
+    {"command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-outcome-contract-20261114.xml services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 0, "summary": "509 passed, 1 skipped, 1 warning in 602.91s (0:10:02)", "counts": {"passed": 509, "skipped": 1}, "log_sha256": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7"},
+    {"command": "timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-ci-tmpfs-source-20261114.xml --basetemp=/dev/shm/pantheon-collector-ci-20261114.na9szk/pytest services/source_ingestion/tests services/source_ingestion/test_*.py", "exit_code": 0, "summary": "1964 passed, 2 skipped, 15 warnings in 863.73s (0:14:23)", "counts": {"passed": 1964, "skipped": 2}, "log_sha256": "82e5f6ea7daf404d0cfce8a932ff50860bf801a313f44ce4526ac93d6a649e71", "environment": {"SOURCE_INGEST_TEST_POSTGRES_DSN": "postgresql://pantheon:pantheon@127.0.0.1:32778/source_ingest_test", "SOURCE_INGEST_DATA_DIR": "/dev/shm/pantheon-collector-ci-20261114.na9szk/source", "TMPDIR": "/dev/shm/pantheon-collector-ci-20261114.na9szk/tmp", "pyarrow": "26.0.1; installed into the checkout-scoped venv under the existing service requirement"}, "skips": [{"test": "services.source_ingestion.tests.test_collector_bundle_connector::test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader", "reason": "private native RSS pack not provided"}, {"test": "services.source_ingestion.tests.test_taiwan_official_connectors::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol", "reason": "Set PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 to run read-only official TWSE/TPEx network smoke."}]}
   ],
   "review_hold": {
     "status": "resolved_by_authorized_test_contract_correction",
@@ -88,7 +87,7 @@
     "window": "2026-11-16 14:40-17:00 Asia/Taipei",
     "required": "Deploy the independently reviewed exact source head through the existing release process, then verify healthy continuation requests under 30 seconds and all latest-session snapshots under 30 minutes."
   },
-  "recorded_at": "2026-11-14T05:55:12.704366+00:00",
+  "recorded_at": "2026-11-14T07:28:48.525859+00:00",
   "recovery": {
     "inherited_head": "9133f196fde6297e0f9c98efc563dec0a1386617",
     "note": "Implementation inherited from committed source. Owner/reviewer above follow the current governed task row; inherited commit authorship is preserved."
@@ -100,7 +99,8 @@
     "services/source_ingestion/runtime.py": "08a44a3a32f85ea7a3399690058cfff348c77cb8",
     "services/source_ingestion/tests/test_collector_newest_session_progress.py": "d7350f8dc1d2413fff5067059df3e8884e9573c4",
     "services/source_ingestion/tests/test_collector_bundle_connector.py": "e15f585f723d02e3b87a0ce656704268fb1341c3",
-    "services/source_ingestion/tests/test_scheduled_connector.py": "9caad9376345cffb95ceee82aea9f81920d2e5c2"
+    "services/source_ingestion/tests/test_scheduled_connector.py": "9caad9376345cffb95ceee82aea9f81920d2e5c2",
+    "services/source_ingestion/tests/test_collector_outcome_truth.py": "ad2c6fcabf63fc54d61d46bde0a979528f3a0ca3"
   },
   "current_controller_benchmark": {
     "enabled_connectors": ["collector-gdelt", "collector-macro-dbnomics", "collector-news-rss", "collector-paper-arxiv", "collector-paper-nber-rss", "collector-paper-openalex", "collector-tw-cmoney-forum", "collector-tw-instagram-popular", "collector-tw-macro-cbc", "collector-tw-macro-dgbas", "collector-tw-macro-ndc", "collector-tw-tpex-price-history", "collector-tw-twse-price-history"],
@@ -160,6 +160,18 @@
     }
   },
   "regression_results_by_suite": {
+    "services.source_ingestion.tests.test_collector_outcome_truth": {
+      "passed": 104,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_collector_newest_session_progress": {
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "services.source_ingestion.tests.test_collector_bundle_connector": {
       "passed": 103,
       "failed": 0,
@@ -172,20 +184,14 @@
       "errors": 0,
       "skipped": 0
     },
-    "services.source_ingestion.tests.test_tw_close_reconcile": {
-      "passed": 16,
-      "failed": 0,
-      "errors": 0,
-      "skipped": 0
-    },
-    "services.source_ingestion.tests.test_collector_newest_session_progress": {
-      "passed": 13,
-      "failed": 0,
-      "errors": 0,
-      "skipped": 0
-    },
     "services.source_ingestion.tests.test_scheduled_connector": {
       "passed": 73,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_tw_close_reconcile": {
+      "passed": 16,
       "failed": 0,
       "errors": 0,
       "skipped": 0
@@ -205,13 +211,18 @@
     "collector-contract-replay-fixed.log": "7daff796dd5d749351225065b52c61aac936f2602464b45d9e4e6fed06896871",
     "collector-contract-newest.log": "d11b292fa9848092dfc1d91024d3fc1fb0bb578a9dd2388bfe35fa8a19d1fbd2",
     "collector-contract-replay.log": "8c42682851baaa6aefb269c619bf3a383d8f5fc709e2512fdfa5468f34fe5fe1",
-    "collector-contract-fast.log": "5c252e8dc6429028d54ccf5b433254b75aa241d93ff2a78c8c6bfb44fe52d03b"
+    "collector-contract-fast.log": "5c252e8dc6429028d54ccf5b433254b75aa241d93ff2a78c8c6bfb44fe52d03b",
+    "collector-outcome-contract-20261114.log": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7",
+    "collector-full-ci-tmpfs-source-20261114.log": "82e5f6ea7daf404d0cfce8a932ff50860bf801a313f44ce4526ac93d6a649e71"
   },
   "previous_validation": [
     {"command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_newest_session_progress.py", "exit_code": 0, "summary": "13 passed, 1 warning in 237.62s (0:03:57)", "counts": {"passed": 13}, "failures": []},
     {"command": "timeout 360 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 124, "status": "timed_out_incomplete_not_passed", "note": "No terminal pytest summary; this batch is not counted as a passed test run."},
     {"command": "timeout 240 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-newest-fast.xml services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 1, "summary": "4 failed, 315 passed, 1 skipped, 1 warning in 123.69s (0:02:03)", "counts": {"failed": 4, "passed": 315, "skipped": 1}, "failures": ["services/source_ingestion/tests/test_collector_bundle_connector.py::test_held_set_change_restarts_the_session_order_instead_of_skipping_rows", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_candidate_and_current_real_size_ordered_pull_measurement[collector-tw-twse-price-history]", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_candidate_and_current_real_size_ordered_pull_measurement[collector-tw-tpex-price-history]"]},
-    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-newest-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 1, "summary": "3 failed, 70 passed, 1 warning in 324.94s (0:05:24)", "counts": {"failed": 3, "passed": 70}, "failures": ["services/source_ingestion/tests/test_scheduled_connector.py::test_full_size_close_through_controller_main_with_persistence", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[0]", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[1]"]}
+    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-newest-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 1, "summary": "3 failed, 70 passed, 1 warning in 324.94s (0:05:24)", "counts": {"failed": 3, "passed": 70}, "failures": ["services/source_ingestion/tests/test_scheduled_connector.py::test_full_size_close_through_controller_main_with_persistence", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[0]", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[1]"]},
+    {"command": "timeout 300 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-fast.xml services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 0, "summary": "319 passed, 1 skipped, 1 warning in 97.33s (0:01:37)", "counts": {"passed": 319, "skipped": 1}, "failures": []},
+    {"command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s --junitxml=/tmp/collector-contract-newest.xml services/source_ingestion/tests/test_collector_newest_session_progress.py", "exit_code": 0, "summary": "13 passed, 1 warning in 213.81s (0:03:33)", "counts": {"passed": 13}, "failures": []},
+    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 0, "summary": "73 passed, 1 warning in 318.42s (0:05:18)", "counts": {"passed": 73}, "failures": []}
   ],
   "previous_regression_results_by_suite": {
     "services.source_ingestion.tests.test_collector_bundle_connector": {
@@ -263,21 +274,7 @@
       "exit_code": 0,
       "summary": "1 passed in 4.38s"
     },
-    "required_validation": "Six-file contract suite passed; exact full CI suite pending after checkout-only pyarrow installation, task-local PostgreSQL and task-owned temporary filesystem placement to avoid host ENOSPC.",
-    "validation": [
-      {
-        "command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-outcome-contract-20261114.xml services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py",
-        "exit_code": 0,
-        "summary": "509 passed, 1 skipped, 1 warning in 602.91s (0:10:02)",
-        "counts": {
-          "passed": 509,
-          "skipped": 1
-        },
-        "outcome_truth_passed": 104,
-        "prior_regressions_passed": 405,
-        "log_sha256": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7"
-      }
-    ],
+    "required_validation": "Completed with terminal exit 0: outcome-truth 104 passed, all prior 405 cases passed, and full source-ingestion suite. Exact commands, counts and log digests are in validation.",
     "environment_repair": {
       "initial_directory_only_batch": {
         "command": "timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-source-20261114.xml services/source_ingestion/tests",
@@ -307,6 +304,11 @@
         "log_sha256": "9ce6e867a22630e58f95462c2de7f34aa4607068ec5de86e3ff452d1feb0dbb2",
         "response": "Confirmed /dev/shm has 24GB free and host has 40GiB available RAM. Next batch uses a unique task-owned TMPDIR and pytest basetemp there, with the same code and CI test scope. No unrelated filesystem deletion performed."
       }
+    },
+    "prior_official_failure": {
+      "provenance": "Canonical task brief / Human/Ops rework instruction",
+      "job": "https://github.com/ajoe734/pantheon/actions/runs/43563872100/job/132354029820",
+      "summary": "1954 passed, 2 skipped, 1 failed in 440.10s; the sole failure was the obsolete priority replay expectation."
     }
   }
 }
