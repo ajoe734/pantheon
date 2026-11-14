@@ -1,6 +1,8 @@
 """Search accepts knowledge requests only; memory belongs to memory-svc/Hindsight."""
 
 import json
+import os
+import uuid
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -107,3 +109,114 @@ def test_backend_contract_delegates_memory_to_hindsight():
     assert (Path(__file__).parents[3] / memory["design_ref"]).is_file()
     assert all(not path.startswith("services/memory/") for path in contract["candidate_modules"])
     assert contract["accepted"] and contract["activation_allowed"]
+
+
+@pytest.fixture
+def legacy_memory_backend(tmp_path, monkeypatch):
+    """Opt-in real pgvector test in a disposable schema, never a served index."""
+    import psycopg
+    from psycopg import sql
+    from services.search.pg_retrieval import PostgresRetrievalBackend
+    from services.search.zh_segmentation import _tokenizer
+
+    dsn = os.getenv("PANTHEON_MEMORY_PURGE_TEST_DSN")
+    if not dsn:
+        pytest.skip("Set PANTHEON_MEMORY_PURGE_TEST_DSN for isolated pgvector cleanup integration")
+    dictionary = tmp_path / "dict.txt.big"
+    dictionary.write_text("測試 20 n\n", encoding="utf-8")
+    monkeypatch.setenv("SEARCH_JIEBA_DICTIONARY", str(dictionary))
+    _tokenizer.cache_clear()
+    schema = "memory_purge_" + uuid.uuid4().hex
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
+        conn.execute(sql.SQL("CREATE SCHEMA {} ").format(sql.Identifier(schema)))
+    backend = PostgresRetrievalBackend(
+        dsn,
+        embedding_engine=Mock(dimension=1024),
+    )
+    connection = backend._get_connection
+
+    def scoped_connection(**kwargs):
+        conn = connection(**kwargs)
+        conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        return conn
+
+    backend._get_connection = scoped_connection
+    try:
+        backend.setup_schema()
+        with backend._get_connection(schema_admin=True) as conn:
+            conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO pantheon_retrieval").format(sql.Identifier(schema)))
+            for tenant in ("tenant-a", "tenant-b"):
+                for kind in ("persona_memory", "institutional_memory", "knowledge_object"):
+                    # Include inactive, uncheckpointed memory rows and overlapping ids.
+                    conn.execute("""INSERT INTO search_retrieval_index
+                        (id, tenant_id, record_kind, title, search_text, is_active)
+                        VALUES (%s, %s, %s, 'fixture', 'fixture', %s)""",
+                        (kind, tenant, kind, kind != "institutional_memory"))
+            conn.execute("""INSERT INTO retrieval_query_log
+                (request_id, query_text, retrieval_mode, model_name, latency_ms)
+                VALUES ('keep-log', 'keep', 'keyword', 'fixture', 1)""")
+            conn.execute("""INSERT INTO retrieval_query_labels
+                (query_log_id, source_event_id, labelled_by)
+                SELECT query_log_id, 'keep-label', 'fixture' FROM retrieval_query_log""")
+        yield backend
+    finally:
+        _tokenizer.cache_clear()
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+def test_rebuild_purges_all_tenants_and_preserves_knowledge_and_logs(legacy_memory_backend, tmp_path, monkeypatch):
+    from services.search import pg_retrieval
+
+    backend = legacy_memory_backend
+    monkeypatch.setattr(pg_retrieval, "PostgresRetrievalBackend", Mock(return_value=backend))
+    monkeypatch.setenv("SEARCH_EVIDENCE_BACKEND", "jsonl")
+    # Real DB health and cleanup; no model inference is needed for an empty owner store.
+    result = pg_retrieval.rebuild_index(evidence_path=tmp_path / "empty.jsonl", pipeline_path=tmp_path / "p.jsonl")
+    assert result["is_full_rebuild"] is True
+    assert result["memory_cleanup"] == {
+        "before_counts": {"institutional_memory": 2, "persona_memory": 2},
+        "deleted_count": 4,
+        "after_counts": {"institutional_memory": 0, "persona_memory": 0},
+        "retained_counts": {"knowledge_object": 2},
+    }
+    repeated = pg_retrieval.rebuild_index(evidence_path=tmp_path / "empty.jsonl", pipeline_path=tmp_path / "p.jsonl")
+    assert repeated["memory_cleanup"]["deleted_count"] == 0
+    with backend._get_connection(schema_admin=True) as conn:
+        for table in ("retrieval_query_log", "retrieval_query_labels"):
+            assert conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"] == 1
+    # RLS remains enabled: request role cannot see rows without tenant context.
+    with backend._get_connection() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM search_retrieval_index").fetchone()["n"] == 0
+        conn.execute("SELECT set_config('pantheon.current_tenant', 'tenant-a', true)")
+        rows = conn.execute("SELECT tenant_id, record_kind FROM search_retrieval_index").fetchall()
+        assert rows == [{"tenant_id": "tenant-a", "record_kind": "knowledge_object"}]
+
+
+def test_purge_fails_closed_with_tenant_only_authority(legacy_memory_backend, monkeypatch):
+    import psycopg
+
+    backend = legacy_memory_backend
+    connection = backend._get_connection
+    monkeypatch.setattr(backend, "_get_connection", lambda **kwargs: connection())
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        backend.purge_legacy_memory()
+    with connection(schema_admin=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM search_retrieval_index").fetchone()["n"] == 6
+
+
+def test_purge_rolls_back_incomplete_deletion(legacy_memory_backend):
+    backend = legacy_memory_backend
+    with backend._get_connection(schema_admin=True) as conn:
+        conn.execute("""CREATE FUNCTION retain_one_memory() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF OLD.record_kind = 'persona_memory' THEN RETURN NULL; END IF;
+                RETURN OLD;
+            END $$""")
+        conn.execute("""CREATE TRIGGER retain_one_memory BEFORE DELETE ON search_retrieval_index
+            FOR EACH ROW EXECUTE FUNCTION retain_one_memory()""")
+    with pytest.raises(RuntimeError, match="cleanup count mismatch"):
+        backend.purge_legacy_memory()
+    with backend._get_connection(schema_admin=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM search_retrieval_index").fetchone()["n"] == 6
