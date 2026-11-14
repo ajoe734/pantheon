@@ -1,8 +1,8 @@
 {
   "task_id": "COLLECTOR-NEWEST-SESSION-30MIN-20261114",
-  "owner": "Codex2",
-  "reviewer": "Claude",
-  "stage": "source_implementation_complete_validation_in_progress",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "stage": "local_acceptance_passed_regression_batches_in_progress",
   "recorded_hosted_evidence": {
     "provenance": "Task-scoped brief and governed show at 2026-11-14; operator read-only observations, not re-probed by this worker.",
     "candidate": "a9284b68c",
@@ -90,7 +90,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.4403634369955398,
+            "wall_seconds": 0.4210149179561995,
             "transport_seconds": 15.189999999999989
           },
           {
@@ -98,7 +98,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.42788386798929423,
+            "wall_seconds": 0.42250485002296045,
             "transport_seconds": 15.190000000000095
           },
           {
@@ -106,7 +106,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.42920552199939266,
+            "wall_seconds": 0.41946382296737283,
             "transport_seconds": 15.189999999999852
           }
         ]
@@ -121,7 +121,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.5534639949910343,
+            "wall_seconds": 0.5158150399802253,
             "transport_seconds": 15.189999999999989
           },
           {
@@ -129,7 +129,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.592291081964504,
+            "wall_seconds": 0.4967234489740804,
             "transport_seconds": 15.190000000000095
           },
           {
@@ -137,7 +137,7 @@
             "rows": 308,
             "delivered": 308,
             "done": false,
-            "wall_seconds": 0.5511470380006358,
+            "wall_seconds": 0.5133865179959685,
             "transport_seconds": 15.189999999999852
           }
         ]
@@ -151,7 +151,23 @@
     ],
     "method": "Load the actual git objects. a9284b68c parses the additive latest_priority.json using its original reader; bee62bc29 predates the sidecar and still reads the original resume-cursor format."
   },
-  "validation": [],
+  "validation": [
+    {
+      "command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_newest_session_progress.py",
+      "exit_code": 0,
+      "summary": "13 passed, 1 warning in 237.62s (0:03:57)",
+      "counts": {
+        "passed": 13
+      },
+      "failures": []
+    },
+    {
+      "command": "timeout 360 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py",
+      "exit_code": 124,
+      "status": "timed_out_incomplete_not_passed",
+      "note": "No terminal pytest summary; superseded by two separately terminal-collected batches below."
+    }
+  ],
   "review_hold": {
     "reason": "Canonical task update explicitly retains six allowed artifacts and requires the smallest demonstrated extension before editing another existing path. Two existing test files contain assertions requiring resets/replay/continuation that now contradict AC3. Their semantic updates require Human/Ops artifact-contract authority.",
     "requested_paths": [
@@ -162,7 +178,9 @@
       "Keep cumulative held-set progress; add a separate historical bundle to the rollback partial-cursor fixture; benchmark historical sweep with a separately acknowledged newest close.",
       "At a fully consumed newest-only boundary expect normal cadence and no pending work; expect only older rows to replay after rewind, retaining unchanged normalized partitions."
     ],
-    "unnecessary_extension_removed": "Readback snapshot reuse was removed to retain the existing internal API and avoid changing test_controller_worker.py. No existing test file is included in the implementation commits."
+    "unnecessary_extension_removed": "No test_controller_worker.py extension is required: its existing internal API is unchanged. No existing test file is modified by this delivery.",
+    "required_actor": "Human/Ops",
+    "next_action": "While blocked, add only the two requested existing-test paths through artifact-contract, then reopen this existing task for Codex to update the fixtures/assertions and rerun the same validation before independent Codex2 review. No replacement task is required."
   },
   "hosted_acceptance": {
     "status": "not_performed_by_author",
@@ -170,5 +188,268 @@
     "existing_task": "TW-SAME-DAY-CLOSE-HOSTED-ACCEPTANCE-20261112",
     "window": "2026-11-16 14:40-17:00 Asia/Taipei",
     "required": "Deploy the independently reviewed exact source head through the existing release process, then verify healthy continuation requests under 30 seconds and all latest-session snapshots under 30 minutes."
+  },
+  "recorded_at": "2026-11-14T05:29:59.875877+00:00",
+  "recovery": {
+    "inherited_head": "9133f196fde6297e0f9c98efc563dec0a1386617",
+    "note": "Implementation inherited from committed source. Owner/reviewer above follow the current governed task row; inherited commit authorship is preserved."
+  },
+  "validated_source_blobs": {
+    "services/source_ingestion/connectors/collector_bundle.py": "675dc76b64862132288d88b6727204096ba48674",
+    "services/source_ingestion/controller_worker.py": "13a5134c6edf2ea6965540c86f711a9c379c2d9b",
+    "services/source_ingestion/pipeline.py": "ba1ade3fe8c91e1f5fda53ade9cafd0fb5984aa7",
+    "services/source_ingestion/runtime.py": "08a44a3a32f85ea7a3399690058cfff348c77cb8",
+    "services/source_ingestion/tests/test_collector_newest_session_progress.py": "d7350f8dc1d2413fff5067059df3e8884e9573c4"
+  },
+  "current_controller_benchmark": {
+    "enabled_connectors": [
+      "collector-gdelt",
+      "collector-macro-dbnomics",
+      "collector-news-rss",
+      "collector-paper-arxiv",
+      "collector-paper-nber-rss",
+      "collector-paper-openalex",
+      "collector-tw-cmoney-forum",
+      "collector-tw-instagram-popular",
+      "collector-tw-macro-cbc",
+      "collector-tw-macro-dgbas",
+      "collector-tw-macro-ndc",
+      "collector-tw-tpex-price-history",
+      "collector-tw-twse-price-history"
+    ],
+    "pulls": [
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 4.868452252994757,
+        "transport_seconds": 13.699999999999996,
+        "tick_seconds_upper_bound": 18.568452252994753
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "wall_seconds": 4.9256695579970255,
+        "transport_seconds": 13.700000000000077,
+        "tick_seconds_upper_bound": 18.625669557997103
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 5.1170766620198265,
+        "transport_seconds": 13.699999999999928,
+        "tick_seconds_upper_bound": 18.817076662019755
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "wall_seconds": 5.041929745988455,
+        "transport_seconds": 13.69999999999986,
+        "tick_seconds_upper_bound": 18.741929745988315
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 5.118742317019496,
+        "transport_seconds": 13.699999999999868,
+        "tick_seconds_upper_bound": 18.818742317019364
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "wall_seconds": 5.140410393010825,
+        "transport_seconds": 13.69999999999986,
+        "tick_seconds_upper_bound": 18.840410393010686
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 5.740874093025923,
+        "transport_seconds": 13.69999999999986,
+        "tick_seconds_upper_bound": 19.440874093025784
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "wall_seconds": 5.7976997080259025,
+        "transport_seconds": 13.69999999999986,
+        "tick_seconds_upper_bound": 19.497699708025763
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.988391524995677,
+        "transport_seconds": 13.69999999999986,
+        "tick_seconds_upper_bound": 20.688391524995538
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "wall_seconds": 6.7249020299641415,
+        "transport_seconds": 13.699999999999832,
+        "tick_seconds_upper_bound": 20.424902029963974
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 5.657463398994878,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 19.357463398994582
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 97,
+        "wall_seconds": 5.601837478054222,
+        "transport_seconds": 6.709999999999752,
+        "tick_seconds_upper_bound": 12.311837478053974
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.430898905964568,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 21.130898905964273
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.449156611983199,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.149156611982903
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.328232519037556,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.02823251903726
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.21849227900384,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 19.918492279003544
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.158777194970753,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 19.858777194970457
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.22603053599596,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.926030535995665
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.436173515976407,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.13617351597611
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.161436582973693,
+        "transport_seconds": 13.699999999999733,
+        "tick_seconds_upper_bound": 20.861436582973425
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.2604155779699795,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.960415577969684
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.947511205042247,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.64751120504195
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.675922077032737,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.375922077032442
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 6.600017997028772,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 20.300017997028476
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.3443204130162485,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 21.044320413015953
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.502731240005232,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 21.202731240004937
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.56094628199935,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 21.260946281999054
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 8.623800961999223,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 22.323800961998927
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "wall_seconds": 7.415176759008318,
+        "transport_seconds": 13.699999999999704,
+        "tick_seconds_upper_bound": 21.115176759008023
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 202,
+        "wall_seconds": 7.147501369996462,
+        "transport_seconds": 11.649999999999693,
+        "tick_seconds_upper_bound": 18.797501369996155
+      }
+    ],
+    "elapsed_seconds_upper_bound_including_worst_cadence_phase": 1225.1709911910893,
+    "snapshot_counts": {
+      "collector-tw-twse-price-history": 1377,
+      "collector-tw-tpex-price-history": 6090
+    },
+    "initial_config_journal": {
+      "lines": 1980,
+      "bytes": 1444844
+    },
+    "method": "Real local controller/API/scheduler, JSONL source evidence and config journal, SQLite ingest queue, raw/normalized files and latest market snapshot persistence. Virtual worst-end fresh-connection costs: raw 0.19s, metadata 0.14s, four concurrent raw readers; actual local CPU/disk/readback wall time is added conservatively. Includes a 600s worst cadence phase and 1s continuation pauses. This is a local upper-bound model, not a hosted or PostgreSQL measurement.",
+    "max_tick_seconds_upper_bound": 22.323800961998927,
+    "source_totals": {
+      "collector-tw-twse-price-history": {
+        "rows": 1377,
+        "pulls": 6
+      },
+      "collector-tw-tpex-price-history": {
+        "rows": 6090,
+        "pulls": 24
+      }
+    },
+    "binding_cost": "The 256-row configured persistence cap binds full newest-session batches; raw transport at four concurrent readers contributes about 13.7s per full pull. Measured local persistence/controller/readback wall time is charged separately per pull. No blanket claim is made for unmeasured hosted database/network/lock costs."
   }
 }
