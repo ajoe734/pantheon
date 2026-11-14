@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Design for implementation; the operator approved the conclusion and asked for the design and tasks on 2026-11-13 |
 | Date | 2026-11-13 |
-| Repo base | `origin/dev` `6cb713b01`; every repository reference below was read on this base |
+| Repo base | `origin/dev` `6cb713b01`; every repository reference below was read on this base; the 2026-11-14 amendment references (H5, H9, H10, H13, section 10) were re-verified on `a9284b68c` and the two Hindsight source facts at v1.2.1 (`0eb02d8c418eac6b489bc63883c993b2257dfac4`), see `docs/deployment/evidence/SD-MEMORY-HINDSIGHT-AMEND-20261114/evidence.json` |
 | Changes | `SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md` decision M2 (memory projection into the search index) is **replaced**; M4/M5 readers and M7 usefulness are **kept** and re-pointed; M1 and M9 (knowledge-base retrieval) are **unchanged** |
 | Keeps | `services/memory/MEMORY_LAYER_DESIGN_NOTE.md` §2–§4 (canonical stores and owner-only writers); `SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md` panel and cycle boundaries |
 | Scope | design only; no source, test, workflow, configuration or infrastructure change |
