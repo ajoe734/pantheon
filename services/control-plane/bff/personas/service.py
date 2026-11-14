@@ -200,7 +200,7 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
 from services.rankings.snapshots import (
     RETURN_ON_CAPITAL_FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
-    snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
+    snapshot_record, snapshot_content_digest, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
@@ -14221,7 +14221,12 @@ def _pm12_evidence_ref_key(ref: Any) -> str:
 
 def _pm12_attach_ranking_snapshot(items, *, surface, period):
     """Attach a content identity only; scheduled evaluator admission owns persistence."""
-    snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+    # Only the identity is attached. Build it from the content digest alone:
+    # snapshot_record() additionally rebuilds the content, deep-freezes every
+    # item and hashes evidence assertions, then the record is discarded.
+    digest = snapshot_content_digest(items, surface=surface, period=period)
+    clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
+    snapshot_id = f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
     return ([{**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"},
               "ranking_snapshot_id": snapshot_id} for item in items], snapshot_id)
 
@@ -15309,6 +15314,7 @@ def _build_persona_health_items_impl(
                 data_source_status,
                 data_sources,
                 required_data_sources=required_data_sources,
+                thin=True,
             )
         else:
             source_health_bindings = []
@@ -17398,7 +17404,15 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        # Ranking blocks never read the per-persona route-policy / health /
+        # allowed-actions summaries; skipping them removes 2-3 store reads per
+        # persona from this read path without changing any ranking field.
+        rows = _pm12_persona_league_rows(
+            tenant_id=caller_tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(

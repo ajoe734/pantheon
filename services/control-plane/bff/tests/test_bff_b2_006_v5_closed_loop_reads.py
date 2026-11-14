@@ -300,3 +300,92 @@ def test_v5_routes_are_served_by_dedicated_handlers() -> None:
     sh = routes_by_path.get("/bff/v5/execution/strategy-health")
     assert sh is not None, "Route /bff/v5/execution/strategy-health not registered"
     assert sh.endpoint.__name__ == "bff_v5_execution_strategy_health", sh.endpoint.__name__
+
+
+def test_v5_persona_health_full_response_stays_under_1mb_with_heavy_source_health() -> None:
+    """BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114 AC1: the serialized GET body
+    (including the duplicated ``data`` and ``items`` arrays) stays under 1 MB
+    when four personas each carry ~1 MB of required source health."""
+    store = _V5ClosedLoopTestStore()
+    pad = "x" * 250_000
+
+    def _heavy_registry(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "connectors": [
+                {
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "status": "configured",
+                    "schedule": {"blob": pad},
+                    "freshness": {"status": "fresh"},
+                    "health_metrics": {},
+                }
+            ]
+        }
+
+    def _snapshot(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "sources": [
+                {
+                    "health": {
+                        "source_id": "tw-twse-tpex-official-market",
+                        "status": "ok",
+                        "last_success_at": "2026-09-14T00:00:00Z",
+                        "row_count_last_run": 8,
+                    },
+                    "usage_aggregate_30d": {},
+                }
+            ]
+        }
+
+    def _list_personas(**kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "persona_id": f"persona-heavy-{index}",
+                "id": f"persona-heavy-{index}",
+                "name": f"Heavy {index}",
+                "lifecycle_state": "active",
+                "metadata": {},
+                "required_data_sources": [
+                    {
+                        "source_key": f"src-{index}-{part}",
+                        "connector_candidates": ["tw-twse-tpex-official-market"],
+                    }
+                    for part in range(4)
+                ],
+            }
+            for index in range(4)
+        ]
+
+    store.get_source_connector_registry = _heavy_registry  # type: ignore[attr-defined]
+    store.get_source_health_usage_snapshot = _snapshot  # type: ignore[attr-defined]
+    store.list_personas = _list_personas  # type: ignore[attr-defined]
+    persona_svc = PersonaService(
+        read_store=store,
+        write_owner=MagicMock(),
+        ranking_write_owner=MagicMock(),
+        command_store=MagicMock(),
+    )
+    rt_router = create_runtime_router(
+        read_surface=store,
+        dependencies={
+            "_extract_identity": _extract_identity,
+            "_require_read_role": _require_read_role,
+            "_dataset_surface_status": _dataset_surface_status,
+            "_composed_dataset_surface_status": _composed_dataset_surface_status,
+            "_build_persona_health_items": persona_svc.build_persona_health_items,
+            "utc_now": _utc_now,
+        },
+    )
+    app = FastAPI()
+    app.routes.extend(rt_router.routes)
+    resp = TestClient(app, raise_server_exceptions=False).get(
+        "/bff/v5/execution/persona-health", headers=OPERATOR_HEADERS
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["items"]) == 4 and body["data"] == body["items"]
+    assert len(resp.content) < 1_000_000, len(resp.content)
+    for item in body["items"]:
+        status = item.get("data_source_status") or {}
+        assert "required_source_health" not in status
+        assert item["source_health_bindings"] == []
