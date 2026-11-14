@@ -271,7 +271,7 @@ class TestPostgresRetrievalBackend(unittest.TestCase):
         from unittest.mock import MagicMock
         from services.search.filters import SearchCapabilityUnavailableError
 
-        unready_engine = MagicMock()
+        unready_engine = MagicMock(dimension=1024)
         unready_engine.is_ready.return_value = False
         unready_backend = PostgresRetrievalBackend(dsn=POSTGRES_TEST_DSN, embedding_engine=unready_engine)
         context = SearchAccessContext(environment="paper", access_scopes=["public"], license_scopes=["open"])
