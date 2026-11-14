@@ -360,7 +360,11 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
         definition = definition_for(source)
         if source not in enabled or definition is None:
             return definition
-        return replace(definition, default_limits={**definition.default_limits, "max_records": 1000},
+        # Cover the same 261720 rows with full-size local batches. Splitting
+        # every day into 1000-row pulls repeatedly reloads the unrelated snapshot
+        # journal and controller receipts, making this provenance proof exceed
+        # the entire source-ingest CI budget. Capped continuation is tested above.
+        return replace(definition, default_limits={**definition.default_limits, "max_records": 6000},
             metadata={**definition.metadata, "collector": {
                 **definition.metadata["collector"], "cadence_seconds": 86400}})
     monkeypatch.setattr(reconciler, "collector_definition", scale_definition)
