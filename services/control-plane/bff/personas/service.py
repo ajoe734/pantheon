@@ -17427,13 +17427,41 @@ class PersonaService:
         )
         total = len(rows)
         page_items, next_page_token = slice_fn(rows, page_token, page_size)
-        for item in page_items:
-            pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
-            item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
-            item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
-            allowed = {} if is_ret else (_get_active_read_store().get_persona_allowed_actions(pid) or {})
-            enabled = sorted(str(k) for k, v in allowed.items() if v)
-            item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        import contextvars as _cv
+
+        def _allowed_for(pid_: str) -> Any:
+            return _get_active_read_store().get_persona_allowed_actions(pid_)
+
+        _allowed_futures: Dict[int, Any] = {}
+        _allowed_pool = None
+        _to_fetch = [
+            (idx, str(it.get("persona_id") or it.get("id") or ""))
+            for idx, it in enumerate(page_items)
+            if it.get("state") != "retired"
+        ]
+        if len(_to_fetch) > 1:
+            _allowed_pool = ThreadPoolExecutor(
+                max_workers=min(8, len(_to_fetch)), thread_name_prefix="bff-league-allowed"
+            )
+            for idx, pid_ in _to_fetch:
+                _allowed_futures[idx] = _allowed_pool.submit(_cv.copy_context().run, _allowed_for, pid_)
+        try:
+            for idx, item in enumerate(page_items):
+                pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
+                item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
+                item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
+                fut = _allowed_futures.get(idx)
+                if is_ret:
+                    allowed = {}
+                elif fut is not None:
+                    allowed = fut.result() or {}
+                else:
+                    allowed = _allowed_for(pid) or {}
+                enabled = sorted(str(k) for k, v in allowed.items() if v)
+                item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        finally:
+            if _allowed_pool is not None:
+                _allowed_pool.shutdown(wait=False, cancel_futures=True)
         summary = {
             "persona_count": total,
             "returned_count": len(page_items),

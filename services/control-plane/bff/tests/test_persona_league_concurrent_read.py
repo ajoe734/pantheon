@@ -173,6 +173,96 @@ def test_concurrent_readers_share_one_computation(monkeypatch: pytest.MonkeyPatc
 # LEAGUE_BENCH=after|before PERSONAS=166 ROUNDS=20 \
 #   python -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench
 # 'before' swaps the memo for the direct pre-change computation.
+class _SerialPool:
+    """Stand-in for ThreadPoolExecutor that runs submissions inline (the pre-change serial order)."""
+
+    def __init__(self, *a, **k):
+        pass
+
+    def submit(self, fn, *a, **k):
+        from concurrent.futures import Future
+
+        f = Future()
+        try:
+            f.set_result(fn(*a, **k))
+        except BaseException as exc:  # noqa: BLE001
+            f.set_exception(exc)
+        return f
+
+    def shutdown(self, *a, **k):
+        pass
+
+
+def _league_store(n: int = 12, fail_on: str | None = None):
+    store = _CountingPm12LeagueTestStore(fallback=True)
+    for i in range(n):
+        store.create_persona(persona_id=f"p-{i:03d}", name=f"Persona {i:03d}", archetype="trend")
+
+    def allowed(persona_id: str):
+        time.sleep(0.01)
+        if persona_id == fail_on:
+            raise RuntimeError("allowed-actions-down")
+        k = sum(map(ord, persona_id))
+        return {"a": True, "b": k % 2 == 0, "c": False}
+
+    store.get_persona_allowed_actions = allowed  # type: ignore[assignment]
+    return store
+
+
+def test_allowed_actions_parallel_matches_serial_order_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td, store=_league_store())
+        par = client.get("/bff/management/persona-league", headers=HEADERS, params={"page_size": 50})
+        assert par.status_code == 200, par.text
+        ps._pm12_league_rows_cache_clear()
+        monkeypatch.setattr(ps, "ThreadPoolExecutor", _SerialPool)
+        ser = client.get("/bff/management/persona-league", headers=HEADERS, params={"page_size": 50})
+        assert ser.status_code == 200
+        assert _scrub(par.json()) == _scrub(ser.json())
+        items = par.json()["data"]["items"]
+        assert any(i["allowed_action_summary"]["enabled_count"] for i in items)
+
+
+def test_allowed_actions_item_failure_same_as_serial(monkeypatch: pytest.MonkeyPatch) -> None:
+    outcomes = []
+    for serial in (False, True):
+        ps._pm12_league_rows_cache_clear()
+        with monkeypatch.context() as m:
+            if serial:
+                m.setattr(ps, "ThreadPoolExecutor", _SerialPool)
+            with tempfile.TemporaryDirectory() as td:
+                client = _fresh_client(td, store=_league_store(fail_on="persona-alpha"))
+                try:
+                    r = client.get("/bff/management/persona-league", headers=HEADERS, params={"page_size": 50})
+                    outcomes.append((r.status_code, _scrub(r.json())))
+                except RuntimeError as exc:
+                    outcomes.append(("raised", str(exc)))
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0] != 200  # the failure is surfaced exactly as the serial loop did, not swallowed
+
+
+def test_allowed_actions_concurrency_is_bounded() -> None:
+    active = {"now": 0, "max": 0}
+    lock = threading.Lock()
+    store = _league_store(n=30)
+
+    def allowed(persona_id: str):
+        with lock:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+        time.sleep(0.02)
+        with lock:
+            active["now"] -= 1
+        return {"a": True}
+
+    store.get_persona_allowed_actions = allowed  # type: ignore[assignment]
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td, store=store)
+        r = client.get("/bff/management/persona-league", headers=HEADERS, params={"page_size": 30})
+        assert r.status_code == 200, r.text
+    assert 1 < active["max"] <= 8
+
+
 import json as _json
 import os as _os
 from concurrent.futures import ThreadPoolExecutor as _TPE
