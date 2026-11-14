@@ -2,7 +2,7 @@
   "task_id": "DEV-LEASE-RATE-LIMIT-WAIT-20261114",
   "owner": "Codex2",
   "reviewer": "Antigravity",
-  "delivery_scope": "Existing source repair only; independent review and integration pending, with an external inherited collector regression blocking green validation",
+  "delivery_scope": "Existing source repair only; clean collector resumption validation passed, independent exact-head review and required CI/integration pending",
   "dependency_resumption": {
     "task_id": "COLLECTOR-SESSION-FIXTURE-CLOCK-20261114",
     "canonical_status": "done",
@@ -111,27 +111,34 @@
       "exit_code": 0
     },
     "supplemental_collector_regression": {
-      "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
-      "result": "1 failed, 12 passed in 155.61s; terminal exit 1, no timeout",
-      "exit_code": 1,
-      "failed_test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]",
-      "assertion": "identities[0] == identities[1] == identities[2], line 280; different replay item sets while loading immutable legacy candidate a9284b68c",
-      "isolated_confirmation": {
-        "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 120 .venv-pantheon/bin/python3 -m pytest -q 'services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]' services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
-        "result": "1 failed, 1 passed in 4.09s; terminal exit 1, no timeout. The CLOCK-corrected completed-same-session test passed; the legacy TPEX replay failed again.",
-        "exit_code": 1
-      },
-      "inherited_source_identity": {
-        "base_commit": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
-        "test_blob_at_dev_and_task": "d5ca37c4de9cee196d56980cbeda9bd589fbbdbd",
-        "collector_adapter_blob_at_dev_and_task": "675dc76b64862132288d88b6727204096ba48674",
-        "task_diff_for_both_paths": "empty"
-      },
-      "scope_and_next": "The legacy replay fixture runs in required Smoke acceptance. No collector source, test, budget, assertion or skip was changed in this task. Preserve the original eight AC/twelve paths/PR7348 and report this distinct inherited failure to collector source owner Codex via the existing external-blocker path. CLOCK remains genuinely done; do not block on that satisfied task or claim all validation passed. No fresh independent review, merge or done is claimed."
+      "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
+      "result": "13 passed, 1 warning in 153.87s (0:02:33); terminal exit 0, no timeout",
+      "exit_code": 0,
+      "validated_source_head": "de66af97452d05e03e313ad1d32b28341c308212",
+      "scope_and_next": "Clean full-file resumption passed without changing collector source, fixtures, assertions, budgets or skips. The earlier replay failure did not recur; dispatch context identifies transient local thread-scheduling jitter around the fixture time.sleep(0.002). CLOCK remains canonically done. Only this evidence manifest changes after the validated source head. Freeze the final published head for assigned reviewer Antigravity; required GitHub CI, independent approval, native integration and owner closeout remain pending.",
+      "prior_attempt": {
+        "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
+        "result": "1 failed, 12 passed in 155.61s; terminal exit 1, no timeout",
+        "exit_code": 1,
+        "failed_test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]",
+        "assertion": "identities[0] == identities[1] == identities[2], line 280; different replay item sets while loading immutable legacy candidate a9284b68c",
+        "isolated_confirmation": {
+          "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 120 .venv-pantheon/bin/python3 -m pytest -q 'services/source_ingestion/tests/test_collector_newest_session_progress.py::test_exact_candidate_restarts_same_session_on_recorded_run_keys[collector-tw-tpex-price-history-6090]' services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
+          "result": "1 failed, 1 passed in 4.09s; terminal exit 1, no timeout. The CLOCK-corrected completed-same-session test passed; the legacy TPEX replay failed again.",
+          "exit_code": 1
+        },
+        "inherited_source_identity": {
+          "base_commit": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+          "test_blob_at_dev_and_task": "d5ca37c4de9cee196d56980cbeda9bd589fbbdbd",
+          "collector_adapter_blob_at_dev_and_task": "675dc76b64862132288d88b6727204096ba48674",
+          "task_diff_for_both_paths": "empty"
+        },
+        "scope_and_next": "The legacy replay fixture runs in required Smoke acceptance. No collector source, test, budget, assertion or skip was changed in this task. Preserve the original eight AC/twelve paths/PR7348 and report this distinct inherited failure to collector source owner Codex via the existing external-blocker path. CLOCK remains genuinely done; do not block on that satisfied task or claim all validation passed. No fresh independent review, merge or done is claimed."
+      }
     },
     "diff_whitespace": {
       "command": "git diff --check origin/dev...HEAD",
-      "result": "Removed a trailing blank line in the task-owned guard test; whitespace check passed before publication",
+      "result": "git diff --check origin/dev...HEAD passed during resumption; the earlier trailing-blank-line correction remains unchanged",
       "exit_code": 0
     }
   },
