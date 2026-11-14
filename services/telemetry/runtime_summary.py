@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 import weakref
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -754,6 +754,82 @@ def _rebuild_positions(
         current.pop("positions_by_underlying", None)
 
 
+_TAIPEI_OFFSET = timezone(timedelta(hours=8))
+
+
+def _can_skip_positions_rebuild(
+    prior_summary: Optional[dict[str, Any]],
+    current: dict[str, Any],
+    *,
+    reference_at: Optional[datetime] = None,
+) -> bool:
+    """Return True when positions and mark freshness are invariant across events."""
+    if not isinstance(prior_summary, dict):
+        return False
+    if not isinstance(current.get("positions"), list) or current.get("positions_status") == "unavailable":
+        return False
+    if isinstance(current.get("_valuation_failure"), dict) or isinstance(
+        prior_summary.get("_valuation_failure"), dict
+    ):
+        return False
+    prior_latest = _parse_rfc3339(
+        prior_summary.get("_binding_latest_event_at") or prior_summary.get("last_event_at")
+    )
+    new_latest = reference_at or _parse_rfc3339(
+        current.get("_binding_latest_event_at") or current.get("last_event_at")
+    )
+    if prior_latest is None or new_latest is None or new_latest < prior_latest:
+        return False
+    if new_latest == prior_latest:
+        return True
+    prior_tpe = prior_latest.astimezone(_TAIPEI_OFFSET)
+    new_tpe = new_latest.astimezone(_TAIPEI_OFFSET)
+    if (
+        prior_latest.date() != new_latest.date()
+        or prior_tpe.date() != new_tpe.date()
+        or ((prior_tpe.hour, prior_tpe.minute) >= (13, 30))
+        != ((new_tpe.hour, new_tpe.minute) >= (13, 30))
+        or ((prior_tpe.hour, prior_tpe.minute) >= (13, 45))
+        != ((new_tpe.hour, new_tpe.minute) >= (13, 45))
+    ):
+        return False
+    positions = current.get("_positions_by_symbol")
+    marks = current.get("_marks_by_symbol")
+    if not isinstance(positions, dict) or not isinstance(marks, dict):
+        return False
+    binding_id = str(current.get("binding_id") or "")
+    for pos_key, qty in positions.items():
+        if not qty:
+            continue
+        mark = marks.get(pos_key)
+        if not (isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id):
+            continue
+        if mark.get("provenance_invalid"):
+            continue
+        mark_as_of = _parse_rfc3339(mark.get("as_of"))
+        if mark_as_of is None:
+            continue
+        prior_age = (prior_latest - mark_as_of).total_seconds()
+        new_age = (new_latest - mark_as_of).total_seconds()
+        if prior_age < 20700.0 or new_age > 172800.0:
+            return False
+        obs_raw = mark.get("observed_at")
+        if isinstance(obs_raw, str) and obs_raw:
+            obs_dt = _parse_rfc3339(obs_raw)
+            if (
+                obs_dt is None
+                or obs_dt > prior_latest
+                or (new_latest - obs_dt).total_seconds() > 172800.0
+            ):
+                return False
+        cal = mark.get("calendar_evidence")
+        if isinstance(cal, dict) and cal:
+            cap_dt = _parse_rfc3339(cal.get("captured_at"))
+            if cap_dt is None or cap_dt > prior_latest:
+                return False
+    return True
+
+
 def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
     if not runtime_id:
@@ -1032,6 +1108,7 @@ class RuntimeSummaryProjectionStore:
         self._last_full_persist_at: Optional[float] = None
         self._full_persist_count = 0
         self._delta_persist_count = 0
+        self._delta_fd: Optional[int] = None
         self._load()
         if self._path is not None:
             _OPEN_SUMMARY_STORES.add(self)
@@ -1292,7 +1369,8 @@ class RuntimeSummaryProjectionStore:
                 for field in _SUMMARY_LIFECYCLE_IDENTITY_FIELDS:
                     value = preserved_identity.get(field)
                     if value not in (None, "", [], {}):
-                        current[field] = _clone_json_value(value)
+                        if is_lifecycle_identity or field not in current:
+                            current[field] = _clone_json_value(value)
             else:
                 if trace_id:
                     current["trace_id"] = trace_id
@@ -1463,9 +1541,10 @@ class RuntimeSummaryProjectionStore:
                 history.sort(key=lambda item: str(item.get("as_of") or ""))
                 current["quarter_equity_observations"] = history
 
-            rebuild_positions_needed = bool(
+            rebuild_positions_needed = (
                 isinstance(current.get("_positions_by_symbol"), dict)
-                and current.get("_positions_by_symbol")
+                and bool(current.get("_positions_by_symbol"))
+                and not isinstance(current.get("positions"), list)
             )
             if event_type in ("pnl_snapshot", "drawdown_snapshot") and not is_derived_metric_echo:
                 reported_fill_count = metrics.get("fill_count")
@@ -1475,11 +1554,11 @@ class RuntimeSummaryProjectionStore:
                     and reported_fill_count >= 0
                 ):
                     # Ledger fill counts only grow within a binding generation.
-                    current["ledger_fill_count"] = max(
-                        int(current.get("ledger_fill_count") or 0),
-                        reported_fill_count,
-                    )
-                    rebuild_positions_needed = True
+                    prev_lfc = int(current.get("ledger_fill_count") or 0)
+                    new_lfc = max(prev_lfc, reported_fill_count)
+                    current["ledger_fill_count"] = new_lfc
+                    if new_lfc != prev_lfc or current.get("positions_status") == "unavailable":
+                        rebuild_positions_needed = True
 
             # Surface executed paper fills so trade activity is visible end-to-end.
             # ``bracket_order_logged`` only records order intent and must never
@@ -1804,11 +1883,11 @@ class RuntimeSummaryProjectionStore:
                     and not isinstance(hb_fill_count, bool)
                     and hb_fill_count >= 0
                 ):
-                    current["ledger_fill_count"] = max(
-                        int(current.get("ledger_fill_count") or 0),
-                        hb_fill_count,
-                    )
-                    rebuild_positions_needed = True
+                    prev_lfc = int(current.get("ledger_fill_count") or 0)
+                    new_lfc = max(prev_lfc, hb_fill_count)
+                    current["ledger_fill_count"] = new_lfc
+                    if new_lfc != prev_lfc or current.get("positions_status") == "unavailable":
+                        rebuild_positions_needed = True
                 perf_diag = (
                     perf.get("diagnostic")
                     if isinstance(perf.get("diagnostic"), dict)
@@ -2011,8 +2090,20 @@ class RuntimeSummaryProjectionStore:
             if rebuild_positions_needed or (
                 isinstance(current.get("_positions_by_symbol"), dict)
                 and current.get("_positions_by_symbol")
+                and not _can_skip_positions_rebuild(prior_summary, current)
             ):
                 _rebuild_positions(current)
+                if isinstance(prior_summary, dict):
+                    if current.get("positions") == prior_summary.get("positions"):
+                        current["positions"] = prior_summary["positions"]
+                    if (
+                        "positions_by_underlying" in current
+                        and current.get("positions_by_underlying")
+                        == prior_summary.get("positions_by_underlying")
+                    ):
+                        current["positions_by_underlying"] = prior_summary[
+                            "positions_by_underlying"
+                        ]
 
             if bridge_repo is not None:
                 current["engine_bridge_repo"] = bridge_repo
@@ -2032,7 +2123,7 @@ class RuntimeSummaryProjectionStore:
             current["health_summary"] = self._health_summary(current)
             self._summaries[summary_key] = current
             self._persist_summary_change(summary_key, prior_summary, current)
-            return _clone_json_value(current)
+            return dict(current)
 
     def _binding_rollover_is_newer(
         self,
@@ -2180,7 +2271,7 @@ class RuntimeSummaryProjectionStore:
         current["projection_diagnostics"] = diagnostics
         self._summaries[summary_key] = current
         self._persist_summary_change(summary_key, prior_summary, current)
-        return _clone_json_value(current)
+        return dict(current)
 
     def backfill_missing_trade_episodes(
         self, trade_episode_store: Any, binding_events_reader: Any
@@ -2674,13 +2765,15 @@ class RuntimeSummaryProjectionStore:
         *,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        projected = _clone_json_value(summary)
+        projected = dict(summary)
         if (
             now is not None
             and isinstance(projected.get("_positions_by_symbol"), dict)
             and projected.get("_positions_by_symbol")
         ):
-            _rebuild_positions(projected, reference_at=now.astimezone(timezone.utc))
+            ref_utc = now.astimezone(timezone.utc)
+            if not _can_skip_positions_rebuild(summary, projected, reference_at=ref_utc):
+                _rebuild_positions(projected, reference_at=ref_utc)
         heartbeat_at = _parse_rfc3339(projected.get("last_heartbeat_at"))
         if heartbeat_at is None or projected.get("retired") is True:
             return projected
@@ -2818,6 +2911,7 @@ class RuntimeSummaryProjectionStore:
         if replayed_deltas > 0:
             self._persist()
         elif delta_exists and self._delta_path is not None:
+            self._close_delta_fd()
             try:
                 self._delta_path.unlink()
             except OSError:
@@ -2825,26 +2919,33 @@ class RuntimeSummaryProjectionStore:
         if self._path.exists():
             self._last_full_persist_at = time.monotonic()
 
+    def _close_delta_fd(self) -> None:
+        if self._delta_fd is not None:
+            try:
+                os.close(self._delta_fd)
+            except OSError:
+                pass
+            self._delta_fd = None
+
     def _append_delta_record(self, record: dict[str, Any]) -> None:
         if self._delta_path is None:
             return
-        self._delta_path.parent.mkdir(parents=True, exist_ok=True)
         encoded = (
             json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
         ).encode("utf-8")
-        fd = os.open(
-            self._delta_path,
-            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-            0o644,
-        )
-        try:
-            view = memoryview(encoded)
-            while view:
-                written = os.write(fd, view)
-                view = view[written:]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        if self._delta_fd is None or not self._delta_path.exists():
+            self._close_delta_fd()
+            self._delta_path.parent.mkdir(parents=True, exist_ok=True)
+            self._delta_fd = os.open(
+                self._delta_path,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o644,
+            )
+        view = memoryview(encoded)
+        while view:
+            written = os.write(self._delta_fd, view)
+            view = view[written:]
+        os.fsync(self._delta_fd)
         self._dirty_since_full_persist = True
         self._delta_persist_count += 1
 
@@ -2903,11 +3004,13 @@ class RuntimeSummaryProjectionStore:
     def close(self) -> None:
         """Flush pending summary updates on graceful stop."""
         self.flush()
+        self._close_delta_fd()
 
     def _persist(self) -> None:
         if self._path is None:
             return
         with self._lock:
+            self._close_delta_fd()
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._cleanup_stale_tmp_files()
             tmp_path = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
