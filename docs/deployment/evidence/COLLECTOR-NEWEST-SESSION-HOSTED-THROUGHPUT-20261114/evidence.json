@@ -96,473 +96,43 @@
       "pulls": [
         {
           "rows": 232,
-          "seconds": 15.301454478993946,
-          "metadata_reads": [
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            }
-          ]
+          "seconds": 15.301454478993946
         },
         {
           "rows": 232,
-          "seconds": 15.206113709994497,
-          "metadata_reads": [
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
-              "bytes": 570000,
-              "remote_seconds": 0.33
-            },
-            {
-              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
-              "bytes": 1240000,
-              "remote_seconds": 0.5533333333333333
-            }
-          ]
+          "seconds": 15.206113709994497
         }
-      ]
+      ],
+      "metadata_remote_seconds_per_pull": 3.533333333333333,
+      "metadata_reads_per_pull": 8
     },
     {
       "source": "collector-tw-tpex-price-history",
       "pulls": [
         {
           "rows": 44,
-          "seconds": 15.122822399669076,
-          "metadata_reads": [
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            }
-          ]
+          "seconds": 15.122822399669076
         },
         {
           "rows": 48,
-          "seconds": 15.25023056833561,
-          "metadata_reads": [
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
-              "bytes": 2500000,
-              "remote_seconds": 0.9733333333333334
-            },
-            {
-              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
-              "bytes": 5700000,
-              "remote_seconds": 2.04
-            }
-          ]
+          "seconds": 15.25023056833561
         }
-      ]
+      ],
+      "metadata_remote_seconds_per_pull": 12.053333333333335,
+      "metadata_reads_per_pull": 8
     }
   ],
   "controller_model": {
-    "cpu_affinity": [
-      0,
-      1
-    ],
-    "index_bytes": 504000,
-    "index_entries": 1721,
-    "fresh_connection_seconds": [
-      0.14,
-      0.19
-    ],
-    "transfer_bytes_per_second": 3000000,
-    "metadata_sizes": {
-      "collector-tw-twse-price-history": [
-        570000,
-        1240000
-      ],
-      "collector-tw-tpex-price-history": [
-        2500000,
-        5700000
-      ]
+    "summary": {
+      "total_rows": 7467,
+      "pulls": 31,
+      "max_tick_seconds": 18.540335856327147,
+      "max_same_source_gap_seconds": 20.45293452232727,
+      "elapsed_including_600_second_cadence_phase": 1130.5159882302232,
+      "new_test_file_result": "13 passed in required full regression"
     },
-    "pulls": [
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 40,
-        "seconds": 16.807097635334685,
-        "start_seconds": 2.8619999739021296e-05,
-        "same_source_gap_seconds": null,
-        "metadata_remote_seconds": 12.053333333333335
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.701882129343176,
-        "start_seconds": 17.81611620433432,
-        "same_source_gap_seconds": 17.816087584334582,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 16.095441105344435,
-        "start_seconds": 34.62484690767769,
-        "same_source_gap_seconds": 16.80873070334337,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 16.10799840834352,
-        "start_seconds": 51.92115977202229,
-        "same_source_gap_seconds": 17.2963128643446,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 16.385371176344506,
-        "start_seconds": 69.27176812536618,
-        "same_source_gap_seconds": 17.350608353343887,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 16.679371337342218,
-        "start_seconds": 86.99536737171047,
-        "same_source_gap_seconds": 17.723599246344293,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.096224369345236,
-        "start_seconds": 104.96152606205305,
-        "same_source_gap_seconds": 17.96615869034258,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.07547628334396,
-        "start_seconds": 121.28074808839847,
-        "same_source_gap_seconds": 16.319222026345415,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.23825502734553,
-        "start_seconds": 137.6136269367421,
-        "same_source_gap_seconds": 16.332878848343626,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.290324796343157,
-        "start_seconds": 154.16093575608784,
-        "same_source_gap_seconds": 16.547308819345744,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.241811443343522,
-        "start_seconds": 170.78304900243074,
-        "same_source_gap_seconds": 16.622113246342906,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.278701133342565,
-        "start_seconds": 187.38391803577406,
-        "same_source_gap_seconds": 16.600869033343315,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.371047004345655,
-        "start_seconds": 204.07874909511702,
-        "same_source_gap_seconds": 16.69483105934296,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.331326174344213,
-        "start_seconds": 220.87976308446287,
-        "same_source_gap_seconds": 16.801013989345847,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.462455612344911,
-        "start_seconds": 237.78710273480738,
-        "same_source_gap_seconds": 16.90733965034451,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.474496506345986,
-        "start_seconds": 254.7666299071525,
-        "same_source_gap_seconds": 16.979527172345115,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.556895857343989,
-        "start_seconds": 271.8021051604983,
-        "same_source_gap_seconds": 17.035475253345794,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.655263387343439,
-        "start_seconds": 288.93672017384233,
-        "same_source_gap_seconds": 17.134615013344046,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.542083902345894,
-        "start_seconds": 306.2036254051859,
-        "same_source_gap_seconds": 17.26690523134357,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.588785661343081,
-        "start_seconds": 323.50030143353206,
-        "same_source_gap_seconds": 17.296676028346155,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.66822808134475,
-        "start_seconds": 340.8929386578752,
-        "same_source_gap_seconds": 17.39263722434316,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.76847932034525,
-        "start_seconds": 358.2929452662197,
-        "same_source_gap_seconds": 17.400006608344484,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.835294228340445,
-        "start_seconds": 375.82124507156504,
-        "same_source_gap_seconds": 17.52829980534534,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 256,
-        "seconds": 15.931724266342826,
-        "start_seconds": 393.4761785719056,
-        "same_source_gap_seconds": 17.654933500340576,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows": 162,
-        "seconds": 11.767178291009259,
-        "start_seconds": 411.25539200824824,
-        "same_source_gap_seconds": 17.779213436342616,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 236,
-        "seconds": 18.540335856327147,
-        "start_seconds": 424.8773039192579,
-        "same_source_gap_seconds": null,
-        "metadata_remote_seconds": 3.533333333333333
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 256,
-        "seconds": 16.57952846699345,
-        "start_seconds": 445.33023844158515,
-        "same_source_gap_seconds": 20.45293452232727,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 256,
-        "seconds": 15.954781556327816,
-        "start_seconds": 464.0468487115786,
-        "same_source_gap_seconds": 18.716610269993453,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 256,
-        "seconds": 16.088878702327293,
-        "start_seconds": 482.0111142989067,
-        "same_source_gap_seconds": 17.9642655873281,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 256,
-        "seconds": 16.4604733203264,
-        "start_seconds": 500.286740491234,
-        "same_source_gap_seconds": 18.27562619232731,
-        "metadata_remote_seconds": 0
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows": 117,
-        "seconds": 10.296197514662708,
-        "start_seconds": 519.1253153395605,
-        "same_source_gap_seconds": 18.838574848326516,
-        "metadata_remote_seconds": 0
-      }
-    ],
-    "counts": {
-      "collector-tw-twse-price-history": 1377,
-      "collector-tw-tpex-price-history": 6090
-    },
-    "elapsed_with_worst_cadence_phase_seconds": 1130.5159882302232
+    "detailed_historical_manifest": "ccd84750fde3a880f7d6601eec653174a717a1ab:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json",
+    "output_log": "collector-throughput-regression.log; SHA256 in log_sha256"
   },
   "model_limits": "Synthetic valid native bundles padded with JSON whitespace to the exact supplied encoded sizes, four same-session runs per source and 1721-entry index. Real in-process HTTP controller/API/scheduler, evidence/config JSONL, SQLite queue, raw/normalized and latest snapshot persistence. 3MB/s and 0.14/0.19s fresh connections are virtual; actual CPU/disk time is charged, affinity limited to two cores. This is not hosted network/PostgreSQL proof and does not reproduce host load 15-34.",
   "validation": [
@@ -631,10 +201,64 @@
       "command": "PYTHONPATH=. timeout 30 \"$PANTHEON_DEPENDENCY_PYTHON\" /tmp/collector-throughput-base-repro.py",
       "exit_code": 0,
       "summary": "Actual 0940f6248 module and task head both return no_new_data=false, zero rows, priority_done=true with newest_bundle_older_than_twice_cadence. Harness asserts the identical pre-existing failure, not a green full suite."
+    },
+    {
+      "command": "timeout 30 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py -k 'not hosted_size and not exact_candidate'",
+      "exit_code": 0,
+      "summary": "11 passed, 3 deselected; explicit healthy and stale controls"
+    },
+    {
+      "command": "timeout 900 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q -s --junitxml=/tmp/collector-throughput-clock-regression.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py > /tmp/collector-throughput-clock-regression.log 2>&1",
+      "exit_code": 0,
+      "counts_by_file": {
+        "services.source_ingestion.tests.test_collector_newest_session_hosted_throughput": {
+          "passed": 13,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "services.source_ingestion.tests.test_collector_newest_session_progress": {
+          "passed": 14,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "services.source_ingestion.tests.test_collector_bundle_connector": {
+          "passed": 103,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 1
+        },
+        "services.source_ingestion.tests.test_controller_worker": {
+          "passed": 200,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "services.source_ingestion.tests.test_scheduled_connector": {
+          "passed": 73,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "services.source_ingestion.tests.test_tw_close_reconcile": {
+          "passed": 16,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "summary": {
+        "passed": 419,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "terminal_output": "419 passed, 1 skipped, 1 warning in 564.82s (0:09:24); exit 0 collected from exec session 24211"
     }
   ],
   "delivery": {
-    "state": "source_committed_for_publication_with_existing_validation_blocker",
+    "state": "source_validated_ready_for_exact_head_independent_review",
     "merge": "not_claimed_independent_review_and_required_checks_outstanding",
     "deployment": "not_performed_author_has_no_authority",
     "deadline": "2026-11-16T06:40:00Z"
@@ -653,7 +277,9 @@
     "collector-throughput-regression.log": "8553d3ac592d8950e14e0aa2aef49a6e76a6bd011dc433ee6dda9d8cc100b09f",
     "collector-throughput-regression.xml": "b578f048ee8227c3fe154d2e19e9851b15f6ac0def8677fe53655999f17d3b93",
     "collector-throughput-progress-fast.log": "0c9766ea06f6b1cb55b7a66d042e1901aeed93510e7ccfd8e6958ecc7957751c",
-    "collector-throughput-base-repro.log": "1ac5654505b1487bb6fa7f1c568d957f531a4428e8c89d02aee923444bb45f1c"
+    "collector-throughput-base-repro.log": "1ac5654505b1487bb6fa7f1c568d957f531a4428e8c89d02aee923444bb45f1c",
+    "collector-throughput-clock-regression.log": "8d8fa2209323235df79aadc6dc8c78375a5c0ba6b53fd62919963beb7a1a52c6",
+    "collector-throughput-clock-regression.xml": "cb1bc98619fa6f49a9592bf42661b0caa731d54bb64d95b8dfca7aa35c7bf825"
   },
   "existing_validation_blocker": {
     "evidence_utc": "2026-11-14T13:54:42Z",
@@ -687,6 +313,85 @@
           ]
         }
       ]
+    },
+    "status": "resolved; original blocker details below are historical",
+    "resolution": {
+      "status": "resolved_by_scoped_test_clock_fix",
+      "artifact_contract_revision": "Human/Ops 2026-11-14T14:00:15Z admitted only the existing progress test file; same task/PR #7352, Codex owner and Antigravity2 reviewer.",
+      "fix": "Existing observed_from_collector_status monkeypatch pattern supplies now=2026-11-14T10:00:00Z (healthy) or 13:00:00Z (stale). Original healthy no-resend/no_new_data assertions remain; stale asserts degraded, no_new_data=false and no raw resend. Both assert unchanged 21600s cadence and exact latest-run timestamp.",
+      "production_changes": "None in this repair; production clocks, health/freshness, source cache/controller and collector fetch policy unchanged.",
+      "prior_results_retained": "Initial 417 passed/1 skipped/1 failed and initial controller model 1130.5159882302232s/max tick 18.540335856327147s above are historical results, not replaced or claimed green.",
+      "other_prs": "This validation does not establish green checks for old exact heads of PR #7348 or #7349."
     }
-  }
+  },
+  "clock_fix_controller_model": {
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "index_bytes": 504000,
+    "index_entries": 1721,
+    "fresh_connection_seconds": [
+      0.14,
+      0.19
+    ],
+    "transfer_bytes_per_second": 3000000,
+    "metadata_sizes": {
+      "collector-tw-twse-price-history": [
+        570000,
+        1240000
+      ],
+      "collector-tw-tpex-price-history": [
+        2500000,
+        5700000
+      ]
+    },
+    "counts": {
+      "collector-tw-twse-price-history": 1377,
+      "collector-tw-tpex-price-history": 6090
+    },
+    "elapsed_with_worst_cadence_phase_seconds": 1126.5308745689013,
+    "pull_columns": "source,rows,seconds,start_seconds,same_source_gap_seconds,metadata_remote_seconds",
+    "pull_rows_csv": [
+      "collector-tw-tpex-price-history,44,16.357148639001934,3.860000106215011e-06,null,12.053333333333335",
+      "collector-tw-tpex-price-history,256,14.933023303342452,17.365563369001848,17.36555950900174,0",
+      "collector-tw-tpex-price-history,256,15.400149277343644,33.34078788934448,15.975224520342636,0",
+      "collector-tw-tpex-price-history,256,15.078216374341991,49.86981908968846,16.52903120034398,0",
+      "collector-tw-tpex-price-history,256,15.153316352343609,66.11168638403069,16.241867294342228,0",
+      "collector-tw-tpex-price-history,256,15.243844337344399,82.42681767637441,16.31513129234372,0",
+      "collector-tw-tpex-price-history,256,15.21541761634353,98.85584903271865,16.42903135634424,0",
+      "collector-tw-tpex-price-history,256,15.130898624343445,115.29333374506223,16.437484712343576,0",
+      "collector-tw-tpex-price-history,256,15.313284180343544,131.67894099340538,16.38560724834315,0",
+      "collector-tw-tpex-price-history,256,15.18236896434746,148.34002515274915,16.661084159343773,0",
+      "collector-tw-tpex-price-history,256,15.27274028634747,164.9625161300969,16.622490977347752,0",
+      "collector-tw-tpex-price-history,256,15.593657379011347,181.59774813444437,16.635232004347472,0",
+      "collector-tw-tpex-price-history,256,15.498660344348536,198.64034734545567,17.042599211011293,0",
+      "collector-tw-tpex-price-history,256,15.32470423134464,215.60724326080435,16.966895915348687,0",
+      "collector-tw-tpex-price-history,256,15.813312993347154,232.4324565511488,16.825213290344436,0",
+      "collector-tw-tpex-price-history,256,15.57320599534387,249.78171357249585,17.349257021347057,0",
+      "collector-tw-tpex-price-history,256,15.986456138345147,266.9207986738397,17.13908510134388,0",
+      "collector-tw-tpex-price-history,256,15.64605538334672,284.5471925131851,17.626393839345383,0",
+      "collector-tw-tpex-price-history,256,15.605423277342652,301.83570944653184,17.288516933346727,0",
+      "collector-tw-tpex-price-history,256,15.742253346345933,319.22507590587475,17.38936645934291,0",
+      "collector-tw-tpex-price-history,256,15.943270095342541,336.66427037022095,17.4391944643462,0",
+      "collector-tw-tpex-price-history,256,15.92579239634324,354.33514665156326,17.670876281342316,0",
+      "collector-tw-tpex-price-history,256,15.92576036234459,372.0367242899065,17.701577638343224,0",
+      "collector-tw-tpex-price-history,256,15.958397402345781,389.7666262132507,17.729901923344187,0",
+      "collector-tw-tpex-price-history,158,11.56383183734215,407.8489125165961,18.082286303345427,0",
+      "collector-tw-twse-price-history,236,18.54952955232784,421.49972157793854,null,3.533333333333333",
+      "collector-tw-twse-price-history,256,16.13413300732418,441.94624544526596,20.446523867327414,0",
+      "collector-tw-twse-price-history,256,16.468781887993828,460.03828116359,18.09203571832404,0",
+      "collector-tw-twse-price-history,256,16.27005310132745,478.44223279458356,18.40395163099356,0",
+      "collector-tw-twse-price-history,256,16.404829255324785,496.95116783991125,18.50893504532769,0",
+      "collector-tw-twse-price-history,117,9.893438073664583,515.5625903512364,18.611422511325145,0"
+    ]
+  },
+  "clock_fix_controller_model_summary": {
+    "total_rows": 7467,
+    "pulls": 31,
+    "max_tick_seconds": 18.54952955232784,
+    "max_same_source_gap_seconds": 20.446523867327414,
+    "elapsed_including_600_second_cadence_phase": 1126.5308745689013
+  },
+  "clock_fix_evidence_utc": "2026-11-14T14:11:53.539684+00:00"
 }
