@@ -424,7 +424,15 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
 
     @router.get("/api/source-ingest/source-records/{source_id}")
     def get_source_record(source_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
-        source = _owned_evidence_read(runtime.evidence_repository, "get_source_record", _source_read_tenant(authorization, tenant_id), source_id, "source record not found")
+        tenant = _source_read_tenant(authorization, tenant_id)
+        source = _owned_evidence_read(runtime.evidence_repository, "get_source_record", tenant, source_id)
+        if source is None:
+            try:
+                source = runtime.collector_market_record_from_partition(source_id, tenant)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Source normalized partition unavailable") from exc
+        if source is None:
+            raise HTTPException(status_code=404, detail="source record not found")
         return {"source_record": source.to_dict()}
 
     @router.get("/api/source-ingest/evidence/items")
