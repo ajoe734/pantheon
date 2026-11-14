@@ -81,22 +81,34 @@ def test_recorded_weekend_and_preclose_runs_use_rows_and_same_date_never_resets(
     assert p.priority_trade_date == "2026-11-12"
 
 
-def test_completed_same_session_new_run_has_no_raw_resend(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fresh", [True, False], ids=["healthy", "stale"])
+def test_completed_same_session_new_run_has_no_raw_resend(tmp_path, monkeypatch, fresh):
     files, first = recorded_run(count=2, fetched="2026-11-13T12:18:42Z")
-    # Observe each recorded run while fresh, regardless of the CI wall clock.
+    # Inherit the CLOCK per-run observation fixture; the second pull also
+    # exercises the real twice-cadence stale guard, independent of wall time.
     observed_at = datetime.fromisoformat(first["finished_at"].replace("Z", "+00:00")) + timedelta(minutes=1)
     real_observed = cb.observed_from_collector_status
     monkeypatch.setattr(cb, "observed_from_collector_status", lambda *args, **kwargs: real_observed(
         *args, **{**kwargs, "now": observed_at}))
     a = adapter(tmp_path, files, [first]); pull = a.pull(); a.save_resume_cursor(pull)
     more, entry = recorded_run(count=2); files.update(more)
-    observed_at = datetime.fromisoformat(entry["finished_at"].replace("Z", "+00:00")) + timedelta(minutes=1)
+    observed_at = datetime.fromisoformat(entry["finished_at"].replace("Z", "+00:00")) + (
+        timedelta(minutes=1) if fresh else timedelta(hours=13))
     a = adapter(tmp_path, files, [first, entry])
     reads = []
     original = a.transport.read
     a.transport.read = lambda path, **kw: (reads.append(path), original(path, **kw))[1]
     pull = a.pull(cursor=pull.next_cursor)
-    assert pull.records == () and pull.priority_done and pull.no_new_data
+    if fresh:
+        assert pull.records == () and pull.priority_done and pull.no_new_data
+        assert pull.observed["health_state"] == "healthy"
+        assert pull.observed["reasons"] == ()
+    else:
+        assert pull.records == () and pull.priority_done and not pull.no_new_data
+        assert pull.observed["health_state"] == "degraded"
+        assert "newest_bundle_older_than_twice_cadence" in pull.observed["reasons"]
+    assert pull.observed["freshness"]["collector_last_run_at"] == "2026-11-14T00:19:33Z"
+    assert pull.observed["freshness"]["cadence_seconds"] == 21600
     assert not any("/raw/" in path for path in reads)
     a.save_resume_cursor(pull)
     assert json.loads(a._priority_key_path().read_text())["key"].endswith(entry["run_id"])
@@ -271,16 +283,37 @@ def test_exact_candidate_restarts_same_session_on_recorded_run_keys(tmp_path, mo
             a = module.CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
                 dataset="tw_price_daily", cadence_seconds=600, max_records=1000, raw_root=str(tmp_path / "store"),
                 attribution_required=True, transport=Transport(files))
+            prior_state = a._load_priority_state()
             start, wall = clock[0], time.perf_counter()
             pull = a.pull(); a.save_resume_cursor(pull)
             measurements.append({"run_id": entry["run_id"], "rows": len(pull.records),
                 "delivered": pull.priority_delivered, "done": pull.priority_done,
-                "wall_seconds": time.perf_counter() - wall, "transport_seconds": clock[0] - start})
+                "wall_seconds": time.perf_counter() - wall, "transport_seconds": clock[0] - start,
+                "priority_key": pull.priority_key, "prior_priority_state": prior_state,
+                "saved_priority_state": a._load_priority_state(),
+                "first_identity": pull.records[0].source_id if pull.records else None})
             identities.append({r.source_id for r in pull.records})
-        assert identities[0] == identities[1] == identities[2]
-        assert not any(m["done"] for m in measurements)
+        for measured, ids in zip(measurements, identities):
+            measured["replayed_first_pull_rows"] = len(ids & identities[0])
+        # Print even when an invariant fails, so the actual windows/timings survive.
         print("CANDIDATE_SESSION_TIMING " + json.dumps({"candidate": "a9284b68c", "source": source,
                                                       "rows_in_bundle": count, "pulls": measurements}))
+        # The historical bug resets acknowledged progress on each new run key.
+        # Concurrent reads share a deadline; their window lengths need not match.
+        # Prove that saved nonzero progress was loaded, then restarted at the
+        # same native item with real overlap instead of continuing after it.
+        assert measurements[0]["prior_priority_state"] == (None, 0, False, ())
+        assert len({m["priority_key"] for m in measurements}) == 3
+        for index, measured in enumerate(measurements):
+            assert measured["priority_key"].endswith("#" + measured["run_id"])
+            assert 0 < measured["delivered"] == measured["rows"] < count
+            assert not measured["done"]
+            assert measured["saved_priority_state"] == (measured["priority_key"], measured["rows"], False, ())
+            assert measured["first_identity"] == measurements[0]["first_identity"]
+            assert measured["replayed_first_pull_rows"] > 0
+            if index:
+                previous = measurements[index - 1]
+                assert measured["prior_priority_state"] == previous["saved_priority_state"]
     finally:
         sys.modules.pop(name, None)
 
