@@ -277,8 +277,8 @@ class InstitutionalMemoryStore:
                 raise InstitutionalMemoryError(f"Entry already exists: {entry.entry_id}")
             self._entries[entry.entry_id] = entry
             self._save()
-            self._mirror(entry)
-            return entry
+        self._mirror(entry)
+        return entry
 
     def get(self, entry_id: str) -> Optional[InstitutionalMemoryEntry]:
         with self._lock:
@@ -370,8 +370,8 @@ class InstitutionalMemoryStore:
             )
             self._entries[entry_id] = updated
             self._save()
-            self._mirror(updated)
-            return updated
+        self._mirror(updated)
+        return updated
 
     def archive_expired(
         self,
@@ -397,8 +397,8 @@ class InstitutionalMemoryStore:
                 archived.append(updated)
             if archived:
                 self._save()
-                for entry in archived:
-                    self._mirror(entry)
+        for entry in archived:
+            self._mirror(entry)
         return archived
 
     @staticmethod
@@ -417,8 +417,8 @@ class InstitutionalMemoryStore:
                 "archived_reason": reason})
             self._entries[entry_id] = updated
             self._save()
-            self._mirror(updated)
-            return updated
+        self._mirror(updated)
+        return updated
 
     def retrieve(
         self,

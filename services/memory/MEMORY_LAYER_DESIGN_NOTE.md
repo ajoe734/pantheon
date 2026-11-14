@@ -265,13 +265,16 @@ service is removed (store `_project` hooks, `sync_memory_projection`,
 
 **Mirror (H3, H11).** After canonical persistence of every create, supersede,
 archive and expiry (both store implementations, including non-HTTP writers) the
-store calls `hindsight_index.mirror_entry`. One Hindsight document per canonical
-id (`document_id` = canonical id) is retained into the tenant facts bank
-(institutional) or the persona interpretation bank (persona); `metadata`,
-event `timestamp` (= `written_at`), `context` (= source event type), anchor
-entities (`resolve_entities=false`) and tags (`anchor:*`, `scope:*`, `type:*`)
-are set. Superseded, archived or expired entries have their memory units
-invalidated (reversible soft retire). Failures are retried (3 attempts), logged
+store calls `hindsight_index.schedule_mirror` outside the canonical store lock
+and commit acknowledgement. One per-`(bank, canonical_id)` FIFO drains in order
+through `hindsight_index.mirror_entry` (`flush_mirrors` drains pending work for
+`rebuild` and tests). One Hindsight document per canonical id (`document_id` =
+canonical id) is retained into the tenant facts bank (institutional) or the
+persona interpretation bank (persona); `metadata`, event `timestamp` (=
+`written_at`), `context` (= source event type), anchor entities
+(`resolve_entities=false`) and tags (`anchor:*`, `scope:*`, `type:*`) are set.
+Superseded, archived or expired entries have their memory units invalidated
+(reversible soft retire). Failures are retried (3 attempts with backoff), logged
 as `memory_mirror_failed` with a reason, kept in bounded diagnostics
 (`hindsight_index.DIAGNOSTICS`) and never block or roll back the canonical write.
 Usefulness marks and read counters do not change the index.
@@ -304,8 +307,10 @@ retrieve, one bank per call (`bank` = `institutional` or `persona`), low budget,
 and returns text plus citations mapped back to canonical ids that re-authorise
 from the owner store. While `PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED` is not
 true, or the index rejects reflect, it returns 503 `reflect_unavailable` with a
-reason. The deployed Hindsight 1.2.1 reflect request has no temperature field, so
-"low temperature" is realised as the `low` budget until upstream exposes it.
+reason. In Hindsight 1.2.1, reflect temperature is a static service setting
+configured on the `hindsight` container via
+`HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` (default `0.1` in `docker-compose.yml`),
+while the per-request payload uses `budget="low"`.
 
 ### 5.3 Retrieval Trigger Contexts
 

@@ -40,6 +40,7 @@ def env(monkeypatch):
     hs.DIAGNOSTICS.reset()
     client = hs.HindsightClient(URL, KEY)
     yield TestClient(main.app), stores, tenant, client
+    hs.flush_mirrors()
     for bank in (hs.facts_bank(tenant), hs.persona_bank(tenant, "persona-alpha"), hs.persona_bank(tenant, "persona-beta")):
         client.delete_bank(bank)
 
@@ -68,6 +69,7 @@ def test_traditional_chinese_recall_through_http_route_with_anchor_filtering(env
     other = inst.create(institution(tenant_id=tenant, content={
         "headline": "外匯部位檢討", "body": "美元兌日圓部位於波動上升時應縮減",
         "tags": ["underlying:JPY"]}))
+    assert hs.flush_mirrors()
     assert hs.DIAGNOSTICS.snapshot()["counts"]["failed"] == 0
     response = retrieve(api, tenant, query="台灣股票風險曝險")
     assert tw.entry_id in ids(response)
@@ -82,14 +84,17 @@ def test_supersede_and_archive_invalidate_in_the_index(env):
     api, (inst, _), tenant, client = env
     old = inst.create(institution(tenant_id=tenant))
     new = inst.create(institution(tenant_id=tenant, source_event_id="pm-new"))
+    assert hs.flush_mirrors()
     bank = hs.facts_bank(tenant)
     assert client.memory_units(bank, old.entry_id)
     inst.supersede(old.entry_id, new.entry_id)
+    assert hs.flush_mirrors()
     assert client.memory_units(bank, old.entry_id) == []
     assert client.memory_units(bank, new.entry_id)
     recalled = hs.recall_canonical_ids(client, bank, query="流動性風控", groups=[], limit=10)
     assert [cid for cid, _ in recalled] == [new.entry_id]
     inst.archive(new.entry_id, reason="obsolete")
+    assert hs.flush_mirrors()
     assert hs.recall_canonical_ids(client, bank, query="流動性風控", groups=[], limit=10) == []
 
 
@@ -101,6 +106,7 @@ def test_persona_never_sees_other_persona_and_committee_only_gets_committee_scop
                                 content={"summary": "可供委員會的解讀：流動性不足時降低曝險", "tags": []}))
     beta = per.create(persona(tenant_id=tenant, persona_id="persona-beta", relevance_scope="persona_and_committee",
                               content={"summary": "貝塔的解讀：流動性不足時降低曝險", "tags": []}))
+    assert hs.flush_mirrors()
     own = retrieve(api, tenant, scope="persona", persona_id="persona-alpha", query="流動性不足降低曝險")
     assert set(ids(own)) == {private.memory_id, shared.memory_id}
     assert own.json()["retrieval_mode"] == "hindsight"
@@ -120,6 +126,7 @@ def test_rebuild_restores_a_dropped_bank_idempotently(env):
     live = inst.create(institution(tenant_id=tenant))
     gone = inst.create(institution(tenant_id=tenant, source_event_id="pm-gone"))
     inst.archive(gone.entry_id, reason="obsolete")
+    assert hs.flush_mirrors()
     bank = hs.facts_bank(tenant)
     client.delete_bank(bank)
     assert client.memory_units(bank, live.entry_id) == []
@@ -149,6 +156,7 @@ def test_unreachable_index_falls_back_explicitly_without_blocking_canonical_stat
     monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
     entry = inst.create(institution(tenant_id=tenant))
     assert inst.get(entry.entry_id) is entry
+    assert hs.flush_mirrors()
     assert hs.DIAGNOSTICS.snapshot()["failures"][0]["reason"] == "hindsight_unreachable"
     body = retrieve(api, tenant, query="流動性風控").json()
     assert body["retrieval_mode"] == "keyword_fallback" and body["fallback_reason"] == "hindsight_unreachable"

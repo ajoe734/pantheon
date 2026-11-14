@@ -83,9 +83,11 @@ def pentry(memory_id=None, **kw):
 
 @pytest.fixture(autouse=True)
 def _reset():
+    hs.flush_mirrors()
     hs.DIAGNOSTICS.reset()
     hs.set_hindsight_client(None)
     yield
+    hs.flush_mirrors()
     hs.set_hindsight_client(None)
 
 
@@ -201,33 +203,117 @@ def test_rebuild_reports_failures():
     assert report["failures"][0]["reason"] == "hindsight_unreachable"
 
 
-def test_slow_index_does_not_block_canonical_writes_and_keeps_document_order():
+def test_slow_index_does_not_block_canonical_writes_and_keeps_document_order(tmp_path):
+    import json
     import threading
     import time
 
-    gate, events = threading.Event(), []
+    for kind, cls, make_first, make_second in (
+        ("institutional", InstitutionalMemoryStore, lambda: inst(mid("s1")), lambda: inst(mid("s2"))),
+        ("persona", PersonaMemoryStore, lambda: pentry(mid("p-1")), lambda: pentry(mid("p-2"))),
+    ):
+        entered, gate, events = threading.Event(), threading.Event(), []
 
-    class Slow(FakeClient):
+        class Slow(FakeClient):
+            def retain(self, bank, items):
+                entered.set()
+                assert gate.wait(10), "slow index gate timed out"
+                events.append(("retain", items[0]["document_id"]))
+                return super().retain(bank, items)
+
+            def invalidate_document(self, bank, doc_id, reason):
+                assert gate.wait(10), "slow index gate timed out"
+                events.append(("invalidate", doc_id))
+                return super().invalidate_document(bank, doc_id, reason)
+
+        hs.set_hindsight_client(Slow())
+        path = tmp_path / f"{kind}.json"
+        store = cls(path=path)
+        t0 = time.monotonic()
+        first = store.create(make_first())
+        assert entered.wait(2), "first mirror did not enter index transport"
+        assert len(json.loads(path.read_text(encoding="utf-8"))) == 1
+
+        got_lock = store._lock.acquire(blocking=False)
+        if got_lock:
+            store._lock.release()
+        assert got_lock, f"{kind} canonical lock held while external index call is blocked"
+
+        second_result = []
+        second_thread = threading.Thread(target=lambda: second_result.append(store.create(make_second())))
+        second_thread.start()
+        second_thread.join(timeout=1.0)
+        assert not second_thread.is_alive(), f"{kind} concurrent canonical write blocked on slow index"
+        assert len(second_result) == 1
+        assert len(json.loads(path.read_text(encoding="utf-8"))) == 2
+
+        first_id = hs.canonical_id(first)
+        second_id = hs.canonical_id(second_result[0])
+        store.supersede(first_id, second_id)
+        store.archive(second_id, reason="stale")
+        assert time.monotonic() - t0 < 2.0
+        assert store.require(first_id).superseded_by == second_id
+        assert store.require(second_id).archived_reason == "stale"
+        assert events == []
+
+        gate.set()
+        assert hs.flush_mirrors()
+        assert events.index(("retain", first_id)) < events.index(("invalidate", first_id))
+        assert events.index(("retain", second_id)) < events.index(("invalidate", second_id))
+
+
+def test_outage_retry_backoff_does_not_block_concurrent_canonical_writes(tmp_path, monkeypatch):
+    import json
+    import threading
+    import time
+
+    sleep_entered = threading.Event()
+    sleep_gate = threading.Event()
+    attempts_by_doc: dict[str, int] = {}
+    attempts_lock = threading.Lock()
+
+    class OutageClient:
         def retain(self, bank, items):
-            gate.wait(10)
-            events.append(("retain", items[0]["document_id"]))
-            return super().retain(bank, items)
+            doc_id = items[0]["document_id"]
+            with attempts_lock:
+                attempts_by_doc[doc_id] = attempts_by_doc.get(doc_id, 0) + 1
+            raise hs.HindsightError("hindsight_unreachable", "simulated timeout")
 
-        def invalidate_document(self, bank, doc_id, reason):
-            events.append(("invalidate", doc_id))
-            return super().invalidate_document(bank, doc_id, reason)
+        def invalidate_document(self, bank, document_id, reason):
+            with attempts_lock:
+                attempts_by_doc[f"inv:{document_id}"] = attempts_by_doc.get(f"inv:{document_id}", 0) + 1
+            raise hs.HindsightError("hindsight_unreachable", "simulated timeout")
 
-    hs.set_hindsight_client(Slow())
-    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    def gated_sleep(_seconds: float) -> None:
+        sleep_entered.set()
+        sleep_gate.wait(5)
+
+    monkeypatch.setattr(hs.time, "sleep", gated_sleep)
+    hs.set_hindsight_client(OutageClient())
+
+    inst_path = tmp_path / "inst-outage.json"
+    persona_path = tmp_path / "persona-outage.json"
+    inst = InstitutionalMemoryStore(path=inst_path)
+    pstore = PersonaMemoryStore(path=persona_path)
+
     t0 = time.monotonic()
-    istore.create(inst(mid("s1")))
-    istore.create(inst(mid("s2")))  # second canonical write while first mirror is stuck
-    istore.supersede(mid("s1"), mid("s2"))
-    pstore.create(pentry())
-    pstore.archive(mid("p-1"), reason="stale")
-    assert time.monotonic() - t0 < 2
-    assert istore.require(mid("s1")).superseded_by == mid("s2") and events == []
-    gate.set()
+    first_inst = inst.create(institution(entry_id=mid("outage-1")))
+    assert sleep_entered.wait(2), "first mirror did not enter retry backoff"
+
+    second_inst = inst.create(institution(entry_id=mid("outage-2")))
+    first_persona = pstore.create(persona(memory_id=mid("p-outage-1")))
+    pstore.archive(first_persona.memory_id, reason="outage_test")
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, f"canonical writes blocked on retry backoff ({elapsed:.3f}s)"
+    assert len(json.loads(inst_path.read_text(encoding="utf-8"))) == 2
+    assert len(json.loads(persona_path.read_text(encoding="utf-8"))) == 1
+
+    sleep_gate.set()
     assert hs.flush_mirrors()
-    for doc in (mid("s1"), mid("p-1")):
-        assert events.index(("retain", doc)) < events.index(("invalidate", doc))
+    assert attempts_by_doc[first_inst.entry_id] == hs.MIRROR_ATTEMPTS
+    assert attempts_by_doc[second_inst.entry_id] == hs.MIRROR_ATTEMPTS
+    assert attempts_by_doc[first_persona.memory_id] == hs.MIRROR_ATTEMPTS
+    assert attempts_by_doc[f"inv:{first_persona.memory_id}"] == hs.MIRROR_ATTEMPTS
+    snap = hs.DIAGNOSTICS.snapshot()
+    assert snap["counts"]["failed"] == 4
+    assert {f["action"] for f in snap["failures"]} == {"retain", "invalidate"}

@@ -382,31 +382,38 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
 
 
 # Post-persistence dispatch: canonical writers hand the persisted state over here and return;
-# index I/O + retries run outside the canonical critical section.  One FIFO per canonical id
+# index I/O + retries run outside the canonical critical section.  One FIFO per (bank, canonical_id)
 # keeps per-document lifecycle order (retain -> invalidate); different ids run in parallel.
-_PENDING: Dict[str, deque] = {}
+_PENDING: Dict[Tuple[str, str], deque] = {}
 _IDLE = threading.Condition(threading.Lock())
 
 
 def schedule_mirror(entry: Any) -> None:
     """Queue a mirror of an already-persisted canonical entry; never blocks, never raises."""
-    key = canonical_id(entry)
+    key = (bank_for(entry), canonical_id(entry))
     with _IDLE:
         queue = _PENDING.get(key)
         if queue is not None:
-            queue.append(entry)  # the drain thread for this id picks it up in order
+            if is_indexable(entry) and any(not is_indexable(item) for item in queue):
+                idx = next(i for i, item in enumerate(queue) if not is_indexable(item))
+                queue.insert(idx, entry)
+            else:
+                queue.append(entry)  # the drain thread for this id picks it up in order
             return
         _PENDING[key] = deque([entry])
     try:
         threading.Thread(target=_drain, args=(key,), name="memory-mirror", daemon=True).start()
     except Exception:  # thread exhaustion must not fail the canonical write
         with _IDLE:
-            _PENDING.pop(key, None)
+            failed = list(_PENDING.pop(key, ()))
             _IDLE.notify_all()
-        DIAGNOSTICS.failure(key, "retain", "hindsight_mirror_failed")
+        for item in failed:
+            action = "retain" if is_indexable(item) else "invalidate"
+            DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
 
 
-def _drain(key: str) -> None:
+def _drain(key: Tuple[str, str]) -> None:
+    invalidated: Any = None
     while True:
         with _IDLE:
             queue = _PENDING.get(key)
@@ -416,6 +423,10 @@ def _drain(key: str) -> None:
                 return
             entry = queue.popleft()
         mirror_entry(entry)
+        if not is_indexable(entry):
+            invalidated = entry
+        elif invalidated is not None:
+            mirror_entry(invalidated)
 
 
 def flush_mirrors(timeout: float = 30.0) -> bool:

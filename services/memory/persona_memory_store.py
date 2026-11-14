@@ -280,8 +280,8 @@ class PersonaMemoryStore:
                 raise PersonaMemoryError(f"Entry already exists: {entry.memory_id}")
             self._entries[entry.memory_id] = entry
             self._save()
-            self._mirror(entry)
-            return entry
+        self._mirror(entry)
+        return entry
 
     def get(self, memory_id: str) -> Optional[PersonaMemoryEntry]:
         with self._lock:
@@ -367,8 +367,8 @@ class PersonaMemoryStore:
             )
             self._entries[memory_id] = updated
             self._save()
-            self._mirror(updated)
-            return updated
+        self._mirror(updated)
+        return updated
 
     def archive_expired(self, *, now: Optional[str] = None, reason: Optional[str] = None) -> List[PersonaMemoryEntry]:
         archive_time = _parse_utc_timestamp(now) if now else datetime.now(timezone.utc)
@@ -384,8 +384,8 @@ class PersonaMemoryStore:
                 archived.append(updated)
             if archived:
                 self._save()
-                for entry in archived:
-                    self._mirror(entry)
+        for entry in archived:
+            self._mirror(entry)
         return archived
 
     @staticmethod
@@ -404,8 +404,8 @@ class PersonaMemoryStore:
                 "archived_reason": reason})
             self._entries[memory_id] = updated
             self._save()
-            self._mirror(updated)
-            return updated
+        self._mirror(updated)
+        return updated
 
     def retrieve(
         self,

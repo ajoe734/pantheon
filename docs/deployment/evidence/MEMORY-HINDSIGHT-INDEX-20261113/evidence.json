@@ -1,12 +1,13 @@
 {
   "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
-  "owner": "Claude2",
+  "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-11-14T02:30:00Z",
+  "recorded_at": "2026-11-14T03:42:00Z",
   "scope": "H3-H7, H9 route, H11 in services/memory. Search-service side of H7, case file, cycle and panel are other tasks.",
   "commands": [
-    {"command": "python -m pytest -q deploy/hindsight/tests services/memory", "result": "136 passed, 9 skipped (real-container tests skipped without env)"},
-    {"command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:18888 PANTHEON_HINDSIGHT_IT_KEY=<key> python -m pytest -v services/memory/test_hindsight_integration.py", "result": "6 passed"}
+    {"command": "python -m pytest -q deploy/hindsight/tests services/memory", "result": "139 passed, 9 skipped (real-container tests skipped without env)"},
+    {"command": ".venv-pantheon/bin/python3 -c \"import sys; sys.path[0] = '/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113'; exec(open('/tmp/pantheon-goal-resume-20261111/Memory7337-AC1-frozen-isolated-probe-20261114T0310/probe.py').read())\"", "result": "exit 0 (AC1_nonblocking_expectation_failed: false for both institutional and persona)"},
+    {"command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:18888 PANTHEON_HINDSIGHT_IT_KEY=<key> python -m pytest -v services/memory/test_hindsight_integration.py", "result": "6 passed (upstream image probe; compose-built image run still pending host disk resource)"}
   ],
   "integration_tests": [
     "test_traditional_chinese_recall_through_http_route_with_anchor_filtering",
@@ -22,9 +23,9 @@
     "run_as": "isolated docker network with two plain `docker run` containers; unique per-test tenant banks, deleted after each test"
   },
   "known_gaps": [
-    "Not run against the repo-built `hindsight` and `memory-index-postgres` images from docker-compose.yml: building them needs several GB of model/image layers and this worker host had about 4 GB free disk. The compose services were not started. The run above used the upstream image with its default local embedding/reranker models (English bge-small, 384-d), not the offline multilingual-e5-large and bge-reranker-v2-m3 packaged by HINDSIGHT-SERVICE-DEPLOY. Traditional Chinese recall passed here through pgroonga plus the default embedder; ranking quality with the packaged models is not measured. The reviewer should re-run the same command against the compose pair (set PANTHEON_HINDSIGHT_IT_URL / _KEY).",
+    "AC8 remains open: not yet run against the repo-built `hindsight` and `memory-index-postgres` images from docker-compose.yml because building them needs several GB of ONNX model/image layers and this worker host has ~3.3 GB free disk (99% used). The earlier 6-passed probe used the upstream image with its default local embedding/reranker models (English bge-small, 384-d), not the offline multilingual-e5-large (1024-d) and bge-reranker-v2-m3 packaged by HINDSIGHT-SERVICE-DEPLOY. Once Human/Ops frees disk or provides the built compose pair, re-run `services/memory/test_hindsight_integration.py` with PANTHEON_HINDSIGHT_IT_URL / _KEY against the compose pair and update this file.",
     "Observation-to-canonical-id mapping through source_fact_ids is covered by a fake-transport unit test only; consolidation is disabled (no LLM provider), so no real observations exist.",
-    "Reflect success path is untested against a real provider (none configured). Hindsight 1.2.1 reflect has no temperature field; low budget is used instead."
+    "Reflect low temperature is pinned on the hindsight service via HINDSIGHT_API_LLM_TEMPERATURE_REFLECT=${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1} in docker-compose.yml (Hindsight 1.2.1 static config field; ReflectRequest has budget='low' and no per-request temperature field). Scoped citation hydration and unavailable reasons are verified by unit tests in test_main.py, while the live reflect LLM success path remains untested against a real LLM provider because the default provider is `none`."
   ],
   "api_facts_verified_on_real_container": [
     "retain with document_id replaces; caller entities kept with resolve_entities false",
