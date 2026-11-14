@@ -125,14 +125,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def provisioned_stack(stack, monkeypatch):
+def provisioned_stack(stack, monkeypatch, request):
     from services.registry import service as registry_service
     from services.registry.storage import RegistryStore
     from services.registry.models import RegistryEntryCreate
     from services.memory.test_main import JWT_SECRET, _make_jwt
 
     monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(stack["root"] / "registry.lock"))
-    monkeypatch.setenv("PERSONA_DEFAULT_TENANT_ID", support.TENANT)
+    bootstrap_failure = getattr(request, "param", "") == "bootstrap_failure"
+    monkeypatch.setenv("PERSONA_DEFAULT_TENANT_ID", "*" if bootstrap_failure else support.TENANT)
     monkeypatch.setenv("PERSONA_DAILY_CYCLE_ENABLED", "false")
     monkeypatch.setenv("PERSONA_POOL_STORE_PATH", str(stack["root"] / "pools.json"))
     monkeypatch.setenv("PERSONA_STORE_PATH", str(stack["root"] / "startup-personas.json"))
@@ -166,7 +167,7 @@ def provisioned_stack(stack, monkeypatch):
             monkeypatch.setenv("PERSONA_REGISTRY_BASE_URL", registry_url)
             monkeypatch.setenv("PERSONA_REGISTRY_SERVICE_TOKEN", token)
             monkeypatch.setenv("PANTHEON_MEMORY_API_URL", stack["memory"])
-            assert persona.app.state.panel_personas["status"] == "ready"
+            assert persona.app.state.panel_personas["status"] == ("blocked" if bootstrap_failure else "ready")
             from persona_strategy_pool import AppendPoolVersionRequest
             persona._pool_store().append(support.INITIATOR, support.TENANT, AppendPoolVersionRequest(
                 expected_version=0, change_reason="test fixture initial approved member", members=[{
@@ -205,6 +206,8 @@ def test_missing_personas_and_agents_reach_three_contribution_memo(provisioned_s
     assert len(gateway.entries) == 5 and gateway.entries[:2] == before
     memos = support._get(stack["api"], "/api/consult/memos?request_id=" + request["request_id"])
     assert len(memos) == 1 and memos[0]["status"] == "published"
+    events = support._get(stack["api"], f"/api/consult/requests/{request['request_id']}/transcript")["events"]
+    assert len([e for e in events if e["event_type"] == "persona_contribution"]) == 3
     assert gateway.revision == 3
     support._provider(cfg).ensure_agents(tenant_id=support.TENANT,
         persona_ids=[support.INITIATOR, triggers.RISK_PERSONA_ID, triggers.RED_TEAM_PERSONA_ID])
@@ -220,10 +223,30 @@ def test_failure_blocks_without_model_calls_then_retries(provisioned_stack, fail
     state = WorkflowStateStore(cfg.state_path)
     gateway.ensure_failure = failure == "ensure"
     gateway.tamper = failure == "tools"
-    result = run_tick(config=cfg, state=state)
-    assert result["completed"] == 0 and result["blocked"] > 0, json.dumps(result)
+    for _ in range(4 if failure == "ensure" else 1):
+        result = run_tick(config=cfg, state=state)
+        assert result["completed"] == 0 and result["blocked"] == 1 and result["dead_lettered"] == 0, json.dumps(result)
     assert not gateway.calls
     assert not support._get(stack["api"], "/api/consult/memos?request_id=" + request["request_id"])
     gateway.ensure_failure = gateway.tamper = False
     result = run_tick(config=cfg, state=state)
     assert result["completed"] == 1, json.dumps(result)
+
+
+@pytest.mark.parametrize("provisioned_stack", ["bootstrap_failure"], indirect=True)
+def test_bootstrap_failure_blocks_panel_until_owner_retries(provisioned_stack, monkeypatch):
+    from dataclasses import replace
+    stack, cfg, gateway, persona = provisioned_stack
+    cfg = replace(cfg, batch_size=1)
+    assert len(persona.PERSONA_OWNER_API.state.persona_owner.list()) == 1
+    request = open_trial(stack)
+    state = WorkflowStateStore(cfg.state_path)
+    first = run_tick(config=cfg, state=state)
+    assert first["blocked"] == 1 and not gateway.calls, json.dumps(first)
+    assert not support._get(stack["api"], "/api/consult/memos?request_id=" + request["request_id"])
+    events = support._get(stack["api"], f"/api/consult/requests/{request['request_id']}/transcript")["events"]
+    assert any(e["event_type"] == "panel_agent_provisioning_blocked" and e["content"]["reason"] for e in events)
+    monkeypatch.setenv("PERSONA_DEFAULT_TENANT_ID", support.TENANT)
+    assert persona._bootstrap_panel_personas(persona.app)["status"] == "ready"
+    retried = run_tick(config=cfg, state=state)
+    assert retried["completed"] == 1, json.dumps(retried)

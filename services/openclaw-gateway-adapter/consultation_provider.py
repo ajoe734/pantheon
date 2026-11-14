@@ -21,6 +21,10 @@ from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from consult_agent_provisioning import (
+    ENSURE_PATH, ConsultAgentProvisioningError, ensure_consult_agent,
+)
+
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError,
@@ -750,8 +754,6 @@ def create_app(
         version="1.0.0",
     )
 
-    from consult_agent_provisioning import ENSURE_PATH, ensure_consult_agent
-
     class EnsureRequest(BaseModel):
         tenant_id: str = Field(min_length=1, max_length=256)
         persona_id: str = Field(min_length=1, max_length=64)
@@ -780,6 +782,8 @@ def create_app(
             return ensure_consult_agent(provider, tenant_id=identity.tenant_id, persona_id=identity.persona_id)
         except PanelAdmissionDenied as exc:
             return _blocked(exc.status_code, exc.message, retryable=True)
+        except ConsultAgentProvisioningError as exc:
+            return _blocked(503, f"consultation agent ensure: {exc}", retryable=True)
         except (OpenClawProviderError, OSError, ValueError, RuntimeError):
             # Do not echo upstream HTTP payloads, credentials or gateway config.
             return _blocked(503, "consultation agent ensure failed: persona owner or gateway unavailable/unsafe", retryable=True)

@@ -19,18 +19,22 @@ from services.persona.consult_triggers import (
 ENSURE_PATH = "/api/openclaw-adapter/consultation/agents/ensure"
 
 
+class ConsultAgentProvisioningError(RuntimeError):
+    """Safe, actionable dependency/policy reason for the blocked envelope."""
+
+
 def _persona_record(tenant_id: str, persona_id: str) -> dict[str, Any]:
     from services.service_token_file import configured_service_token
     base = str(os.getenv("PANTHEON_PERSONA_API_URL") or "").rstrip("/")
     token = configured_service_token("PANTHEON_PERSONA_SERVICE_TOKEN") or configured_service_token("PERSONA_SERVICE_TOKEN")
     if not base or not token:
-        raise RuntimeError("persona owner read is not configured")
+        raise ConsultAgentProvisioningError("persona owner read is not configured")
     request = urllib.request.Request(base + "/api/personas/" + persona_id,
         headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant_id})
     with urllib.request.urlopen(request, timeout=10) as response:
         record = json.load(response)
     if record.get("tenant_id") != tenant_id:
-        raise ValueError("participant persona tenant binding mismatch")
+        raise ConsultAgentProvisioningError("participant persona tenant binding mismatch")
     if persona_id in {RISK_PERSONA_ID, RED_TEAM_PERSONA_ID}:
         metadata = record.get("metadata") or {}
         if (record.get("consult_policy_id") != CONSULT_PANEL_POLICY_ID
@@ -38,7 +42,7 @@ def _persona_record(tenant_id: str, persona_id: str) -> dict[str, Any]:
             or metadata.get("persona_class") != "consult_panel"
             or metadata.get("trading") is not False or metadata.get("consultable") is not True
             or record.get("tool_profile_id") or record.get("route_policy_id")):
-            raise ValueError("panel persona bootstrap is incomplete or unsafe")
+            raise ConsultAgentProvisioningError("panel persona bootstrap is incomplete or unsafe")
     return record
 
 
@@ -61,21 +65,21 @@ def ensure_consult_agent(provider: Any, *, tenant_id: str, persona_id: str) -> d
     with agent_registry_lock():
         snapshot = provider._gateway_call("config.get")
         if snapshot.get("valid") is not True or not snapshot.get("hash"):
-            raise RuntimeError("gateway config snapshot is invalid or lacks a revision")
+            raise ConsultAgentProvisioningError("gateway config snapshot is invalid or lacks a revision")
         config = snapshot.get("config") or {}
         entries = (config.get("agents") or {}).get("list", [])
         if (not isinstance(entries, list)
             or any(not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"] for a in entries)
             or len({a["id"] for a in entries}) != len(entries)):
-            raise RuntimeError("gateway agents config is invalid")
+            raise ConsultAgentProvisioningError("gateway agents config is invalid")
         # Never let the first consultation agent become an implicit default.
         if not entries or not any(a.get("id") == "main" or a.get("default") is True for a in entries):
-            raise RuntimeError("gateway default agent is not provisioned")
+            raise ConsultAgentProvisioningError("gateway default agent is not provisioned")
         matches = [a for a in entries if a.get("id") == agent_id]
         if len(matches) > 1 or any(a.get("default") for a in matches):
-            raise RuntimeError("consultation agent identity collides with a default or duplicate agent")
+            raise ConsultAgentProvisioningError("consultation agent identity collides with a default or duplicate agent")
         if any(a.get("id") != agent_id and a.get("workspace") == workspace for a in entries):
-            raise RuntimeError("consultation workspace belongs to another agent")
+            raise ConsultAgentProvisioningError("consultation workspace belongs to another agent")
         desired = {"id": agent_id, "workspace": workspace, **copy.deepcopy(_PERSONA_OPINION_RUNTIME_POLICY)}
         changed = not matches or any(matches[0].get(k) != v for k, v in desired.items())
         if changed:
@@ -94,6 +98,6 @@ def ensure_consult_agent(provider: Any, *, tenant_id: str, persona_id: str) -> d
         live_entries = ((verified.get("config") or {}).get("agents") or {}).get("list") or []
         bound = [a for a in live_entries if a.get("id") == agent_id]
         if verified.get("valid") is not True or len(bound) != 1 or bound[0].get("workspace") != workspace:
-            raise RuntimeError("consultation agent workspace was not acknowledged")
+            raise ConsultAgentProvisioningError("consultation agent workspace was not acknowledged")
     return {"status": "ready", "tenant_id": tenant_id, "persona_id": persona,
             "agent_id": admitted, "workspace_ref": workspace, "changed": changed}
