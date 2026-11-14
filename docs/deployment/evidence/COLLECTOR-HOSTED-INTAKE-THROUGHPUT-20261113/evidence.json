@@ -23,98 +23,32 @@
       {
         "source": "collector-tw-twse-price-history",
         "rows_in_bundle": 1375,
-        "profile": "local",
-        "raw_cost_seconds": 0,
-        "rows": 1000,
-        "raw_reads": 1000,
-        "wall_seconds": 0.725511,
-        "model_seconds": 0.0,
-        "next_cursor": null,
-        "complete": false,
-        "continuation_pending": true,
-        "priority_done": false,
+        "rows_per_pull": [1000, 300],
+        "wall_seconds": [0.725511, 0.245265],
+        "model_seconds": [0.0, 15.0],
         "cap": 1000,
-        "cadence_seconds": 600
-      },
-      {
-        "source": "collector-tw-twse-price-history",
-        "rows_in_bundle": 1375,
-        "profile": "read_budget",
-        "raw_cost_seconds": 0.05,
-        "rows": 300,
-        "raw_reads": 300,
-        "wall_seconds": 0.245265,
-        "model_seconds": 15.0,
-        "next_cursor": null,
-        "complete": false,
-        "continuation_pending": true,
-        "priority_done": false,
-        "cap": 1000,
-        "cadence_seconds": 600
+        "cadence_seconds": 600,
+        "continuation_pending": true
       },
       {
         "source": "collector-tw-tpex-price-history",
         "rows_in_bundle": 6000,
-        "profile": "local",
-        "raw_cost_seconds": 0,
-        "rows": 1000,
-        "raw_reads": 1000,
-        "wall_seconds": 0.744876,
-        "model_seconds": 0.0,
-        "next_cursor": null,
-        "complete": false,
-        "continuation_pending": true,
-        "priority_done": false,
+        "rows_per_pull": [1000, 300],
+        "wall_seconds": [0.744876, 0.299755],
+        "model_seconds": [0.0, 15.0],
         "cap": 1000,
-        "cadence_seconds": 600
-      },
-      {
-        "source": "collector-tw-tpex-price-history",
-        "rows_in_bundle": 6000,
-        "profile": "read_budget",
-        "raw_cost_seconds": 0.05,
-        "rows": 300,
-        "raw_reads": 300,
-        "wall_seconds": 0.299755,
-        "model_seconds": 15.0,
-        "next_cursor": null,
-        "complete": false,
-        "continuation_pending": true,
-        "priority_done": false,
-        "cap": 1000,
-        "cadence_seconds": 600
+        "cadence_seconds": 600,
+        "continuation_pending": true
       },
       {
         "source": "collector-tw-twse-t86",
         "rows_in_bundle": 1349,
-        "profile": "local",
-        "raw_cost_seconds": 0,
-        "rows": 500,
-        "raw_reads": 500,
-        "wall_seconds": 0.644156,
-        "model_seconds": 0.0,
-        "next_cursor": "2026-11-10T02:01:00Z#run1|items=500",
-        "complete": false,
-        "continuation_pending": false,
-        "priority_done": false,
+        "rows_per_pull": [500, 300],
+        "wall_seconds": [0.644156, 0.1849],
+        "model_seconds": [0.0, 15.0],
         "cap": 500,
-        "cadence_seconds": 86400
-      },
-      {
-        "source": "collector-tw-twse-t86",
-        "rows_in_bundle": 1349,
-        "profile": "read_budget",
-        "raw_cost_seconds": 0.05,
-        "rows": 300,
-        "raw_reads": 300,
-        "wall_seconds": 0.1849,
-        "model_seconds": 15.0,
-        "next_cursor": "2026-11-10T02:01:00Z#run1|items=300",
-        "complete": false,
-        "continuation_pending": false,
-        "priority_done": false,
-        "cap": 500,
-        "cadence_seconds": 86400
+        "cadence_seconds": 86400,
+        "continuation_pending": false
       }
     ],
     "diagnosis": [
@@ -127,7 +61,8 @@
       "At 500 rows/day T86 needs 1317 pulls for 488*1349 rows, making the previous daily cadence incompatible with 48 hours.",
       "The 15-second read budget, one scheduled pull per controller request, record caps and controller timeout remain unchanged. Upstream exchange request policy is unchanged.",
       "A profiler on a native 769-row market batch measured 8.099s in distillation admission, including 3.027s in repeated SQLite connection setup/teardown. Ingest now reuses one context-local connection for that batch while preserving every existing FULL-synchronous per-record transaction, identity check, commit and rollback."
-    ]
+    ],
+    "profile_order": ["local", "read_budget_serial_50ms"]
   },
   "ordered_before_after": {
     "method": "Actual 3ed0ea555 adapter loaded from git vs task adapter; a completed latest sidecar seeds the ordered-sweep measurement. Recorded row/raw JSON shape, full daily row counts, 270ms virtual latency for each receive, 5ms actual I/O yield so all sixteen readers can overlap. Local wall and virtual transport time are separate. Candidate serial history and task bounded parallel history use the same fixture/clock model.",
@@ -225,20 +160,6 @@
         "days": 3,
         "unique_rows": 4125,
         "pulls": 12,
-        "rows_per_pull": [
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          487,
-          832,
-          799,
-          799,
-          816,
-          495
-        ],
         "model_seconds": 179.28000000000134,
         "max_pull_seconds": 15.390000000000583,
         "wall_seconds": 8.167983752005966,
@@ -249,66 +170,14 @@
         "history_model_seconds_with_pauses": 76.55000000000165,
         "history_wall_seconds": 4.462457789020846,
         "history_rows": 3741,
-        "extrapolated_488_days_seconds": 14767.5425288348
+        "extrapolated_488_days_seconds": 14767.5425288348,
+        "rows_per_pull_summary": {"count": 12, "min": 212, "max": 832, "sum": 5500}
       },
       {
         "source": "collector-tw-tpex-price-history",
         "days": 3,
         "unique_rows": 18000,
         "pulls": 51,
-        "rows_per_pull": [
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          212,
-          608,
-          832,
-          832,
-          832,
-          832,
-          832,
-          832,
-          800,
-          832,
-          832,
-          832,
-          816,
-          832,
-          832,
-          800,
-          832,
-          832,
-          832,
-          832,
-          816,
-          832,
-          832,
-          80
-        ],
         "model_seconds": 772.1999999999695,
         "max_pull_seconds": 15.390000000000583,
         "wall_seconds": 38.192724600987276,
@@ -319,24 +188,14 @@
         "history_model_seconds_with_pauses": 347.88999999997804,
         "history_wall_seconds": 20.81249554292299,
         "history_rows": 17456,
-        "extrapolated_488_days_seconds": 62829.799551960816
+        "extrapolated_488_days_seconds": 62829.799551960816,
+        "rows_per_pull_summary": {"count": 51, "min": 80, "max": 832, "sum": 24000}
       },
       {
         "source": "collector-tw-twse-t86",
         "days": 3,
         "unique_rows": 4047,
         "pulls": 9,
-        "rows_per_pull": [
-          500,
-          500,
-          500,
-          500,
-          500,
-          500,
-          500,
-          500,
-          47
-        ],
         "model_seconds": 81.00000000000009,
         "max_pull_seconds": 10.260000000000119,
         "wall_seconds": 4.588604750984814,
@@ -347,7 +206,8 @@
         "history_model_seconds_with_pauses": 90.00000000000009,
         "history_wall_seconds": 4.579101842013188,
         "history_rows": 4047,
-        "extrapolated_488_days_seconds": 15384.867232967494
+        "extrapolated_488_days_seconds": 15384.867232967494,
+        "rows_per_pull_summary": {"count": 9, "min": 47, "max": 500, "sum": 4047}
       }
     ],
     "formula": "For each source: 2*(cold newest startup modeled time + wall + 1s pauses) + (ordered modeled time + wall + 1s pauses)/measured ordered rows * 488*daily_rows. Sum all three sources sharing one controller slot, then add 600s worst-phase admission delay. Startup mixed-history work is charged conservatively and ordered newest replay remains included.",
@@ -357,16 +217,8 @@
   },
   "t86_controller": {
     "measurement": {
-      "T86_controller_rows": [
-        500,
-        500,
-        349
-      ],
-      "tick_wall_seconds": [
-        1.9919429139990825,
-        1.9655022509978153,
-        1.479423515003873
-      ],
+      "T86_controller_rows": [500, 500, 349],
+      "tick_wall_seconds": [1.9919429139990825, 1.9655022509978153, 1.479423515003873],
       "cadence_seconds": 86400
     },
     "default_cap": 500,
@@ -433,14 +285,8 @@
   "newest_session_controller": {
     "measurement": {
       "sessions": [
-        [
-          1377,
-          "TWSE"
-        ],
-        [
-          6090,
-          "TPEX"
-        ]
+        [1377, "TWSE"],
+        [6090, "TPEX"]
       ],
       "ticks": 38,
       "reads": 9413,
@@ -479,7 +325,8 @@
         "skipped": 3,
         "failed": 1,
         "log": "/tmp/collector-final-validation.log",
-        "note": "All three capacity cases passed. The running process retained the earlier Gemini registry while the final desired-state exclusion changed on disk; source alignment contract failed on that stale in-process registry. Superseded by the fresh final-configuration rerun below."
+        "note": "All three capacity cases passed. The running process retained the earlier Gemini registry while the final desired-state exclusion changed on disk; source alignment contract failed on that stale in-process registry. Superseded by the fresh final-configuration rerun below.",
+        "log_sha256": "a4b4b74f558a7b0095e83eac18f64fe19b14f8582ccc7dfe36ff8b34819bf12c"
       },
       {
         "command": "timeout 240 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_distillation_worker.py deploy/collector/tests -k 'not full_size_close_through_controller_main_with_persistence and not real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget and not real_size_two_day_sweep_continues_and_preserves_newest_priority'",
@@ -488,21 +335,24 @@
         "skipped": 3,
         "deselected": 3,
         "log": "/tmp/collector-final-fresh-process.log",
-        "note": "Fresh final configuration; the three expensive capacity cases were already passed above and their market execution path was unchanged by the exclusion/compatibility fixes."
+        "note": "Fresh final configuration; the three expensive capacity cases were already passed above and their market execution path was unchanged by the exclusion/compatibility fixes.",
+        "log_sha256": "792c6d0cc452346025ea6452878c5b9e99d9ad4f0925005c364a3049f185d887"
       },
       {
         "command": "timeout 120 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/test_service.py",
         "exit_code": 0,
         "passed": 40,
         "skipped": 2,
-        "log": "/tmp/collector-service-compat-final.log"
+        "log": "/tmp/collector-service-compat-final.log",
+        "log_sha256": "6b85cd686a6101f4f9deb23c165cf74086cc86b5a62c1b461c5e84f99a1cfacf"
       },
       {
         "command": "timeout 60 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/test_service.py services/source_ingestion/tests/test_scheduled_connector.py -k 'scalar_readback_ranking or controller_readback_reads_each_store_once_at_production_scale'",
         "exit_code": 0,
         "passed": 2,
         "deselected": 113,
-        "log": "/tmp/collector-final-readback-compat.log"
+        "log": "/tmp/collector-final-readback-compat.log",
+        "log_sha256": "984a27c76b2aac2ac53df4b4836d8d9df17ca87a4530b08dc0981f2ecde800bc"
       },
       {
         "command": "timeout 120 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q deploy/collector/tests services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/test_service.py::test_controller_readback_reads_each_store_once_at_production_scale services/source_ingestion/tests/test_scheduled_connector.py::test_scalar_readback_ranking_preserves_mixed_datetime_and_persisted_iso_order",
@@ -510,11 +360,14 @@
         "passed": 181,
         "skipped": 2,
         "log": "/tmp/collector-composed-base-final.log",
-        "note": "After composing current dev hourly collector timer change; no task-source implementation conflict."
+        "note": "After composing current dev hourly collector timer change; no task-source implementation conflict.",
+        "log_sha256": "a50db05fa0c450b814064c425f9d6f54493633cbe8437d64925ace94bf974fd9"
       }
     ],
     "skips": "Private native RSS pack not supplied; optional browser/image checks unavailable/not opted in. Existing service tests also skip their optional unavailable integration paths. No skipped test is counted as passed.",
-    "exploratory_runs": "Earlier interrupted, timed-out, profiled or failed development batches are excluded from successful validation. All acceptance-bearing final batches above have terminal outputs and exit statuses; no process is left to finish after handoff."
+    "exploratory_runs": "Earlier interrupted, timed-out, profiled or failed development batches are excluded from successful validation. All acceptance-bearing final batches above have terminal outputs and exit statuses; no process is left to finish after handoff.",
+    "evidence_revision": "Reviewer budget fix only: summarized baseline and repetitive pull series, retaining exact original by commit/path/SHA256. No runtime or test source changes.",
+    "summary_validation": "python3 /tmp/summarize-collector-evidence.py: JSON roundtrip, retained acceptance/command equality, pull-series aggregates, original SHA256 and five log digests verified; exit 0. git diff --check: exit 0."
   },
   "remaining_acceptance": {
     "task": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113",
@@ -524,5 +377,11 @@
       "Measure actual newest-session completion, cursor sweep progress, tick/request times and end-to-end rate in the deployed environment.",
       "Keep GDELT, Threads, existing DLQ entries and upstream exchange request rates outside this source task."
     ]
+  },
+  "detailed_output_reference": {
+    "commit": "1a1f5c92926b0dbcc0c629f993d54ae1df904960",
+    "path": "docs/deployment/evidence/COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113/evidence.json",
+    "sha256": "7eabd5230c278c9c74ef7db122b61159d7d7b9485937ac31c3bb75c4c3276fbd",
+    "contents": "Original full measurements, per-pull series and validation records; retrieve with git show <commit>:<path>. Summary retains acceptance numbers; timings remain local/model evidence, not hosted proof."
   }
 }
