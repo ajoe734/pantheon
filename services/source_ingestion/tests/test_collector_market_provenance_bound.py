@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -169,6 +169,19 @@ def test_completed_receipt_reuses_rows_without_per_row_evidence(admission_stack,
     assert http.get("/api/source-ingest/management/sources", headers=headers).status_code == 200
     seeds = http.get("/api/source-ingest/management/strategy-seeds", headers=headers)
     assert seeds.status_code == 200 and seeds.json()["items"] == []
+    # Force the completed native cursor boundary, observing the recorded bundle
+    # while fresh. An empty replay must not create extra provenance or rows.
+    from services.source_ingestion.connectors import collector_bundle as cb
+    observed = cb.observed_from_collector_status
+    with monkeypatch.context() as clock:
+        clock.setattr(cb, "observed_from_collector_status", lambda *args, **kwargs: observed(
+            *args, **{**kwargs, "now": datetime(2026, 11, 10, 2, 6, tzinfo=timezone.utc)}))
+        empty = cw.run_schedule_tick(api_url="http://source-ingest.test:8097", max_concurrency=1,
+            force_connector_ids=[source], exclusive_connector_ids=[source],
+            controller_token=module.runtime.controller_token)
+    assert empty["summary"]["total_failed"] == 0
+    assert empty["ran"][0]["receipt"]["normalized_count"] == 0
+    assert len(module.runtime.evidence_repository.list_source_records()) == len(summaries)
     run = module.runtime.manager.start_ingest_run(connector_id=source, trace_id="replay", trigger_type="manual")
     result = ScheduledIngestResult(run=run, records=records, watermark=None,
                                    collector_delivery=CollectorDelivery(records, lambda: None))

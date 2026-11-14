@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-MARKET-PROVENANCE-BOUND-20261114",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "implementation_validation_in_progress",
+  "status": "validation_hold_readonly_acceptance_contract",
   "scope": "Verified Collector market bundles only; normalized rows, snapshots, official connectors, request cadence and legacy evidence retained.",
   "baseline": {
     "source_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
@@ -66,7 +66,7 @@
     ],
     "head_note": "The process imported the unmodified pipeline before the anchor commit. Its end-of-run git HEAD field reports e491739d7, not the already-loaded module version; immutable module source is identified above.",
     "hosted_observation": "Task-provided read-only psql observation, 2026-11-14 13:30-13:55Z: TWSE history 442 source records, 1495 evidence items, 1495 knowledge objects; table 22701 rows / 67 MB. This worker did not run hosted SSH or SQL.",
-    "local_vs_hosted": "A single pass through the merged pipeline reproduces linear 1:1:1 source/item/knowledge growth plus one job per row. The roughly 3.38 hosted item/source ratio is historical accumulated evidence; it was not reproduced by a clean single-pass ingest and is not claimed as a local result.",
+    "local_vs_hosted": "A clean pass through merged code yields linear 1:1:1 source/item/knowledge growth, plus a job per row. The roughly 3.38 hosted item/source ratio was not reproduced; its historical cause was not determined. Hosted counts and size are task-provided context, not new hosted measurements.",
     "distillation_note": "The existing market worker synthesizes evidence and materializes a local seed before marking a job skipped, but that path alone does not add PostgreSQL evidence rows in this version.",
     "immutable_reproduction": {
       "command": ".venv-pantheon/bin/python /tmp/collector-provenance-frozen-baseline.py",
@@ -143,10 +143,11 @@
     "search": "Bundle knowledge objects remain readable provenance; numeric bundles do not enter the semantic embedding pipeline. Existing text and legacy market knowledge remain eligible.",
     "distillation": "No automatic admission or catch-up admission for numeric bundle summaries; explicit old/manual jobs are skipped before seed/evidence synthesis. Legacy market jobs retain existing behavior.",
     "compatibility": "No deletion, schema migration or canonical record type change; additional metadata only. Original collector: source-id namespace retained.",
-    "row_lineage_read": "Existing source-record/{id} endpoint resolves a missing Collector row through completed normalized partitions selected by tenant-owned bundle refs; no per-row evidence is inserted. Foreign tenant 404 and unavailable owned partition 503 are tested."
+    "row_lineage_read": "Existing source-record/{id} endpoint resolves a missing Collector row through completed normalized partitions selected by tenant-owned bundle refs; no per-row evidence is inserted. Foreign tenant 404 and unavailable owned partition 503 are tested.",
+    "receipt_compatibility": "The scalar evidence_bundle_id remains; additive evidence_bundle_ids lists every bundle/date group in a multi-date delivery. Native empty replay and completed-receipt storage reuse are tested."
   },
   "scale": {
-    "status": "pending",
+    "status": "passed",
     "planned_days_per_source": 30,
     "normalized_rows": 261720,
     "two_year_days": 488,
@@ -169,7 +170,32 @@
       "budget_seconds": 120,
       "process_peak_rss_kib_including_fixture_setup": 936752,
       "notes": "22704 synthetic existing rows (>=22701 observed), with deterministic incompressible padding, plus 5856 new two-year objects. 165609472-byte PostgreSQL relation exceeds the observed 67-MB legacy relation plus estimated additions. Tracemalloc reports Python allocations; process RSS upper bound includes all model setup. This measures evidence reload, not full hosted startup."
-    }
+    },
+    "measured_30_day_controller": {
+      "controller_ticks": 263,
+      "days_per_source": 30,
+      "distillation_jobs": 0,
+      "normalized_rows": 261720,
+      "postgres_bytes": 1196032,
+      "postgres_counts": {
+        "evidence_bundle": 90,
+        "evidence_item": 90,
+        "knowledge_object": 90,
+        "source_record": 90
+      },
+      "snapshot_harness": "valid two-close projection window; lossless latest-envelope journal compaction between ticks; all normalized history retained",
+      "two_year_bundles": 1464,
+      "two_year_normalized_rows": 4257312,
+      "two_year_reload_peak_bytes": 54780596,
+      "two_year_reload_seconds": 1.3603418439997768,
+      "wall_seconds": 918.19589928,
+      "predicted_new_embedding_calls": 0,
+      "embedding_basis": "Structural bound: every numeric bundle KO is excluded by the real index pipeline; a separate backend no-call test verifies it. Search-svc is not running in this controller fixture."
+    },
+    "row_count_bound": "261720 normalized rows -> 90 source + 90 item + 90 bundle + 90 knowledge rows. The 1-row/full-day and cap=2 tests show the delta is independent of per-bundle row count.",
+    "projection": "488 * (1375 + 6000 + 1349) = 4257312 normalized rows; 488 * 3 = 1464 bundle/date groups; 5856 new evidence-table rows; 0 automatic jobs; predicted 0 new numeric embedding calls.",
+    "evidence_size_projection_bytes": 19455454,
+    "extrapolation_note": "Relation-size estimate scales measured 30-day storage linearly; exact TOAST/vacuum/index sizes may differ. Conservative 165609472-byte existing-plus-new startup model separately exceeds the supplied 67-MB legacy table plus this estimate."
   },
   "readers": [
     {
@@ -177,7 +203,7 @@
       "path": "services/source_ingestion/runtime.py:_latest_source_record_by_connector",
       "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression",
       "file_line_refs": [
-        "services/source_ingestion/runtime.py:1195"
+        "services/source_ingestion/runtime.py:1242"
       ]
     },
     {
@@ -185,7 +211,8 @@
       "path": "services/source_ingestion/pipeline.py:persist_latest_market_snapshots; services/source_ingestion/requirement_state.py:append_normalized_records",
       "proof": "test_latest_market_snapshot.py; test_latest_market_snapshot_state.py; test_intraday_snapshot_projection.py; held-symbol controller regression",
       "file_line_refs": [
-        "services/source_ingestion/pipeline.py:537"
+        "services/source_ingestion/pipeline.py:538",
+        "services/source_ingestion/requirement_state.py:1136"
       ]
     },
     {
@@ -193,7 +220,7 @@
       "path": "services/source_ingestion/pipeline.py:_persist_collector_market_storage",
       "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence (including foreign-tenant negative)",
       "file_line_refs": [
-        "services/source_ingestion/pipeline.py:1175"
+        "services/source_ingestion/pipeline.py:1176"
       ]
     },
     {
@@ -202,7 +229,8 @@
       "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_distillation_worker.py",
       "file_line_refs": [
         "services/source_ingestion/distillation_worker.py:1920",
-        "services/source_ingestion/distillation_worker.py:1997"
+        "services/source_ingestion/distillation_worker.py:1997",
+        "services/source_ingestion/distillation_controller.py:481"
       ]
     },
     {
@@ -237,7 +265,7 @@
       "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_pg_store.py; real 30-day PG scale",
       "file_line_refs": [
         "services/knowledge/evidence/repository.py:212",
-        "services/source_ingestion/pg_store.py:416"
+        "services/source_ingestion/pg_store.py:233"
       ]
     },
     {
@@ -248,13 +276,17 @@
     {
       "reader": "single per-row snapshot lineage lookup",
       "path": "services/source_ingestion/runtime.py:collector_market_record_from_partition; services/source_ingestion/routers/ingest_operations.py:get_source_record",
-      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence compares original normalized row/hash, rejects foreign tenant, and checks missing partition 503 without foreign existence disclosure."
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence compares original normalized row/hash, rejects foreign tenant, and checks missing partition 503 without foreign existence disclosure.",
+      "file_line_refs": [
+        "services/source_ingestion/runtime.py:1174",
+        "services/source_ingestion/routers/ingest_operations.py:426"
+      ]
     }
   ],
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\"",
-      "result": "9 passed including actual bee62bc29 PostgreSQL reader and untouched legacy object payload checks; additional padded startup model 1 passed; complete final module rerun pending."
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 240 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\"",
+      "result": "9 passed / 1 deselected before adding padded startup model; final service and reader-module batches cover all non-scale tests."
     },
     {
       "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 900 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/test_pg_store.py services/search/test_index_pipeline.py",
@@ -279,12 +311,63 @@
     {
       "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 300 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_latest_market_snapshot.py",
       "result": "18 passed, 1 deselected, exit 0; includes the new row-lineage endpoint fallback and padded startup model."
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 900 .venv-pantheon/bin/python -m pytest -q -rs services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/test_pg_store.py services/search/test_index_pipeline.py",
+      "result": "242 passed / 1 skipped (private native RSS pack) / 1 deselected, exit 0"
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 1800 .venv-pantheon/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_market_provenance_bound.py -k real_pg --maxfail=1",
+      "result": "1 passed / 10 deselected, exit 0; 940.63 seconds including setup, 918.20 seconds for controller drain"
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python -m pytest -q services/search",
+      "result": "After installing repository-pinned qdrant-client==1.19.0 and jieba==0.42.1 only in this checkout venv: 166 passed / 24 optional PG/native skips / 4 subtests passed, exit 0"
+    },
+    {
+      "command": "timeout 900 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_latest_market_snapshot.py",
+      "result": "Composed dev PR7353 run: 104 passed / 6 failed, exit 1. Five readonly row-count conflicts plus historical frozen-candidate TPEx set-comparison jitter under concurrent scale I/O; isolated newest-session rerun passed all 13 tests (148.51s), exit 0; no test or production change was needed for that jitter."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k completed_receipt",
+      "result": "1 passed / 10 deselected, exit 0; includes forced native empty replay, row lookup and tenant/missing-partition guards"
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k pg_legacy",
+      "result": "1 passed / 10 deselected, exit 0; real legacy reader on tenant-scoped records"
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
+      "result": "13 passed, exit 0; isolated after bulk scale and search workloads finished"
     }
   ],
   "holds": {
-    "readonly_tests": "Task explicitly requires test_scheduled_connector.py unchanged. Five unmodified tests assert/derive per-row source-record counts (8,16,7467,1349,6002), contradicting bounded physical provenance. Final required batch is 105 passed / 5 failed. Operator clarification remains pending; no assertion weakened and no read-only test edited.",
-    "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact.",
-    "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes. The first full-window attempt also hit unrelated paper source selection after 30 TWSE and 30 TPEx days (959.30s, exit 1); no scale pass claimed. Final harness filters actual default desired-state requirements to exactly the three market sources, recalculating its real digest; retry pending.",
-    "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt."
+    "readonly_tests": "Five unmodified scheduled tests assert/derive per-row source-record counts, conflicting with bounded physical provenance. Task explicitly marks this module read-only. Operator clarification is pending; no test changed or weakened. Independent review/merge/done are held until this acceptance contract is resolved.",
+    "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact. Resolved upstream by PR7353 (f3873766e), composed without editing the readonly suite in this task. The final composed-base commands use ordinary pytest without the temporary plugin.",
+    "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes. The first full-window attempt also hit unrelated paper source selection after 30 TWSE and 30 TPEx days (959.30s, exit 1); no scale pass claimed. Final harness filters actual default desired-state requirements to exactly the three market sources, recalculating its real digest; retry pending. The final three-market-only retry passed (940.63s, exit 0); earlier failed/interrupted runs remain excluded.",
+    "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt.",
+    "remaining_assertions": [
+      "services/source_ingestion/tests/test_scheduled_connector.py:2457 test_completed_close_keeps_native_boundary_ack_and_replays_as_empty: expected 8 per-row sources, actual 1 bundle source",
+      "services/source_ingestion/tests/test_scheduled_connector.py:2514 test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots: expected 16 sources, actual 2 session bundles",
+      "services/source_ingestion/tests/test_scheduled_connector.py:2650 test_full_size_close_through_controller_main_with_persistence: expected 7467 sources, actual 2 bundles",
+      "services/source_ingestion/tests/test_scheduled_connector.py:2749 test_real_controller_drains_1349_t86_rows_before_daily_cadence: expected 1349 sources, actual 1 bundle",
+      "services/source_ingestion/tests/test_scheduled_connector.py:2902 test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget: expected 6002 sources, actual 3 bundles"
+    ]
+  },
+  "delivery": {
+    "pr": 7356,
+    "url": "https://github.com/ajoe734/pantheon/pull/7356",
+    "base": "dev",
+    "composed_dev": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+    "draft": true,
+    "merge_commit": null,
+    "hold": "Task-scoped readonly scheduled-test acceptance conflict; independent review and merge not requested while held.",
+    "required_actor": "Human/Ops",
+    "review_status": "not submitted for canonical review while acceptance hold remains"
+  },
+  "reproducibility": {
+    "scale_log_sha256": "53c2aa3e6772c6793b51035c56f8ca6658b044bbb4f20213920ed334ee7c56f4",
+    "startup_log_sha256": "e5264dc49e25bb92938274d3362846e69ca36bb616080fe2d9758de14c04d756",
+    "isolated_newest_log_sha256": "cb867a63376042ffb837ab62fe80c877d56fe9000368ef322ea066eba5c7ffa0"
   }
 }
