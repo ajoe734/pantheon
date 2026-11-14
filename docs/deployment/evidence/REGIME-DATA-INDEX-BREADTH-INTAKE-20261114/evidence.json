@@ -1,0 +1,86 @@
+{
+  "task_id": "REGIME-DATA-INDEX-BREADTH-INTAKE-20261114",
+  "hosted_behavior_claimed": false,
+  "scope": "Source-only intake of the collector index/breadth and TAIEX history bundles; paper/research data. No deployment, hosted pull or hosted acceptance claim.",
+  "captured_at": "2026-11-14T19:47:46.382751+00:00",
+  "python_env": "/tmp/regime-index-breadth-venv (python 3.12, pytest)",
+  "real_inputs": {
+    "method": "The real collector spiders (deploy/collector collector_stack CollectorRunner) run over committed unedited official TWSE responses via FixtureTransport; the resulting bundle tree is read by the production pull entry point execute_provider_owned_adapter -> CollectorBundleAdapter.",
+    "fixtures": [
+      {
+        "path": "deploy/collector/tests/fixtures/twse_mi_index_full_20261110.json",
+        "sha256": "e5cdb5fd66f44853a2dd674891f6c96feafb38e0b164bc73eeb1a885c0aea560"
+      },
+      {
+        "path": "deploy/collector/tests/fixtures/twse_mi_5mins_hist_201201.json",
+        "sha256": "45b974f43cd446ba7895ee14376b11638103df3f746078ffb1429a0a38fdf320"
+      }
+    ]
+  },
+  "results": {
+    "pulled_records": {
+      "collector-tw-twse-index-breadth": {
+        "tw_index_daily": 56,
+        "tw_market_breadth_daily": 1
+      },
+      "collector-tw-twse-taiex-history": {
+        "tw_index_daily": 15
+      }
+    },
+    "taiex_2026_11_10": {
+      "close": 42711.92,
+      "change_points": 1050.22,
+      "change_percent": 2.52
+    },
+    "taiex_2012_01_02": {
+      "open": 7071.35,
+      "high": 7073.48,
+      "low": 6948.67,
+      "close": 6952.21,
+      "first_history_date": "2012-01-02"
+    },
+    "measure_stored_history_depth": {
+      "tw_index_daily": {
+        "first_event_date": "2012-01-02",
+        "last_event_date": "2026-11-10",
+        "entity_count_min": 56
+      },
+      "tw_market_breadth_daily": {
+        "row_count": 1
+      },
+      "tw_price_daily": {
+        "row_count": 0
+      }
+    },
+    "isolation": "Index/breadth/OHLC records are excluded from persist_latest_market_snapshots by is_index_breadth_record (dataset and connector guard) and are stored under normalized/tw_index_daily and normalized/tw_market_breadth_daily only; no normalized/tw_price_daily is written."
+  },
+  "design_notes": [
+    "TAIEX history rows (collector dataset tw_index_ohlc_daily) are normalized into tw_index_daily with open/high/low; collector dataset kept as source_collector_dataset.",
+    "Index series key is the index name (series_id). MI_INDEX rows carry close, change_points and change_percent only; open/high/low are never filled.",
+    "Breadth keeps the source whole_market/stocks groups and adds flat catalogue fields (14).",
+    "available_time is first acquisition (fetch time), so backfilled 2012 rows are visible to read_feature_series only from their acquisition; nothing is dated earlier than known.",
+    "A connector can prove only one persona requirement, so the breadth dataset rides the index-breadth connector's requirement; the two index sources are separate requirements for tw_index_daily.",
+    "Missing index_name/close/trade_date or breadth counts raise SourceEvidenceError (fail closed)."
+  ],
+  "out_of_contract_edit": "services/source_ingestion/tests/test_scheduled_connector.py: the admission fixture now builds index-shaped rows for the newly admitted index sources; required by the new default desired state.",
+  "commands": [
+    {
+      "cmd": "pytest services/source_ingestion/tests/test_collector*.py services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_pipeline*.py services/registry/test_factor_rule.py",
+      "result": "387 passed, 4 skipped"
+    },
+    {
+      "cmd": "pytest services/source_ingestion/tests/test_scheduled_connector.py",
+      "result": "73 passed"
+    },
+    {
+      "cmd": "pytest services/registry/test_sector_features.py services/source_ingestion/tests/test_srcm_p1_contracts.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py",
+      "result": "168 passed, 1 skipped, 1 failed, 1 error. The failure was test_scheduled_connector (admission fixture lacked index rows), fixed and rerun green (73 passed, above). The error is the BFF test importing numpy, absent from this venv."
+    },
+    {
+      "cmd": "pytest services/training-session/tests/test_source_dataset_authority.py",
+      "result": "76 passed"
+    }
+  ],
+  "known_unrelated": "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py errors at import in this venv (numpy not installed); not touched by this change.",
+  "not_run": "Full services/source_ingestion suite in one process exceeds the 10 minute foreground limit; it was run in the bounded batches above."
+}

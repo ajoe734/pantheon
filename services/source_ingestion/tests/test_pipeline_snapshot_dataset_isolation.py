@@ -84,3 +84,51 @@ def test_connector_declaring_minute_dataset_excludes_everything(tmp_path):
     connector = SimpleNamespace(connector_id="other", metadata={"normalized_dataset": "tw_price_1m"}, datasets=())
     out = persist_latest_market_snapshots(store, _result([_daily(602.0)], "run-x"), connector=connector)
     assert out["updated_snapshot_count"] == 0 and store.get("2330") is None
+
+
+# REGIME-DATA-INDEX-BREADTH-INTAKE-20261114: index and breadth rows never enter stock closes ---------------
+def _real_index_breadth_records(tmp_path, monkeypatch):
+    from services.source_ingestion.tests.test_collector_bundle_connector import (
+        pull_regime_records, regime_collector_files,
+    )
+
+    files = regime_collector_files(tmp_path / "real")
+    _, index = pull_regime_records(files, tmp_path, monkeypatch, "collector-tw-twse-index-breadth")
+    _, history = pull_regime_records(files, tmp_path, monkeypatch, "collector-tw-twse-taiex-history")
+    return [*index, *history]
+
+
+def test_index_and_breadth_rows_never_change_the_latest_close_snapshot(tmp_path, monkeypatch):
+    from services.source_ingestion.pipeline import is_index_breadth_record
+
+    records = _real_index_breadth_records(tmp_path, monkeypatch)
+    assert len(records) == 56 + 1 + 15 and all(is_index_breadth_record(r) for r in records)
+    assert not is_index_breadth_record(_daily(600.0))
+    # Index rows carry a close and a trade date; the explicit dataset guard (not the absence of a symbol)
+    # is what keeps them out, so a future symbol-bearing index row would still be excluded.
+
+    store = LatestMarketSnapshotStore(tmp_path / "snap.jsonl")
+    persist_latest_market_snapshots(store, _result([_daily(600.0)], "run-daily"))
+    before = _snapshot(store)
+    out = persist_latest_market_snapshots(store, _result(records, "run-index"))
+    assert out["accepted_record_count"] == 0 and out["updated_snapshot_count"] == 0
+    assert _snapshot(store) == before
+    store.reload()
+    assert _snapshot(store) == before
+
+
+def test_index_only_ingest_creates_no_snapshot_and_mixed_batch_keeps_stock_close(tmp_path, monkeypatch):
+    records = _real_index_breadth_records(tmp_path, monkeypatch)
+    store = LatestMarketSnapshotStore(tmp_path / "snap.jsonl")
+    persist_latest_market_snapshots(store, _result(records, "run-index-only"))
+    assert store.get("發行量加權股價指數") is None
+    assert store.get("2330") is None
+    persist_latest_market_snapshots(store, _result([*records, _daily(603.0)], "run-mixed"))
+    assert store.get("2330").closes[-1] == 603.0
+    assert store.get("發行量加權股價指數") is None
+    # A connector that declares an index dataset is excluded wholesale as well; its rows are stored elsewhere.
+    for connector_id in ("collector-tw-twse-index-breadth", "collector-tw-twse-taiex-history"):
+        rec = SourceRecord(source_id="x", connector_id=connector_id, source_type="market", title="t",
+                           content_ref="ref://x", metadata={"symbol": "2330", "close": 1.0, "event_time": f"{DAY}T00:00:00Z"})
+        from services.source_ingestion.pipeline import is_index_breadth_record
+        assert is_index_breadth_record(rec)

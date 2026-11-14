@@ -950,3 +950,67 @@ def test_market_chip_records_malformed_payloads_and_overflow_as_withheld():
     assert fc.market_chip_observations('taifex_market_put_call', [None])['reason'] == 'malformed_session_rows'
     options = _recorded_chip_rows('taifex_options_chip', 'TAIFEX')[:1]
     assert fc.market_chip_observations('taifex_market_put_call', [{**options[0], 'raw_row': 5}])['reason'] == 'malformed_source_row'
+
+
+# REGIME-DATA-INDEX-BREADTH-INTAKE-20261114 ---------------------------------------------------------------
+def _regime_observations(tmp_path, monkeypatch):
+    """Point-in-time observations from real collector bundle rows read through the production pull."""
+    from services.source_ingestion.tests.test_collector_bundle_connector import (
+        pull_regime_records, regime_collector_files,
+    )
+
+    files = regime_collector_files(tmp_path / "real")
+    records = []
+    for source_id in ("collector-tw-twse-index-breadth", "collector-tw-twse-taiex-history"):
+        records += pull_regime_records(files, tmp_path, monkeypatch, source_id)[1]
+    out = []
+    for rec in records:
+        row = {**rec.metadata["normalized_row"], "available_time": rec.metadata["available_time"],
+               "ingest_time": rec.metadata["ingest_time"]}
+        out += fc.observations_from_row(rec.metadata["dataset"], row)
+    return out
+
+
+def test_catalogue_declares_index_series_and_breadth_fields_mirrored_in_factor_rule():
+    index = fc.get_dataset_spec("tw_index_daily")
+    assert (index.key_kind, index.normalized_dataset, index.event_time_key) == ("series", "tw_index_daily", "date")
+    assert {f.field for f in fc.catalogue_fields() if f.dataset == "tw_index_daily"} == {
+        "close", "open", "high", "low", "change_points", "change_percent"}
+    breadth = fc.get_dataset_spec("tw_market_breadth_daily")
+    assert (breadth.key_kind, breadth.event_time_key) == ("market", "date")
+    breadth_fields = {f.field for f in fc.catalogue_fields() if f.dataset == "tw_market_breadth_daily"}
+    assert len(breadth_fields) == 14 and "whole_market_advancers" in breadth_fields and "stocks_limit_down" in breadth_fields
+    for field in fc.catalogue_fields():
+        if field.dataset not in fc.REGIME_DATASETS:
+            continue
+        definition = factor_rule.get_feature_definition(field.dataset, field.field)
+        assert definition is not None, (field.dataset, field.field)
+        assert definition.min_availability_lag_days == fc.lag_days_for(field.dataset, field.field) == 0
+    factor_rule.assert_governed_feature_inputs({"kind": "factor_rule_v1", "inputs": [
+        {"name": "a", "dataset": "tw_index_daily", "field": "close", "availability_lag_days": 0},
+        {"name": "b", "dataset": "tw_market_breadth_daily", "field": "whole_market_advancers", "availability_lag_days": 0}]})
+    assert {d["dataset"]: d["key_kind"] for d in fc.catalogue_document()["datasets"]}["tw_index_daily"] == "series"
+
+
+def test_read_feature_series_returns_point_in_time_index_and_breadth_values_from_real_rows(tmp_path, monkeypatch):
+    obs = _regime_observations(tmp_path, monkeypatch)
+    taiex = "發行量加權股價指數"
+    # Real rows are acquired on the pull date: nothing is visible before that, whatever the event date.
+    acquired = max(o["available_time"] for o in obs)[:10]
+    assert fc.read_feature_series(obs, "tw_index_daily", "close", decision_time="2026-11-10", entity=taiex) == ()
+    series = fc.read_feature_series(obs, "tw_index_daily", "close", decision_time=acquired, entity=taiex)
+    by_day = {o["event_time"]: o["value"] for o in series}
+    assert by_day["2026-11-10"] == 42711.92 and by_day["2012-01-02"] == 6952.21
+    assert [o["event_time"] for o in series] == sorted(by_day)
+    assert all(o["entity"] == taiex and o["availability_lag_days"] == 0 for o in series)
+    # open/high/low only where the source states them (the OHLC history), never filled for MI_INDEX days.
+    opens = fc.read_feature_series(obs, "tw_index_daily", "open", decision_time=acquired, entity=taiex)
+    assert {o["event_time"] for o in opens} == {o["event_time"] for o in series} - {"2026-11-10"}
+    assert next(o for o in opens if o["event_time"] == "2012-01-02")["value"] == 7071.35
+    # Other indices are separate series; a decision time before a day is acquired hides it.
+    sectors = {o["entity"] for o in obs if o["dataset"] == "tw_index_daily"}
+    assert taiex in sectors and len(sectors) >= 56
+    assert fc.read_feature_series(obs, "tw_index_daily", "close", decision_time="2012-01-05") == ()
+    breadth = fc.read_feature_series(obs, "tw_market_breadth_daily", "whole_market_advancers", decision_time=acquired)
+    assert [(o["entity"], o["event_time"]) for o in breadth] == [("TW", "2026-11-10")]
+    assert isinstance(breadth[0]["value"], float) and breadth[0]["value"] > 0

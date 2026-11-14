@@ -219,8 +219,7 @@
         {
           "cadence": "daily",
           "connector_candidates": [
-            "collector-tw-twse-index-breadth",
-            "collector-tw-twse-taiex-history"
+            "collector-tw-twse-index-breadth"
           ],
           "dataset": "tw_index_daily",
           "market": "TW",
@@ -235,9 +234,9 @@
         {
           "cadence": "daily",
           "connector_candidates": [
-            "collector-tw-twse-index-breadth"
+            "collector-tw-twse-taiex-history"
           ],
-          "dataset": "tw_market_breadth_daily",
+          "dataset": "tw_index_daily",
           "market": "TW",
           "policy_gates": [
             "require_connector_approved",
