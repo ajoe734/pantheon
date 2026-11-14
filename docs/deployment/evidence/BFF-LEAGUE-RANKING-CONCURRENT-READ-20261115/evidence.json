@@ -1,0 +1,36 @@
+{
+  "task_id": "BFF-LEAGUE-RANKING-CONCURRENT-READ-20261115",
+  "change": "personas/service.py: _pm12_persona_league_rows_shared = single-flight + tenant-keyed memo (10s, hard cap 30s, measured from computation start, failures never stored, deep-copied per caller) used by get_persona_league, get_persona_league_rankings, _compose_quarterly_ranking_context.",
+  "standard_approach": "request coalescing / single-flight plus short TTL memo",
+  "acceptance_status": {
+    "AC1_p95_under_2s_hosted_sized_fixture": "NOT PROVEN: the local fixture is already <1s before the change (see local_bench), so it does not reproduce the hosted 3-6s latency",
+    "AC2_hosted_fixture_sizes": "NOT DONE: no read-only access to hosted dev from this worker; local fixture uses 166 personas (taken from the existing test_quarterly_ranking_read_latency PERSONA_COUNT), with no bindings/runtime bindings/sessions/league entries/quarter evidence",
+    "AC3_before_after": "recorded for the local fixture only; no improvement observed under concurrent cold start",
+    "AC4_body_parity": "test_bodies_identical_to_unmemoized_code",
+    "AC5_tenant_scope": "test_memo_is_tenant_scoped",
+    "AC6_window": "test_reuse_window_is_bounded_and_store_change_visible_after_window",
+    "AC7_failure_not_reused": "test_failed_computation_is_never_reused",
+    "AC8": "no route signature, crawler, budget or timeout changes"
+  },
+  "local_bench": {
+    "command_before": "LEAGUE_BENCH=before PERSONAS=166 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "command_after": "LEAGUE_BENCH=after PERSONAS=166 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "seconds_p50_p95_max": {
+      "before": {
+        "persona-league": [0.434, 0.6, 0.6],
+        "persona-league/rankings": [0.45, 0.602, 0.602],
+        "quarterly-ranking": [0.47, 0.599, 0.599],
+        "quarterly-ranking/formula": [0.359, 0.516, 0.516],
+        "persona-fleet": [0.434, 0.596, 0.596]
+      },
+      "after": {
+        "persona-league": [0.484, 0.64, 0.64],
+        "persona-league/rankings": [0.492, 0.65, 0.65],
+        "quarterly-ranking": [0.498, 0.661, 0.661],
+        "quarterly-ranking/formula": [0.355, 0.479, 0.479],
+        "persona-fleet": [0.477, 0.66, 0.66]
+      }
+    },
+    "serial_cold_vs_warm_seconds": {"persona-league": [0.312, 0.081], "quarterly-ranking": [0.198, 0.101]}
+  }
+}
