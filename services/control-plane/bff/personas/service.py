@@ -15309,6 +15309,7 @@ def _build_persona_health_items_impl(
                 data_source_status,
                 data_sources,
                 required_data_sources=required_data_sources,
+                thin=True,
             )
         else:
             source_health_bindings = []
