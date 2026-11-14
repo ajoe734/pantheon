@@ -101,14 +101,19 @@ class CaseFileTests(unittest.TestCase):
         seen = []
         hit = {"type": "institutional", "relevance_score": 1.0,
                "entry": {"entry_id": "mem-1", "content": {"summary": "s", "tags": ["family:momentum", "negative_memory"]}}}
+        other_decision_hit = {"type": "institutional", "relevance_score": 1.0,
+                              "entry": {"entry_id": "mem-other-decision", "content": {
+                                  "summary": "removal only", "tags": ["family:momentum", "decision:member_removal", "negative_memory"]}}}
         out = compose(overrides={"/api/memory/retrieve": lambda p: seen.append(list(p)) or {
-            "hits": [hit], "retrieval_mode": "hindsight", "llm_layers": "disabled"}})
+            "hits": [hit, other_decision_hit], "retrieval_mode": "hindsight", "llm_layers": "disabled"}})
         self.assertTrue(seen)
         for params in seen:
             anchors = [v for k, v in params if k == "subject_anchors"]
             self.assertEqual(anchors, ["family:momentum", "underlying:2330", "instrument:equity"])
-        for item in out["groups"]["lessons"]["items"] + [
-                i for i in out["groups"]["similar_history"]["items"] if i["kind"] == "memory_negative_memory"]:
+        items = out["groups"]["lessons"]["items"] + [
+            i for i in out["groups"]["similar_history"]["items"] if i["kind"] == "memory_negative_memory"]
+        self.assertTrue(items)
+        for item in items:
             self.assertEqual(item["source_id"], "mem-1")
             self.assertEqual(item["retrieval_mode"], "hindsight")
             self.assertEqual(item["llm_layers"], "disabled")

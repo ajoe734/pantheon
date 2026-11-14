@@ -306,6 +306,9 @@ class CaseFileHindsightAnchors(unittest.TestCase):
         on_subject = stores[0].create(institution(tenant_id=tenant, content={
             "headline": "momentum 2330 trial admission lesson", "body": "momentum 2330 trial admission lesson",
             "tags": ["family:momentum", "underlying:2330", "decision:trial_admission"]}))
+        other_decision = stores[0].create(institution(tenant_id=tenant, content={
+            "headline": "momentum 2330 member removal lesson", "body": "momentum 2330 member removal lesson",
+            "tags": ["family:momentum", "underlying:2330", "decision:member_removal"]}))
         decision_only = stores[0].create(institution(tenant_id=tenant, content={
             "headline": "carry trial admission lesson", "body": "carry trial admission lesson",
             "tags": ["family:carry", "decision:trial_admission"]}))
@@ -325,6 +328,7 @@ class CaseFileHindsightAnchors(unittest.TestCase):
         cf._lessons(subject, caller, owners, cf.Budgets(), g)
         got = {i["source_id"]: i for i in g.items}
         self.assertIn(on_subject.entry_id, got)
+        self.assertNotIn(other_decision.entry_id, got)
         self.assertNotIn(decision_only.entry_id, got)
         self.assertNotIn(neg_decision_only.entry_id, got)
         self.assertEqual(got[on_subject.entry_id]["retrieval_mode"], "hindsight")

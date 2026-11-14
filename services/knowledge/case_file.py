@@ -328,6 +328,12 @@ def _memory_item(group: str, hit: dict, budgets: Budgets, layer: str, response: 
                  source_event_id=entry.get("source_event_id"), llm_layers=llm_layers)
 
 
+def _decision_matches(subject: Subject, entry: Mapping[str, Any]) -> bool:
+    etags = {str(t).strip().lower() for t in ((entry.get("content") or {}).get("tags") or []) if str(t).strip()}
+    decisions = {t for t in etags if t.startswith("decision:")}
+    return not decisions or f"decision:{subject.decision_type.strip().lower()}" in decisions
+
+
 def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
     query, tags = lesson_query(subject)
     limit = budgets.max_items_per_group
@@ -337,6 +343,8 @@ def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
     def add(hits: Iterable[dict], layer: str, response: dict, *, allow_private: bool) -> None:
         for hit in hits:
             entry = hit.get("entry") or {}
+            if not _decision_matches(subject, entry):
+                continue
             if hit.get("type") == "persona":
                 if entry.get("persona_id") != subject.persona_id:
                     continue  # never another persona's memory
@@ -421,7 +429,7 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
                 continue  # negative history only consumes the institutional read
             etags = {str(t).strip().lower() for t in ((hit.get("entry") or {}).get("content") or {}).get("tags") or []}
             # require an actual negative marker AND subject relevance (not just the OR-matched marker)
-            if "negative_memory" not in etags or not (etags & subject_tags):
+            if "negative_memory" not in etags or not (etags & subject_tags) or not _decision_matches(subject, hit.get("entry") or {}):
                 continue
             g.items.append(_memory_item("similar_history", hit, budgets, "negative_memory", resp))
     except OwnerUnavailable as exc:

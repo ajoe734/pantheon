@@ -2,8 +2,14 @@
   "task_id": "CASE-FILE-HINDSIGHT-ANCHORS-20261113",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-11-14T15:19:30Z",
-  "change": "services/knowledge/case_file.py: subject_anchors(subject) derives subject anchors from lesson_query(subject) (excluding decision:*) and sends them as subject_anchors on every /api/memory/retrieve call (lessons + negative memory); _memory_item preserves source_id, retrieval_mode, and llm_layers on returned items. Anchors: family, dataset, underlying, instrument, regime (only when subject.regime_tag). decision type is never an anchor.",
+  "recorded_at": "2026-11-14T16:09:30Z",
+  "change": "services/knowledge/case_file.py: subject_anchors(subject) derives subject anchors from lesson_query(subject) (excluding decision:*) and sends them as subject_anchors on every /api/memory/retrieve call (lessons + negative memory); _decision_matches(subject, entry) ensures entries carrying decision:* tags only match their own decision_type when OR-matched on subject tags; _memory_item preserves source_id, retrieval_mode, and llm_layers on returned items. Anchors: family, dataset, underlying, instrument, regime (only when subject.regime_tag). decision type is never an anchor.",
+  "consumer_regression_diagnosis": {
+    "failing_suite": "services/persona/test_persona_cycle_controller.py (5 tests at lines 742/760/776/799)",
+    "source_finding": "services/knowledge/case_file.py _lessons and _history needed _decision_matches(subject, entry) so on-subject entries carrying a decision:<type> tag for another decision type do not leak across cycle vs proposal case files via /api/memory/retrieve OR-tag matching.",
+    "fixture_finding": "services/persona/test_persona_cycle_controller.py::_seed_decision_lessons (line 721) seeds CYCLE-ONLY and REMOVAL-ONLY persona entries with decision-only tags (['decision:' + decision]) and no subject anchor (e.g. 'family:momentum'). Because H8 AC1/AC4 requires subject_anchors (excluding decision:*) on /api/memory/retrieve and search_retrieval.retrieve_persona enforces anchors.isdisjoint(hs.anchors_for(entry)), decision-only fixture entries are excluded by design unless _seed_decision_lessons also includes the persona's subject family anchor (*[f'family:{f}' for f in obs['cycle_subject']['families']]).",
+    "required_artifact_admission": "services/persona/test_persona_cycle_controller.py"
+  },
   "unchanged": [
     "budgets",
     "groups",
