@@ -313,6 +313,13 @@
     "limits": "Throughput/freshness are measured embedding capacity for these long reference shapes, not a claim about all hosted indexing/database or source-ingestion time. Existing checkpoint and scheduler behavior is unchanged."
   },
   "validation": {
+    "resumption_20261114": {
+      "previous_source_head": "3ca98850ca3b76b2973fad19c3e8a293bfb1c92d",
+      "merged_base": "f3873766e36187e3ed8443feafa2eff1f83e1e23 (PR #7353; inherited Collector test-clock correction only)",
+      "unchanged_evidence": "Search source/tests, compose and model manifest match previous_source_head; original full evidence blob and all six raw-output SHA256 values reverified. Prior real-model suite and benchmark reused without repeating unchanged inference.",
+      "focused_validation": "timeout 60 /tmp/search-embed-cpu-venv/bin/python -m pytest -p no:cacheprovider -q -rs services/search/tests/test_embedding_cpu_bound.py services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend: exit 0, 7 passed, 2 host-model skips; compose render cpus=2/cpu_shares=256 and git diff --check: exit 0.",
+      "additional_batches": "Combined CPU tests plus full Collector session-progress file first exited 1 (18 passed, 2 skipped, missing jsonschema setup error). After installing jsonschema into the temporary venv, the 120s batch timed out with exit 124 during the unchanged large persistence test; no pass claimed. The targeted corrected-clock case passed above; current-head required CI remains necessary."
+    },
     "focused_unittest_host": {
       "result": "3 passed, 1 skipped (no host-mounted model)",
       "exit_status": 0
