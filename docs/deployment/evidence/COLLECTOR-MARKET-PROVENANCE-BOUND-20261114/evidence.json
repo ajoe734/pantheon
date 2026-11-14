@@ -432,8 +432,19 @@
       }
     ],
     "changes": [
-      "Use 6000-row test-only historical batches instead of 1000 while retaining all 30 full-size days per source, real controller/pipeline/partitions/PostgreSQL, and all cardinality assertions."
+      "Retain the real 1000-row fetch cap, all 30 full-size days per source, real controller/pipeline/writer/PostgreSQL, and all cardinality assertions.",
+      "Test-only memoization of byte-identical, already cold-validated snapshot envelopes avoids repeated unrelated snapshot decoding. Every new envelope still goes through the production checksum/model decoder. Final snapshot state must equal an independent cold replay. Obsolete cache entries are discarded after journal compaction."
     ],
-    "status": "Original 1000-row scale reproduction running; final verification pending."
+    "status": "Original scale reproduction and cached replay comparison running; final validation pending.",
+    "attempts": [
+      {
+        "change": "6000-row test cap",
+        "result": "Rejected by real connector configuration validation (max_records <= 1000); 1 failed in 7.98s, exit 1. Reverted; production limits unchanged."
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres PYTHONPATH=. timeout --kill-after=15 90 .venv-pantheon/bin/python /tmp/collector-bound-profile.py",
+        "result": "Diagnostic profile deliberately bounded at 90s; exit 124, not a passing test. Of 17 ticks, snapshot replay consumed 27.09s and constructed 85875 snapshots for 17000 input rows."
+      }
+    ]
   }
 }

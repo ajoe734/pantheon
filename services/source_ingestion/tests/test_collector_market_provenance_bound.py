@@ -340,6 +340,27 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     # default 60-close, held-symbol and intraday readers run in separate suites;
     # normalized partitions below retain every row of all thirty sessions.
     monkeypatch.setattr(module.runtime.latest_market_snapshot_store, "max_closes", 2)
+    # Revalidate each distinct snapshot envelope once in this scale harness.
+    # The actual writer still projects every normalized row and fsyncs every
+    # checksummed envelope. Unchanged journal lines need not be decoded again
+    # on all 263 controller ticks to measure PostgreSQL provenance growth.
+    # A cold replay below checks the final projection independently.
+    from services.source_ingestion import requirement_state as snapshot_state
+    cold_replay = snapshot_state._market_snapshots_from_lines
+    snapshot_cache = {}
+    def replay_validated_envelopes(lines, *, path):
+        snapshots = {}
+        for line in lines:
+            if not line.strip():
+                continue
+            if line not in snapshot_cache:
+                decoded = cold_replay((line,), path=path)
+                assert len(decoded) == 1  # daily close test: no withdrawals
+                snapshot_cache[line] = next(iter(decoded.items()))
+            key, snapshot = snapshot_cache[line]
+            snapshots[key] = snapshot
+        return snapshots
+    monkeypatch.setattr(snapshot_state, "_market_snapshots_from_lines", replay_validated_envelopes)
     # The controller still uses its real desired-state/reconcile/frontier/receipt path.
     enabled = {s[0] for s in SPECS}
     load_desired = cw.load_desired_state
@@ -360,11 +381,7 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
         definition = definition_for(source)
         if source not in enabled or definition is None:
             return definition
-        # Cover the same 261720 rows with full-size local batches. Splitting
-        # every day into 1000-row pulls repeatedly reloads the unrelated snapshot
-        # journal and controller receipts, making this provenance proof exceed
-        # the entire source-ingest CI budget. Capped continuation is tested above.
-        return replace(definition, default_limits={**definition.default_limits, "max_records": 6000},
+        return replace(definition, default_limits={**definition.default_limits, "max_records": 1000},
             metadata={**definition.metadata, "collector": {
                 **definition.metadata["collector"], "cadence_seconds": 86400}})
     monkeypatch.setattr(reconciler, "collector_definition", scale_definition)
@@ -397,6 +414,10 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
                     state = json.loads(line)["state"]
                     latest_lines[(state["symbol"], state.get("dataset", "tw_price_daily"))] = line
             journal.write_text("".join(latest_lines.values()))
+            retained = set(latest_lines.values())
+            for line in tuple(snapshot_cache):
+                if line not in retained:
+                    del snapshot_cache[line]
         records = pg_repo.list_source_records()
         if len(records) == 90 and sum(r.metadata["collector_market_bundle"]["row_count"] for r in records) == 30 * 8724:
             break
@@ -416,6 +437,9 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     assert set(enabled).issubset(module.runtime._latest_source_record_by_connector())
     snapshots = module.runtime.latest_market_snapshot_store.reload()
     assert len(snapshots) >= 6000
+    with module.runtime.latest_market_snapshot_store.path.open() as handle:
+        cold_snapshots = cold_replay(handle, path=module.runtime.latest_market_snapshot_store.path)
+    assert snapshots == cold_snapshots
     source = pg_repo.list_source_records()[0]
     # Model all 488 days with the exact persisted objects, not serialized-byte arithmetic.
     templates = {}
