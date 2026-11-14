@@ -50,6 +50,9 @@ STACK_SCHEMA = "pantheon.dev-stack-image-baseline.v1"
 STACK_ENV_KEYS = ("PANTHEON_TENANT_ID", "GIT_SHA")
 SERVICE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}")
 STACK_MAX_SERVICES = 128
+# Whole-stack rollback retains these images and the Compose named volume.
+# Candidate-only containers are stopped, never removed with their volumes.
+MEMORY_INDEX_SERVICES = frozenset({"hindsight", "memory-index-postgres"})
 # Readback budget: recreated services start together, the slowest (source-ingest,
 # ~110 s) must fit with room for a second attempt. Far inside the 60 minute step.
 STACK_READBACK_SECONDS = 900
@@ -709,6 +712,8 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
     services = value["services"]
     if not isinstance(services, dict) or not 0 < len(services) <= STACK_MAX_SERVICES:
         raise ArtifactError("invalid stack baseline services")
+    if MEMORY_INDEX_SERVICES.intersection(services) and not MEMORY_INDEX_SERVICES.issubset(services):
+        raise ArtifactError("memory index baseline requires both hindsight and memory-index-postgres")
     for service, row in services.items():
         _match(service, SERVICE_NAME, "stack service name")
         # A running source controller/API must carry its recorded posture; nothing else may.

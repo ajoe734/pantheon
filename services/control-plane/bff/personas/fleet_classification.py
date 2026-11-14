@@ -21,7 +21,7 @@ PURPOSE_FILTERS = frozenset({PURPOSE_TRADING, PURPOSE_ADVISORY, PURPOSE_UNKNOWN,
 DATA_SCOPE_FILTERS = frozenset({DATA_SCOPE_REGULAR, DATA_SCOPE_TEST, DATA_SCOPE_UNKNOWN, "all"})
 ARCHIVED_FILTERS = frozenset({"exclude", "only", "include"})
 
-_ADVISORY_CLASSES = frozenset({"agora_servant"})
+_ADVISORY_CLASSES = frozenset({"agora_servant", "consult_panel"})
 _TEST_SCOPE_VALUES = frozenset({"test", "acceptance", "fixture", "synthetic"})
 # Values a create request may declare; the test-like ones reuse the set above.
 DECLARABLE_DATA_SCOPES = frozenset({DATA_SCOPE_REGULAR}) | _TEST_SCOPE_VALUES

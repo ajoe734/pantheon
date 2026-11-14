@@ -8,6 +8,8 @@ monkey patches, experiment overlays, and fixture-pack loading.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +25,10 @@ log = logging.getLogger(__name__)
 
 class _EvidenceOwnerReadError(RuntimeError):
     """The evidence owner read failed or timed out."""
+
+
+class _EvidenceOwnerHintsUnsupported(_EvidenceOwnerReadError):
+    """The owner did not confirm the requested population hints."""
 
 
 class ResearchWriteOwnerUnavailableError(RuntimeError):
@@ -86,6 +92,7 @@ class EvidenceReadResult:
     next_page_token: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
     summary_unavailable: bool = False
+    owner_hints_applied: bool = True
 
     @property
     def available(self) -> bool:
@@ -296,6 +303,15 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def evidence_ref_sort_key(ref: Mapping[str, Any]) -> Tuple[datetime, str]:
+    """Newest-first ordering key shared by the full evidence read and callers
+    that reassemble owner pages, so both produce identical row order."""
+    return (
+        _naive_utc(_parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))),
+        str(ref.get("ref_id") or ""),
+    )
 
 
 def _is_valid_health_usage_envelope(payload: Any) -> bool:
@@ -1291,7 +1307,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return detail
 
     def _read_owner_evidence_page(
-        self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE
+        self,
+        *,
+        start: int = 0,
+        page_size: int = EVIDENCE_OWNER_PAGE_SIZE,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
@@ -1304,16 +1327,35 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise
         except Exception:
             pass
+        path = f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}"
+        if captured_from is not None:
+            path += f"&captured_from={quote(str(captured_from), safe='')}"
+        if captured_before is not None:
+            path += f"&captured_before={quote(str(captured_before), safe='')}"
+        expected_filters: Dict[str, Any] = {}
+        if linked_entity_types is not None:
+            types = sorted(set(linked_entity_types))
+            path += f"&linked_entity_types={quote(','.join(types), safe='')}"
+            expected_filters["linked_entity_types"] = types
+        if not include_summary:
+            path += "&include_summary=false"
+            expected_filters["include_summary"] = False
         try:
-            avail, payload = self._http_get(
-                self._source_ingest_service_url,
-                f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
-            )
+            avail, payload = self._http_get(self._source_ingest_service_url, path)
         except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
         items = payload.get("items") if avail and isinstance(payload, dict) else None
         if not isinstance(items, list):
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
+        filters = payload.get("filters") or {}
+        if expected_filters and (
+            not isinstance(filters, dict)
+            or any(filters.get(k) != v for k, v in expected_filters.items())
+        ):
+            # A mixed-version owner may implement only part of the hints. Retry
+            # the complete legacy population, never trust a partially filtered
+            # total or retain per-instance capability state across requests.
+            raise _EvidenceOwnerHintsUnsupported("source-ingest owner did not echo read hints")
         total = payload.get("total")
         total = int(total) if isinstance(total, int) and not isinstance(total, bool) else start + len(items)
         summary = _normalize_owner_evidence_summary(payload.get("summary"), default_total=total)
@@ -1339,10 +1381,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_scope_metadata: bool = False,
         page_token: Optional[str] = None,
         page_size: Optional[int] = None,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> EvidenceReadResult:
         """One evidence read. With ``page_size`` and no scope filter against the
         owner service, exactly one owner page is fetched; otherwise every owner
-        page is streamed and filtered so totals stay correct."""
+        page is streamed and filtered so totals stay correct.
+
+        ``captured_from`` / ``captured_before`` ask the owner to page only items
+        captured in ``[captured_from, captured_before)`` (a population hint for
+        the paged branches). An older owner ignores them and returns the
+        unfiltered population, so callers must still apply the window to rows."""
         from services.knowledge.evidence.models import summarize_evidence_items_collection
 
         unscoped = not linked_entities and not source_types
@@ -1367,19 +1418,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             except ValueError:
                 start = 0
             try:
+                repo_kwargs: Dict[str, Any] = {"limit": page_size, "offset": start}
                 if effective_tenant is not None:
+                    repo_kwargs["tenant_id"] = effective_tenant
+                window_kwargs = {
+                    k: v
+                    for k, v in (("captured_from", captured_from), ("captured_before", captured_before))
+                    if v is not None
+                }
+                if linked_entity_types is not None:
+                    window_kwargs["linked_entity_types"] = linked_entity_types
+                try:
                     repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        tenant_id=effective_tenant, limit=page_size, offset=start
+                        **repo_kwargs, **window_kwargs
                     )
-                else:
-                    repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        limit=page_size, offset=start
-                    )
+                except TypeError:
+                    if not window_kwargs:
+                        raise
+                    # Repository without window support: unfiltered page, the
+                    # caller applies the window to rows.
+                    repo_items, total = self._evidence_repo.list_evidence_items_page(**repo_kwargs)
             except Exception:
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             repo_summary: Optional[Dict[str, Any]] = None
             summarize_fn = getattr(self._evidence_repo, "summarize_evidence_items", None)
-            if callable(summarize_fn):
+            if include_summary and callable(summarize_fn):
                 try:
                     raw_summary = (
                         summarize_fn(tenant_id=effective_tenant)
@@ -1427,8 +1490,23 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                         tenant_tok = selected_tenant.set(effective_tenant)
                 except Exception:
                     tenant_tok = None
+            owner_hints_applied = True
             try:
-                items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
+                try:
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                        captured_from=captured_from,
+                        captured_before=captured_before,
+                        linked_entity_types=linked_entity_types,
+                        include_summary=include_summary,
+                    )
+                except _EvidenceOwnerHintsUnsupported:
+                    owner_hints_applied = False
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                    )
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             finally:
@@ -1455,6 +1533,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 str(nxt) if nxt < total else None,
                 summary=owner_summary,
                 summary_unavailable=owner_summary is None,
+                owner_hints_applied=owner_hints_applied,
             )
 
         tenant_tok = None
@@ -1484,15 +1563,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
-        filtered.sort(
-            key=lambda ref: (
-                _naive_utc(
-                    _parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))
-                ),
-                str(ref.get("ref_id") or ""),
-            ),
-            reverse=True,
-        )
+        filtered.sort(key=evidence_ref_sort_key, reverse=True)
         total = len(filtered)
         nxt_token: Optional[str] = None
         if page_size:

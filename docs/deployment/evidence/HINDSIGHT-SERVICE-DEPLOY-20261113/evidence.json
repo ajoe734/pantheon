@@ -1,0 +1,301 @@
+{
+  "task_id": "HINDSIGHT-SERVICE-DEPLOY-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-14T01:37:55.989258+00:00",
+  "source_status": "native_startup_repaired_pending_independent_review",
+  "review_decision": "pending_assigned_reviewer",
+  "integration_base": "d7141eb45a600739255d8910fd0aab531a08a4c0",
+  "build_source_commit": "4e579a1e4ce1bcd64d4b772e2d9c42b1a42a0574",
+  "scope": "H1/H2 packaging, internal compose services, deployment/release/rollback wiring and isolated current Dev VM smoke. No served FE/BFF pair switch or canonical memory write.",
+  "upstream": {
+    "version": "1.2.1",
+    "git_commit": "0eb02d8c418eac6b489bc63883c993b2257dfac4",
+    "api_image": "ghcr.io/vectorize-io/hindsight-api:1.2.1-slim@sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c",
+    "postgres_base": "groonga/pgroonga:4.0.8-debian-17@sha256:15ab42f1b92749950da640b6d88f5563498a2ac06b2d0aaee1f9185afe34e376",
+    "pgvector_package": "postgresql-17-pgvector=0.8.6-1.pgdg13+1",
+    "archive_reason": "First real build failed (apt exit 100): exact pgvector package rotated out of live PGDG index. Official signed trixie-pgdg-archive restores the exact version, without changing the pin.",
+    "variant_reason": "Both upstream full and slim omit local-onnx. Slim plus pinned ONNX/tokenizer dependencies avoids torch and default downloaded local-ml models.",
+    "image_recipe": "https://github.com/vectorize-io/hindsight/blob/v1.2.1/docker/standalone/Dockerfile",
+    "none_provider_contract": "https://github.com/vectorize-io/hindsight/blob/v1.2.1/hindsight-api-slim/tests/test_none_llm_provider.py"
+  },
+  "acceptance": [
+    {
+      "id": 1,
+      "result": "passed",
+      "evidence": "Pinned repo-built Postgres, dedicated volume, no host bindings, actual extensions pgroonga=4.0.8 and vector=0.8.6. Parsed main Postgres and retrieval-postgres definitions equal origin/dev."
+    },
+    {
+      "id": 2,
+      "result": "passed",
+      "evidence": "Pinned official Hindsight derivative; API-key extension, pgroonga/pgvector, migrations, MCP disabled. Contract restricts client key to memory and networks to memory->Hindsight->index DB. Actual internal networks and empty host bindings recorded below."
+    },
+    {
+      "id": 3,
+      "result": "passed",
+      "evidence": "Directly consumes search model manifest and all checksums for multilingual-e5-large. Reranker bge-reranker-v2-m3 int8 revision/checksums in deploy manifest. Build and every start verify every model file; corrupt mounted tokenizer config fails before API starts. Local paths, HF offline flags and internal-only networks prevent runtime model downloads; no packet-capture claim."
+    },
+    {
+      "id": 4,
+      "result": "passed",
+      "evidence": "Actual none-provider startup, chunks retain 200, recall 200, reflect 400 with reason. Empty optional LLM provider/model/key settings; background/consolidation off. No placeholder credentials or mock inference."
+    },
+    {
+      "id": 5,
+      "result": "passed",
+      "evidence": "Root deploy requires both services and records derivative GIT_SHA image identities. Existing whole-stack image capture/rollback holds/restores both; new tests reject a half-pair and confirm no volume deletion. Final image recreation reused the same named index volume. README documents targeted drop and canonical rebuild; H3 facade command belongs to downstream task."
+    },
+    {
+      "id": 6,
+      "result": "passed",
+      "evidence": "Contract tests parse compose; opt-in production image entry-point probe runs on actual current Dev VM containers, retains/recalls Chinese content, then deletes its unique test bank. Runtime identities, image sizes and HTTP results follow."
+    }
+  ],
+  "runtime": {
+    "recorded_at": "2026-11-14T00:36:45.284016+00:00",
+    "hostname": "pantheon-dev-deploy.c.pantheon-dev-20260902.internal",
+    "project": "hindsight-service-deploy-20261113",
+    "services": {
+      "memory-index-postgres": {
+        "container_id": "83f9716c69f038930011770580061d8158da20626030d953e2f50b29398bfc6c",
+        "image_id": "sha256:32db0e6fffe6a364d3595d79dae88ae5e4bc9c68c2eb449dfbcd976264a1c124",
+        "image_inspect_size_bytes": 259650519,
+        "image_revision": "4e579a1e4ce1bcd64d4b772e2d9c42b1a42a0574",
+        "base_name": "groonga/pgroonga:4.0.8-debian-17",
+        "base_digest": "sha256:15ab42f1b92749950da640b6d88f5563498a2ac06b2d0aaee1f9185afe34e376",
+        "status": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "host_port_bindings": {},
+        "networks": [
+          "hindsight-service-deploy-20261113_memory-index-storage"
+        ],
+        "volumes": [
+          "hindsight-service-deploy-20261113_memory-index-postgres-data"
+        ]
+      },
+      "hindsight": {
+        "container_id": "dda6ae7843b770f2342cad29da13ca727c14860fcdfacea57be5de06e1d21b72",
+        "image_id": "sha256:4f9bfda2028243552d7064584bdf63d022a17138e86c08da5662ece6b4acab09",
+        "image_inspect_size_bytes": 2249833724,
+        "image_revision": "4e579a1e4ce1bcd64d4b772e2d9c42b1a42a0574",
+        "base_name": "ghcr.io/vectorize-io/hindsight-api:1.2.1-slim",
+        "base_digest": "sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c",
+        "status": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "host_port_bindings": {},
+        "networks": [
+          "hindsight-service-deploy-20261113_memory-index",
+          "hindsight-service-deploy-20261113_memory-index-storage"
+        ],
+        "volumes": []
+      }
+    },
+    "networks": {
+      "memory-index": {
+        "internal": true,
+        "containers": [
+          "hindsight-service-deploy-20261113-hindsight-1"
+        ]
+      },
+      "memory-index-storage": {
+        "internal": true,
+        "containers": [
+          "hindsight-service-deploy-20261113-hindsight-1",
+          "hindsight-service-deploy-20261113-memory-index-postgres-1"
+        ]
+      }
+    },
+    "postgres_extensions": "pgroonga=4.0.8\nvector=0.8.6",
+    "image_ls_sizes": "hindsight-service-deploy-20261113-hindsight 6.44GB\nhindsight-service-deploy-20261113-memory-index-postgres 1.17GB",
+    "disk": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/root       193G  157G   37G  82% /"
+  },
+  "http_smoke": {
+    "retain_status": 200,
+    "recall_status": 200,
+    "recall_count": 1,
+    "document_ids": [
+      "smoke-canonical-1"
+    ],
+    "unauthenticated_status": 401,
+    "mcp_status": 404,
+    "reflect_status": 400,
+    "reflect_reason": "{\"detail\":\"Reflect requires an LLM provider. Current provider is set to 'none'. Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini).\"}",
+    "llm_provider": "none"
+  },
+  "corrupt_model_probe": {
+    "exit_code": 1,
+    "reason": "model_checksum_mismatch:reranker/tokenizer_config.json",
+    "api_started": false,
+    "runtime_model_download": false,
+    "probe": "read-only corrupt-file mount over the final image, upstream startup never reached"
+  },
+  "validation": [
+    {
+      "command": "timeout 600 .venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests/test_hindsight_compose_contract.py scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py",
+      "exit_code": 0,
+      "result": "272 passed, 5 skipped in 277.20s on current-dev composition; opt-in real-container probe then ran separately with 5 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py",
+      "exit_code": 0,
+      "result": "267 passed, 4 skipped (prior to current-dev composition; new optional transport test separately passed)"
+    },
+    {
+      "command": "PANTHEON_HINDSIGHT_SMOKE_COMMAND=<pinned-key SSH argv for isolated compose exec -T -w / hindsight python -> .venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests/test_hindsight_compose_contract.py",
+      "exit_code": 0,
+      "result": "5 passed in 4.07s; includes real containers"
+    },
+    {
+      "command": "GIT_SHA=4e579a1e4ce1bcd64d4b772e2d9c42b1a42a0574 timeout 660 docker compose -p hindsight-service-deploy-20261113 -f compose.json --profile root up --build --wait --wait-timeout 420 memory-index-postgres hindsight",
+      "exit_code": 0,
+      "result": "Both healthy; reused the existing isolated index volume"
+    },
+    {
+      "command": "docker compose run --rm --no-deps -v <corrupt-file>:/opt/hindsight/reranker/tokenizer_config.json:ro --entrypoint python hindsight /opt/hindsight/models.py start",
+      "expected_exit_code": 1,
+      "probe_exit_code": 0,
+      "result": "model_checksum_mismatch:reranker/tokenizer_config.json; API not started"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh; docker compose --profile root config --quiet; parsed postgres/retrieval-postgres equality vs origin/dev",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "artifact_sha256": {
+    "docker-compose.yml": "e1260804fa3fea5c4e0b955821888c91ba9af71600b24396e344243b0fffac6f",
+    ".env.example": "00c5a7dae46c33ea8bce934eb8cf7dc9140529173ca16b205e13819ea2d6f99b",
+    "deploy/memory-index-postgres/Dockerfile": "aa430ba9f14613014f7a07ed03b64c9b9fe1db4973636ff88388032ffd6719b0",
+    "deploy/memory-index-postgres/init.sql": "d28b267be8eb1a680e2ba408935af4ea57be7b4d9f92a82bcee110d03603292f",
+    "deploy/hindsight/Dockerfile": "d9cf4810da85a06d295c237c312468b81967e876e0d90e9a6b007b8b067feec0",
+    "deploy/hindsight/model-manifest.json": "e9c1ddae56d0a76cdb237acab03ee0f5f4ab2986a184c5263e1a66d98c7e1246",
+    "deploy/hindsight/tests/test_hindsight_compose_contract.py": "8d8c76bd5fbc40acfc548d4d68060233c6da1eddd05e0e2c0a490159d5fb2af3",
+    "scripts/deploy_nonprod_vm.sh": "2fe73296959d24a14d186d7ba5b57a13d1d0ccc378984a8178f409027bf06f4c",
+    "scripts/dev_release_artifacts.py": "13a9f367fe27f6759cfd9fbe32d3a0df9753c8964b9cf599c3d29356fb5782c9",
+    "scripts/test_deploy_nonprod_vm.py": "367839b83f7d37df6ea26efc9eaf06f305ea644522150f5701d4a44b65f58f6f",
+    "scripts/test_dev_release_artifacts.py": "09386e4b0366e375178de7b1afb398e783d15e44b5098b9edc0703db8a10dd1a",
+    "deploy/hindsight/README.md": "d691679682cbcc65bab5e54b3ffed65edee17e62ca02fb66fd88d20e8d8a133b"
+  },
+  "smoke_compose_sha256": "003d4a5afed3ffe3956dba2d45bca78738b00ac4181d8023841872e696575195",
+  "smoke_compose_contract": "Generated by selecting exactly hindsight/memory-index-postgres, their two internal networks and dedicated volume from current docker-compose.yml; service definitions unchanged.",
+  "limits": [
+    "Isolated Dev VM smoke is not an accepted hosted product release or FE/BFF deployment manifest.",
+    "Canonical memory facade, bank authorisation/hydration, invalidation and rebuild entry point are MEMORY-HINDSIGHT-INDEX-20261113 scope; current memory service only receives configuration here.",
+    "No LLM provider selected, no private-memory cross-persona acceptance claimed, no retrieval-quality benchmark and no external-transport packet capture claimed.",
+    "Docker image ls reports 6.44GB for Hindsight and 1.17GB for index Postgres. image inspect Size uses a different Docker/containerd accounting field; both raw observations are retained, not summed as physical disk use."
+  ],
+  "cleanup": {
+    "command": "timeout 90 docker compose -p hindsight-service-deploy-20261113 -f compose.json --profile root down",
+    "exit_code": 0,
+    "result": "Isolated test containers and networks removed. Named index volume and built images retained for reviewer replay; no accepted pantheon runtime was modified."
+  },
+  "native_startup_repair": {
+    "recorded_at": "2026-11-14T01:37:55.989258+00:00",
+    "previous_failed_head": "d9744d345b0978f976e13b9960b57f5a78d88328",
+    "previous_failed_runs": {
+      "branch": 43535699264,
+      "stage0": 43535699161
+    },
+    "cause": "Local Dockerfile inherited ENTRYPOINT/CMD, so Stage0 effective_argv was empty even though the image built successfully.",
+    "change": "Explicit Bash invocation of the unchanged upstream docker-entrypoint.sh (matching its shebang), with the unchanged postgres default CMD. No Python shim, CI guard change, skip, pin change or runtime model change.",
+    "build_source_commit": "11ba7acf14f9d9a940ebdc7c4b7847360c32eaca",
+    "build_source_boundary": "The image revision identifies the committed Dockerfile repair. Later commits update documentation/evidence only; image-affecting files are unchanged from this revision.",
+    "upstream_script_sha256": "9c440299ae04a0a79d55b8bf03307036d890a40979d2fb698073c9050d4b20a5",
+    "script_identity": "sha256sum is identical in the pinned base and rebuilt derivative.",
+    "pgvector_package": "postgresql-17-pgvector=0.8.6-1.pgdg13+1",
+    "postgres_version": "17.10 (Debian 17.10-1.pgdg13+1)",
+    "stage0_effective_argv": [
+      "bash",
+      "/usr/local/bin/docker-entrypoint.sh",
+      "postgres"
+    ],
+    "stage0_check": [
+      "bash",
+      "-n",
+      "/usr/local/bin/docker-entrypoint.sh"
+    ],
+    "runtime": {
+      "upstream_entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "upstream_cmd": [
+        "postgres"
+      ],
+      "entrypoint": [
+        "bash",
+        "/usr/local/bin/docker-entrypoint.sh"
+      ],
+      "cmd": [
+        "postgres"
+      ],
+      "image_id": "sha256:ae9fc3329009e0aad84712b50d9d0f8d9490fee6beb75d03d888f6e8858993da",
+      "image_size_bytes": 259650729,
+      "image_revision": "11ba7acf14f9d9a940ebdc7c4b7847360c32eaca",
+      "in_image_bash_syntax_exit_code": 0,
+      "runs": [
+        {
+          "arguments": [],
+          "pid1": "postgres",
+          "uid": "Uid:\t999\t999\t999\t999",
+          "extensions": "pgroonga=4.0.8\nvector=0.8.6",
+          "max_connections": "100",
+          "stop_exit_code": 0,
+          "host_port_bindings": {}
+        },
+        {
+          "arguments": [
+            "-c",
+            "max_connections=37"
+          ],
+          "pid1": "postgres",
+          "uid": "Uid:\t999\t999\t999\t999",
+          "extensions": "pgroonga=4.0.8\nvector=0.8.6",
+          "max_connections": "37",
+          "stop_exit_code": 0,
+          "host_port_bindings": {}
+        }
+      ],
+      "cleanup": "probe containers and task-owned volume removed"
+    },
+    "runtime_boundary": "Local disposable native database probe, --network none, no host ports. Fresh task-owned volume reused for the second startup and then deleted. No hosted deployment, Root/index workflow dispatch or Hindsight restart.",
+    "prior_hosted_evidence_boundary": "Top-level build_source_commit, runtime, http_smoke and corrupt_model_probe remain historical Dev VM observations at 4e579a1e4. They are not represented as a deployment of this repair. Hindsight/model/compose/init/release files did not change in this repair.",
+    "validation": [
+      {
+        "command": "timeout 90 /tmp/hindsight-native-startup-venv/bin/python -m unittest scripts/test_ci_stage0.py scripts/test_check_service_lock_shared_deps.py",
+        "exit_code": 0,
+        "result": "31 tests passed in 40.248s"
+      },
+      {
+        "command": "BUILDX_CONFIG=/tmp/hindsight-native-startup-buildx timeout 240 docker build --file deploy/memory-index-postgres/Dockerfile --build-arg GIT_SHA=11ba7acf14f9d9a940ebdc7c4b7847360c32eaca --tag pantheon-hindsight-native-startup:repair .",
+        "exit_code": 0,
+        "result": "Real derivative image built successfully; identity/size recorded above"
+      },
+      {
+        "command": "PATH=/tmp/hindsight-native-startup-venv/bin:$PATH BUILDX_CONFIG=/tmp/hindsight-native-startup-buildx GIT_SHA=11ba7acf14f9d9a940ebdc7c4b7847360c32eaca timeout 240 python3 scripts/ci_stage0.py import-smoke --image-id deploy-memory-index-postgres-Dockerfile --tag-suffix native-startup",
+        "exit_code": 0,
+        "result": "memory-index-postgres: passed; existing Stage0 performs bash -n inside the built image"
+      },
+      {
+        "command": "timeout 150 /tmp/hindsight-native-startup-venv/bin/python /tmp/hindsight-native-startup-probe.py",
+        "exit_code": 0,
+        "result": "Default startup and -c max_connections=37 startup passed; both extensions, non-root PostgreSQL PID1, init reuse and graceful stop exit 0 verified"
+      },
+      {
+        "command": "PATH=/tmp/hindsight-native-startup-venv/bin:$PATH timeout 600 python3 scripts/ci_stage0.py run-baseline",
+        "exit_code": 0,
+        "result": "80 passed in 17.46s"
+      },
+      {
+        "command": "timeout 450 /tmp/hindsight-native-startup-venv/bin/python -m pytest -q deploy/hindsight/tests/test_hindsight_compose_contract.py scripts/test_dev_release_artifacts.py",
+        "exit_code": 0,
+        "result": "139 passed, 3 skipped in 188.58s (0:03:08)"
+      }
+    ],
+    "local_probe_corrections": [
+      "First build failed before building because the default buildx activity directory is read-only; using a task-scoped BUILDX_CONFIG resolved it.",
+      "First native probe collected only stdout from docker logs and missed the shutdown message on stderr. Capturing both streams resolved the probe assertion; the database had already stopped with exit 0. Full probe rerun passed."
+    ]
+  }
+}
