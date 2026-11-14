@@ -67,6 +67,8 @@ def _bootstrap_panel_personas(app):
         owner = PERSONA_OWNER_API.state.persona_owner
         def local_owner(method, url, body):
             if method == "GET":
+                if "/api/personas/" in url:
+                    return owner.get(url.rsplit("/", 1)[1]).model_dump(mode="json")
                 return owner.list_json()
             if method == "PATCH":
                 return owner.patch(url.rsplit("/", 1)[1], PatchPersonaRequest(**body)).model_dump(mode="json")
@@ -78,8 +80,11 @@ def _bootstrap_panel_personas(app):
         app.state.panel_personas = {"status": "ready", "tenant_id": tenant, "personas": result}
     except Exception as exc:
         # Keep the owner available for diagnostics/repair; admission remains closed.
+        # Owner/store exceptions can carry connection details. Only our
+        # bootstrap validation messages are safe to expose on health.
+        reason = str(exc) if type(exc) is RuntimeError else type(exc).__name__
         app.state.panel_personas = {"status": "blocked", "tenant_id": tenant,
-                                   "reason": f"panel persona bootstrap: {type(exc).__name__}: {exc}"}
+                                   "reason": f"panel persona bootstrap: {reason}"}
     return app.state.panel_personas
 
 

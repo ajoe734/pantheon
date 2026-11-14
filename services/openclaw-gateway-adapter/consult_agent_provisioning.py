@@ -64,8 +64,13 @@ def ensure_consult_agent(provider: Any, *, tenant_id: str, persona_id: str) -> d
             raise RuntimeError("gateway config snapshot is invalid or lacks a revision")
         config = snapshot.get("config") or {}
         entries = (config.get("agents") or {}).get("list", [])
-        if not isinstance(entries, list) or any(not isinstance(a, dict) for a in entries):
+        if (not isinstance(entries, list)
+            or any(not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"] for a in entries)
+            or len({a["id"] for a in entries}) != len(entries)):
             raise RuntimeError("gateway agents config is invalid")
+        # Never let the first consultation agent become an implicit default.
+        if not entries or not any(a.get("id") == "main" or a.get("default") is True for a in entries):
+            raise RuntimeError("gateway default agent is not provisioned")
         matches = [a for a in entries if a.get("id") == agent_id]
         if len(matches) > 1 or any(a.get("default") for a in matches):
             raise RuntimeError("consultation agent identity collides with a default or duplicate agent")
@@ -79,7 +84,16 @@ def ensure_consult_agent(provider: Any, *, tenant_id: str, persona_id: str) -> d
             provider._gateway_call("config.patch", {
                 "baseHash": snapshot["hash"],
                 "raw": json.dumps({"agents": {"list": [desired]}}),
+                # Explicit shrink intent required by the pinned gateway when
+                # repairing an agent that previously had tools/skills/memory.
+                "replacePaths": ["agents.list[].tools.allow", "agents.list[].tools.deny",
+                                 "agents.list[].skills", "agents.list[].memorySearch.sources"],
             })
         admitted = admit_panel_agent(provider, tenant_id=tenant_id, persona_id=persona)
+        verified = provider._gateway_call("config.get")
+        live_entries = ((verified.get("config") or {}).get("agents") or {}).get("list") or []
+        bound = [a for a in live_entries if a.get("id") == agent_id]
+        if verified.get("valid") is not True or len(bound) != 1 or bound[0].get("workspace") != workspace:
+            raise RuntimeError("consultation agent workspace was not acknowledged")
     return {"status": "ready", "tenant_id": tenant_id, "persona_id": persona,
             "agent_id": admitted, "workspace_ref": workspace, "changed": changed}

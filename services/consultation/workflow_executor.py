@@ -35,6 +35,7 @@ from typing import Any, Callable, Mapping
 from services.knowledge import case_file as decision_case
 
 from .provider import (
+    AgentProvisioningBlocked,
     ContributionBlocked,
     ContributionProviderError,
     HttpContributionProvider,
@@ -819,7 +820,7 @@ def _compose_panel_case_file(
             entry = row.get("entry", row)
             if entry.get("registry_id") != ref or not entry.get("strategy_id"):
                 raise WorkflowBlocked("panel_case_file: registry subject binding missing")
-            if entry.get("tenant_id") not in (config.tenant_id, "__builtin__"):
+            if entry.get("owner_tenant", entry.get("tenant_id")) not in (config.tenant_id, "__builtin__"):
                 raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
             families.setdefault(str(entry["strategy_id"]), []).append(entry)
         caller = decision_case.Caller(
@@ -836,7 +837,7 @@ def _compose_panel_case_file(
         bindings = {(e.get("metadata") or {}).get("persona_capital_binding_id")
                     for entries in families.values() for e in entries
                     if (e.get("metadata") or {}).get("persona_id") == persona
-                    and e.get("tenant_id") == config.tenant_id}
+                    and e.get("owner_tenant", e.get("tenant_id")) == config.tenant_id}
         binding = next(iter(bindings)) if len(bindings) == 1 else ""
         for family, entries in families.items():
             metadata = [e.get("metadata") or {} for e in entries]
@@ -846,7 +847,7 @@ def _compose_panel_case_file(
                 persona_capital_binding_id=str(binding or ""),
                 member_artifact_refs=tuple(e["registry_id"] for e in entries),
                 backtest_run_refs=tuple(dict.fromkeys(
-                    run for e in entries for run in (e.get("lineage") or {}).get("source_run_ids", []))),
+                    run for e in entries for run in ((e.get("lineage") or {}).get("source_run_ids") or []))),
                 underlyings=tuple(dict.fromkeys(u for m in metadata for u in m.get("underlyings", []))),
                 instrument_class=next((str(m["instrument_class"]) for m in metadata if m.get("instrument_class")), ""))
             files.append(decision_case.compose_case_file(subject, caller, owners))
@@ -1147,15 +1148,24 @@ def _execute_panel_claim(
 ) -> dict[str, str]:
     participants, decision = _validated_panel(request, panel)
     try:
-        provider.ensure_agents(tenant_id=config.tenant_id,
-                               persona_ids=[p["persona_id"] for p in participants])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(provider.ensure_agents, tenant_id=config.tenant_id,
+                                 persona_ids=[p["persona_id"] for p in participants])
+            while True:
+                try:
+                    future.result(timeout=max(0.05, config.lease_seconds / 3))
+                    break
+                except FutureTimeout:
+                    if future.done():
+                        raise
+                    claim = _renew(state, claim, config)
     except ContributionProviderError as exc:
         _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
             "request_id": claim.request_id, "event_type": "panel_agent_provisioning_blocked",
             "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
             "content": {"reason": str(exc), "gated_decision": decision},
             "idempotency_key": f"{claim.request_id}:agents-blocked:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
-        raise
+        raise AgentProvisioningBlocked(str(exc)) from exc
     trace_id = str(
         request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
     )
@@ -1522,7 +1532,9 @@ def run_tick(
                 terminal_status = state.block(
                     claim,
                     reason=reason,
-                    max_blocked_attempts=config.max_blocked_attempts,
+                    max_blocked_attempts=(max(config.max_blocked_attempts, claim.blocked_count + 2)
+                                          if isinstance(exc, AgentProvisioningBlocked)
+                                          else config.max_blocked_attempts),
                     retry_after_seconds=config.retry_after_seconds,
                 )
             except StaleWorkflowClaim as stale:

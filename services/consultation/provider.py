@@ -45,6 +45,10 @@ class ContributionBlocked(ContributionProviderError):
         self.retryable = retryable
 
 
+class AgentProvisioningBlocked(ContributionBlocked):
+    """Retryable dependency hold; no participant has been dispatched yet."""
+
+
 def _blocked_http_response(exc: urllib.error.HTTPError) -> ContributionBlocked:
     """Translate the provider endpoint's typed blocked envelope when present."""
 

@@ -412,6 +412,18 @@ PANEL_PERSONA_SPECS: tuple[dict[str, str], ...] = (
     },
 )
 
+def validate_panel_persona(record: Mapping[str, Any]) -> None:
+    """Panel identities stay draft and cannot acquire trading authority."""
+    metadata = record.get("metadata") or {}
+    if record.get("persona_id") not in {RISK_PERSONA_ID, RED_TEAM_PERSONA_ID} and metadata.get("persona_class") != "consult_panel":
+        return
+    if (record.get("lifecycle_state") != "draft" or metadata.get("trading") is not False
+        or metadata.get("persona_class") != "consult_panel" or metadata.get("consultable") is not True
+        or record.get("tool_profile_id") or record.get("route_policy_id")
+        or record.get("consult_policy_id") != CONSULT_PANEL_POLICY_ID):
+        raise ValueError("panel personas must remain non-trading drafts with only the consultation policy")
+
+
 HttpFn = Callable[[str, str, "dict[str, Any] | None"], Any]
 
 
@@ -513,9 +525,11 @@ def bootstrap_consult_personas(
         if isinstance(created, dict) and created.get("_conflict"):
             # A concurrent replica won the CAS; validate the winner rather than
             # assuming an arbitrary conflicting identity is our panel persona.
-            return {**result, **bootstrap_consult_personas(
-                persona_url=persona_url, actor_id=actor_id, tenant_id=tenant_id,
-                http=call, timeout_seconds=timeout_seconds)}
+            winner = call("GET", f"{base}/api/personas/{persona_id}", None)
+            if not isinstance(winner, dict) or winner.get("tenant_id") != tenant_id:
+                raise RuntimeError(f"panel persona {persona_id}: conflicting tenant binding")
+            validate_panel_persona(winner)
+            result[persona_id] = "exists"
         else:
             result[persona_id] = "created"
     return result
