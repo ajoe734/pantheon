@@ -1,0 +1,574 @@
+{
+  "schema_version": "collector_newest_session_hosted_throughput.v1",
+  "task_id": "COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "review_status": "pending_independent_review",
+  "base_commit": "0940f6248",
+  "scope": "Verified immutable metadata cache and bounded newest-session controller continuation; no collector-host request/fetch policy, service, queue, setting, endpoint or deployment change.",
+  "hosted_observations": {
+    "provenance": "Operator-provided canonical task acceptance AC1, read through governed AI_NAME=Codex show on 2026-11-14. No VM/SSH access performed.",
+    "candidate": "0940f6248",
+    "window_utc": "2026-11-14 10:00-10:43Z",
+    "load": [
+      15,
+      34
+    ],
+    "TPEx": {
+      "pulls_utc": [
+        "09:51",
+        "10:09",
+        "10:21",
+        "10:33"
+      ],
+      "rows": [
+        16,
+        8,
+        4,
+        28
+      ],
+      "latest_priority_delivered": 328,
+      "total": 6090
+    },
+    "TWSE": {
+      "pulls_utc": [
+        "09:55",
+        "10:12",
+        "10:23",
+        "10:37"
+      ],
+      "rows": [
+        60,
+        76,
+        64,
+        64
+      ],
+      "latest_priority_delivered": 416,
+      "total": 1377
+    },
+    "pull_seconds_approx": 16,
+    "transfer_MB_per_second": [
+      3,
+      4
+    ],
+    "index": {
+      "bytes": 504000,
+      "entries": 1721
+    },
+    "metadata_bytes": {
+      "TWSE": {
+        "manifest": 570000,
+        "items": 1240000
+      },
+      "TPEx": {
+        "manifest": 2500000,
+        "items": 5700000
+      }
+    }
+  },
+  "diagnosis": {
+    "index_remote_seconds_at_3MBps": 0.30800000000000005,
+    "one_TWSE_manifest_remote_seconds": 0.33,
+    "one_TWSE_items_remote_seconds": 0.5533333333333333,
+    "one_TPEx_manifest_remote_seconds": 0.9733333333333334,
+    "one_TPEx_items_remote_seconds": 2.04,
+    "candidate_selection": "The candidate loops over all complete entries whose fetch-date upper bound is at least the newest row trade date. Four six-hour run-* fetches can therefore all cover yesterday's session. Every one downloads/parses/verifies manifest and items before the first raw read on every pull.",
+    "four_candidate_remote_seconds": {
+      "TWSE": 3.5333333333333337,
+      "TPEx": 12.053333333333335
+    },
+    "budget": "TPEx four-candidate transfer costs 12.053s, plus index 0.308s, leaving 2.639s of the shared 15s before CPU parsing/verification, raw hashing and host contention. TWSE metadata is 3.533s plus index. Per-step CPU and network were not recorded on the host; these are explicit lower-bound model costs, not invented hosted timings.",
+    "controller_interval": "The 60s interval is a sleep after a tick, not a per-source guarantee. A missing/failed/ineligible continuation falls back to the 600s finished-source cadence and least-attempted rotation. The quoted 12-18 minute gaps are consistent with that fallback plus tick/host delays. In candidate source a successful, eligible persisted continuation should already request 1s sleeps; the provided receipts do NOT contain fetch-state flags, controller result/error timestamps or loop invocations, so which hosted gate failed cannot be established from them alone.",
+    "controller_change": "Explicit newest-session continuations outrank ordinary due sources. Reuse the already validated terminal readback with this tick's admitted adapter bindings instead of fetching another readback and registry after persistence. Failed/degraded/unoffered sources retain existing fail-closed cadence gates.",
+    "index_policy": "Index is freshly read every pull (including cache hits), at 504KB/0.308s modelled remote cost. It is already size-bounded at 8MiB and is not the dominant read; no TTL that could hide a new run was introduced.",
+    "hosted_gap_followup": "Authorized hosted verifier must correlate source receipts with controller tick results and fetch_state.collector_outcome.observed for the exact deployed identity. This author has no VM/SSH/deployment authority and makes no claim of having proved the historical gap cause."
+  },
+  "implementation": {
+    "cache": "Process-local bounded LRU shared by newly constructed adapters/transports; 16 entries and 64MiB encoded metadata. No persisted trust marker or new state file. Full verification on miss, absent digest, changed run/index identity/digest or restart. HTTP host/token namespace, storage root and source isolate reuse. Metadata admitted only after source/schema/time/status/item coverage/bundle digest verification and agreement with the live index digest.",
+    "eviction": "LRU/byte bound; replaced run identity/digest evicts its old entry after full verification; prior trading sessions are evicted when a newer session is selected. Same-session runs remain bounded and available for omitted-instrument union/rollback safety.",
+    "verification": "Each delivered raw item still downloads and verifies its hash/declared size; existing raw-to-native-row and record contract checks run before persistence and acknowledgement.",
+    "rollback": "Existing latest_priority.json and resume cursor formats unchanged. Actual bee62bc29 and 0940f6248 reader tests parse new acknowledgements."
+  },
+  "baseline_model": [
+    {
+      "source": "collector-tw-twse-price-history",
+      "pulls": [
+        {
+          "rows": 236,
+          "seconds": 15.267756086660029,
+          "metadata_reads": [
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            }
+          ]
+        },
+        {
+          "rows": 236,
+          "seconds": 15.272693717659422,
+          "metadata_reads": [
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
+              "bytes": 570000,
+              "remote_seconds": 0.33
+            },
+            {
+              "path": "bundles/collector-tw-twse-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
+              "bytes": 1240000,
+              "remote_seconds": 0.5533333333333333
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "collector-tw-tpex-price-history",
+      "pulls": [
+        {
+          "rows": 48,
+          "seconds": 15.072653308335248,
+          "metadata_reads": [
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            }
+          ]
+        },
+        {
+          "rows": 52,
+          "seconds": 15.1804503700032,
+          "metadata_reads": [
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T061933Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-14/run-20261114T001933Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T181844Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/manifest.json",
+              "bytes": 2500000,
+              "remote_seconds": 0.9733333333333334
+            },
+            {
+              "path": "bundles/collector-tw-tpex-price-history/2026-11-13/run-20261113T121842Z/items.jsonl",
+              "bytes": 5700000,
+              "remote_seconds": 2.04
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "controller_model": {
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "index_bytes": 504000,
+    "index_entries": 1721,
+    "fresh_connection_seconds": [
+      0.14,
+      0.19
+    ],
+    "transfer_bytes_per_second": 3000000,
+    "metadata_sizes": {
+      "collector-tw-twse-price-history": [
+        570000,
+        1240000
+      ],
+      "collector-tw-tpex-price-history": [
+        2500000,
+        5700000
+      ]
+    },
+    "pulls": [
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 48,
+        "seconds": 16.47827753666843,
+        "start_seconds": 7.589000233565457e-06,
+        "same_source_gap_seconds": null,
+        "metadata_remote_seconds": 12.053333333333335
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.224932095011354,
+        "start_seconds": 17.488533475668646,
+        "same_source_gap_seconds": 17.488525886668413,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 14.848206526344711,
+        "start_seconds": 33.75561274868005,
+        "same_source_gap_seconds": 16.267079273011404,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 14.994691112347027,
+        "start_seconds": 49.686917991024984,
+        "same_source_gap_seconds": 15.931305242344934,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.028836629345278,
+        "start_seconds": 65.81828395537195,
+        "same_source_gap_seconds": 16.13136596434697,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.128488294346425,
+        "start_seconds": 82.04102750371749,
+        "same_source_gap_seconds": 16.222743548345534,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.062569401345172,
+        "start_seconds": 98.37017625606359,
+        "same_source_gap_seconds": 16.3291487523461,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.280582687345941,
+        "start_seconds": 114.68043613340842,
+        "same_source_gap_seconds": 16.310259877344834,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.119759696347046,
+        "start_seconds": 131.2349348837547,
+        "same_source_gap_seconds": 16.554498750346283,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.176639810345023,
+        "start_seconds": 147.76122522610194,
+        "same_source_gap_seconds": 16.526290342347238,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.529953107343317,
+        "start_seconds": 164.3795712404467,
+        "same_source_gap_seconds": 16.618346014344752,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.321275769343629,
+        "start_seconds": 181.2805002257901,
+        "same_source_gap_seconds": 16.9009289853434,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.348359284343132,
+        "start_seconds": 198.09576137613385,
+        "same_source_gap_seconds": 16.81526115034376,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.403886957345549,
+        "start_seconds": 214.8840791444768,
+        "same_source_gap_seconds": 16.78831776834295,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.477678395345265,
+        "start_seconds": 231.7825527128225,
+        "same_source_gap_seconds": 16.898473568345707,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.550174508345208,
+        "start_seconds": 248.77596955716763,
+        "same_source_gap_seconds": 16.99341684434512,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.740171161345643,
+        "start_seconds": 265.92909099051303,
+        "same_source_gap_seconds": 17.153121433345405,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.558774081343472,
+        "start_seconds": 283.3441834328587,
+        "same_source_gap_seconds": 17.415092442345667,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.68865985934417,
+        "start_seconds": 300.58432475420204,
+        "same_source_gap_seconds": 17.240141321343344,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.79136346234236,
+        "start_seconds": 317.94787897354627,
+        "same_source_gap_seconds": 17.363554219344223,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.77099282434574,
+        "start_seconds": 335.4372600148886,
+        "same_source_gap_seconds": 17.489381041342313,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.805216868345724,
+        "start_seconds": 352.9316415062344,
+        "same_source_gap_seconds": 17.494381491345848,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.85203492934943,
+        "start_seconds": 370.50990039958015,
+        "same_source_gap_seconds": 17.57825889334572,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 256,
+        "seconds": 15.999334003344757,
+        "start_seconds": 388.17171774192957,
+        "same_source_gap_seconds": 17.661817342349423,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-tpex-price-history",
+        "rows": 154,
+        "seconds": 11.87198039767145,
+        "start_seconds": 406.40798691327427,
+        "same_source_gap_seconds": 18.236269171344702,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 232,
+        "seconds": 18.829118521661258,
+        "start_seconds": 420.21828573594576,
+        "same_source_gap_seconds": null,
+        "metadata_remote_seconds": 3.533333333333333
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "seconds": 16.080780350325767,
+        "start_seconds": 441.08235328660703,
+        "same_source_gap_seconds": 20.864067550661275,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "seconds": 16.02279346532987,
+        "start_seconds": 459.54631711593265,
+        "same_source_gap_seconds": 18.46396382932562,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "seconds": 16.145658747327616,
+        "start_seconds": 477.8194887372624,
+        "same_source_gap_seconds": 18.273171621329766,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 256,
+        "seconds": 16.073204940331834,
+        "start_seconds": 496.1158782975899,
+        "same_source_gap_seconds": 18.296389560327498,
+        "metadata_remote_seconds": 0
+      },
+      {
+        "source": "collector-tw-twse-price-history",
+        "rows": 121,
+        "seconds": 10.00899752532996,
+        "start_seconds": 514.3272241319219,
+        "same_source_gap_seconds": 18.21134583433195,
+        "metadata_remote_seconds": 0
+      }
+    ],
+    "counts": {
+      "collector-tw-twse-price-history": 1377,
+      "collector-tw-tpex-price-history": 6090
+    },
+    "elapsed_with_worst_cadence_phase_seconds": 1125.3872536062518
+  },
+  "model_limits": "Synthetic valid native bundles padded with JSON whitespace to the exact supplied encoded sizes, four same-session runs per source and 1721-entry index. Real in-process HTTP controller/API/scheduler, evidence/config JSONL, SQLite queue, raw/normalized and latest snapshot persistence. 3MB/s and 0.14/0.19s fresh connections are virtual; actual CPU/disk time is charged, affinity limited to two cores. This is not hosted network/PostgreSQL proof and does not reproduce host load 15-34.",
+  "validation": [],
+  "delivery": {
+    "state": "implementation_validation_in_progress",
+    "merge": "not_claimed",
+    "deployment": "not_performed_author_has_no_authority",
+    "deadline": "2026-11-16T06:40:00Z"
+  }
+}
