@@ -715,10 +715,12 @@ def test_case_file_with_every_group_unavailable_fails_closed_before_the_turn(sys
 def _seed_decision_lessons(controller, owner, memory_service, base=90):
     from services.knowledge import case_file as cf
     persona = owner.list_json()[0]
-    cycle_type, _ = controller._cycle_decision(controller.owners.observe(persona))
+    obs = controller.owners.observe(persona)
+    cycle_type, _ = controller._cycle_decision(obs)
+    families = [f"family:{f}" for f in obs["cycle_subject"]["families"]]
     for mid, summary, decision in ((base, "CYCLE-ONLY " + cycle_type.replace("_", " "), cycle_type),
                                    (base + 1, "REMOVAL-ONLY member removal", "member_removal")):
-        entry = _private(mid, persona["persona_id"], summary, ["decision:" + decision])
+        entry = _private(mid, persona["persona_id"], summary, ["decision:" + decision, *families])
         cf.http_json(cf.OwnerEndpoint(memory_service), "/api/memory/persona-entries", tenant_id=TENANT_A,
                      method="POST", body=entry)
     return persona
