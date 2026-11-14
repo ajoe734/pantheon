@@ -134,13 +134,15 @@ def test_slow_owner_over_timeout_is_unavailable(monkeypatch: pytest.MonkeyPatch)
     assert personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs) is None
 
 
-def test_rows_keep_owner_order_and_are_not_truncated() -> None:
+def test_rows_match_unpaged_read_order_and_are_not_truncated() -> None:
     owner = _Owner(3_100)
     port = DefaultResearchKnowledgeSourcePort(
         source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
     )
     rows = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs)
-    assert [r["ref_id"] for r in rows] == [f"ev-{i}" for i in range(3_100)]
+    legacy = port.read_evidence_refs().items  # unpaged full read, newest-first
+    assert len(rows) == 3_100
+    assert [r["ref_id"] for r in rows] == [r["ref_id"] for r in legacy]
 
 
 _VOLATILE_KEYS = {"snapshot_at", "generated_at", "request_id", "as_of", "observed_time", "last_known_at", "correlation_id"}
@@ -236,15 +238,27 @@ def test_linked_evidence_beyond_first_page_keeps_full_output(
         assert len(body["evidence_refs"]) == 501
 
 
+def _snapshot_surface(body: Dict[str, Any]) -> Dict[str, Any]:
+    data = body.get("data") or {}
+    return {
+        k: data.get(k)
+        for k in ("items", "ranking_snapshot_id", "evidence_refs", "surfaces", "evidence_surface")
+        if k in data
+    }
+
+
 @pytest.mark.parametrize("route", ROUTES)
 def test_owner_pages_out_of_order_beyond_cap_match_full_stream(
     route: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """In-quarter linked rows sit behind 1500+ newer rows in owner append
-    order (the shape that was silently truncated)."""
+    """In-quarter linked rows sit behind 1600 newer rows in owner append
+    order. The owner projection drops linked_object_summary, so the store
+    wrapper re-attaches it to the port's rows (real port, real paging) so the
+    linked rows survive the quarter filter and the output is non-trivial."""
     newer = _linked_refs("newer", 1_600, "2026-06-01T00:00:00Z")
     inq = _linked_refs("q", 501, "2026-02-15T00:00:00Z")
     rows = newer + inq
+    linked = {r["ref_id"]: r["linked_object_summary"] for r in rows}
 
     class _OrderedOwner(_Owner):
         def http_get(self, base_url: str, path: str) -> Tuple[bool, Any]:
@@ -258,16 +272,90 @@ def test_owner_pages_out_of_order_beyond_cap_match_full_stream(
                     "citation_label": r["ref_id"],
                     "available_time": r["source_document"]["captured_at"],
                     "metadata": {},
-                    "linked_object_summary": r["linked_object_summary"],
                 }
                 for r in rows[start:start + size]
             ]
             return True, {"items": items, "total": len(rows), "summary": None}
 
-    bounded = _get(_OrderedOwner(0), route)
+    def linking_read(self: Any, **kwargs: Any):
+        result = self._port.read_evidence_refs(**kwargs)
+        for item in result.items:
+            item["linked_object_summary"] = dict(linked[item["ref_id"]])
+        return result
+
+    monkeypatch.setattr(_OwnerBackedStore, "read_evidence_refs", linking_read)
+    owner = _OrderedOwner(0)
+    bounded = _get(owner, route)
+    assert len(owner.calls) == 5  # ceil(2101 / 500)
+    legacy_owner = _OrderedOwner(0)
     monkeypatch.setattr(personas_service, "_PM12_QUARTER_EVIDENCE_PAGE_SIZE", None)
-    full = _get(_OrderedOwner(0), route)
-    assert bounded["status"] == full["status"]
+    full = _get(legacy_owner, route)
+    assert bounded["status"] == full["status"] == 200
     assert _strip_volatile(copy.deepcopy(bounded["body"])) == _strip_volatile(
         copy.deepcopy(full["body"])
     )
+    assert _snapshot_surface(_strip_volatile(copy.deepcopy(bounded["body"]))) == _snapshot_surface(
+        _strip_volatile(copy.deepcopy(full["body"]))
+    )
+    # non-trivial: the 501 linked in-quarter refs reach the output
+    assert repr(bounded["body"]).count("q-0") > 0, "linked quarter refs must reach the output"
+    probe = personas_service._pm12_quarter_evidence_refs(
+        [dict(r, evidence_origin="source_ingest") for r in inq],
+        {"start_at": "2026-01-01T00:00:00Z", "end_exclusive_at": "2026-04-01T00:00:00Z"},
+    )
+    assert len(probe) == 501
+
+
+def _result(items: List[Dict[str, Any]], token: Any, total: Any = None, available: bool = True) -> Any:
+    from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
+
+    return EvidenceReadResult(items, total, "ok" if available else "unavailable", "x", token)
+
+
+def test_empty_filtered_page_with_next_token_is_followed() -> None:
+    """500 other-tenant rows (filtered to empty) then the wanted row."""
+    owner = _Owner(501)
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+    )
+
+    def read(**kw: Any):
+        r = port.read_evidence_refs(**kw)
+        if kw.get("page_token") is None:
+            r.items = []  # tenant filter emptied the first page, token remains
+        return r
+
+    rows = personas_service._pm12_read_all_evidence_pages(read)
+    assert [x["ref_id"] for x in rows] == ["ev-500"]
+
+
+def test_deadline_is_enforced_on_every_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_EVIDENCE_OWNER_READ_TIMEOUT_SECONDS", "0.1")
+
+    def timed(read: Any) -> Tuple[Any, float]:
+        started = time.monotonic()
+        out = personas_service._pm12_read_all_evidence_pages(read)
+        return out, time.monotonic() - started
+
+    # single page slower than the budget
+    out, took = timed(lambda **kw: (time.sleep(0.4), _result([{"ref_id": "a"}], None))[1])
+    assert out is None and took < 0.25, took
+
+    # first page fast, next page slow (offset path)
+    def slow_next(**kw: Any):
+        if kw["page_token"] is None:
+            time.sleep(0.02)
+            return _result([{"ref_id": str(i)} for i in range(500)], "500", 5_000)
+        time.sleep(0.4)
+        return _result([{"ref_id": "x"}], None, 5_000)
+
+    out, took = timed(slow_next)
+    assert out is None and took < 0.25, took  # 9 remaining pages > 8 workers
+
+    # opaque-token sequential path
+    def opaque(**kw: Any):
+        time.sleep(0.04)
+        return _result([{"ref_id": "o"}], "t-" + str(time.monotonic()), None)
+
+    out, took = timed(opaque)
+    assert out is None and took < 0.25, took

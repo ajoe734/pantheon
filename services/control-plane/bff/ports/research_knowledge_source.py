@@ -298,6 +298,15 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     return dt
 
 
+def evidence_ref_sort_key(ref: Mapping[str, Any]) -> Tuple[datetime, str]:
+    """Newest-first ordering key shared by the full evidence read and callers
+    that reassemble owner pages, so both produce identical row order."""
+    return (
+        _naive_utc(_parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))),
+        str(ref.get("ref_id") or ""),
+    )
+
+
 def _is_valid_health_usage_envelope(payload: Any) -> bool:
     """Match services/source_ingestion get_health_usage_snapshot; zero sources is valid."""
     if not isinstance(payload, dict):
@@ -1484,15 +1493,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
-        filtered.sort(
-            key=lambda ref: (
-                _naive_utc(
-                    _parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))
-                ),
-                str(ref.get("ref_id") or ""),
-            ),
-            reverse=True,
-        )
+        filtered.sort(key=evidence_ref_sort_key, reverse=True)
         total = len(filtered)
         nxt_token: Optional[str] = None
         if page_size:

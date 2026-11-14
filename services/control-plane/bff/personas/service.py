@@ -5934,11 +5934,14 @@ def _pm12_read_all_evidence_pages(read_fn: Any) -> Optional[List[Dict[str, Any]]
     """Read every owner evidence page exactly (no truncation, no ordering
     assumption), or return ``None`` when the owner is unavailable.
 
-    The first page yields the owner total and an offset page token; the
-    remaining offset pages are then requested concurrently so a slow owner is
-    waited on about once per request instead of once per page. Rows keep owner
-    page order. Any unavailable page, or a read exceeding the owner timeout in
-    total, marks the whole surface unavailable.
+    Every read, including the first, runs under one overall deadline equal to
+    the evidence owner read timeout; the caller never blocks past it (worker
+    threads are abandoned, not joined). The first page yields the owner total
+    and an offset page token; the remaining offset pages are requested
+    concurrently so a slow owner is waited on about once per request. A page
+    that is empty after tenant filtering still carries a continuation token and
+    is followed. Any unavailable page, or exceeding the deadline, marks the
+    whole surface unavailable.
     """
     import concurrent.futures
     import contextvars
@@ -5951,55 +5954,59 @@ def _pm12_read_all_evidence_pages(read_fn: Any) -> Optional[List[Dict[str, Any]]
     except Exception:
         deadline = time.monotonic() + 4.0
     page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
-    first = read_fn(page_size=page_size, page_token=None)
-    if not first.available:
-        return None
-    rows: List[Dict[str, Any]] = list(first.items or [])
-    token = first.next_page_token
-    if not token or not rows:
-        return rows
-    total = first.total
-    offset_tokens = (
-        isinstance(total, int)
-        and not isinstance(total, bool)
-        and str(token) == str(len(rows))
-    )
-    if not offset_tokens:
-        # Opaque tokens: sequential follow, still complete.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
+
+    def _submit(token: Optional[str]) -> Any:
+        return pool.submit(
+            contextvars.copy_context().run,
+            lambda: read_fn(page_size=page_size, page_token=token),
+        )
+
+    def _sorted(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # The unpaged read returns rows newest-first; paged owner reads keep
+        # append order, so restore the same order for identical output.
+        from ..ports.research_knowledge_source import evidence_ref_sort_key
+
+        return sorted(all_rows, key=evidence_ref_sort_key, reverse=True)
+
+    def _wait(future: Any) -> Any:
+        return future.result(timeout=max(deadline - time.monotonic(), 0.0))
+
+    try:
+        first = _wait(_submit(None))
+        if not first.available:
+            return None
+        rows: List[Dict[str, Any]] = list(first.items or [])
+        token = first.next_page_token
+        if not token:
+            return _sorted(rows)
+        total = first.total
+        step = int(token) if str(token).isdigit() else 0
+        if isinstance(total, int) and not isinstance(total, bool) and step == page_size:
+            futures = [_submit(str(o)) for o in range(step, total, step)]
+            for future in futures:
+                page = _wait(future)
+                if not page.available:
+                    return None
+                rows.extend(page.items or [])
+            return _sorted(rows)
+        # Opaque or short-page tokens: sequential follow, still complete.
+        seen = {str(token)}
         while token:
-            if time.monotonic() > deadline:
-                return None
-            page = read_fn(page_size=page_size, page_token=token)
+            page = _wait(_submit(str(token)))
             if not page.available:
                 return None
-            items = list(page.items or [])
-            rows.extend(items)
-            token = page.next_page_token if items else None
-        return rows
-    step = len(rows)
-    offsets = list(range(step, int(total), step))
-
-    def _fetch(offset: int) -> Any:
-        return read_fn(page_size=page_size, page_token=str(offset))
-
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(_PM12_QUARTER_EVIDENCE_MAX_WORKERS, max(len(offsets), 1))
-    ) as pool:
-        futures = [pool.submit(contextvars.copy_context().run, _fetch, o) for o in offsets]
-        pages: List[Any] = []
-        for future in futures:
-            remaining = deadline - time.monotonic()
-            try:
-                pages.append(future.result(timeout=max(remaining, 0.0)))
-            except Exception:
-                for pending in futures:
-                    pending.cancel()
+            rows.extend(page.items or [])
+            token = page.next_page_token
+            if token is not None and str(token) in seen:
                 return None
-    for page in pages:
-        if not page.available:
-            return None
-        rows.extend(page.items or [])
-    return rows
+            if token is not None:
+                seen.add(str(token))
+        return _sorted(rows)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # --- _pm12_public_quarter_evidence_refs ---
