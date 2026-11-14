@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 399,
+  "total_test_files": 400,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -102,7 +102,7 @@
     "application": 191,
     "composition": 19,
     "hosted": 12,
-    "router": 122
+    "router": 123
   },
   "main_by_layer": {
     "composition": 14,
@@ -110,7 +110,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 332,
+    "DECOUPLED": 333,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2928,6 +2928,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-PERSONA-CASE-RETIRE-COMMAND-20261108 regression coverage for the RetirePaperPersonaCase PersonaAction command: confirm-token admission, retired/pending/not-found receipts, release-case refusal, read-only dry run plan, and the deprecated actions route; never imports main"
+    },
+    {
+      "file": "tests/test_deployments_list_bounded_stage_truth.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114: full HTTP legacy parity, constant 200-plan owner/store reads, decision and runtime evidence precedence, request isolation, and reproducible real-port profiling; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,

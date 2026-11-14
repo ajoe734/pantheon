@@ -78,10 +78,11 @@ _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
 # Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
 # every transport read share it, so one request can never run past the controller boundary.
 COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
-# Only newest-session raw reads overlap. Metadata and the historical sweep remain
-# ordered; at most four guarded Collector requests are in flight, with no queue
+# Market raw reads overlap. Metadata and bundle/cursor traversal remain
+# ordered; newest closes use four readers, historical sweeps at most sixteen, with no queue
 # beyond that batch and no reader surviving the pull.
 LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
+HISTORY_RAW_READ_CONCURRENCY = 16
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
 
@@ -404,8 +405,8 @@ def verify_bundle(
     further raw file is fetched (at least one is always read so every pull progresses) and
     ``verified_through`` records how far verification got. Nothing is skipped or assumed.
 
-    ``raw_read_concurrency`` overlaps at most four reads per bounded batch for
-    newest closes. Every reader shares the operation context/deadline and joins
+    ``raw_read_concurrency`` overlaps a bounded batch (four for newest closes,
+    sixteen for historical market sweeps). Every reader shares the operation context/deadline and joins
     before return; a timeout can retain only an ordered verified prefix.
     """
 
@@ -501,7 +502,7 @@ def verify_bundle(
             raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
         return actual, data
 
-    width = max(1, min(raw_read_concurrency, LATEST_CLOSE_RAW_READ_CONCURRENCY))
+    width = max(1, min(raw_read_concurrency, HISTORY_RAW_READ_CONCURRENCY))
     # A separate context per worker preserves the *same* operation deadline and
     # egress policy. Never acknowledge out of order or discard a genuine failure
     # from a later parallel read merely because an earlier read timed out.
@@ -637,6 +638,18 @@ def observed_from_collector_status(
     }
 
 
+def source_offering(status_doc: Mapping[str, Any] | None, source_id: str) -> dict[str, Any]:
+    """Additive host admission. Legacy status without offered retains its old behaviour."""
+    sources = (status_doc or {}).get("sources", {})
+    if isinstance(sources, list):
+        entry = next((s for s in sources if isinstance(s, Mapping) and s.get("source_id") == source_id), {})
+    else:
+        entry = sources.get(source_id, {}) if isinstance(sources, Mapping) else {}
+    if not isinstance(entry, Mapping) or not isinstance(entry.get("offered"), bool):
+        return {"offered": None, "reason": "collector_offering_unverified"}
+    return {"offered": entry["offered"], "reason": entry.get("offered_reason")}
+
+
 @dataclass(frozen=True)
 class CollectorBundleAdapter:
     """Pull, verify and map collector bundles for one collector source."""
@@ -657,6 +670,7 @@ class CollectorBundleAdapter:
     # Whole-pull raw read budget, kept below the controller's per-request timeout; the
     # remainder stays pending behind a partial cursor. None disables the budget.
     read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    history_raw_read_concurrency: int = HISTORY_RAW_READ_CONCURRENCY
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -810,7 +824,9 @@ class CollectorBundleAdapter:
             paused_reasons=(*paused, *base.paused_reasons),
             # Newest-session rows still undelivered: the controller may re-pull before the
             # finished-source cadence. Only this pull's own acknowledged outcome carries it.
-            observed=({**base.observed, "continuation_pending": True} if not done and not paused else base.observed),
+            observed=({**base.observed, "continuation_pending": True}
+                      if merged and (not done or not base.complete) and not paused and not base.paused_reasons
+                      else base.observed),
             feature_rejected=base.feature_rejected,
             complete=base.complete,
             no_new_data=not merged and not paused and base.no_new_data,
@@ -951,6 +967,7 @@ class CollectorBundleAdapter:
         # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
+        window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
         deadline = _OP_DEADLINE.get()
@@ -969,6 +986,7 @@ class CollectorBundleAdapter:
                 bundle = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
                     deadline=deadline,
+                    raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
                 )
             except TimeoutError:
                 # A later bundle cut by the shared deadline before any of its rows verified
@@ -979,6 +997,7 @@ class CollectorBundleAdapter:
                     break
                 raise
             verified.append(bundle)
+            window_stops[bundle.cursor] = skip + remaining
             if bundle.verified_through is not None:
                 # Read budget exhausted mid-window: later rows/bundles stay pending.
                 unverified_pending = True
@@ -997,7 +1016,9 @@ class CollectorBundleAdapter:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            stop = len(bundle.items) if bundle.verified_through is None else bundle.verified_through
+            stop = min(len(bundle.items), window_stops[bundle.cursor])
+            if bundle.verified_through is not None:
+                stop = min(stop, bundle.verified_through)
             for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
@@ -1079,6 +1100,11 @@ class CollectorBundleAdapter:
         if paused:
             observed = {**observed, "health_state": "degraded",
                         "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
+        if (self.source_type == "market" and records and not complete and not paused
+                and all(b.status == "complete" for b in verified)):
+            # A verified prefix cut by the output/deadline budget is ready to continue.
+            # Producer partial/paused bundles wait for cadence rather than retrying hot.
+            observed = {**observed, "continuation_pending": True}
         result = CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
@@ -1373,7 +1399,9 @@ class CollectorBundleAdapter:
         # bundles fully represented in `records`. A bundle larger than the remaining
         # budget is consumed partially (``<key>|items=<n>``) so a bundle bigger than the
         # public cap still makes bounded progress instead of starving every later pull.
-        if len(records) < len(all_records):
+        if len(records) < len(all_records) or len(records) < sum(
+            max(len(b.items) - skips.get(b.cursor, 0), 0) for b in verified if b.status != "paused"
+        ):
             kept = len(records)
             next_cursor = cursor
             running = 0

@@ -63,7 +63,7 @@ from .connectors import (
     SourceType,
     example_provider_catalog,
 )
-from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+from .configured import ConfiguredConnector, ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .distillation_worker import DistillationJobQueue
 from .external_sources import (
     external_source_bundle_metadata,
@@ -131,7 +131,7 @@ from .api_models import (
     SetConnectorLifecycleRequest,
     TriggerIngestJobRequest,
 )
-from .pipeline import IngestPipelineService
+from .pipeline import IngestDistillationJobQueue, IngestPipelineService
 from .strategy_seed_store import StrategySpecSeedStore
 
 
@@ -327,7 +327,7 @@ class SourceIngestionRuntime:
         self.audit_store_lock = threading.RLock()
         self.source_execution_lock = threading.RLock()
         self.market_data_storage_writer = MarketDataStorageWriter(self.MARKET_DATA_STORAGE_ROOT)
-        self.distillation_job_queue = DistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
+        self.distillation_job_queue = IngestDistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
         self.source_management_store = build_source_management_store(self.DATA_DIR)
         self._STRATEGY_SEED_STORE_PATH = Path(
             (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))
@@ -1215,8 +1215,10 @@ class SourceIngestionRuntime:
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
         for record in self.evidence_repository.list_source_records():
             cid = record.connector_id
-            rec_dict = record.to_dict()
-            rec_meta = rec_dict.get("metadata") or {}
+            # Historical sweeps grow this population on every tick. Ranking only
+            # reads scalar metadata; avoid allocating serialized record and
+            # metadata mappings for every stored row in each readback.
+            rec_meta = record.metadata or {}
             norm_row = rec_meta.get("normalized_row") if isinstance(rec_meta.get("normalized_row"), dict) else {}
             rec_run_id = str(rec_meta.get("source_ingest_run_id") or rec_meta.get("ingest_run_id") or "")
             target_run_id = latest_run_by_connector.get(cid, "")
@@ -1235,7 +1237,10 @@ class SourceIngestionRuntime:
                 or norm_row.get("date")
                 or ""
             )
-            rec_created = str(rec_dict.get("created_at") or "")
+            rec_created = (
+                record.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+                if isinstance(record.created_at, datetime) else str(record.created_at or "")
+            )
             source_id = str(record.source_id or "")
 
             if cid in COLLECTOR_PRICE_HISTORY_SOURCE_IDS:
@@ -1255,8 +1260,35 @@ class SourceIngestionRuntime:
 
         return {cid: item[1] for cid, item in latest.items()}
 
+    def _collector_offerings(self, configs: Sequence[ConfiguredConnector]) -> dict[str, dict[str, Any]]:
+        from .connectors.collector_bundle import (
+            COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, HttpBundleTransport,
+            collector_host, operation_deadline, source_offering,
+        )
+        documents: dict[str, Any] = {}
+        offerings = {}
+        for config in configs:
+            fetch = getattr(config, "fetch", None) or {}
+            if fetch.get("mode") != "provider_owned_adapter" or fetch.get("adapter") != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+                continue
+            spec = fetch.get("adapter_config") or {}
+            host = str(spec.get("host") or collector_host())
+            if host not in documents:
+                # One bounded status read per host for this snapshot, never per source.
+                with operation_deadline(2.0):
+                    try:
+                        documents[host] = CollectorBundleAdapter(
+                            connector_id=config.connector.connector_id, source_id=str(spec.get("source_id") or ""),
+                            transport=HttpBundleTransport(host=host, timeout_seconds=2.0),
+                        ).read_status()
+                    except SourceEvidenceError:
+                        documents[host] = None  # unavailable/malformed capability is never invented
+            offerings[config.connector.connector_id] = source_offering(documents[host], str(spec.get("source_id") or ""))
+        return offerings
+
     def _controller_connector_readbacks(self) -> list[dict[str, Any]]:
         configs, fetch_states = self.connector_store.read_snapshot()
+        offerings = self._collector_offerings(configs)
         schedules = {
             schedule.connector_id: schedule
             for schedule in self.schedule_config_store.list_schedules()
@@ -1309,6 +1341,7 @@ class SourceIngestionRuntime:
                         latest_by_connector.get(connector_id), receipts_by_connector.get(connector_id, ())
                     ),
                     "source_health": health_payload,
+                    **({"collector_offering": offerings[connector_id]} if connector_id in offerings else {}),
                 }
             )
         return readbacks
