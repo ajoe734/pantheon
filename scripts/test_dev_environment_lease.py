@@ -1327,6 +1327,107 @@ raise SystemExit(lease.heartbeat_loop(args, mgr))
 
 
 class RateLimitHandlingTests(unittest.TestCase):
+    def setUp(self):
+        jitter = mock.patch.object(lease.random, "uniform", return_value=2.0)
+        jitter.start()
+        self.addCleanup(jitter.stop)
+
+    def test_secondary_limit_on_acquisition_put_rereads_remote_cas_before_restore(self):
+        client = FakeClient()
+        client.state = state_for(heartbeat=NOW - timedelta(seconds=400))
+        client.content_sha = "a" * 40
+        original_put = client.put_content
+        attempted_shas = []
+        def limited_once(*args, **kwargs):
+            attempted_shas.append(kwargs["expected_sha"])
+            if len(attempted_shas) == 1:
+                raise lease.GitHubRateLimitError(429, "secondary rate limit",
+                                               retry_after_seconds=42, server_now=client.now)
+            return original_put(*args, **kwargs)
+        client.put_content = limited_once
+        def reset(seconds):
+            client.now += timedelta(seconds=seconds)
+            client.content_sha = "b" * 40
+        client.sleep = reset
+        mgr = manager(client)
+        state, sha, _ = mgr.acquire(mode="deployment", owner="deploy:rollback",
+                                   ttl_seconds=300, wait_seconds=3900, poll_seconds=5)
+        verified = mgr.verify(lease.public_state(state, content_sha=sha), max_heartbeat_age_seconds=120)
+        restore = mock.Mock()
+        # Restore may only be called with the verified, freshly acquired ID.
+        if verified["status"] == "verified":
+            restore(verified["leaseId"])
+        self.assertEqual(attempted_shas, ["a" * 40, "b" * 40])
+        restore.assert_called_once_with(state["leaseId"])
+        self.assertEqual(state["previousContentSha"], "b" * 40)
+
+    def test_permission_denials_never_wait_or_authorize_quota_acquire_or_verify(self):
+        for status in (401, 403):
+            for phase in ("quota", "acquire", "verify"):
+                with self.subTest(status=status, phase=phase):
+                    client = FakeClient()
+                    client.state = state_for(owner="deploy:rollback")
+                    client.content_sha = "a" * 40
+                    denied = lease.classify_github_http_error(status, "Permission denied")
+                    mgr = manager(client)
+                    if phase == "quota":
+                        client.get_rate_limit = mock.Mock(side_effect=denied)
+                        call = lambda: mgr.wait_for_core_quota()
+                    elif phase == "acquire":
+                        client.get_ref = mock.Mock(side_effect=denied)
+                        call = lambda: mgr.acquire(mode="deployment", owner="deploy:rollback",
+                                                  ttl_seconds=300, wait_seconds=3900, poll_seconds=5)
+                    else:
+                        client.get_content = mock.Mock(side_effect=denied)
+                        call = lambda: mgr.verify(client.state, max_heartbeat_age_seconds=120,
+                                                 rate_limit_wait_seconds=3900)
+                    with mock.patch.object(mgr, "_sleep") as sleep:
+                        with self.assertRaises(lease.GitHubApiError):
+                            call()
+                    sleep.assert_not_called()
+                    self.assertEqual(client.put_expected_shas, [])
+
+    def test_guard_verification_does_not_wait_or_reacquire_for_rollback_owner(self):
+        client = FakeClient()
+        local = state_for(owner="deploy:rollback")
+        client.get_content = mock.Mock(side_effect=lease.GitHubRateLimitError(
+            429, "secondary rate limit", retry_after_seconds=60, server_now=NOW))
+        mgr = manager(client)
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(mgr, "_sleep") as sleep:
+            with self.assertRaises(lease.GitHubRateLimitError):
+                mgr.verify(local, max_heartbeat_age_seconds=120)
+        sleep.assert_not_called()
+        self.assertEqual(client.put_expected_shas, [])
+
+    def test_verification_after_reset_does_not_reacquire_a_foreign_lease(self):
+        client = FakeClient()
+        local = state_for(owner="deploy:rollback")
+        foreign = state_for(owner="foreign", lease_id="22222222-2222-4222-8222-222222222222")
+        client.get_content = mock.Mock(side_effect=[
+            lease.GitHubRateLimitError(429, "secondary rate limit", retry_after_seconds=10, server_now=NOW),
+            lease.RemoteContent(state=foreign, content_sha="f" * 40, server_now=NOW),
+        ])
+        mgr = manager(client)
+        with mock.patch.object(mgr, "_sleep") as sleep:
+            with self.assertRaises(lease.LeaseLost):
+                mgr.verify(local, max_heartbeat_age_seconds=120, rate_limit_wait_seconds=3900)
+        sleep.assert_called_once()
+        self.assertEqual(client.put_expected_shas, [])
+
+    def test_http_transport_preserves_rate_limit_headers(self):
+        for status, headers in ((403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(NOW.timestamp()) + 120)}),
+                                (429, {"Retry-After": "42"})):
+            with self.subTest(status=status):
+                headers["Date"] = "Mon, 13 Jul 2026 16:30:00 GMT"
+                error = urllib.error.HTTPError("https://api.github.com/test", status, "rate limit", headers,
+                                              io.BytesIO(b'{"message":"API rate limit exceeded"}'))
+                client = lease.GitHubClient("fixture-token")
+                with mock.patch.object(lease.urllib.request, "urlopen", side_effect=error):
+                    with self.assertRaises(lease.GitHubRateLimitError) as caught:
+                        client._request("GET", "/test", allowed=(200,))
+                self.assertEqual(caught.exception.status, status)
+                self.assertEqual(caught.exception.server_now, NOW)
+
     def test_classify_primary_403_secondary_429_and_plain_auth_denial(self) -> None:
         reset_time = datetime(2026, 11, 14, 7, 58, 56, tzinfo=timezone.utc)
         server_now = datetime(2026, 11, 14, 7, 50, 54, tzinfo=timezone.utc)

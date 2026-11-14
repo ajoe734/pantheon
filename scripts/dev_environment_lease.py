@@ -909,7 +909,7 @@ class LeaseManager:
         base = max(0.0, min(float(self.rate_limit_jitter_seconds), MAX_RATE_LIMIT_JITTER_SECONDS))
         if base <= 0:
             return 0.0
-        return base
+        return random.uniform(0.0, base)
 
     def _current_now_utc(self, fallback: datetime | None = None) -> datetime:
         if fallback is not None:
@@ -1020,7 +1020,9 @@ class LeaseManager:
                 print(json.dumps(wait_event, sort_keys=True), file=sys.stderr)
                 self._sleep(wait_seconds)
                 waited_seconds += wait_seconds
-            except Exception as exc:
+            except (GitHubApiError, GitHubTransportError) as exc:
+                if not is_transient_error(exc):
+                    raise
                 fallback_wait = min(DEFAULT_RATE_LIMIT_FALLBACK_WAIT_SECONDS, 15.0)
                 warn_event = {
                     "schemaVersion": SCHEMA_VERSION,
@@ -1033,16 +1035,6 @@ class LeaseManager:
                 print(json.dumps(warn_event, sort_keys=True), file=sys.stderr)
                 self._sleep(fallback_wait)
                 waited_seconds += fallback_wait
-                if attempts >= 3 and not isinstance(exc, (GitHubRateLimitError, GitHubTransportError)):
-                    return {
-                        "schemaVersion": SCHEMA_VERSION,
-                        "status": "quota_probe_degraded",
-                        "resource": self.resource,
-                        "minRemaining": min_remaining,
-                        "waitedSeconds": round(waited_seconds, 3),
-                        "attempts": attempts,
-                        "warning": str(exc),
-                    }
 
     def _now_monotonic(self) -> float:
         client_now = getattr(self.client, "now_monotonic", None)
@@ -1164,7 +1156,7 @@ class LeaseManager:
                 wait_seconds = max(wait_seconds, (reset_at - ref_now).total_seconds())
             except LeaseError:
                 reset_at = None
-        if retry_after is not None:
+        if retry_after is not None and reset_at is None:
             try:
                 wait_seconds = max(wait_seconds, float(retry_after))
             except (TypeError, ValueError):
@@ -1423,9 +1415,8 @@ class LeaseManager:
                 return float(raw_env)
             except ValueError as exc:
                 raise LeaseError(f"{RATE_LIMIT_WAIT_ENV} must be numeric") from exc
-        owner = str(local_state.get("owner") or "")
-        if owner.endswith(":rollback"):
-            return DEFAULT_COMPENSATION_RATE_LIMIT_WAIT_SECONDS
+        # Waiting/reacquisition is explicit at compensation startup, before
+        # its heartbeat starts. A running guard must fail promptly on loss.
         return 0.0
 
     def verify(
@@ -1466,16 +1457,28 @@ class LeaseManager:
             try:
                 state, remote = self._matching_remote(
                     current_local,
-                    require_active=True,
+                    require_active=False,
                     allow_exact_stale_predecessor=(
                         initial_visibility_wait_seconds > 0
                     ),
                 )
                 heartbeat = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
                 age = (remote.server_now - heartbeat).total_seconds()
-                if age > max_heartbeat_age_seconds:
+                expired = parse_utc_iso(state["expiresAt"], "expiresAt") <= remote.server_now
+                if expired or age > max_heartbeat_age_seconds:
+                    if waited_for_rate_limit and effective_rate_limit_wait > 0:
+                        current_local = self._reacquire_after_rate_limit_wait(
+                            current_local,
+                            local_state_Sink=local_state,
+                            rate_limit_deadline=rate_limit_deadline,
+                            ttl_seconds=ttl_seconds,
+                            state_file=state_file,
+                        )
+                        waited_for_rate_limit = False
+                        visibility_deadline = self._now_monotonic() + initial_visibility_wait_seconds
+                        continue
                     raise LeaseLost(
-                        f"dev environment lease heartbeat is stale: {age:.0f}s > "
+                        f"dev environment lease expired or heartbeat is stale: {age:.0f}s > "
                         f"{max_heartbeat_age_seconds}s"
                     )
                 break
@@ -1496,19 +1499,6 @@ class LeaseManager:
                 )
                 continue
             except InitialLeaseVisibilityPending as exc:
-                if waited_for_rate_limit and effective_rate_limit_wait > 0:
-                    current_local = self._reacquire_after_rate_limit_wait(
-                        current_local,
-                        local_state_Sink=local_state,
-                        rate_limit_deadline=rate_limit_deadline,
-                        ttl_seconds=ttl_seconds,
-                        state_file=state_file,
-                    )
-                    waited_for_rate_limit = False
-                    visibility_deadline = (
-                        self._now_monotonic() + initial_visibility_wait_seconds
-                    )
-                    continue
                 remaining = visibility_deadline - self._now_monotonic()
                 if remaining <= 0:
                     raise LeaseLost(
@@ -1516,21 +1506,6 @@ class LeaseManager:
                         "predecessor until the bounded timeout"
                     ) from exc
                 self._sleep(min(initial_visibility_poll_seconds, remaining))
-            except LeaseLost:
-                if waited_for_rate_limit and effective_rate_limit_wait > 0:
-                    current_local = self._reacquire_after_rate_limit_wait(
-                        current_local,
-                        local_state_Sink=local_state,
-                        rate_limit_deadline=rate_limit_deadline,
-                        ttl_seconds=ttl_seconds,
-                        state_file=state_file,
-                    )
-                    waited_for_rate_limit = False
-                    visibility_deadline = (
-                        self._now_monotonic() + initial_visibility_wait_seconds
-                    )
-                    continue
-                raise
 
         result = public_state(state, content_sha=remote.content_sha)
         result.update(
@@ -1551,14 +1526,15 @@ class LeaseManager:
         ttl_seconds: int,
         state_file: str,
     ) -> dict[str, Any]:
-        remaining_wait = max(1, int(rate_limit_deadline - self._now_monotonic()))
-        acquired = parse_utc_iso(current_local.get("acquiredAt"), "acquiredAt")
-        expires = parse_utc_iso(current_local.get("expiresAt"), "expiresAt")
-        inferred_ttl = max(30, min(3600, int((expires - acquired).total_seconds()) or ttl_seconds))
+        remaining_wait = int(rate_limit_deadline - self._now_monotonic())
+        if remaining_wait <= 0:
+            raise RateLimitedRollbackPending(
+                f"{RATE_LIMITED_ROLLBACK_PENDING_REASON}: no budget for fresh rollback lease"
+            )
         new_state, new_sha, _ = self.acquire(
             mode=str(current_local["mode"]),
             owner=str(current_local["owner"]),
-            ttl_seconds=inferred_ttl,
+            ttl_seconds=ttl_seconds,
             wait_seconds=remaining_wait,
             poll_seconds=5.0,
             expected_backend_sha=str(current_local.get("expectedBackendSha") or ""),
@@ -1580,6 +1556,7 @@ class LeaseManager:
         *,
         effective_freshness_seconds: int,
         exc: GitHubRateLimitError,
+        read_started_monotonic: float,
     ) -> VerifiedRenewalBudget | None:
         if self._recovery_anchor is not None:
             return self._recovery_anchor
@@ -1596,7 +1573,7 @@ class LeaseManager:
         remaining_validity = (validity_deadline_utc - exc.server_now).total_seconds()
         if remaining_validity <= 0:
             return None
-        deadline_monotonic = self._now_monotonic() + remaining_validity
+        deadline_monotonic = read_started_monotonic + remaining_validity
         if self._active_deadline_monotonic is not None:
             deadline_monotonic = min(deadline_monotonic, self._active_deadline_monotonic)
         return VerifiedRenewalBudget(
@@ -1643,6 +1620,7 @@ class LeaseManager:
                 local_state,
                 effective_freshness_seconds=effective_freshness_seconds,
                 exc=exc,
+                read_started_monotonic=read_started_monotonic,
             )
             if (
                 fallback_budget is not None
