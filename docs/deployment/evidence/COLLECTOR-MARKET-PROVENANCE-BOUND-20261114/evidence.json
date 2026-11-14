@@ -14,53 +14,23 @@
     "samples": [
       {
         "rows": 1375,
-        "after_pipeline": {
-          "evidence_bundle": 1,
-          "evidence_item": 1375,
-          "source_record": 1375,
-          "knowledge_object": 1375
-        },
+        "after_pipeline": {"evidence_bundle": 1, "evidence_item": 1375, "source_record": 1375, "knowledge_object": 1375},
         "jobs": 1375,
-        "after_distillation": {
-          "evidence_bundle": 1,
-          "evidence_item": 1375,
-          "source_record": 1375,
-          "knowledge_object": 1375
-        },
+        "after_distillation": {"evidence_bundle": 1, "evidence_item": 1375, "source_record": 1375, "knowledge_object": 1375},
         "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
       },
       {
         "rows": 6000,
-        "after_pipeline": {
-          "evidence_bundle": 1,
-          "evidence_item": 6000,
-          "knowledge_object": 6000,
-          "source_record": 6000
-        },
+        "after_pipeline": {"evidence_bundle": 1, "evidence_item": 6000, "knowledge_object": 6000, "source_record": 6000},
         "jobs": 6000,
-        "after_distillation": {
-          "evidence_bundle": 1,
-          "evidence_item": 6000,
-          "knowledge_object": 6000,
-          "source_record": 6000
-        },
+        "after_distillation": {"evidence_bundle": 1, "evidence_item": 6000, "knowledge_object": 6000, "source_record": 6000},
         "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
       },
       {
         "rows": 1349,
-        "after_pipeline": {
-          "evidence_item": 1349,
-          "knowledge_object": 1349,
-          "source_record": 1349,
-          "evidence_bundle": 1
-        },
+        "after_pipeline": {"evidence_item": 1349, "knowledge_object": 1349, "source_record": 1349, "evidence_bundle": 1},
         "jobs": 1349,
-        "after_distillation": {
-          "evidence_item": 1349,
-          "knowledge_object": 1349,
-          "source_record": 1349,
-          "evidence_bundle": 1
-        },
+        "after_distillation": {"evidence_item": 1349, "knowledge_object": 1349, "source_record": 1349, "evidence_bundle": 1},
         "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
       }
     ],
@@ -76,53 +46,23 @@
       "samples": [
         {
           "rows": 1,
-          "after_pipeline": {
-            "evidence_bundle": 1,
-            "evidence_item": 1,
-            "source_record": 1,
-            "knowledge_object": 1
-          },
+          "after_pipeline": {"evidence_bundle": 1, "evidence_item": 1, "source_record": 1, "knowledge_object": 1},
           "jobs": 1,
-          "after_distillation": {
-            "evidence_bundle": 1,
-            "evidence_item": 1,
-            "source_record": 1,
-            "knowledge_object": 1
-          },
+          "after_distillation": {"evidence_bundle": 1, "evidence_item": 1, "source_record": 1, "knowledge_object": 1},
           "distillation": "DistillationRunResult(processed=1, created=0, refreshed=0, skipped=1, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
         },
         {
           "rows": 10,
-          "after_pipeline": {
-            "evidence_bundle": 1,
-            "evidence_item": 10,
-            "source_record": 10,
-            "knowledge_object": 10
-          },
+          "after_pipeline": {"evidence_bundle": 1, "evidence_item": 10, "source_record": 10, "knowledge_object": 10},
           "jobs": 10,
-          "after_distillation": {
-            "evidence_bundle": 1,
-            "evidence_item": 10,
-            "source_record": 10,
-            "knowledge_object": 10
-          },
+          "after_distillation": {"evidence_bundle": 1, "evidence_item": 10, "source_record": 10, "knowledge_object": 10},
           "distillation": "DistillationRunResult(processed=10, created=0, refreshed=0, skipped=10, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
         },
         {
           "rows": 100,
-          "after_pipeline": {
-            "evidence_bundle": 1,
-            "evidence_item": 100,
-            "source_record": 100,
-            "knowledge_object": 100
-          },
+          "after_pipeline": {"evidence_bundle": 1, "evidence_item": 100, "source_record": 100, "knowledge_object": 100},
           "jobs": 100,
-          "after_distillation": {
-            "evidence_bundle": 1,
-            "evidence_item": 100,
-            "source_record": 100,
-            "knowledge_object": 100
-          },
+          "after_distillation": {"evidence_bundle": 1, "evidence_item": 100, "source_record": 100, "knowledge_object": 100},
           "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
         }
       ]
