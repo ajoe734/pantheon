@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import re
 import shlex
 import subprocess
@@ -129,3 +130,20 @@ def test_no_secret_or_real_token_is_committed() -> None:
             assert not pat.search(text), f"Potential secret pattern {pat.pattern!r} found in {path}"
         assert not path.name.endswith(".salt"), f"Real salt file must not be committed: {path}"
         assert path.name != ".env", f".env file must not be committed: {path}"
+
+
+def test_regime_readme_month_backfill_commands_match_container_entrypoint(capsys):
+    from collector_stack.cli import main
+    readme = (COLLECTOR_DIR / 'README.md').read_text(encoding='utf-8')
+    section = readme.split('## Regime inputs:', 1)[1]
+    script = section.split('```bash\n', 1)[1].split('```', 1)[0].replace('\\\n', '')
+    commands = [shlex.split(line) for line in script.splitlines() if line.startswith('docker compose')]
+    assert len(commands) == 3
+    for command in commands:
+        args = command[command.index('collector-worker') + 1:]
+        assert args[0] == '--root-dir'  # Python/module already supplied by image ENTRYPOINT.
+        if '--dry-run' not in args:
+            args.append('--dry-run')
+        assert main(args) == 0
+        plan = json.loads(capsys.readouterr().out)
+        assert plan['first_date'] == '2012-01' and plan['min_interval_seconds'] >= 5

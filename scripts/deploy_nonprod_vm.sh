@@ -947,6 +947,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
+    command_prefix+=" DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
@@ -1056,6 +1057,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
@@ -1357,6 +1360,7 @@ validate_source_refresh_profile() {
 import sys
 
 from services.external_egress import allowed_hosts
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
 
 hosts = allowed_hosts(
     {
@@ -1367,7 +1371,16 @@ hosts = allowed_hosts(
 if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 dataset = sys.argv[3] if len(sys.argv) > 3 else ""
-if sys.argv[2] == "tw-twse-tpex-official-market":
+profile = TW_CHIP_REFRESH_PROFILES.get(sys.argv[2])
+if profile is not None:
+    required = ({"openapi.taifex.com.tw", "www.taifex.com.tw"}
+                if profile["base"] == "tw-taifex-futures-options-chip"
+                else {"openapi.twse.com.tw", "www.tpex.org.tw"})
+    if hosts != required:
+        raise SystemExit("chip refresh requires exact hosts: " + ",".join(sorted(required)))
+    if dataset != profile["dataset"]:
+        raise SystemExit(f"chip refresh dataset mismatch: {dataset!r} != {profile['dataset']!r}")
+elif sys.argv[2] == "tw-twse-tpex-official-market":
     required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
     if hosts != required:
         raise SystemExit(
@@ -1779,6 +1792,10 @@ bounded_dataset = (
 expected_dataset = bounded_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip" else ""
 )
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+if profile is not None and expected_dataset != profile["dataset"]:
+    raise SystemExit("bounded chip dataset is outside the governed profile")
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1819,12 +1836,34 @@ if freshness.get("source_timestamp_status") != "valid":
 if provenance.get("source_ingest_run_id") != run_id or not source_id:
     raise SystemExit("controller source record does not bind the new ingest run")
 actual_dataset = str(provenance.get("dataset") or record_metadata.get("dataset") or "").strip()
-if expected_dataset and (connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
+if expected_dataset and (profile is not None or connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
     if actual_dataset != expected_dataset:
         raise SystemExit(
             f"controller source record dataset mismatch for {connector_id}: "
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
+if profile is not None:
+    expected_schema = profile["schema_hash"]
+    if (provenance.get("schema_hash") or record_metadata.get("schema_hash")) != expected_schema:
+        raise SystemExit("bounded chip schema mismatch")
+    row = record_metadata.get("normalized_row") or {}
+    from datetime import time as _time, timedelta
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+    taipei = started.astimezone(timezone(timedelta(hours=8)))
+    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=cursor.isoformat())
+        if cursor.weekday() < 5 and not (calendar and cursor.isoformat() in (calendar.get("holidays") or {})):
+            break
+        cursor -= timedelta(days=1)
+    record_date = str(row.get("date") or record_metadata.get("date") or "")
+    if record_date != cursor.isoformat():
+        raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
+    prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+    if not source_id.startswith(f"{prefix}:{expected_dataset}:"):
+        raise SystemExit("bounded chip source identity does not bind the dataset")
+    if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
+        raise SystemExit("bounded chip venue is outside the governed profile")
 if connector_id == "tw-taifex-futures-options-chip":
     req_ds = expected_dataset or "taifex_ssf_contracts"
     expected_source_prefix = f"tw-taifex:{req_ds}:"
@@ -2195,7 +2234,8 @@ raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
 connector_id = raw_connector or (
     "tw-taifex-futures-options-chip" if raw_dataset == "taifex_ssf_contracts" else "tw-twse-tpex-official-market"
 )
-CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report", *TW_CHIP_REFRESH_PROFILES}
 bounded_dataset = raw_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
     else "tw_broker_top" if connector_id == "tw-finmind-broker-daily-report"
@@ -2321,6 +2361,13 @@ if connector_id in CHIP_CONNECTORS:
     source_id = str(latest_record.get("source_id") or "")
     record_dataset = str(provenance.get("dataset") or metadata.get("dataset") or "")
     schema_hash = str(provenance.get("schema_hash") or metadata.get("schema_hash") or "")
+    profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+    if profile is not None:
+        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        if (schema_hash != profile["schema_hash"]
+                or not source_id.startswith(f"{prefix}:{bounded_dataset}:")
+                or (profile.get("venues") and metadata.get("venue") not in profile["venues"])):
+            emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if (
         not latest_record
         or latest_record.get("status") not in (None, "", "normalized", "valid")
@@ -2741,6 +2788,10 @@ RECOVER_DLQ_PY
 
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
+  case "${connector_id}:${dataset}" in
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
+      return 0 ;;
+  esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
     [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
   elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
@@ -5121,12 +5172,119 @@ run_bounded_docker_prune() {
   fi
 
   info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
-  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+  local status=0
+  timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" || status=$?
+  if (( status == 0 )); then
+    return 0
+  fi
+  if (( status == 124 || status == 137 )); then
+    info "warning: ${label} timed out after ${timeout_seconds}s (status ${status}); continuing deployment"
+  else
+    info "warning: ${label} exited with status ${status}; continuing deployment"
+  fi
+  return 0
+}
+
+# Removes images with no tag that no container (running or stopped) references,
+# one at a time with a non-forced docker rmi so the daemon refuses in-use or
+# parent images. Tagged images (including pantheon-protect/*) are never
+# candidates. Each removal is persistent, so a budget cut keeps earlier progress.
+remove_dev_untagged_unreferenced_images_for_build() {
+  local budget="${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}"
+  if ! [[ "${budget}" =~ ^[0-9]+$ ]] || (( budget < 1 || budget > 3600 )); then
+    info "warning: invalid PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=${budget}; skipping untagged image removal"
+    return 0
+  fi
+  local deadline_total="${DEV_DEPLOY_DEADLINE_SECONDS:-}"
+  if [[ "${deadline_total}" =~ ^[0-9]+$ ]] && (( deadline_total >= 4 && budget > deadline_total / 4 )); then
+    budget=$((deadline_total / 4))
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    info "warning: timeout utility unavailable; skipping untagged image removal"
     return 0
   fi
 
-  local status=$?
-  info "warning: ${label} exited with status ${status}; continuing deployment"
+  # One elapsed-time budget covers discovery and removals. Every docker call is
+  # bounded by the remaining budget minus the kill-after grace, so a hung
+  # daemon cannot outlive the budget.
+  local grace=5 started="${SECONDS}" remaining call_timeout
+  local free_before="" free_after="" check_path="${PANTHEON_DEV_DEPLOY_DISK_CHECK_PATH:-$(pwd)}"
+  free_before="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_before}" =~ ^[0-9]+$ ]] || free_before="unknown"
+
+  local ids_out="" inspect_out="" rows=""
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! ids_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker ps -a -q --no-trunc 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  declare -A referenced=()
+  local ref
+  local -a cids=()
+  mapfile -t cids <<< "${ids_out}"
+  if (( ${#cids[@]} > 0 )) && [[ -n "${cids[0]}" ]]; then
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )) || ! inspect_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker inspect --format '{{.Image}}' "${cids[@]}" 2>/dev/null)"; then
+      info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_inspect_failed_or_timed_out"
+      return 0
+    fi
+    while IFS= read -r ref; do
+      ref="${ref#sha256:}"
+      [[ -n "${ref}" ]] && referenced["${ref:0:12}"]=1
+    done <<< "${inspect_out}"
+  fi
+
+  local row tag_ref img_id
+  local -a candidates=()
+  declare -A seen=()
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  # An image id with any tag row is tagged and never a candidate.
+  declare -A tagged=()
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || tagged["${img_id:0:12}"]=1
+  done <<< "${rows}"
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || continue
+    [[ -z "${tagged[${img_id:0:12}]:-}" && -z "${referenced[${img_id:0:12}]:-}" && -z "${seen[${img_id:0:12}]:-}" ]] || continue
+    seen["${img_id:0:12}"]=1
+    candidates+=("${img_id}")
+  done <<< "${rows}"
+
+  local removed=0 refused=0 skipped=0 per_call
+  info "removing untagged unreferenced dev Docker images one at a time (candidates=${#candidates[@]} budget=${budget}s)"
+  for img_id in "${candidates[@]}"; do
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )); then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    per_call=$((remaining < 60 ? remaining : 60))
+    if timeout --signal=TERM --kill-after="${grace}s" "${per_call}s" docker rmi "${img_id}" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    else
+      refused=$((refused + 1))
+    fi
+  done
+
+  free_after="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_after}" =~ ^[0-9]+$ ]] || free_after="unknown"
+  local budget_note=""
+  if (( skipped > 0 )); then
+    budget_note=" budget_exhausted=true"
+  fi
+  info "untagged image removal: candidates=${#candidates[@]} removed=${removed} refused=${refused} not_attempted=${skipped} free_bytes_before=${free_before} free_bytes_after=${free_after}${budget_note}"
   return 0
 }
 
@@ -5311,6 +5469,12 @@ prune_dev_docker_storage_for_build() {
         # rollback restores from release-artifacts tars, not from these images.
         info "removing dangling dev Docker images before root build"
         run_bounded_docker_prune "dangling images" docker image prune -f
+        if [[ "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}" != "false" ]]; then
+          # Guarded so harnesses that source only the older prune helpers keep working.
+          if declare -F remove_dev_untagged_unreferenced_images_for_build >/dev/null; then
+            remove_dev_untagged_unreferenced_images_for_build
+          fi
+        fi
       fi
     else
       info "skipped dev Docker builder cache and dangling-image prune because container image protection did not complete"

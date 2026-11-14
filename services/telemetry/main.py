@@ -914,10 +914,16 @@ def shutdown():
     """Gracefully stop the ingest service."""
     global _svc, _loop, _lineage_svc
     if _svc is not None:
+        summary_store = getattr(_svc, "_runtime_summary_store", None)
         try:
             _run_async(_svc.stop(graceful=True), timeout=15.0)
         except Exception as exc:
             log.error(f"Error during graceful shutdown: {exc}")
+        if summary_store is not None and hasattr(summary_store, "close"):
+            try:
+                summary_store.close()
+            except Exception as exc:
+                log.error(f"Error flushing runtime summary store on shutdown: {exc}")
         _svc = None
     if _loop is not None:
         _loop.call_soon_threadsafe(_loop.stop)
@@ -1445,11 +1451,21 @@ def forensic_plan_trace(plan_id: str):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import atexit
+    import signal
+
     logging.basicConfig(level=logging.INFO)
     startup()
 
-    import atexit
     atexit.register(shutdown)
+
+    def _handle_stop_signal(signum: int, _frame: Any) -> None:
+        log.info("Received signal %s; shutting down telemetry service", signum)
+        shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_stop_signal)
+    signal.signal(signal.SIGINT, _handle_stop_signal)
 
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=False)

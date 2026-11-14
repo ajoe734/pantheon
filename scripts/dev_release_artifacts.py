@@ -97,7 +97,15 @@ PAPER_SERVICE = "paper-signal-producer"
 PAPER_ENV_KEYS = ("PANTHEON_PAPER_EXPRESSION_LAYER", "PANTHEON_CAPITAL_API_URL",
                   "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE")
 PAPER_ENV_FORMAT = _env_format(PAPER_ENV_KEYS)
+# The existing dev paper principal issuer fails closed when its authorization flag is
+# not the exact string "true"; Compose defaults it to false for a restoring caller. Record
+# only these three nonsecret names (never the JWT secret/issuer/audience) and restore them
+# verbatim: true stays true, false stays false, absent stays absent. Nothing is inferred.
+ISSUER_SERVICE = "dev-paper-principal-issuer"
+ISSUER_ENV_KEYS = ("PANTHEON_ENV", "PANTHEON_DEV_BFF_TENANT_ID", "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED")
+ISSUER_ENV_FORMAT = _env_format(ISSUER_ENV_KEYS)
 CONTROL_POSTURE = {CONTROL_SERVICE: (CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT),
+                   ISSUER_SERVICE: (ISSUER_ENV_KEYS, ISSUER_ENV_FORMAT),
                    API_SERVICE: (API_ENV_KEYS, API_ENV_FORMAT),
                    PAPER_SERVICE: (PAPER_ENV_KEYS, PAPER_ENV_FORMAT)}
 RESTART_FORMAT = "{{json .HostConfig.RestartPolicy.Name}}"
