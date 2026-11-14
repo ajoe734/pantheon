@@ -3264,7 +3264,10 @@ def test_workflows_pass_collector_host_and_token_names() -> None:
     bounded = [
         (n, e) for n, e in refresh if n.startswith("Execute bounded") and "FinMind" not in n
     ]
-    assert len(bounded) == 2
+    assert {name for name, _ in bounded} == {
+        "Execute bounded TAIFEX contract refresh", "Execute bounded Taiwan market refresh",
+        "Execute bounded Taiwan chip refresh",
+    }
     for name, env in bounded:
         for key, value in expected.items():
             assert env.get(key) == value, (name, key)
@@ -3739,6 +3742,33 @@ python3 -c 'import json,os; print(json.dumps({k:v for k,v in os.environ.items() 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {'HINDSIGHT_API_KEY': supplied}
     assert not sentinel.exists()
+
+
+def _chip_admission(connector, dataset, hosts):
+    import sys
+    script = DEPLOY_SCRIPT.read_text()
+    validator = script.split('  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}"', 1)[1]
+    body = validator.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    return subprocess.run([sys.executable, '-c', body, hosts, connector, dataset, ''],
+                          cwd=ROOT, capture_output=True, text=True, timeout=20)
+
+
+def test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs():
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        hosts = ('openapi.taifex.com.tw,www.taifex.com.tw' if profile['base'] == 'tw-taifex-futures-options-chip'
+                 else 'openapi.twse.com.tw,www.tpex.org.tw')
+        accepted = _chip_admission(cid, profile['dataset'], hosts)
+        assert accepted.returncode == 0, accepted.stderr
+        for dataset in ('tw_price_daily', 'taifex_ssf_contracts', 'other_dataset', ''):
+            assert _chip_admission(cid, dataset, hosts).returncode != 0
+        assert _chip_admission(cid, profile['dataset'], hosts + ',example.com').returncode != 0
+    for cid, dataset, hosts in (
+        ('tw-twse-tpex-official-market', 'tw_price_daily', 'openapi.twse.com.tw,www.tpex.org.tw'),
+        ('tw-taifex-futures-options-chip', 'taifex_ssf_contracts', 'openapi.taifex.com.tw,www.taifex.com.tw'),
+    ):
+        assert _chip_admission(cid, dataset, hosts).returncode == 0
+        assert _chip_admission(cid, 'unadmitted', hosts).returncode != 0
 
 
 def _prune_shell_function(name: str) -> str:
