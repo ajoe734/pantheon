@@ -522,7 +522,7 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
 STACK_SIZE = 57
 SEALED = artifacts.SERVICES
 SCHEDULER = artifacts.CONTROL_SERVICE
-OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 3)) + ("source-ingest", SCHEDULER, "paper-signal-producer")
+OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 4)) + ("source-ingest", SCHEDULER, "paper-signal-producer", artifacts.ISSUER_SERVICE)
 # Healthy steady scheduler posture; EXCLUSIVE is absent (not empty), FORCE is empty.
 STEADY_CONTROL = {"SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only", "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
                   "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "",
@@ -544,8 +544,13 @@ STEADY_PAPER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "on", "PANTHEON_CAPITAL_API_U
                 "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": "/run/pantheon-principals/DEPLOYMENT_CAPITAL_SERVICE_TOKEN"}
 EMPTY_PAPER_CALLER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "off", "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
                       "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": ""}
-STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API, PAPER: STEADY_PAPER}
-CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API, PAPER: EMPTY_PAPER_CALLER}
+ISSUER = artifacts.ISSUER_SERVICE
+STEADY_ISSUER = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+                 "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}
+# Compose default a restoring caller without the original value produces.
+FALSE_ISSUER_CALLER = {**STEADY_ISSUER, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"}
+STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API, PAPER: STEADY_PAPER, ISSUER: STEADY_ISSUER}
+CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API, PAPER: EMPTY_PAPER_CALLER, ISSUER: FALSE_ISSUER_CALLER}
 ONE_SHOT = "minio-init"
 TENANT = "tenant-recorded-at-baseline"
 
@@ -637,7 +642,8 @@ class StackDocker:
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
             if args[2] == artifacts.SOURCE_PATH_FORMAT:
                 return json.dumps("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH=" + str(self.source_journal)) + "\n"
-            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT):
+            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT,
+                           artifacts.ISSUER_ENV_FORMAT):
                 keys = artifacts.CONTROL_POSTURE[service][0]
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row.get("control_env", {}).items() if k in keys)
             if args[2] == artifacts.RESTART_FORMAT:
@@ -1120,12 +1126,12 @@ def test_restore_preserves_source_scheduler_and_api_posture_against_a_bounded_ca
     assert recorded["env"]["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == ""
     assert set(stack["services"][API]["control"]["env"]) == set(artifacts.API_ENV_KEYS)
     docker.mutate_to_candidate()
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         docker.containers[service]["control_env"] = dict(CALLER[service])
         docker.containers[service].update(restart="no")
     docker.containers[SCHEDULER].update(status="exited", exit_code=1, health=None)
     result, _ = restore_stack(stack_case)
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         row = docker.containers[service]
         assert row["control_env"] == baseline[service]["control_env"] == STEADY[service]
         assert row["restart"] == "unless-stopped" and row["status"] == "running"
@@ -1160,7 +1166,7 @@ def test_matching_scheduler_posture_is_left_alone(stack_case):
     assert SCHEDULER not in result["recreated_services"] and API not in result["recreated_services"]
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER, ISSUER])
 def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     _, docker, _, _, stack, _, _ = stack_case
     docker.containers[service]["control_env"] = dict(CALLER[service])
@@ -1170,7 +1176,7 @@ def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     assert service in caught.value.services
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER, ISSUER])
 def test_running_source_service_without_control_posture_is_invalid(stack_case, service):
     # No legacy shim: a capture lacking the required posture cannot prove restoration.
     stack = json.loads(json.dumps(stack_case[4]))
@@ -1188,15 +1194,16 @@ def test_real_compose_render_ignores_a_bounded_caller_for_every_recorded_key(sta
     text = next(c for c in docker.up_calls if SCHEDULER in c["names"])["text"]
     override = tmp_path / "override.yml"
     override.write_text(text)
-    caller = {**BOUNDED_CALLER, **BOUNDED_API, "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no"}
+    caller = {**BOUNDED_CALLER, **BOUNDED_API, "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+              "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"}
     repo = Path(__file__).resolve().parent.parent
     run = subprocess.run(["docker", "compose", "-f", str(repo / "docker-compose.yml"), "-f", str(override),
-                          "--profile", "root", "config", "--format", "json"],
+                          "--profile", "root", "--profile", "dev-paper-principals", "config", "--format", "json"],
                          capture_output=True, text=True, env={**os.environ, **caller}, cwd=repo)
     if run.returncode:
         pytest.skip("docker compose cannot render the repository file in this environment")
     rendered = json.loads(run.stdout)["services"]
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         recorded = stack["services"][service]["control"]
         env = rendered[service]["environment"]
         for key, value in recorded["env"].items():
@@ -1323,4 +1330,65 @@ def test_half_memory_index_cannot_become_a_rollback_baseline(stack_case, remaini
     stack = copy.deepcopy(stack_case[4])
     stack["services"][remaining] = copy.deepcopy(stack["services"]["svc-01"])
     with pytest.raises(artifacts.ArtifactError, match="requires both"):
+        artifacts.validate_stack(stack)
+
+
+def _recapture_issuer(stack_case, value):
+    """Re-capture the baseline after setting the running issuer's recorded flag (None = absent)."""
+    root, docker, source_sha = stack_case[0], stack_case[1], None
+    env = docker.containers[ISSUER]["control_env"]
+    if value is None:
+        env.pop("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED")
+    else:
+        env["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] = value
+    stack = artifacts.capture_stack(docker=docker, source_sha=stack_case[4]["source_sha"], check_lease=lambda: None)
+    return stack
+
+
+@pytest.mark.parametrize("caller", [FALSE_ISSUER_CALLER, {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev"}])
+def test_captured_true_issuer_flag_survives_caller_false_or_absent(stack_case, caller):
+    _, docker, _, _, stack, _, _ = stack_case
+    assert stack["services"][ISSUER]["control"]["env"] == STEADY_ISSUER
+    docker.mutate_to_candidate()
+    docker.containers[ISSUER]["control_env"] = dict(caller)
+    docker.compose_defaults[ISSUER]["control"] = dict(caller)
+    restore_stack(stack_case)
+    assert docker.containers[ISSUER]["control_env"] == STEADY_ISSUER
+
+
+@pytest.mark.parametrize("flag", ["false", None])
+def test_captured_false_or_absent_issuer_flag_never_becomes_true(stack_case, flag):
+    _, docker, _, _, _, _, _ = stack_case
+    stack = _recapture_issuer(stack_case, flag)
+    assert stack["services"][ISSUER]["control"]["env"]["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] == flag
+    docker.compose_defaults[ISSUER]["control"] = dict(STEADY_ISSUER)  # a true caller must not leak in
+    docker.mutate_to_candidate()
+    stack_case = (*stack_case[:4], stack, *stack_case[5:])
+    restore_stack(stack_case)
+    assert docker.containers[ISSUER]["control_env"].get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") == flag
+
+
+def test_mismatched_restored_issuer_posture_is_rejected(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.containers[ISSUER]["control_env"] = dict(FALSE_ISSUER_CALLER)
+    docker.stuck.add(ISSUER)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack(stack_case)
+    assert ISSUER in caught.value.services
+
+
+def test_issuer_baseline_records_no_jwt_secret_or_token(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    docker.containers[ISSUER]["env"]["PANTHEON_DEV_BFF_JWT_SECRET"] = "s" * 40
+    text = json.dumps(stack)
+    assert "JWT" not in text and "s" * 40 not in text
+    assert set(stack["services"][ISSUER]["control"]["env"]) == set(artifacts.ISSUER_ENV_KEYS)
+
+
+def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_case):
+    # Explicit limitation: a sealed baseline taken before this posture existed is never
+    # upgraded or given invented values; it recovers through its original pinned controller.
+    stack = json.loads(json.dumps(stack_case[4]))
+    del stack["services"][ISSUER]["control"]
+    with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(stack)
