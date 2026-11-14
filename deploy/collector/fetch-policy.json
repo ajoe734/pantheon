@@ -567,6 +567,52 @@
       "attribution": "",
       "logged_in": false,
       "enabled": true
+    },
+    "collector-tw-twse-index-breadth": {
+      "source_id": "collector-tw-twse-index-breadth",
+      "section_ref": "5.1",
+      "description": "TWSE MI_INDEX TWSE price indices and whole-market/stock breadth; separate regime dataset",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
+      ],
+      "endpoint_template": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={yyyymmdd}&type=ALLBUT0999&response=json",
+      "backfill_page_granularity": "per_date_indices_and_breadth",
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 1,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所（單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": true
+    },
+    "collector-tw-twse-taiex-history": {
+      "source_id": "collector-tw-twse-taiex-history",
+      "section_ref": "5.1",
+      "description": "TWSE MI_5MINS_HIST TAIEX daily OHLC history, one request per calendar month from 2012-01",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST"
+      ],
+      "endpoint_template": "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date={yyyymmdd}&response=json",
+      "backfill_page_granularity": "per_month_taiex",
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 1,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html (read 2026-11-10)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所（單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": true
     }
   }
 }

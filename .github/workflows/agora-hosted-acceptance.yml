@@ -105,7 +105,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 3fd9536ca9f5e0cfb275429a05fefa36bc7ec870
+          ref: 081075781d28a6563c731909667b98b7b5c153f9
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -126,11 +126,11 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           lease_dir="$(mktemp -d "${RUNNER_TEMP}/agora-hosted-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
