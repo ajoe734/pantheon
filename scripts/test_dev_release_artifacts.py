@@ -1377,12 +1377,28 @@ def test_mismatched_restored_issuer_posture_is_rejected(stack_case):
     assert ISSUER in caught.value.services
 
 
-def test_issuer_baseline_records_no_jwt_secret_or_token(stack_case):
-    _, docker, _, _, stack, _, _ = stack_case
-    docker.containers[ISSUER]["env"]["PANTHEON_DEV_BFF_JWT_SECRET"] = "s" * 40
+def test_issuer_baseline_records_no_jwt_secret_or_token(stack_case, capsys):
+    _, docker, _, _, _, _, _ = stack_case
+    secret, token = "s" * 40, "t" * 40
+    # The fake filters control_env by the allowed keys exactly as the Docker inspect format does.
+    docker.containers[ISSUER]["control_env"].update(
+        PANTHEON_DEV_BFF_JWT_SECRET=secret, PANTHEON_DEV_PAPER_PRINCIPAL_TOKEN=token)
+    stack = artifacts.capture_stack(docker=docker, source_sha=stack_case[4]["source_sha"], check_lease=lambda: None)
     text = json.dumps(stack)
-    assert "JWT" not in text and "s" * 40 not in text
+    names = ("PANTHEON_DEV_BFF_JWT_SECRET", "PANTHEON_DEV_PAPER_PRINCIPAL_TOKEN")
+    assert not any(n in text for n in names) and secret not in text and token not in text
     assert set(stack["services"][ISSUER]["control"]["env"]) == set(artifacts.ISSUER_ENV_KEYS)
+    # Successful restore and failing diagnostic output must also exclude the names and values.
+    docker.mutate_to_candidate()
+    docker.containers[ISSUER]["control_env"].update(PANTHEON_DEV_BFF_JWT_SECRET=secret)
+    restore_stack((*stack_case[:4], stack, *stack_case[5:]))
+    docker.containers[ISSUER]["control_env"] = dict(FALSE_ISSUER_CALLER, PANTHEON_DEV_BFF_JWT_SECRET=secret)
+    docker.stuck.add(ISSUER)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack((*stack_case[:4], stack, *stack_case[5:]))
+    out = capsys.readouterr()
+    diagnostic = str(caught.value) + repr(caught.value.services) + out.out + out.err
+    assert secret not in diagnostic and token not in diagnostic and not any(n in diagnostic for n in names)
 
 
 def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_case):

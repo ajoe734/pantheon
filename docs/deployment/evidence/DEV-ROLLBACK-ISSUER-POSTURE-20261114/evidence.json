@@ -4,6 +4,5 @@
   "defect": "Whole-stack baseline recorded the running dev-paper-principal-issuer image but not PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED; a restored Compose without the caller value defaults to false and the issuer fails closed.",
   "change": "dev-paper-principal-issuer added to the existing CONTROL_POSTURE capture/restore/readback mechanism, recording only PANTHEON_ENV, PANTHEON_DEV_BFF_TENANT_ID, PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED (true/false/absent preserved verbatim; JWT secret/issuer/audience never recorded).",
   "legacy_limitation": "Sealed baselines captured before this change lack issuer posture. They stay immutable and are not migrated or given invented values; validate_stack rejects them for this helper, so they recover only through their original pinned controller. Original flag value for Root435699 was not captured and is not claimed.",
-  "tests": "scripts/test_dev_release_artifacts.py: 144 passed, 2 skipped (docker-dependent)",
-  "related_tests": "test_capture_dev_artifact_baseline.py 180 passed; test_dev_artifact_compensation_evidence.py 102 passed"
+  "tests": "scripts/test_dev_release_artifacts.py + test_capture_dev_artifact_baseline.py + test_dev_artifact_compensation_evidence.py: 426 passed, 2 skipped (local pgvector image fixture not provided; separate FE digest helper/Node checkout unavailable). JWT/token regression now injects synthetic secret/token into the filtered control env BEFORE a fresh capture_stack, and asserts baseline, successful restore and failing diagnostic output exclude names/values."
 }
