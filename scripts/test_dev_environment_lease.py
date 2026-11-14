@@ -1326,5 +1326,502 @@ raise SystemExit(lease.heartbeat_loop(args, mgr))
             self.assertEqual(failure["status"], "lost")
 
 
+class RateLimitHandlingTests(unittest.TestCase):
+    def test_classify_primary_403_secondary_429_and_plain_auth_denial(self) -> None:
+        reset_time = datetime(2026, 11, 14, 7, 58, 56, tzinfo=timezone.utc)
+        server_now = datetime(2026, 11, 14, 7, 50, 54, tzinfo=timezone.utc)
+
+        primary_err = lease.classify_github_http_error(
+            403,
+            "API rate limit exceeded for user ID 169176954.",
+            '{"message":"API rate limit exceeded for user ID 169176954."}',
+            {
+                "Date": "Sat, 14 Nov 2026 07:50:54 GMT",
+                "X-RateLimit-Limit": "5000",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(reset_time.timestamp())),
+            },
+        )
+        self.assertIsInstance(primary_err, lease.GitHubRateLimitError)
+        assert isinstance(primary_err, lease.GitHubRateLimitError)
+        self.assertTrue(lease.is_rate_limit_error(primary_err))
+        self.assertFalse(lease.is_transient_error(primary_err))
+        self.assertEqual(primary_err.reason, "rate_limited")
+        self.assertEqual(primary_err.rate_limit_kind, "primary")
+        self.assertEqual(primary_err.remaining, 0)
+        self.assertEqual(primary_err.reset_at, reset_time)
+        self.assertEqual(primary_err.server_now, server_now)
+
+        secondary_429 = lease.classify_github_http_error(
+            429,
+            "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+            '{"message":"You have exceeded a secondary rate limit."}',
+            {
+                "Date": "Sat, 14 Nov 2026 07:50:54 GMT",
+                "Retry-After": "42",
+            },
+        )
+        self.assertIsInstance(secondary_429, lease.GitHubRateLimitError)
+        assert isinstance(secondary_429, lease.GitHubRateLimitError)
+        self.assertTrue(lease.is_rate_limit_error(secondary_429))
+        self.assertFalse(lease.is_transient_error(secondary_429))
+        self.assertEqual(secondary_429.reason, "rate_limited")
+        self.assertEqual(secondary_429.rate_limit_kind, "secondary")
+        self.assertEqual(secondary_429.retry_after_seconds, 42.0)
+
+        secondary_403_retry_after = lease.classify_github_http_error(
+            403,
+            "Forbidden",
+            '{"message":"Forbidden"}',
+            {
+                "Date": "Sat, 14 Nov 2026 07:50:54 GMT",
+                "X-RateLimit-Remaining": "4200",
+                "Retry-After": "30",
+            },
+        )
+        self.assertIsInstance(secondary_403_retry_after, lease.GitHubRateLimitError)
+        assert isinstance(secondary_403_retry_after, lease.GitHubRateLimitError)
+        self.assertEqual(secondary_403_retry_after.rate_limit_kind, "secondary")
+        self.assertEqual(secondary_403_retry_after.retry_after_seconds, 30.0)
+
+        for status, msg, headers in (
+            (
+                401,
+                "Bad credentials",
+                {"Date": "Sat, 14 Nov 2026 07:50:54 GMT"},
+            ),
+            (
+                403,
+                "Resource not accessible by integration",
+                {
+                    "Date": "Sat, 14 Nov 2026 07:50:54 GMT",
+                    "X-RateLimit-Remaining": "4912",
+                    "X-RateLimit-Reset": str(int(reset_time.timestamp())),
+                },
+            ),
+            (
+                404,
+                "Not Found",
+                {"Date": "Sat, 14 Nov 2026 07:50:54 GMT"},
+            ),
+            (
+                409,
+                "Conflict",
+                {"Date": "Sat, 14 Nov 2026 07:50:54 GMT"},
+            ),
+            (
+                422,
+                "Unprocessable Entity",
+                {"Date": "Sat, 14 Nov 2026 07:50:54 GMT"},
+            ),
+        ):
+            with self.subTest(status=status, msg=msg):
+                plain_err = lease.classify_github_http_error(
+                    status,
+                    msg,
+                    json.dumps({"message": msg}),
+                    headers,
+                )
+                self.assertIsInstance(plain_err, lease.GitHubApiError)
+                self.assertNotIsInstance(plain_err, lease.GitHubRateLimitError)
+                self.assertFalse(lease.is_rate_limit_error(plain_err))
+                self.assertFalse(lease.is_transient_error(plain_err))
+
+    def test_root_43569948128_heartbeat_rate_limit_loss_then_compensation_waits_and_restores_with_fresh_cas(
+        self,
+    ) -> None:
+        # Root 43569948128 timeline on 2026-11-14:
+        # - 07:49:54Z: last verified heartbeat (expiresAt 07:54:54Z, freshness deadline 07:51:54Z)
+        # - 07:50:54Z: heartbeat renewal hits 403 API rate limit exceeded (reset at 07:58:56Z, 482s away > 60s remaining freshness)
+        # - 07:54:04Z: compensation rollback lease acquisition hits the same 403 rate limit until 07:58:56Z
+        hb_at = datetime(2026, 11, 14, 7, 49, 54, tzinfo=timezone.utc)
+        exp_at = datetime(2026, 11, 14, 7, 54, 54, tzinfo=timezone.utc)
+        fail_at = datetime(2026, 11, 14, 7, 50, 54, tzinfo=timezone.utc)
+        comp_start = datetime(2026, 11, 14, 7, 54, 4, tzinfo=timezone.utc)
+        reset_at = datetime(2026, 11, 14, 7, 58, 56, tzinfo=timezone.utc)
+
+        deploy_active_sha = "1" * 40
+        client = FakeClient()
+        client.now = fail_at
+        client.state = state_for(
+            owner="pantheon:deploy-43569948128",
+            mode="deployment",
+            heartbeat=hb_at,
+            expires=exp_at,
+        )
+        client.content_sha = deploy_active_sha
+        mgr = manager(client)
+
+        rate_limit_403 = lease.GitHubRateLimitError(
+            403,
+            "API rate limit exceeded for user ID 169176954.",
+            '{"message":"API rate limit exceeded for user ID 169176954."}',
+            rate_limit_kind="primary",
+            remaining=0,
+            reset_at=reset_at,
+            server_now=fail_at,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = root / "state.json"
+            failure_file = root / "failure.json"
+            rollback_state_file = root / "rollback-state.json"
+            lease.atomic_write_json(
+                state_file,
+                lease.public_state(client.state, content_sha=deploy_active_sha),
+                0o600,
+            )
+
+            # Phase 1: At 07:50:54Z, heartbeat renewal hits 403 primary rate limit.
+            # Remaining verified freshness is 60s (until 07:51:54Z), while reset is 482s away (07:58:56Z).
+            # Heartbeat must NOT wait past verified freshness; it immediately reports lost with reason="rate_limited".
+            original_get_content = client.get_content
+            client.get_content = mock.MagicMock(side_effect=rate_limit_403)  # type: ignore[method-assign]
+
+            hb_args = lease.build_parser().parse_args(
+                [
+                    "heartbeat-loop",
+                    "--state-file",
+                    str(state_file),
+                    "--interval-seconds",
+                    "60",
+                    "--failure-json-out",
+                    str(failure_file),
+                ]
+            )
+            with mock.patch.object(lease.signal, "signal"), mock.patch.object(
+                lease.time, "sleep"
+            ) as hb_sleep:
+                hb_exit = lease.heartbeat_loop(hb_args, mgr)
+
+            self.assertEqual(hb_exit, 75)
+            # Only the normal 60s interval sleep occurred before the single rate-limited renewal attempt.
+            self.assertEqual(sum(call.args[0] for call in hb_sleep.call_args_list), 60.0)
+            failure_payload = json.loads(failure_file.read_text(encoding="utf-8"))
+            self.assertEqual(failure_payload["status"], "lost")
+            self.assertEqual(failure_payload["reason"], "rate_limited")
+            self.assertEqual(failure_payload["rateLimitKind"], "primary")
+            self.assertEqual(failure_payload["rateLimitResetAt"], "2026-11-14T07:58:56Z")
+
+            # Phase 2: At 07:54:04Z, compensation runs rollback lease acquire + verify.
+            # While client.now < reset_at (07:58:56Z), GitHub returns 403 rate limit.
+            # When compensation sleeps, clock advances past 07:58:56Z (and past predecessor expiresAt 07:54:54Z).
+            client.now = comp_start
+            slept_intervals: list[float] = []
+
+            def advance_clock(seconds: float) -> None:
+                slept_intervals.append(seconds)
+                client.now = client.now + timedelta(seconds=seconds)
+
+            client.sleep = advance_clock  # type: ignore[attr-defined]
+
+            def rate_limited_get_ref(repository: str, branch: str):
+                if client.now < reset_at:
+                    raise lease.GitHubRateLimitError(
+                        403,
+                        "API rate limit exceeded for user ID 169176954.",
+                        rate_limit_kind="primary",
+                        remaining=0,
+                        reset_at=reset_at,
+                        server_now=client.now,
+                    )
+                return client.refs.get(branch), client.now
+
+            def rate_limited_get_content(repository: str, branch: str, path: str):
+                if client.now < reset_at:
+                    raise lease.GitHubRateLimitError(
+                        403,
+                        "API rate limit exceeded for user ID 169176954.",
+                        rate_limit_kind="primary",
+                        remaining=0,
+                        reset_at=reset_at,
+                        server_now=client.now,
+                    )
+                return original_get_content(repository, branch, path)
+
+            client.get_ref = rate_limited_get_ref  # type: ignore[method-assign]
+            client.get_content = rate_limited_get_content  # type: ignore[method-assign]
+
+            comp_mgr = manager(client)
+            acquired_state, acquired_sha, written_at = comp_mgr.acquire(
+                mode="deployment",
+                owner="pantheon:deploy-43569948128:rollback",
+                ttl_seconds=300,
+                wait_seconds=3900,
+                poll_seconds=5.0,
+                expected_backend_sha="b" * 40,
+                run_url="https://github.com/ajoe734/pantheon/actions/runs/43569948128",
+            )
+            # Wait was 292s (07:54:04Z -> 07:58:56Z) + 2s bounded jitter = 294s.
+            self.assertEqual(slept_intervals, [294.0])
+            self.assertEqual(client.now, datetime(2026, 11, 14, 7, 58, 58, tzinfo=timezone.utc))
+            self.assertEqual(written_at, datetime(2026, 11, 14, 7, 58, 58, tzinfo=timezone.utc))
+            # Fresh CAS replaced the expired predecessor deploy_active_sha with a fresh leaseId.
+            self.assertEqual(client.put_expected_shas, [deploy_active_sha])
+            self.assertEqual(acquired_state["previousContentSha"], deploy_active_sha)
+            self.assertNotEqual(acquired_state["leaseId"], "11111111-1111-4111-8111-111111111111")
+            self.assertEqual(acquired_state["owner"], "pantheon:deploy-43569948128:rollback")
+
+            local_rollback = lease.public_state(acquired_state, content_sha=acquired_sha)
+            lease.atomic_write_json(rollback_state_file, local_rollback, 0o600)
+
+            verified = comp_mgr.verify(
+                local_rollback,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=15.0,
+                initial_visibility_poll_seconds=1.0,
+                state_file=str(rollback_state_file),
+            )
+            self.assertEqual(verified["status"], "verified")
+            self.assertEqual(verified["owner"], "pantheon:deploy-43569948128:rollback")
+            self.assertEqual(verified["leaseId"], acquired_state["leaseId"])
+
+    def test_heartbeat_retries_short_secondary_rate_limit_only_within_verified_freshness(
+        self,
+    ) -> None:
+        client = FakeClient()
+        # 50s of verified freshness remaining (heartbeat 70s ago, max freshness 120s).
+        hb_at = NOW - timedelta(seconds=70)
+        exp_at = NOW + timedelta(seconds=230)
+        client.state = state_for(heartbeat=hb_at, expires=exp_at)
+        client.content_sha = "blob-initial"
+        mgr = manager(client)
+
+        original_put = client.put_content
+        put_attempts = 0
+
+        def rate_limited_then_ok_put(*args, **kwargs):
+            nonlocal put_attempts
+            put_attempts += 1
+            if put_attempts == 1:
+                raise lease.GitHubRateLimitError(
+                    429,
+                    "You have exceeded a secondary rate limit.",
+                    rate_limit_kind="secondary",
+                    retry_after_seconds=10.0,
+                    server_now=client.now,
+                )
+            res = original_put(*args, **kwargs)
+            self.stop_loop()
+            return res
+
+        client.put_content = rate_limited_then_ok_put  # type: ignore[method-assign]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = root / "state.json"
+            failure_file = root / "failure.json"
+            lease.atomic_write_json(
+                state_file,
+                lease.public_state(client.state, content_sha="blob-initial"),
+                0o600,
+            )
+            args = lease.build_parser().parse_args(
+                [
+                    "heartbeat-loop",
+                    "--state-file",
+                    str(state_file),
+                    "--interval-seconds",
+                    "60",
+                    "--failure-json-out",
+                    str(failure_file),
+                ]
+            )
+            handlers = {}
+            self.stop_loop = lambda: handlers[signal.SIGTERM](signal.SIGTERM, None)
+            with mock.patch.object(
+                lease.signal,
+                "signal",
+                side_effect=lambda sig, handler: handlers.update({sig: handler}),
+            ), mock.patch.object(lease.time, "sleep") as sleep_mock:
+                rc = lease.heartbeat_loop(args, mgr)
+
+            self.assertEqual(rc, 0)
+            self.assertFalse(failure_file.exists())
+            # 60s initial interval + (10s retry-after + 2s jitter) = 72s
+            self.assertAlmostEqual(
+                sum(call.args[0] for call in sleep_mock.call_args_list), 72.0
+            )
+            saved = lease.read_json_file(state_file, "state")
+            self.assertEqual(saved["contentSha"], "blob-1")
+
+    def test_compensation_verify_waits_for_rate_limit_and_reacquires_fresh_lease_when_ttl_expired(
+        self,
+    ) -> None:
+        client = FakeClient()
+        client.now = datetime(2026, 11, 14, 8, 0, 0, tzinfo=timezone.utc)
+        mgr = manager(client)
+
+        initial_state, _, _ = mgr.acquire(
+            mode="deployment",
+            owner="pantheon:deploy-99:rollback",
+            ttl_seconds=300,
+            wait_seconds=60,
+            poll_seconds=5.0,
+            expected_backend_sha="a" * 40,
+        )
+        initial_sha = "2" * 40
+        client.content_sha = initial_sha
+        # During initial verify, GitHub rate-limits for 400s (longer than the 300s TTL).
+        reset_at = client.now + timedelta(seconds=400)
+        original_get_content = client.get_content
+        verify_get_calls = 0
+
+        def get_content_rate_limited_once(repository: str, branch: str, path: str):
+            nonlocal verify_get_calls
+            verify_get_calls += 1
+            if verify_get_calls == 1:
+                raise lease.GitHubRateLimitError(
+                    403,
+                    "API rate limit exceeded",
+                    rate_limit_kind="primary",
+                    remaining=0,
+                    reset_at=reset_at,
+                    server_now=client.now,
+                )
+            return original_get_content(repository, branch, path)
+
+        client.get_content = get_content_rate_limited_once  # type: ignore[method-assign]
+        slept: list[float] = []
+
+        def advance_clock(seconds: float) -> None:
+            slept.append(seconds)
+            client.now = client.now + timedelta(seconds=seconds)
+
+        client.sleep = advance_clock  # type: ignore[attr-defined]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "rollback-state.json"
+            local_state = lease.public_state(initial_state, content_sha=initial_sha)
+            lease.atomic_write_json(state_file, local_state, 0o600)
+
+            verified = mgr.verify(
+                local_state,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=15.0,
+                initial_visibility_poll_seconds=1.0,
+                rate_limit_wait_seconds=3900.0,
+                ttl_seconds=300,
+                state_file=str(state_file),
+            )
+            self.assertEqual(slept, [402.0])
+            self.assertEqual(verified["status"], "verified")
+            # Re-acquired a fresh lease with a new leaseId and fresh CAS after waiting out the 400s reset.
+            self.assertNotEqual(verified["leaseId"], initial_state["leaseId"])
+            self.assertEqual(client.put_expected_shas, [None, initial_sha])
+            persisted = lease.read_json_file(state_file, "rollback state")
+            self.assertEqual(persisted["leaseId"], verified["leaseId"])
+            self.assertEqual(local_state["leaseId"], verified["leaseId"])
+
+    def test_reset_beyond_budget_fails_with_rate_limited_rollback_pending_exit_79(
+        self,
+    ) -> None:
+        client = FakeClient()
+        client.now = datetime(2026, 11, 14, 7, 54, 4, tzinfo=timezone.utc)
+        # Reset is 4000s in the future, exceeding the 3900s compensation budget.
+        reset_beyond = client.now + timedelta(seconds=4000)
+
+        def always_rate_limited(*args, **kwargs):
+            raise lease.GitHubRateLimitError(
+                403,
+                "API rate limit exceeded for user ID 169176954.",
+                rate_limit_kind="primary",
+                remaining=0,
+                reset_at=reset_beyond,
+                server_now=client.now,
+            )
+
+        client.get_ref = always_rate_limited  # type: ignore[method-assign]
+        mgr = manager(client)
+
+        with self.assertRaises(lease.RateLimitedRollbackPending) as ctx:
+            mgr.acquire(
+                mode="deployment",
+                owner="pantheon:deploy-43569948128:rollback",
+                ttl_seconds=300,
+                wait_seconds=3900,
+                poll_seconds=5.0,
+            )
+        self.assertIn("rate_limited_rollback_pending", str(ctx.exception))
+
+        # Verify main() translates RateLimitedRollbackPending to exit code 79 and explicit reason on stderr.
+        stderr_buf = io.StringIO()
+        with mock.patch.object(
+            lease, "run", side_effect=ctx.exception
+        ), mock.patch("sys.stderr", stderr_buf):
+            with self.assertRaises(SystemExit) as exit_ctx:
+                lease.main()
+        self.assertEqual(
+            exit_ctx.exception.code, lease.RATE_LIMITED_ROLLBACK_PENDING_EXIT_CODE
+        )
+        self.assertEqual(exit_ctx.exception.code, 79)
+        self.assertIn(
+            "environment lease rate_limited_rollback_pending:",
+            stderr_buf.getvalue(),
+        )
+
+    def test_wait_for_core_quota_waits_when_below_default_1500_and_never_fails(
+        self,
+    ) -> None:
+        client = FakeClient()
+        client.now = datetime(2026, 11, 14, 7, 45, 0, tzinfo=timezone.utc)
+        reset_at = datetime(2026, 11, 14, 7, 58, 56, tzinfo=timezone.utc)
+        slept: list[float] = []
+
+        def advance_clock(seconds: float) -> None:
+            slept.append(seconds)
+            client.now = client.now + timedelta(seconds=seconds)
+
+        client.sleep = advance_clock  # type: ignore[attr-defined]
+        calls = 0
+
+        def fake_get_rate_limit() -> dict:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "limit": 5000,
+                    "remaining": 842,
+                    "resetEpoch": int(reset_at.timestamp()),
+                    "resetAt": reset_at,
+                    "serverNow": client.now,
+                }
+            return {
+                "limit": 5000,
+                "remaining": 5000,
+                "resetEpoch": int((client.now + timedelta(hours=1)).timestamp()),
+                "resetAt": client.now + timedelta(hours=1),
+                "serverNow": client.now,
+            }
+
+        client.get_rate_limit = fake_get_rate_limit  # type: ignore[attr-defined]
+        mgr = manager(client)
+
+        stderr_buf = io.StringIO()
+        with mock.patch("sys.stderr", stderr_buf):
+            result = mgr.wait_for_core_quota()
+
+        self.assertEqual(result["status"], "quota_ready")
+        self.assertEqual(result["minRemaining"], 1500)
+        self.assertEqual(result["remaining"], 5000)
+        self.assertEqual(result["attempts"], 2)
+        # 836s until 07:58:56Z + 2s jitter = 838s
+        self.assertEqual(slept, [838.0])
+        logs = [
+            json.loads(line)
+            for line in stderr_buf.getvalue().strip().splitlines()
+            if line.strip()
+        ]
+        statuses = [entry["status"] for entry in logs]
+        self.assertEqual(
+            statuses,
+            ["quota_observed", "quota_waiting", "quota_observed"],
+        )
+        self.assertEqual(logs[0]["remaining"], 842)
+        self.assertEqual(logs[1]["waitSeconds"], 838.0)
+        self.assertEqual(logs[2]["remaining"], 5000)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -633,3 +633,40 @@ def test_heartbeat_survives_subshell_step_exit_and_sighup() -> None:
                 os.kill(heartbeat_pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+
+
+def test_rate_limited_heartbeat_loss_preserves_rate_limit_failure_json_for_compensation() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        paths = prepare_fixture(root)
+        rate_limit_failure = {
+            "schemaVersion": 1,
+            "status": "lost",
+            "reason": "rate_limited",
+            "rateLimitKind": "primary",
+            "rateLimitResetAt": "2026-11-14T07:58:56Z",
+            "resource": "pantheon-dev-hosted",
+            "repository": "ajoe734/pantheon",
+            "branch": "pantheon-environment-leases",
+            "path": "leases/dev-hosted.json",
+            "detectedAt": "2026-11-14T07:50:54Z",
+            "error": "GitHub API 403: API rate limit exceeded for user ID 169176954.",
+        }
+        paths["failure"].write_text(
+            json.dumps(rate_limit_failure, indent=2) + "\n", encoding="utf-8"
+        )
+        completed = subprocess.run(
+            ["bash", str(paths["guard"]), "echo", "should-not-run"],
+            cwd=REPO_ROOT,
+            env=guard_environment(paths),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 75, completed.stderr
+        assert "should-not-run" not in completed.stdout
+        persisted = json.loads(paths["failure"].read_text(encoding="utf-8"))
+        assert persisted["reason"] == "rate_limited"
+        assert persisted["rateLimitResetAt"] == "2026-11-14T07:58:56Z"
+

@@ -54,6 +54,17 @@ READ_ATTEMPTS = 3
 DEFAULT_MAX_HEARTBEAT_AGE_SECONDS = 120
 HEARTBEAT_RETRY_SLEEP_SECONDS = 5.0
 MIN_RENEWAL_BUDGET_SECONDS = 1.0
+RATE_LIMITED_REASON = "rate_limited"
+RATE_LIMITED_ROLLBACK_PENDING_REASON = "rate_limited_rollback_pending"
+RATE_LIMITED_ROLLBACK_PENDING_EXIT_CODE = 79
+DEFAULT_RATE_LIMIT_JITTER_SECONDS = 2.0
+MAX_RATE_LIMIT_JITTER_SECONDS = 5.0
+DEFAULT_RATE_LIMIT_FALLBACK_WAIT_SECONDS = 60.0
+DEFAULT_COMPENSATION_RATE_LIMIT_WAIT_SECONDS = 3900.0
+DEFAULT_MIN_CORE_QUOTA_REMAINING = 1500
+MIN_CORE_QUOTA_ENV = "PANTHEON_DEV_LEASE_MIN_REMAINING_QUOTA"
+RATE_LIMIT_WAIT_ENV = "PANTHEON_DEV_ENVIRONMENT_LEASE_RATE_LIMIT_WAIT_SECONDS"
+PREDECESSOR_FAILURE_FILE_ENV = "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE"
 ACQUISITION_IMMUTABLE_FIELDS = (
     "schemaVersion",
     "repository",
@@ -89,11 +100,48 @@ class LeaseConflict(LeaseError):
     """Raised for a GitHub compare-and-swap conflict."""
 
 
+class RateLimitedRollbackPending(LeaseError):
+    """Raised when a GitHub rate-limit reset falls beyond the rollback budget."""
+
+    reason = RATE_LIMITED_ROLLBACK_PENDING_REASON
+
+
 class GitHubApiError(LeaseError):
     def __init__(self, status: int, message: str, body: str = "") -> None:
         super().__init__(f"GitHub API {status}: {message}")
         self.status = status
         self.body = body
+
+
+class GitHubRateLimitError(GitHubApiError):
+    """Raised for primary or secondary GitHub API rate-limit responses."""
+
+    reason = RATE_LIMITED_REASON
+
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        body: str = "",
+        *,
+        rate_limit_kind: str = "primary",
+        remaining: int | None = None,
+        reset_epoch: int | None = None,
+        reset_at: datetime | None = None,
+        retry_after_seconds: float | None = None,
+        server_now: datetime | None = None,
+    ) -> None:
+        super().__init__(status, message, body)
+        self.rate_limit_kind = rate_limit_kind
+        self.remaining = remaining
+        if reset_at is None and reset_epoch is not None:
+            reset_at = datetime.fromtimestamp(int(reset_epoch), tz=timezone.utc)
+        if reset_epoch is None and reset_at is not None:
+            reset_epoch = int(reset_at.timestamp())
+        self.reset_epoch = reset_epoch
+        self.reset_at = reset_at
+        self.retry_after_seconds = retry_after_seconds
+        self.server_now = server_now
 
 
 class GitHubTransportError(LeaseError):
@@ -102,8 +150,97 @@ class GitHubTransportError(LeaseError):
 
 def is_transient_error(exc: Exception) -> bool:
     return isinstance(exc, GitHubTransportError) or (
-        isinstance(exc, GitHubApiError) and exc.status in TRANSIENT_HTTP_STATUSES
+        isinstance(exc, GitHubApiError)
+        and not isinstance(exc, GitHubRateLimitError)
+        and exc.status in TRANSIENT_HTTP_STATUSES
     )
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    return isinstance(exc, GitHubRateLimitError)
+
+
+def classify_github_http_error(
+    status: int,
+    message: str,
+    body: str = "",
+    headers: Mapping[str, str] | None = None,
+) -> GitHubApiError:
+    hdrs = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    server_now: datetime | None = None
+    if "date" in hdrs:
+        try:
+            server_now = github_server_now(hdrs)
+        except LeaseError:
+            server_now = None
+    remaining: int | None = None
+    raw_remaining = hdrs.get("x-ratelimit-remaining", "").strip()
+    if raw_remaining:
+        try:
+            remaining = int(raw_remaining)
+        except ValueError:
+            remaining = None
+    reset_epoch: int | None = None
+    reset_at: datetime | None = None
+    raw_reset = hdrs.get("x-ratelimit-reset", "").strip()
+    if raw_reset:
+        try:
+            reset_epoch = int(float(raw_reset))
+            reset_at = datetime.fromtimestamp(reset_epoch, tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            reset_epoch = None
+            reset_at = None
+    retry_after_seconds: float | None = None
+    raw_retry_after = hdrs.get("retry-after", "").strip()
+    if raw_retry_after:
+        try:
+            retry_after_seconds = max(0.0, float(raw_retry_after))
+        except ValueError:
+            try:
+                parsed_retry = email.utils.parsedate_to_datetime(raw_retry_after)
+                if parsed_retry is not None:
+                    if parsed_retry.tzinfo is None:
+                        parsed_retry = parsed_retry.replace(tzinfo=timezone.utc)
+                    ref_now = server_now or datetime.now(timezone.utc)
+                    retry_after_seconds = max(
+                        0.0,
+                        (parsed_retry.astimezone(timezone.utc) - ref_now).total_seconds(),
+                    )
+            except (TypeError, ValueError):
+                retry_after_seconds = None
+    if status in (403, 429):
+        combined_lower = f"{message} {body}".lower()
+        has_rate_limit_message = (
+            "rate limit exceeded" in combined_lower
+            or "secondary rate limit" in combined_lower
+            or "exceeded a secondary rate limit" in combined_lower
+        )
+        is_rate_limited = status == 429 or (
+            status == 403
+            and (
+                (remaining is not None and remaining <= 0)
+                or retry_after_seconds is not None
+                or has_rate_limit_message
+            )
+        )
+        if is_rate_limited:
+            kind = (
+                "secondary"
+                if (retry_after_seconds is not None or "secondary rate limit" in combined_lower)
+                else "primary"
+            )
+            return GitHubRateLimitError(
+                status,
+                message,
+                body,
+                rate_limit_kind=kind,
+                remaining=remaining,
+                reset_epoch=reset_epoch,
+                reset_at=reset_at,
+                retry_after_seconds=retry_after_seconds,
+                server_now=server_now,
+            )
+    return GitHubApiError(status, message, body)
 
 
 @dataclass(frozen=True)
@@ -562,8 +699,66 @@ class GitHubClient:
             message = "request failed"
             if isinstance(result.payload, dict) and result.payload.get("message"):
                 message = str(result.payload["message"])
-            raise GitHubApiError(result.status, message, json.dumps(result.payload))
+            raise classify_github_http_error(
+                result.status,
+                message,
+                json.dumps(result.payload),
+                result.headers,
+            )
         return result
+
+    def get_rate_limit(self) -> dict[str, Any]:
+        response = self._request("GET", "/rate_limit", allowed=(200,))
+        now = github_server_now(response.headers)
+        payload = response.payload if isinstance(response.payload, Mapping) else {}
+        resources = payload.get("resources") if isinstance(payload, Mapping) else None
+        core = resources.get("core") if isinstance(resources, Mapping) else None
+        if not isinstance(core, Mapping):
+            core = payload.get("rate") if isinstance(payload, Mapping) else None
+        remaining: int | None = None
+        limit: int | None = None
+        reset_epoch: int | None = None
+        if isinstance(core, Mapping):
+            if core.get("remaining") is not None:
+                try:
+                    remaining = int(core["remaining"])
+                except (TypeError, ValueError):
+                    remaining = None
+            if core.get("limit") is not None:
+                try:
+                    limit = int(core["limit"])
+                except (TypeError, ValueError):
+                    limit = None
+            if core.get("reset") is not None:
+                try:
+                    reset_epoch = int(float(core["reset"]))
+                except (TypeError, ValueError):
+                    reset_epoch = None
+        if remaining is None and "x-ratelimit-remaining" in response.headers:
+            try:
+                remaining = int(response.headers["x-ratelimit-remaining"])
+            except ValueError:
+                remaining = None
+        if limit is None and "x-ratelimit-limit" in response.headers:
+            try:
+                limit = int(response.headers["x-ratelimit-limit"])
+            except ValueError:
+                limit = None
+        if reset_epoch is None and "x-ratelimit-reset" in response.headers:
+            try:
+                reset_epoch = int(float(response.headers["x-ratelimit-reset"]))
+            except ValueError:
+                reset_epoch = None
+        if remaining is None or reset_epoch is None:
+            raise LeaseError("GitHub rate_limit response is missing core remaining/reset")
+        reset_at = datetime.fromtimestamp(reset_epoch, tz=timezone.utc)
+        return {
+            "limit": limit,
+            "remaining": remaining,
+            "resetEpoch": reset_epoch,
+            "resetAt": reset_at,
+            "serverNow": now,
+        }
 
     @staticmethod
     def _content_route(repository: str, path: str, branch: str | None = None) -> str:
@@ -704,10 +899,150 @@ class LeaseManager:
         self.path = path
         self.resource = resource
         self.max_heartbeat_age_seconds = DEFAULT_MAX_HEARTBEAT_AGE_SECONDS
+        self.rate_limit_jitter_seconds: float = DEFAULT_RATE_LIMIT_JITTER_SECONDS
         self._sleep_offset: float = 0.0
         self._logical_monotonic: float | None = None
         self._active_deadline_monotonic: float | None = None
         self._recovery_anchor: VerifiedRenewalBudget | None = None
+
+    def _bounded_jitter(self) -> float:
+        base = max(0.0, min(float(self.rate_limit_jitter_seconds), MAX_RATE_LIMIT_JITTER_SECONDS))
+        if base <= 0:
+            return 0.0
+        return base
+
+    def _current_now_utc(self, fallback: datetime | None = None) -> datetime:
+        if fallback is not None:
+            return fallback
+        client_now = getattr(self.client, "now", None)
+        if isinstance(client_now, datetime):
+            return client_now
+        if callable(client_now):
+            val = client_now()
+            if isinstance(val, datetime):
+                return val
+        return datetime.now(timezone.utc)
+
+    def _rate_limit_wait_seconds(self, exc: GitHubRateLimitError) -> tuple[float, datetime | None]:
+        ref_now = self._current_now_utc(exc.server_now)
+        wait_seconds = 0.0
+        reset_at = exc.reset_at
+        if exc.retry_after_seconds is not None:
+            wait_seconds = max(wait_seconds, float(exc.retry_after_seconds))
+            if reset_at is None:
+                reset_at = ref_now + timedelta(seconds=float(exc.retry_after_seconds))
+        if reset_at is not None:
+            delta = (reset_at - ref_now).total_seconds()
+            wait_seconds = max(wait_seconds, delta)
+        if exc.retry_after_seconds is None and reset_at is None:
+            wait_seconds = DEFAULT_RATE_LIMIT_FALLBACK_WAIT_SECONDS
+            reset_at = ref_now + timedelta(seconds=wait_seconds)
+        total_wait = max(0.0, wait_seconds) + self._bounded_jitter()
+        return total_wait, reset_at
+
+    def wait_for_core_quota(
+        self,
+        *,
+        min_remaining: int = DEFAULT_MIN_CORE_QUOTA_REMAINING,
+    ) -> dict[str, Any]:
+        if min_remaining <= 0:
+            return {
+                "schemaVersion": SCHEMA_VERSION,
+                "status": "quota_check_skipped",
+                "minRemaining": min_remaining,
+            }
+        waited_seconds = 0.0
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                quota = self.client.get_rate_limit()
+                remaining = int(quota["remaining"])
+                limit = quota.get("limit")
+                reset_at: datetime = quota["resetAt"]
+                server_now: datetime = quota["serverNow"]
+                observed_event = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "quota_observed",
+                    "resource": self.resource,
+                    "remaining": remaining,
+                    "limit": limit,
+                    "minRemaining": min_remaining,
+                    "resetAt": utc_iso(reset_at),
+                    "observedAt": utc_iso(server_now),
+                    "attempt": attempts,
+                }
+                print(json.dumps(observed_event, sort_keys=True), file=sys.stderr)
+                if remaining >= min_remaining:
+                    return {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "status": "quota_ready",
+                        "resource": self.resource,
+                        "remaining": remaining,
+                        "limit": limit,
+                        "minRemaining": min_remaining,
+                        "resetAt": utc_iso(reset_at),
+                        "observedAt": utc_iso(server_now),
+                        "waitedSeconds": round(waited_seconds, 3),
+                        "attempts": attempts,
+                    }
+                wait_seconds = max(0.0, (reset_at - server_now).total_seconds()) + self._bounded_jitter()
+                wait_seconds = max(1.0, wait_seconds)
+                wait_event = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "quota_waiting",
+                    "resource": self.resource,
+                    "reason": RATE_LIMITED_REASON,
+                    "remaining": remaining,
+                    "limit": limit,
+                    "minRemaining": min_remaining,
+                    "resetAt": utc_iso(reset_at),
+                    "waitSeconds": round(wait_seconds, 3),
+                    "observedAt": utc_iso(server_now),
+                }
+                print(json.dumps(wait_event, sort_keys=True), file=sys.stderr)
+                self._sleep(wait_seconds)
+                waited_seconds += wait_seconds
+            except GitHubRateLimitError as exc:
+                wait_seconds, reset_at_opt = self._rate_limit_wait_seconds(exc)
+                wait_seconds = max(1.0, wait_seconds)
+                wait_event = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "quota_waiting",
+                    "resource": self.resource,
+                    "reason": RATE_LIMITED_REASON,
+                    "remaining": exc.remaining if exc.remaining is not None else 0,
+                    "minRemaining": min_remaining,
+                    "resetAt": utc_iso(reset_at_opt) if reset_at_opt else None,
+                    "waitSeconds": round(wait_seconds, 3),
+                    "error": str(exc),
+                }
+                print(json.dumps(wait_event, sort_keys=True), file=sys.stderr)
+                self._sleep(wait_seconds)
+                waited_seconds += wait_seconds
+            except Exception as exc:
+                fallback_wait = min(DEFAULT_RATE_LIMIT_FALLBACK_WAIT_SECONDS, 15.0)
+                warn_event = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "quota_probe_warning",
+                    "resource": self.resource,
+                    "minRemaining": min_remaining,
+                    "waitSeconds": round(fallback_wait, 3),
+                    "warning": f"core quota check error (waiting before retry): {exc}",
+                }
+                print(json.dumps(warn_event, sort_keys=True), file=sys.stderr)
+                self._sleep(fallback_wait)
+                waited_seconds += fallback_wait
+                if attempts >= 3 and not isinstance(exc, (GitHubRateLimitError, GitHubTransportError)):
+                    return {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "status": "quota_probe_degraded",
+                        "resource": self.resource,
+                        "minRemaining": min_remaining,
+                        "waitedSeconds": round(waited_seconds, 3),
+                        "attempts": attempts,
+                        "warning": str(exc),
+                    }
 
     def _now_monotonic(self) -> float:
         client_now = getattr(self.client, "now_monotonic", None)
@@ -802,6 +1137,105 @@ class LeaseManager:
             "verifiedAt": utc_iso(created_at),
         }
 
+    def _wait_for_predecessor_rate_limit_reset(
+        self,
+        failure_file: str,
+        *,
+        deadline_monotonic: float,
+        owner: str,
+    ) -> None:
+        path = Path(failure_file)
+        if not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, Mapping) or payload.get("reason") != RATE_LIMITED_REASON:
+            return
+        raw_reset_at = payload.get("rateLimitResetAt")
+        retry_after = payload.get("retryAfterSeconds")
+        ref_now = self._current_now_utc()
+        wait_seconds = 0.0
+        reset_at: datetime | None = None
+        if isinstance(raw_reset_at, str) and raw_reset_at.strip():
+            try:
+                reset_at = parse_utc_iso(raw_reset_at, "rateLimitResetAt")
+                wait_seconds = max(wait_seconds, (reset_at - ref_now).total_seconds())
+            except LeaseError:
+                reset_at = None
+        if retry_after is not None:
+            try:
+                wait_seconds = max(wait_seconds, float(retry_after))
+            except (TypeError, ValueError):
+                pass
+        if wait_seconds <= 0:
+            return
+        total_wait = wait_seconds + self._bounded_jitter()
+        remaining_budget = deadline_monotonic - self._now_monotonic()
+        if total_wait > remaining_budget:
+            reset_desc = utc_iso(reset_at) if reset_at is not None else f"{total_wait:.1f}s"
+            raise RateLimitedRollbackPending(
+                f"{RATE_LIMITED_ROLLBACK_PENDING_REASON}: predecessor heartbeat lost due to "
+                f"rate_limited and reset ({reset_desc}, wait {total_wait:.1f}s) exceeds "
+                f"remaining rollback lease budget ({ max(0.0, remaining_budget):.1f}s) for {owner}"
+            )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "rate_limit_waiting",
+                    "phase": "predecessor_failure_handoff",
+                    "resource": self.resource,
+                    "owner": owner,
+                    "reason": RATE_LIMITED_REASON,
+                    "rateLimitResetAt": utc_iso(reset_at) if reset_at else None,
+                    "waitSeconds": round(total_wait, 3),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        self._sleep(total_wait)
+
+    def _sleep_for_rate_limit_or_raise(
+        self,
+        exc: GitHubRateLimitError,
+        *,
+        deadline_monotonic: float,
+        owner: str,
+        phase: str,
+    ) -> None:
+        total_wait, reset_at = self._rate_limit_wait_seconds(exc)
+        remaining_budget = deadline_monotonic - self._now_monotonic()
+        if total_wait > remaining_budget:
+            reset_desc = utc_iso(reset_at) if reset_at is not None else f"{total_wait:.1f}s"
+            raise RateLimitedRollbackPending(
+                f"{RATE_LIMITED_ROLLBACK_PENDING_REASON}: GitHub API rate limit reset "
+                f"({reset_desc}, wait {total_wait:.1f}s) exceeds remaining lease budget "
+                f"({max(0.0, remaining_budget):.1f}s) during {phase} for {owner}: {exc}"
+            ) from exc
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "rate_limit_waiting",
+                    "phase": phase,
+                    "resource": self.resource,
+                    "owner": owner,
+                    "reason": RATE_LIMITED_REASON,
+                    "rateLimitKind": exc.rate_limit_kind,
+                    "rateLimitResetAt": utc_iso(reset_at) if reset_at else None,
+                    "retryAfterSeconds": exc.retry_after_seconds,
+                    "waitSeconds": round(total_wait, 3),
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        self._sleep(max(0.5, total_wait))
+
     def acquire(
         self,
         *,
@@ -812,6 +1246,8 @@ class LeaseManager:
         poll_seconds: float,
         expected_backend_sha: str = "",
         run_url: str = "",
+        predecessor_failure_file: str = "",
+        min_remaining_quota: int = 0,
     ) -> tuple[dict[str, Any], str, datetime]:
         if mode not in VALID_MODES:
             raise LeaseError(f"unsupported lease mode: {mode}")
@@ -824,82 +1260,109 @@ class LeaseManager:
             raise LeaseError("poll-seconds must be greater than 0 and at most 60")
         if expected_backend_sha and not SHA40_RE.fullmatch(expected_backend_sha):
             raise LeaseError("expected-backend-sha must be a 40-character SHA")
-        self.ensure_branch()
 
-        deadline = time.monotonic() + wait_seconds
+        if min_remaining_quota > 0:
+            self.wait_for_core_quota(min_remaining=min_remaining_quota)
+
+        deadline = self._now_monotonic() + wait_seconds
+        effective_failure_file = predecessor_failure_file or (
+            os.environ.get(PREDECESSOR_FAILURE_FILE_ENV, "")
+            if owner.endswith(":rollback")
+            else ""
+        )
+        if effective_failure_file:
+            self._wait_for_predecessor_rate_limit_reset(
+                effective_failure_file,
+                deadline_monotonic=deadline,
+                owner=owner,
+            )
+
+        branch_verified = False
         last_busy: dict[str, Any] | None = None
         while True:
-            remote = self.client.get_content(self.repository, self.branch, self.path)
-            expected_sha: str | None = None
-            if remote is None:
-                # A missing file is free only because ensure_branch distinguished
-                # it from a missing coordination branch.
-                # A second lightweight ref read supplies the authoritative clock
-                # for the 404-content case without trusting the runner clock.
-                head_sha, now = self.client.get_ref(self.repository, self.branch)
-                if not head_sha:
-                    raise LeaseError(
-                        f"coordination branch {self.repository}:{self.branch} "
-                        "disappeared during acquisition"
-                    )
-            else:
-                state = self._validated(remote)
-                now = remote.server_now
-                expires = parse_utc_iso(state["expiresAt"], "expiresAt")
-                if expires > now:
-                    last_busy = public_state(state, content_sha=remote.content_sha)
-                    remaining = max(0.0, (expires - now).total_seconds())
-                    if time.monotonic() >= deadline:
-                        raise LeaseBusy(
-                            "dev environment is leased by "
-                            f"{state['owner']} ({state['mode']}) until {state['expiresAt']}"
-                        )
-                    time.sleep(min(poll_seconds, remaining or poll_seconds))
-                    continue
-                expected_sha = remote.content_sha
-
-            lease_id = str(uuid.uuid4())
-            timestamp = utc_iso(now)
-            candidate: dict[str, Any] = {
-                "schemaVersion": SCHEMA_VERSION,
-                "resource": self.resource,
-                "mode": mode,
-                "owner": owner,
-                "leaseId": lease_id,
-                "acquiredAt": timestamp,
-                "heartbeatAt": timestamp,
-                "expiresAt": utc_iso(now + timedelta(seconds=ttl_seconds)),
-                "repository": self.repository,
-                "branch": self.branch,
-                "path": self.path,
-            }
-            if expected_backend_sha:
-                candidate["expectedBackendSha"] = expected_backend_sha.lower()
-            if run_url:
-                candidate["runUrl"] = run_url
-            action = "take over stale" if expected_sha else "acquire"
             try:
-                content_sha, written_at = self.client.put_content(
-                    self.repository,
-                    self.branch,
-                    self.path,
-                    candidate,
-                    expected_sha=expected_sha,
-                    message=f"lease: {action} {self.resource} for {owner}",
-                )
-            except LeaseConflict:
-                if time.monotonic() >= deadline:
-                    raise LeaseBusy(
-                        "dev environment lease CAS remained contended"
-                        + (f"; last owner={last_busy.get('owner')}" if last_busy else "")
+                if not branch_verified:
+                    self.ensure_branch()
+                    branch_verified = True
+                remote = self.client.get_content(self.repository, self.branch, self.path)
+                expected_sha: str | None = None
+                if remote is None:
+                    # A missing file is free only because ensure_branch distinguished
+                    # it from a missing coordination branch.
+                    # A second lightweight ref read supplies the authoritative clock
+                    # for the 404-content case without trusting the runner clock.
+                    head_sha, now = self.client.get_ref(self.repository, self.branch)
+                    if not head_sha:
+                        raise LeaseError(
+                            f"coordination branch {self.repository}:{self.branch} "
+                            "disappeared during acquisition"
+                        )
+                else:
+                    state = self._validated(remote)
+                    now = remote.server_now
+                    expires = parse_utc_iso(state["expiresAt"], "expiresAt")
+                    if expires > now:
+                        last_busy = public_state(state, content_sha=remote.content_sha)
+                        remaining = max(0.0, (expires - now).total_seconds())
+                        if self._now_monotonic() >= deadline:
+                            raise LeaseBusy(
+                                "dev environment is leased by "
+                                f"{state['owner']} ({state['mode']}) until {state['expiresAt']}"
+                            )
+                        self._sleep(min(poll_seconds, remaining or poll_seconds))
+                        continue
+                    expected_sha = remote.content_sha
+
+                lease_id = str(uuid.uuid4())
+                timestamp = utc_iso(now)
+                candidate: dict[str, Any] = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "resource": self.resource,
+                    "mode": mode,
+                    "owner": owner,
+                    "leaseId": lease_id,
+                    "acquiredAt": timestamp,
+                    "heartbeatAt": timestamp,
+                    "expiresAt": utc_iso(now + timedelta(seconds=ttl_seconds)),
+                    "repository": self.repository,
+                    "branch": self.branch,
+                    "path": self.path,
+                }
+                if expected_backend_sha:
+                    candidate["expectedBackendSha"] = expected_backend_sha.lower()
+                if run_url:
+                    candidate["runUrl"] = run_url
+                action = "take over stale" if expected_sha else "acquire"
+                try:
+                    content_sha, written_at = self.client.put_content(
+                        self.repository,
+                        self.branch,
+                        self.path,
+                        candidate,
+                        expected_sha=expected_sha,
+                        message=f"lease: {action} {self.resource} for {owner}",
                     )
-                time.sleep(min(poll_seconds, random.uniform(0.25, 1.0)))
+                except LeaseConflict:
+                    if self._now_monotonic() >= deadline:
+                        raise LeaseBusy(
+                            "dev environment lease CAS remained contended"
+                            + (f"; last owner={last_busy.get('owner')}" if last_busy else "")
+                        )
+                    self._sleep(min(poll_seconds, random.uniform(0.25, 1.0)))
+                    continue
+                if expected_sha:
+                    # Local-only evidence binds a bounded initial visibility retry
+                    # to the exact stale blob replaced by this successful CAS.
+                    candidate["previousContentSha"] = expected_sha.lower()
+                return candidate, content_sha, written_at
+            except GitHubRateLimitError as exc:
+                self._sleep_for_rate_limit_or_raise(
+                    exc,
+                    deadline_monotonic=deadline,
+                    owner=owner,
+                    phase="acquire",
+                )
                 continue
-            if expected_sha:
-                # Local-only evidence binds a bounded initial visibility retry
-                # to the exact stale blob replaced by this successful CAS.
-                candidate["previousContentSha"] = expected_sha.lower()
-            return candidate, content_sha, written_at
 
     def _is_exact_stale_predecessor(
         self,
@@ -947,6 +1410,24 @@ class LeaseManager:
             raise LeaseLost(f"dev environment lease expired at {state['expiresAt']}")
         return state, remote
 
+    def _resolve_verify_rate_limit_wait_seconds(
+        self,
+        local_state: Mapping[str, Any],
+        rate_limit_wait_seconds: float | None,
+    ) -> float:
+        if rate_limit_wait_seconds is not None:
+            return float(rate_limit_wait_seconds)
+        raw_env = os.environ.get(RATE_LIMIT_WAIT_ENV, "").strip()
+        if raw_env:
+            try:
+                return float(raw_env)
+            except ValueError as exc:
+                raise LeaseError(f"{RATE_LIMIT_WAIT_ENV} must be numeric") from exc
+        owner = str(local_state.get("owner") or "")
+        if owner.endswith(":rollback"):
+            return DEFAULT_COMPENSATION_RATE_LIMIT_WAIT_SECONDS
+        return 0.0
+
     def verify(
         self,
         local_state: Mapping[str, Any],
@@ -954,6 +1435,9 @@ class LeaseManager:
         max_heartbeat_age_seconds: int,
         initial_visibility_wait_seconds: float = 0.0,
         initial_visibility_poll_seconds: float = 0.5,
+        rate_limit_wait_seconds: float | None = None,
+        ttl_seconds: int = 300,
+        state_file: str = "",
     ) -> dict[str, Any]:
         if initial_visibility_wait_seconds < 0 or initial_visibility_wait_seconds > 30:
             raise LeaseError(
@@ -963,34 +1447,91 @@ class LeaseManager:
             raise LeaseError(
                 "initial-visibility-poll-seconds must be greater than 0 and at most 5"
             )
-        deadline = time.monotonic() + initial_visibility_wait_seconds
+        if max_heartbeat_age_seconds <= 0:
+            raise LeaseError("max-heartbeat-age-seconds must be positive")
+        effective_rate_limit_wait = self._resolve_verify_rate_limit_wait_seconds(
+            local_state, rate_limit_wait_seconds
+        )
+        if effective_rate_limit_wait < 0:
+            raise LeaseError("rate-limit-wait-seconds must be non-negative")
+        start_monotonic = self._now_monotonic()
+        visibility_deadline = start_monotonic + initial_visibility_wait_seconds
+        rate_limit_deadline = start_monotonic + effective_rate_limit_seconds(
+            effective_rate_limit_wait, initial_visibility_wait_seconds
+        )
+        current_local: dict[str, Any] = dict(local_state)
+        waited_for_rate_limit = False
+
         while True:
             try:
                 state, remote = self._matching_remote(
-                    local_state,
+                    current_local,
                     require_active=True,
                     allow_exact_stale_predecessor=(
                         initial_visibility_wait_seconds > 0
                     ),
                 )
+                heartbeat = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
+                age = (remote.server_now - heartbeat).total_seconds()
+                if age > max_heartbeat_age_seconds:
+                    raise LeaseLost(
+                        f"dev environment lease heartbeat is stale: {age:.0f}s > "
+                        f"{max_heartbeat_age_seconds}s"
+                    )
                 break
+            except GitHubRateLimitError as exc:
+                if effective_rate_limit_wait <= 0:
+                    raise
+                owner = str(current_local.get("owner") or "unknown")
+                self._sleep_for_rate_limit_or_raise(
+                    exc,
+                    deadline_monotonic=rate_limit_deadline,
+                    owner=owner,
+                    phase="verify",
+                )
+                waited_for_rate_limit = True
+                visibility_deadline = max(
+                    visibility_deadline,
+                    self._now_monotonic() + initial_visibility_wait_seconds,
+                )
+                continue
             except InitialLeaseVisibilityPending as exc:
-                remaining = deadline - time.monotonic()
+                if waited_for_rate_limit and effective_rate_limit_wait > 0:
+                    current_local = self._reacquire_after_rate_limit_wait(
+                        current_local,
+                        local_state_Sink=local_state,
+                        rate_limit_deadline=rate_limit_deadline,
+                        ttl_seconds=ttl_seconds,
+                        state_file=state_file,
+                    )
+                    waited_for_rate_limit = False
+                    visibility_deadline = (
+                        self._now_monotonic() + initial_visibility_wait_seconds
+                    )
+                    continue
+                remaining = visibility_deadline - self._now_monotonic()
                 if remaining <= 0:
                     raise LeaseLost(
                         "initial lease visibility remained on the exact stale "
                         "predecessor until the bounded timeout"
                     ) from exc
-                time.sleep(min(initial_visibility_poll_seconds, remaining))
-        heartbeat = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
-        age = (remote.server_now - heartbeat).total_seconds()
-        if max_heartbeat_age_seconds <= 0:
-            raise LeaseError("max-heartbeat-age-seconds must be positive")
-        if age > max_heartbeat_age_seconds:
-            raise LeaseLost(
-                f"dev environment lease heartbeat is stale: {age:.0f}s > "
-                f"{max_heartbeat_age_seconds}s"
-            )
+                self._sleep(min(initial_visibility_poll_seconds, remaining))
+            except LeaseLost:
+                if waited_for_rate_limit and effective_rate_limit_wait > 0:
+                    current_local = self._reacquire_after_rate_limit_wait(
+                        current_local,
+                        local_state_Sink=local_state,
+                        rate_limit_deadline=rate_limit_deadline,
+                        ttl_seconds=ttl_seconds,
+                        state_file=state_file,
+                    )
+                    waited_for_rate_limit = False
+                    visibility_deadline = (
+                        self._now_monotonic() + initial_visibility_wait_seconds
+                    )
+                    continue
+                raise
+
         result = public_state(state, content_sha=remote.content_sha)
         result.update(
             {
@@ -1000,6 +1541,72 @@ class LeaseManager:
             }
         )
         return result
+
+    def _reacquire_after_rate_limit_wait(
+        self,
+        current_local: Mapping[str, Any],
+        *,
+        local_state_Sink: Mapping[str, Any],
+        rate_limit_deadline: float,
+        ttl_seconds: int,
+        state_file: str,
+    ) -> dict[str, Any]:
+        remaining_wait = max(1, int(rate_limit_deadline - self._now_monotonic()))
+        acquired = parse_utc_iso(current_local.get("acquiredAt"), "acquiredAt")
+        expires = parse_utc_iso(current_local.get("expiresAt"), "expiresAt")
+        inferred_ttl = max(30, min(3600, int((expires - acquired).total_seconds()) or ttl_seconds))
+        new_state, new_sha, _ = self.acquire(
+            mode=str(current_local["mode"]),
+            owner=str(current_local["owner"]),
+            ttl_seconds=inferred_ttl,
+            wait_seconds=remaining_wait,
+            poll_seconds=5.0,
+            expected_backend_sha=str(current_local.get("expectedBackendSha") or ""),
+            run_url=str(current_local.get("runUrl") or ""),
+        )
+        updated_local = public_state(new_state, content_sha=new_sha)
+        if "previousContentSha" in new_state:
+            updated_local["previousContentSha"] = new_state["previousContentSha"]
+        if state_file:
+            atomic_write_json(state_file, updated_local, 0o600)
+        if isinstance(local_state_Sink, dict):
+            local_state_Sink.clear()
+            local_state_Sink.update(updated_local)
+        return updated_local
+
+    def _fallback_budget_from_local_state(
+        self,
+        local_state: Mapping[str, Any],
+        *,
+        effective_freshness_seconds: int,
+        exc: GitHubRateLimitError,
+    ) -> VerifiedRenewalBudget | None:
+        if self._recovery_anchor is not None:
+            return self._recovery_anchor
+        if exc.server_now is None:
+            return None
+        try:
+            heartbeat_at = parse_utc_iso(local_state.get("heartbeatAt"), "heartbeatAt")
+            expires_at = parse_utc_iso(local_state.get("expiresAt"), "expiresAt")
+            content_sha = str(local_state.get("contentSha") or "")
+        except LeaseError:
+            return None
+        freshness_deadline = heartbeat_at + timedelta(seconds=effective_freshness_seconds)
+        validity_deadline_utc = min(expires_at, freshness_deadline)
+        remaining_validity = (validity_deadline_utc - exc.server_now).total_seconds()
+        if remaining_validity <= 0:
+            return None
+        deadline_monotonic = self._now_monotonic() + remaining_validity
+        if self._active_deadline_monotonic is not None:
+            deadline_monotonic = min(deadline_monotonic, self._active_deadline_monotonic)
+        return VerifiedRenewalBudget(
+            validity_deadline_utc=validity_deadline_utc,
+            deadline_monotonic=deadline_monotonic,
+            server_now=exc.server_now,
+            content_sha=content_sha,
+            heartbeat_at=heartbeat_at,
+            expires_at=expires_at,
+        )
 
     def heartbeat(
         self,
@@ -1028,8 +1635,21 @@ class LeaseManager:
                 "dev environment lease validity budget exhausted before renewal read"
             )
         read_started_monotonic = self._now_monotonic()
-        with self._client_deadline(self._active_deadline_monotonic):
-            state, remote = self._matching_remote(local_state, require_active=True)
+        try:
+            with self._client_deadline(self._active_deadline_monotonic):
+                state, remote = self._matching_remote(local_state, require_active=True)
+        except GitHubRateLimitError as exc:
+            fallback_budget = self._fallback_budget_from_local_state(
+                local_state,
+                effective_freshness_seconds=effective_freshness_seconds,
+                exc=exc,
+            )
+            if (
+                fallback_budget is not None
+                and self._now_monotonic() < fallback_budget.deadline_monotonic
+            ):
+                setattr(exc, "_verified_renewal_budget", fallback_budget)
+            raise
         observed_monotonic = self._now_monotonic()
         if (
             self._active_deadline_monotonic is not None
@@ -1111,8 +1731,10 @@ class LeaseManager:
                     message=f"lease: heartbeat {self.resource} for {state['owner']}",
                 )
         except (GitHubApiError, GitHubTransportError) as exc:
-            if is_transient_error(exc):
+            if is_transient_error(exc) or is_rate_limit_error(exc):
                 if self._now_monotonic() >= deadline_monotonic:
+                    if is_rate_limit_error(exc):
+                        raise
                     raise LeaseLost(
                         "dev environment lease validity budget exhausted during renewal write"
                     ) from exc
@@ -1145,6 +1767,12 @@ class LeaseManager:
         raise LeaseLost("dev environment lease release lost repeated CAS races")
 
 
+def effective_rate_limit_seconds(
+    rate_limit_wait_seconds: float, initial_visibility_wait_seconds: float
+) -> float:
+    return max(float(rate_limit_wait_seconds), float(initial_visibility_wait_seconds))
+
+
 def common_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     subparser.add_argument("--branch", default=DEFAULT_BRANCH)
@@ -1166,6 +1794,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="branch to bootstrap from (default: repository default branch)",
     )
 
+    wait_quota = subparsers.add_parser(
+        "wait-for-quota",
+        help="wait until GitHub core API quota remaining meets the minimum threshold",
+    )
+    common_parser(wait_quota)
+    wait_quota.add_argument(
+        "--min-remaining",
+        type=int,
+        default=None,
+        help=(
+            f"minimum remaining core quota before continuing "
+            f"(default: ${MIN_CORE_QUOTA_ENV} or {DEFAULT_MIN_CORE_QUOTA_REMAINING})"
+        ),
+    )
+
     acquire = subparsers.add_parser("acquire", help="atomically acquire the environment lease")
     common_parser(acquire)
     acquire.add_argument("--mode", choices=sorted(VALID_MODES), required=True)
@@ -1176,6 +1819,8 @@ def build_parser() -> argparse.ArgumentParser:
     acquire.add_argument("--state-file", required=True)
     acquire.add_argument("--expected-backend-sha", default="")
     acquire.add_argument("--run-url", default="")
+    acquire.add_argument("--predecessor-failure-file", default="")
+    acquire.add_argument("--min-remaining-quota", type=int, default=0)
 
     verify = subparsers.add_parser("verify", help="verify current ownership and freshness")
     common_parser(verify)
@@ -1183,6 +1828,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--max-heartbeat-age-seconds", type=int, default=120)
     verify.add_argument("--initial-visibility-wait-seconds", type=float, default=0.0)
     verify.add_argument("--initial-visibility-poll-seconds", type=float, default=0.5)
+    verify.add_argument(
+        "--rate-limit-wait-seconds",
+        type=float,
+        default=None,
+        help="maximum seconds to wait for a GitHub rate-limit reset during verification",
+    )
+    verify.add_argument("--ttl-seconds", type=int, default=300)
 
     heartbeat = subparsers.add_parser(
         "heartbeat-loop", help="renew the lease until signalled; fail closed on ownership loss"
@@ -1314,9 +1966,36 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             # A transient PUT failure after a verified fresh authoritative
             # same-owner GET may recover while conservative validity remains
             # within min(remote expiresAt, remote heartbeatAt + freshness<=120s).
-            # Every retry re-reads remote state and obtains a fresh CAS SHA.
+            # On rate_limited, heartbeat never certifies unverified freshness;
+            # it may retry only when the rate-limit wait fits within the
+            # remaining verified freshness budget, and otherwise reports lost
+            # with reason="rate_limited" so compensation knows to wait for reset.
             budget = getattr(exc, "_verified_renewal_budget", None)
-            if is_transient_error(exc) and isinstance(budget, VerifiedRenewalBudget):
+            if is_rate_limit_error(exc) and isinstance(budget, VerifiedRenewalBudget):
+                assert isinstance(exc, GitHubRateLimitError)
+                remaining = budget.deadline_monotonic - manager._now_monotonic()
+                rate_limit_wait, reset_at_opt = manager._rate_limit_wait_seconds(exc)
+                if rate_limit_wait > 0 and rate_limit_wait + MIN_RENEWAL_BUDGET_SECONDS < remaining:
+                    manager._active_deadline_monotonic = budget.deadline_monotonic
+                    sleep_seconds = rate_limit_wait
+                    print(
+                        json.dumps(
+                            {
+                                "schemaVersion": SCHEMA_VERSION,
+                                "status": "warning",
+                                "reason": RATE_LIMITED_REASON,
+                                "resource": manager.resource,
+                                "detectedAt": utc_iso(datetime.now(timezone.utc)),
+                                "rateLimitResetAt": utc_iso(reset_at_opt) if reset_at_opt else None,
+                                "waitSeconds": round(rate_limit_wait, 3),
+                                "warning": f"rate_limited heartbeat failure within verified freshness (retrying): {exc}",
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
+                    continue
+            elif is_transient_error(exc) and isinstance(budget, VerifiedRenewalBudget):
                 remaining = budget.deadline_monotonic - manager._now_monotonic()
                 retry_sleep = _retry_sleep_seconds(args.interval_seconds, remaining)
                 if retry_sleep is not None:
@@ -1336,7 +2015,7 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
                         file=sys.stderr,
                     )
                     continue
-            failure = {
+            failure: dict[str, Any] = {
                 "schemaVersion": SCHEMA_VERSION,
                 "status": "lost",
                 "resource": manager.resource,
@@ -1346,6 +2025,14 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
                 "detectedAt": utc_iso(datetime.now(timezone.utc)),
                 "error": str(exc),
             }
+            if isinstance(exc, GitHubRateLimitError):
+                _, reset_at_opt = manager._rate_limit_wait_seconds(exc)
+                failure["reason"] = RATE_LIMITED_REASON
+                failure["rateLimitKind"] = exc.rate_limit_kind
+                if reset_at_opt is not None:
+                    failure["rateLimitResetAt"] = utc_iso(reset_at_opt)
+                if exc.retry_after_seconds is not None:
+                    failure["retryAfterSeconds"] = exc.retry_after_seconds
             if args.failure_json_out:
                 atomic_write_json(args.failure_json_out, failure, 0o644)
             print(json.dumps(failure, sort_keys=True), file=sys.stderr)
@@ -1371,6 +2058,18 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
     return 0
 
 
+def _resolve_min_remaining_quota(cli_value: int | None) -> int:
+    if cli_value is not None:
+        return int(cli_value)
+    raw = os.environ.get(MIN_CORE_QUOTA_ENV, "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise LeaseError(f"{MIN_CORE_QUOTA_ENV} must be an integer") from exc
+    return DEFAULT_MIN_CORE_QUOTA_REMAINING
+
+
 def run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "verify-heartbeat-identity":
@@ -1389,6 +2088,13 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.command == "bootstrap":
         emit(manager.bootstrap(args.base_branch), args.json_out)
         return 0
+    if args.command == "wait-for-quota":
+        min_remaining = _resolve_min_remaining_quota(args.min_remaining)
+        emit(
+            manager.wait_for_core_quota(min_remaining=min_remaining),
+            args.json_out,
+        )
+        return 0
     if args.command == "acquire":
         state, content_sha, written_at = manager.acquire(
             mode=args.mode,
@@ -1398,6 +2104,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             poll_seconds=args.poll_seconds,
             expected_backend_sha=args.expected_backend_sha,
             run_url=args.run_url,
+            predecessor_failure_file=args.predecessor_failure_file,
+            min_remaining_quota=args.min_remaining_quota,
         )
         local = public_state(state, content_sha=content_sha)
         atomic_write_json(args.state_file, local, 0o600)
@@ -1413,6 +2121,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 max_heartbeat_age_seconds=args.max_heartbeat_age_seconds,
                 initial_visibility_wait_seconds=args.initial_visibility_wait_seconds,
                 initial_visibility_poll_seconds=args.initial_visibility_poll_seconds,
+                rate_limit_wait_seconds=args.rate_limit_wait_seconds,
+                ttl_seconds=args.ttl_seconds,
+                state_file=args.state_file,
             ),
             args.json_out,
         )
@@ -1429,6 +2140,12 @@ def run(argv: Sequence[str] | None = None) -> int:
 def main() -> None:
     try:
         raise SystemExit(run())
+    except RateLimitedRollbackPending as exc:
+        print(
+            f"environment lease {RATE_LIMITED_ROLLBACK_PENDING_REASON}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(RATE_LIMITED_ROLLBACK_PENDING_EXIT_CODE) from exc
     except LeaseBusy as exc:
         print(f"environment lease busy: {exc}", file=sys.stderr)
         raise SystemExit(75) from exc
