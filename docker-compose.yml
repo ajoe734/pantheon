@@ -1057,6 +1057,9 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Provisioning verifies participant identities against the Persona owner.
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       # Committee-visible memory reader (tenant-filtered in the provider).
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
@@ -1911,6 +1914,8 @@ services:
     restart: unless-stopped
     environment:
       PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      # Match the consultation executor's deployment tenant; no invented tenant.
+      PERSONA_DEFAULT_TENANT_ID: ${PERSONA_DEFAULT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
       PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}

@@ -412,6 +412,18 @@ PANEL_PERSONA_SPECS: tuple[dict[str, str], ...] = (
     },
 )
 
+def validate_panel_persona(record: Mapping[str, Any]) -> None:
+    """Panel identities stay draft and cannot acquire trading authority."""
+    metadata = record.get("metadata") or {}
+    if record.get("persona_id") not in {RISK_PERSONA_ID, RED_TEAM_PERSONA_ID} and metadata.get("persona_class") != "consult_panel":
+        return
+    if (record.get("lifecycle_state") != "draft" or metadata.get("trading") is not False
+        or metadata.get("persona_class") != "consult_panel" or metadata.get("consultable") is not True
+        or record.get("tool_profile_id") or record.get("route_policy_id")
+        or record.get("consult_policy_id") != CONSULT_PANEL_POLICY_ID):
+        raise ValueError("panel personas must remain non-trading drafts with only the consultation policy")
+
+
 HttpFn = Callable[[str, str, "dict[str, Any] | None"], Any]
 
 
@@ -468,7 +480,15 @@ def bootstrap_consult_personas(
     for spec in PANEL_PERSONA_SPECS:
         persona_id = spec["persona_id"]
         if persona_id in existing:
-            if existing[persona_id].get("consult_policy_id") == CONSULT_PANEL_POLICY_ID:
+            record = existing[persona_id]
+            if tenant_id and record.get("tenant_id") != tenant_id:
+                raise RuntimeError(f"panel persona {persona_id}: tenant binding mismatch")
+            metadata = record.get("metadata") or {}
+            if record.get("lifecycle_state", "draft") != "draft" or metadata.get("trading") is True:
+                raise RuntimeError(f"panel persona {persona_id}: non-trading draft required")
+            if record.get("tool_profile_id") or record.get("route_policy_id"):
+                raise RuntimeError(f"panel persona {persona_id}: trading policy attached")
+            if record.get("consult_policy_id") == CONSULT_PANEL_POLICY_ID and metadata.get("persona_class") == "consult_panel" and metadata.get("trading") is False and metadata.get("consultable") is True:
                 result[persona_id] = "exists"
             else:
                 # Complete a previously half-provisioned persona through the
@@ -479,6 +499,8 @@ def bootstrap_consult_personas(
                     {
                         "actor_id": actor_id,
                         "consult_policy_id": CONSULT_PANEL_POLICY_ID,
+                        "metadata": {**metadata, "persona_class": "consult_panel", "trading": False,
+                                     "consultable": True, "panel_role": spec["panel_role"]},
                     },
                 )
                 result[persona_id] = "repaired"
@@ -501,6 +523,12 @@ def bootstrap_consult_personas(
         }
         created = call("POST", f"{base}/api/personas", body)
         if isinstance(created, dict) and created.get("_conflict"):
+            # A concurrent replica won the CAS; validate the winner rather than
+            # assuming an arbitrary conflicting identity is our panel persona.
+            winner = call("GET", f"{base}/api/personas/{persona_id}", None)
+            if not isinstance(winner, dict) or winner.get("tenant_id") != tenant_id:
+                raise RuntimeError(f"panel persona {persona_id}: conflicting tenant binding")
+            validate_panel_persona(winner)
             result[persona_id] = "exists"
         else:
             result[persona_id] = "created"

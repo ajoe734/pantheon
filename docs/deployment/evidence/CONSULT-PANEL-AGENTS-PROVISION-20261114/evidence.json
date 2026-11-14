@@ -1,0 +1,78 @@
+{
+  "task_id": "CONSULT-PANEL-AGENTS-PROVISION-20261114",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "record_type": "source_acceptance_manifest",
+  "summary": "Startup owner bootstrap for two draft non-trading panel personas; authenticated tenant-bound deny-all consult agent provisioning for every participant before dispatch.",
+  "base_commit": "6b20b0460e511534301e61a6604743e2927a1ab1",
+  "acceptance_record": "docs/deployment/evidence/CONSULT-PANEL-AGENTS-PROVISION-20261114/README.md",
+  "validation": [
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/consultation/tests",
+      "exit_code": 0,
+      "result": "70 passed",
+      "terminal_output": "docs/deployment/evidence/CONSULT-PANEL-AGENTS-PROVISION-20261114/validation/consultation.log"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/test_panel_persona_bootstrap.py services/openclaw-gateway-adapter/test_consult_agent_provisioning.py services/persona/test_consult_triggers.py services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py services/control-plane/persona/test_main.py",
+      "exit_code": 0,
+      "result": "49 passed; 3 subtests passed",
+      "terminal_output": "docs/deployment/evidence/CONSULT-PANEL-AGENTS-PROVISION-20261114/validation/owner-ranking.log"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/persona",
+      "exit_code": 0,
+      "result": "358 passed; 1 skipped",
+      "terminal_output": "docs/deployment/evidence/CONSULT-PANEL-AGENTS-PROVISION-20261114/validation/persona.log"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/consultation/tests/test_panel_agent_provisioning.py services/openclaw-gateway-adapter/test_consult_agent_provisioning.py",
+      "exit_code": 0,
+      "result": "13 passed",
+      "terminal_output": "docs/deployment/evidence/CONSULT-PANEL-AGENTS-PROVISION-20261114/validation/final-boundary.log"
+    }
+  ],
+  "additional_checks": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "description": "Parse docker-compose.yml and docker-compose.control.yml with PyYAML SafeLoader plus existing !override sequence tag; assert persona tenant binding and adapter owner URL/token wiring.",
+      "exit_code": 0
+    }
+  ],
+  "integration_boundary": {
+    "real_http_handlers": [
+      "Persona owner and deployed lifespan",
+      "Consultation API and workflow executor",
+      "Adapter ensure and contribution routes",
+      "Registry",
+      "Governance handoff",
+      "Memory"
+    ],
+    "storage": "JSON/in-memory test stores instead of PostgreSQL",
+    "authorization": "real owner authentication; Memory local governance policy",
+    "faked": "OpenClaw Gateway HTTP Responses SSE and CLI RPC transport forwarded to fake Gateway HTTP server",
+    "results": "Missing panel personas/agents -> three-contribution published memo; bootstrap failure, ensure outage beyond normal retry threshold and policy drift all block model calls and memo publication until repaired."
+  },
+  "safety_boundaries": [
+    "Panel identities remain draft; owner rejects trading authority or lifecycle advancement.",
+    "No trading/default agent config mutation; each consult agent has its own exact tenant/persona workspace.",
+    "Existing live admission check unchanged; synthetic contributions exist only in tests.",
+    "No capital, lifecycle adoption, production deployment or runtime mutation performed by this task execution."
+  ],
+  "hosted_proof": {
+    "status": "not_claimed",
+    "owner_task": "PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112",
+    "acceptance": "AC3"
+  },
+  "independent_review": {
+    "status": "pending",
+    "authority": "Canonical exact-head handoff/approval and GitHub merge records; no self-approval."
+  },
+  "upstream_contracts": [
+    "https://github.com/openclaw/openclaw/blob/v2026.7.1/src/gateway/server-methods/config.ts",
+    "https://github.com/openclaw/openclaw/blob/v2026.7.1/src/config/merge-patch.ts"
+  ]
+}

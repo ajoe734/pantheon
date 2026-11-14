@@ -1,0 +1,30 @@
+{
+  "task_id": "SD-MEMORY-HINDSIGHT-AMEND-20261114",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-11-14",
+  "verified_base": "a9284b68c",
+  "hosted_behavior_claimed": false,
+  "scope": "design amendment only; no source, test, workflow or infrastructure change",
+  "operator_statements": [
+    {"line": 2969, "uuid": "00cddf54-423f-477c-aa01-0fa652866616", "timestamp": "2026-11-13T23:57:18.325Z", "match": "operator sentence verbatim; message also quotes a coordinator note, shown as interpretation"},
+    {"line": 3154, "uuid": "80bc73d7-1343-4110-b188-14d55f584af6", "timestamp": "2026-11-14T01:50:22.742Z", "match": "verbatim"},
+    {"line": 3647, "uuid": "9045b98f-59d1-453a-b108-8bd3b3fa5979", "timestamp": "2026-11-14T03:21:32.806Z", "match": "verbatim"},
+    {"line": 3275, "uuid": "d0009d7b-157b-4b93-85c1-c7a9a06a12ab", "timestamp": "2026-11-14T01:53:17.349Z", "match": "coordinator answer, uuid confirmed (assistant message)"}
+  ],
+  "repo_references_resolved": [
+    "scripts/openclaw-configure-shared-model-pool.sh:94-125 (structured-extraction deny-all agent)",
+    "services/openclaw-gateway-adapter/main.py:1831 (/api/openclaw-adapter/assistant/providers/openclaw/structured)",
+    "integrations/openclaw/model-pool-and-persona-routing.md (credentials in gateway)",
+    "integrations/openclaw/persona_agent_sync.py:154-183 (PERSONA_PROPOSAL_TOOL, PERSONA_AGENT_TOOL_PROFILE)",
+    "services/openclaw-gateway-adapter/consultation_provider.py, services/consultation/workflow_executor.py, services/persona/persona_cycle_controller.py, services/memory/main.py, services/knowledge/case_file.py, docker-compose.yml (hindsight service sets LLM providers to none, no model key)"
+  ],
+  "hindsight_source_facts": {
+    "version": "v1.2.1",
+    "git_commit": "0eb02d8c418eac6b489bc63883c993b2257dfac4",
+    "claude_code_subscription_warning": "hindsight-api-slim/hindsight_api/engine/providers/claude_code_llm.py:252-257",
+    "no_tools_sent_to_provider": "hindsight-api-slim/hindsight_api/engine/providers/tools_via_schema.py:3"
+  },
+  "numeric_values": "coordinator proposals, not operator decisions",
+  "not_confirmed_by_running": ["latency per call through an agent run", "JSON compliance of pooled models on Hindsight prompts"]
+}
