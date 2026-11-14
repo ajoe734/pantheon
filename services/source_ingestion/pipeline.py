@@ -420,8 +420,8 @@ def persist_source_evidence_refs(
             # items. URL-only dedupe retained the first prefix's run forever,
             # failing the next controller tick's real record/run readback.
             # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
-            prefix = ("collector-bundle" if record.metadata.get("collector_market_bundle") else
-                      "collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else "collector-market")
+            prefix = ("collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else
+                      "collector-bundle" if record.metadata.get("collector_market_bundle") else "collector-market")
             candidate_source = replace(candidate_source, metadata={
                 **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
             })

@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-MARKET-PROVENANCE-BOUND-20261114",
   "owner": "Codex2",
   "reviewer": "Claude",
-  "status": "validation_hold_readonly_acceptance_contract",
+  "status": "final_validation_in_progress",
   "scope": "Verified Collector market bundles only; normalized rows, snapshots, official connectors, request cadence and legacy evidence retained.",
   "baseline": {
     "source_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
@@ -144,7 +144,8 @@
     "distillation": "No automatic admission or catch-up admission for numeric bundle summaries; explicit old/manual jobs are skipped before seed/evidence synthesis. Legacy market jobs retain existing behavior.",
     "compatibility": "No deletion, schema migration or canonical record type change; additional metadata only. Original collector: source-id namespace retained.",
     "row_lineage_read": "Existing source-record/{id} endpoint resolves a missing Collector row through completed normalized partitions selected by tenant-owned bundle refs; no per-row evidence is inserted. Foreign tenant 404 and unavailable owned partition 503 are tested.",
-    "receipt_compatibility": "The scalar evidence_bundle_id remains; additive evidence_bundle_ids lists every bundle/date group in a multi-date delivery. Native empty replay and completed-receipt storage reuse are tested."
+    "receipt_compatibility": "The scalar evidence_bundle_id remains; additive evidence_bundle_ids lists every bundle/date group in a multi-date delivery. Native empty replay and completed-receipt storage reuse are tested.",
+    "close_dedupe_compatibility": "Verified close bundle summaries keep the existing collector-close:<source_id> dedupe namespace; their bundle source IDs still include the complete bundle identity. Historical non-close bundle summaries use collector-bundle:<source_id>. The existing close dedupe assertion remains unchanged."
   },
   "scale": {
     "status": "passed",
@@ -339,14 +340,18 @@
     {
       "command": "timeout 300 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
       "result": "13 passed, exit 0; isolated after bulk scale and search workloads finished"
+    },
+    {
+      "command": "timeout 600 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_scheduled_connector.py -k 'completed_close_keeps_native_boundary or native_close_rollover or full_size_close_through or drains_1349 or real_size_backfill_fits'",
+      "result": "4 passed, 1 failed, 68 deselected, exit 1 (125.93s). All five new bounded/normalized cardinality checks passed; full-size close then reached the unchanged collector-close dedupe assertion and exposed the new collector-bundle prefix. Pipeline prefix precedence corrected to preserve the existing close contract; full validation pending."
     }
   ],
   "holds": {
-    "readonly_tests": "Five unmodified scheduled tests assert/derive per-row source-record counts, conflicting with bounded physical provenance. Task explicitly marks this module read-only. Operator clarification is pending; no test changed or weakened. Independent review/merge/done are held until this acceptance contract is resolved.",
+    "readonly_tests": "Resolved by Human/Ops governed artifact-contract revision 2026-11-14T15:00:39Z: only the five scheduled count blocks may change, with exact row_count and normalized partition counts. All other scheduled assertions, newest-session and tw-close-reconcile suites remain unchanged.",
     "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact. Resolved upstream by PR7353 (f3873766e), composed without editing the readonly suite in this task. The final composed-base commands use ordinary pytest without the temporary plugin.",
     "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes. The first full-window attempt also hit unrelated paper source selection after 30 TWSE and 30 TPEx days (959.30s, exit 1); no scale pass claimed. Final harness filters actual default desired-state requirements to exactly the three market sources, recalculating its real digest; retry pending. The final three-market-only retry passed (940.63s, exit 0); earlier failed/interrupted runs remain excluded.",
     "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt.",
-    "remaining_assertions": [
+    "historical_remaining_assertions": [
       "services/source_ingestion/tests/test_scheduled_connector.py:2457 test_completed_close_keeps_native_boundary_ack_and_replays_as_empty: expected 8 per-row sources, actual 1 bundle source",
       "services/source_ingestion/tests/test_scheduled_connector.py:2514 test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots: expected 16 sources, actual 2 session bundles",
       "services/source_ingestion/tests/test_scheduled_connector.py:2650 test_full_size_close_through_controller_main_with_persistence: expected 7467 sources, actual 2 bundles",
@@ -361,13 +366,31 @@
     "composed_dev": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
     "draft": true,
     "merge_commit": null,
-    "hold": "Task-scoped readonly scheduled-test acceptance conflict; independent review and merge not requested while held.",
-    "required_actor": "Human/Ops",
-    "review_status": "not submitted for canonical review while acceptance hold remains"
+    "hold": "Full final validation in progress after authorized assertion changes and close dedupe compatibility correction.",
+    "required_actor": null,
+    "review_status": "not yet submitted; waiting for final validation"
   },
   "reproducibility": {
     "scale_log_sha256": "53c2aa3e6772c6793b51035c56f8ca6658b044bbb4f20213920ed334ee7c56f4",
     "startup_log_sha256": "e5264dc49e25bb92938274d3362846e69ca36bb616080fe2d9758de14c04d756",
     "isolated_newest_log_sha256": "cb867a63376042ffb837ab62fe80c877d56fe9000368ef322ea066eba5c7ffa0"
+  },
+  "operator_authorized_assertions": {
+    "authorization": "Canonical artifact-contract updated by Human/Ops at 2026-11-14T15:00:39Z; owner resumed at 15:00:47Z.",
+    "expected_bundle_counts": [
+      1,
+      2,
+      2,
+      1,
+      3
+    ],
+    "expected_normalized_rows": [
+      8,
+      16,
+      7467,
+      1349,
+      6002
+    ],
+    "preserved": "All scheduling, cadence, concurrency, tenant, URL, continuation and dedupe assertions remain unchanged. Backfill delivered count now sums bundle row_count so the existing 6002-row completion and 48-hour checks retain their meaning. Both read-only regression modules are unchanged from dev."
   }
 }
