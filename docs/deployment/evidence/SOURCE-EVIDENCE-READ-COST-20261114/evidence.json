@@ -1,0 +1,137 @@
+{
+  "task_id": "SOURCE-EVIDENCE-READ-COST-20261114",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "review_state": "ready_for_independent_review",
+  "recorded_at": "2026-11-14T05:44:24.294570+00:00",
+  "validated_source_revision": "29717c778384d567cd224967ca647d0f96371e2e",
+  "base_revision": "ec3878a953b608881dd9bf750d1e66da40ef6e24",
+  "delivery_scope": "source and local integration",
+  "hosted_behavior_claimed": false,
+  "hosted_proof_owner": "MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114",
+  "fixture": {
+    "postgresql": "16.15, disposable task-owned container and per-test schemas",
+    "tenant_evidence_rows": 9000,
+    "source_record_link_rows": 7200,
+    "ranking_link_rows": 1800,
+    "created_personas": 166,
+    "personas_including_existing_local_fixtures": 169,
+    "link_shapes": [
+      "linked_entity_type",
+      "linked_object_summary",
+      "linked_decisions",
+      "linked_entities",
+      "related_entities"
+    ],
+    "body_characters_per_row": 2000,
+    "heavy_metadata": "raw_storage_refs is omitted by the existing SQL list projection",
+    "owner_transport": "real source-ingest FastAPI route via in-process HTTP TestClient",
+    "bff_transport": "production PersonaService routers via HTTP TestClient, four concurrent calls",
+    "other_owner_surfaces": "existing local read/provisioning/evaluator fixtures",
+    "hosted_network_used": false
+  },
+  "measurements": {
+    "summary_seconds": [
+      0.005530452006496489,
+      0.003485055989585817,
+      0.0036646199878305197,
+      0.003296256996691227,
+      0.004533328989055008
+    ],
+    "summary_query_plan": "GroupAggregate  (cost=0.29..310.44 rows=16 width=35) (actual time=0.330..3.060 rows=8 loops=1)\n  Group Key: evidence_source_type, evidence_link_type, evidence_credibility_tier, evidence_verified\n  Buffers: shared hit=10\n  ->  Index Only Scan using source_evidence_summary_idx on evidence  (cost=0.29..197.78 rows=9000 width=27) (actual time=0.073..1.133 rows=9000 loops=1)\n        Index Cond: (evidence_tenant_id = 'pantheon-dev'::text)\n        Heap Fetches: 0\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=4\nPlanning Time: 0.298 ms\nExecution Time: 3.119 ms",
+    "owner_pages_with_parity_seconds": 0.811292162979953,
+    "quarter_owner": {
+      "seconds": 0.46231461002025753,
+      "pages": 4,
+      "rows": 1800,
+      "summary_calls": 0
+    },
+    "concurrent_bff": {
+      "wall_seconds": 2.1832396940444596,
+      "routes": [
+        {
+          "route": "/bff/management/persona-league",
+          "seconds": 0.7466107030049898,
+          "status": 200,
+          "item_count": 169,
+          "persona_count": 169
+        },
+        {
+          "route": "/bff/management/persona-league/rankings",
+          "seconds": 0.8640631479793228,
+          "status": 200,
+          "item_count": 5,
+          "persona_count": 169
+        },
+        {
+          "route": "/bff/management/quarterly-ranking",
+          "seconds": 1.8369814499747008,
+          "status": 200,
+          "item_count": 169,
+          "persona_count": 169
+        },
+        {
+          "route": "/bff/management/quarterly-ranking/recommendations",
+          "seconds": 2.175509571970906,
+          "status": 200,
+          "item_count": 200,
+          "persona_count": 200
+        }
+      ],
+      "owner_requests": 8,
+      "owner_request_seconds": [
+        0.6410317630507052,
+        0.6116796360001899,
+        0.4638082910096273,
+        0.5051755059976131,
+        0.5100783290108666,
+        0.5639893909683451,
+        0.6868769460124895,
+        0.7891088500036858
+      ],
+      "summary_calls": 0,
+      "transport": "in-process HTTP TestClient; real PostgreSQL 16"
+    }
+  },
+  "thresholds_seconds": {
+    "summary_max": 0.5,
+    "quarter_owner": 1.0,
+    "four_concurrent_bff": 6.0
+  },
+  "validation": {
+    "exit_status": 0,
+    "result": "106 passed, 3 warnings; no skips",
+    "interpreter": ".venv-pantheon/bin/python3 provisioned from supervisor PANTHEON_DEPENDENCY_PYTHON",
+    "python_version": "3.12.3",
+    "pytest_version": "9.2.0",
+    "psycopg_version": "3.3.6",
+    "command": "SOURCE_EVIDENCE_COST_MEASUREMENTS=/tmp/source-evidence-release-measurements.jsonl timeout 180 python3 /tmp/run-source-evidence-tests.py -q services/source_ingestion/tests/test_quarter_evidence_owner_read.py services/source_ingestion/tests/test_evidence_read_cost.py services/source_ingestion/test_pg_store.py services/control-plane/bff/tests/test_quarterly_ranking_read_latency.py services/control-plane/bff/tests/test_quarter_evidence_linked_filter.py services/control-plane/bff/tests/test_evidence_source_backend.py services/knowledge/evidence/tests --durations=5",
+    "wrapper": "Reads the task-owned PostgreSQL container connection settings into the child environment without printing credentials, then invokes .venv-pantheon/bin/python3 -m pytest with the listed arguments.",
+    "portable_reproduction": "Supply SOURCE_INGEST_TEST_POSTGRES_DSN and run the identical suites directly with .venv-pantheon/bin/python3 -m pytest; see README.md.",
+    "terminal_output": "validation.txt",
+    "additional_checks": [
+      "git diff --check",
+      "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --delivery-class auto"
+    ],
+    "warnings": [
+      "jsonschema.RefResolver deprecation (two import warnings)",
+      "Starlette TestClient httpx deprecation"
+    ]
+  },
+  "acceptance_evidence": {
+    "1": "test_summary_is_opt_out_and_legacy_callers_keep_the_population; real BFF integration asserts zero summary calls and include_summary=false on owner requests",
+    "2": "test_owner_link_shapes_filter_and_echo_without_changing_summary (five shapes); real PostgreSQL page parity and transferred IDs exclude all 7200 source-record rows",
+    "3": "test_real_pg_summary_exact_fast_and_updated_by_independent_writes; five timings and covering Index Only Scan plan recorded above; independent SQL confidence update changes counts exactly",
+    "4": "test_real_postgres_owner_and_four_concurrent_bff_routes; quarter_owner and concurrent_bff measurements recorded above",
+    "5": "test_linked_unlinked_fixture_keeps_ranked_items_attachments_and_redaction on all three quarterly routes compares full outputs to unbounded baseline, with nonempty attachments and capability redaction; existing latency suite preserves unavailable surfaces; any filtered owner page failure returns unavailable",
+    "6": "test_unsupported_or_mixed_version_owner_restarts_one_complete_population (old, partial and mixed replicas); full population remains exact and later upgraded requests use hints again",
+    "7": "hosted_behavior_claimed=false; hosted proof delegated to the named Root acceptance task",
+    "migration": "test_real_pg_existing_table_migrates_idempotently_and_link_updates_stay_exact; existing rows, repeated bootstrap, normalized linkage, malformed link-array shape, exact updates and tenant isolation"
+  },
+  "deployment_notes": [
+    "Owner bootstrap adds immutable SQL linkage reducer, generated columns, summary covering index and linkage GIN index. Existing-row migration and repeated bootstrap tested.",
+    "Schema migration requires source-owner DDL privileges and a table rewrite/lock. If SOURCE_INGEST_EVIDENCE_BOOTSTRAP is disabled, apply owner schema migration before enabling the new reader.",
+    "Read-only source-record consumers retain their prior query and do not bootstrap schema.",
+    "No hosted deployment, browser result, FE/BFF served identity, production load or other live behavior is claimed."
+  ]
+}

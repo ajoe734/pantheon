@@ -59,7 +59,21 @@ class _Owner:
             }
             for i in range(start, min(start + size, self.total))
         ]
-        return True, {"items": items, "total": self.total, "summary": None}
+        return True, {"items": items, "total": self.total, "summary": None,
+                      "filters": _read_hint_echo(path)}
+
+
+def _read_hint_echo(path: str) -> Dict[str, Any]:
+    """Paging fixtures acknowledge the new hints; legacy owners have separate tests."""
+    from urllib.parse import parse_qs, urlparse
+
+    q = parse_qs(urlparse(path).query)
+    filters: Dict[str, Any] = {}
+    if "include_summary" in q:
+        filters["include_summary"] = q["include_summary"][0] != "false"
+    if "linked_entity_types" in q:
+        filters["linked_entity_types"] = q["linked_entity_types"][0].split(",")
+    return filters
 
 
 class _OwnerBackedStore(_CountingPm12LeagueTestStore):
@@ -112,17 +126,29 @@ def test_unavailable_owner_is_paid_once_and_marks_surface(route: str) -> None:
 
 
 def test_slow_available_owner_wait_is_paid_once_not_per_page() -> None:
-    owner = _Owner(3_000, delay=0.2)
+    import threading
+    from urllib.parse import parse_qs, urlparse
+
+    continuation_pages = threading.Barrier(5, timeout=2.0)
+
+    class ConcurrentOwner(_Owner):
+        def http_get(self, base_url: str, path: str) -> Tuple[bool, Any]:
+            query = parse_qs(urlparse(path).query)
+            if query["page_token"] != ["0"]:
+                continuation_pages.wait()
+            return super().http_get(base_url, path)
+
+    owner = ConcurrentOwner(3_000, delay=0.2)
     port = DefaultResearchKnowledgeSourcePort(
         source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
     )
-    started = time.monotonic()
     rows = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs)
-    elapsed = time.monotonic() - started
     assert rows is not None and len(rows) == 3_000
     assert len(owner.calls) == 6
-    # first page sequential + the other five concurrently = 2 waits, not 6
-    assert elapsed < 0.2 * 3, elapsed
+    # All five continuation calls must overlap. A serial reader breaks the
+    # barrier instead of conflating CPU projection time with the injected sleep.
+    # Actual latency budgets are checked against PostgreSQL in the cost suite.
+    assert not continuation_pages.broken
 
 
 def test_slow_owner_over_timeout_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,7 +301,8 @@ def test_owner_pages_out_of_order_beyond_cap_match_full_stream(
                 }
                 for r in rows[start:start + size]
             ]
-            return True, {"items": items, "total": len(rows), "summary": None}
+            return True, {"items": items, "total": len(rows), "summary": None,
+                          "filters": _read_hint_echo(path)}
 
     def linking_read(self: Any, **kwargs: Any):
         result = self._port.read_evidence_refs(**kwargs)
@@ -376,10 +403,12 @@ class _WindowOwner:
         size, start = int(q["page_size"]), int(q["page_token"])
         rows = self.rows
         payload: Dict[str, Any] = {"summary": None}
+        if self.honour:
+            payload["filters"] = _read_hint_echo(path)
         if self.honour and "captured_from" in q:
             lo, hi = q["captured_from"], q["captured_before"]
             rows = [r for r in rows if lo <= r["available_time"].replace("Z", "+00:00") < hi]
-            payload["filters"] = {"captured_from": lo, "captured_before": hi}
+            payload["filters"].update({"captured_from": lo, "captured_before": hi})
         payload["items"] = [
             {"evidence_item_id": r["id"], "item_type": "filing", "citation_label": r["id"],
              "available_time": r["available_time"], "metadata": {}}
@@ -406,7 +435,7 @@ def test_quarter_window_makes_request_count_follow_the_quarter_not_the_total() -
     new_owner, old_owner = _WindowOwner(rows), _WindowOwner(rows, honour=False)
     assert run(new_owner) == run(old_owner) == sorted(f"q-{i}" for i in range(501))
     assert len(new_owner.calls) == 2  # ceil(501/500): independent of the 1600 newer rows
-    assert len(old_owner.calls) == 5  # old owner ignores the window: truthful full paging
+    assert len(old_owner.calls) == 6  # one unsupported-hint probe, then five full pages
     # a window with nothing in it is one request, not a full stream
     empty = _WindowOwner(rows)
     far = {"start_at": "2020-01-01T00:00:00Z", "end_exclusive_at": "2020-04-01T00:00:00Z"}
