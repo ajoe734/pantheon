@@ -52,16 +52,21 @@ RUN python /opt/hindsight/models.py package \
     && chmod -R a-w /opt/hindsight
 ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.revision=$GIT_SHA \
+    org.opencontainers.image.source="https://github.com/ajoe734/pantheon" \
     org.opencontainers.image.base.name="ghcr.io/vectorize-io/hindsight-api:1.2.1-slim" \
     org.opencontainers.image.base.digest="sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c"
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
     HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx \
+    HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=intfloat/multilingual-e5-large \
     HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH=/opt/hindsight/embeddings/model.onnx \
     HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH=/opt/hindsight/embeddings \
     HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=1024 \
+    HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING=mean \
+    HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE=true \
     HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: " \
     HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: " \
     HINDSIGHT_API_RERANKER_PROVIDER=onnx \
+    HINDSIGHT_API_RERANKER_ONNX_MODEL_ID=BAAI/bge-reranker-v2-m3 \
     HINDSIGHT_API_RERANKER_ONNX_MODEL_PATH=/opt/hindsight/reranker/model.onnx \
     HINDSIGHT_API_RERANKER_ONNX_TOKENIZER_NAME_OR_PATH=/opt/hindsight/reranker
 USER hindsight

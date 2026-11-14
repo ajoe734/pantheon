@@ -65,6 +65,8 @@ def test_offline_manifest_and_none_provider_defaults():
     assert manifest['embedding_manifest'] == 'services/search/model-manifest.json'
     assert 'COPY services/search/model-manifest.json /opt/hindsight/embedding-manifest.json' in DOCKERFILE
     assert embedding['dimension'] == 1024
+    assert f"HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID={embedding['model_name']}" in DOCKERFILE
+    assert f"HINDSIGHT_API_RERANKER_ONNX_MODEL_ID={manifest['reranker']['model_name']}" in DOCKERFILE
     assert 'HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: "' in DOCKERFILE
     assert 'HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: "' in DOCKERFILE
     assert 'HF_HUB_OFFLINE=1' in DOCKERFILE and 'TRANSFORMERS_OFFLINE=1' in DOCKERFILE

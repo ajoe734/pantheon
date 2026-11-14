@@ -7,4 +7,7 @@ RUN echo 'deb [signed-by=/usr/local/share/keyrings/postgres.gpg.asc] https://apt
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY deploy/memory-index-postgres/init.sql /docker-entrypoint-initdb.d/01-memory-index.sql
 ARG GIT_SHA=unknown
-LABEL org.opencontainers.image.revision=$GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA \
+    org.opencontainers.image.source="https://github.com/ajoe734/pantheon" \
+    org.opencontainers.image.base.name="groonga/pgroonga:4.0.8-debian-17" \
+    org.opencontainers.image.base.digest="sha256:15ab42f1b92749950da640b6d88f5563498a2ac06b2d0aaee1f9185afe34e376"
