@@ -352,3 +352,42 @@ def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> No
         " run -d " in call or " build " in call or call.startswith(("stop ", "start ", "rm ", "manage "))
         for call in calls
     )
+
+
+def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures(tmp_path):
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    step = next(s for s in _load_workflow()['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
+    assert step['timeout-minutes'] == 15
+    assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
+    assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 120
+    assert step.get('continue-on-error', False) is False
+    wrapper = tmp_path / '.lease-controller/scripts/run_with_dev_environment_lease.sh'
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text('#!/usr/bin/env bash\nexec "$@"\n')
+    wrapper.chmod(0o755)
+    deploy = tmp_path / 'scripts/deploy_nonprod_vm.sh'
+    deploy.parent.mkdir()
+    deploy.write_text('''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['CALLS'], 'a') as stream:
+    stream.write(json.dumps(args) + '\\n')
+# One failure cannot suppress the remaining datasets' recorded outcomes.
+code = 1 if 'tw-official-twse-margin-balances' in args else 0
+with open(args[args.index('--output') + 1], 'w') as stream:
+    json.dump({'status': 'failed' if code else 'completed', 'reason': 'fixture'}, stream)
+sys.exit(code)
+''')
+    deploy.chmod(0o755)
+    proc = subprocess.run(['bash', '-e', '-c', step['run']], cwd=tmp_path,
+                          env={**os.environ, 'RUNNER_TEMP': str(tmp_path), 'FORCE_REFRESH': 'true',
+                               'CALLS': str(tmp_path / 'calls')}, text=True, capture_output=True, timeout=20)
+    assert proc.returncode == 1, proc.stderr
+    calls = [json.loads(l) for l in (tmp_path / 'calls').read_text().splitlines()]
+    assert len(calls) == len(TW_CHIP_REFRESH_PROFILES) == 5
+    for call in calls:
+        cid = call[call.index('--connector-id') + 1]
+        assert call[call.index('--dataset') + 1] == TW_CHIP_REFRESH_PROFILES[cid]['dataset']
+        assert '--force' in call and '--refresh-only' in call
+        assert (tmp_path / f'{cid}-refresh-outcome.json').is_file()
+    assert "30 10" in step['if'] and "30 12" in step['if']

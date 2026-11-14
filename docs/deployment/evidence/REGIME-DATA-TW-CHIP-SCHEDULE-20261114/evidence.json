@@ -1,0 +1,245 @@
+{
+  "task_id": "REGIME-DATA-TW-CHIP-SCHEDULE-20261114",
+  "hosted_behavior_claimed": false,
+  "recorded_at": "2026-11-14T03:18:52.334373+00:00",
+  "recording_note": "Unmodified row samples from credential-free official HTTP GET responses. Counts and SHA-256 bind full responses; fixtures are samples, not whole-market evidence.",
+  "recorded_responses": [
+    {
+      "dataset": "tw_institutional_flow",
+      "venue": "TPEx",
+      "url": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading",
+      "response_sha256": "e57edfbf0b5ee7fb0a43d834dd393514ed5f7a440816b33d9550bffb8b66e902",
+      "response_row_count": 896,
+      "payload": [
+        {"Date": "1151113", "SecuritiesCompanyCode": "00411A", "CompanyName": "主動統一前沿科技", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Buy": "558000", " Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Sell": "871000", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Difference": "-313000", "Foreign Dealers-Total Buy": "0", "Foreign Dealers-TotalSell": "0", "ForeignDealers-Difference": "0", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy": "558000", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell": "871000", "ForeignInvestorsInclude MainlandAreaInvestors-Difference": "-313000", "SecuritiesInvestmentTrustCompanies-TotalBuy": "0", "SecuritiesInvestmentTrustCompanies-TotalSell": "0", "SecuritiesInvestmentTrustCompanies-Difference": "0", "Dealers-TotalBuy": "1375129", "Dealers-TotalSell": "6115054", "Dealers-Difference": "-4739925", "Dealers -TotalSell": "6115054", "TotalDifference": "-5052925"},
+        {"Date": "1151113", "SecuritiesCompanyCode": "00679B", "CompanyName": "元大美債20年", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Buy": "3980250", " Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Total Sell": "3810000", "Foreign Investors include Mainland Area Investors (Foreign Dealers excluded)-Difference": "170250", "Foreign Dealers-Total Buy": "0", "Foreign Dealers-TotalSell": "0", "ForeignDealers-Difference": "0", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy": "3980250", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell": "3810000", "ForeignInvestorsInclude MainlandAreaInvestors-Difference": "170250", "SecuritiesInvestmentTrustCompanies-TotalBuy": "0", "SecuritiesInvestmentTrustCompanies-TotalSell": "0", "SecuritiesInvestmentTrustCompanies-Difference": "0", "Dealers-TotalBuy": "7141000", "Dealers-TotalSell": "11589420", "Dealers-Difference": "-4448420", "Dealers -TotalSell": "11589420", "TotalDifference": "-4278170"}
+      ],
+      "sample_only": true
+    },
+    {
+      "dataset": "tw_margin_short_balance",
+      "venue": "TWSE",
+      "url": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN",
+      "response_sha256": "f98ce88ee72be9ec740d40b3fa5360a17b9a5aac2d5ad109d5f2bdbe6babfefd",
+      "response_row_count": 1309,
+      "payload": [
+        {"股票代號": "00400A", "股票名稱": "主動國泰動能高息", "融資買進": "254", "融資賣出": "722", "融資現金償還": "29", "融資前日餘額": "15060", "融資今日餘額": "14563", "融資限額": "609035", "融券買進": "", "融券賣出": "", "融券現券償還": "", "融券前日餘額": "7", "融券今日餘額": "7", "融券限額": "609035", "資券互抵": "5", "註記": " "},
+        {"股票代號": "00401A", "股票名稱": "主動摩根台灣鑫收", "融資買進": "42", "融資賣出": "262", "融資現金償還": "", "融資前日餘額": "3065", "融資今日餘額": "2845", "融資限額": "82598", "融券買進": "", "融券賣出": "2", "融券現券償還": "", "融券前日餘額": "", "融券今日餘額": "2", "融券限額": "82598", "資券互抵": "1", "註記": " "}
+      ],
+      "sample_only": true
+    },
+    {
+      "dataset": "tw_margin_short_balance",
+      "venue": "TPEx",
+      "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
+      "response_sha256": "71c07556902501caa52ab76ca1b48d77eb631de71c5c45dda7d3cad6eca86660",
+      "response_row_count": 922,
+      "payload": [
+        {"Date": "1151113", "SecuritiesCompanyCode": "00411A", "CompanyName": "主動統一前沿科技", "MarginPurchaseBalancePreviousDay": "19612", "MarginPurchase": "338", "MarginSales": "61", "CashRedemption": "0", "MarginPurchaseBalance": "19889", "MarginPurchaseBalanceBelongSecuritiesFinanceEnterprise": "81", "MarginPurchaseUtilizationRate": "16.85", "MarginPurchaseQuota": "118019", "ShortSaleBalancePreviousDay": "0", "ShortSale": "0", "ShortConvering": "0", "StockRedemption": "0", "ShortSaleBalance": "0", "ShortSaleBalanceBelongSecuritiesFinanceEnterprise": "0", "ShortSaleUtilizationRate": "0.0", "ShortSaleQuota": "118019", "Offsetting": "0", "Note": ""},
+        {"Date": "1151113", "SecuritiesCompanyCode": "00679B", "CompanyName": "元大美債20年", "MarginPurchaseBalancePreviousDay": "2994", "MarginPurchase": "378", "MarginSales": "17", "CashRedemption": "15", "MarginPurchaseBalance": "3340", "MarginPurchaseBalanceBelongSecuritiesFinanceEnterprise": "12", "MarginPurchaseUtilizationRate": "0.22", "MarginPurchaseQuota": "1472423", "ShortSaleBalancePreviousDay": "22", "ShortSale": "12", "ShortConvering": "2", "StockRedemption": "0", "ShortSaleBalance": "32", "ShortSaleBalanceBelongSecuritiesFinanceEnterprise": "0", "ShortSaleUtilizationRate": "0.0", "ShortSaleQuota": "1472423", "Offsetting": "0", "Note": "X"}
+      ],
+      "sample_only": true
+    },
+    {
+      "dataset": "taifex_futures_chip",
+      "venue": "TAIFEX",
+      "url": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
+      "response_sha256": "4d98aa73ec3792fe85107cf8c4c11fb5d41d4f204a8d0068ea79d8c8a5a33203",
+      "response_row_count": 66,
+      "payload": [
+        {"Date": "20261113", "ContractCode": "臺股期貨", "Item": "自營商", "TradingVolume(Long)": "8904", "TradingValue(Long)(Thousands)": "78216571", "TradingVolume(Short)": "11427", "TradingValue(Short)(Thousands)": "100569837", "TradingVolume(Net)": "-2523", "TradingValue(Net)(Thousands)": "-22353267", "OpenInterest(Long)": "3733", "ContractValueofOpenInterest(Long)(Thousands)": "32771404", "OpenInterest(Short)": "6504", "ContractValueofOpenInterest(Short)(Thousands)": "57054323", "OpenInterest(Net)": "-2771", "ContractValueofOpenInterest(Net)(Thousands)": "-24282919"},
+        {"Date": "20261113", "ContractCode": "臺股期貨", "Item": "投信", "TradingVolume(Long)": "9181", "TradingValue(Long)(Thousands)": "81171589", "TradingVolume(Short)": "8159", "TradingValue(Short)(Thousands)": "72110550", "TradingVolume(Net)": "1022", "TradingValue(Net)(Thousands)": "9061039", "OpenInterest(Long)": "103019", "ContractValueofOpenInterest(Long)(Thousands)": "903444863", "OpenInterest(Short)": "3096", "ContractValueofOpenInterest(Short)(Thousands)": "27146981", "OpenInterest(Net)": "99923", "ContractValueofOpenInterest(Net)(Thousands)": "876297882"},
+        {"Date": "20261113", "ContractCode": "臺股期貨", "Item": "外資及陸資", "TradingVolume(Long)": "104183", "TradingValue(Long)(Thousands)": "912415087", "TradingVolume(Short)": "105480", "TradingValue(Short)(Thousands)": "923979898", "TradingVolume(Net)": "-1297", "TradingValue(Net)(Thousands)": "-11564811", "OpenInterest(Long)": "6186", "ContractValueofOpenInterest(Long)(Thousands)": "54274122", "OpenInterest(Short)": "107056", "ContractValueofOpenInterest(Short)(Thousands)": "938969213", "OpenInterest(Net)": "-100870", "ContractValueofOpenInterest(Net)(Thousands)": "-884695091"},
+        {"Date": "20261113", "ContractCode": "小型臺指期貨", "Item": "自營商", "TradingVolume(Long)": "22107", "TradingValue(Long)(Thousands)": "48446369", "TradingVolume(Short)": "21011", "TradingValue(Short)(Thousands)": "46046127", "TradingVolume(Net)": "1096", "TradingValue(Net)(Thousands)": "2400242", "OpenInterest(Long)": "3003", "ContractValueofOpenInterest(Long)(Thousands)": "6589084", "OpenInterest(Short)": "7923", "ContractValueofOpenInterest(Short)(Thousands)": "17392514", "OpenInterest(Net)": "-4920", "ContractValueofOpenInterest(Net)(Thousands)": "-10803430"},
+        {"Date": "20261113", "ContractCode": "小型臺指期貨", "Item": "投信", "TradingVolume(Long)": "5", "TradingValue(Long)(Thousands)": "10960", "TradingVolume(Short)": "0", "TradingValue(Short)(Thousands)": "0", "TradingVolume(Net)": "5", "TradingValue(Net)(Thousands)": "10960", "OpenInterest(Long)": "87", "ContractValueofOpenInterest(Long)(Thousands)": "190700", "OpenInterest(Short)": "119", "ContractValueofOpenInterest(Short)(Thousands)": "260842", "OpenInterest(Net)": "-32", "ContractValueofOpenInterest(Net)(Thousands)": "-70142"},
+        {"Date": "20261113", "ContractCode": "小型臺指期貨", "Item": "外資及陸資", "TradingVolume(Long)": "205440", "TradingValue(Long)(Thousands)": "448731539", "TradingVolume(Short)": "206019", "TradingValue(Short)(Thousands)": "450014699", "TradingVolume(Net)": "-579", "TradingValue(Net)(Thousands)": "-1283160", "OpenInterest(Long)": "4472", "ContractValueofOpenInterest(Long)(Thousands)": "9804252", "OpenInterest(Short)": "2997", "ContractValueofOpenInterest(Short)(Thousands)": "6573410", "OpenInterest(Net)": "1475", "ContractValueofOpenInterest(Net)(Thousands)": "3230842"}
+      ],
+      "sample_only": true
+    },
+    {
+      "dataset": "taifex_options_chip",
+      "venue": "TAIFEX",
+      "url": "https://openapi.taifex.com.tw/v1/PutCallRatio",
+      "response_sha256": "5e625c0b5a25d3f57b9affafbe0d40d9aac42d81b61ddeb58fdbaedc28e173b8",
+      "response_row_count": 21,
+      "payload": [
+        {"Date": "20261113", "PutVolume": "473795", "CallVolume": "480228", "PutCallVolumeRatio%": "98.66", "PutOI": "61300", "CallOI": "106148", "PutCallOIRatio%": "57.75"},
+        {"Date": "20261112", "PutVolume": "213349", "CallVolume": "217330", "PutCallVolumeRatio%": "98.17", "PutOI": "85188", "CallOI": "127738", "PutCallOIRatio%": "66.69"}
+      ],
+      "sample_only": true
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon resolves imports from a foreign cwd; supervisor-provided dependency interpreter."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_provider_management_coverage.py services/registry/test_factor_rule.py services/source_ingestion/tests/test_controller_worker.py scripts/test_dev_tw_market_refresh_workflow.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "423 passed, 1 skipped, 1 warning in 65.71s. Subsequent malformed-input/overflow, unit metadata and workflow-budget changes rechecked by focused validation below."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_deploy_nonprod_vm.py::test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "63 passed in 26.98s; final catalogue guards, exact host/dataset acceptance/rejection and actual workflow shell execution."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k 'chip_terminal or chip_preflight' scripts/test_dev_tw_market_refresh_workflow.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "2 passed, 143 deselected in 16.76s; loops cover all five profiles with correct and wrong dataset/schema/venue/session/run proof."
+    },
+    {
+      "command": "/tmp/gfd-venv/bin/python -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names services/source_ingestion/tests/test_feature_catalogue.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "82 passed in 45.48s; corrected diagnostics regressions plus market catalogue."
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "Official TWSE MI_MARGN OpenAPI response has no source date; no run-date substitution is permitted. Market observations withhold these rows.",
+    "Equity tables exceed the unchanged 500-record bound. Whole-market aggregates remain withheld pending a governed complete entity set and complete pull; partial totals are never market truth."
+  ],
+  "delivery_scope": "Source-only scheduled ingestion and governed market series; no hosted deployment or live-capital action.",
+  "implementation": {
+    "configured_instances": "Five independently scheduled instances of the two existing adapter implementations. Venue-specific margin instances prevent one capped venue from consuming the other venue budget; no new adapter or endpoint.",
+    "admission": "Each added identity admits one exact dataset and the existing official host pair. Existing tw_price_daily and taifex_ssf_contracts profiles retain their behavior and reject unrelated datasets.",
+    "workflow": "Existing 07:00/08:00 UTC weekday refresh; each chip run has a 120-second bounded runtime and 500-row cap, within a 15-minute chip step. All five outcomes are attempted and uploaded. Any failed chip run fails the step after remaining runs are attempted.",
+    "series": "Four market datasets / thirteen fields; same-session completeness, governed entity identity, source event date, release lag, actual acquisition time, separate reported put/call ratios and raw net-OI verification.",
+    "aggregation_entrypoint": "services.source_ingestion.feature_catalogue.market_chip_observations returns complete observations or a withheld result with a reason. It consumes one session of stored normalized rows plus the caller-governed complete entity set; it does not invent an entity set from a capped slice.",
+    "units": "Market margin balances retain reported trading-unit counts, without converting them to TWD or relabelling them as individual shares. Existing per-symbol entries are unchanged."
+  },
+  "validation_history": [
+    {
+      "suite": "Initial expanded deploy/workflow/catalogue/reconciler batch",
+      "result": "255 passed, 2 skipped, 1 failed. Existing collector-env test expected two bounded workflow steps; updated it to assert the three named steps including chip refresh, then reran successfully."
+    },
+    {
+      "suite": "Initial controller/registry/diagnostics batch",
+      "result": "253 passed, 2 failed. Both diagnostics assertions also failed against the unchanged origin/dev deploy script: FinMind was omitted from the existing connector allowlist assertion, and the old before-close assertion contradicted the current latest-closed-session recovery behavior. Fixed the assertions without altering that runtime behavior; diagnostics rerun passed."
+    },
+    {
+      "suite": "Full scripts/test_dev_tw_market_refresh.py regression batch",
+      "result": "129 passed, 1 failed. New preflight test used the wrong existing harness signature; fixed force/datetime arguments. Targeted final rerun passed, including the terminal verifier matrix. No killed, timed-out or still-running batch is recorded as passed."
+    }
+  ],
+  "acceptance_notes": {
+    "hosted_behavior_claimed": false,
+    "complete_market_proof": false,
+    "fixture_scope": "Recorded samples are real provider rows; positive completeness tests govern only the explicitly named sample entities. They do not certify a complete live Taiwan market.",
+    "raw_date_policy": "TWSE MI_MARGN is requested and its raw rows can be persisted, but the recorded response is undated. Terminal verification and market-series conversion refuse valid-session claims for it; the current run date is never substituted.",
+    "cap_policy": "Official equity response counts (1309 / 922 / 896) exceed the unchanged 500-row bound. No whole-market margin/flow value is claimed or produced from those capped pulls.",
+    "review_status": "Pending independent review by assigned reviewer Claude; owner has not approved or marked done."
+  },
+  "source_rework": {
+    "recorded_at": "2026-11-14T16:03:18.767146+00:00",
+    "reason": "Original task/PR reopened to admit the existing scheduled-connector test path and correct classification of five builtin chip profiles as external Collector requirements.",
+    "base_commit": "7b0c226d92acbc8f15eadb6682f416af0504acb3",
+    "integration": "Merged current dev into the original published branch, preserving original PR #7341 and normal non-force push. Preserved both appended deploy-test blocks and inherited scheduled-connector history/throughput assertions.",
+    "invariants": "All requirements remain single-candidate live pulls, connector ids are unique, admitted Collector ids match deployed definitions minus held sources, held ids stay absent, and all five builtin chip requirements retain exact dataset/cadence/policy contracts.",
+    "hosted_behavior_claimed": false,
+    "validation": [
+      {
+        "command": "timeout 120 python3 scripts/dev/provision_python_distribution.py",
+        "exit_code": 0,
+        "result": "Checkout-scoped interpreter provisioned; foreign-cwd import ownership verified."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_controller_worker.py services/registry/test_factor_rule.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "380 passed, 1 skipped, 1 warning in 63.51s."
+      },
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh && git diff --check && python3 scripts/dev/provision_python_distribution.py --check-only",
+        "exit_code": 0,
+        "result": "Shell syntax, whitespace and checkout-scoped imports passed."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 240s while executing the real-size backfill test. This batch is NOT passed. Split reruns cover the rest of the file and the unchanged real-size backfill separately with bounded timeouts."
+      },
+      {
+        "command": "timeout 300 .venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 300s; NOT passed. Split reruns cover deploy separately from refresh/workflow/diagnostics without changing assertions."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py -k 'not real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget' -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "72 passed, 1 deselected, 1 warning in 178.75s. The deselected real-size backfill is covered by its separate completed batch."
+      },
+      {
+        "command": "timeout 420 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py::test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget -q --disable-warnings --maxfail=1",
+        "exit_code": 0,
+        "result": "1 passed, 1 warning in 36.21s. Together with the other split batch, all 73 tests in the scheduled-connector file passed."
+      },
+      {
+        "command": "timeout 300 .venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "142 passed, 2 skipped in 128.14s."
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id REGIME-DATA-TW-CHIP-SCHEDULE-20261114 --skip-merge && git diff --check && git merge-base --is-ancestor origin/dev HEAD",
+        "exit_code": 0,
+        "result": "Commit trailers, whitespace and current-dev ancestry passed."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 124,
+        "result": "Timed out after 240s; NOT passed. Final reruns split refresh tests by the complementary bounded_refresh/not bounded_refresh selectors and run workflow/diagnostics separately."
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "51 passed in 29.91s."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k bounded_refresh -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "26 passed, 104 deselected in 135.48s."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k 'not bounded_refresh' -q --disable-warnings --maxfail=2",
+        "exit_code": 0,
+        "result": "104 passed, 26 deselected in 115.90s. The complementary selectors cover all 130 tests without omissions."
+      }
+    ],
+    "final_validation_summary": {
+      "passed": 776,
+      "skipped": 3,
+      "coverage": "Nonoverlapping completed batches cover the five source/controller/registry files, all 73 scheduled-connector tests, and all four scoped deploy/refresh/workflow/diagnostics files.",
+      "timeouts": "Three oversized initial batches exited 124 and are not counted as passed. Every test file in those batches has completed split reruns with exit 0.",
+      "review": "Pending fresh independent exact-head review by Claude on original PR #7341; no owner approval or done claim.",
+      "hosted_behavior_claimed": false
+    }
+  },
+  "evidence_compaction_rework": {
+    "reason": "Reviewer requested evidence additions below the 400-line cap. Only recorded sample row formatting is compacted; all pre-existing JSON values and validation history remain identical.",
+    "prior_manifest": "bdf595c17e3398874314ec01199c5d65637225be:docs/deployment/evidence/REGIME-DATA-TW-CHIP-SCHEDULE-20261114/evidence.json",
+    "prior_manifest_sha256": "a205a61f96808504c4e2cd699b883c0bc321d78491ea1e1b5e17350ed5a23cac",
+    "validation": [
+      {
+        "command": "timeout 90 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py::test_recorded_chip_profiles_dispatch_existing_adapters_and_store_raw_values -q --disable-warnings --maxfail=1",
+        "exit_code": 0,
+        "result": "1 passed in 0.90s; all five recorded dataset/venue profiles dispatch and persist raw values."
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      }
+    ],
+    "hosted_behavior_claimed": false
+  }
+}

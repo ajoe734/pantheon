@@ -2119,16 +2119,31 @@ def admission_stack(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 def test_desired_state_declares_one_live_pull_per_admitted_collector_source_and_holds_the_rest() -> None:
     from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     from services.source_ingestion.persona_source_reconciler import deployed_collector_definitions
 
     personas, _ = cw.load_desired_state()
     holder = next(p for p in personas if p["persona_id"] == cw.DEPLOYMENT_REQUIREMENT_HOLDER_ID)
     requirements = holder["required_data_sources"]
-    collector_reqs = [r for r in requirements if r["connector_candidates"][0] != "tw-twse-tpex-official-market"]
-    assert all(r["source_class"] == "live_pull" and len(r["connector_candidates"]) == 1 for r in collector_reqs)
+    assert all(r["source_class"] == "live_pull" and len(r["connector_candidates"]) == 1 for r in requirements)
+    candidates = [r["connector_candidates"][0] for r in requirements]
+    assert len(candidates) == len(set(candidates))
+    builtin_ids = {"tw-twse-tpex-official-market", *TW_CHIP_REFRESH_PROFILES}
+    collector_reqs = [r for r in requirements if r["connector_candidates"][0] not in builtin_ids]
     admitted = {r["connector_candidates"][0] for r in collector_reqs}
     deployed = {d.definition_id for d in deployed_collector_definitions()}
     assert admitted == deployed - _ADMISSION_HELD
+    assert _ADMISSION_HELD.isdisjoint(candidates)
+    # Builtin official chip profiles are independent of the external Collector bundle.
+    chip_reqs = {r["connector_candidates"][0]: r for r in requirements
+                 if r["connector_candidates"][0] in TW_CHIP_REFRESH_PROFILES}
+    assert set(chip_reqs) == set(TW_CHIP_REFRESH_PROFILES)
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        assert chip_reqs[cid] == {
+            "cadence": "daily", "connector_candidates": [cid], "dataset": profile["dataset"],
+            "market": "TW", "source_class": "live_pull",
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok", "no_live_capital"],
+        }
     # The existing official requirement is unchanged.
     assert [r for r in requirements if r["connector_candidates"] == ["tw-twse-tpex-official-market"]] == [
         {

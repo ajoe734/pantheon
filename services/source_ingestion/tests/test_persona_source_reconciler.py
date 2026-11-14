@@ -945,3 +945,38 @@ def test_dbnomics_and_individual_paper_bundle_sources_are_provisioned(tmp_path, 
     for cid in ids:
         assert connectors.get_config(cid).fetch["adapter_config"]["source_id"] == cid
         assert schedules.get_schedule(cid).enabled
+
+
+def test_default_chip_requirements_provision_independent_idempotent_daily_instances(tmp_path, monkeypatch):
+    import json
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    monkeypatch.delenv('PANTHEON_COLLECTOR_HOST', raising=False)
+    desired = json.loads((Path(__file__).parents[1] / 'default_desired_state.json').read_text())
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    first = reconciler.reconcile_personas(desired['personas'])
+    assert all(r.summary['conflicts'] == 0 and r.summary['unsupported'] == 0 for r in first)
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        cfg = connectors.get_config(cid)
+        assert cfg.fetch['request']['dataset'] == profile['dataset']
+        assert cfg.fetch['max_records'] == 500
+        assert cfg.fetch['allow_empty'] is False
+        if 'venues' in profile:
+            assert cfg.fetch['request']['venues'] == profile['venues']
+        else:
+            assert cfg.fetch['request']['contracts'] == profile['contracts']
+        assert schedules.get_schedule(cid).enabled
+        assert schedules.get_schedule(cid).interval_seconds == 86400
+    assert connectors.get_config('tw-twse-tpex-official-market').fetch['request']['dataset'] == 'tw_price_daily'
+    assert connectors.get_config('tw-taifex-futures-options-chip') is None  # SSF remains the existing refresh path.
+    counts = (_line_count(tmp_path / 'connector_config.jsonl'), _line_count(tmp_path / 'connector_schedule.jsonl'))
+    second = reconciler.reconcile_personas(desired['personas'])
+    assert all(r.summary['mutated'] == 0 for r in second)
+    assert counts == (_line_count(tmp_path / 'connector_config.jsonl'), _line_count(tmp_path / 'connector_schedule.jsonl'))
+
+
+@pytest.mark.parametrize('cid', ['tw-official-tpex-institutional-flow', 'tw-taifex-institutional-positions', 'tw-taifex-put-call'])
+def test_chip_profile_cannot_provision_an_unrelated_dataset(tmp_path, cid):
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    result = reconciler.reconcile_persona(_persona(connector_candidates=[cid], dataset='tw_price_daily'))
+    assert result.actions[0].status == 'unsupported'
+    assert connectors.get_config(cid) is None
