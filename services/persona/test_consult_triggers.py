@@ -90,7 +90,8 @@ def test_missing_required_answer_fails_closed():
 class FakePersonaOwner:
     def __init__(self, existing=()):
         self.records = {
-            i: {"persona_id": i, "consult_policy_id": t.CONSULT_PANEL_POLICY_ID}
+            i: {"persona_id": i, "consult_policy_id": t.CONSULT_PANEL_POLICY_ID,
+                "metadata": {"persona_class": "consult_panel", "trading": False, "consultable": True}}
             for i in existing
         }
         self.posts = []
@@ -204,3 +205,22 @@ def test_shared_memo_verification_recomputes_gate_from_participant_transcripts()
     other = ct.trial_admission_requirement("t", "p", "art", "ck", 4)
     assert verify(_panel(req, ok), other).reason == "request_binding_mismatch"
     assert verify(_panel(req, ok, memo_rec="reject")).operator_decision_required
+
+
+def test_bootstrap_checks_conflicting_replica_winner_and_tenant():
+    owner = FakePersonaOwner()
+    winner = {
+        "persona_id": t.RISK_PERSONA_ID, "tenant_id": "ten", "lifecycle_state": "draft",
+        "consult_policy_id": t.CONSULT_PANEL_POLICY_ID,
+        "metadata": {"persona_class": "consult_panel", "trading": False, "consultable": True},
+    }
+    def raced(method, url, body):
+        if method == "GET" and url.endswith("/" + t.RISK_PERSONA_ID):
+            return winner
+        if method == "POST" and body["persona_id"] == t.RISK_PERSONA_ID:
+            return {"_conflict": True}
+        return owner(method, url, body)
+    assert t.bootstrap_consult_personas(persona_url="http://p", tenant_id="ten", http=raced)[t.RISK_PERSONA_ID] == "exists"
+    winner["tenant_id"] = "other"
+    with pytest.raises(RuntimeError, match="tenant binding"):
+        t.bootstrap_consult_personas(persona_url="http://p", tenant_id="ten", http=raced)

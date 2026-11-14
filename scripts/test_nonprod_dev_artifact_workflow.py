@@ -18,6 +18,32 @@ def step(job, identity):
     return next(item for item in job["steps"] if item.get("id") == identity)
 
 
+def test_quota_preflight_precedes_candidate_mutation_and_logs_with_configurable_budget():
+    acquisition = step(DEPLOY, "lease")
+    assert acquisition["env"]["PANTHEON_DEV_LEASE_MIN_REMAINING_QUOTA"] == "${{ vars.DEV_LEASE_MIN_REMAINING_QUOTA || '1500' }}"
+    body = acquisition["run"]
+    assert body.index("sha256sum --check --strict") < body.index("wait-for-quota") < body.index('dev_environment_lease.py" acquire')
+    assert "|| true" not in body
+    assert DEPLOY["timeout-minutes"] == 360
+
+
+def test_compensation_waits_before_heartbeat_and_cannot_be_displayed_as_success_on_failure():
+    for job, identity in ((DEPLOY, "deploy_compensation"), (COORDINATE, "compensation")):
+        compensation = step(job, identity)
+        assert compensation.get("continue-on-error", False) is False
+        assert compensation["timeout-minutes"] * 60 >= 3900 + 1500 + 180
+    for body in (step(DEPLOY, "deploy_compensation")["run"],
+                 (ROOT / "scripts/compensate_cross_repo_release.sh").read_text()):
+        start = body.index("rollback_lease_deadline=$((SECONDS + 3900))")
+        startup = body[start:]
+        assert startup.index("acquire") < startup.index("--rate-limit-wait-seconds") < startup.index("heartbeat-loop")
+        assert '--rate-limit-wait-seconds "${rollback_rate_wait}"' in startup
+        assert '--wait-seconds 3900' in startup
+        assert 'rollback_rate_wait=$((rollback_lease_deadline - SECONDS))' in startup
+        assert "rate_limited_rollback_pending" in body
+        assert '"${status}" -eq 79' in body
+
+
 def test_baseline_is_guarded_and_uploaded_before_candidate_mutation():
     order = [item.get("id") for item in DEPLOY["steps"]]
     required = ["release_admission", "rollback_baseline", "lease", "artifact_baseline",
@@ -26,7 +52,7 @@ def test_baseline_is_guarded_and_uploaded_before_candidate_mutation():
     assert sorted(required, key=order.index) == required
     capture = step(DEPLOY, "artifact_baseline")
     assert "run_with_dev_environment_lease.sh" in capture["run"]
-    assert "89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4" in capture["run"]
+    assert "c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa" in capture["run"]
     assert "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2" in capture["run"]
     assert "capture_dev_artifact_baseline.py" in capture["run"]
     assert "acquire" not in capture["run"]  # no replacement lease authority

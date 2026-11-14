@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import os
 import re
 import subprocess
@@ -3768,3 +3769,173 @@ def test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs():
     ):
         assert _chip_admission(cid, dataset, hosts).returncode == 0
         assert _chip_admission(cid, 'unadmitted', hosts).returncode != 0
+
+
+def _prune_shell_function(name: str) -> str:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index(f"{name}() {{")
+    following = re.search(r"\n[A-Za-z_][A-Za-z_0-9]*\(\) \{", source[start:])
+    assert following is not None
+    chunk = source[start : start + following.start()]
+    return chunk[: chunk.rindex("\n}\n") + 3]
+
+
+def test_run_bounded_docker_prune_reports_timeout_status_truthfully(tmp_path: Path) -> None:
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        'set -euo pipefail\ninfo() { echo "[info] $*"; }\n'
+        + _prune_shell_function("run_bounded_docker_prune")
+        + '\nrun_bounded_docker_prune "dangling images" sleep 30\n'
+        'run_bounded_docker_prune "failing" bash -c "exit 3"\n',
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS": "1"}
+    res = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, check=False, timeout=60)
+    assert res.returncode == 0, res.stderr
+    assert "dangling images timed out after 1s (status 124)" in res.stdout
+    assert "exited with status 0" not in res.stdout
+    assert "failing exited with status 3" in res.stdout
+
+
+def _run_untagged_removal(
+    tmp_path: Path, images: dict, containers: list, *, budget: str = "60", rmi_sleep: float = 0.0,
+    slow: str = "", slow_sleep: float = 0.0, deadline: str = "",
+):
+    state = tmp_path / "state.json"
+    calls = tmp_path / "calls.jsonl"
+    state.write_text(json.dumps({"images": images, "containers": containers}), encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "docker"
+    stub.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys, time
+from pathlib import Path
+state_file = Path({str(state)!r})
+args = sys.argv[1:]
+with Path({str(calls)!r}).open("a") as h:
+    h.write(json.dumps(args) + "\\n")
+st = json.loads(state_file.read_text())
+imgs, ctrs = st["images"], st["containers"]
+if {slow!r} and args[0] == {slow!r}.split()[0] and (args[:2] == {slow!r}.split() or len({slow!r}.split()) == 1):
+    time.sleep({slow_sleep})
+if args[:1] == ["ps"]:
+    for c in ctrs: print(c["id"])
+elif args[:1] == ["inspect"]:
+    for c in ctrs:
+        if c["id"] in args: print(c["image"])
+elif args[:2] == ["image", "ls"]:
+    for img_id, tags in imgs.items():
+        short = img_id.split(":", 1)[1]
+        for t in (tags or ["<none>:<none>"]): print(f"{{t}}|sha256:{{short}}")
+elif args[:1] == ["rmi"]:
+    assert "-f" not in args and "--force" not in args
+    time.sleep({rmi_sleep})
+    target = args[-1]
+    for img_id in list(imgs):
+        if img_id.split(":", 1)[1].startswith(target.removeprefix("sha256:")):
+            if any(c["image"] == img_id for c in ctrs) or imgs[img_id]:
+                sys.exit(1)
+            del imgs[img_id]
+            state_file.write_text(json.dumps(st))
+            sys.exit(0)
+    sys.exit(1)
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        'set -euo pipefail\ninfo() { echo "[info] $*"; }\n'
+        + _prune_shell_function("remove_dev_untagged_unreferenced_images_for_build")
+        + "\nremove_dev_untagged_unreferenced_images_for_build\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS": budget,
+    }
+    if deadline:
+        env["DEV_DEPLOY_DEADLINE_SECONDS"] = deadline
+    t0 = time.monotonic()
+    res = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, check=False, timeout=120)
+    res.elapsed = time.monotonic() - t0
+    assert res.returncode == 0, res.stderr
+    return res, json.loads(state.read_text())["images"], [json.loads(x) for x in calls.read_text().splitlines()]
+
+
+def _img(ch: str) -> str:
+    return "sha256:" + ch * 64
+
+
+def test_untagged_image_removal_only_removes_unreferenced_untagged_images(tmp_path: Path) -> None:
+    images = {
+        _img("1"): ["pantheon-protect/operator-bff:" + "1" * 12],
+        _img("2"): ["pantheon-operator-bff:latest"],
+        _img("3"): [],  # running container
+        _img("4"): [],  # stopped container
+        _img("5"): [],
+        _img("6"): [],
+    }
+    containers = [
+        {"id": "run", "image": _img("3")},
+        {"id": "stop", "image": _img("4")},
+    ]
+    res, after, calls = _run_untagged_removal(tmp_path, images, containers)
+    assert set(after) == {_img("1"), _img("2"), _img("3"), _img("4")}
+    rmi = [c for c in calls if c[:1] == ["rmi"]]
+    assert len(rmi) == 2
+    assert all(len(c) == 2 for c in rmi)  # one image per call, no force flag
+    assert "candidates=2 removed=2 refused=0 not_attempted=0" in res.stdout
+    assert "free_bytes_before=" in res.stdout and "free_bytes_after=" in res.stdout
+
+
+def test_untagged_image_removal_budget_cut_keeps_partial_progress(tmp_path: Path) -> None:
+    images = {_img(str(i)): [] for i in range(1, 9)}
+    res, after, _ = _run_untagged_removal(tmp_path, images, [], budget="8", rmi_sleep=1.2)
+    removed = 8 - len(after)
+    assert 1 <= removed < 8
+    assert "budget_exhausted=true" in res.stdout
+    assert f"removed={removed}" in res.stdout
+    assert "not_attempted=" in res.stdout and "not_attempted=0" not in res.stdout
+
+
+def test_untagged_image_removal_slow_container_enumeration_is_bounded(tmp_path: Path) -> None:
+    images = {_img("1"): [], _img("2"): []}
+    res, after, calls = _run_untagged_removal(tmp_path, images, [], budget="7", slow="ps", slow_sleep=30)
+    assert res.elapsed < 7, res.elapsed
+    assert "budget_exhausted=true" in res.stdout and "container_enumeration_failed_or_timed_out" in res.stdout
+    assert len(after) == 2 and not [c for c in calls if c[:1] == ["rmi"]]
+
+
+def test_untagged_image_removal_slow_image_enumeration_is_bounded(tmp_path: Path) -> None:
+    images = {_img("1"): [], _img("2"): []}
+    res, after, calls = _run_untagged_removal(tmp_path, images, [], budget="7", slow="image ls", slow_sleep=30)
+    assert res.elapsed < 7, res.elapsed
+    assert "image_enumeration_failed_or_timed_out" in res.stdout
+    assert len(after) == 2 and not [c for c in calls if c[:1] == ["rmi"]]
+
+
+def test_untagged_image_removal_budget_capped_by_short_deploy_deadline(tmp_path: Path) -> None:
+    images = {_img(str(i)): [] for i in range(1, 4)}
+    res, _, _ = _run_untagged_removal(tmp_path, images, [], budget="900", deadline="40")
+    assert "budget=10s" in res.stdout
+
+
+def test_dev_deploy_deadline_is_forwarded_to_remote_environment() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("ssh_bash() {")
+    block = source[start : source.index("\n}\n", start)]
+    assert 'DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")' in block
+
+
+def test_untagged_image_removal_wired_after_protection_and_no_forbidden_prunes() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    block = _prune_shell_function("prune_dev_docker_storage_for_build")
+    assert block.index("protect_dev_compose_container_images_for_builder_prune") < block.index(
+        "remove_dev_untagged_unreferenced_images_for_build"
+    )
+    removal = _prune_shell_function("remove_dev_untagged_unreferenced_images_for_build")
+    assert "docker rmi -f" not in removal and "--force" not in removal
+    assert "volume prune" not in source

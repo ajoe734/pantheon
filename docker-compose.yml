@@ -148,6 +148,7 @@ services:
       HINDSIGHT_API_REFLECT_LLM_PROVIDER: ${HINDSIGHT_REFLECT_LLM_PROVIDER:-none}
       HINDSIGHT_API_REFLECT_LLM_MODEL: ${HINDSIGHT_REFLECT_LLM_MODEL:-}
       HINDSIGHT_API_REFLECT_LLM_API_KEY: ${HINDSIGHT_REFLECT_LLM_API_KEY:-}
+      HINDSIGHT_API_LLM_TEMPERATURE_REFLECT: ${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1}
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER:-none}
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL:-}
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_API_KEY:-}
@@ -565,6 +566,8 @@ services:
   search-svc:
     profiles: ["core", "root"]
     stop_grace_period: 30s
+    cpus: 2.0
+    cpu_shares: 256
     build:
       context: .
       dockerfile: services/search/Dockerfile
@@ -1056,6 +1059,9 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Provisioning verifies participant identities against the Persona owner.
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       # Committee-visible memory reader (tenant-filtered in the provider).
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
@@ -1910,6 +1916,8 @@ services:
     restart: unless-stopped
     environment:
       PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      # Match the consultation executor's deployment tenant; no invented tenant.
+      PERSONA_DEFAULT_TENANT_ID: ${PERSONA_DEFAULT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
       PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
@@ -2121,6 +2129,8 @@ services:
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
       PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      # Reflect needs an operator-chosen Hindsight LLM provider; off until then.
+      PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED: ${PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED:-false}
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
       # Without this, retrieve denies with governance_authz_unconfigured.

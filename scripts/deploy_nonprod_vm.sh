@@ -947,6 +947,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
+    command_prefix+=" DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
@@ -1056,6 +1057,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
@@ -5169,12 +5172,119 @@ run_bounded_docker_prune() {
   fi
 
   info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
-  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+  local status=0
+  timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" || status=$?
+  if (( status == 0 )); then
+    return 0
+  fi
+  if (( status == 124 || status == 137 )); then
+    info "warning: ${label} timed out after ${timeout_seconds}s (status ${status}); continuing deployment"
+  else
+    info "warning: ${label} exited with status ${status}; continuing deployment"
+  fi
+  return 0
+}
+
+# Removes images with no tag that no container (running or stopped) references,
+# one at a time with a non-forced docker rmi so the daemon refuses in-use or
+# parent images. Tagged images (including pantheon-protect/*) are never
+# candidates. Each removal is persistent, so a budget cut keeps earlier progress.
+remove_dev_untagged_unreferenced_images_for_build() {
+  local budget="${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}"
+  if ! [[ "${budget}" =~ ^[0-9]+$ ]] || (( budget < 1 || budget > 3600 )); then
+    info "warning: invalid PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=${budget}; skipping untagged image removal"
+    return 0
+  fi
+  local deadline_total="${DEV_DEPLOY_DEADLINE_SECONDS:-}"
+  if [[ "${deadline_total}" =~ ^[0-9]+$ ]] && (( deadline_total >= 4 && budget > deadline_total / 4 )); then
+    budget=$((deadline_total / 4))
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    info "warning: timeout utility unavailable; skipping untagged image removal"
     return 0
   fi
 
-  local status=$?
-  info "warning: ${label} exited with status ${status}; continuing deployment"
+  # One elapsed-time budget covers discovery and removals. Every docker call is
+  # bounded by the remaining budget minus the kill-after grace, so a hung
+  # daemon cannot outlive the budget.
+  local grace=5 started="${SECONDS}" remaining call_timeout
+  local free_before="" free_after="" check_path="${PANTHEON_DEV_DEPLOY_DISK_CHECK_PATH:-$(pwd)}"
+  free_before="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_before}" =~ ^[0-9]+$ ]] || free_before="unknown"
+
+  local ids_out="" inspect_out="" rows=""
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! ids_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker ps -a -q --no-trunc 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  declare -A referenced=()
+  local ref
+  local -a cids=()
+  mapfile -t cids <<< "${ids_out}"
+  if (( ${#cids[@]} > 0 )) && [[ -n "${cids[0]}" ]]; then
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )) || ! inspect_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker inspect --format '{{.Image}}' "${cids[@]}" 2>/dev/null)"; then
+      info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_inspect_failed_or_timed_out"
+      return 0
+    fi
+    while IFS= read -r ref; do
+      ref="${ref#sha256:}"
+      [[ -n "${ref}" ]] && referenced["${ref:0:12}"]=1
+    done <<< "${inspect_out}"
+  fi
+
+  local row tag_ref img_id
+  local -a candidates=()
+  declare -A seen=()
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  # An image id with any tag row is tagged and never a candidate.
+  declare -A tagged=()
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || tagged["${img_id:0:12}"]=1
+  done <<< "${rows}"
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || continue
+    [[ -z "${tagged[${img_id:0:12}]:-}" && -z "${referenced[${img_id:0:12}]:-}" && -z "${seen[${img_id:0:12}]:-}" ]] || continue
+    seen["${img_id:0:12}"]=1
+    candidates+=("${img_id}")
+  done <<< "${rows}"
+
+  local removed=0 refused=0 skipped=0 per_call
+  info "removing untagged unreferenced dev Docker images one at a time (candidates=${#candidates[@]} budget=${budget}s)"
+  for img_id in "${candidates[@]}"; do
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )); then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    per_call=$((remaining < 60 ? remaining : 60))
+    if timeout --signal=TERM --kill-after="${grace}s" "${per_call}s" docker rmi "${img_id}" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    else
+      refused=$((refused + 1))
+    fi
+  done
+
+  free_after="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_after}" =~ ^[0-9]+$ ]] || free_after="unknown"
+  local budget_note=""
+  if (( skipped > 0 )); then
+    budget_note=" budget_exhausted=true"
+  fi
+  info "untagged image removal: candidates=${#candidates[@]} removed=${removed} refused=${refused} not_attempted=${skipped} free_bytes_before=${free_before} free_bytes_after=${free_after}${budget_note}"
   return 0
 }
 
@@ -5359,6 +5469,12 @@ prune_dev_docker_storage_for_build() {
         # rollback restores from release-artifacts tars, not from these images.
         info "removing dangling dev Docker images before root build"
         run_bounded_docker_prune "dangling images" docker image prune -f
+        if [[ "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}" != "false" ]]; then
+          # Guarded so harnesses that source only the older prune helpers keep working.
+          if declare -F remove_dev_untagged_unreferenced_images_for_build >/dev/null; then
+            remove_dev_untagged_unreferenced_images_for_build
+          fi
+        fi
       fi
     else
       info "skipped dev Docker builder cache and dangling-image prune because container image protection did not complete"
