@@ -1,0 +1,76 @@
+{
+  "task_id": "CASE-FILE-HINDSIGHT-ANCHORS-20261113",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-11-14T16:09:30Z",
+  "change": "services/knowledge/case_file.py: subject_anchors(subject) derives subject anchors from lesson_query(subject) (excluding decision:*) and sends them as subject_anchors on every /api/memory/retrieve call (lessons + negative memory); _decision_matches(subject, entry) ensures entries carrying decision:* tags only match their own decision_type when OR-matched on subject tags; _memory_item preserves source_id, retrieval_mode, and llm_layers on returned items. Anchors: family, dataset, underlying, instrument, regime (only when subject.regime_tag). decision type is never an anchor.",
+  "consumer_regression_diagnosis": {
+    "failing_suite": "services/persona/test_persona_cycle_controller.py (5 tests at lines 742/760/776/799)",
+    "source_finding": "services/knowledge/case_file.py _lessons and _history needed _decision_matches(subject, entry) so on-subject entries carrying a decision:<type> tag for another decision type do not leak across cycle vs proposal case files via /api/memory/retrieve OR-tag matching.",
+    "fixture_finding": "services/persona/test_persona_cycle_controller.py::_seed_decision_lessons (line 721) seeds CYCLE-ONLY and REMOVAL-ONLY persona entries with decision-only tags (['decision:' + decision]) and no subject anchor (e.g. 'family:momentum'). Because H8 AC1/AC4 requires subject_anchors (excluding decision:*) on /api/memory/retrieve and search_retrieval.retrieve_persona enforces anchors.isdisjoint(hs.anchors_for(entry)), decision-only fixture entries are excluded by design unless _seed_decision_lessons also includes the persona's subject family anchor (*[f'family:{f}' for f in obs['cycle_subject']['families']]).",
+    "required_artifact_admission": "services/persona/test_persona_cycle_controller.py"
+  },
+  "unchanged": [
+    "budgets",
+    "groups",
+    "citation rules",
+    "fail-closed unavailable groups"
+  ],
+  "acceptance": [
+    {
+      "id": 1,
+      "criterion": "Lessons and negative-memory reads pass the subject anchors from lesson_query to /api/memory/retrieve so association-first filtering applies; items keep source ids and retrieval mode and llm_layers",
+      "verified": true,
+      "evidence": "subject_anchors(subject) extracts non-decision tags from lesson_query(subject) and _memory_hits passes them as subject_anchors to /api/memory/retrieve for both _lessons and _history (negative memory). _memory_item preserves source_id, retrieval_mode, and llm_layers on each returned item. Verified in unit test test_subject_anchors_passed_to_lessons_and_negative_memory and real Hindsight integration test CaseFileHindsightAnchors.test_decision_tag_only_lesson_excluded_and_on_subject_lesson_returned."
+    },
+    {
+      "id": 2,
+      "criterion": "regime is passed as an anchor only when the subject carries regime_tag and nothing invents a regime",
+      "verified": true,
+      "evidence": "lesson_query includes regime:<tag> only when subject.regime_tag is non-empty, and subject_anchors emits regime:<tag> only when present. Verified in test_regime_anchor_only_when_subject_carries_it."
+    },
+    {
+      "id": 3,
+      "criterion": "Budgets and groups and citation rules and fail-closed unavailable groups are unchanged",
+      "verified": true,
+      "evidence": "Budgets, GROUPS, _Group.render fail-closed unavailable handling, and evidence citation fields are untouched. Verified across services/knowledge/test_case_file.py, services/knowledge/test_case_file_integration.py, services/persona/test_case_file_outcomes.py, services/research/tests/test_retrieval_influence_case_file.py, services/research/alpha_replication/test_evolution_executor_case_file.py, and services/control-plane/bff/tests/test_case_file_views.py."
+    },
+    {
+      "id": 4,
+      "criterion": "An integration test against the real memory route backed by Hindsight shows that a lesson matching only the decision-type tag is excluded and an on-subject lesson is returned",
+      "verified": true,
+      "evidence": "CaseFileHindsightAnchors.test_decision_tag_only_lesson_excluded_and_on_subject_lesson_returned starts the real services.memory.main FastAPI app over uvicorn with strict JWT auth and real Hindsight + pgroonga/pgvector Postgres containers, retains on-subject and decision-tag-only institutional lessons and negative-memory entries, flushes mirrors, and verifies via cf._lessons and cf._history that decision-tag-only entries are excluded while on-subject entries are returned with retrieval_mode='hindsight' and llm_layers='disabled'."
+    }
+  ],
+  "containers_used": {
+    "postgres_native_startup": "pantheon-hindsight-native-startup:repair (sha256:ae9fc3329009e0aad84712b50d9d0f8d9490fee6beb75d03d888f6e8858993da)",
+    "postgres_eval_pg": "pantheon-hindsight-eval-pg:pgroonga-pgvector (sha256:1d9dec1c927a628d8bb1bcfb7048cd2f8c84111fc4a8c34babd7b149151782c8)",
+    "hindsight_api": "pantheon-case-file-hindsight:local (sha256:ac0506c1867591f84521e11a53b39e3717d5003ad22c4486e48b2d83f94f8ca3, built from deploy/hindsight/Dockerfile with base ghcr.io/vectorize-io/hindsight-api:1.2.1-slim@sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c)",
+    "cleanup_verified": "Temporary containers and networks removed via trap cleanup EXIT; verified zero temporary containers or networks remaining."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:32772 PANTHEON_HINDSIGHT_IT_KEY=<ephemeral-key> .venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+        "exit_code": 0,
+        "result": "15 passed, 0 skipped, 1 warning in 11.01s (with pantheon-hindsight-native-startup:repair + pantheon-case-file-hindsight:local)"
+      },
+      {
+        "command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:32772 PANTHEON_HINDSIGHT_IT_KEY=<ephemeral-key> PYTHONPATH=/tmp/pantheon-worker-worktrees/pantheon/case-file-hindsight-anchors-20261113:/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/lib/python3.12/site-packages /tmp/search-embed-cpu-venv/bin/python3 -m pytest -q services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+        "exit_code": 0,
+        "result": "15 passed, 0 skipped, 1 warning in 10.71s (with pantheon-hindsight-native-startup:repair + pantheon-case-file-hindsight:local)"
+      },
+      {
+        "command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:32773 PANTHEON_HINDSIGHT_IT_KEY=<ephemeral-key> PYTHONPATH=/tmp/pantheon-worker-worktrees/pantheon/case-file-hindsight-anchors-20261113:/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/lib/python3.12/site-packages /tmp/search-embed-cpu-venv/bin/python3 -m pytest -q services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+        "exit_code": 0,
+        "result": "15 passed, 0 skipped, 1 warning in 11.08s (with pantheon-hindsight-eval-pg:pgroonga-pgvector + pantheon-case-file-hindsight:local)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/knowledge/test_case_file.py services/persona/test_case_file_outcomes.py services/research/tests/test_retrieval_influence_case_file.py services/research/alpha_replication/test_evolution_executor_case_file.py services/control-plane/bff/tests/test_case_file_views.py",
+        "exit_code": 0,
+        "result": "60 passed"
+      }
+    ],
+    "acceptance_4_verified": true
+  }
+}

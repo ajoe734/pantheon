@@ -97,6 +97,32 @@ class CaseFileTests(unittest.TestCase):
         for t in ("family:momentum", "underlying:2330", "instrument:equity", "decision:trial_admission"):
             self.assertIn(t, tags)
 
+    def test_subject_anchors_passed_to_lessons_and_negative_memory(self):
+        seen = []
+        hit = {"type": "institutional", "relevance_score": 1.0,
+               "entry": {"entry_id": "mem-1", "content": {"summary": "s", "tags": ["family:momentum", "negative_memory"]}}}
+        other_decision_hit = {"type": "institutional", "relevance_score": 1.0,
+                              "entry": {"entry_id": "mem-other-decision", "content": {
+                                  "summary": "removal only", "tags": ["family:momentum", "decision:member_removal", "negative_memory"]}}}
+        out = compose(overrides={"/api/memory/retrieve": lambda p: seen.append(list(p)) or {
+            "hits": [hit, other_decision_hit], "retrieval_mode": "hindsight", "llm_layers": "disabled"}})
+        self.assertTrue(seen)
+        for params in seen:
+            anchors = [v for k, v in params if k == "subject_anchors"]
+            self.assertEqual(anchors, ["family:momentum", "underlying:2330", "instrument:equity"])
+        items = out["groups"]["lessons"]["items"] + [
+            i for i in out["groups"]["similar_history"]["items"] if i["kind"] == "memory_negative_memory"]
+        self.assertTrue(items)
+        for item in items:
+            self.assertEqual(item["source_id"], "mem-1")
+            self.assertEqual(item["retrieval_mode"], "hindsight")
+            self.assertEqual(item["llm_layers"], "disabled")
+
+    def test_regime_anchor_only_when_subject_carries_it(self):
+        self.assertFalse([a for a in cf.subject_anchors(subject()) if a.startswith("regime:")])
+        self.assertIn("regime:bull", cf.subject_anchors(subject(regime_tag="Bull")))
+        self.assertFalse([a for a in cf.subject_anchors(subject()) if a.startswith("decision:")])
+
     def _persona_hits(self, params):
         scope = dict(params)["scope"]
         if scope == "institutional":
