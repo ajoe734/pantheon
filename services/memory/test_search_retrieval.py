@@ -27,9 +27,11 @@ def doc(cid, final=1.0):
 
 @pytest.fixture(autouse=True)
 def _no_mirror():
+    hs.flush_mirrors()
     hs.set_hindsight_client(type("Off", (), {"retain": lambda *a: None,
                                               "invalidate_document": lambda *a: 0})())
     yield
+    hs.flush_mirrors()
     hs.set_hindsight_client(None)
 
 
