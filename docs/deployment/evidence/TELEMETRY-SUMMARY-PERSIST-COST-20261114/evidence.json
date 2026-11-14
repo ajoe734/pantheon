@@ -116,12 +116,56 @@
       "proof": "No existing test file was modified, weakened, or deleted."
     }
   },
+  "resumption_20261114": {
+    "previous_source_head": "b890516f52276d3006f39e2cf82262ee19f0810d",
+    "merge_base_before_refresh": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+    "merged_base": "f3873766e36187e3ed8443feafa2eff1f83e1e23 (PR #7353 COLLECTOR-SESSION-FIXTURE-CLOCK-20261114; inherited shared Collector test-clock correction only)",
+    "historical_b890516_review_and_test_record": {
+      "review_id": "PRR_kwDOR5tTNs8AAAABX_QsPQ",
+      "reviewed_head_sha": "b890516f52276d3006f39e2cf82262ee19f0810d",
+      "reviewer": "Claude",
+      "submitted_at": "2026-11-14T14:12:18Z",
+      "reviewer_suite_result": "559 passed; 2 failures from missing fastapi in reviewer venv (preserved as historical environment failures and NOT relabeled as passing)",
+      "prior_author_telemetry_suite_result": "524 passed, 1 skipped, 54 subtests passed (plus 5 passed in 13.50s for test_runtime_summary_persist_cost.py)",
+      "reason_for_refresh": "Head b890516f52276d3006f39e2cf82262ee19f0810d diverged from current dev f3873766e36187e3ed8443feafa2eff1f83e1e23 by 2 commits from merge-base 0940f6248ad1003a7cc6406c083875d9061cfb3a and lacked the shared Collector clock fix merged in PR #7353, causing Smoke acceptance on PR #7354 to fail before refresh."
+    },
+    "unchanged_telemetry_source_scope": {
+      "services/telemetry/runtime_summary.py": "9e3cd73ccf612de6008f9e23a8d015c91de2975e0e76d02417a0332256727c05",
+      "services/telemetry/main.py": "c5699769e09de3129065a6f0b876b1739602c0f6b5532320c9794ec64d3336a1",
+      "services/telemetry/test_runtime_summary_persist_cost.py": "c878546632e4560a8ba72d8cfc6e0435c31404b4e42781c242bca086bae9c584",
+      "benchmark_reuse_note": "All three telemetry implementation/test files are byte-for-byte identical to b890516f52276d3006f39e2cf82262ee19f0810d; the 6s and 12s 4 MB benchmark results in local_benchmark_4mb_store are reused within this verified unchanged source scope, and test_ac5_local_measurement_4mb_store_cpu_and_write_bytes_before_and_after was also re-executed on the merged checkout."
+    },
+    "resumed_head_validation_batches": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_collector_newest_session_progress.py -k test_completed_same_session_new_run_has_no_raw_resend",
+        "exit_status": 0,
+        "result": "1 passed, 12 deselected, 1 warning in 1.64s"
+      },
+      {
+        "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_runtime_summary_persist_cost.py",
+        "exit_status": 0,
+        "result": "5 passed in 20.07s"
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/telemetry --ignore=services/telemetry/test_runtime_summary_persist_cost.py",
+        "exit_status": 0,
+        "result": "556 passed, 1 skipped, 47 warnings, 54 subtests passed in 103.51s"
+      },
+      {
+        "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py",
+        "exit_status": 124,
+        "result": "timed out at 30s after 6 dots during the large persistence test; not counted as passed (targeted clock-fix test passed above)"
+      }
+    ]
+  },
   "verification_commands": [
-    ".venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_runtime_summary_persist_cost.py",
-    ".venv-pantheon/bin/python3 -m pytest -q services/telemetry"
+    ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_collector_newest_session_progress.py -k test_completed_same_session_new_run_has_no_raw_resend",
+    "timeout 60 .venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_runtime_summary_persist_cost.py",
+    "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/telemetry --ignore=services/telemetry/test_runtime_summary_persist_cost.py"
   ],
   "verification_results": {
-    "persist_cost_suite": "5 passed in 13.50s",
-    "full_telemetry_suite": "524 passed, 1 skipped, 54 subtests passed"
+    "inherited_collector_clock_fix_test": "1 passed, 12 deselected in 1.64s (exit 0)",
+    "persist_cost_suite": "5 passed in 20.07s (exit 0; prior b890516 run: 5 passed in 13.50s)",
+    "telemetry_regression_suite_excluding_persist_cost": "556 passed, 1 skipped, 54 subtests passed in 103.51s (exit 0; combined telemetry total: 561 passed, 1 skipped, 54 subtests passed)"
   }
 }
