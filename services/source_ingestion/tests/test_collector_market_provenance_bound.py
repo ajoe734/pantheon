@@ -138,6 +138,9 @@ def test_completed_receipt_reuses_rows_without_per_row_evidence(admission_stack,
     records = tuple(SourceRecord.from_dict({**row, "title": "replay", "source_type": "market", "status": "normalized"})
                     for row in rows)
     assert all(module.runtime.evidence_repository.get_source_record(r.source_id, tenant_id=r.tenant_id) is None for r in records)
+    assert len(receipt.evidence_refs["evidence_bundle_ids"]) == len({r.metadata["trade_date"] for r in records})
+    assert all(module.runtime.evidence_repository.get_bundle(key, tenant_id=records[0].tenant_id) is not None
+               for key in receipt.evidence_refs["evidence_bundle_ids"])
     from services.source_ingestion.tests.test_scheduled_connector import _read_headers
     headers = _read_headers(records[0].tenant_id)
     response = http.get("/api/source-ingest/source-records", headers=headers)
@@ -231,7 +234,7 @@ def pg_repo():
 
 def test_pg_legacy_records_and_bee_reader(pg_repo, tmp_path):
     adapter, _, _ = bundle(tmp_path, SPECS[0], count=3)
-    rows = adapter.pull().records
+    rows = tuple(replace(r, metadata={**r.metadata, "tenant_id": "legacy-tenant"}) for r in adapter.pull().records)
     queue = DistillationJobQueue(tmp_path / "queue.jsonl")
     ingest(adapter, rows[:1], tmp_path / "legacy", pg_repo, queue, verified=False)
     with pg_repo._get_connection() as conn:
@@ -252,8 +255,8 @@ def test_pg_legacy_records_and_bee_reader(pg_repo, tmp_path):
         exec(compile(raw, name, "exec"), module.__dict__)
         reader = module.PostgresSourceEvidenceRepository(pg_repo.dsn, table=pg_repo.table.replace('"', ''), bootstrap=False)
         try:
-            loaded = reader.list_source_records()
-            assert len(loaded) == 2 and len(reader.list_knowledge_objects()) == 2
+            loaded = reader.list_source_records(tenant_id="legacy-tenant")
+            assert len(loaded) == 2 and len(reader.list_knowledge_objects(tenant_id="legacy-tenant")) == 2
             summary = next(r for r in loaded if r.metadata.get("collector_market_bundle"))
             assert summary.metadata["collector_market_bundle"]["row_count"] == 3
         finally:

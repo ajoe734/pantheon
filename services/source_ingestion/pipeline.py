@@ -369,13 +369,14 @@ def persist_source_evidence_refs(
             and result.records and not all(r.metadata.get("collector_market_bundle") for r in result.records)):
         summaries = collector_market_bundle_records(result, storage_refs or {})
         combined: dict[str, Any] = {"source_ids": [], "evidence_item_ids": [], "knowledge_object_ids": [],
-                                    "evidence_bundle_id": None, "distillation_admissions": {}}
+                                    "evidence_bundle_id": None, "evidence_bundle_ids": [], "distillation_admissions": {}}
         for summary in summaries:
             refs = persist_source_evidence_refs(manager, evidence_repository, evidence_builder,
                 distillation_job_queue, replace(result, records=(summary,)), storage_refs={})
             for key in ("source_ids", "evidence_item_ids", "knowledge_object_ids"):
                 combined[key].extend(refs[key])
             combined["evidence_bundle_id"] = refs["evidence_bundle_id"]
+            combined["evidence_bundle_ids"].append(refs["evidence_bundle_id"])
         return combined
 
     source_records = [
