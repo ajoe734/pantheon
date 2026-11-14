@@ -44,13 +44,27 @@
   ],
   "fixture_provenance": "Incident counts/timestamps/run identity are recorded facts from the supplied brief. Native index/manifest/items/raw shapes are reconstructed using the checked-in TWSE MI_INDEX fixture through the existing recorded_run helper. No synthetic fixture is claimed as a downloaded hosted raw bundle",
   "validation": {
+    "validated_source_commit": "9dbaf0f70b871e129ed73250c9560c03b00a5e1d",
+    "total_passed": 157,
+    "total_skipped": 1,
     "focused": {
       "command": "timeout 90s \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short",
       "exit_status": 0,
       "passed": 9,
       "duration_seconds": 44.02
     },
-    "regressions": {"status": "running"},
+    "regressions": {
+      "command": "timeout 900s \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_collector_source_alignment_contract.py -q --tb=short",
+      "exit_status": 0,
+      "passed": 148,
+      "skipped": 1,
+      "skip_reason": "Existing private native RSS pack not provided",
+      "duration_seconds": 298.77
+    },
+    "static_checks": [
+      {"command": "git diff --check", "exit_status": 0},
+      {"command": "python3 -m json.tool docs/deployment/evidence/COLLECTOR-MARKET-EARLY-FETCH-PIT-HOSTED-20261114/evidence.json > /dev/null", "exit_status": 0}
+    ],
     "prior_attempts": [
       {"command": "timeout 120s python3 -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short", "exit_status": 1, "result": "System Python has no pytest; used existing test interpreters"},
       {"command": "timeout 150s /tmp/pt-venv-droot/bin/python -m pytest services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -q --tb=short", "exit_status": 2, "result": "Collection failed because that unrelated venv lacks fastapi"},
