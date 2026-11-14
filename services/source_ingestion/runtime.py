@@ -975,7 +975,8 @@ class SourceIngestionRuntime:
         for receipt in freshness_snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
+        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector,
+                                                                     source_records=source_records)
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
@@ -1195,6 +1196,7 @@ class SourceIngestionRuntime:
     def _latest_source_record_by_connector(
         self,
         receipts_by_connector: Mapping[str, Sequence[IngestReceipt]] | None = None,
+        source_records: Sequence[SourceRecord] | None = None,
     ) -> dict[str, SourceRecord]:
         active_symbols = _active_contract_symbols()
         latest_run_by_connector: dict[str, str] = {}
@@ -1213,7 +1215,7 @@ class SourceIngestionRuntime:
                 pass
 
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
-        for record in self.evidence_repository.list_source_records():
+        for record in self.evidence_repository.list_source_records() if source_records is None else source_records:
             cid = record.connector_id
             # Historical sweeps grow this population on every tick. Ranking only
             # reads scalar metadata; avoid allocating serialized record and
@@ -1286,7 +1288,7 @@ class SourceIngestionRuntime:
             offerings[config.connector.connector_id] = source_offering(documents[host], str(spec.get("source_id") or ""))
         return offerings
 
-    def _controller_connector_readbacks(self) -> list[dict[str, Any]]:
+    def _controller_connector_readbacks(self, *, source_records: Sequence[SourceRecord] | None = None) -> list[dict[str, Any]]:
         configs, fetch_states = self.connector_store.read_snapshot()
         offerings = self._collector_offerings(configs)
         schedules = {
@@ -1302,7 +1304,8 @@ class SourceIngestionRuntime:
         for receipt in snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
+        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector,
+                                                                     source_records=source_records)
         readbacks: list[dict[str, Any]] = []
         for config in sorted(configs, key=lambda item: item.connector.connector_id):
             connector = config.connector
@@ -1347,7 +1350,8 @@ class SourceIngestionRuntime:
         return readbacks
 
     def _controller_readback_payload(self) -> dict[str, Any]:
-        connector_readbacks = self._controller_connector_readbacks()
+        source_records = self.evidence_repository.list_source_records()
+        connector_readbacks = self._controller_connector_readbacks(source_records=source_records)
         frontier = self.store.list_frontier()
         frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)
         staleness_values = [
@@ -1388,7 +1392,7 @@ class SourceIngestionRuntime:
             "controller_state_path": str(self.CONTROLLER_STATE_PATH),
             "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
             "connector_count": len(connector_readbacks),
-            "source_record_count": len(self.evidence_repository.list_source_records()),
+            "source_record_count": len(source_records),
             "dlq_count": len(dlq_entries),
             "pending_dlq_count": dlq_status_counts[DeadLetterStatus.PENDING.value],
             "unresolved_dlq_count": unresolved_dlq_count,

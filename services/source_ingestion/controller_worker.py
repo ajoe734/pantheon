@@ -1555,6 +1555,9 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
     the slots; the remainder stay due and are picked up on the next tick.
     """
 
+    from .connector_definitions import deployed_connector_definitions
+
+    definitions = deployed_connector_definitions()
     last_attempt: dict[str, str] = {}
     newest_pending: set[str] = set()
     for item in actual.get("connectors") or []:
@@ -1567,7 +1570,7 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
             cid = str(item.get("connector_id") or "")
             last_attempt[cid] = max(attempts)
             connector = item.get("connector") or {}
-            definition = deployed_connector_definitions().get(str((connector.get("metadata") or {}).get("definition_id") or ""))
+            definition = definitions.get(str((connector.get("metadata") or {}).get("definition_id") or ""))
             collector = (definition.metadata.get("collector") or {}) if definition else {}
             outcome = (item.get("fetch_state") or {}).get("collector_outcome") or {}
             observed = outcome.get("observed") or {}

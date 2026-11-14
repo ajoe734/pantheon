@@ -82,6 +82,9 @@ COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
 # ordered; newest closes use four readers, historical sweeps at most sixteen, with no queue
 # beyond that batch and no reader surviving the pull.
 LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
+# Configured delivery also pays per-item evidence and snapshot persistence after reads.
+# Bound that work even when the Collector transport is fast; the remainder continues.
+LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 
@@ -330,9 +333,6 @@ class CollectorPullResult:
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
 PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
-# The newest session is delivered whole in one pull (bounded by this ceiling, above any single
-# exchange day) so the 30-minute deadline never depends on a second scheduled pull.
-PRIORITY_LATEST_MAX_ROWS = 5000
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
 
 
@@ -353,6 +353,8 @@ def _bundle_trade_date(entry: Mapping[str, Any], items: Sequence[Mapping[str, An
     if declared and declared != day:
         raise SourceEvidenceError("collector trade_date disagrees with rows")
     try:
+        for value in days:
+            date.fromisoformat(value)
         return date.fromisoformat(day).isoformat()
     except ValueError as exc:
         raise SourceEvidenceError("price-history bundle has invalid trade_date") from exc
@@ -811,7 +813,7 @@ class CollectorBundleAdapter:
         remaining = total_cap - len(records)
         op_deadline = _OP_DEADLINE.get()
         base = None
-        if remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
+        if done and remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
             try:
                 base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining,
                                           priority_state={"trade_date": trade_date, "key": key, "items": delivered_items})
@@ -930,14 +932,11 @@ class CollectorBundleAdapter:
         state = self._priority_document()
         state_key, delivered, done, state_held = self._load_priority_state()
         best: tuple[str, str, VerifiedBundle] | None = None
-        seen_hashes: set[str] = set()
         for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
             if best and upper_bound(entry) < best[0]:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
-            if digest and digest in seen_hashes:
-                continue
             bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0),
                                    priority_codes=held)
             if not bundle.items:
@@ -947,7 +946,6 @@ class CollectorBundleAdapter:
             if digest:
                 if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
                     raise SourceEvidenceError("collector index bundle_sha256 mismatch")
-                seen_hashes.add(digest)
             if best is None or (trade_date, key) > best[:2]:
                 best = (trade_date, key, bundle)
         if best is None:
@@ -974,7 +972,11 @@ class CollectorBundleAdapter:
         pending = tuple(r for r in bundle.items if delivered_items.get(str(r["id"])) !=
                         str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower())
         if not pending:
+            if state_key != key or not state.get("trade_date") or state_held != held:
+                return [], key, (), len(bundle.items), True, held, trade_date, delivered_items
             return None
+        if _DEFER_ACK.get():
+            total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)
         windowed = _verify_raw_window(transport, replace(bundle, items=pending), item_window=(0, total_cap),
                                       deadline=_OP_DEADLINE.get(), raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY)
         stop = total_cap if windowed.verified_through is None else windowed.verified_through
@@ -1143,7 +1145,9 @@ class CollectorBundleAdapter:
             cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
             delivery_complete=complete and not feature_rejected,
         )
-        no_new_data = False
+        no_new_data = bool(verified and all(not b.items for b in verified) and complete
+                           and not records and not feature_records and not feature_rejected
+                           and observed["health_state"] == "healthy")
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
             # Revalidate the exact consumed boundary over the guarded transport. No raw
             # rows are fetched here: the acknowledged cursor represents their previous
