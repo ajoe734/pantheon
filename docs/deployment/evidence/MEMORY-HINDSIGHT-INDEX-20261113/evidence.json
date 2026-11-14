@@ -1,0 +1,36 @@
+{
+  "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-11-14T02:30:00Z",
+  "scope": "H3-H7, H9 route, H11 in services/memory. Search-service side of H7, case file, cycle and panel are other tasks.",
+  "commands": [
+    {"command": "python -m pytest -q deploy/hindsight/tests services/memory", "result": "136 passed, 9 skipped (real-container tests skipped without env)"},
+    {"command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:18888 PANTHEON_HINDSIGHT_IT_KEY=<key> python -m pytest -v services/memory/test_hindsight_integration.py", "result": "6 passed"}
+  ],
+  "integration_tests": [
+    "test_traditional_chinese_recall_through_http_route_with_anchor_filtering",
+    "test_supersede_and_archive_invalidate_in_the_index",
+    "test_persona_never_sees_other_persona_and_committee_only_gets_committee_scope",
+    "test_rebuild_restores_a_dropped_bank_idempotently",
+    "test_reflect_reports_unavailable_with_reason",
+    "test_unreachable_index_falls_back_explicitly_without_blocking_canonical_state"
+  ],
+  "containers_used": {
+    "hindsight": "ghcr.io/vectorize-io/hindsight-api@sha256:662109ece429871a81e036427fb93fbb09ba9dc4b01d320d356f114c0e1aedd8 (upstream image, provider none, chunks retain, pgroonga + pgvector, API-key tenant extension, MCP off)",
+    "postgres": "local image pantheon-hindsight-eval-pg:pgroonga-pgvector (groonga/pgroonga 17 + pgvector), database pantheon_memory_index",
+    "run_as": "isolated docker network with two plain `docker run` containers; unique per-test tenant banks, deleted after each test"
+  },
+  "known_gaps": [
+    "Not run against the repo-built `hindsight` and `memory-index-postgres` images from docker-compose.yml: building them needs several GB of model/image layers and this worker host had about 4 GB free disk. The compose services were not started. The run above used the upstream image with its default local embedding/reranker models (English bge-small, 384-d), not the offline multilingual-e5-large and bge-reranker-v2-m3 packaged by HINDSIGHT-SERVICE-DEPLOY. Traditional Chinese recall passed here through pgroonga plus the default embedder; ranking quality with the packaged models is not measured. The reviewer should re-run the same command against the compose pair (set PANTHEON_HINDSIGHT_IT_URL / _KEY).",
+    "Observation-to-canonical-id mapping through source_fact_ids is covered by a fake-transport unit test only; consolidation is disabled (no LLM provider), so no real observations exist.",
+    "Reflect success path is untested against a real provider (none configured). Hindsight 1.2.1 reflect has no temperature field; low budget is used instead."
+  ],
+  "api_facts_verified_on_real_container": [
+    "retain with document_id replaces; caller entities kept with resolve_entities false",
+    "memories/list supports document_id and state filters; PATCH state=invalidated removes units from recall and is reversible (state=valid)",
+    "tag_groups leaf with match any_strict filters recall",
+    "DELETE bank drops it; retain recreates it",
+    "reflect with provider none returns HTTP 400"
+  ]
+}

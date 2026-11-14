@@ -2121,6 +2121,8 @@ services:
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
       PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      # Reflect needs an operator-chosen Hindsight LLM provider; off until then.
+      PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED: ${PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED:-false}
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
       # Without this, retrieve denies with governance_authz_unconfigured.

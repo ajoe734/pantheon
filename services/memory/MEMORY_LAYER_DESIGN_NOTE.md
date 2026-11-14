@@ -254,50 +254,58 @@ Persona implementation note (2026-06-09, MPOS-P1-MEM-001):
 - Consultation sessions are filtered to `relevance_scope=persona_and_committee`, so private persona memory does not leak into committee contexts.
 - `scope=both` merges ranked persona and institutional hits and only writes `reuse_count` for returned hits.
 
-### 5.2 Shared search projection (2026-11-13, M2)
+### 5.2 Hindsight memory index (2026-11-14, MEMORY-HINDSIGHT-INDEX-20261113)
 
-Canonical memory writes remain owned by memory-svc. Both store implementations
-project create, supersede, explicit archive and expiry mutations after canonical
-persistence, including non-HTTP Learn-feedback writers. Inactive or expired
-entries project as `is_active=false` tombstones. Tenant, persona, relevance scope,
-institutional scope/filter and source event identity travel with the projection.
-Persona entries now support optional `expires_at`, `archived_at` and
-`archived_reason`; no default persona TTL is imposed.
+Canonical stores stay owner-written and are the only truth. Hindsight is an
+internal, rebuildable index reachable only by memory-svc
+(`PANTHEON_MEMORY_HINDSIGHT_URL` / `_API_KEY`); no agent holds a credential or a
+write path, and execution never reads it. The earlier projection into the search
+service is removed (store `_project` hooks, `sync_memory_projection`,
+`backfill_memory_index`, `project_*_entry`, `retrieve_*_with_backend`).
 
-Memory calls the existing search `POST /api/search/index/refresh` with typed
-`memory_entries`, and `POST /api/search/query` with `memory_record_kind` for
-candidates. These branches require a verified `memory-svc` JWT with `system`
-role and enforce its tenant grants even if ordinary search is permissive.
-They do not add an endpoint or a role. The search service owns projection
-validation, jieba segmentation, embedding and index writes. The normal knowledge
-query restricts its backend to `knowledge_object` records so memory projections
-cannot displace knowledge candidates. Memory never opens the retrieval DSN or
-constructs an embedding engine in its production path.
+**Mirror (H3, H11).** After canonical persistence of every create, supersede,
+archive and expiry (both store implementations, including non-HTTP writers) the
+store calls `hindsight_index.mirror_entry`. One Hindsight document per canonical
+id (`document_id` = canonical id) is retained into the tenant facts bank
+(institutional) or the persona interpretation bank (persona); `metadata`,
+event `timestamp` (= `written_at`), `context` (= source event type), anchor
+entities (`resolve_entities=false`) and tags (`anchor:*`, `scope:*`, `type:*`)
+are set. Superseded, archived or expired entries have their memory units
+invalidated (reversible soft retire). Failures are retried (3 attempts), logged
+as `memory_mirror_failed` with a reason, kept in bounded diagnostics
+(`hindsight_index.DIAGNOSTICS`) and never block or roll back the canonical write.
+Usefulness marks and read counters do not change the index.
 
-Candidate responses contain IDs and scores. Memory hydrates its own records,
-then rechecks tenant, persona, active/superseded/expired state, knowledge/memory
-type, scope/filter and tags before ranking/limiting the returned entries.
-Consultation sessions require `persona_and_committee`; `persona_private` cannot
-cross personas or enter committee results. The same checks apply to keyword
-fallback. A verified wildcard tenant is narrowed to `default`, never expanded
-into a cross-tenant query.
+**Anchors (H4).** One deterministic mapping (`anchors_for`) turns canonical
+structured fields and `kind:value` tags into `strategy`, `parent_strategy`,
+`family`, `underlying`, `instrument`, `dataset`, `decision` and `regime` anchors.
+Entries without an anchor carry `anchor:none` and are counted (`anchor_none`).
 
-Every successful retrieval response includes `retrieval_mode`, `fallback_reason`
-and per-store `retrieval_details`. Modes are `hybrid`, `lexical_only` (jieba/FTS
-when the search embedding model is unavailable), and `keyword_fallback` (empty
-query, unconfigured search or failed search request). A mixed response reports
-its least capable mode and retains each store's reason. Keyword fallback emits
-a warning. Search records candidate queries under the requesting persona/session
-context; an unavailable query log fails the search request. The real session ID
-is sent as caller attribution. Search query logs record candidates; memory's
-canonical hydration determines which entries are actually returned and reused.
+**Rebuild (H3).** `python -m services.memory.hindsight_index rebuild` drops every
+bank known to canonical memory and re-retains each active entry; it is idempotent
+and reports banks, retained, skipped inactive, `anchor_none` and failures (exit 1
+on failure). It is a CLI, not a route.
 
-Projection failures emit `memory_projection_failed` with the entry and source
-event IDs and a bounded reason, without discarding the durable canonical write.
-They require replay using the backfill entry point below. A failed tombstone
-cannot authorize a stale hit: canonical hydration still rejects it. An index
-outage can reduce recall until replay; there is no automatic retry daemon or
-claim that a failed projection succeeded.
+**Retrieve (H6).** `/api/memory/retrieve` recalls each readable bank (facts bank;
+only the requested persona's own bank), adding `tag_groups` (`any_strict`) when
+the request carries `subject_anchors` (`kind:value`), `scope:committee` for
+consultation callers and a `type:` tag when a type filter is given. Observations
+map to canonical ids through `source_fact_ids`. Memory then hydrates and
+re-authorises every id from the canonical stores (tenant, persona, relevance
+scope, active/expiry, filters, anchors), applies `usefulness_score` as the final
+re-rank, and reports `retrieval_mode` (`hindsight` or `keyword_fallback`),
+`fallback_reason`, per-store `retrieval_details` and `llm_layers`
+(`disabled` until reflect is enabled). Keyword ranking runs only as the explicit
+fallback (empty query, `hindsight_unconfigured`, or a transport/HTTP reason).
+Wildcard tenants narrow to `default`.
+
+**Reflect (H9 route).** `POST /api/memory/reflect` is read-only, authorised like
+retrieve, one bank per call (`bank` = `institutional` or `persona`), low budget,
+and returns text plus citations mapped back to canonical ids that re-authorise
+from the owner store. While `PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED` is not
+true, or the index rejects reflect, it returns 503 `reflect_unavailable` with a
+reason. The deployed Hindsight 1.2.1 reflect request has no temperature field, so
+"low temperature" is realised as the `low` budget until upstream exposes it.
 
 ### 5.3 Retrieval Trigger Contexts
 
