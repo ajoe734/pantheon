@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 import weakref
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -654,12 +654,16 @@ def _rebuild_positions(
                 if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                     row["last_known_mark_observed_at"] = mark["observed_at"]
                 if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                    row["last_known_mark_lineage"] = mark["lineage"]
+                    row["last_known_mark_lineage"] = _clone_json_value(
+                        mark["lineage"]
+                    )
                 if (
                     isinstance(mark.get("calendar_evidence"), dict)
                     and mark["calendar_evidence"]
                 ):
-                    row["last_known_mark_calendar_evidence"] = mark["calendar_evidence"]
+                    row["last_known_mark_calendar_evidence"] = _clone_json_value(
+                        mark["calendar_evidence"]
+                    )
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
@@ -690,12 +694,16 @@ def _rebuild_positions(
                 if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                     row["last_known_mark_observed_at"] = mark["observed_at"]
                 if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                    row["last_known_mark_lineage"] = mark["lineage"]
+                    row["last_known_mark_lineage"] = _clone_json_value(
+                        mark["lineage"]
+                    )
                 if (
                     isinstance(mark.get("calendar_evidence"), dict)
                     and mark["calendar_evidence"]
                 ):
-                    row["last_known_mark_calendar_evidence"] = mark["calendar_evidence"]
+                    row["last_known_mark_calendar_evidence"] = _clone_json_value(
+                        mark["calendar_evidence"]
+                    )
                 if mark.get("quote_currency"):
                     row["currency"] = mark["quote_currency"]
                 rows.append(row)
@@ -713,12 +721,14 @@ def _rebuild_positions(
             if isinstance(mark.get("observed_at"), str) and mark["observed_at"]:
                 row["mark_observed_at"] = mark["observed_at"]
             if isinstance(mark.get("lineage"), dict) and mark["lineage"]:
-                row["mark_lineage"] = mark["lineage"]
+                row["mark_lineage"] = _clone_json_value(mark["lineage"])
             if (
                 isinstance(mark.get("calendar_evidence"), dict)
                 and mark["calendar_evidence"]
             ):
-                row["mark_calendar_evidence"] = mark["calendar_evidence"]
+                row["mark_calendar_evidence"] = _clone_json_value(
+                    mark["calendar_evidence"]
+                )
             if mark.get("quote_currency"):
                 row["currency"] = mark["quote_currency"]
         rows.append(row)
@@ -752,82 +762,6 @@ def _rebuild_positions(
         current["positions_by_underlying"] = by_underlying
     else:
         current.pop("positions_by_underlying", None)
-
-
-_TAIPEI_OFFSET = timezone(timedelta(hours=8))
-
-
-def _can_skip_positions_rebuild(
-    prior_summary: Optional[dict[str, Any]],
-    current: dict[str, Any],
-    *,
-    reference_at: Optional[datetime] = None,
-) -> bool:
-    """Return True when positions and mark freshness are invariant across events."""
-    if not isinstance(prior_summary, dict):
-        return False
-    if not isinstance(current.get("positions"), list) or current.get("positions_status") == "unavailable":
-        return False
-    if isinstance(current.get("_valuation_failure"), dict) or isinstance(
-        prior_summary.get("_valuation_failure"), dict
-    ):
-        return False
-    prior_latest = _parse_rfc3339(
-        prior_summary.get("_binding_latest_event_at") or prior_summary.get("last_event_at")
-    )
-    new_latest = reference_at or _parse_rfc3339(
-        current.get("_binding_latest_event_at") or current.get("last_event_at")
-    )
-    if prior_latest is None or new_latest is None or new_latest < prior_latest:
-        return False
-    if new_latest == prior_latest:
-        return True
-    prior_tpe = prior_latest.astimezone(_TAIPEI_OFFSET)
-    new_tpe = new_latest.astimezone(_TAIPEI_OFFSET)
-    if (
-        prior_latest.date() != new_latest.date()
-        or prior_tpe.date() != new_tpe.date()
-        or ((prior_tpe.hour, prior_tpe.minute) >= (13, 30))
-        != ((new_tpe.hour, new_tpe.minute) >= (13, 30))
-        or ((prior_tpe.hour, prior_tpe.minute) >= (13, 45))
-        != ((new_tpe.hour, new_tpe.minute) >= (13, 45))
-    ):
-        return False
-    positions = current.get("_positions_by_symbol")
-    marks = current.get("_marks_by_symbol")
-    if not isinstance(positions, dict) or not isinstance(marks, dict):
-        return False
-    binding_id = str(current.get("binding_id") or "")
-    for pos_key, qty in positions.items():
-        if not qty:
-            continue
-        mark = marks.get(pos_key)
-        if not (isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id):
-            continue
-        if mark.get("provenance_invalid"):
-            continue
-        mark_as_of = _parse_rfc3339(mark.get("as_of"))
-        if mark_as_of is None:
-            continue
-        prior_age = (prior_latest - mark_as_of).total_seconds()
-        new_age = (new_latest - mark_as_of).total_seconds()
-        if prior_age < 20700.0 or new_age > 172800.0:
-            return False
-        obs_raw = mark.get("observed_at")
-        if isinstance(obs_raw, str) and obs_raw:
-            obs_dt = _parse_rfc3339(obs_raw)
-            if (
-                obs_dt is None
-                or obs_dt > prior_latest
-                or (new_latest - obs_dt).total_seconds() > 172800.0
-            ):
-                return False
-        cal = mark.get("calendar_evidence")
-        if isinstance(cal, dict) and cal:
-            cap_dt = _parse_rfc3339(cal.get("captured_at"))
-            if cap_dt is None or cap_dt > prior_latest:
-                return False
-    return True
 
 
 def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
@@ -1369,8 +1303,7 @@ class RuntimeSummaryProjectionStore:
                 for field in _SUMMARY_LIFECYCLE_IDENTITY_FIELDS:
                     value = preserved_identity.get(field)
                     if value not in (None, "", [], {}):
-                        if is_lifecycle_identity or field not in current:
-                            current[field] = _clone_json_value(value)
+                        current[field] = _clone_json_value(value)
             else:
                 if trace_id:
                     current["trace_id"] = trace_id
@@ -2090,7 +2023,6 @@ class RuntimeSummaryProjectionStore:
             if rebuild_positions_needed or (
                 isinstance(current.get("_positions_by_symbol"), dict)
                 and current.get("_positions_by_symbol")
-                and not _can_skip_positions_rebuild(prior_summary, current)
             ):
                 _rebuild_positions(current)
                 if isinstance(prior_summary, dict):
@@ -2123,7 +2055,7 @@ class RuntimeSummaryProjectionStore:
             current["health_summary"] = self._health_summary(current)
             self._summaries[summary_key] = current
             self._persist_summary_change(summary_key, prior_summary, current)
-            return dict(current)
+            return _clone_json_value(current)
 
     def _binding_rollover_is_newer(
         self,
@@ -2271,7 +2203,7 @@ class RuntimeSummaryProjectionStore:
         current["projection_diagnostics"] = diagnostics
         self._summaries[summary_key] = current
         self._persist_summary_change(summary_key, prior_summary, current)
-        return dict(current)
+        return _clone_json_value(current)
 
     def backfill_missing_trade_episodes(
         self, trade_episode_store: Any, binding_events_reader: Any
@@ -2765,15 +2697,13 @@ class RuntimeSummaryProjectionStore:
         *,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        projected = dict(summary)
+        projected = _clone_json_value(summary)
         if (
             now is not None
             and isinstance(projected.get("_positions_by_symbol"), dict)
             and projected.get("_positions_by_symbol")
         ):
-            ref_utc = now.astimezone(timezone.utc)
-            if not _can_skip_positions_rebuild(summary, projected, reference_at=ref_utc):
-                _rebuild_positions(projected, reference_at=ref_utc)
+            _rebuild_positions(projected, reference_at=now.astimezone(timezone.utc))
         heartbeat_at = _parse_rfc3339(projected.get("last_heartbeat_at"))
         if heartbeat_at is None or projected.get("retired") is True:
             return projected

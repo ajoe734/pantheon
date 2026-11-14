@@ -20,6 +20,7 @@ Proves that:
 from __future__ import annotations
 
 import copy
+import gc
 import json
 import os
 import signal
@@ -365,9 +366,19 @@ class _EventDrivenDurableBroker(InMemoryBuffer):
         super().__init__(maxsize=maxsize)
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd: int | None = None
 
     def is_durable(self) -> bool:
         return True
+
+    async def close(self) -> None:
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
+        await super().close()
 
     async def put(self, event: dict[str, Any], timeout: float | None = None) -> bool:
         ok = await super().put(event, timeout=timeout)
@@ -375,14 +386,12 @@ class _EventDrivenDurableBroker(InMemoryBuffer):
             encoded = (
                 json.dumps(event, separators=(",", ":"), sort_keys=True) + "\n"
             ).encode("utf-8")
-            fd = os.open(
-                self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644
-            )
-            try:
-                os.write(fd, encoded)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+            if self._fd is None:
+                self._fd = os.open(
+                    self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644
+                )
+            os.write(self._fd, encoded)
+            os.fsync(self._fd)
         return ok
 
 
@@ -511,6 +520,7 @@ def run_local_persist_cost_benchmark(
                         )
                     schedule.sort(key=lambda item: item[0])
 
+                    gc.collect()
                     io_before = _read_proc_io_write_bytes()
                     cpu_before = time.process_time()
                     wall_start = time.monotonic()
@@ -567,6 +577,8 @@ def run_local_persist_cost_benchmark(
 
                     _main._run_async(svc.stop(graceful=True), timeout=10.0)
                     _main._loop.call_soon_threadsafe(_main._loop.stop)
+                    if _main._loop_thread is not None:
+                        _main._loop_thread.join(timeout=5.0)
 
                     return {
                         "mode": mode,
@@ -1018,6 +1030,28 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
                     res_legacy = legacy_store.project_event(copy.deepcopy(ev))
                     res_new = new_store.project_event(copy.deepcopy(ev))
                     self.assertEqual(res_new, res_legacy)
+                    if isinstance(res_new, dict):
+                        res_new["mutated_project_return"] = "caller_mutation"
+                        if isinstance(res_new.get("last_lifecycle_identity"), dict):
+                            res_new["last_lifecycle_identity"].setdefault("metadata", {})[
+                                "project_return_alias_probe"
+                            ] = "mutated_by_caller"
+
+            # Verify public get() and list() return isolated copies (no read-alias mutation)
+            probe_get = new_store.get(rt_fill, tenant_id=_TENANT_ID, now=fixed_now)
+            self.assertIsNotNone(probe_get)
+            assert probe_get is not None
+            probe_get["last_lifecycle_identity"]["metadata"]["root_read_alias_probe"] = (
+                "mutated_by_caller"
+            )
+            if probe_get.get("positions"):
+                probe_get["positions"][0].setdefault("mark_lineage", {})[
+                    "alias_probe"
+                ] = "mutated_by_caller"
+            probe_list = new_store.list(tenant_id=_TENANT_ID, now=fixed_now)
+            probe_list[0]["last_lifecycle_identity"]["metadata"]["list_read_alias_probe"] = (
+                "mutated_by_caller"
+            )
 
             # Compare store.list() and store.get() for every runtime
             self.assertEqual(
@@ -1025,9 +1059,21 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
                 legacy_store.list(tenant_id=_TENANT_ID, now=fixed_now),
             )
             for rt_id, _ in runtime_pairs:
-                self.assertEqual(
-                    new_store.get(rt_id, tenant_id=_TENANT_ID, now=fixed_now),
-                    legacy_store.get(rt_id, tenant_id=_TENANT_ID, now=fixed_now),
+                got_new = new_store.get(rt_id, tenant_id=_TENANT_ID, now=fixed_now)
+                got_legacy = legacy_store.get(rt_id, tenant_id=_TENANT_ID, now=fixed_now)
+                self.assertEqual(got_new, got_legacy)
+                assert got_new is not None
+                self.assertNotIn(
+                    "root_read_alias_probe",
+                    got_new["last_lifecycle_identity"]["metadata"],
+                )
+                self.assertNotIn(
+                    "list_read_alias_probe",
+                    got_new["last_lifecycle_identity"]["metadata"],
+                )
+                self.assertNotIn(
+                    "project_return_alias_probe",
+                    got_new["last_lifecycle_identity"]["metadata"],
                 )
 
             # Compare BFF-facing HTTP routes (/api/telemetry/runtime-summaries and /<runtime_id>)
@@ -1082,22 +1128,9 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
         200 ingest calls plus 70 infrastructure-health calls per minute records
         CPU and write_bytes/s before and after, with after CPU < 0.1 core and
         writes < 0.5 MB/s."""
-        best_metrics: dict[str, Any] | None = None
-        for _ in range(3):
-            candidate = run_local_persist_cost_benchmark(duration_seconds=6.0)
-            if (
-                best_metrics is None
-                or candidate["after"]["cpu_cores"] < best_metrics["after"]["cpu_cores"]
-            ):
-                best_metrics = candidate
-            if (
-                candidate["after"]["cpu_cores"] < 0.1
-                and candidate["after"]["write_mb_per_sec"] < 0.5
-            ):
-                break
-        assert best_metrics is not None
-        before = best_metrics["before"]
-        after = best_metrics["after"]
+        metrics = run_local_persist_cost_benchmark(duration_seconds=12.0)
+        before = metrics["before"]
+        after = metrics["after"]
 
         self.assertGreaterEqual(before["store_initial_bytes"], 4_000_000)
         self.assertGreaterEqual(after["store_initial_bytes"], 4_000_000)
