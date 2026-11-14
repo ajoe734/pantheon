@@ -1465,19 +1465,34 @@ def test_held_first_order_continues_across_ticks_without_gaps(tmp_path):
         if result.priority_done:
             done = True
             break
-    # every row arrives; leftover cap handed to the ordered sweep may replay already
-    # delivered rows (pre-existing idempotent replay), never a gap
-    assert done and len(set(seen)) == 600
+    assert done and len(seen) == len(set(seen)) == 600
 
 
-def test_held_set_change_restarts_the_session_order_instead_of_skipping_rows(tmp_path):
+def test_held_set_change_preserves_progress_and_prioritizes_undelivered_holdings(tmp_path):
     make = _held_session(tmp_path)
     adapter = make()
     first = adapter.pull(priority_symbols=("2330",))
     adapter.save_resume_cursor(first)
     adapter = make()
     second = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
-    assert second.priority_delivered == 55 and "2317" in _symbols(second)
+    assert second.priority_delivered == 110 and _symbols(second)[0] == "2317"
+    assert _symbols(first)[0] == "2330"
+    expected = replace(_held_session(tmp_path / "reference")(), max_records=600).pull(
+        priority_symbols=("2330", "2317"))
+    identity = lambda r: (r.source_id, r.metadata["content_hash"])
+    seen = [identity(r) for r in first.records + second.records]
+    assert len(seen) == len(set(seen)) == 110
+    result = second
+    for _ in range(10):
+        adapter.save_resume_cursor(result)
+        if result.priority_done:
+            break
+        adapter = make()
+        result = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330", "2317"))
+        seen.extend(identity(r) for r in result.records)
+    assert result.priority_done and result.priority_delivered == 600
+    assert len(seen) == len(set(seen)) == 600
+    assert set(seen) == {identity(r) for r in expected.records}
 
 
 def test_deferred_ack_does_not_persist_held_progress_before_persistence(tmp_path):
@@ -1692,10 +1707,12 @@ def test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback(tmp_pat
         spec.loader.exec_module(legacy)
         source, _, dataset, exchange, _, cadence = _INTAKE_SIZES[0]
         files, entry = _intake_bundle(source, 5, dataset, exchange, "2024-11-12")
+        latest_files, latest = _intake_bundle(source, 2, dataset, exchange, "2024-11-13")
+        files.update(latest_files)
         files["status.json"] = json.dumps({"sources": {source: {
             "status": "ok", "last_run_at": entry["finished_at"], "cadence_seconds": 86400,
             "offered": False, "offered_reason": "no_timer", "timer_enabled": False}}}).encode()
-        adapter = adapter_for(files, [entry], tmp_path, source_id=source, source_type="market", dataset=dataset,
+        adapter = adapter_for(files, [entry, latest], tmp_path, source_id=source, source_type="market", dataset=dataset,
                               max_records=2, cadence_seconds=cadence)
         pull = adapter.pull(); adapter.save_resume_cursor(pull)
         # Drain priority, leaving the normal backward-compatible partial sweep cursor.
@@ -1704,6 +1721,7 @@ def test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback(tmp_pat
                 break
             pull = adapter.pull(cursor=pull.next_cursor); adapter.save_resume_cursor(pull)
         assert pull.next_cursor and "|items=" in pull.next_cursor
+        assert {r.metadata["trade_date"] for r in pull.records} == {"2024-11-12"}
         old = legacy.CollectorBundleAdapter(connector_id=adapter.connector_id, source_id=source,
                                            source_type="market", dataset=dataset, raw_root=str(tmp_path / "store"))
         assert old.load_resume_cursor() == pull.next_cursor
@@ -1739,7 +1757,12 @@ def test_candidate_and_current_real_size_ordered_pull_measurement(tmp_path, monk
     loader.loader.exec_module(candidate)
     source, count, dataset, exchange, cap, cadence = spec
     files, entry = _intake_bundle(source, count, dataset, exchange, "2024-11-12")
-    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    entries = [entry]
+    if dataset == "tw_price_daily":
+        latest_files, latest = _intake_bundle(source, 2, dataset, exchange, "2024-11-13")
+        files.update(latest_files)
+        entries.append(latest)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
     files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": entry["finished_at"]}}}).encode()
     measurements = []
     try:
@@ -1765,14 +1788,16 @@ def test_candidate_and_current_real_size_ordered_pull_measurement(tmp_path, monk
             if dataset == "tw_price_daily":
                 priority = adapter._priority_key_path()
                 priority.parent.mkdir(parents=True, exist_ok=True)
-                priority.write_text(json.dumps({"source_id": source, "key": entry["finished_at"] + "#" + entry["run_id"],
-                                                "delivered": count, "done": True, "held": []}))
+                priority.write_text(json.dumps({"source_id": source, "key": latest["finished_at"] + "#" + latest["run_id"],
+                                                "delivered": 2, "done": True, "held": []}))
             start = real_time.perf_counter(); result = adapter.pull()
             measurements.append({"version": label, "source": source, "bundle_rows": count,
                                  "rows": len(result.records), "raw_reads": reads[0], "wall_seconds": real_time.perf_counter()-start,
                                  "model_seconds": clock[0], "cap": cap, "cadence_seconds": cadence,
                                  "continuation_pending": result.observed.get("continuation_pending", False)})
             assert len(result.records) > 0 and clock[0] < 16
+            assert {r.metadata["trade_date"] for r in result.records} == {"2024-11-12"}
+            assert len({(r.source_id, r.metadata["content_hash"]) for r in result.records}) == len(result.records)
         assert measurements[0]["rows"] < cap  # 15 seconds binds the candidate
         assert measurements[1]["rows"] > measurements[0]["rows"]
         assert measurements[1]["rows"] <= cap  # cap and shared deadline both remain binding
