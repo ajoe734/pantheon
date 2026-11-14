@@ -1,0 +1,91 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-SEARCH-EMBED-CPU-BOUND-20261114-CI-RED-D5536CBFB04B",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "status": "diagnosed_scope_blocked",
+  "source_task_id": "SEARCH-EMBED-CPU-BOUND-20261114",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/7349",
+  "source_head": "3ca98850ca3b76b2973fad19c3e8a293bfb1c92d",
+  "investigated_dev_sha": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+  "root_cause": {
+    "kind": "wall_clock_dependent_test_fixture",
+    "test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
+    "fixture_last_run_at": "2026-11-14T00:19:33Z",
+    "collector_cadence_seconds": 21600,
+    "fixture_becomes_stale_after": "2026-11-14T12:19:33Z",
+    "explanation": "The test requires no_new_data=true but does not freeze the health observation clock. observed_from_collector_status uses datetime.now(timezone.utc) and correctly marks bundles older than twice the collector cadence degraded. _pull_ordered requires healthy status for no_new_data. The fixture therefore expires independently of the embedding changes. Empty records, completed priority delivery and zero raw reads remain correct.",
+    "production_health_guard": "services/source_ingestion/connectors/collector_bundle.py:observed_from_collector_status",
+    "required_edit": "services/source_ingestion/tests/test_collector_newest_session_progress.py",
+    "minimal_correction": "Freeze only the adapter health observation clock for the affected fresh-boundary test to a time shortly after the latest recorded run, following test_collector_outcome_truth.py's existing observed_from_collector_status wrapper pattern. Retain no_new_data, priority completion, no raw reads and persisted priority key assertions. Do not relax the production freshness check or remove stale/unacknowledged controls."
+  },
+  "official_ci": {
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/43600698373/job/132466640993",
+    "check": "Smoke acceptance",
+    "step": "Run source ingestion tests",
+    "finished_at": "2026-11-14T14:03:57Z",
+    "exit_code": 1,
+    "summary": "1 failed, 1963 passed, 2 skipped, 15 warnings in 388.07s",
+    "failure": "test_completed_same_session_new_run_has_no_raw_resend: records=(), priority_done=True, no_new_data=False",
+    "failed_job_log_sha256": "c0f6567690eb98180190d52b503f1548fdf3a88d478e7b712fd5f93a69b6471a"
+  },
+  "local_validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable installation verified from a foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend services/source_ingestion/tests/test_collector_newest_session_progress.py::test_empty_unacknowledged_bundle_does_not_claim_no_new_data",
+      "exit_code": 1,
+      "summary": "1 failed, 1 passed, 1 warning in 1.66s",
+      "result": "Same official-CI failure reproduced on unchanged dev; unacknowledged-empty negative control passed.",
+      "log_sha256": "57d9e4247d5365689bccffa8e3c5f2aa35868f22a4d0785e4981f6aedc3dca46"
+    },
+    {
+      "method": "Transient Python diagnostic imports recorded_run and adapter from the existing test, creates two count=2 bundles with the test's timestamps, saves the first pull, and observes the second pull while unittest.mock.patch.object wraps only observed_from_collector_status to supply now. Each clock uses a fresh TemporaryDirectory; assertions require empty records, completed priority and zero raw reads. No repository file or system clock is changed.",
+      "exit_code": 0,
+      "observations": [
+        {
+          "clock": "2026-11-14T01:00:00Z",
+          "record_count": 0,
+          "priority_done": true,
+          "no_new_data": true,
+          "raw_reads": 0,
+          "health": "healthy",
+          "reasons": []
+        },
+        {
+          "clock": "2026-11-14T14:00:00Z",
+          "record_count": 0,
+          "priority_done": true,
+          "no_new_data": false,
+          "raw_reads": 0,
+          "health": "degraded",
+          "reasons": ["newest_bundle_older_than_twice_cadence"]
+        }
+      ],
+      "limitation": "Diagnostic isolation only; this is not a corrected-suite or green-CI claim."
+    },
+    {
+      "command": "git diff --name-only origin/dev...3ca98850ca3b76b2973fad19c3e8a293bfb1c92d -- services/source_ingestion",
+      "exit_code": 0,
+      "stdout": "",
+      "result": "The source PR makes no source-ingestion changes relative to its current dev base."
+    }
+  ],
+  "scope_blocker": {
+    "waiting_for": "Human/Ops",
+    "reason": "The task brief explicitly requires a blocker when a needed file is outside its artifact contract. Only scripts/git/auto_integrator.py and this evidence.json are authorized; the necessary test file is excluded.",
+    "requested_contract_addition": "services/source_ingestion/tests/test_collector_newest_session_progress.py",
+    "next": "Revise this existing blocked task's artifact contract through the governed command, then reopen it. Deliver the narrowly scoped fixture fix from this repair task's own branch and PR, validate both fresh and stale outcomes and the relevant source-ingestion suite, and hand off for independent exact-head review. Preserve source PR #7349 and its approval identity; repair commits must not be pushed to its branch."
+  },
+  "delivery_limits": {
+    "implementation_changed": false,
+    "auto_integrator_changed": false,
+    "source_pr_changed": false,
+    "ci_unblocked": false,
+    "source_task_superseded": false,
+    "acceptance_complete": false,
+    "note": "Evidence anchor only. Auto-integrator is correctly refusing red CI. No review, merge, done, deployment or runtime-promotion claim."
+  }
+}
