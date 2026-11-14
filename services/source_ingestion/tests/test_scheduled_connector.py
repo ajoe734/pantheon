@@ -2757,6 +2757,7 @@ def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack,
 def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack, monkeypatch, spec_index):
     import json
     from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
     from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
     http, module, _ = steady_stack
     spec = _INTAKE_SIZES[spec_index]; source, _, dataset, _, _, cadence = spec
@@ -2781,6 +2782,13 @@ def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack,
     stored = module.runtime.connector_store.get_config(source)
     fetch = {**stored.fetch, "request": {**stored.fetch.get("request", {}), "cursor": "2020-01-01T00:00:00Z#start"}}
     module.runtime.connector_store.upsert_config(stored.connector, fetch)
+    replayed = []
+    original_pull = CollectorBundleAdapter.pull
+    def capture_pull(self, *args, **kwargs):
+        outcome = original_pull(self, *args, **kwargs)
+        replayed.extend(outcome.records)
+        return outcome
+    monkeypatch.setattr(CollectorBundleAdapter, "pull", capture_pull)
     replay = pull()
     assert replay["summary"]["total_failed"] == 0
     receipt = replay["ran"][0]["receipt"]
@@ -2788,6 +2796,11 @@ def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack,
     # Rewind replays older history, retaining the newest item/hash acknowledgements.
     assert receipt["raw_count"] == replay_count
     assert receipt["storage_refs"]["summary"]["reused_record_count"] == replay_count
+    assert len(replayed) == replay_count
+    identity_fields = ("content_hash", "event_time", "available_time")
+    assert {(r.source_id, *(r.metadata.get(k) for k in identity_fields)) for r in replayed} == {
+        (r["source_id"], *(r["metadata"].get(k) for k in identity_fields)) for r in rows
+        if dataset != "tw_price_daily" or r["metadata"]["event_time"][:10] == "2024-11-12"}
     assert receipt["storage_refs"]["summary"]["new_normalized_row_count"] == 0
     after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
     assert after == before
