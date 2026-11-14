@@ -481,9 +481,38 @@
     ],
     "required_next_step": "Formally block this same task for Human/Ops native artifact-contract maintenance before editing runtime.py (definite freshness selection owner); assess scheduler.py receipt tie ordering. Preserve all six ACs, five existing paths, owner/reviewer/generation, native guard, original required full Source CI and fresh exact-head independent review. No new helper task, writer, service or queue.",
     "bounded_full_model_diagnostic": {
-      "status": "running_not_acceptance",
+      "status": "terminal_diagnostic_only",
       "command": "timeout 720 .venv-pantheon/bin/python3 -m pytest -q -s /tmp/collector_order_probe.py > /tmp/collector-order-probe.log 2>&1",
-      "scope": "Two discovered model cases (imported original plus diagnostic wrapper), same product source; wrapper records native readbacks only. Terminal output will be collected before blocker/final."
+      "scope": "Two discovered model cases (imported original plus diagnostic wrapper), same product source; wrapper records native readbacks only. Terminal output will be collected before blocker/final.",
+      "exit_code": 0,
+      "terminal_output": "2 passed, 1 warning in 237.75s (0:03:57)",
+      "models": [
+        {
+          "counts": {
+            "collector-tw-twse-price-history": 1377,
+            "collector-tw-tpex-price-history": 6090
+          },
+          "pulls": 31,
+          "elapsed_with_worst_cadence_phase_seconds": 1127.6225172686882,
+          "max_tick_seconds": 18.529389518704193,
+          "max_same_source_gap_seconds": 20.410917714705647
+        },
+        {
+          "counts": {
+            "collector-tw-twse-price-history": 1377,
+            "collector-tw-tpex-price-history": 6090
+          },
+          "pulls": 31,
+          "elapsed_with_worst_cadence_phase_seconds": 1180.077466907669,
+          "max_tick_seconds": 20.261343083708198,
+          "max_same_source_gap_seconds": 23.017376274709022
+        }
+      ],
+      "instrumented_ticks": 31,
+      "natural_mismatches": 0,
+      "log_sha256": "067ac6a8344a289e27bd42e0dc5403c7cc1641e403a7ec018aff3a09c4f4ba23",
+      "capture_sha256": "875ac8656b99d9743b8d2b8838420a5bededbaec379f52fc2f0fe6042a055fa5",
+      "interpretation": "Two local full-size model executions passed unchanged product/test source on this host. No natural same-second mismatch occurred in the instrumented 31 ticks. This timing-dependent local pass does NOT clear the official exact-head full Source CI failure; deterministic native proof above establishes the tie defect. No original CI run was rerun."
     }
   }
 }
