@@ -12,6 +12,8 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -177,6 +179,36 @@ def with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRe
     )
 
 
+class IngestDistillationJobQueue(DistillationJobQueue):
+    """Reuse one thread-local connection per ingest batch, keeping every durable transaction.
+
+    The queue's schema, FULL synchronous setting, identity checks, per-record
+    commit/rollback and cross-process consumer API are inherited unchanged.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._ingest_connection: ContextVar[Any] = ContextVar("ingest_distillation_connection", default=None)
+        super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def _connect(self):
+        active = self._ingest_connection.get()
+        if active is not None:
+            yield active
+        else:
+            with super()._connect() as connection:
+                yield connection
+
+    @contextmanager
+    def admission_connection(self):
+        with self._connect() as connection:
+            token = self._ingest_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._ingest_connection.reset(token)
+
+
 def admit_normalized_records_to_distillation(
     distillation_job_queue: DistillationJobQueue,
     normalized_source_records: Iterable[SourceRecord],
@@ -186,25 +218,25 @@ def admit_normalized_records_to_distillation(
     # Never raises; catch_up remains the missed-event recovery path for
     # whatever admission could not enqueue here.
     admissions: dict[str, Any] = {}
-    for source in normalized_source_records:
-        if source.status != SourceRecordStatus.NORMALIZED:
-            continue
-        try:
-            job = distillation_job_queue.enqueue_source_record(
-                source,
-                requested_by="source-ingest",
-            )
-        except Exception as exc:  # noqa: BLE001 - ingest completion must remain non-blocking.
-            admissions[source.source_id] = {
-                "status": "admission_failed",
-                "error": str(exc)[:300],
-            }
-            continue
-        admissions[source.source_id] = {
-            "status": "admitted",
-            "job_id": job.job_id,
-            "source_digest": job.source_digest,
-        }
+    sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED)
+    if not sources:
+        return admissions
+    context = (distillation_job_queue.admission_connection()
+               if isinstance(distillation_job_queue, IngestDistillationJobQueue) else nullcontext())
+    try:
+        with context:
+            for source in sources:
+                try:
+                    job = distillation_job_queue.enqueue_source_record(source, requested_by="source-ingest")
+                except Exception as exc:  # noqa: BLE001 - admission remains non-blocking.
+                    admissions[source.source_id] = {"status": "admission_failed", "error": str(exc)[:300]}
+                    continue
+                admissions[source.source_id] = {
+                    "status": "admitted", "job_id": job.job_id, "source_digest": job.source_digest,
+                }
+    except Exception as exc:  # connection setup/teardown must preserve catch-up recovery too
+        for source in sources:
+            admissions.setdefault(source.source_id, {"status": "admission_failed", "error": str(exc)[:300]})
     return admissions
 
 
@@ -285,18 +317,19 @@ def persist_source_evidence_refs(
     connector_license_scope = connector.license_scope if connector else None
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
-        verified_close = (
+        verified_market = (
             isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
             and record.source_type.value == "market"
-            and isinstance(record.metadata.get("collector_close"), Mapping)
+            and isinstance(record.metadata.get("collector"), Mapping)
         )
-        if verified_close:
-            # One exchange URL describes thousands of distinct verified close
+        if verified_market:
+            # One exchange URL describes thousands of distinct verified market
             # items. URL-only dedupe retained the first prefix's run forever,
             # failing the next controller tick's real record/run readback.
             # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
+            prefix = "collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else "collector-market"
             candidate_source = replace(candidate_source, metadata={
-                **candidate_source.metadata, "source_dedupe_key": f"collector-close:{record.source_id}",
+                **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
             })
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
         source_owner = (
@@ -305,7 +338,7 @@ def persist_source_evidence_refs(
             or candidate_source
         )
         source_owner_by_dedupe_key[source_dedupe_key] = source_owner
-        if verified_close:
+        if verified_market:
             normalized_source = candidate_source
             normalized_item = normalize_evidence_item(
                 candidate_source, evidence_item_for_record(record, result.run),
@@ -979,7 +1012,7 @@ class IngestPipelineService:
         try:
             self.runtime._append_audit_actions(result.audit_actions)
             post_processing_stage = "market_storage"
-            storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+            storage_refs = self._persist_collector_market_storage(result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
             market_snapshots = persist_latest_market_snapshots(
@@ -1037,6 +1070,63 @@ class IngestPipelineService:
             )
             record_search_refresh_event(self.store, result.run, source_search_refresh)
         return result, evidence_refs, source_search_refresh
+
+    def _persist_collector_market_storage(self, result: Any) -> dict[str, Any]:
+        """Replay verified market rows through their completed persisted receipt.
+
+        Raw cache/cursors alone never suppress a write. Reuse requires the same
+        tenant/item/hash/PIT row in an existing normalized partition and its own
+        completed receipt; new/corrected rows still use the normal writer.
+        """
+        connector = self.manager.get_connector(result.run.connector_id)
+        if (not isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+                or connector is None or connector.source_type.value != "market"):
+            return persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+        receipts = {r.ingest_run_id: r for r in self.store.read_freshness_snapshot()["receipts"]
+                    if r.status == "completed" and r.connector_id == connector.connector_id}
+        fresh, reused = [], []
+        partitions: dict[str, set[tuple[Any, ...]]] = {}
+        def identity(source_id: str, meta: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (source_id, *(meta.get(k) for k in ("content_hash", "dataset", "event_time", "available_time")))
+        for record in result.records:
+            prior = self.evidence_repository.get_source_record(record.source_id, tenant_id=record.tenant_id)
+            receipt = receipts.get(str((prior.metadata if prior else {}).get("source_ingest_run_id") or ""))
+            stored = receipt.storage_refs if receipt else {}
+            matched = False
+            for ref in stored.get("normalized_refs", ()):
+                if (ref.get("dataset") != record.metadata.get("dataset")
+                        or ref.get("date") != str(record.metadata.get("event_time") or "")[:10]):
+                    continue
+                uri = str(ref["uri"])
+                if uri not in partitions:
+                    try:
+                        rows = [json.loads(line) for line in Path(uri).read_text().splitlines() if line.strip()]
+                        partitions[uri] = {identity(row["source_id"], row["metadata"]) for row in rows}
+                    except (OSError, ValueError, KeyError) as exc:
+                        raise SourceEvidenceError("completed Collector normalized partition is missing or invalid") from exc
+                if identity(record.source_id, record.metadata) in partitions[uri]:
+                    matched = True
+                    break
+            if matched:
+                reused.append(stored)
+            else:
+                fresh.append(record)
+        refs = persist_market_data_storage_refs(
+            self.manager, self.market_data_storage_writer, replace(result, records=tuple(fresh)))
+        new_count = refs["summary"]["normalized_row_count"]
+        for key in ("raw_refs", "normalized_refs", "feature_refs"):
+            by_uri = {r["uri"]: r for r in refs[key]}
+            for stored in reused:
+                for ref in stored.get(key, ()):
+                    by_uri.setdefault(ref["uri"], ref)
+            refs[key] = list(by_uri.values())
+        refs["summary"] = {
+            "raw_ref_count": len(refs["raw_refs"]), "normalized_ref_count": len(refs["normalized_refs"]),
+            "feature_ref_count": len(refs["feature_refs"]),
+            "normalized_row_count": sum(r["row_count"] for r in refs["normalized_refs"]),
+            "new_normalized_row_count": new_count, "reused_record_count": len(reused),
+        }
+        return refs
 
     def run_ingest_request(self, request: TriggerIngestJobRequest) -> dict[str, Any]:
         if len(request.records) > self.runtime.MAX_RECORDS_PER_JOB:
@@ -1303,6 +1393,8 @@ class IngestPipelineService:
                 detail=f"max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY={self.runtime.SCHEDULER_MAX_CONCURRENCY}",
             )
         schedules = self.schedule_config_store.list_schedules()
+        offerings = self.runtime._collector_offerings(self.connector_store.list_configs())
+        not_offered = {cid for cid, offering in offerings.items() if offering.get("offered") is False}
         enqueued: list[dict[str, Any]] = []
         ran: list[dict[str, Any]] = []
         skipped: list[str] = []
@@ -1327,6 +1419,9 @@ class IngestPipelineService:
         for sched in schedules:
             if exclusive_connector_ids and sched.connector_id not in exclusive_connector_ids:
                 excluded.append(sched.connector_id)
+                continue
+            if sched.connector_id in not_offered:
+                skipped.append(sched.connector_id)
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
@@ -1401,7 +1496,8 @@ class IngestPipelineService:
         claimed = self.store.claim_due_frontier(
             limit=max_concurrency,
             now=now_iso,
-            connector_ids=exclusive_connector_ids or None,
+            connector_ids=((exclusive_connector_ids or {c.connector.connector_id for c in self.connector_store.list_configs()})
+                           - not_offered) if not_offered else exclusive_connector_ids or None,
         )
         for frontier in claimed:
             try:
@@ -1439,7 +1535,7 @@ class IngestPipelineService:
                 if isinstance(item, Mapping)
             }
             claimed_connector_ids = {item.connector_id for item in claimed}
-            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids):
+            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids - not_offered):
                 failed.append({
                     "connector_id": connector_id,
                     "error": "exclusively selected connector was not runnable",
