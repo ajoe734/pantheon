@@ -176,7 +176,6 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 """
             )
 
-
             # Stored scalar projections avoid repeatedly detoasting the payload in
             # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
             # writes from independent owner processes; no cache invalidation path.
@@ -578,8 +577,8 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         else:
             where, scope_params = "TRUE", ()
         sql = (
-            "SELECT evidence_source_type, evidence_link_type, evidence_credibility_tier, "
-            "evidence_verified, COUNT(*) AS row_count "
+            "SELECT evidence_source_type AS source_type, evidence_link_type AS link_type, evidence_credibility_tier AS credibility_tier, "
+            "evidence_verified AS verified, COUNT(*) AS row_count "
             f"FROM {self.table} WHERE record_type = %s AND {where} "
             "GROUP BY 1, 2, 3, 4"
         )

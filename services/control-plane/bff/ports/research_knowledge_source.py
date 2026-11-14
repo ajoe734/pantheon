@@ -1308,6 +1308,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         page_size: int = EVIDENCE_OWNER_PAGE_SIZE,
         captured_from: Optional[str] = None,
         captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
@@ -1325,6 +1327,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             path += f"&captured_from={quote(str(captured_from), safe='')}"
         if captured_before is not None:
             path += f"&captured_before={quote(str(captured_before), safe='')}"
+        expected_filters: Dict[str, Any] = {}
+        if linked_entity_types is not None:
+            types = sorted(set(linked_entity_types))
+            path += f"&linked_entity_types={quote(','.join(types), safe='')}"
+            expected_filters["linked_entity_types"] = types
+        if not include_summary:
+            path += "&include_summary=false"
+            expected_filters["include_summary"] = False
         try:
             avail, payload = self._http_get(self._source_ingest_service_url, path)
         except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
@@ -1332,6 +1342,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         items = payload.get("items") if avail and isinstance(payload, dict) else None
         if not isinstance(items, list):
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
+        filters = payload.get("filters") or {}
+        if expected_filters and (
+            not isinstance(filters, dict)
+            or any(filters.get(k) != v for k, v in expected_filters.items())
+        ):
+            # A mixed-version owner may implement only part of the hints. Retry
+            # the complete legacy population, never trust a partially filtered
+            # total or retain per-instance capability state across requests.
+            return self._read_owner_evidence_page(start=start, page_size=page_size)
         total = payload.get("total")
         total = int(total) if isinstance(total, int) and not isinstance(total, bool) else start + len(items)
         summary = _normalize_owner_evidence_summary(payload.get("summary"), default_total=total)
@@ -1359,6 +1378,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         page_size: Optional[int] = None,
         captured_from: Optional[str] = None,
         captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> EvidenceReadResult:
         """One evidence read. With ``page_size`` and no scope filter against the
         owner service, exactly one owner page is fetched; otherwise every owner
@@ -1400,6 +1421,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     for k, v in (("captured_from", captured_from), ("captured_before", captured_before))
                     if v is not None
                 }
+                if linked_entity_types is not None:
+                    window_kwargs["linked_entity_types"] = linked_entity_types
                 try:
                     repo_items, total = self._evidence_repo.list_evidence_items_page(
                         **repo_kwargs, **window_kwargs
@@ -1414,7 +1437,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             repo_summary: Optional[Dict[str, Any]] = None
             summarize_fn = getattr(self._evidence_repo, "summarize_evidence_items", None)
-            if callable(summarize_fn):
+            if include_summary and callable(summarize_fn):
                 try:
                     raw_summary = (
                         summarize_fn(tenant_id=effective_tenant)
@@ -1468,6 +1491,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     page_size=page_size,
                     captured_from=captured_from,
                     captured_before=captured_before,
+                    linked_entity_types=linked_entity_types,
+                    include_summary=include_summary,
                 )
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
