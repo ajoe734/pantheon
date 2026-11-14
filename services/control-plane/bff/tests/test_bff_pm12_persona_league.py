@@ -1753,3 +1753,37 @@ def test_fill_rate_aggregates_quantities_across_runtimes_not_average_rates(tmp_p
     assert result["fill_rate"] != (0.5 + 1.0) / 2
     assert result["fill_rate_details"]["numerator"] == 60
     assert result["fill_rate_details"]["denominator"] == 110
+
+
+def test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity() -> None:
+    """BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114: ranking blocks never read
+    route-policy / allowed-action summaries, so the read path must not issue
+    those per-persona store reads, and the output must equal the full-row path."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _CountingPm12LeagueTestStore()
+        client = _fresh_client(td, store=store)
+        for index in range(6):
+            _create_persona(client, f"Rank Parity {index}", archetype="momentum", key=f"rank-parity-{index}")
+        service = personas_service._current_persona_service.get()
+        kwargs = dict(caller_tenant_id="pantheon-dev", snapshot_at="2026-11-14T00:00:00Z")
+
+        store.reset_counts()
+        new = json.dumps(service.get_persona_league_rankings(**kwargs), sort_keys=True, default=str)
+        assert store.calls["get_route_policy_for_persona"] == 0
+        assert store.calls["get_persona_allowed_actions"] == 0
+
+        original = personas_service._pm12_persona_league_rows
+
+        def _full_rows(*args: Any, **kw: Any) -> Any:
+            for key in ("include_route_policy", "include_health", "include_allowed_actions"):
+                kw.pop(key, None)
+            return original(*args, **kw)
+
+        personas_service._pm12_persona_league_rows = _full_rows
+        try:
+            store.reset_counts()
+            old = json.dumps(service.get_persona_league_rankings(**kwargs), sort_keys=True, default=str)
+        finally:
+            personas_service._pm12_persona_league_rows = original
+        assert store.calls["get_persona_allowed_actions"] > 0
+        assert new == old

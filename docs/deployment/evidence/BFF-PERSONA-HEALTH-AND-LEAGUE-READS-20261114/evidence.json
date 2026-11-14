@@ -1,0 +1,31 @@
+{
+  "task_id": "BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114",
+  "persona_health": {
+    "change": "_build_persona_health_items_impl now calls overlay_source_health_truth(..., thin=True)",
+    "test": "test_persona_health_rows_use_thin_source_health_overlay_and_stay_under_1mb (4 personas, ~1 MB of required source health each; response < 1 MB; fails without the change)",
+    "frontend_consumers_checked": "NOT VERIFIED in this repo: the execute-plans frontend lives in a separate repository and was not available in this worktree. Only the in-repo e2e spec docs/05/.../03-execution-loop.spec.ts references persona-health. Thin mode removes only data_source_status.required_source_health/requiredSourceHealth/connector_health/connectorHealth and sets source_health_bindings to []; all scalar fields (state, summary, provider_statuses, live_* ids, source_health_source, row statuses) are unchanged. A reviewer must confirm the frontend does not read the removed blobs from persona-health.",
+    "not_measured": "68 MB / 12.5 s hosted figures not reproduced locally"
+  },
+  "persona_league_rankings": {
+    "dominant_cost_found": "N+1 per-persona store reads: _pm12_persona_league_rows ran with default include_route_policy/health/allowed_actions, issuing get_route_policy_for_persona and get_persona_allowed_actions once per persona (170 + 170 calls for 167 personas). Ranking blocks never read those fields.",
+    "removed": "get_persona_league_rankings passes include_route_policy=False, include_health=False, include_allowed_actions=False; calls drop to 0 each",
+    "parity_test": "test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity compares the full serialized response old path vs new path for equality (ranking order, scores, tiers)"
+  },
+  "persona_league": {
+    "dominant_cost_found": "Local profile (167 personas, in-memory fixture store): ~75% of time is _list_persona_records -> MemoryPersonaProvisioningStore.list_by_tenant deepcopy of every record. This is a test-store cost; the production persona owner read path is not reproduced locally. The league route already skips route-policy/health/allowed-actions for non-page rows.",
+    "removed": "Nothing; no in-scope read-path cost was identifiable beyond the shared record read. Not claimed as fixed."
+  },
+  "persona_fleet": {
+    "profile": "167 personas, page_size 50, fixture ports: p50 ~0.04 s; cost spread across row projection, no dominant item. Owner reads are already overlapped by BFF-PERSONA-FLEET-CURRENT-LATENCY-20261106.",
+    "removed": "Nothing."
+  },
+  "local_measurement_167_personas_in_memory_store_sequential": {
+    "rankings_before": {"p50_s": 0.608, "p95_s": 0.658, "per_persona_store_reads": 340},
+    "rankings_after": {"p50_s": 0.613, "p95_s": 0.631, "per_persona_store_reads": 0},
+    "persona_league_after": {"p50_s": 0.605, "p95_s": 0.614},
+    "persona_fleet_after": {"p50_s": 0.04},
+    "caveats": "Fixture store reads are in-process and free, so wall time does not change locally; the benefit is the removed 340 store round-trips per request against a real store. Requests were measured sequentially, not concurrently, and persona-health was not timed with 167 real-shaped personas. Acceptance 5 (concurrent p50/p95 incl. persona-health) is therefore only partially evidenced; hosted re-measurement is needed.",
+    "persona_health_167": "not measured"
+  },
+  "constraints": "No new cache, setting, endpoint or background job; response shapes unchanged. New tests were added to existing registered files, so no inventory change was needed."
+}

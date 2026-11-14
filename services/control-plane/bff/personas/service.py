@@ -17399,7 +17399,15 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        # Ranking blocks never read the per-persona route-policy / health /
+        # allowed-actions summaries; skipping them removes 2-3 store reads per
+        # persona from this read path without changing any ranking field.
+        rows = _pm12_persona_league_rows(
+            tenant_id=caller_tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
