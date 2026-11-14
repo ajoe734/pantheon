@@ -696,3 +696,114 @@ def test_gdelt_rejects_corrupt_existing_cache(tmp_path, fixtures_dir, test_hashe
     runner.run_source("collector-gdelt", run_id="redownload-cache")
     assert len(transport.calls) == 2
     assert cached.is_file()
+
+
+@pytest.mark.parametrize(
+    'class_name,fixture,dates,count',
+    [
+        ('TwseIndexBreadthSpider', 'twse_mi_index_full_20261110.json', ['2026-11-10'], 57),
+        ('TwseTaiexHistorySpider', 'twse_mi_5mins_hist_201201.json', ['2012-01'], 15),
+    ],
+)
+def test_regime_complete_official_pages(fixtures_dir, class_name, fixture, dates, count):
+    from collector_stack import spiders
+    cls = getattr(spiders, class_name)
+    body = (fixtures_dir / fixture).read_bytes()
+    payload = json.loads(body)
+    url = cls.build_date_url(dates[0])
+    transport = FixtureTransport({url: body})
+    spider = cls(load_collector_config(env={}).get_source(cls.source_id), transport=transport)
+    stamp = '2026-11-14T04:00:00Z'
+    items = spider.collect(dates=dates, fetched_at=stamp)
+    assert len(items) == count and len(transport.calls) == 1
+    assert all(i.url == url and i.fetched_at == stamp for i in items)
+    if class_name == 'TwseIndexBreadthSpider':
+        indices = [i.extra_fields for i in items[:-1]]
+        assert {r['index_name'] for r in indices} == {r[0] for r in payload['tables'][0]['data']}
+        taiex = next(r for r in indices if r['index_name'] == '發行量加權股價指數')
+        assert (taiex['close'], taiex['change_points'], taiex['change_percent']) == (42711.92, 1050.22, 2.52)
+        food = next(r for r in indices if r['index_name'] == '食品類指數')
+        assert (food['change_points'], food['change_percent']) == (-20.37, -1.08)
+        breadth = items[-1].extra_fields
+        assert breadth['whole_market'] == dict(advancers=10250, limit_up=150, decliners=3702,
+                                               limit_down=137, unchanged=694, untraded=22388, no_comparison=4701)
+        assert breadth['stocks'] == dict(advancers=526, limit_up=30, decliners=491,
+                                         limit_down=2, unchanged=68, untraded=2, no_comparison=0)
+        assert json.loads(items[1].raw_bytes)['data'][0] == payload['tables'][0]['data'][1]
+        assert json.loads(items[-1].raw_bytes)['data'] == payload['tables'][7]['data']
+        assert all(i.extra_fields['dataset'] != 'tw_price_daily' for i in items)
+        # Table order and unrelated table availability are not schema identity.
+        payload['tables'].reverse()
+        transport.register(url, json.dumps(payload, ensure_ascii=False))
+        spider = cls(load_collector_config(env={}).get_source(cls.source_id), transport=transport)
+        assert [i.item_id for i in spider.collect(dates=dates)] == [i.item_id for i in items]
+    else:
+        first = items[0].extra_fields
+        assert first['trade_date'] == '2012-01-02'
+        assert (first['open'], first['high'], first['low'], first['close']) == (7071.35, 7073.48, 6948.67, 6952.21)
+        assert {i.extra_fields['trade_date'] for i in items} == {
+            spiders._normalize_iso_date(row[0]) for row in payload['data']
+        }
+        assert [json.loads(i.raw_bytes)['data'][0] for i in items] == payload['data']
+
+
+@pytest.mark.parametrize('fault', ['missing_index', 'missing_breadth', 'fields', 'breadth_labels',
+                                  'breadth_value', 'last_index_value', 'date', 'stat', 'duplicate'])
+def test_regime_index_schema_failure_records_reason_and_no_partial_rows(
+    tmp_path, fixtures_dir, test_hasher, fault
+):
+    from collector_stack.spiders import TwseIndexBreadthSpider
+    p = json.loads((fixtures_dir / 'twse_mi_index_full_20261110.json').read_bytes())
+    if fault == 'missing_index':
+        p['tables'][0] = {}
+    elif fault == 'missing_breadth':
+        p['tables'][7] = {}
+    elif fault == 'fields':
+        p['tables'][7]['fields'][1] = 'changed'
+    elif fault == 'breadth_labels':
+        p['tables'][7]['data'].pop()
+    elif fault == 'breadth_value':
+        p['tables'][7]['data'][-1][-1] = 'unknown'
+    elif fault == 'last_index_value':
+        p['tables'][0]['data'][-1][1] = '--'
+    elif fault == 'date':
+        p['date'] = '20261109'
+    elif fault == 'stat':
+        p['stat'] = 'not OK'
+    else:
+        p['tables'][0]['data'].append(p['tables'][0]['data'][0])
+    url = TwseIndexBreadthSpider.build_date_url('2026-11-10')
+    runner = CollectorRunner(load_collector_config(env={}), root_dir=tmp_path, hasher=test_hasher,
+                             transport=FixtureTransport({url: json.dumps(p, ensure_ascii=False)}))
+    outcome = runner.run_source(TwseIndexBreadthSpider.source_id, run_id='invalid',
+                                collect_kwargs={'dates': ['2026-11-10']})
+    assert outcome.status == 'partial'
+    assert outcome.bundle.manifest['reason'].startswith('parse_failed: ')
+    assert len(outcome.bundle.manifest['reason']) > len('parse_failed: ')
+    assert outcome.bundle.items_path.read_bytes() == b''
+    assert outcome.bundle.manifest['source_url'] == url
+
+
+@pytest.mark.parametrize('fault', ['fields', 'last_value', 'duplicate', 'wrong_month', 'ohlc', 'date'])
+def test_regime_month_schema_failure_is_atomic(tmp_path, fixtures_dir, test_hasher, fault):
+    from collector_stack.spiders import TwseTaiexHistorySpider
+    p = json.loads((fixtures_dir / 'twse_mi_5mins_hist_201201.json').read_bytes())
+    if fault == 'fields':
+        p['fields'][-1] = 'changed'
+    elif fault == 'last_value':
+        p['data'][-1][-1] = '--'
+    elif fault == 'duplicate':
+        p['data'].append(p['data'][0])
+    elif fault == 'wrong_month':
+        p['data'][-1][0] = '101/02/01'
+    elif fault == 'ohlc':
+        p['data'][-1][2], p['data'][-1][3] = p['data'][-1][3], p['data'][-1][2]
+    else:
+        p['date'] = '20120201'
+    url = TwseTaiexHistorySpider.build_date_url('2012-01')
+    runner = CollectorRunner(load_collector_config(env={}), root_dir=tmp_path, hasher=test_hasher,
+                             transport=FixtureTransport({url: json.dumps(p, ensure_ascii=False)}))
+    outcome = runner.run_source(TwseTaiexHistorySpider.source_id, run_id='invalid-month',
+                                collect_kwargs={'dates': ['2012-01']})
+    assert outcome.status == 'partial' and outcome.bundle.manifest['reason'].startswith('parse_failed: ')
+    assert outcome.bundle.items_path.read_bytes() == b''

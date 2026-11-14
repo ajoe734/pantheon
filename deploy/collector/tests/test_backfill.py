@@ -193,3 +193,60 @@ def test_run_rejects_oversized_range_before_any_request(tmp_path: Path, capsys) 
         ])
     err = capsys.readouterr().err
     assert "backfill" in err and "no request was made" in err
+
+
+def test_taiex_month_range_cli_and_resume(tmp_path, fixtures_dir, test_hasher, capsys):
+    from collector_stack.backfill import MONTHLY_SOURCE, resolve_months
+    from collector_stack.spiders import TwseTaiexHistorySpider
+    assert resolve_months('2012-01', '2012-03') == ['2012-01', '2012-02', '2012-03']
+    assert resolve_months('2012-12', '2013-01') == ['2012-12', '2013-01']
+    assert cli_main(['backfill', '--source', MONTHLY_SOURCE, '--start-month', '2012-01',
+                     '--end-month', '2026-11', '--dry-run']) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['requests'] == 179 and plan['min_interval_seconds'] == 5.0
+    assert plan['first_date'] == '2012-01' and plan['last_date'] == '2026-11'
+    transport = FixtureTransport({TwseTaiexHistorySpider.build_date_url('2012-01'):
+                                 (fixtures_dir / 'twse_mi_5mins_hist_201201.json').read_bytes()})
+    runner = _runner(tmp_path, test_hasher, transport)
+    first = run_backfill(runner, MONTHLY_SOURCE, ['2012-01'], sleep_fn=lambda _: None)
+    assert first.complete and first.fetched == ['2012-01']
+    # February has no registered response: stop without completing its ledger entry.
+    sleeps = []
+    second = run_backfill(runner, MONTHLY_SOURCE, ['2012-01', '2012-02', '2012-03'], sleep_fn=sleeps.append)
+    assert not second.complete and second.skipped_already_done == ['2012-01']
+    assert second.stopped_at == '2012-02' and sleeps == []
+    assert len(transport.calls) == 2
+    ledger = json.loads((tmp_path / 'state/backfill' / f'{MONTHLY_SOURCE}.json').read_text())
+    assert set(ledger['completed']) == {'2012-01'}
+
+
+def test_taiex_month_request_spacing_without_fabricated_rows(tmp_path, fixtures_dir, test_hasher):
+    from collector_stack.backfill import MONTHLY_SOURCE
+    from collector_stack.spiders import TwseTaiexHistorySpider
+    from datetime import datetime, timezone
+    # Replay the full real January page as January. Then the real January page
+    # served to a February request must fail closed after the five-second gap.
+    transport = FixtureTransport({'https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST':
+                                 (fixtures_dir / 'twse_mi_5mins_hist_201201.json').read_bytes()})
+    sleeps = []
+    runner = _runner(tmp_path, test_hasher, transport)
+    result = run_backfill(runner, MONTHLY_SOURCE, ['2012-01', '2012-01-20', '2012-02'], sleep_fn=sleeps.append)
+    assert result.fetched == ['2012-01'] and result.stopped_at == '2012-02'
+    assert sleeps == [5.0] and len(transport.calls) == 2
+    # While January is still current it must remain refreshable, not completed.
+    other = _runner(tmp_path / 'current-month', test_hasher, transport)
+    for _ in range(2):
+        r = run_backfill(other, MONTHLY_SOURCE, ['2012-01'], sleep_fn=lambda _: None,
+                         now_fn=lambda: datetime(2012, 1, 31, tzinfo=timezone.utc))
+        assert r.fetched == ['2012-01'] and not r.skipped_already_done
+
+
+@pytest.mark.parametrize('options', [
+    ['--start-month', '2011-12'], ['--start-month', '2012-13'],
+    ['--start-month', '2012-02', '--end-month', '2012-01'],
+    ['--start-month', '2012-01', '--two-years'], ['--start-date', '2012-01-01'],
+])
+def test_invalid_month_options_fail_before_fetch(options):
+    from collector_stack.backfill import MONTHLY_SOURCE
+    with pytest.raises(SystemExit):
+        cli_main(['backfill', '--source', MONTHLY_SOURCE, '--dry-run', *options])
