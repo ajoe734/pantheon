@@ -1,0 +1,352 @@
+{
+  "task_id": "REGIME-DATA-COLLECTOR-INDEX-BREADTH-20261114",
+  "hosted_behavior_claimed": false,
+  "scope": "Collector source implementation only; paper/research data. No deployment, business API or hosted acceptance claim.",
+  "development_host": "pantheon-dev.c.erudite-acre-504305-m8.internal",
+  "captured_at": "2026-11-14T03:21:08.971561+00:00",
+  "transport": "Injected FetchTransport delegates real GET requests to production _raw_http_get (httpx raw response bytes). Default Scrapling import/package guard is not exercised: worker test environment has httpx but no scrapling.",
+  "reproduction": {
+    "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python3 /tmp/regime-live-smoke.py",
+    "script": "import hashlib\nimport json\nimport socket\nimport tempfile\nimport time\nfrom collections import Counter\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\nfrom collector_stack.bundle import verify_bundle_directory\nfrom collector_stack.config import load_collector_config\nfrom collector_stack.fetchers import FetchTransport, _raw_http_get\nfrom collector_stack.privacy import AuthorHasher\nfrom collector_stack.runner import CollectorRunner\n\nTASK = 'REGIME-DATA-COLLECTOR-INDEX-BREADTH-20261114'\nclass RecordingHttpTransport(FetchTransport):\n    def __init__(self):\n        self.records = []\n    def request(self, url, *, method='GET', headers=None, body=None, fetcher_kind='http'):\n        assert method == 'GET' and body is None and fetcher_kind == 'http'\n        response = _raw_http_get(url, headers or {})\n        payload = json.loads(response.body)\n        self.records.append(dict(url=url, fetched_at=datetime.now(timezone.utc).isoformat(),\n                                 http_status=response.http_status, bytes=len(response.body),\n                                 response_sha256=hashlib.sha256(response.body).hexdigest(),\n                                 upstream_stat=payload.get('stat'), upstream_date=payload.get('date'),\n                                 tables=[dict(title=t.get('title'), fields=t.get('fields'),\n                                              rows=len(t.get('data', []))) for t in payload.get('tables', [])]))\n        return response\n\ntransport = RecordingHttpTransport()\nresults = []\nwith tempfile.TemporaryDirectory(prefix='regime-dev-smoke-') as tmp:\n    root = Path(tmp)\n    salt = root / 'salt'\n    salt.write_bytes(b'dev-smoke-only-ephemeral-author-hash-salt')\n    runner = CollectorRunner(load_collector_config(env={}), root_dir=root,\n                             hasher=AuthorHasher.from_file(salt), transport=transport)\n    for source, target in [('collector-tw-twse-index-breadth', '2026-11-10'),\n                           ('collector-tw-twse-taiex-history', '2012-01'),\n                           ('collector-tw-twse-index-breadth', '2012-01-02')]:\n        if results:\n            time.sleep(5.0)\n        outcome = runner.run_source(source, run_id='smoke-' + target, collect_kwargs={'dates': [target]})\n        verify_bundle_directory(outcome.bundle.bundle_dir)\n        rows = [json.loads(line) for line in outcome.bundle.items_path.read_text().splitlines()]\n        assert outcome.status == 'complete' and rows, outcome.bundle.manifest\n        results.append(dict(source_id=source, target=target, status=outcome.status,\n                            rows=len(rows), dataset_counts=dict(Counter(r['dataset'] for r in rows)),\n                            first_trade_date=min(r['trade_date'] for r in rows),\n                            last_trade_date=max(r['trade_date'] for r in rows),\n                            bundle_sha256=outcome.bundle.manifest['bundle_sha256'],\n                            bundle_integrity='passed', request=transport.records[-1]))\n\nfixtures = []\nfor filename, url in [('twse_mi_index_full_20261110.json', results[0]['request']['url']),\n                      ('twse_mi_5mins_hist_201201.json', results[1]['request']['url'])]:\n    path = Path('deploy/collector/tests/fixtures') / filename\n    fixtures.append(dict(path=str(path), source_url=url, bytes=path.stat().st_size,\n                         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),\n                         recording='Complete unedited official response downloaded with curl --fail --max-time 45 on 2026-11-14'))\n\nevidence = dict(task_id=TASK, hosted_behavior_claimed=False,\n                scope='Collector source implementation only; paper/research data. No deployment, business API or hosted acceptance claim.',\n                development_host=socket.gethostname(), captured_at=datetime.now(timezone.utc).isoformat(),\n                transport='Injected FetchTransport delegates real GET requests to production _raw_http_get (httpx raw response bytes). Default Scrapling import/package guard is not exercised: worker test environment has httpx but no scrapling.',\n                reproduction=dict(command='PYTHONPATH=deploy/collector .venv-pantheon/bin/python3 /tmp/regime-live-smoke.py',\n                                  script=Path('/tmp/regime-live-smoke.py').read_text()),\n                endpoint_runs=results, fixtures=fixtures,\n                historical_mi_index=dict(session='2012-01-02',\n                    same_required_tables=True,\n                    note='TWSE price-index fields and breadth fields/labels match 2026. There are 43 TWSE price indices versus 56 in 2026; cross-market/Taiwan Index Company tables are absent in 2012. No absent indices were fabricated.'),\n                contracts=dict(index_source='collector-tw-twse-index-breadth',\n                               index_dataset='tw_index_daily', breadth_dataset='tw_market_breadth_daily',\n                               ohlc_source='collector-tw-twse-taiex-history', ohlc_dataset='tw_index_ohlc_daily',\n                               price_history_unchanged=True,\n                               downstream_intake_task='REGIME-DATA-INDEX-BREADTH-INTAKE-20261114',\n                               collector_deployment_task='REGIME-DATA-COLLECTOR-DEPLOY-20261114'))\npath = Path('docs/deployment/evidence') / TASK / 'evidence.json'\npath.parent.mkdir(parents=True, exist_ok=True)\npath.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\\n')\nprint(json.dumps(dict(evidence=str(path), runs=[dict(source_id=r['source_id'],target=r['target'],rows=r['rows'],status=r['status']) for r in results])))\n"
+  },
+  "endpoint_runs": [
+    {
+      "source_id": "collector-tw-twse-index-breadth",
+      "target": "2026-11-10",
+      "status": "complete",
+      "rows": 57,
+      "dataset_counts": {
+        "tw_index_daily": 56,
+        "tw_market_breadth_daily": 1
+      },
+      "first_trade_date": "2026-11-10",
+      "last_trade_date": "2026-11-10",
+      "bundle_sha256": "9ab9efb8a73845f54688100807c65d3106856e3c82355998d4a86aa59aaee38b",
+      "bundle_integrity": "passed",
+      "request": {
+        "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261110&type=ALLBUT0999&response=json",
+        "fetched_at": "2026-11-14T03:20:58.741200+00:00",
+        "http_status": 200,
+        "bytes": 248709,
+        "response_sha256": "e5cdb5fd66f44853a2dd674891f6c96feafb38e0b164bc73eeb1a885c0aea560",
+        "upstream_stat": "OK",
+        "upstream_date": "20261110",
+        "tables": [
+          {
+            "title": "115年11月10日 價格指數(臺灣證券交易所)",
+            "fields": [
+              "指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 56
+          },
+          {
+            "title": "價格指數(跨市場)",
+            "fields": [
+              "指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 46
+          },
+          {
+            "title": "價格指數(臺灣指數公司)",
+            "fields": [
+              "指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 36
+          },
+          {
+            "title": "報酬指數(臺灣證券交易所)",
+            "fields": [
+              "報酬指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 47
+          },
+          {
+            "title": "報酬指數(跨市場)",
+            "fields": [
+              "報酬指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 47
+          },
+          {
+            "title": "報酬指數(臺灣指數公司)",
+            "fields": [
+              "報酬指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 35
+          },
+          {
+            "title": "115年11月10日 大盤統計資訊",
+            "fields": [
+              "成交統計",
+              "成交金額(元)",
+              "成交股數(股)",
+              "成交筆數"
+            ],
+            "rows": 17
+          },
+          {
+            "title": "漲跌證券數合計",
+            "fields": [
+              "類型",
+              "整體市場",
+              "股票"
+            ],
+            "rows": 5
+          },
+          {
+            "title": "115年11月10日 每日收盤行情(全部(不含權證、牛熊證、可展延牛熊證))",
+            "fields": [
+              "證券代號",
+              "證券名稱",
+              "成交股數",
+              "成交筆數",
+              "成交金額",
+              "開盤價",
+              "最高價",
+              "最低價",
+              "收盤價",
+              "漲跌(+/-)",
+              "漲跌價差",
+              "最後揭示買價",
+              "最後揭示買量",
+              "最後揭示賣價",
+              "最後揭示賣量",
+              "本益比"
+            ],
+            "rows": 1389
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          }
+        ]
+      }
+    },
+    {
+      "source_id": "collector-tw-twse-taiex-history",
+      "target": "2012-01",
+      "status": "complete",
+      "rows": 15,
+      "dataset_counts": {
+        "tw_index_ohlc_daily": 15
+      },
+      "first_trade_date": "2012-01-02",
+      "last_trade_date": "2012-01-31",
+      "bundle_sha256": "16f6a193a49840d171fd975e19f6308f9815c2d912ecd4dc6f8f62b4126bab3a",
+      "bundle_integrity": "passed",
+      "request": {
+        "url": "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date=20120101&response=json",
+        "fetched_at": "2026-11-14T03:21:03.830100+00:00",
+        "http_status": 200,
+        "bytes": 1063,
+        "response_sha256": "45b974f43cd446ba7895ee14376b11638103df3f746078ffb1429a0a38fdf320",
+        "upstream_stat": "OK",
+        "upstream_date": "20120101",
+        "tables": []
+      }
+    },
+    {
+      "source_id": "collector-tw-twse-index-breadth",
+      "target": "2012-01-02",
+      "status": "complete",
+      "rows": 44,
+      "dataset_counts": {
+        "tw_index_daily": 43,
+        "tw_market_breadth_daily": 1
+      },
+      "first_trade_date": "2012-01-02",
+      "last_trade_date": "2012-01-02",
+      "bundle_sha256": "7b6d6b6b0b22419d82c937a89df4a5140983cf843f89589050cdacdd96cbaabd",
+      "bundle_integrity": "passed",
+      "request": {
+        "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20120102&type=ALLBUT0999&response=json",
+        "fetched_at": "2026-11-14T03:21:08.944849+00:00",
+        "http_status": 200,
+        "bytes": 138428,
+        "response_sha256": "ae08e2f58bf342e3417eb46f5d56b464ceb5dc6c841250c30b106fbcd6a6c795",
+        "upstream_stat": "OK",
+        "upstream_date": "20120102",
+        "tables": [
+          {
+            "title": "101年01月02日 價格指數(臺灣證券交易所)",
+            "fields": [
+              "指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 43
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          },
+          {
+            "title": "報酬指數(臺灣證券交易所)",
+            "fields": [
+              "報酬指數",
+              "收盤指數",
+              "漲跌(+/-)",
+              "漲跌點數",
+              "漲跌百分比(%)",
+              "特殊處理註記"
+            ],
+            "rows": 33
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          },
+          {
+            "title": "101年01月02日 大盤統計資訊",
+            "fields": [
+              "成交統計",
+              "成交金額(元)",
+              "成交股數(股)",
+              "成交筆數"
+            ],
+            "rows": 17
+          },
+          {
+            "title": "漲跌證券數合計",
+            "fields": [
+              "類型",
+              "整體市場",
+              "股票"
+            ],
+            "rows": 5
+          },
+          {
+            "title": "101年01月02日 每日收盤行情(全部(不含權證、牛熊證、可展延牛熊證))",
+            "fields": [
+              "證券代號",
+              "證券名稱",
+              "成交股數",
+              "成交筆數",
+              "成交金額",
+              "開盤價",
+              "最高價",
+              "最低價",
+              "收盤價",
+              "漲跌(+/-)",
+              "漲跌價差",
+              "最後揭示買價",
+              "最後揭示買量",
+              "最後揭示賣價",
+              "最後揭示賣量",
+              "本益比"
+            ],
+            "rows": 854
+          },
+          {
+            "title": null,
+            "fields": null,
+            "rows": 0
+          }
+        ]
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "deploy/collector/tests/fixtures/twse_mi_index_full_20261110.json",
+      "source_url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261110&type=ALLBUT0999&response=json",
+      "bytes": 248709,
+      "sha256": "e5cdb5fd66f44853a2dd674891f6c96feafb38e0b164bc73eeb1a885c0aea560",
+      "recording": "Complete unedited official response downloaded with curl --fail --max-time 45 on 2026-11-14"
+    },
+    {
+      "path": "deploy/collector/tests/fixtures/twse_mi_5mins_hist_201201.json",
+      "source_url": "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date=20120101&response=json",
+      "bytes": 1063,
+      "sha256": "45b974f43cd446ba7895ee14376b11638103df3f746078ffb1429a0a38fdf320",
+      "recording": "Complete unedited official response downloaded with curl --fail --max-time 45 on 2026-11-14"
+    }
+  ],
+  "historical_mi_index": {
+    "session": "2012-01-02",
+    "same_required_tables": true,
+    "note": "TWSE price-index fields and breadth fields/labels match 2026. There are 43 TWSE price indices versus 56 in 2026; cross-market/Taiwan Index Company tables are absent in 2012. No absent indices were fabricated."
+  },
+  "contracts": {
+    "index_source": "collector-tw-twse-index-breadth",
+    "index_dataset": "tw_index_daily",
+    "breadth_dataset": "tw_market_breadth_daily",
+    "ohlc_source": "collector-tw-twse-taiex-history",
+    "ohlc_dataset": "tw_index_ohlc_daily",
+    "price_history_unchanged": true,
+    "downstream_intake_task": "REGIME-DATA-INDEX-BREADTH-INTAKE-20261114",
+    "collector_deployment_task": "REGIME-DATA-COLLECTOR-DEPLOY-20261114"
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python3 -m pytest deploy/collector/tests -q",
+      "exit_status": 0,
+      "result": "207 passed, 2 skipped in 11.98s",
+      "limits": "Optional Scrapling/image integration checks skipped; no collector image build or hosted deployment claim."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "passed"
+    },
+    {
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python3 /tmp/regime-live-smoke.py",
+      "exit_status": 0,
+      "result": "Three live endpoint source runs complete; 57, 15 and 44 rows; bundle integrity verified."
+    }
+  ],
+  "acceptance_notes": {
+    "fixtures": "Unedited full official pages: MI_INDEX includes all 10 table entries and 1389 stock rows; January 2012 OHLC includes all 15 sessions.",
+    "atomic_failure": "Offline tests cover missing tables, changed fields/labels, malformed last rows, duplicate identifiers, mismatched dates/months and inconsistent OHLC; failures emit zero rows with a specific recorded reason.",
+    "resume": "Offline tests verify month expansion, current-month refresh, completed-month skip, no failed-month completion and five-second spacing.",
+    "existing_consumers": "Existing stock-price spider and same-day-close projection unchanged; full collector regression suite passes.",
+    "timers": "README Step 2.5 schedules both new sources with existing six-hour timer template; command extraction tests validate documented month-backfill commands against the CLI and image entrypoint.",
+    "historical_coverage_limit": "Only one 2012 OHLC month and one historical MI_INDEX session were fetched for this task; full 2012-to-present coverage requires the separate collector deployment/backfill execution."
+  }
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -1101,6 +1102,190 @@ class TwseDailyPriceHistorySpider:
                         )
                     )
         self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
+        return items
+
+
+class TwseRegimeParseError(ValueError):
+    """A regime page cannot be published atomically with the expected schema."""
+
+
+def _regime_rows(table: Mapping[str, Any], fields: list[str], label: str) -> list[list[str]]:
+    if table.get("fields") != fields:
+        raise TwseRegimeParseError(f"{label}: changed fields {table.get('fields')!r}")
+    rows = table.get("data")
+    if not isinstance(rows, list) or not rows:
+        raise TwseRegimeParseError(f"{label}: missing data rows")
+    if any(not isinstance(row, list) or len(row) != len(fields)
+           or any(not isinstance(cell, str) for cell in row) for row in rows):
+        raise TwseRegimeParseError(f"{label}: malformed row")
+    return rows
+
+
+def _regime_number(raw: str) -> float:
+    if not re.fullmatch(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", raw):
+        raise TwseRegimeParseError(f"invalid numeric value {raw!r}")
+    value = float(raw.replace(",", ""))
+    if not math.isfinite(value):
+        raise TwseRegimeParseError(f"non-finite numeric value {raw!r}")
+    return value
+
+
+class TwseIndexBreadthSpider(TwseDailyPriceHistorySpider):
+    """Separate MI_INDEX source: TWSE price indices and market/stock breadth.
+
+    Build the entire result before returning it so one malformed table/row
+    invalidates the run, including any earlier successfully parsed pages.
+    """
+
+    source_id = "collector-tw-twse-index-breadth"
+    INDEX_FIELDS = ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)", "特殊處理註記"]
+    BREADTH_FIELDS = ["類型", "整體市場", "股票"]
+    BREADTH_LABELS = ["上漲(漲停)", "下跌(跌停)", "持平", "未成交", "無比價"]
+
+    def __init__(self, policy: SourceFetchPolicy, **kwargs: Any) -> None:
+        # These new sources enforce website spacing before issuing any request.
+        if policy.max_connections != 1 or policy.min_interval_seconds < 5.0:
+            raise CollectorConfigError(f"{policy.source_id}: requires max_connections=1 and min_interval_seconds >= 5.0")
+        super().__init__(policy, **kwargs)
+
+    def _item(self, *, record: dict[str, Any], raw: dict[str, Any], item_id: str,
+              url: str, fetched_iso: str, http_status: int) -> CollectedItem:
+        return CollectedItem(
+            item_id=item_id, url=url, fetched_at=fetched_iso,
+            published_at=f"{record['trade_date']}T06:30:00Z",
+            text=f"TWSE {record['source_dataset']} {record.get('index_name', 'market breadth')} {record['trade_date']}",
+            lang="zh-TW", hashed_author=None,
+            raw_bytes=json.dumps(raw, ensure_ascii=False).encode("utf-8"), raw_extension="json",
+            http_status=http_status, extra_fields={**record, "raw_values": raw},
+        )
+
+    def collect(self, *, dates: Sequence[str] | None = None,
+                fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        targets = dates if dates is not None else [latest_published_trading_date(fetched_iso)]
+        items: list[CollectedItem] = []
+        self.no_data_confirmed = False
+        for target in dict.fromkeys(targets):
+            trade_date = _normalize_iso_date(target)
+            url = self.build_date_url(trade_date)
+            response = self.fetcher.fetch(url)
+            payload = json.loads(response.text)
+            if not isinstance(payload, dict) or payload.get("stat") != "OK":
+                raise TwseRegimeParseError("MI_INDEX: expected stat=OK")
+            if payload.get("date") != trade_date.replace("-", ""):
+                raise TwseRegimeParseError("MI_INDEX: response date does not match request")
+            tables = payload.get("tables")
+            if not isinstance(tables, list):
+                raise TwseRegimeParseError("MI_INDEX: missing tables")
+            indices = [t for t in tables if isinstance(t, dict)
+                       and str(t.get("title", "")).endswith("價格指數(臺灣證券交易所)")]
+            breadth = [t for t in tables if isinstance(t, dict) and t.get("title") == "漲跌證券數合計"]
+            if len(indices) != 1 or len(breadth) != 1:
+                raise TwseRegimeParseError("MI_INDEX: expected one TWSE price index table and one breadth table")
+            index_rows = _regime_rows(indices[0], self.INDEX_FIELDS, "MI_INDEX price indices")
+            names = [r[0] for r in index_rows]
+            if ("發行量加權股價指數" not in names or not any("類指數" in n for n in names)
+                    or len(set(names)) != len(names) or any(not n for n in names)):
+                raise TwseRegimeParseError("MI_INDEX: missing TAIEX/sector indices or duplicate index names")
+            base = {"exchange": "TWSE", "source_dataset": "MI_INDEX", "trade_date": trade_date}
+            for row in index_rows:
+                name, close, sign_raw, points, percent, _ = row
+                sign = re.sub(r"<[^>]*>", "", sign_raw).strip()
+                if sign not in {"+", "-", ""}:
+                    raise TwseRegimeParseError(f"MI_INDEX: unexpected change sign {sign_raw!r}")
+                points_value = _regime_number(points)
+                percent_value = _regime_number(percent)
+                if points_value < 0 or (sign == "" and (points_value != 0 or percent_value != 0)):
+                    raise TwseRegimeParseError("MI_INDEX: inconsistent change sign/points")
+                change = -points_value if sign == "-" else points_value
+                if (change < 0 < percent_value) or (percent_value < 0 < change):
+                    raise TwseRegimeParseError("MI_INDEX: inconsistent change percent")
+                record = {**base, "dataset": "tw_index_daily", "index_name": name,
+                          "close": _regime_number(close), "change_points": change,
+                          "change_percent": percent_value}
+                raw = {"fields": self.INDEX_FIELDS, "data": [row], "title": indices[0]["title"]}
+                items.append(self._item(record=record, raw=raw, item_id=f"twse-index-{trade_date}-{name}",
+                                        url=url, fetched_iso=fetched_iso, http_status=response.http_status))
+            breadth_rows = _regime_rows(breadth[0], self.BREADTH_FIELDS, "MI_INDEX breadth")
+            by_label = {row[0]: row for row in breadth_rows}
+            if set(by_label) != set(self.BREADTH_LABELS) or len(breadth_rows) != 5:
+                raise TwseRegimeParseError("MI_INDEX: changed breadth row labels")
+            counts: dict[str, Any] = {}
+            for col, group in ((1, "whole_market"), (2, "stocks")):
+                group_counts: dict[str, int] = {}
+                for label, total_key, limit_key in (("上漲(漲停)", "advancers", "limit_up"),
+                                                    ("下跌(跌停)", "decliners", "limit_down")):
+                    match = re.fullmatch(r"([\d,]+)\(([\d,]+)\)", by_label[label][col])
+                    if not match:
+                        raise TwseRegimeParseError(f"MI_INDEX: malformed breadth count {by_label[label][col]!r}")
+                    total, limit = (self._count(v) for v in match.groups())
+                    if limit > total:
+                        raise TwseRegimeParseError("MI_INDEX: limit count exceeds total")
+                    group_counts.update({total_key: total, limit_key: limit})
+                for label, key in (("持平", "unchanged"), ("未成交", "untraded"), ("無比價", "no_comparison")):
+                    group_counts[key] = self._count(by_label[label][col])
+                counts[group] = group_counts
+            items.append(self._item(
+                record={**base, "dataset": "tw_market_breadth_daily", **counts},
+                raw={"fields": self.BREADTH_FIELDS, "data": breadth_rows, "title": breadth[0]["title"]},
+                item_id=f"twse-breadth-{trade_date}", url=url, fetched_iso=fetched_iso,
+                http_status=response.http_status,
+            ))
+        return items
+
+    @staticmethod
+    def _count(raw: str) -> int:
+        if not re.fullmatch(r"(?:\d{1,3}(?:,\d{3})+|\d+)", raw):
+            raise TwseRegimeParseError(f"MI_INDEX: invalid integer count {raw!r}")
+        return int(raw.replace(",", ""))
+
+
+class TwseTaiexHistorySpider(TwseIndexBreadthSpider):
+    """One MI_5MINS_HIST request per calendar month; never fills absent sessions."""
+
+    source_id = "collector-tw-twse-taiex-history"
+    MONTH_FIELDS = ["日期", "開盤指數", "最高指數", "最低指數", "收盤指數"]
+    URL_TEMPLATE = "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date={yyyymmdd}&response=json"
+
+    @staticmethod
+    def build_date_url(trade_date: str) -> str:
+        month = trade_date[:7]
+        datetime.strptime(month + "-01", "%Y-%m-%d")
+        return TwseTaiexHistorySpider.URL_TEMPLATE.format(yyyymmdd=month.replace("-", "") + "01")
+
+    def collect(self, *, dates: Sequence[str] | None = None,
+                fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        targets = dates if dates is not None else [latest_published_trading_date(fetched_iso)[:7]]
+        items: list[CollectedItem] = []
+        for month in dict.fromkeys(d[:7] for d in targets):
+            url = self.build_date_url(month)
+            response = self.fetcher.fetch(url)
+            payload = json.loads(response.text)
+            if not isinstance(payload, dict) or payload.get("stat") != "OK":
+                raise TwseRegimeParseError("MI_5MINS_HIST: expected stat=OK")
+            if payload.get("date") != month.replace("-", "") + "01":
+                raise TwseRegimeParseError("MI_5MINS_HIST: response month does not match request")
+            rows = _regime_rows(payload, self.MONTH_FIELDS, "MI_5MINS_HIST")
+            seen: set[str] = set()
+            for row in rows:
+                trade_date = _normalize_iso_date(row[0])
+                datetime.strptime(trade_date, "%Y-%m-%d")
+                if trade_date[:7] != month or trade_date in seen:
+                    raise TwseRegimeParseError("MI_5MINS_HIST: duplicate or out-of-month session")
+                seen.add(trade_date)
+                ohlc = dict(zip(("open", "high", "low", "close"), map(_regime_number, row[1:])))
+                if not (0 < ohlc["low"] <= min(ohlc["open"], ohlc["close"])
+                        <= max(ohlc["open"], ohlc["close"]) <= ohlc["high"]):
+                    raise TwseRegimeParseError("MI_5MINS_HIST: inconsistent OHLC")
+                items.append(self._item(
+                    record={"dataset": "tw_index_ohlc_daily", "exchange": "TWSE",
+                            "source_dataset": "MI_5MINS_HIST", "index_name": "發行量加權股價指數",
+                            "trade_date": trade_date, **ohlc},
+                    raw={"fields": self.MONTH_FIELDS, "data": [row], "title": payload.get("title")},
+                    item_id=f"twse-taiex-{trade_date}", url=url, fetched_iso=fetched_iso,
+                    http_status=response.http_status,
+                ))
         return items
 
 

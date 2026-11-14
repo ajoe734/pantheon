@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -20,9 +20,27 @@ BACKFILL_SOURCES = frozenset(
         "collector-tw-twse-price-history",
         "collector-tw-tpex-price-history",
         "collector-tw-twse-t86",
+        "collector-tw-twse-index-breadth",
+        "collector-tw-twse-taiex-history",
     }
 )
 TWO_YEARS_DAYS = 731
+MONTHLY_SOURCE = "collector-tw-twse-taiex-history"
+
+
+def resolve_months(start_month: str, end_month: str) -> list[str]:
+    """Inclusive calendar months, one page each, with no holiday filtering."""
+    for value in (start_month, end_month):
+        if len(value) != 7 or datetime.strptime(value, "%Y-%m").strftime("%Y-%m") != value:
+            raise ValueError("months must use YYYY-MM")
+    if start_month < "2012-01" or start_month > end_month:
+        raise ValueError("month range must start at or after 2012-01 and end after start")
+    year, month = map(int, start_month.split("-"))
+    months = []
+    while f"{year:04d}-{month:02d}" <= end_month:
+        months.append(f"{year:04d}-{month:02d}")
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return months
 
 def load_extra_holidays(path: str | Path | None) -> frozenset[str]:
     """Extra closure dates from a JSON list file (typhoon days, newly announced holidays)."""
@@ -163,6 +181,10 @@ def run_backfill(
     policy = runner.config.get_source(source_id)
     interval = float(policy.min_interval_seconds)
     ledger = BackfillLedger(ledger_path or runner.root_dir / "state" / "backfill" / f"{source_id}.json")
+    if source_id == MONTHLY_SOURCE:
+        dates = sorted(set(d[:7] for d in dates))
+        for month in dates:
+            resolve_months(month, month)
     result = BackfillResult(source_id=source_id, requested=len(dates))
     requested_any = False
     for trade_date in dates:
@@ -184,7 +206,10 @@ def run_backfill(
             break
         reason = outcome.bundle.manifest.get("reason")
         if outcome.status == "complete":
-            ledger.mark(trade_date, outcome="fetched", run_id=run_id)
+            # The current month is still growing: refresh it on the next invocation.
+            current_month = (stamp or datetime.now(timezone.utc)).strftime("%Y-%m")
+            if source_id != MONTHLY_SOURCE or trade_date < current_month:
+                ledger.mark(trade_date, outcome="fetched", run_id=run_id)
             result.fetched.append(trade_date)
         elif outcome.status == "partial" and reason == "no_data_for_date":
             ledger.mark(trade_date, outcome="no_data", run_id=run_id)
