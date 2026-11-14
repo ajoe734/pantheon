@@ -2,12 +2,20 @@
   "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-11-14T07:26:30Z",
-  "scope": "H3-H7, H9 route, H11 in services/memory. Search-service side of H7, case file, cycle and panel are other tasks.",
+  "recorded_at": "2026-11-14T07:54:00Z",
+  "scope": "H3-H7, H9 route, H11 in services/memory (plus consumer fixture import update in services/persona/test_case_file_outcomes.py). Search-service side of H7, case file, cycle and panel are other tasks.",
   "commands": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests services/memory",
-      "result": "142 passed, 9 skipped, 2 subtests passed (real-container tests skipped without env)"
+      "result": "142 passed, 9 skipped, 1 warning, 2 subtests passed in 18.27s (real-container tests skipped without env)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py",
+      "result": "14 passed, 1 warning in 8.03s (all original Persona pool/case/outcome/usefulness-ranking and durable/PIT/tenant assertions preserved)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests services/memory services/persona",
+      "result": "500 passed, 10 skipped, 233 warnings, 2 subtests passed in 123.99s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_main.py -k test_reflect_route_unavailable_reasons_and_scoped_citation_hydration",
@@ -235,6 +243,16 @@
         "sha256": "321eff081806ba383482aa35ff8bc06a48aa94e2fed78bbe090c496131499bc1"
       }
     }
+  },
+  "ci_repair_20261114t074500z": {
+    "prior_head": "2aa2822800363681145f71bc925c5a5deca20984",
+    "prior_approval_status": "historical_for_prior_head_2aa2822800363681145f71bc925c5a5deca20984",
+    "original_ci_run_id": 43571208422,
+    "original_ci_job_id": 132375994896,
+    "original_ci_failure": "Service suites (misc) / Run persona service tests failed on ModuleNotFoundError: No module named 'services.memory.test_memory_index_projection' in services/persona/test_case_file_outcomes.py line 20 (from services.memory.test_memory_index_projection import persona)",
+    "repair_file": "services/persona/test_case_file_outcomes.py",
+    "repair_sha256": "8af407422124c6dbc7356f1557649c7378d34d31308e38c19d8089f7f54067b9",
+    "repair_change": "Updated import from deleted services.memory.test_memory_index_projection.persona to AST-identical fixture helper services.memory.test_hindsight_index.persona; preserved all original Persona pool/case/outcome/usefulness-ranking and durable/PIT/tenant assertions without skip/delete/xfail or business behavior change."
   },
   "known_gaps": [
     "Observation-to-canonical-id mapping through source_fact_ids is covered by a fake-transport unit test only; consolidation is disabled (no LLM provider), so no real observations exist.",
