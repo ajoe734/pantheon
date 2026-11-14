@@ -30,6 +30,7 @@ def search_client(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("route", [
     "/api/search/query", "/api/search/query/request-documents-compat",
+    "/api/search/v2/query", "/api/search/v2/alpha-query",
     "/api/search/index/refresh", "/api/search/index/source-completions",
 ])
 @pytest.mark.parametrize("legacy", [
@@ -77,7 +78,7 @@ def test_openapi_has_no_memory_projection_contract(search_client):
     client, _, _ = search_client
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
     assert "MemoryProjectionBody" not in schemas
-    for name in ("SearchQueryBody", "IndexRefreshBody", "SourceCompletionBody"):
+    for name in ("SearchQueryBody", "StructuredAlphaQueryBody", "IndexRefreshBody", "SourceCompletionBody"):
         assert not {"memory_record_kind", "memory_entries"}.intersection(schemas[name]["properties"])
 
 

@@ -1,0 +1,71 @@
+{
+  "task_id": "SEARCH-MEMORY-PROJECTION-REMOVAL-20261113",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-14T08:31:01.163104+00:00",
+  "delivery_status": "partial_implementation_scope_blocked",
+  "base_sha": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+  "implementation_anchor": "ab1f6582c8ab94e7c247f9c6814d9ee3c1e4f3e0",
+  "design_ref": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_HINDSIGHT_ADOPTION_2026-11-13.md#H7",
+  "acceptance": {
+    "AC1": {
+      "status": "locally_verified",
+      "evidence": "Removed MemoryProjectionBody and both memory HTTP execution branches. A before-validator rejects memory_entries and memory_record_kind including null, empty, invalid and both legacy kinds with HTTP 422 memory_search_projection_removed before backend calls or checkpoint writes. Covered query, compat, v2, alpha, refresh and source-completions; 48 rejection cases plus 4 focused contract/regression tests."
+    },
+    "AC2": {
+      "status": "locally_verified",
+      "evidence": "Backend contract v3 removes memory-backend wiring claims and memory candidate module, names canonical memory service ownership and Hindsight, and cites H7. Postgres knowledge backend activation remains accepted."
+    },
+    "AC3": {
+      "status": "blocked_not_run",
+      "evidence": "The existing services/search/pg_retrieval.py rebuild_index applies schema and runs IncrementalIndexPipeline(force_full=True). It does not purge legacy memory rows; direct memory projection never added them to the knowledge pipeline checkpoint. pg_retrieval.py is absent from this task artifact contract. No cleanup or dev-host before/after count claim is made."
+    },
+    "AC4": {
+      "status": "locally_verified_with_integration_limits",
+      "evidence": "Existing knowledge-base tests unchanged. Entire search suite terminal exit 0: 218 passed, 24 skipped, 4 subtests passed. Knowledge query still sends record_kind=knowledge_object and full refresh still produces its existing pipeline snapshot."
+    }
+  },
+  "validation": [
+    {
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/search/tests/test_memory_projection_removed.py",
+      "exit_status": 0,
+      "result": "36 passed at initial anchor; subsequently expanded to cover v2 and alpha in the full-suite run"
+    },
+    {
+      "command": "timeout 240 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/search",
+      "exit_status": 2,
+      "result": "Initial collection failed: qdrant_client missing from worker Python environment"
+    },
+    {
+      "command": "Search suite with qdrant-client==1.19.0 installed in isolated /tmp test dependency directory",
+      "exit_status": 1,
+      "result": "199 passed, 24 skipped, 3 failed: jieba missing; resolved by isolated installation of repository pin jieba==0.42.1"
+    },
+    {
+      "command": "timeout 240 \"$PANTHEON_DEPENDENCY_PYTHON\" -c 'import sys; sys.path.append(\"/tmp/search-memory-projection-removal-20261113-test-deps\"); import pytest; raise SystemExit(pytest.main([\"-q\", \"-rs\", \"services/search\"]))'",
+      "exit_status": 0,
+      "result": "218 passed, 24 skipped, 1 warning, 4 subtests passed in 36.04s",
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-search-tests.log",
+      "terminal_log_sha256": "b02aca79071176a480fc463f7661b8d4b3742f6c8ea7f5077b465f2f1dec36c6",
+      "limits": "Integration cases skipped for missing configured Postgres DSNs, unavailable local model/pgvector backend and Qdrant, and missing ranx. This is not hosted cleanup proof."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    }
+  ],
+  "dev_host_cleanup": {
+    "status": "not_run",
+    "entrypoint": "python -m services.search.pg_retrieval rebuild",
+    "before_counts": null,
+    "after_counts": null,
+    "reason": "Existing rebuild has no memory purge and its source file is outside the immutable artifact contract; no dev-host mutation attempted."
+  },
+  "remaining_work": [
+    "Human/Ops must add ONLY services/search/pg_retrieval.py to the SAME task artifact contract via the governed artifact-contract command, then reopen this task. Existing prerequisite MEMORY-HINDSIGHT-INDEX-20261113 is done and satisfied.",
+    "Extend existing rebuild entry point to purge only institutional_memory/persona_memory rows across tenants using its existing schema-admin maintenance authority, with RLS fail-closed verification and before/deleted/after counts. Preserve knowledge rows, canonical stores and query logs; add regression coverage in the already authorized test file.",
+    "Run bounded real-container rebuild integration and the required dev-host cleanup, record terminal output and actual before/after counts here, then complete exact-head independent review and supervisor integration before owner done."
+  ],
+  "review_status": "not_handed_off; AC3 incomplete",
+  "hosted_delivery_claimed": false
+}

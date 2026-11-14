@@ -449,7 +449,7 @@ class SearchQueryBody(KnowledgeSearchBody):
     source_event_id: str | None = None
 
 
-class StructuredAlphaQueryBody(BaseModel):
+class StructuredAlphaQueryBody(KnowledgeSearchBody):
     schema_version: str = "alpha_rule_query.v1"
     dataset_ref: str
     universe: list[str] = Field(default_factory=lambda: ["US_EQUITY"])
