@@ -145,6 +145,24 @@ def test_completed_receipt_reuses_rows_without_per_row_evidence(admission_stack,
     summaries = response.json()["source_records"]
     assert len(summaries) == len({r.metadata["trade_date"] for r in records})
     assert sum(r["metadata"]["collector_market_bundle"]["row_count"] for r in summaries) == len(records)
+    for record in records:
+        projected = http.get(f"/api/source-ingest/source-records/{record.source_id}", headers=headers)
+        assert projected.status_code == 200
+        metadata = projected.json()["source_record"]["metadata"]
+        assert metadata["normalized_row"] == record.metadata["normalized_row"]
+        assert metadata["content_hash"] == record.metadata["content_hash"]
+        assert metadata["source_record_projection"] == "normalized_partition"
+    assert http.get(f"/api/source-ingest/source-records/{records[0].source_id}",
+                    headers=_read_headers("foreign")).status_code == 404
+    path = Path(receipt.storage_refs["normalized_refs"][0]["uri"])
+    hidden = path.with_suffix(".unavailable")
+    path.rename(hidden)
+    try:
+        assert http.get(f"/api/source-ingest/source-records/{records[0].source_id}", headers=headers).status_code == 503
+        assert http.get(f"/api/source-ingest/source-records/{records[0].source_id}",
+                        headers=_read_headers("foreign")).status_code == 404
+    finally:
+        hidden.rename(path)
     assert http.get("/api/source-ingest/management/sources", headers=headers).status_code == 200
     seeds = http.get("/api/source-ingest/management/strategy-seeds", headers=headers)
     assert seeds.status_code == 200 and seeds.json()["items"] == []
@@ -308,6 +326,18 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     monkeypatch.setattr(module.runtime.latest_market_snapshot_store, "max_closes", 2)
     # The controller still uses its real desired-state/reconcile/frontier/receipt path.
     enabled = {s[0] for s in SPECS}
+    load_desired = cw.load_desired_state
+    def market_desired(**kwargs):
+        personas, metadata = load_desired(**kwargs)
+        selected = []
+        for persona in personas:
+            requirements = [r for r in persona["required_data_sources"]
+                            if any(c in enabled for c in r.get("connector_candidates", ()))]
+            if requirements:
+                selected.append({**persona, "required_data_sources": requirements})
+        return tuple(selected), {**metadata, "sha256": module.runtime._desired_state_digest(selected),
+                                 "requirement_count": sum(len(p["required_data_sources"]) for p in selected)}
+    monkeypatch.setattr(cw, "load_desired_state", market_desired)
     from services.source_ingestion import persona_source_reconciler as reconciler
     definition_for = reconciler.collector_definition
     def scale_definition(source):

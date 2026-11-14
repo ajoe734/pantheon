@@ -142,7 +142,8 @@
     "replay": "Completed receipt and normalized partition identity (tenant, item id, full content hash, dataset, event and availability times) authorizes reuse without requiring per-row evidence.",
     "search": "Bundle knowledge objects remain readable provenance; numeric bundles do not enter the semantic embedding pipeline. Existing text and legacy market knowledge remain eligible.",
     "distillation": "No automatic admission or catch-up admission for numeric bundle summaries; explicit old/manual jobs are skipped before seed/evidence synthesis. Legacy market jobs retain existing behavior.",
-    "compatibility": "No deletion, schema migration or canonical record type change; additional metadata only. Original collector: source-id namespace retained."
+    "compatibility": "No deletion, schema migration or canonical record type change; additional metadata only. Original collector: source-id namespace retained.",
+    "row_lineage_read": "Existing source-record/{id} endpoint resolves a missing Collector row through completed normalized partitions selected by tenant-owned bundle refs; no per-row evidence is inserted. Foreign tenant 404 and unavailable owned partition 503 are tested."
   },
   "scale": {
     "status": "pending",
@@ -157,7 +158,7 @@
     "health_budget_seconds": 120,
     "health_budget_reference": "docker-compose.yml source-ingest healthcheck start_period:120s (plus 10 retries at 10s).",
     "search_limit_reference": "SEARCH-EMBED-CPU-BOUND-20261114: <=2 compute threads/CPUs and >=300 embeddings/hour; new numeric bundles add zero embedding calls.",
-    "harness_boundary": "Local PostgreSQL and real controller, API, pipeline, partitions, queue and snapshot writer. Test uses <=1000-row historical batches and daily cadence; separate default-cadence newest-session and held-symbol tests preserve current behavior. Lossless latest-envelope snapshot journal compaction between scale ticks preserves every retained point/checksum; this is test-only and not a production repair. The final scale run uses the supported two-close projection window; default 60-close/held/intraday behavior is verified separately, and all normalized history remains persisted.",
+    "harness_boundary": "Local PostgreSQL and real controller, API, pipeline, partitions, queue and snapshot writer. Test uses <=1000-row historical batches and daily cadence; separate default-cadence newest-session and held-symbol tests preserve current behavior. Lossless latest-envelope snapshot journal compaction between scale ticks preserves every retained point/checksum; this is test-only and not a production repair. The final scale run uses the supported two-close projection window; default 60-close/held/intraday behavior is verified separately, and all normalized history remains persisted. Desired-state scale fixture selects the three original market requirements only; unrelated paper/social sources are not scheduled.",
     "conservative_startup_model": {
       "existing_rows": 22704,
       "two_year_new_rows": 5856,
@@ -243,6 +244,11 @@
       "reader": "bee62bc29 rollback codec",
       "path": "services/source_ingestion/connectors/base.py:SourceRecord.from_dict at bee62bc29",
       "proof": "test_legacy_rows_and_bee_reader_accept_additive_bundle executes actual historical codec on both untouched legacy and new bundle records"
+    },
+    {
+      "reader": "single per-row snapshot lineage lookup",
+      "path": "services/source_ingestion/runtime.py:collector_market_record_from_partition; services/source_ingestion/routers/ingest_operations.py:get_source_record",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence compares original normalized row/hash, rejects foreign tenant, and checks missing partition 503 without foreign existence disclosure."
     }
   ],
   "validation": [
@@ -269,12 +275,16 @@
     {
       "command": "timeout 300 .venv-pantheon/bin/python -m pytest -q services/search",
       "result": "Collection stopped, exit 2: optional qdrant_client unavailable. Required touched index_pipeline module passed in the focused service batch."
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 300 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_latest_market_snapshot.py",
+      "result": "18 passed, 1 deselected, exit 0; includes the new row-lineage endpoint fallback and padded startup model."
     }
   ],
   "holds": {
     "readonly_tests": "Task explicitly requires test_scheduled_connector.py unchanged. Five unmodified tests assert/derive per-row source-record counts (8,16,7467,1349,6002), contradicting bounded physical provenance. Final required batch is 105 passed / 5 failed. Operator clarification remains pending; no assertion weakened and no read-only test edited.",
     "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact.",
-    "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes.",
+    "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes. The first full-window attempt also hit unrelated paper source selection after 30 TWSE and 30 TPEx days (959.30s, exit 1); no scale pass claimed. Final harness filters actual default desired-state requirements to exactly the three market sources, recalculating its real digest; retry pending.",
     "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt."
   }
 }
