@@ -3,8 +3,8 @@
   "change": "personas/service.py: _pm12_persona_league_rows_shared = single-flight + tenant-keyed memo (10s, hard cap 30s, measured from computation start, failures never stored, deep-copied per caller) used by get_persona_league, get_persona_league_rankings, _compose_quarterly_ranking_context.",
   "standard_approach": "request coalescing / single-flight plus short TTL memo",
   "acceptance_status": {
-    "AC1_p95_under_2s_hosted_sized_fixture": "NOT PROVEN: the local fixture is already <1s before the change (see local_bench), so it does not reproduce the hosted 3-6s latency",
-    "AC2_hosted_fixture_sizes": "NOT DONE: no read-only access to hosted dev from this worker; local fixture uses 166 personas (taken from the existing test_quarterly_ranking_read_latency PERSONA_COUNT), with no bindings/runtime bindings/sessions/league entries/quarter evidence",
+    "AC1_p95_under_2s_hosted_sized_fixture": "NOT PROVEN with injected latency: persona-league p95 2.74s (before and after identical) because its page-item loop calls get_persona_allowed_actions serially per item (20 x delay) OUTSIDE the memo; other routes <1s p95.",
+    "AC2_hosted_fixture_sizes": "PARTIAL: personas 170 (11 active/159 archived) and evidence refs 0 supplied by Human/Ops; binding/runtime/session/league-entry counts not supplied. Bench uses 170 personas.",
     "AC3_before_after": "recorded for the local fixture only; no improvement observed under concurrent cold start",
     "AC4_body_parity": "test_bodies_identical_to_unmemoized_code",
     "AC5_tenant_scope": "test_memo_is_tenant_scoped",
@@ -17,20 +17,179 @@
     "command_after": "LEAGUE_BENCH=after PERSONAS=166 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
     "seconds_p50_p95_max": {
       "before": {
-        "persona-league": [0.434, 0.6, 0.6],
-        "persona-league/rankings": [0.45, 0.602, 0.602],
-        "quarterly-ranking": [0.47, 0.599, 0.599],
-        "quarterly-ranking/formula": [0.359, 0.516, 0.516],
-        "persona-fleet": [0.434, 0.596, 0.596]
+        "persona-league": [
+          0.434,
+          0.6,
+          0.6
+        ],
+        "persona-league/rankings": [
+          0.45,
+          0.602,
+          0.602
+        ],
+        "quarterly-ranking": [
+          0.47,
+          0.599,
+          0.599
+        ],
+        "quarterly-ranking/formula": [
+          0.359,
+          0.516,
+          0.516
+        ],
+        "persona-fleet": [
+          0.434,
+          0.596,
+          0.596
+        ]
       },
       "after": {
-        "persona-league": [0.484, 0.64, 0.64],
-        "persona-league/rankings": [0.492, 0.65, 0.65],
-        "quarterly-ranking": [0.498, 0.661, 0.661],
-        "quarterly-ranking/formula": [0.355, 0.479, 0.479],
-        "persona-fleet": [0.477, 0.66, 0.66]
+        "persona-league": [
+          0.484,
+          0.64,
+          0.64
+        ],
+        "persona-league/rankings": [
+          0.492,
+          0.65,
+          0.65
+        ],
+        "quarterly-ranking": [
+          0.498,
+          0.661,
+          0.661
+        ],
+        "quarterly-ranking/formula": [
+          0.355,
+          0.479,
+          0.479
+        ],
+        "persona-fleet": [
+          0.477,
+          0.66,
+          0.66
+        ]
       }
     },
-    "serial_cold_vs_warm_seconds": {"persona-league": [0.312, 0.081], "quarterly-ranking": [0.198, 0.101]}
-  }
+    "serial_cold_vs_warm_seconds": {
+      "persona-league": [
+        0.312,
+        0.081
+      ],
+      "quarterly-ranking": [
+        0.198,
+        0.101
+      ]
+    }
+  },
+  "hosted_read_only_data": {
+    "source": "Human/Ops supplied 2026-11-14T20:48Z, file claude-evidence/league-ranking-hosted-read-sizes-20261114.json (authenticated read-only GETs on hosted dev bee62bc29)",
+    "personas_total": 170,
+    "active": 11,
+    "archived": 159,
+    "quarterly_ranking_universe": 170,
+    "current_quarter_evidence_refs": 0,
+    "persona_league_rankings_bytes": 277987,
+    "hosted_latency_s_single_vs_5way_p95": {
+      "persona-league": [
+        1.3,
+        2.51
+      ],
+      "persona-league/rankings": [
+        1.1,
+        2.78
+      ],
+      "quarterly-ranking": [
+        13.4,
+        14.8
+      ],
+      "persona-fleet": [
+        1.9,
+        3.41
+      ]
+    },
+    "bindings_runtime_bindings_sessions_league_entries_counts": "not in supplied data"
+  },
+  "bench_170_personas_20_rounds": {
+    "command": "LEAGUE_BENCH=<before|after> STORE_DELAY_MS=<ms> PERSONAS=170 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "note": "STORE_DELAY_MS adds a fixed sleep per call to list_bindings, list_runtime_bindings, list_persona_league, get_persona_allowed_actions. The delay value is an assumption, not a hosted measurement.",
+    "delay_0_p50_p95": {
+      "before": {
+        "persona-league": [
+          0.754,
+          1.094
+        ],
+        "rankings": [
+          0.784,
+          1.084
+        ],
+        "quarterly-ranking": [
+          0.782,
+          1.084
+        ],
+        "persona-fleet": [
+          0.744,
+          1.086
+        ]
+      },
+      "after": {
+        "persona-league": [
+          0.47,
+          0.684
+        ],
+        "rankings": [
+          0.493,
+          0.661
+        ],
+        "quarterly-ranking": [
+          0.495,
+          0.687
+        ],
+        "persona-fleet": [
+          0.484,
+          0.68
+        ]
+      }
+    },
+    "delay_100ms_p50_p95": {
+      "before": {
+        "persona-league": [
+          2.671,
+          2.738
+        ],
+        "rankings": [
+          0.724,
+          0.822
+        ],
+        "quarterly-ranking": [
+          0.722,
+          0.821
+        ],
+        "persona-fleet": [
+          0.678,
+          0.816
+        ]
+      },
+      "after": {
+        "persona-league": [
+          2.653,
+          2.736
+        ],
+        "rankings": [
+          0.709,
+          0.804
+        ],
+        "quarterly-ranking": [
+          0.708,
+          0.804
+        ],
+        "persona-fleet": [
+          0.619,
+          0.8
+        ]
+      }
+    },
+    "delay_20ms_with_per_persona_session_path_artifact": "before/after both ~4.1-4.5s p95 (wrapping sessions fn forced per-persona path; discarded as artifact)"
+  },
+  "finding": "Memo cuts CPU/GIL contention (delay 0: p95 ~1.09s -> ~0.68s) but cannot reduce serial downstream waits. Remaining lever for persona-league: batch or parallelize per-page-item get_persona_allowed_actions in get_persona_league (service.py ~line 17430); not implemented, needs reviewer decision on scope."
 }

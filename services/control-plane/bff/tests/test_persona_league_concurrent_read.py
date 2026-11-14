@@ -197,6 +197,17 @@ def test_cockpit_concurrent_bench(monkeypatch: pytest.MonkeyPatch) -> None:
         store = _CountingPm12LeagueTestStore(fallback=True)
         for n in range(personas):
             store.create_persona(persona_id=f"p-{n:03d}", name=f"Persona {n:03d}", archetype=("trend", "mean_reversion", "carry")[n % 3])
+        delay = float(_os.environ.get("STORE_DELAY_MS", "0")) / 1000.0
+        if delay > 0:
+            # Per-call downstream latency on the bulk/per-persona store reads the
+            # league composition makes (stand-in for hosted downstream latency).
+            for name in ("list_bindings", "list_runtime_bindings", "list_persona_league", "get_persona_allowed_actions"):
+                orig = getattr(store, name, None)
+                if callable(orig):
+                    def _slow(*a, __o=orig, **k):
+                        time.sleep(delay)
+                        return __o(*a, **k)
+                    monkeypatch.setattr(store, name, _slow, raising=False)
         client = _fresh_client(td, store=store)
         lat: Dict[str, List[float]] = {r: [] for r in _COCKPIT_ROUTES}
 
