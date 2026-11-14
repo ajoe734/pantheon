@@ -4,7 +4,7 @@
   "owner": "Codex",
   "reviewer": "Antigravity2",
   "review_status": "pending_independent_review",
-  "base_commit": "0940f6248",
+  "base_commit": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
   "scope": "Verified immutable metadata cache and bounded newest-session controller continuation; no collector-host request/fetch policy, service, queue, setting, endpoint or deployment change.",
   "hosted_observations": {
     "provenance": "Operator-provided canonical task acceptance AC1, read through governed AI_NAME=Codex show on 2026-11-14. No VM/SSH access performed.",
@@ -137,129 +137,42 @@
   "model_limits": "Synthetic valid native bundles padded with JSON whitespace to the exact supplied encoded sizes, four same-session runs per source and 1721-entry index. Real in-process HTTP controller/API/scheduler, evidence/config JSONL, SQLite queue, raw/normalized and latest snapshot persistence. 3MB/s and 0.14/0.19s fresh connections are virtual; actual CPU/disk time is charged, affinity limited to two cores. This is not hosted network/PostgreSQL proof and does not reproduce host load 15-34.",
   "validation": [
     {
-      "command": "timeout 540 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q -s --junitxml=/tmp/collector-throughput-new.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py",
+      "command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q -s --junitxml=/tmp/collector-throughput-rebased-regression.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py > /tmp/collector-throughput-rebased-regression.log 2>&1",
       "exit_code": 0,
-      "summary": "9 passed, 1 warning in 94.22s; before four additional cache/rollback cases were added"
-    },
-    {
-      "command": "timeout 90 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q --junitxml=/tmp/collector-throughput-added.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py -k \"fresh_index or http_cache or rollback\"",
-      "exit_code": 0,
-      "summary": "4 passed, 9 deselected, 1 warning in 2.21s"
-    },
-    {
-      "command": "timeout 900 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q -s --junitxml=/tmp/collector-throughput-regression.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py",
-      "interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3",
-      "exit_code": 1,
-      "summary": "1 failed, 417 passed, 1 skipped, 1 warning in 543.12s",
-      "counts_by_suite": {
-        "services.source_ingestion.tests.test_collector_newest_session_hosted_throughput": {
-          "passed": 13,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
-        },
-        "services.source_ingestion.tests.test_collector_newest_session_progress": {
-          "passed": 12,
-          "failed": 1,
-          "errors": 0,
-          "skipped": 0
-        },
-        "services.source_ingestion.tests.test_collector_bundle_connector": {
-          "passed": 103,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 1
-        },
-        "services.source_ingestion.tests.test_controller_worker": {
-          "passed": 200,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
-        },
-        "services.source_ingestion.tests.test_scheduled_connector": {
-          "passed": 73,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
-        },
-        "services.source_ingestion.tests.test_tw_close_reconcile": {
-          "passed": 16,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
-        }
-      },
-      "failure": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_completed_same_session_new_run_has_no_raw_resend",
-      "skip": "Existing native recorded RSS fixture pack is not provided; no skip/xfail was added."
-    },
-    {
-      "command": "timeout 30 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py -k \"not hosted_size and not exact_candidate\"",
-      "exit_code": 1,
-      "summary": "1 failed, 9 passed, 3 deselected; same no-new-data assertion"
-    },
-    {
-      "command": "PYTHONPATH=. timeout 30 \"$PANTHEON_DEPENDENCY_PYTHON\" /tmp/collector-throughput-base-repro.py",
-      "exit_code": 0,
-      "summary": "Actual 0940f6248 module and task head both return no_new_data=false, zero rows, priority_done=true with newest_bundle_older_than_twice_cadence. Harness asserts the identical pre-existing failure, not a green full suite."
-    },
-    {
-      "command": "timeout 30 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py -k 'not hosted_size and not exact_candidate'",
-      "exit_code": 0,
-      "summary": "11 passed, 3 deselected; explicit healthy and stale controls"
-    },
-    {
-      "command": "timeout 900 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q -s --junitxml=/tmp/collector-throughput-clock-regression.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py > /tmp/collector-throughput-clock-regression.log 2>&1",
-      "exit_code": 0,
+      "terminal_output": "419 passed, 1 skipped, 1 warning in 581.02s (0:09:41)",
+      "tested_source_commit": "34b88eb40f2baf8302094d279503ddb89c5a71e8",
       "counts_by_file": {
         "services.source_ingestion.tests.test_collector_newest_session_hosted_throughput": {
-          "passed": 13,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
+          "passed": 13
         },
         "services.source_ingestion.tests.test_collector_newest_session_progress": {
-          "passed": 14,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
+          "passed": 14
         },
         "services.source_ingestion.tests.test_collector_bundle_connector": {
           "passed": 103,
-          "failed": 0,
-          "errors": 0,
           "skipped": 1
         },
         "services.source_ingestion.tests.test_controller_worker": {
-          "passed": 200,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
+          "passed": 200
         },
         "services.source_ingestion.tests.test_scheduled_connector": {
-          "passed": 73,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
+          "passed": 73
         },
         "services.source_ingestion.tests.test_tw_close_reconcile": {
-          "passed": 16,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0
+          "passed": 16
         }
       },
       "summary": {
         "passed": 419,
-        "failed": 0,
-        "errors": 0,
         "skipped": 1
       },
-      "terminal_output": "419 passed, 1 skipped, 1 warning in 564.82s (0:09:24); exit 0 collected from exec session 24211"
+      "provisioning": "python3 scripts/dev/provision_python_distribution.py; checkout-scoped editable install verified from a foreign working directory without PYTHONPATH.",
+      "skip": "Existing native recorded RSS fixture pack is unavailable; no new skip or xfail."
     }
   ],
   "delivery": {
-    "state": "source_validated_ready_for_exact_head_independent_review",
-    "merge": "not_claimed_independent_review_and_required_checks_outstanding",
+    "state": "rebased_source_validated_ready_for_fresh_exact_head_independent_review",
+    "merge": "not_claimed_fresh_review_required_checks_and_native_supervisor_merge_outstanding",
     "deployment": "not_performed_author_has_no_authority",
     "deadline": "2026-11-16T06:40:00Z"
   },
@@ -279,50 +192,15 @@
     "collector-throughput-progress-fast.log": "0c9766ea06f6b1cb55b7a66d042e1901aeed93510e7ccfd8e6958ecc7957751c",
     "collector-throughput-base-repro.log": "1ac5654505b1487bb6fa7f1c568d957f531a4428e8c89d02aee923444bb45f1c",
     "collector-throughput-clock-regression.log": "8d8fa2209323235df79aadc6dc8c78375a5c0ba6b53fd62919963beb7a1a52c6",
-    "collector-throughput-clock-regression.xml": "cb1bc98619fa6f49a9592bf42661b0caa731d54bb64d95b8dfca7aa35c7bf825"
+    "collector-throughput-clock-regression.xml": "cb1bc98619fa6f49a9592bf42661b0caa731d54bb64d95b8dfca7aa35c7bf825",
+    "collector-throughput-rebased-regression.log": "ef73213f1f367d6f8cc2dc82a83bf55e19e45a03c07e176aea332202434f84aa",
+    "collector-throughput-rebased-regression.xml": "0dd322e50580fa00036b6cb2932ac37912c7a57cd2f499ae664627f5c1726c40"
   },
   "existing_validation_blocker": {
-    "evidence_utc": "2026-11-14T13:54:42Z",
-    "file": "services/source_ingestion/tests/test_collector_newest_session_progress.py",
-    "test": "test_completed_same_session_new_run_has_no_raw_resend",
-    "cause": "Fixture latest run is fixed at 2026-11-14T00:19:33Z and cadence is 21600s. After 12:19:33Z the production health guard correctly treats it as older than twice cadence; the test still asserts healthy no_new_data. Reproduced with the actual original module and the task module. This is not caused by metadata caching.",
-    "required_fix": "Freeze observed_from_collector_status(now=2026-11-14T10:00:00Z) within that one recorded-run test, retaining its exact native ids/hashes/no-resend and no_new_data assertions. Do not relax product freshness or add skip/xfail.",
-    "scope_hold": "The existing test file is named in validation acceptance but is not in this dispatched task artifact contract. scripts/ai_status.py command_artifact_contract says Only Human/Ops can revise task artifact contracts, and only while todo/blocked. No worker impersonation, canonical JSON edits or out-of-contract source changes were performed.",
-    "needed_actor": "Human/Ops",
-    "needed_action": "After the task is blocked, add this existing test path with artifact-contract, then reopen the same task for Codex to freeze the test clock, rerun and hand off the exact PR head. No replacement task is needed.",
-    "product_health_unchanged": true,
-    "base_and_head_results": {
-      "utc": "2026-11-14T13:54:42.107492+00:00",
-      "results": [
-        {
-          "version": "0940f6248",
-          "no_new_data": false,
-          "priority_done": true,
-          "rows": 0,
-          "reasons": [
-            "newest_bundle_older_than_twice_cadence"
-          ]
-        },
-        {
-          "version": "task_head",
-          "no_new_data": false,
-          "priority_done": true,
-          "rows": 0,
-          "reasons": [
-            "newest_bundle_older_than_twice_cadence"
-          ]
-        }
-      ]
-    },
-    "status": "resolved; original blocker details below are historical",
-    "resolution": {
-      "status": "resolved_by_scoped_test_clock_fix",
-      "artifact_contract_revision": "Human/Ops 2026-11-14T14:00:15Z admitted only the existing progress test file; same task/PR #7352, Codex owner and Antigravity2 reviewer.",
-      "fix": "Existing observed_from_collector_status monkeypatch pattern supplies now=2026-11-14T10:00:00Z (healthy) or 13:00:00Z (stale). Original healthy no-resend/no_new_data assertions remain; stale asserts degraded, no_new_data=false and no raw resend. Both assert unchanged 21600s cadence and exact latest-run timestamp.",
-      "production_changes": "None in this repair; production clocks, health/freshness, source cache/controller and collector fetch policy unchanged.",
-      "prior_results_retained": "Initial 417 passed/1 skipped/1 failed and initial controller model 1130.5159882302232s/max tick 18.540335856327147s above are historical results, not replaced or claimed green.",
-      "other_prs": "This validation does not establish green checks for old exact heads of PR #7348 or #7349."
-    }
+    "status": "resolved; original blocker and resolution are historical",
+    "manifest": "195dac4ecdc3efa36bc1e985730f218abdfa41cd:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json",
+    "cause": "Recorded latest run expired against the moving test wall clock; production freshness guard was correct.",
+    "current_resolution": "Inherit CLOCK PR7353 per-run observed_at monkeypatch. First run is observed one minute after completion; next run is observed one minute after completion (healthy) or thirteen hours after completion (stale). Preserve no-resend, exact timestamp, 21600s cadence and real health/freshness assertions."
   },
   "clock_fix_controller_model": {
     "cpu_affinity": [
@@ -393,5 +271,95 @@
     "max_same_source_gap_seconds": 20.446523867327414,
     "elapsed_including_600_second_cadence_phase": 1126.5308745689013
   },
-  "clock_fix_evidence_utc": "2026-11-14T14:11:53.539684+00:00"
+  "clock_fix_evidence_utc": "2026-11-14T14:11:53.539684+00:00",
+  "historical_delivery": {
+    "head": "195dac4ecdc3efa36bc1e985730f218abdfa41cd",
+    "base": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+    "manifest": "195dac4ecdc3efa36bc1e985730f218abdfa41cd:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json",
+    "validation": "419 passed, 1 skipped in 564.82s, exit 0; all original exact commands, failed-batch history and model measurements remain in the immutable manifest above.",
+    "independent_review": "Canonical task retains Antigravity2 approval of this exact old head and independent 42-pass rerun. Human/Ops reopened at 2026-11-14T14:37:33Z for integration with merged CLOCK PR7353; this does not erase or replace the old technical approval."
+  },
+  "rebase_integration": {
+    "base": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+    "clock_pr": "https://github.com/ajoe734/pantheon/pull/7353",
+    "scope": "Same original task and PR7352, six acceptance criteria, five artifact paths, Codex owner and Antigravity2 reviewer. No dependency on the completed CLOCK task.",
+    "production_and_throughput_test_unchanged_from": "195dac4ecdc3efa36bc1e985730f218abdfa41cd",
+    "verification": "git diff 195dac4ec -- services/source_ingestion/connectors/collector_bundle.py services/source_ingestion/controller_worker.py services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py is empty; git range-diff preserves the other four original commits.",
+    "source_sha256": {
+      "services/source_ingestion/connectors/collector_bundle.py": "a68a0c60eb574f66c839cc58b7650e9a1978ca64a16d8fb331f21a83b723fd35",
+      "services/source_ingestion/controller_worker.py": "fd1dd7dc9d093966bae95385d342919acc364eec1d0dd24c0d8b0403b3b5346e",
+      "services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py": "51dc8fa4136258369a3db4994b923f0edfc88946ddea544628d5362ad47e8d32",
+      "services/source_ingestion/tests/test_collector_newest_session_progress.py": "1d0e8d9e0e1610e39b2293a0b01633f43e173e63439f1852ae2dda3cb6d649b8"
+    },
+    "evidence_utc": "2026-11-14T14:50:25.403286+00:00"
+  },
+  "rebased_controller_model": {
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "index_bytes": 504000,
+    "index_entries": 1721,
+    "fresh_connection_seconds": [
+      0.14,
+      0.19
+    ],
+    "transfer_bytes_per_second": 3000000,
+    "metadata_sizes": {
+      "collector-tw-twse-price-history": [
+        570000,
+        1240000
+      ],
+      "collector-tw-tpex-price-history": [
+        2500000,
+        5700000
+      ]
+    },
+    "counts": {
+      "collector-tw-twse-price-history": 1377,
+      "collector-tw-tpex-price-history": 6090
+    },
+    "elapsed_with_worst_cadence_phase_seconds": 1135.5614725794612,
+    "pull_columns": "source,rows,seconds,start_seconds,same_source_gap_seconds,metadata_remote_seconds",
+    "pull_rows_csv": [
+      "collector-tw-tpex-price-history,48,16.663612912666395,5.129999408381991e-06,null,12.053333333333335",
+      "collector-tw-tpex-price-history,256,15.17427152934215,17.674814852665804,17.674809722666396,0",
+      "collector-tw-tpex-price-history,256,15.131694554345813,33.892619810008,16.217804957342196,0",
+      "collector-tw-tpex-price-history,256,15.310230681339817,50.13129880835368,16.238678998345677,0",
+      "collector-tw-tpex-price-history,256,15.219067919343615,66.56558421369391,16.434285405340233,0",
+      "collector-tw-tpex-price-history,256,15.422590033336746,83.1512398020368,16.585655588342888,0",
+      "collector-tw-tpex-price-history,256,15.658466785335804,99.82273230237388,16.67149250033708,0",
+      "collector-tw-tpex-price-history,256,15.423216818345281,116.80335475970969,16.980622457335812,0",
+      "collector-tw-tpex-price-history,256,15.43088582333985,133.5479698200552,16.744615060345495,0",
+      "collector-tw-tpex-price-history,256,15.497369608341614,150.35188243339417,16.80391261333898,0",
+      "collector-tw-tpex-price-history,256,15.49201825234013,167.17699562373582,16.825113190341654,0",
+      "collector-tw-tpex-price-history,256,18.31232271133831,184.69673612907627,17.51974050534045,0",
+      "collector-tw-tpex-price-history,256,15.664198024342113,204.4394680454143,19.742731916338016,0",
+      "collector-tw-tpex-price-history,256,15.407045433341409,221.54535049475635,17.10588244934206,0",
+      "collector-tw-tpex-price-history,256,15.711449900347361,238.44214030109833,16.896789806341985,0",
+      "collector-tw-tpex-price-history,256,15.729942122343346,255.70722375044534,17.265083449347003,0",
+      "collector-tw-tpex-price-history,256,15.852452030342647,273.0212432297885,17.314019479343187,0",
+      "collector-tw-tpex-price-history,256,15.884867260339888,290.6442616971317,17.623018467343172,0",
+      "collector-tw-tpex-price-history,256,16.01724132934396,308.1690928014723,17.524831104340592,0",
+      "collector-tw-tpex-price-history,256,16.210558995339852,325.97149199681644,17.80239919534415,0",
+      "collector-tw-tpex-price-history,256,15.97591331233798,344.24064086315684,18.2691488663404,0",
+      "collector-tw-tpex-price-history,256,16.130933005339102,362.1223188854947,17.881678022337837,0",
+      "collector-tw-tpex-price-history,256,16.168366712340685,380.0604285548334,17.9381096693387,0",
+      "collector-tw-tpex-price-history,256,16.2032532293415,398.0573856601741,17.996957105340698,0",
+      "collector-tw-tpex-price-history,154,11.562414766668553,416.42760870351503,18.370223043340957,0",
+      "collector-tw-twse-price-history,232,18.526619380653756,430.12142178718386,null,3.533333333333333",
+      "collector-tw-twse-price-history,256,16.140829346328246,450.64555998183823,20.52413819465437,0",
+      "collector-tw-twse-price-history,256,16.138942411325843,468.9046777061658,18.259117724327552,0",
+      "collector-tw-twse-price-history,256,16.247898444323255,487.1918034924911,18.287125786325305,0",
+      "collector-tw-twse-price-history,256,16.716272107321856,505.5649556428143,18.37315215032322,0",
+      "collector-tw-twse-price-history,121,10.090774171325393,524.3274143421359,18.76245869932154,0"
+    ]
+  },
+  "rebased_controller_model_summary": {
+    "total_rows": 7467,
+    "pulls": 31,
+    "max_tick_seconds": 18.526619380653756,
+    "max_same_source_gap_seconds": 20.52413819465437,
+    "elapsed_including_600_second_cadence_phase": 1135.5614725794612
+  }
 }
