@@ -148,10 +148,25 @@
       "provisioning": "python3 scripts/dev/provision_python_distribution.py; checkout-scoped editable install verified from a foreign working directory without PYTHONPATH.",
       "skip": "Existing native recorded RSS fixture pack is unavailable; no new skip or xfail.",
       "immutable_counts_by_file_manifest": "a065af81000d547265e799719819a147b2556964:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json"
+    },
+    {
+      "command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q -s --junitxml=/tmp/collector-throughput-replay-regression.xml services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py > /tmp/collector-throughput-replay-regression.log 2>&1",
+      "exit_code": 0,
+      "terminal_output": "419 passed, 1 skipped, 1 warning in 561.63s (0:09:21)",
+      "tested_source_commit": "2575faaef0914acc6ad4f8848c1b7c087174e96d",
+      "scope": "bd3717260 only compacts evidence; all tested source files equal replay anchor 2575faaef. Final evidence-only commit does not change tested source. One bounded invocation; no reruns.",
+      "counts_by_file": {
+        "test_collector_newest_session_hosted_throughput": "13 passed, 0 skipped",
+        "test_collector_newest_session_progress": "14 passed, 0 skipped",
+        "test_collector_bundle_connector": "103 passed, 1 skipped",
+        "test_controller_worker": "200 passed, 0 skipped",
+        "test_scheduled_connector": "73 passed, 0 skipped",
+        "test_tw_close_reconcile": "16 passed, 0 skipped"
+      }
     }
   ],
   "delivery": {
-    "state": "historical_reproducer_corrected_validation_pending_fresh_exact_head_review_required",
+    "state": "source_validated_ready_for_fresh_exact_head_independent_review",
     "merge": "not_claimed_fresh_review_required_checks_and_native_supervisor_merge_outstanding",
     "deployment": "not_performed_author_has_no_authority",
     "deadline": "2026-11-16T06:40:00Z"
@@ -174,7 +189,9 @@
     "collector-throughput-clock-regression.log": "8d8fa2209323235df79aadc6dc8c78375a5c0ba6b53fd62919963beb7a1a52c6",
     "collector-throughput-clock-regression.xml": "cb1bc98619fa6f49a9592bf42661b0caa731d54bb64d95b8dfca7aa35c7bf825",
     "collector-throughput-rebased-regression.log": "ef73213f1f367d6f8cc2dc82a83bf55e19e45a03c07e176aea332202434f84aa",
-    "collector-throughput-rebased-regression.xml": "0dd322e50580fa00036b6cb2932ac37912c7a57cd2f499ae664627f5c1726c40"
+    "collector-throughput-rebased-regression.xml": "0dd322e50580fa00036b6cb2932ac37912c7a57cd2f499ae664627f5c1726c40",
+    "collector-throughput-replay-regression.log": "f42ee5ab65a711b69f9ad56fe2d3dada0840107b4361f7db9bf4ea1664d20f53",
+    "collector-throughput-replay-regression.xml": "37f0dcd39d59294a99b1f12778b134c62a684e0369b22458d32c1ebe7efac9ea"
   },
   "existing_validation_blocker": {
     "status": "resolved; original blocker and resolution are historical",
@@ -217,66 +234,9 @@
     "evidence_utc": "2026-11-14T14:50:25.403286+00:00"
   },
   "rebased_controller_model": {
-    "cpu_affinity": [
-      0,
-      1
-    ],
-    "index_bytes": 504000,
-    "index_entries": 1721,
-    "fresh_connection_seconds": [
-      0.14,
-      0.19
-    ],
-    "transfer_bytes_per_second": 3000000,
-    "metadata_sizes": {
-      "collector-tw-twse-price-history": [
-        570000,
-        1240000
-      ],
-      "collector-tw-tpex-price-history": [
-        2500000,
-        5700000
-      ]
-    },
-    "counts": {
-      "collector-tw-twse-price-history": 1377,
-      "collector-tw-tpex-price-history": 6090
-    },
-    "elapsed_with_worst_cadence_phase_seconds": 1135.5614725794612,
-    "pull_columns": "source,rows,seconds,start_seconds,same_source_gap_seconds,metadata_remote_seconds",
-    "pull_rows_csv": [
-      "collector-tw-tpex-price-history,48,16.663612912666395,5.129999408381991e-06,null,12.053333333333335",
-      "collector-tw-tpex-price-history,256,15.17427152934215,17.674814852665804,17.674809722666396,0",
-      "collector-tw-tpex-price-history,256,15.131694554345813,33.892619810008,16.217804957342196,0",
-      "collector-tw-tpex-price-history,256,15.310230681339817,50.13129880835368,16.238678998345677,0",
-      "collector-tw-tpex-price-history,256,15.219067919343615,66.56558421369391,16.434285405340233,0",
-      "collector-tw-tpex-price-history,256,15.422590033336746,83.1512398020368,16.585655588342888,0",
-      "collector-tw-tpex-price-history,256,15.658466785335804,99.82273230237388,16.67149250033708,0",
-      "collector-tw-tpex-price-history,256,15.423216818345281,116.80335475970969,16.980622457335812,0",
-      "collector-tw-tpex-price-history,256,15.43088582333985,133.5479698200552,16.744615060345495,0",
-      "collector-tw-tpex-price-history,256,15.497369608341614,150.35188243339417,16.80391261333898,0",
-      "collector-tw-tpex-price-history,256,15.49201825234013,167.17699562373582,16.825113190341654,0",
-      "collector-tw-tpex-price-history,256,18.31232271133831,184.69673612907627,17.51974050534045,0",
-      "collector-tw-tpex-price-history,256,15.664198024342113,204.4394680454143,19.742731916338016,0",
-      "collector-tw-tpex-price-history,256,15.407045433341409,221.54535049475635,17.10588244934206,0",
-      "collector-tw-tpex-price-history,256,15.711449900347361,238.44214030109833,16.896789806341985,0",
-      "collector-tw-tpex-price-history,256,15.729942122343346,255.70722375044534,17.265083449347003,0",
-      "collector-tw-tpex-price-history,256,15.852452030342647,273.0212432297885,17.314019479343187,0",
-      "collector-tw-tpex-price-history,256,15.884867260339888,290.6442616971317,17.623018467343172,0",
-      "collector-tw-tpex-price-history,256,16.01724132934396,308.1690928014723,17.524831104340592,0",
-      "collector-tw-tpex-price-history,256,16.210558995339852,325.97149199681644,17.80239919534415,0",
-      "collector-tw-tpex-price-history,256,15.97591331233798,344.24064086315684,18.2691488663404,0",
-      "collector-tw-tpex-price-history,256,16.130933005339102,362.1223188854947,17.881678022337837,0",
-      "collector-tw-tpex-price-history,256,16.168366712340685,380.0604285548334,17.9381096693387,0",
-      "collector-tw-tpex-price-history,256,16.2032532293415,398.0573856601741,17.996957105340698,0",
-      "collector-tw-tpex-price-history,154,11.562414766668553,416.42760870351503,18.370223043340957,0",
-      "collector-tw-twse-price-history,232,18.526619380653756,430.12142178718386,null,3.533333333333333",
-      "collector-tw-twse-price-history,256,16.140829346328246,450.64555998183823,20.52413819465437,0",
-      "collector-tw-twse-price-history,256,16.138942411325843,468.9046777061658,18.259117724327552,0",
-      "collector-tw-twse-price-history,256,16.247898444323255,487.1918034924911,18.287125786325305,0",
-      "collector-tw-twse-price-history,256,16.716272107321856,505.5649556428143,18.37315215032322,0",
-      "collector-tw-twse-price-history,121,10.090774171325393,524.3274143421359,18.76245869932154,0"
-    ]
+    "immutable_manifest": "a065af81000d547265e799719819a147b2556964:docs/deployment/evidence/COLLECTOR-NEWEST-SESSION-HOSTED-THROUGHPUT-20261114/evidence.json",
+    "field": "rebased_controller_model",
+    "scope": "Earlier source-unchanged measurement retained by immutable reference; fresh followup_controller_model below uses the same parameters and source."
   },
   "rebased_controller_model_summary": {
     "total_rows": 7467,
@@ -324,6 +284,68 @@
         "result": "One unchanged case, real fixtures; pytest exit 0; records empty. Not CI and not evidence that original failures disappeared."
       }
     ],
-    "validation": "pending one bounded six-file AC6 regression; no retry-until-green loop"
-  }
+    "validation": "Single bounded six-file AC6 invocation completed at exit 0: 419 passed, 1 existing skip; see validation and log_sha256.",
+    "measurements_columns": "run_id,rows,delivered,done,wall_seconds,transport_seconds,replayed_first_pull_rows",
+    "measurements": {
+      "collector-tw-twse-price-history": [
+        "run-20261113T121842Z,304,304,false,0.7297186880005029,15.189999999999989,304",
+        "run-20261113T181844Z,308,308,false,0.6697650009991776,15.190000000000095,304",
+        "run-20261114T001933Z,308,308,false,0.5506165879996843,15.189999999999852,304"
+      ],
+      "collector-tw-tpex-price-history": [
+        "run-20261113T121842Z,308,308,false,0.6633053509995079,15.189999999999989,308",
+        "run-20261113T181844Z,308,308,false,0.6336645629999111,15.190000000000095,308",
+        "run-20261114T001933Z,308,308,false,0.6987914300007105,15.189999999999852,308"
+      ]
+    },
+    "observed_unequal_windows": "Fresh TWSE windows are 304/308/308, with 304 first-pull native identities replayed each time. Thus the former exact-set assertion would reject this genuine replay; new persisted-progress/reset/replay assertions pass. TPEx windows are 308/308/308. These observations do not reconstruct or establish the cause of the two original TPEx failures.",
+    "corrected_test_sha256": "3e5396eb3d3adddfab3a9e0ab5cdc6c68d2d945cfd4a769b31a89de0b2a650f5"
+  },
+  "followup_controller_model": {
+    "parameters": "Same source and hosted-size/connection/transfer model as rebased_controller_model immutable reference; unchanged two-core test and production source. Virtual transport plus actual CPU/persistence time, not hosted deployment evidence.",
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "total_rows": 7467,
+    "pulls": 31,
+    "max_tick_seconds": 18.527509283325344,
+    "max_same_source_gap_seconds": 20.417223869325426,
+    "elapsed_including_600_second_cadence_phase": 1125.0269805321777,
+    "pull_columns": "source,rows,seconds,start_seconds,same_source_gap_seconds,metadata_remote_seconds",
+    "pull_rows_csv": [
+      "collector-tw-tpex-price-history,48,16.631914377666362,9.200000022246968e-06,null,12.053333333333335",
+      "collector-tw-tpex-price-history,256,14.99630874135164,17.638895776666686,17.638886576666664,0",
+      "collector-tw-tpex-price-history,256,14.996419157339915,33.67756357501821,16.038667798351526,0",
+      "collector-tw-tpex-price-history,256,15.211868865339966,49.76243810635788,16.084874531339665,0",
+      "collector-tw-tpex-price-history,256,15.193838266340208,66.10116041469792,16.33872230834004,0",
+      "collector-tw-tpex-price-history,256,15.021800702343171,82.5085895080374,16.407429093339488,0",
+      "collector-tw-tpex-price-history,256,15.135447454345922,98.71979262938021,16.211203121342805,0",
+      "collector-tw-tpex-price-history,256,15.106558163346563,115.08756279972567,16.367770170345466,0",
+      "collector-tw-tpex-price-history,256,15.352219476339087,131.4601231470724,16.372560347346734,0",
+      "collector-tw-tpex-price-history,256,15.248601954346668,148.12419228441195,16.66406913733954,0",
+      "collector-tw-tpex-price-history,256,15.325858516341214,164.79897817275832,16.674785888346378,0",
+      "collector-tw-tpex-price-history,256,15.451950053340624,181.4783946070993,16.679416434340965,0",
+      "collector-tw-tpex-price-history,256,15.330591471340995,198.33308676543948,16.854692158340185,0",
+      "collector-tw-tpex-price-history,256,15.518275862344126,215.21936867278055,16.886281907341072,0",
+      "collector-tw-tpex-price-history,256,15.602716089339992,232.2398244751248,17.02045580234426,0",
+      "collector-tw-tpex-price-history,256,15.6468244873422,249.35898581346464,17.119161338339836,0",
+      "collector-tw-tpex-price-history,256,16.061330464336606,267.2519735548076,17.89298774134295,0",
+      "collector-tw-tpex-price-history,256,15.610305125340346,284.87872908414465,17.62675552933706,0",
+      "collector-tw-tpex-price-history,256,15.500435545340224,302.13365810048526,17.25492901634061,0",
+      "collector-tw-tpex-price-history,256,15.590489877347864,319.3732499408252,17.239591840339926,0",
+      "collector-tw-tpex-price-history,256,15.731372093346181,336.6421039071729,17.268853966347706,0",
+      "collector-tw-tpex-price-history,256,15.818730619337657,354.0897333265193,17.447629419346413,0",
+      "collector-tw-tpex-price-history,256,15.855766335343105,371.6453638818566,17.555630555337302,0",
+      "collector-tw-tpex-price-history,256,16.04324959434598,389.30408998819985,17.658726106343238,0",
+      "collector-tw-tpex-price-history,154,11.29714887267437,407.19550977054587,17.89141978234602,0",
+      "collector-tw-twse-price-history,236,18.527509283325344,420.4725027632203,null,3.533333333333333",
+      "collector-tw-twse-price-history,256,16.325855388989112,440.8897266325457,20.417223869325426,0",
+      "collector-tw-twse-price-history,256,16.05888233832502,459.11684678653546,18.227120153989745,0",
+      "collector-tw-twse-price-history,256,16.78031796732921,477.26757660786006,18.150729821324603,0",
+      "collector-tw-twse-price-history,256,16.185402764326682,496.00727689618907,18.739700288329004,0",
+      "collector-tw-twse-price-history,117,9.545497550660912,514.224449637516,18.217172741326976,0"
+    ]
+  },
+  "followup_evidence_utc": "2026-11-14T15:18:08.863693+00:00"
 }
