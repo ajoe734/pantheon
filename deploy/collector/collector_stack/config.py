@@ -141,6 +141,35 @@ class SourceFetchPolicy:
         canonical = json.dumps(dict(self.raw_config), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def offering(self, env: Mapping[str, str]) -> dict[str, Any]:
+        """Host capability, separate from the outcome of its last fetch.
+
+        Optional timer inventory is supplied by host provisioning; never infer that
+        a source is scheduled merely because it ran once. No secret value is returned.
+        """
+        reasons = []
+        if not self.enabled:
+            reasons.append(str(self.raw_config.get("disabled_reason") or "disabled_by_fetch_policy"))
+        credential = {
+            "collector-youtube-finance": "YOUTUBE_DATA_API_KEY",
+            "collector-youtube-gemini-notes": "GEMINI_API_KEY",
+        }.get(self.source_id)
+        if credential:
+            available = bool(env.get(credential, "").strip())
+            if not available and env.get(f"{credential}_FILE"):
+                try:
+                    available = bool(Path(env[f"{credential}_FILE"]).read_text().strip())
+                except OSError:
+                    pass
+            if not available:
+                reasons.append(f"missing_credential:{credential}")
+        scheduled = env.get("COLLECTOR_SCHEDULED_SOURCE_IDS")
+        timer_enabled = None if scheduled is None else self.source_id in scheduled.split(",")
+        if timer_enabled is False:
+            reasons.append("no_timer")
+        return {"offered": not reasons, "offered_reason": "; ".join(reasons) or None,
+                "policy_enabled": self.enabled, "timer_enabled": timer_enabled}
+
     def validate_target_url(self, url: str) -> None:
         parsed = urlparse(url)
         lowered = url.lower()

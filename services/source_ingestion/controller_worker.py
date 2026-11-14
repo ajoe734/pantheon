@@ -1474,7 +1474,7 @@ CONTINUATION_PAUSE_SECONDS = 1
 
 
 def _collector_continuation_pending(item: Mapping[str, Any], freshness: Mapping[str, Any]) -> bool:
-    """Newest-session delivery is partial: the last pull succeeded, persisted, and said more remains.
+    """Market delivery is partial: the last pull succeeded, persisted, and said more remains.
 
     Only the latest persisted pull's outcome counts (a failed fetch or failed run replaces or
     outranks it), so a failing source falls back to its normal cadence instead of retrying hot.
@@ -1525,6 +1525,8 @@ def select_collector_pull_connectors(
         if str(metadata.get("definition_id") or "") not in collector_definitions:
             continue
         if not _fetch_binds_collector_adapter(item):
+            continue
+        if (item.get("collector_offering") or {}).get("offered") is False:
             continue
         if str(connector.get("status") or "") != "enabled":
             continue
@@ -2229,8 +2231,8 @@ def run_controller_tick(
         store.save(state)
         continuation_pending = False
         if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
-            # A pull just persisted: if its newest session is still partial, the loop must not idle
-            # a full cadence interval before the next bounded read (30 minute whole-session bound).
+            # A pull just persisted: pending newest-session or ordered history rows
+            # continue on the next bounded tick instead of idling a full cadence.
             continuation_pending = bool(
                 select_collector_pull_connectors(
                     read_actual_state_with_fetch_bindings(

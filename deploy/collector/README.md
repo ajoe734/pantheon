@@ -229,3 +229,54 @@ date (one connection, >= 5 s between the two requests, same fetch policy); succe
 failed fetch exits 2 (accepted by the unit) and is retried by the next tick. Outside the window, on weekends
 and on known holidays the command does nothing. Bundles are named `close-<date>-<HHMM>`.
 The existing 6-hourly `pantheon-collector@<source>.timer` keeps running unchanged.
+
+### Hosted intake continuation and offered sources
+
+Hosted market bundle intake retains one Collector pull per controller scheduler
+request and the 15-second operation read budget. A successful, persisted market
+prefix capped by rows or time now requests a continuation after one second,
+until its ordered sweep completes. Newest price-session rows still precede the
+history sweep; held symbols retain their existing ordering. Producer partial or
+paused bundles and failed pulls retain normal cadence. At most four guarded raw
+reads overlap for newest sessions and sixteen for historical sweeps; bundle order, verification, cursor acknowledgement
+and persistence remain ordered. This does not change Collector requests to exchanges.
+
+Each status publication includes **all fetch-policy sources**, including sources
+that have never run. Existing `status`, run, cadence and pause fields remain;
+`offered`, `offered_reason`, `policy_enabled`, and `timer_enabled` are additive.
+Disabled policy or missing required YouTube/Gemini credentials makes a source
+not offered. Credentials are checked only for presence and never published.
+Provisioning can supply `COLLECTOR_SCHEDULED_SOURCE_IDS` as a comma-separated
+inventory of enabled source timers. An omitted source is then not offered with
+`no_timer`; without this inventory, `timer_enabled` is `null` (unknown). The
+inventory describes installed timers and must not be used to enable any timer.
+DGBAS remains disabled for its recorded 403; this change does not enable YouTube.
+
+Hosted readback exposes `collector_offering`. An explicit `offered: false`
+prevents enqueue/claim and controller selection, without creating a failed run
+or DLQ entry. Polling a later `offered: true` automatically restores selection.
+One status read per host per readback/scheduler snapshot is bounded to two seconds.
+Legacy status files without this flag retain their previous scheduling behaviour;
+missing/unverified offering metadata does not fabricate a disabled source.
+
+DBnomics and the individual arXiv/OpenAlex/NBER bundle sources have independent
+hosted definitions and desired admission. `strategy-seed-paper-corpus` reads
+`collector-papers` composite bundles only; it does not consume separately written
+child-source bundles. Gemini video notes have an explicit ingestion exclusion: their native generated
+summary has no hashed author and needs a generated-note attribution contract.
+Books retain their existing operator hold. Actual hosted throughput/availability
+is accepted separately by `COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113`; synthetic
+rate evidence is in the throughput task's deployment evidence manifest.
+
+Ingest also reuses a thread-local distillation ledger connection for one native
+batch. Each record still uses the queue's existing FULL-synchronous transaction,
+identity validation, commit and rollback. Connection setup/teardown is amortized;
+no queued work or per-record durability is removed, and other threads/processes
+continue using independent connections to the same ledger.
+
+A verified market row replay reuses an existing normalized partition only when
+its tenant/item/hash/event/availability identity is present in that partition
+and the producing ingest receipt completed. New and changed rows still use the
+normal writer. Receipt storage summaries add `new_normalized_row_count` and
+`reused_record_count`; the existing reference counts describe all referenced
+objects, including reused objects. A raw cache or cursor alone cannot suppress a write.
