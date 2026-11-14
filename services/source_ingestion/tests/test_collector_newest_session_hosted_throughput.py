@@ -35,7 +35,10 @@ def test_collector_same_second_readback_keeps_latest_native_run(admission_stack,
     from services.source_ingestion.connectors import base
 
     http, module, _, _, files, _, tick = admission_stack
-    more, entry = recorded_run(TPEX, fetched="2026-11-14T06:19:33Z")
+    # Keep this ordering test's empty second pull inside the real freshness
+    # window; dedicated healthy/stale controls still exercise its boundary.
+    fetched = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    more, entry = recorded_run(TPEX, fetched=fetched)
     files.update(more)
     files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
     files["status.json"] = json.dumps({"sources": {TPEX: {
