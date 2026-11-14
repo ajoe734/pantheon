@@ -284,7 +284,11 @@ class IncrementalIndexPipeline:
         previous_ids: set[str] = set(previous.indexed_object_ids) if previous else set()
         last_indexed_at: datetime | None = _parse_time(previous.indexed_at) if previous else None
 
-        all_objects = self.repository.list_knowledge_objects()
+        # Numeric Collector bundles are discoverable provenance/partition refs,
+        # not semantic documents. Partial deliveries update their row counts;
+        # embedding those updates would reintroduce work proportional to rows.
+        all_objects = [obj for obj in self.repository.list_knowledge_objects()
+                       if not obj.metadata.get("collector_market_bundle")]
         current_ids = {obj.knowledge_object_id for obj in all_objects}
         removed_count = len(previous_ids - current_ids)
 

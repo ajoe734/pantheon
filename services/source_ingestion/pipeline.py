@@ -164,6 +164,79 @@ def compact_bulk_market_record(record: SourceRecord, storage_refs: dict[str, Any
     )
 
 
+def _collector_market_group(record: SourceRecord) -> tuple[str, ...]:
+    meta = record.metadata
+    collector = meta.get("collector") or {}
+    return (record.connector_id, record.tenant_id or "", str(collector.get("source_id") or ""),
+            str(collector.get("bundle_sha256") or ""), str(meta.get("dataset") or ""),
+            str(meta.get("trade_date") or meta.get("event_time") or "")[:10])
+
+
+def collector_market_bundle_records(result: Any, storage_refs: Mapping[str, Any]) -> list[SourceRecord]:
+    """Bound evidence by verified bundle/dataset/session, including capped deliveries.
+
+    Rows stay in normalized partitions. Directory references plus the bundle hash
+    select their exact lineage without persisting symbol/id/partition-file lists
+    proportional to row count. Recompute from disk so retries cannot double count.
+    """
+    grouped: dict[tuple[str, ...], list[SourceRecord]] = {}
+    for record in result.records:
+        if not record.is_rejected:
+            grouped.setdefault(_collector_market_group(record), []).append(record)
+    summaries = []
+    for group, records in grouped.items():
+        first = records[0]
+        dataset, day = group[-2:]
+        refs = [ref for ref in storage_refs.get("normalized_refs", ())
+                if ref.get("dataset") == dataset and ref.get("date") == day]
+        directories = sorted({str(Path(ref["uri"]).parent) for ref in refs})
+        if len(directories) != 1:
+            raise SourceEvidenceError("Collector market provenance requires one normalized date partition")
+        rows_by_id: dict[str, SourceRecord] = {}
+        for path in Path(directories[0]).glob("*.jsonl"):
+            with path.open() as handle:
+                for line in handle:
+                    row = json.loads(line)
+                    stored = SourceRecord.from_dict({**row, "source_type": "market", "title": "partition row"})
+                    if _collector_market_group(stored) == group:
+                        rows_by_id[stored.source_id] = stored
+        if not {r.source_id for r in records}.issubset(rows_by_id):
+            raise SourceEvidenceError("Collector market provenance is missing normalized rows")
+        meta = first.metadata
+        identity = json.dumps(group, separators=(",", ":"))
+        source_id = stable_ref("collector-bundle", identity)
+        row_count = len(rows_by_id)
+        event_times = [str(r.metadata["event_time"]) for r in rows_by_id.values()]
+        available_times = [str(r.metadata["available_time"]) for r in rows_by_id.values()]
+        digest = sha256("\n".join(sorted(
+            f"{r.source_id}:{r.metadata['content_hash']}" for r in rows_by_id.values())).encode()).hexdigest()
+        # An allowlist prevents accidental retention of per-symbol numeric payloads.
+        metadata = {key: meta[key] for key in (
+            "tenant_id", "license_scope", "license_policy", "entitlement_tags", "access_scope",
+            "terms_ref", "robots_decision", "attribution_required", "attribution_text",
+            "redistribution_allowed", "direct_execution_allowed", "collector", "collector_close",
+            "pit", "governance", "schema_hash",
+        ) if key in meta}
+        metadata.update({
+            "collector_market_bundle": {"schema_version": "collector_market_bundle.v1",
+                "row_count": row_count, "rows_sha256": digest, "bundle_sha256": group[3],
+                "event_time_min": min(event_times), "event_time_max": max(event_times),
+                "available_time_min": min(available_times), "available_time_max": max(available_times)},
+            "dataset": dataset, "trade_date": day, "event_time": max(event_times),
+            "available_time": max(available_times), "content_hash": "sha256:" + group[3],
+            "raw_uri": str(Path(str(meta["raw_uri"])).parent),
+            "normalized_partition_refs": [{"uri": directories[0], "dataset": dataset, "date": day,
+                "selector": {"connector_id": group[0], "tenant_id": first.tenant_id,
+                             "collector_source_id": group[2], "bundle_sha256": group[3]}}],
+            "body": f"{group[2]} {dataset} {day}: {row_count} normalized market rows; bundle {group[3]}.",
+        })
+        metadata["pit"] = {**metadata.get("pit", {}), "event_time": max(event_times),
+                           "available_time": max(available_times), "validated": True}
+        summaries.append(replace(first, source_id=source_id, title=f"{group[2]} {dataset} {day}",
+                                 metadata=metadata))
+    return summaries
+
+
 def with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRecord:
     """Keep the producing run on the durable SourceRecord projection."""
     return SourceRecord(
@@ -218,7 +291,8 @@ def admit_normalized_records_to_distillation(
     # Never raises; catch_up remains the missed-event recovery path for
     # whatever admission could not enqueue here.
     admissions: dict[str, Any] = {}
-    sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED)
+    sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED
+                    and not s.metadata.get("collector_market_bundle"))
     if not sources:
         return admissions
     context = (distillation_job_queue.admission_connection()
@@ -285,6 +359,20 @@ def persist_source_evidence_refs(
     storage_refs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     connector = manager.get_connector(result.run.connector_id)
+
+    if (isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+            and connector is not None and connector.source_type.value == "market"
+            and result.records and not all(r.metadata.get("collector_market_bundle") for r in result.records)):
+        summaries = collector_market_bundle_records(result, storage_refs or {})
+        combined: dict[str, Any] = {"source_ids": [], "evidence_item_ids": [], "knowledge_object_ids": [],
+                                    "evidence_bundle_id": None, "distillation_admissions": {}}
+        for summary in summaries:
+            refs = persist_source_evidence_refs(manager, evidence_repository, evidence_builder,
+                distillation_job_queue, replace(result, records=(summary,)), storage_refs={})
+            for key in ("source_ids", "evidence_item_ids", "knowledge_object_ids"):
+                combined[key].extend(refs[key])
+            combined["evidence_bundle_id"] = refs["evidence_bundle_id"]
+        return combined
 
     source_records = [
         with_source_ingest_run(
@@ -376,7 +464,8 @@ def persist_source_evidence_refs(
         evidence_items=evidence_items,
         summary=f"Source ingest run {result.run.ingest_run_id} persisted {len(source_records)} source record(s).",
         created_by="source-ingest",
-        evidence_bundle_id=stable_ref("evbundle", result.run.ingest_run_id),
+        evidence_bundle_id=stable_ref("evbundle", source_records[0].source_id
+            if source_records[0].metadata.get("collector_market_bundle") else result.run.ingest_run_id),
         metadata=bundle_metadata,
     )
     distillation_admissions = admit_normalized_records_to_distillation(
@@ -407,6 +496,9 @@ def persist_source_evidence_refs(
                 "entitlement_tags": metadata.get("entitlement_tags"),
                 "pit": metadata.get("pit"),
                 "governance": metadata.get("governance"),
+                **({"collector_market_bundle": metadata["collector_market_bundle"],
+                    "normalized_partition_refs": metadata["normalized_partition_refs"]}
+                   if metadata.get("collector_market_bundle") else {}),
             },
         )
         knowledge_object_ids.append(knowledge_object.knowledge_object_id)
@@ -1089,29 +1181,29 @@ class IngestPipelineService:
         receipts = {r.ingest_run_id: r for r in self.store.read_freshness_snapshot()["receipts"]
                     if r.status == "completed" and r.connector_id == connector.connector_id}
         fresh, reused = [], []
-        partitions: dict[str, set[tuple[Any, ...]]] = {}
+        partitions: dict[tuple[str, str], dict[tuple[Any, ...], dict[str, Any]]] = {}
         def identity(source_id: str, meta: Mapping[str, Any]) -> tuple[Any, ...]:
-            return (source_id, *(meta.get(k) for k in ("content_hash", "dataset", "event_time", "available_time")))
+            return (source_id, *(meta.get(k) for k in ("tenant_id", "content_hash", "dataset", "event_time", "available_time")))
+        refs_by_partition: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        for receipt in receipts.values():
+            for ref in receipt.storage_refs.get("normalized_refs", ()):
+                key = (str(ref.get("dataset") or ""), str(ref.get("date") or ""))
+                refs_by_partition.setdefault(key, {})[str(ref["uri"])] = receipt.storage_refs
         for record in result.records:
-            prior = self.evidence_repository.get_source_record(record.source_id, tenant_id=record.tenant_id)
-            receipt = receipts.get(str((prior.metadata if prior else {}).get("source_ingest_run_id") or ""))
-            stored = receipt.storage_refs if receipt else {}
-            matched = False
-            for ref in stored.get("normalized_refs", ()):
-                if (ref.get("dataset") != record.metadata.get("dataset")
-                        or ref.get("date") != str(record.metadata.get("event_time") or "")[:10]):
-                    continue
-                uri = str(ref["uri"])
-                if uri not in partitions:
+            key = (str(record.metadata.get("dataset") or ""), str(record.metadata.get("event_time") or "")[:10])
+            if key not in partitions:
+                partitions[key] = {}
+                for uri, stored in refs_by_partition.get(key, {}).items():
                     try:
-                        rows = [json.loads(line) for line in Path(uri).read_text().splitlines() if line.strip()]
-                        partitions[uri] = {identity(row["source_id"], row["metadata"]) for row in rows}
+                        with Path(uri).open() as handle:
+                            for line in handle:
+                                if line.strip():
+                                    row = json.loads(line)
+                                    partitions[key][identity(row["source_id"], row["metadata"])] = stored
                     except (OSError, ValueError, KeyError) as exc:
                         raise SourceEvidenceError("completed Collector normalized partition is missing or invalid") from exc
-                if identity(record.source_id, record.metadata) in partitions[uri]:
-                    matched = True
-                    break
-            if matched:
+            stored = partitions[key].get(identity(record.source_id, record.metadata))
+            if stored is not None:
                 reused.append(stored)
             else:
                 fresh.append(record)
