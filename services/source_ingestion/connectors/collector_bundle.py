@@ -74,6 +74,15 @@ MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 
+
+class MarketTimeEvidenceError(SourceEvidenceError):
+    """A verified price bundle cannot represent a completed Taiwan session."""
+
+    def __init__(self, reason: str, item_id: str, detail: str) -> None:
+        self.reason = reason
+        self.item_id = item_id
+        super().__init__(f"{reason}: collector item {item_id} {detail}")
+
 # Configured ingestion owns persistence; tuple adapter callers retain their
 # existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
 _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
@@ -1115,6 +1124,8 @@ class CollectorBundleAdapter:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
         acknowledged_only_keys: set[str] = set()
+        rejected: list[Mapping[str, Any]] = []
+        rejected_keys: set[str] = set()
         window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
@@ -1132,6 +1143,25 @@ class CollectorBundleAdapter:
             skip = partial_skip if key == base_cursor else 0
             try:
                 metadata_bundle = None
+                if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
+                    metadata_bundle = self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "complete":
+                        try:
+                            # Validate the entire bundle before any capped prefix is emitted.
+                            # An invalid tail must not leave a partly admitted price bundle.
+                            for row in metadata_bundle.items:
+                                fetched = _utc(row.get("fetched_at"), "fetched_at")
+                                stated = row.get("published_at")
+                                published = _utc(stated, "published_at", allow_rfc2822=True) if stated else fetched
+                                self._market_event_time(str(row["id"]), row, stated, published, fetched)
+                        except MarketTimeEvidenceError as exc:
+                            rejection = self._record_market_rejection(metadata_bundle, exc)
+                            rejected.append(rejection)
+                            rejected_keys.add(key)
+                            # Empty traversal entry advances only the sweep, never a data ack.
+                            verified.append(replace(metadata_bundle, items=()))
+                            window_stops[key] = 0
+                            continue
                 if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
                     metadata_bundle = self._verify_ordered_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
                     if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
@@ -1223,11 +1253,12 @@ class CollectorBundleAdapter:
             feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
         # Cache the verified window even for a feature-only capped delivery.
         # Its provenance must already resolve; this cache is not a cursor ack.
-        self._write_raw([(b, {}) for b in verified if b.status != "paused"], records)
+        self._write_raw([(b, {}) for b in verified if b.status != "paused" and b.cursor not in rejected_keys], records)
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0]) if source_entries else (None, None)
-        boundary = verified[-1] if verified and verified[-1].cursor == latest_key else None
+        boundary = (verified[-1] if verified and verified[-1].cursor == latest_key
+                    and latest_key not in rejected_keys else None)
         if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
             # The cache alone cannot acknowledge a configured delivery; the
             # persistence owner must also have committed this exact boundary.
@@ -1238,6 +1269,8 @@ class CollectorBundleAdapter:
             cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
             delivery_complete=complete and not feature_rejected,
         )
+        if rejected:
+            observed = {**observed, "rejected_bundles": rejected}
         no_new_data = bool(verified and all(b.cursor in acknowledged_only_keys for b in verified) and complete
                            and not records and not feature_records and not feature_rejected
                            and observed["health_state"] == "healthy")
@@ -1349,7 +1382,7 @@ class CollectorBundleAdapter:
         published_raw = row.get("published_at")
         published_at = _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True) if published_raw else fetched_at
         if self.source_type == "market" and row.get("trade_date"):
-            published_at = self._market_event_time(item_id, row, published_raw, published_at)
+            published_at = self._market_event_time(item_id, row, published_raw, published_at, fetched_at)
         text = row.get("text")
         title = str(row.get("title") or (str(text).strip()[:80] if text else "") or item_id)
         raw_ref = f"raw/{_slug(self.connector_id)}/{_slug(self.dataset)}/date={bundle.date}/bundle-{bundle.run_id}/{PurePosixPath(manifest_item['raw_path']).name}"
@@ -1506,7 +1539,8 @@ class CollectorBundleAdapter:
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
     def _market_event_time(
-        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime
+        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime,
+        fetched_at: datetime,
     ) -> datetime:
         """Point-in-time history: a market row's event time is its own trade date.
 
@@ -1519,14 +1553,48 @@ class CollectorBundleAdapter:
             trade_date = date.fromisoformat(str(row["trade_date"]).strip())
         except ValueError as exc:
             raise SourceEvidenceError(f"collector item {item_id} has an invalid trade_date") from exc
+        is_price = self.dataset in PRIORITY_LATEST_DATASETS
+        session_close = datetime(trade_date.year, trade_date.month, trade_date.day, 5, 30, tzinfo=timezone.utc)
+        if is_price and fetched_at < session_close:
+            raise MarketTimeEvidenceError("market_price_fetched_before_session_close", item_id,
+                                          f"was fetched before { _iso(session_close) }")
         if published_raw:
             if published_at.astimezone(_TAIPEI_TZ).date() != trade_date:
                 raise SourceEvidenceError(
                     f"collector item {item_id} published_at is not on its trade_date {trade_date.isoformat()}"
                 )
-            return published_at
-        close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
-        return datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
+            event_time = published_at
+        else:
+            close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
+            event_time = datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
+        if is_price:
+            if event_time < session_close:
+                raise MarketTimeEvidenceError("market_price_published_before_session_close", item_id,
+                                              "has a publish time before the session close")
+            if event_time > fetched_at and fetched_at.astimezone(_TAIPEI_TZ).date() == trade_date:
+                # The collector uses a conventional 14:30 publication label even when
+                # the exchange supplied the close earlier. Observation is the conservative
+                # event bound; availability remains the original fetch timestamp.
+                return fetched_at
+        return event_time
+
+    def _record_market_rejection(self, bundle: VerifiedBundle, error: MarketTimeEvidenceError) -> Mapping[str, Any]:
+        """Durable quarantine evidence, separate from legacy cursor/priority state.
+
+        This records a rejection, never proves raw verification or persistence. A
+        later pull still verifies the host metadata and reevaluates the bundle.
+        """
+        evidence = {"source_id": self.source_id, "run_id": bundle.run_id, "date": bundle.date,
+                    "cursor": bundle.cursor, "bundle_sha256": bundle.manifest["bundle_sha256"],
+                    "reason": error.reason, "item_id": error.item_id, "detail": str(error)}
+        root = self._raw_root() / "state" / _slug(self.connector_id) / "rejected_bundles"
+        root.mkdir(parents=True, exist_ok=True)
+        identity = _sha256(f"{bundle.cursor}:{bundle.manifest['bundle_sha256']}".encode())
+        path = root / f"{identity}.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        return evidence
 
     def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
         authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}
