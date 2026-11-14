@@ -263,7 +263,7 @@
       "exit_code": 0,
       "summary": "1 passed in 4.38s"
     },
-    "required_validation": "Six-file contract suite terminal exit 0; full source-ingestion suite running in a bounded foreground batch.",
+    "required_validation": "Six-file contract suite passed; initial directory-only full batch failed for missing pyarrow. Dependency repaired; exact CI source suite including root test_*.py and task-local PostgreSQL is next.",
     "validation": [
       {
         "command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-outcome-contract-20261114.xml services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py",
@@ -277,6 +277,28 @@
         "prior_regressions_passed": 405,
         "log_sha256": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7"
       }
-    ]
+    ],
+    "environment_repair": {
+      "initial_directory_only_batch": {
+        "command": "timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-source-20261114.xml services/source_ingestion/tests",
+        "exit_code": 1,
+        "summary": "9 failed, 1880 passed, 9 skipped, 15 warnings in 897.50s (0:14:57)",
+        "cause": "All nine failures in test_finmind_broker_backfill.py are missing pyarrow; existing PostgreSQL tests also lacked a local test DSN. This initial batch did not include the root test_*.py files used by CI.",
+        "log_sha256": "6d4500f8ad64013f1143bde5fa824498ce94d2f23bc441427bbd8802277c489f"
+      },
+      "installation": {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pip install 'pyarrow>=15,<30'",
+        "exit_code": 0,
+        "version": "26.0.1",
+        "scope": "Checkout-scoped venv only; existing services/source_ingestion/requirements.txt constraint; no shared interpreter or repository dependency changes."
+      },
+      "recheck": {
+        "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py",
+        "exit_code": 0,
+        "summary": "17 passed in 7.27s",
+        "log_sha256": "061506557586a8b7469b63c938443c6e36b44c6d5250c1f85087583767e76ddf"
+      },
+      "ci_parity": "Use the exact branch-ci source scope (services/source_ingestion/tests plus services/source_ingestion/test_*.py), a fresh data directory and dedicated localhost-only postgres:16 test container. No VM/provider/deployment/product service changes."
+    }
   }
 }
