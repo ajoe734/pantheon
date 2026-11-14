@@ -33,12 +33,14 @@ import shutil
 import tempfile
 import time
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
+from threading import RLock
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
 from services.external_egress import open_external_url
@@ -87,6 +89,13 @@ LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+# Process-local, shared across the short-lived adapters built by configured pulls.
+# No serialized trust marker survives a restart. Bounds apply to both population
+# and encoded metadata size; raw bodies are never cached here.
+VERIFIED_METADATA_CACHE_ENTRIES = 16
+VERIFIED_METADATA_CACHE_BYTES = 64 * 1024 * 1024
+_METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
+_METADATA_CACHE_LOCK = RLock()
 
 
 class _DeadlineBody:
@@ -471,6 +480,8 @@ def verify_bundle(
         manifest.get("bundle_sha256") or ""
     ).lower():
         raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+    if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
+        raise SourceEvidenceError("collector index bundle_sha256 mismatch")
 
     items_text = transport.read(f"{base}/items.jsonl", max_bytes=MAX_JSON_BYTES).decode("utf-8")
     items: list[Mapping[str, Any]] = []
@@ -880,6 +891,44 @@ class CollectorBundleAdapter:
     def _priority_key_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
 
+    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
+        """Reuse only fully verified immutable metadata bound to the live index.
+
+        Entries without a digest retain the full-read contract. HTTP authorization
+        and local roots isolate cache populations; injected transports are held by
+        reference so object-id reuse cannot alias an earlier reader.
+        """
+        digest = str(entry.get("bundle_sha256") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        if isinstance(transport, HttpBundleTransport):
+            namespace = (transport.host, transport.token_env,
+                         _sha256(os.environ.get(transport.token_env, "").encode()))
+        elif isinstance(transport, LocalDirectoryBundleTransport):
+            namespace = (str(Path(transport.root_dir).resolve()),)
+        else:
+            namespace = (id(transport),)
+        scope = (str(self._raw_root().resolve()), self.source_id, namespace)
+        key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
+        with _METADATA_CACHE_LOCK:
+            cached = _METADATA_CACHE.get(key)
+            if cached is not None:
+                _METADATA_CACHE.move_to_end(key)
+                return cached[1]
+        bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        size = len(json.dumps(bundle.manifest).encode()) + sum(len(json.dumps(row).encode()) for row in bundle.items)
+        if size <= VERIFIED_METADATA_CACHE_BYTES:
+            with _METADATA_CACHE_LOCK:
+                # A changed digest/identity for this run supersedes its old entry.
+                for old_key, (_, old, _) in list(_METADATA_CACHE.items()):
+                    if old_key[:3] == scope and (old.date, old.run_id) == (bundle.date, bundle.run_id):
+                        del _METADATA_CACHE[old_key]
+                _METADATA_CACHE[key] = (transport, bundle, size)
+                while (len(_METADATA_CACHE) > VERIFIED_METADATA_CACHE_ENTRIES
+                       or sum(value[2] for value in _METADATA_CACHE.values()) > VERIFIED_METADATA_CACHE_BYTES):
+                    _METADATA_CACHE.popitem(last=False)
+        return bundle
+
     def _load_priority_state(self) -> tuple[str | None, int, bool, tuple[str, ...]]:
         path = self._priority_key_path()
         try:
@@ -936,8 +985,7 @@ class CollectorBundleAdapter:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
-            bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0),
-                                   priority_codes=held)
+            bundle = self._verified_metadata(transport, entry)
             if not bundle.items:
                 continue
             trade_date = _bundle_trade_date(entry, bundle.items)
@@ -964,7 +1012,7 @@ class CollectorBundleAdapter:
             old_entry = next((e for e in mine if _cursor_key(_utc(e.get("finished_at"), "index finished_at"),
                                                            str(e.get("run_id") or "")) == state_key), None)
             if old_entry:
-                old = bundle if state_key == key and state_held == held else verify_bundle(
+                old = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=old_entry, item_window=(0, 0),
                     priority_codes=state_held)
                 if _bundle_trade_date(old_entry, old.items) == trade_date:
@@ -978,6 +1026,11 @@ class CollectorBundleAdapter:
             if day == trade_date:
                 for row in candidate.items:
                     session_items.setdefault(str(row["id"]), (candidate, row))
+        with _METADATA_CACHE_LOCK:
+            for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
+                if (cache_key[:2] == (str(self._raw_root().resolve()), self.source_id)
+                        and cached.items and _bundle_trade_date({}, cached.items) < trade_date):
+                    del _METADATA_CACHE[cache_key]
         pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
                    if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
         pending.sort(key=lambda pair: not (
