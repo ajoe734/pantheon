@@ -317,3 +317,185 @@ def test_outage_retry_backoff_does_not_block_concurrent_canonical_writes(tmp_pat
     snap = hs.DIAGNOSTICS.snapshot()
     assert snap["counts"]["failed"] == 4
     assert {f["action"] for f in snap["failures"]} == {"retain", "invalidate"}
+
+
+def test_rebuild_aborts_before_dropping_banks_when_mirror_drain_times_out(monkeypatch):
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    events = []
+
+    class GatedClient(FakeClient):
+        def retain(self, bank, items):
+            if threading.current_thread().name == "memory-mirror":
+                events.append("original_mirror_entered")
+                entered.set()
+                assert release.wait(5), "mirror release gate timed out"
+                events.append("original_mirror_finished")
+            else:
+                events.append("rebuild_retain")
+            return super().retain(bank, items)
+
+        def delete_bank(self, bank):
+            events.append("bank_deleted_while_mirror_inflight" if not release.is_set() else "bank_deleted_after_release")
+            return super().delete_bank(bank)
+
+    client = GatedClient()
+    hs.set_hindsight_client(client)
+    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    real_flush = hs.flush_mirrors
+    flush_results = []
+
+    def short_flush(timeout: float = 0.02):
+        value = real_flush(timeout=0.02)
+        flush_results.append(value)
+        return value
+
+    monkeypatch.setattr(hs, "flush_mirrors", short_flush)
+    try:
+        istore.create(inst(mid("inflight-1")))
+        assert entered.wait(2), "mirror did not enter transport"
+        report = hs.rebuild(istore, pstore, client=client)
+        before_release = list(events)
+    finally:
+        release.set()
+        assert real_flush(timeout=2.0), "mirror failed to drain after release"
+
+    assert flush_results == [False]
+    assert before_release == ["original_mirror_entered"]
+    assert "bank_deleted_while_mirror_inflight" not in events
+    assert "rebuild_retain" not in events
+    assert report["banks"] == 0 and report["retained"] == 0 and report["bank_counts"] == {}
+    assert report["failures"] == [{"reason": "hindsight_mirror_drain_timeout"}]
+
+
+def test_rebuild_orders_concurrent_writes_after_bank_repopulation_without_blocking_writers():
+    import threading
+    import time
+
+    delete_entered, release_rebuild = threading.Event(), threading.Event()
+    events = []
+
+    class RecordingClient(FakeClient):
+        def delete_bank(self, bank):
+            events.append(("delete_bank", bank))
+            delete_entered.set()
+            assert release_rebuild.wait(5), "rebuild delete_bank gate timed out"
+            return super().delete_bank(bank)
+
+        def retain(self, bank, items):
+            source = "mirror_retain" if threading.current_thread().name == "memory-mirror" else "rebuild_retain"
+            events.append((source, items[0]["document_id"]))
+            return super().retain(bank, items)
+
+        def invalidate_document(self, bank, document_id, reason):
+            events.append(("mirror_invalidate", document_id, reason))
+            return super().invalidate_document(bank, document_id, reason)
+
+    client = RecordingClient()
+    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    istore.create(inst(mid("r-existing")))
+    assert hs.flush_mirrors()
+    hs.set_hindsight_client(client)
+
+    rebuild_out = []
+    rebuild_thread = threading.Thread(target=lambda: rebuild_out.append(hs.rebuild(istore, pstore, client=client)))
+    rebuild_thread.start()
+    assert delete_entered.wait(2), "rebuild did not enter delete_bank"
+
+    t0 = time.monotonic()
+    istore.archive(mid("r-existing"), reason="concurrent_archive")
+    istore.create(inst(mid("r-new-active")))
+    istore.create(inst(mid("r-new-transient")))
+    istore.supersede(mid("r-new-transient"), mid("r-new-active"))
+    assert time.monotonic() - t0 < 1.0, "canonical writes blocked while rebuild was in progress"
+    assert events == [("delete_bank", hs.facts_bank("t1"))]
+
+    release_rebuild.set()
+    rebuild_thread.join(timeout=5.0)
+    assert not rebuild_thread.is_alive()
+    report = rebuild_out[0]
+    assert report["failures"] == [] and report["banks"] == 1 and report["retained"] == 1
+
+    del_idx = events.index(("delete_bank", hs.facts_bank("t1")))
+    reb_existing_idx = events.index(("rebuild_retain", mid("r-existing")))
+    inv_existing_idx = events.index(("mirror_invalidate", mid("r-existing"), "concurrent_archive"))
+    ret_new_idx = events.index(("mirror_retain", mid("r-new-active")))
+    ret_transient_idx = events.index(("mirror_retain", mid("r-new-transient")))
+    inv_transient_idx = events.index(("mirror_invalidate", mid("r-new-transient"), "superseded"))
+
+    assert del_idx < reb_existing_idx < inv_existing_idx
+    assert del_idx < reb_existing_idx < ret_new_idx
+    assert del_idx < reb_existing_idx < ret_transient_idx < inv_transient_idx
+
+
+def test_mirror_dispatch_bounds_worker_threads_and_queue_capacity_with_truthful_diagnostics(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(hs, "MAX_MIRROR_WORKERS", 2)
+    monkeypatch.setattr(hs, "MAX_PENDING_MIRRORS", 3)
+
+    two_workers_entered = threading.Event()
+    release_workers = threading.Event()
+    lock = threading.Lock()
+    active_in_client = 0
+    peak_in_client = 0
+
+    class BoundedProbeClient(FakeClient):
+        def retain(self, bank, items):
+            nonlocal active_in_client, peak_in_client
+            with lock:
+                active_in_client += 1
+                peak_in_client = max(peak_in_client, active_in_client)
+                if active_in_client >= 2:
+                    two_workers_entered.set()
+            try:
+                assert release_workers.wait(5), "worker gate timed out"
+                return super().retain(bank, items)
+            finally:
+                with lock:
+                    active_in_client -= 1
+
+    client = BoundedProbeClient()
+    hs.set_hindsight_client(client)
+    istore = InstitutionalMemoryStore()
+
+    # 2 entries occupy the 2 worker threads.
+    istore.create(inst(mid("b-1")))
+    istore.create(inst(mid("b-2")))
+    assert two_workers_entered.wait(2), "expected 2 bounded workers to enter retain"
+
+    # 3 distinct entries fill MAX_PENDING_MIRRORS=3; lifecycle invalidation on an already-queued
+    # document is preserved in order, while new documents beyond MAX_PENDING_MIRRORS fail fast.
+    istore.create(inst(mid("b-3")))
+    istore.create(inst(mid("b-4")))
+    istore.create(inst(mid("b-5")))
+    istore.archive(mid("b-3"), reason="archived_while_queued")
+
+    overflow_entry = istore.create(inst(mid("b-6")))
+    overflow_archived = istore.create(inst(mid("b-7")))
+    istore.archive(overflow_archived.entry_id, reason="overflow_archive")
+    assert istore.get(overflow_entry.entry_id) is overflow_entry
+
+    mirror_threads = [t for t in threading.enumerate() if t.name == "memory-mirror"]
+    assert len(mirror_threads) <= 2
+
+    snap_while_blocked = hs.DIAGNOSTICS.snapshot()
+    assert snap_while_blocked["counts"]["failed"] == 3
+    assert snap_while_blocked["failures"] == [
+        {"entry_id": mid("b-6"), "action": "retain", "reason": "hindsight_mirror_queue_full"},
+        {"entry_id": mid("b-7"), "action": "retain", "reason": "hindsight_mirror_queue_full"},
+        {"entry_id": mid("b-7"), "action": "invalidate", "reason": "hindsight_mirror_queue_full"},
+    ]
+
+    release_workers.set()
+    assert hs.flush_mirrors()
+    assert peak_in_client == 2
+    final_snap = hs.DIAGNOSTICS.snapshot()
+    assert final_snap["counts"]["retained"] == 5
+    assert final_snap["counts"]["invalidated"] == 1
+    assert final_snap["counts"]["failed"] == 3
+    assert {item[0]["document_id"] for _bank, item in client.retained} == {
+        mid("b-1"), mid("b-2"), mid("b-3"), mid("b-4"), mid("b-5")
+    }
+    assert client.invalidated == [(hs.facts_bank("t1"), mid("b-3"), "archived_while_queued")]

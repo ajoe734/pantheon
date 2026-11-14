@@ -266,9 +266,11 @@ service is removed (store `_project` hooks, `sync_memory_projection`,
 **Mirror (H3, H11).** After canonical persistence of every create, supersede,
 archive and expiry (both store implementations, including non-HTTP writers) the
 store calls `hindsight_index.schedule_mirror` outside the canonical store lock
-and commit acknowledgement. One per-`(bank, canonical_id)` FIFO drains in order
-through `hindsight_index.mirror_entry` (`flush_mirrors` drains pending work for
-`rebuild` and tests). One Hindsight document per canonical id (`document_id` =
+and commit acknowledgement. One bounded per-`(bank, canonical_id)` FIFO drains in
+lifecycle order (`retain` before `invalidate`) across a bounded background worker
+pool (`MAX_MIRROR_WORKERS`, queue capacity `MAX_PENDING_MIRRORS`; overflow records
+`hindsight_mirror_queue_full` in `DIAGNOSTICS` without blocking canonical writes).
+One Hindsight document per canonical id (`document_id` =
 canonical id) is retained into the tenant facts bank (institutional) or the
 persona interpretation bank (persona); `metadata`, event `timestamp` (=
 `written_at`), `context` (= source event type), anchor entities
@@ -284,10 +286,13 @@ structured fields and `kind:value` tags into `strategy`, `parent_strategy`,
 `family`, `underlying`, `instrument`, `dataset`, `decision` and `regime` anchors.
 Entries without an anchor carry `anchor:none` and are counted (`anchor_none`).
 
-**Rebuild (H3).** `python -m services.memory.hindsight_index rebuild` drops every
-bank known to canonical memory and re-retains each active entry; it is idempotent
-and reports banks, retained, skipped inactive, `anchor_none` and failures (exit 1
-on failure). It is a CLI, not a route.
+**Rebuild (H3).** `python -m services.memory.hindsight_index rebuild` drains
+pending mirrors first (aborting with `hindsight_mirror_drain_timeout` and without
+dropping banks if the drain fails), drops every bank known to canonical memory,
+re-retains each active entry, and drains any mirrors scheduled during rebuild in
+lifecycle order after bank repopulation; it is idempotent and reports banks,
+retained, skipped inactive, `anchor_none` and failures (exit 1 on failure). It is
+a CLI, not a route.
 
 **Retrieve (H6).** `/api/memory/retrieve` recalls each readable bank (facts bank;
 only the requested persona's own bank), adding `tag_groups` (`any_strict`) when

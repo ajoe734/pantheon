@@ -38,7 +38,10 @@ REFLECT_ENV = "PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED"
 MIRROR_ATTEMPTS = 3
 MIRROR_BACKOFF_SECONDS = 0.5
 REQUEST_TIMEOUT_SECONDS = 60.0
+DEFAULT_FLUSH_TIMEOUT_SECONDS = 30.0
 FAILURE_LOG_LIMIT = 500
+MAX_MIRROR_WORKERS = 4
+MAX_PENDING_MIRRORS = 256
 
 # Anchor kinds (H4).  The value is the tag prefix used by owner writers
 # (``family:x``, ``underlying:TW`` ...) and by the case-file lesson query.
@@ -291,6 +294,7 @@ def hindsight_client_from_env() -> Optional[HindsightClient]:
 
 
 _GLOBAL_CLIENT: Any = None
+_REBUILD_CLIENT: Any = None
 
 
 def set_hindsight_client(client: Any) -> None:
@@ -300,7 +304,11 @@ def set_hindsight_client(client: Any) -> None:
 
 
 def get_hindsight_client() -> Optional[HindsightClient]:
-    return _GLOBAL_CLIENT if _GLOBAL_CLIENT is not None else hindsight_client_from_env()
+    if _GLOBAL_CLIENT is not None:
+        return _GLOBAL_CLIENT
+    if _REBUILD_CLIENT is not None:
+        return _REBUILD_CLIENT
+    return hindsight_client_from_env()
 
 
 def reflect_configured() -> bool:
@@ -316,6 +324,20 @@ def llm_layers() -> str:
 # Mirror (H3 / H11): canonical mutation -> Hindsight, never blocking
 # ---------------------------------------------------------------------------
 
+# Post-persistence dispatch: canonical writers hand the persisted state over here and return;
+# index I/O + retries run outside the canonical critical section.  One bounded FIFO per
+# (bank, canonical_id) keeps per-document lifecycle order (retain -> invalidate) while a
+# bounded worker pool limits background thread / queue resource usage during outages.
+_PENDING: Dict[Tuple[str, str], deque] = {}
+_IN_FLIGHT: set[Tuple[str, str]] = set()
+_SEEN_RETAIN: Dict[Tuple[str, str], None] = {}
+_INVALIDATED: Dict[Tuple[str, str], Any] = {}
+_ACTIVE_WORKERS = 0
+_REBUILDING = 0
+_REBUILD_LOCK = threading.Lock()
+_IDLE = threading.Condition(threading.Lock())
+
+
 class MirrorDiagnostics:
     """Counts and recent failures reported by the mirror (bounded, thread-safe)."""
 
@@ -327,6 +349,9 @@ class MirrorDiagnostics:
         with self._lock:
             self.counts = {"retained": 0, "invalidated": 0, "failed": 0, "anchor_none": 0}
             self.failures: deque = deque(maxlen=FAILURE_LOG_LIMIT)
+        with _IDLE:
+            _SEEN_RETAIN.clear()
+            _INVALIDATED.clear()
 
     def record(self, key: str, **extra: Any) -> None:
         with self._lock:
@@ -381,64 +406,154 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
         return {"status": "failed", "entry_id": entry_id, "action": action, "reason": reason}
 
 
-# Post-persistence dispatch: canonical writers hand the persisted state over here and return;
-# index I/O + retries run outside the canonical critical section.  One FIFO per (bank, canonical_id)
-# keeps per-document lifecycle order (retain -> invalidate); different ids run in parallel.
-_PENDING: Dict[Tuple[str, str], deque] = {}
-_IDLE = threading.Condition(threading.Lock())
+def _pending_keys_unlocked() -> int:
+    return sum(1 for k, q in _PENDING.items() if k not in _IN_FLIGHT and q)
+
+
+def _bound_map_unlocked(mapping: Dict[Tuple[str, str], Any]) -> None:
+    while len(mapping) > FAILURE_LOG_LIMIT:
+        mapping.pop(next(iter(mapping)), None)
+
+
+def _enqueue_entry_unlocked(key: Tuple[str, str], entry: Any) -> bool:
+    queue = _PENDING.get(key)
+    indexable = is_indexable(entry)
+    if queue is None and _pending_keys_unlocked() >= max(1, MAX_PENDING_MIRRORS):
+        return False
+    if indexable:
+        _SEEN_RETAIN[key] = None
+        _bound_map_unlocked(_SEEN_RETAIN)
+    elif key not in _SEEN_RETAIN and not any(is_indexable(item) for item in (queue or ())):
+        _INVALIDATED[key] = entry
+        _bound_map_unlocked(_INVALIDATED)
+    if queue is not None:
+        for idx, existing in enumerate(queue):
+            if is_indexable(existing) == indexable:
+                queue[idx] = entry
+                if indexable and any(not is_indexable(item) for item in queue):
+                    _INVALIDATED.pop(key, None)
+                return True
+        if indexable and any(not is_indexable(item) for item in queue):
+            idx = next(i for i, item in enumerate(queue) if not is_indexable(item))
+            queue.insert(idx, entry)
+            _INVALIDATED.pop(key, None)
+        else:
+            queue.append(entry)
+        return True
+    _PENDING[key] = deque([entry])
+    return True
+
+
+def _ensure_workers_unlocked() -> List[Any]:
+    global _ACTIVE_WORKERS
+    if _REBUILDING:
+        return []
+    unclaimed = sum(1 for k, q in _PENDING.items() if k not in _IN_FLIGHT and q)
+    free_workers = max(0, _ACTIVE_WORKERS - len(_IN_FLIGHT))
+    needed = min(unclaimed - free_workers, max(1, MAX_MIRROR_WORKERS) - _ACTIVE_WORKERS)
+    for _ in range(max(0, needed)):
+        _ACTIVE_WORKERS += 1
+        try:
+            threading.Thread(target=_worker_loop, name="memory-mirror", daemon=True).start()
+        except Exception:  # thread exhaustion must not fail the canonical write
+            _ACTIVE_WORKERS -= 1
+            if _ACTIVE_WORKERS == 0:
+                failed: List[Any] = []
+                for key in [k for k in list(_PENDING) if k not in _IN_FLIGHT]:
+                    failed.extend(_PENDING.pop(key, ()))
+                _IDLE.notify_all()
+                return failed
+            break
+    return []
 
 
 def schedule_mirror(entry: Any) -> None:
     """Queue a mirror of an already-persisted canonical entry; never blocks, never raises."""
     key = (bank_for(entry), canonical_id(entry))
+    accepted = False
+    failed_to_start: List[Any] = []
     with _IDLE:
-        queue = _PENDING.get(key)
-        if queue is not None:
-            if is_indexable(entry) and any(not is_indexable(item) for item in queue):
-                idx = next(i for i, item in enumerate(queue) if not is_indexable(item))
-                queue.insert(idx, entry)
-            else:
-                queue.append(entry)  # the drain thread for this id picks it up in order
-            return
-        _PENDING[key] = deque([entry])
-    try:
-        threading.Thread(target=_drain, args=(key,), name="memory-mirror", daemon=True).start()
-    except Exception:  # thread exhaustion must not fail the canonical write
+        accepted = _enqueue_entry_unlocked(key, entry)
+        if accepted:
+            failed_to_start = _ensure_workers_unlocked()
+    if not accepted:
+        action = "retain" if is_indexable(entry) else "invalidate"
+        entry_id = canonical_id(entry)
+        DIAGNOSTICS.failure(entry_id, action, "hindsight_mirror_queue_full")
+        _LOG.warning("memory_mirror_failed entry_id=%s action=%s reason=hindsight_mirror_queue_full", entry_id, action)
+        return
+    for item in failed_to_start:
+        action = "retain" if is_indexable(item) else "invalidate"
+        DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+
+
+def _worker_loop() -> None:
+    global _ACTIVE_WORKERS
+    while True:
         with _IDLE:
-            failed = list(_PENDING.pop(key, ()))
-            _IDLE.notify_all()
-        for item in failed:
-            action = "retain" if is_indexable(item) else "invalidate"
-            DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+            if _REBUILDING:
+                _ACTIVE_WORKERS -= 1
+                _IDLE.notify_all()
+                return
+            key = next((k for k, q in _PENDING.items() if k not in _IN_FLIGHT and q), None)
+            if key is None:
+                _ACTIVE_WORKERS -= 1
+                _IDLE.notify_all()
+                return
+            _IN_FLIGHT.add(key)
+        _drain(key)
 
 
 def _drain(key: Tuple[str, str]) -> None:
     invalidated: Any = None
-    while True:
+    try:
+        while True:
+            with _IDLE:
+                if _REBUILDING:
+                    if not _PENDING.get(key):
+                        _PENDING.pop(key, None)
+                    _IN_FLIGHT.discard(key)
+                    _IDLE.notify_all()
+                    return
+                queue = _PENDING.get(key)
+                if not queue:
+                    _PENDING.pop(key, None)
+                    _IN_FLIGHT.discard(key)
+                    _IDLE.notify_all()
+                    return
+                entry = queue.popleft()
+            mirror_entry(entry)
+            if not is_indexable(entry):
+                invalidated = entry
+            else:
+                with _IDLE:
+                    late_invalidated = _INVALIDATED.pop(key, None) or invalidated
+                    has_queued_invalidation = any(not is_indexable(item) for item in _PENDING.get(key, ()))
+                if late_invalidated is not None and not has_queued_invalidation:
+                    mirror_entry(late_invalidated)
+    except Exception:
         with _IDLE:
-            queue = _PENDING.get(key)
-            if not queue:
-                _PENDING.pop(key, None)
-                _IDLE.notify_all()
-                return
-            entry = queue.popleft()
-        mirror_entry(entry)
-        if not is_indexable(entry):
-            invalidated = entry
-        elif invalidated is not None:
-            mirror_entry(invalidated)
+            _PENDING.pop(key, None)
+            _IN_FLIGHT.discard(key)
+            _IDLE.notify_all()
 
 
-def flush_mirrors(timeout: float = 30.0) -> bool:
-    """Wait until every queued mirror finished (tests, rebuild, shutdown). True if drained."""
+def _wait_drained(timeout: float = DEFAULT_FLUSH_TIMEOUT_SECONDS) -> bool:
     deadline = time.monotonic() + timeout
     with _IDLE:
-        while _PENDING:
+        _ensure_workers_unlocked()
+        while _PENDING or _IN_FLIGHT:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
             _IDLE.wait(remaining)
+            _ensure_workers_unlocked()
     return True
+
+
+def flush_mirrors(timeout: float = DEFAULT_FLUSH_TIMEOUT_SECONDS) -> bool:
+    """Wait until every queued mirror finished (tests, rebuild, shutdown). True if drained."""
+    return _wait_drained(timeout)
 
 
 def _invalidation_reason(entry: Any) -> str:
@@ -458,42 +573,87 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
 
     Idempotent: a second run drops and re-retains the same documents.
     """
-    flush_mirrors()  # queued post-persistence mirrors must not race the bank drop
-    client = client or get_hindsight_client()
+    global _REBUILDING, _REBUILD_CLIENT
     report: Dict[str, Any] = {"banks": 0, "retained": 0, "inactive_skipped": 0, "anchor_none": 0,
                               "failures": [], "bank_counts": {}}
-    if client is None:
-        report["failures"].append({"reason": "hindsight_unconfigured"})
-        return report
-    by_bank: Dict[str, List[Any]] = {}
-    for store in (institutional_store, persona_store):
-        store.archive_expired()
-        for entry in store.list(active_only=False):
-            by_bank.setdefault(bank_for(entry), [])
-            if is_indexable(entry):
-                by_bank[bank_for(entry)].append(entry)
-            else:
-                report["inactive_skipped"] += 1
-    for bank, entries in sorted(by_bank.items()):
+    with _REBUILD_LOCK:
+        if not flush_mirrors():  # queued post-persistence mirrors must not race the bank drop
+            report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
+            return report
+        deadline = time.monotonic() + DEFAULT_FLUSH_TIMEOUT_SECONDS
+        with _IDLE:
+            _REBUILDING += 1
+            while _IN_FLIGHT:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _REBUILDING -= 1
+                    _ensure_workers_unlocked()
+                    _IDLE.notify_all()
+                    report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
+                    return report
+                _IDLE.wait(remaining)
+        resolved_client = client or get_hindsight_client()
+        _REBUILD_CLIENT = resolved_client
         try:
-            client.delete_bank(bank)
-        except HindsightError as exc:
-            report["failures"].append({"bank": bank, "reason": exc.reason})
-            continue
-        report["banks"] += 1
-        retained = 0
-        for entry in entries:
-            item = retain_item(entry)
+            if resolved_client is None:
+                report["failures"].append({"reason": "hindsight_unconfigured"})
+                return report
+            by_bank: Dict[str, List[Any]] = {}
+            expired_keys: set[Tuple[str, str]] = set()
+            for store in (institutional_store, persona_store):
+                for expired_entry in store.archive_expired() or []:
+                    expired_keys.add((bank_for(expired_entry), canonical_id(expired_entry)))
+                for entry in store.list(active_only=False):
+                    by_bank.setdefault(bank_for(entry), [])
+                    if is_indexable(entry):
+                        by_bank[bank_for(entry)].append(entry)
+                    else:
+                        report["inactive_skipped"] += 1
+            if expired_keys:
+                with _IDLE:
+                    for key in expired_keys:
+                        queue = _PENDING.get(key)
+                        if queue is not None and all(not is_indexable(item) for item in queue):
+                            _PENDING.pop(key, None)
+            for bank, entries in sorted(by_bank.items()):
+                try:
+                    resolved_client.delete_bank(bank)
+                except HindsightError as exc:
+                    report["failures"].append({"bank": bank, "reason": exc.reason})
+                    continue
+                with _IDLE:
+                    for key in [k for k in _INVALIDATED if k[0] == bank]:
+                        _INVALIDATED.pop(key, None)
+                report["banks"] += 1
+                retained = 0
+                for entry in entries:
+                    item = retain_item(entry)
+                    try:
+                        resolved_client.retain(bank, [item])
+                    except HindsightError as exc:
+                        report["failures"].append({"bank": bank, "entry_id": canonical_id(entry), "reason": exc.reason})
+                        continue
+                    retained += 1
+                    report["anchor_none"] += int(item["tags"][0] == ANCHOR_NONE_TAG)
+                report["retained"] += retained
+                report["bank_counts"][bank] = retained
+        finally:
+            failed_to_start: List[Any] = []
+            with _IDLE:
+                _REBUILDING -= 1
+                has_pending = bool(_PENDING or _IN_FLIGHT)
+                if not _REBUILDING:
+                    failed_to_start = _ensure_workers_unlocked()
+                _IDLE.notify_all()
+            for item in failed_to_start:
+                action = "retain" if is_indexable(item) else "invalidate"
+                DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
             try:
-                client.retain(bank, [item])
-            except HindsightError as exc:
-                report["failures"].append({"bank": bank, "entry_id": canonical_id(entry), "reason": exc.reason})
-                continue
-            retained += 1
-            report["anchor_none"] += int(item["tags"][0] == ANCHOR_NONE_TAG)
-        report["retained"] += retained
-        report["bank_counts"][bank] = retained
-    return report
+                if has_pending and not _wait_drained(DEFAULT_FLUSH_TIMEOUT_SECONDS):
+                    report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
+            finally:
+                _REBUILD_CLIENT = None
+        return report
 
 
 # ---------------------------------------------------------------------------

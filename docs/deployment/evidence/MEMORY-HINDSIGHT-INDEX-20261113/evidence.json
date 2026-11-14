@@ -2,11 +2,12 @@
   "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-11-14T03:42:00Z",
+  "recorded_at": "2026-11-14T04:23:00Z",
   "scope": "H3-H7, H9 route, H11 in services/memory. Search-service side of H7, case file, cycle and panel are other tasks.",
   "commands": [
-    {"command": "python -m pytest -q deploy/hindsight/tests services/memory", "result": "139 passed, 9 skipped (real-container tests skipped without env)"},
+    {"command": "python -m pytest -q deploy/hindsight/tests services/memory", "result": "142 passed, 9 skipped (real-container tests skipped without env)"},
     {"command": ".venv-pantheon/bin/python3 -c \"import sys; sys.path[0] = '/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113'; exec(open('/tmp/pantheon-goal-resume-20261111/Memory7337-AC1-frozen-isolated-probe-20261114T0310/probe.py').read())\"", "result": "exit 0 (AC1_nonblocking_expectation_failed: false for both institutional and persona)"},
+    {"command": ".venv-pantheon/bin/python3 -c \"import sys; from pathlib import Path; code = Path('/tmp/pantheon-goal-resume-20261111/Memory7337-14c-current-rebuild-counterexample-20261114T0405/probe.py').read_text().replace('Path(__file__).with_name(\\\"hindsight_index.py\\\")', 'Path(\\\"/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113/services/memory/hindsight_index.py\\\")'); exec(code)\"", "result": "exit 0 (rebuild_dropped_bank_and_reported_success_despite_undrained_mirror: false; failures=[{reason: hindsight_mirror_drain_timeout}])"},
     {"command": "PANTHEON_HINDSIGHT_IT_URL=http://127.0.0.1:18888 PANTHEON_HINDSIGHT_IT_KEY=<key> python -m pytest -v services/memory/test_hindsight_integration.py", "result": "6 passed (upstream image probe; compose-built image run still pending host disk resource)"}
   ],
   "integration_tests": [
