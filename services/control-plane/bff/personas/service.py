@@ -7661,6 +7661,85 @@ def _pm12_persona_league_rows(
     )
 
 
+# --- _pm12_persona_league_rows_shared ---
+# Single-flight + short tenant-scoped memo for the unfiltered league rows that
+# persona-league, persona-league/rankings and quarterly-ranking all recompute.
+# Concurrent identical reads share one computation (single-flight); a finished
+# result is reused for at most _PM12_LEAGUE_ROWS_REUSE_SECONDS, measured from the
+# moment the computation STARTED, so a store change is visible to the first read
+# after that window. Failures are never stored. Every caller gets its own deep
+# copy so one response can never mutate another's rows.
+_PM12_LEAGUE_ROWS_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PM12_LEAGUE_ROWS_WAIT_SECONDS = 30.0
+_pm12_league_rows_lock = threading.Lock()
+_pm12_league_rows_entries: Dict[Any, Any] = {}
+_pm12_league_rows_inflight: Dict[Any, Any] = {}
+
+
+def _pm12_league_rows_cache_clear() -> None:
+    with _pm12_league_rows_lock:
+        _pm12_league_rows_entries.clear()
+
+
+def _pm12_persona_league_rows_shared(*, tenant_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Unfiltered, summary-free league rows; same output as _pm12_persona_league_rows."""
+    import weakref
+
+    def compute() -> List[Dict[str, Any]]:
+        return _pm12_persona_league_rows(
+            tenant_id=tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+    )
+    while True:
+        with _pm12_league_rows_lock:
+            entry = _pm12_league_rows_entries.get(key)
+            if entry is not None:
+                expires, ref, rows = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(rows)
+                _pm12_league_rows_entries.pop(key, None)
+            flight = _pm12_league_rows_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "rows": None}
+                _pm12_league_rows_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PM12_LEAGUE_ROWS_WAIT_SECONDS)
+            if flight["rows"] is not None:
+                return copy.deepcopy(flight["rows"])
+            continue  # leader failed (or timed out): recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            rows = compute()
+            flight["rows"] = rows
+            with _pm12_league_rows_lock:
+                _pm12_league_rows_entries[key] = (
+                    started + min(_PM12_LEAGUE_ROWS_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    rows,
+                )
+            return copy.deepcopy(rows)
+        finally:
+            with _pm12_league_rows_lock:
+                if _pm12_league_rows_inflight.get(key) is flight:
+                    del _pm12_league_rows_inflight[key]
+            flight["event"].set()
+
+
 # --- _pm12_persona_league_source_surfaces ---
 def _pm12_persona_league_source_surfaces(snapshot_at: str, read_store: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
     return {
@@ -16385,12 +16464,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         quarter_window = _pm12_quarter_window(quarter, snap)
-        rows = _pm12_persona_league_rows(
-            tenant_id=caller_tenant_id,
-            include_route_policy=False,
-            include_health=False,
-            include_allowed_actions=False,
-        )
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
         (
             public_evidence_refs,
@@ -17315,7 +17389,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
-        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         all_rows = [r for r in all_rows if not _fleet_cls.is_non_trading_persona(r)]
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
@@ -17434,12 +17508,7 @@ class PersonaService:
         # Ranking blocks never read the per-persona route-policy / health /
         # allowed-actions summaries; skipping them removes 2-3 store reads per
         # persona from this read path without changing any ranking field.
-        rows = _pm12_persona_league_rows(
-            tenant_id=caller_tenant_id,
-            include_route_policy=False,
-            include_health=False,
-            include_allowed_actions=False,
-        )
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
