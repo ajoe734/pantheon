@@ -1170,20 +1170,29 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
 # Separate configured instances keep each daily requirement's watermark and schedule
 # independent; these reuse the existing adapters, never the TWSE collector flow path.
 TW_CHIP_REFRESH_PROFILES = {
-    "tw-official-margin-balances": {
+    "tw-official-twse-margin-balances": {
         "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
-        "venues": ["TWSE", "TPEx"],
+        "schema_hash": "tw_margin_short_balance.v1",
+        "venues": ["TWSE"],
+    },
+    "tw-official-tpex-margin-balances": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
+        "schema_hash": "tw_margin_short_balance.v1",
+        "venues": ["TPEx"],
     },
     "tw-official-tpex-institutional-flow": {
         "base": "tw-twse-tpex-official-market", "dataset": "tw_institutional_flow",
+        "schema_hash": "tw_institutional_flow.v1",
         "venues": ["TPEx"],
     },
     "tw-taifex-institutional-positions": {
         "base": "tw-taifex-futures-options-chip", "dataset": "taifex_futures_chip",
+        "schema_hash": "tw_taifex_futures_chip.v1",
         "contracts": ["TX", "MTX"],
     },
     "tw-taifex-put-call": {
         "base": "tw-taifex-futures-options-chip", "dataset": "taifex_options_chip",
+        "schema_hash": "tw_taifex_options_chip.v1",
         "contracts": ["TXO"],
     },
 }

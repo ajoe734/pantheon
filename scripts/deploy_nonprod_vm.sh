@@ -1840,17 +1840,25 @@ if expected_dataset and (profile is not None or connector_id == "tw-taifex-futur
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
 if profile is not None:
-    expected_schema = {
-        "tw_margin_short_balance": "tw_margin_short_balance.v1",
-        "tw_institutional_flow": "tw_institutional_flow.v1",
-        "taifex_futures_chip": "tw_taifex_futures_chip.v1",
-        "taifex_options_chip": "tw_taifex_options_chip.v1",
-    }[expected_dataset]
+    expected_schema = profile["schema_hash"]
     if (provenance.get("schema_hash") or record_metadata.get("schema_hash")) != expected_schema:
         raise SystemExit("bounded chip schema mismatch")
     row = record_metadata.get("normalized_row") or {}
-    if not (row.get("date") or record_metadata.get("date")):
-        raise SystemExit("bounded chip provider session is missing")
+    from datetime import time as _time, timedelta
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+    taipei = started.astimezone(timezone(timedelta(hours=8)))
+    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=cursor.isoformat())
+        if cursor.weekday() < 5 and not (calendar and cursor.isoformat() in (calendar.get("holidays") or {})):
+            break
+        cursor -= timedelta(days=1)
+    record_date = str(row.get("date") or record_metadata.get("date") or "")
+    if record_date != cursor.isoformat():
+        raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
+    prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+    if not source_id.startswith(f"{prefix}:{expected_dataset}:"):
+        raise SystemExit("bounded chip source identity does not bind the dataset")
     if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
         raise SystemExit("bounded chip venue is outside the governed profile")
 if connector_id == "tw-taifex-futures-options-chip":
@@ -2350,6 +2358,13 @@ if connector_id in CHIP_CONNECTORS:
     source_id = str(latest_record.get("source_id") or "")
     record_dataset = str(provenance.get("dataset") or metadata.get("dataset") or "")
     schema_hash = str(provenance.get("schema_hash") or metadata.get("schema_hash") or "")
+    profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+    if profile is not None:
+        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        if (schema_hash != profile["schema_hash"]
+                or not source_id.startswith(f"{prefix}:{bounded_dataset}:")
+                or (profile.get("venues") and metadata.get("venue") not in profile["venues"])):
+            emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if (
         not latest_record
         or latest_record.get("status") not in (None, "", "normalized", "valid")
@@ -2771,7 +2786,7 @@ RECOVER_DLQ_PY
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
   case "${connector_id}:${dataset}" in
-    tw-official-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
       return 0 ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then

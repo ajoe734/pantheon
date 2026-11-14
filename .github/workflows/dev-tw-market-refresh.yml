@@ -243,9 +243,10 @@ jobs:
             .lease-controller/scripts/run_with_dev_environment_lease.sh \
               ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
               --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
-              --output "${RUNNER_TEMP}/${dataset}-refresh-outcome.json" || failed=1
+              --output "${RUNNER_TEMP}/${connector}-refresh-outcome.json" </dev/null || failed=1
           done <<'PROFILES'
-          tw-official-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
+          tw-official-twse-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
+          tw-official-tpex-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
           tw-official-tpex-institutional-flow tw_institutional_flow openapi.twse.com.tw,www.tpex.org.tw
           tw-taifex-institutional-positions taifex_futures_chip openapi.taifex.com.tw,www.taifex.com.tw
           tw-taifex-put-call taifex_options_chip openapi.taifex.com.tw,www.taifex.com.tw
@@ -261,10 +262,11 @@ jobs:
             ${{ runner.temp }}/tw-refresh-outcome.json
             ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
             ${{ runner.temp }}/finmind-broker-refresh-outcome.json
-            ${{ runner.temp }}/tw_margin_short_balance-refresh-outcome.json
-            ${{ runner.temp }}/tw_institutional_flow-refresh-outcome.json
-            ${{ runner.temp }}/taifex_futures_chip-refresh-outcome.json
-            ${{ runner.temp }}/taifex_options_chip-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-twse-margin-balances-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-tpex-margin-balances-refresh-outcome.json
+            ${{ runner.temp }}/tw-official-tpex-institutional-flow-refresh-outcome.json
+            ${{ runner.temp }}/tw-taifex-institutional-positions-refresh-outcome.json
+            ${{ runner.temp }}/tw-taifex-put-call-refresh-outcome.json
 
       - name: Stop heartbeat and release lease
         if: ${{ always() && steps.lease.outcome == 'success' }}

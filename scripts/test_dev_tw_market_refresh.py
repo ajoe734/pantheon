@@ -3379,3 +3379,49 @@ def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Pa
         assert proc.returncode == 0, proc.stderr
     else:
         assert proc.returncode != 0 and message in proc.stderr, proc.stderr
+
+
+def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session(tmp_path):
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    body = DEPLOY_SCRIPT.read_text().split('verify_bounded_source_refresh_readback() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        dataset = profile['dataset']
+        prefix = 'tw-taifex' if profile['base'] == 'tw-taifex-futures-options-chip' else 'tw-official'
+        record = {'source_id': f'{prefix}:{dataset}:recorded',
+                  'metadata': {'dataset': dataset, 'schema_hash': profile['schema_hash'],
+                               'date': '2026-11-13', 'venue': profile.get('venues', ['TAIFEX'])[0]},
+                  'provenance': {'dataset': dataset, 'source_ingest_run_id': 'chip-run'}}
+        receipts = {'receipts': [{'connector_id': cid, 'status': 'completed', 'typed_failure': None,
+                                 'source_timestamp': '2026-11-13T10:00:00Z', 'source_timestamp_status': 'valid',
+                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run'}]}
+        (tmp_path / 'receipts.json').write_text(json.dumps(receipts))
+        (tmp_path / 'projection.json').write_text('{}')
+        cases = [({}, {}, True), ({'dataset': 'other'}, {}, False), ({'schema_hash': 'wrong'}, {}, False),
+                 ({'date': ''}, {}, False), ({'date': '2026-11-12'}, {}, False),
+                 ({}, {'source_ingest_run_id': 'old-run'}, False)]
+        if 'venues' in profile:
+            cases.append(({'venue': 'TAIFEX'}, {}, False))
+        for meta_patch, provenance_patch, accepted in cases:
+            latest = {**record, 'metadata': {**record['metadata'], **meta_patch},
+                      'provenance': {**record['provenance'], **provenance_patch}}
+            # A record's dataset must agree across provenance and metadata.
+            if 'dataset' in meta_patch:
+                latest['provenance']['dataset'] = meta_patch['dataset']
+            readback = {'connectors': [{'connector_id': cid, 'freshness': {
+                'latest_receipt': {'ingest_run_id': 'chip-run'}, 'source_timestamp_status': 'valid', 'status': 'fresh'},
+                'latest_source_record': latest}]}
+            (tmp_path / 'readback.json').write_text(json.dumps(readback))
+            proc = subprocess.run([sys.executable, '-c', body, cid, '2026-11-13T11:00:00Z',
+                                   str(tmp_path / 'receipts.json'), str(tmp_path / 'readback.json'),
+                                   str(tmp_path / 'projection.json'), '', dataset],
+                                  cwd=ROOT, text=True, capture_output=True, timeout=20)
+            assert (proc.returncode == 0) is accepted, (cid, meta_patch, proc.stderr)
+
+
+def test_chip_preflight_does_not_require_equity_price_snapshots():
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        result = _run_preflight_script('2026-11-13T11:00:00Z', None,
+                                       profile=(cid, profile['dataset']), readback={'connectors': []})
+        assert result['status'] == 'proceed', (cid, result)
+        assert result['reason'] != 'snapshot_missing'
