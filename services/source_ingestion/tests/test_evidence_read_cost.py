@@ -163,3 +163,38 @@ def test_real_pg_filtered_pages_match_memory_and_never_transfer_source_records(v
     assert all(int(r.evidence_item_id.split("-")[1]) >= 7200 for r in seen)
     # Includes Python reference comparisons; the BFF integration records owner-only timing.
     record_measurement("owner_pages_with_parity_seconds", elapsed)
+
+
+def test_real_pg_existing_table_migrates_idempotently_and_link_updates_stay_exact(volume_repo):
+    import psycopg
+    from services.source_ingestion.tests.test_quarter_evidence_owner_read import _source_for
+
+    schema = f"evidence_legacy_{uuid.uuid4().hex[:10]}"
+    table = f'"{schema}".evidence'
+    item = replace(_item("legacy", available=Q1[0]), metadata={
+        "tenant_id": TENANT, "linked_decisions": [{"entity_type": " PERSONA ", "entity_ref": "p-001"}],
+        "linked_entities": 123,
+    })
+    with psycopg.connect(volume_repo.dsn) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+        conn.execute(f"CREATE TABLE {table} (append_id BIGSERIAL PRIMARY KEY, record_id TEXT NOT NULL, record_type TEXT NOT NULL, payload JSONB NOT NULL, UNIQUE(record_type,record_id))")
+        for kind, record_id, payload in (("source_record", item.source_id, _source_for(item).to_dict()),
+                                         ("evidence_item", item.evidence_item_id, item.to_dict())):
+            conn.execute(f"INSERT INTO {table} (record_type,record_id,payload) VALUES (%s,%s,%s::jsonb)",
+                         (kind, record_id, json.dumps(payload)))
+    repo = None
+    try:
+        repo = PostgresSourceEvidenceRepository(volume_repo.dsn, table=f"{schema}.evidence")
+        repo._bootstrap()  # repeat startup against already-migrated data
+        kwargs = dict(limit=500, linked_entity_types=("persona",), captured_from=Q1[0], captured_before=Q1[1])
+        assert repo.list_evidence_items_page(TENANT, **kwargs)[1] == 1
+        assert repo.summarize_evidence_items(TENANT)["total"] == 1
+        with psycopg.connect(volume_repo.dsn) as conn:
+            conn.execute(f"UPDATE {table} SET payload = jsonb_set(payload, '{{metadata,linked_decisions}}', '[]'::jsonb)")
+        assert repo.list_evidence_items_page(TENANT, **kwargs)[1] == 0
+        assert repo.summarize_evidence_items("other-tenant")["total"] == 0
+    finally:
+        if repo:
+            repo.close()
+        with psycopg.connect(volume_repo.dsn) as conn:
+            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')

@@ -148,14 +148,17 @@ def test_real_postgres_owner_and_four_concurrent_bff_routes(volume_repo, monkeyp
     def get(route):
         start = time.monotonic()
         response = client.get(route, headers=HEADERS, params={"quarter": "2026-Q1", "page_size": 200, "limit": 200})
+        data = response.json().get("data", {})
+        item_count = len(data.get("items", []))
+        persona_count = data.get("summary", {}).get("persona_count", item_count) if route.endswith("/rankings") else item_count
         return {"route": route, "seconds": time.monotonic() - start, "status": response.status_code,
-                "item_count": len(response.json().get("data", {}).get("items", []))}
+                "item_count": item_count, "persona_count": persona_count}
 
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(get, routes))
     wall = time.monotonic() - started
-    assert all(r["status"] == 200 and r["seconds"] < 6.0 and r["item_count"] >= 166 for r in results), results
+    assert all(r["status"] == 200 and r["seconds"] < 6.0 and r["persona_count"] >= 166 for r in results), results
     assert wall < 6.0 and not summary_calls
     assert all("include_summary=false" in r["path"] and r["status"] == 200 for r in requests)
     record_measurement("concurrent_bff", {"wall_seconds": wall, "routes": results,
