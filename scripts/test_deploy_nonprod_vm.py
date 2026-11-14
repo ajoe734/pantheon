@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import os
 import re
 import subprocess
@@ -3766,7 +3767,10 @@ def test_run_bounded_docker_prune_reports_timeout_status_truthfully(tmp_path: Pa
     assert "failing exited with status 3" in res.stdout
 
 
-def _run_untagged_removal(tmp_path: Path, images: dict, containers: list, *, budget: str = "60", rmi_sleep: float = 0.0):
+def _run_untagged_removal(
+    tmp_path: Path, images: dict, containers: list, *, budget: str = "60", rmi_sleep: float = 0.0,
+    slow: str = "", slow_sleep: float = 0.0, deadline: str = "",
+):
     state = tmp_path / "state.json"
     calls = tmp_path / "calls.jsonl"
     state.write_text(json.dumps({"images": images, "containers": containers}), encoding="utf-8")
@@ -3783,11 +3787,13 @@ with Path({str(calls)!r}).open("a") as h:
     h.write(json.dumps(args) + "\\n")
 st = json.loads(state_file.read_text())
 imgs, ctrs = st["images"], st["containers"]
+if {slow!r} and args[0] == {slow!r}.split()[0] and (args[:2] == {slow!r}.split() or len({slow!r}.split()) == 1):
+    time.sleep({slow_sleep})
 if args[:1] == ["ps"]:
     for c in ctrs: print(c["id"])
 elif args[:1] == ["inspect"]:
     for c in ctrs:
-        if c["id"] == args[-1]: print(c["image"])
+        if c["id"] in args: print(c["image"])
 elif args[:2] == ["image", "ls"]:
     for img_id, tags in imgs.items():
         short = img_id.split(":", 1)[1]
@@ -3820,7 +3826,11 @@ elif args[:1] == ["rmi"]:
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
         "PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS": budget,
     }
+    if deadline:
+        env["DEV_DEPLOY_DEADLINE_SECONDS"] = deadline
+    t0 = time.monotonic()
     res = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, check=False, timeout=120)
+    res.elapsed = time.monotonic() - t0
     assert res.returncode == 0, res.stderr
     return res, json.loads(state.read_text())["images"], [json.loads(x) for x in calls.read_text().splitlines()]
 
@@ -3853,12 +3863,41 @@ def test_untagged_image_removal_only_removes_unreferenced_untagged_images(tmp_pa
 
 def test_untagged_image_removal_budget_cut_keeps_partial_progress(tmp_path: Path) -> None:
     images = {_img(str(i)): [] for i in range(1, 9)}
-    res, after, _ = _run_untagged_removal(tmp_path, images, [], budget="1", rmi_sleep=0.6)
+    res, after, _ = _run_untagged_removal(tmp_path, images, [], budget="8", rmi_sleep=1.2)
     removed = 8 - len(after)
     assert 1 <= removed < 8
     assert "budget_exhausted=true" in res.stdout
     assert f"removed={removed}" in res.stdout
     assert "not_attempted=" in res.stdout and "not_attempted=0" not in res.stdout
+
+
+def test_untagged_image_removal_slow_container_enumeration_is_bounded(tmp_path: Path) -> None:
+    images = {_img("1"): [], _img("2"): []}
+    res, after, calls = _run_untagged_removal(tmp_path, images, [], budget="7", slow="ps", slow_sleep=30)
+    assert res.elapsed < 7, res.elapsed
+    assert "budget_exhausted=true" in res.stdout and "container_enumeration_failed_or_timed_out" in res.stdout
+    assert len(after) == 2 and not [c for c in calls if c[:1] == ["rmi"]]
+
+
+def test_untagged_image_removal_slow_image_enumeration_is_bounded(tmp_path: Path) -> None:
+    images = {_img("1"): [], _img("2"): []}
+    res, after, calls = _run_untagged_removal(tmp_path, images, [], budget="7", slow="image ls", slow_sleep=30)
+    assert res.elapsed < 7, res.elapsed
+    assert "image_enumeration_failed_or_timed_out" in res.stdout
+    assert len(after) == 2 and not [c for c in calls if c[:1] == ["rmi"]]
+
+
+def test_untagged_image_removal_budget_capped_by_short_deploy_deadline(tmp_path: Path) -> None:
+    images = {_img(str(i)): [] for i in range(1, 4)}
+    res, _, _ = _run_untagged_removal(tmp_path, images, [], budget="900", deadline="40")
+    assert "budget=10s" in res.stdout
+
+
+def test_dev_deploy_deadline_is_forwarded_to_remote_environment() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("ssh_bash() {")
+    block = source[start : source.index("\n}\n", start)]
+    assert 'DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")' in block
 
 
 def test_untagged_image_removal_wired_after_protection_and_no_forbidden_prunes() -> None:

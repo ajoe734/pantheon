@@ -947,6 +947,7 @@ ssh_bash() {
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
+    command_prefix+=" DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
@@ -5155,23 +5156,44 @@ remove_dev_untagged_unreferenced_images_for_build() {
     return 0
   fi
 
+  # One elapsed-time budget covers discovery and removals. Every docker call is
+  # bounded by the remaining budget minus the kill-after grace, so a hung
+  # daemon cannot outlive the budget.
+  local grace=5 started="${SECONDS}" remaining call_timeout
   local free_before="" free_after="" check_path="${PANTHEON_DEV_DEPLOY_DISK_CHECK_PATH:-$(pwd)}"
   free_before="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
   [[ "${free_before}" =~ ^[0-9]+$ ]] || free_before="unknown"
 
+  local ids_out="" inspect_out="" rows=""
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! ids_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker ps -a -q --no-trunc 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_enumeration_failed_or_timed_out"
+    return 0
+  fi
   declare -A referenced=()
-  local cid ref
-  while IFS= read -r cid; do
-    [[ -n "${cid}" ]] || continue
-    ref="$(docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null || true)"
-    ref="${ref#sha256:}"
-    [[ -n "${ref}" ]] && referenced["${ref:0:12}"]=1
-  done < <(docker ps -a -q --no-trunc 2>/dev/null || true)
+  local ref
+  local -a cids=()
+  mapfile -t cids <<< "${ids_out}"
+  if (( ${#cids[@]} > 0 )) && [[ -n "${cids[0]}" ]]; then
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )) || ! inspect_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker inspect --format '{{.Image}}' "${cids[@]}" 2>/dev/null)"; then
+      info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_inspect_failed_or_timed_out"
+      return 0
+    fi
+    while IFS= read -r ref; do
+      ref="${ref#sha256:}"
+      [[ -n "${ref}" ]] && referenced["${ref:0:12}"]=1
+    done <<< "${inspect_out}"
+  fi
 
-  local rows="" row tag_ref img_id
+  local row tag_ref img_id
   local -a candidates=()
   declare -A seen=()
-  rows="$(docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null || true)"
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
+    return 0
+  fi
   # An image id with any tag row is tagged and never a candidate.
   declare -A tagged=()
   while IFS= read -r row; do
@@ -5192,17 +5214,16 @@ remove_dev_untagged_unreferenced_images_for_build() {
     candidates+=("${img_id}")
   done <<< "${rows}"
 
-  local removed=0 refused=0 skipped=0 started="${SECONDS}" elapsed remaining per_call
+  local removed=0 refused=0 skipped=0 per_call
   info "removing untagged unreferenced dev Docker images one at a time (candidates=${#candidates[@]} budget=${budget}s)"
   for img_id in "${candidates[@]}"; do
-    elapsed=$((SECONDS - started))
-    remaining=$((budget - elapsed))
+    remaining=$((budget - (SECONDS - started) - grace))
     if (( remaining <= 0 )); then
       skipped=$((skipped + 1))
       continue
     fi
     per_call=$((remaining < 60 ? remaining : 60))
-    if timeout --signal=TERM --kill-after=5s "${per_call}s" docker rmi "${img_id}" >/dev/null 2>&1; then
+    if timeout --signal=TERM --kill-after="${grace}s" "${per_call}s" docker rmi "${img_id}" >/dev/null 2>&1; then
       removed=$((removed + 1))
     else
       refused=$((refused + 1))
