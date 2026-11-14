@@ -823,6 +823,11 @@ class PersistentPersonaOwner:
             required_data_sources=request.required_data_sources,
             metadata=request.metadata,
         ).model_dump(mode="json")
+        from services.persona.consult_triggers import validate_panel_persona
+        try:
+            validate_panel_persona(record)
+        except ValueError as exc:
+            raise PersonaOwnerError(str(exc)) from exc
         inserted, existing = self._records.compare_and_set(persona_id, None, record)
         if not inserted:
             raise PersonaAlreadyExists(
@@ -1023,6 +1028,16 @@ class PersistentPersonaOwner:
             merged_metadata = dict(record.get("metadata") or {})
             merged_metadata.update(request.metadata or {})
             record["metadata"] = merged_metadata
+        from services.persona.consult_triggers import validate_panel_persona
+        try:
+            # Validate using the old identity as well, so removing the class
+            # marker cannot turn a panel persona into a trading persona.
+            if ((current.get("metadata") or {}).get("persona_class") == "consult_panel"
+                and (record.get("metadata") or {}).get("persona_class") != "consult_panel"):
+                raise ValueError("panel personas cannot change their persona class")
+            validate_panel_persona(record)
+        except ValueError as exc:
+            raise PersonaOwnerError(str(exc)) from exc
         record["updated_at"] = _utc_now()
         record["updated_by"] = request.actor_id
         return PersonaBody.model_validate(record).model_dump(mode="json")
