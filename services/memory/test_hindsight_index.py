@@ -124,12 +124,15 @@ def test_store_create_supersede_archive_expiry_are_mirrored_after_persist():
     store = InstitutionalMemoryStore()
     store.create(inst(mid("a")))
     store.create(inst(mid("b")))
+    hs.flush_mirrors()
     assert [i[1][0]["document_id"] for i in client.retained] == [mid("a"), mid("b")]
     store.supersede(mid("a"), mid("b"))
     store.archive(mid("b"), reason="obsolete")
+    hs.flush_mirrors()
     assert client.invalidated == [(hs.facts_bank("t1"), mid("a"), "superseded"), (hs.facts_bank("t1"), mid("b"), "obsolete")]
     store.create(inst(mid("e"), expires_at="2099-01-01T00:00:00Z"))
     archived = store.archive_expired(now="2100-01-01T00:00:00Z", reason="ttl")
+    hs.flush_mirrors()
     assert [x.entry_id for x in archived] == [mid("e")]
     assert client.invalidated[-1] == (hs.facts_bank("t1"), mid("e"), "ttl")
 
@@ -139,8 +142,10 @@ def test_persona_store_mirrors_into_persona_bank():
     hs.set_hindsight_client(client)
     store = PersonaMemoryStore()
     store.create(pentry())
+    hs.flush_mirrors()
     assert client.retained[0][0] == hs.persona_bank("t1", "alpha")
     store.archive(mid("p-1"), reason="stale")
+    hs.flush_mirrors()
     assert client.invalidated == [(hs.persona_bank("t1", "alpha"), mid("p-1"), "stale")]
 
 
@@ -150,10 +155,12 @@ def test_mirror_retries_then_reports_and_never_blocks_canonical_write(monkeypatc
     hs.set_hindsight_client(client)
     store = InstitutionalMemoryStore()
     store.create(inst(mid("a")))  # 2 failures then success
+    hs.flush_mirrors()
     assert len(client.retained) == 1 and hs.DIAGNOSTICS.snapshot()["counts"]["failed"] == 0
     client.fail = 99
     created = store.create(inst(mid("b")))
     assert store.get(mid("b")) is created  # canonical write persisted despite outage
+    hs.flush_mirrors()
     snap = hs.DIAGNOSTICS.snapshot()
     assert snap["counts"]["failed"] == 1
     assert snap["failures"] == [{"entry_id": mid("b"), "action": "retain", "reason": "hindsight_unreachable"}]
@@ -192,3 +199,35 @@ def test_rebuild_reports_failures():
     istore.create(inst(mid("a")))
     report = hs.rebuild(istore, PersonaMemoryStore(), client=client)
     assert report["failures"][0]["reason"] == "hindsight_unreachable"
+
+
+def test_slow_index_does_not_block_canonical_writes_and_keeps_document_order():
+    import threading
+    import time
+
+    gate, events = threading.Event(), []
+
+    class Slow(FakeClient):
+        def retain(self, bank, items):
+            gate.wait(10)
+            events.append(("retain", items[0]["document_id"]))
+            return super().retain(bank, items)
+
+        def invalidate_document(self, bank, doc_id, reason):
+            events.append(("invalidate", doc_id))
+            return super().invalidate_document(bank, doc_id, reason)
+
+    hs.set_hindsight_client(Slow())
+    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    t0 = time.monotonic()
+    istore.create(inst(mid("s1")))
+    istore.create(inst(mid("s2")))  # second canonical write while first mirror is stuck
+    istore.supersede(mid("s1"), mid("s2"))
+    pstore.create(pentry())
+    pstore.archive(mid("p-1"), reason="stale")
+    assert time.monotonic() - t0 < 2
+    assert istore.require(mid("s1")).superseded_by == mid("s2") and events == []
+    gate.set()
+    assert hs.flush_mirrors()
+    for doc in (mid("s1"), mid("p-1")):
+        assert events.index(("retain", doc)) < events.index(("invalidate", doc))

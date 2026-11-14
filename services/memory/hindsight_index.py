@@ -381,6 +381,55 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
         return {"status": "failed", "entry_id": entry_id, "action": action, "reason": reason}
 
 
+# Post-persistence dispatch: canonical writers hand the persisted state over here and return;
+# index I/O + retries run outside the canonical critical section.  One FIFO per canonical id
+# keeps per-document lifecycle order (retain -> invalidate); different ids run in parallel.
+_PENDING: Dict[str, deque] = {}
+_IDLE = threading.Condition(threading.Lock())
+
+
+def schedule_mirror(entry: Any) -> None:
+    """Queue a mirror of an already-persisted canonical entry; never blocks, never raises."""
+    key = canonical_id(entry)
+    with _IDLE:
+        queue = _PENDING.get(key)
+        if queue is not None:
+            queue.append(entry)  # the drain thread for this id picks it up in order
+            return
+        _PENDING[key] = deque([entry])
+    try:
+        threading.Thread(target=_drain, args=(key,), name="memory-mirror", daemon=True).start()
+    except Exception:  # thread exhaustion must not fail the canonical write
+        with _IDLE:
+            _PENDING.pop(key, None)
+            _IDLE.notify_all()
+        DIAGNOSTICS.failure(key, "retain", "hindsight_mirror_failed")
+
+
+def _drain(key: str) -> None:
+    while True:
+        with _IDLE:
+            queue = _PENDING.get(key)
+            if not queue:
+                _PENDING.pop(key, None)
+                _IDLE.notify_all()
+                return
+            entry = queue.popleft()
+        mirror_entry(entry)
+
+
+def flush_mirrors(timeout: float = 30.0) -> bool:
+    """Wait until every queued mirror finished (tests, rebuild, shutdown). True if drained."""
+    deadline = time.monotonic() + timeout
+    with _IDLE:
+        while _PENDING:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _IDLE.wait(remaining)
+    return True
+
+
 def _invalidation_reason(entry: Any) -> str:
     if entry.superseded_by:
         return "superseded"
@@ -398,6 +447,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
 
     Idempotent: a second run drops and re-retains the same documents.
     """
+    flush_mirrors()  # queued post-persistence mirrors must not race the bank drop
     client = client or get_hindsight_client()
     report: Dict[str, Any] = {"banks": 0, "retained": 0, "inactive_skipped": 0, "anchor_none": 0,
                               "failures": [], "bank_counts": {}}

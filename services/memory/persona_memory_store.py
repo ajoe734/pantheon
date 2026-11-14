@@ -390,9 +390,9 @@ class PersonaMemoryStore:
 
     @staticmethod
     def _mirror(entry) -> None:
-        """Mirror the persisted canonical state to the Hindsight index (never raises)."""
-        from .hindsight_index import mirror_entry
-        mirror_entry(entry)
+        """Mirror the persisted canonical state to the Hindsight index (queued; never blocks or raises)."""
+        from .hindsight_index import schedule_mirror
+        schedule_mirror(entry)
 
     def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
         if not reason.strip():
