@@ -449,10 +449,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             ]
             window = list(reversed(items))[int(offset): int(offset) + int(limit)]
             return [strip_list_heavy_metadata(i) for i in window], len(items)
-        raw_ts = "COALESCE(NULLIF(BTRIM(payload->>'available_time'), ''), NULLIF(BTRIM(payload->>'event_time'), ''))"
+        # No BTRIM: legacy selection only falls back on an absent/empty value, so a
+        # blank or padded string stays "odd" and is judged by the Python predicate.
+        raw_ts = "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"
+        # Strict: hours 00-23, a zone only after a time, <=6 fraction digits. Anything
+        # else (date+zone, 24:00, compact forms, ...) goes to the Python predicate.
         iso_guard = (
             r"'^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
-            r"([T ][0-2][0-9]:[0-5][0-9](:[0-5][0-9]([.][0-9]+)?)?)?(Z|[+-][0-9]{2}:[0-9]{2})?$'"
+            r"(([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9]([.][0-9]{1,6})?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?)$'"
         )
         has_zone = r"'(Z|[+-][0-9]{2}:[0-9]{2})$'"
         captured = (
