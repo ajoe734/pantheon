@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 
 import pytest
 import yaml
@@ -118,10 +117,11 @@ base = 'http://127.0.0.1:8888'
 headers = {'Authorization': 'Bearer ' + os.environ['HINDSIGHT_API_TENANT_API_KEY'], 'Content-Type':'application/json'}
 def call(path, body=None, auth=True, method=None):
     data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(base+path, data=data, headers=headers if auth else {}, method=method)
+    req = urllib.request.Request(base+path, data=data, headers=headers if auth else {'Content-Type':'application/json'}, method=method)
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
-            return response.status, json.loads(response.read())
+            payload = response.read()
+            return response.status, json.loads(payload) if payload else None
     except urllib.error.HTTPError as error:
         return error.code, error.read().decode()
 try:
