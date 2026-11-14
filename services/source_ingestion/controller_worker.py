@@ -1560,6 +1560,7 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
     definitions = deployed_connector_definitions()
     last_attempt: dict[str, str] = {}
     newest_pending: set[str] = set()
+    newest_continuing: set[str] = set()
     for item in actual.get("connectors") or []:
         if isinstance(item, Mapping):
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
@@ -1579,7 +1580,11 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
                          or (_collector_continuation_pending(item, freshness)
                              and observed.get("newest_session_pending") is not False))):
                 newest_pending.add(cid)
-    ranked = sorted(selected, key=lambda connector_id: (connector_id not in newest_pending,
+                if (_collector_continuation_pending(item, freshness)
+                        and observed.get("newest_session_pending") is True):
+                    newest_continuing.add(cid)
+    ranked = sorted(selected, key=lambda connector_id: (connector_id not in newest_continuing,
+                                                       connector_id not in newest_pending,
                                                        last_attempt.get(connector_id, ""), connector_id))
     return sorted(ranked[: max(int(limit), 1)])
 
@@ -2249,14 +2254,17 @@ def run_controller_tick(
         if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
             # A pull just persisted: pending newest-session or ordered history rows
             # continue on the next bounded tick instead of idling a full cadence.
-            continuation_pending = bool(
-                select_collector_pull_connectors(
-                    read_actual_state_with_fetch_bindings(
-                        api_url=config.api_url, timeout_seconds=config.timeout_seconds
-                    ),
-                    reconcile,
-                )
-            )
+            # Terminal readback already contains the persisted outcome. Reuse it
+            # with the registry bindings admitted earlier in this same tick;
+            # another full readback/registry pair repeats host status and growing
+            # evidence scans after every 15-second pull.
+            bindings = {item["connector_id"]: item.get("fetch_binding")
+                        for item in steady_actual.get("connectors") or [] if isinstance(item, Mapping)}
+            continuation_actual = {**actual, "connectors": [
+                {**item, "fetch_binding": bindings.get(item.get("connector_id"))}
+                for item in actual.get("connectors") or [] if isinstance(item, Mapping)
+            ]}
+            continuation_pending = bool(select_collector_pull_connectors(continuation_actual, reconcile))
         return {
             "status": "ok",
             "continuation_pending": continuation_pending,
