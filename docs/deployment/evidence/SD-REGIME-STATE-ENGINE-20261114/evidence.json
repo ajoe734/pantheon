@@ -1,0 +1,13 @@
+{
+  "task_id": "SD-REGIME-STATE-ENGINE-20261114",
+  "base_sha": "a9284b68c",
+  "verified_on": "2026-11-14",
+  "hosted_behavior_claimed": false,
+  "design_only": true,
+  "operator_statements_verbatim_match": true,
+  "references_verified": "all section 2 and 3 references resolved on base; daggers removed",
+  "open_source_rechecked": {"jumpmodels": {"license": "Apache-2.0", "last_push": "2025-01-12", "stars": 173}},
+  "not_reconfirmed": ["statsmodels", "bayesian_changepoint_detection", "ruptures", "hmmlearn", "arXiv:2402.05272 figures", "TAIFEX VIX depth"],
+  "corrections": ["C1 registry has no dataset reader or stats dependencies", "C2 trigger is POST evaluate, GET read-only", "C3 regime_scores normalisation validated by evaluator"],
+  "numeric_values": "coordinator proposals"
+}
