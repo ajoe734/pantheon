@@ -783,9 +783,9 @@ async def reflect_memory(payload: ReflectPayload, authorization: Optional[str] =
     if any(hs.parse_subject_anchor(a) is None for a in anchors):
         raise HTTPException(status_code=422, detail={"error": "invalid_subject_anchor", "allowed_kinds": list(hs.ANCHOR_KINDS)})
 
-    def unavailable(reason: str):
-        return HTTPException(status_code=503, detail={"error": "reflect_unavailable", "reason": reason,
-                                                      "llm_layers": hs.llm_layers()})
+    def unavailable(reason: str, status: int = 503, error: str = "reflect_unavailable"):
+        return HTTPException(status_code=status, detail={"error": error, "reason": reason, "llm_layers": hs.llm_layers()})
+
     if not hs.reflect_configured():
         raise unavailable("reflect_not_configured")
     client = hs.get_hindsight_client()
@@ -793,14 +793,11 @@ async def reflect_memory(payload: ReflectPayload, authorization: Optional[str] =
         raise unavailable("hindsight_unconfigured")
     if payload.bank == "persona":
         bank = hs.persona_bank(tenant_id, payload.persona_id)
-        groups = hs.tag_groups(
-            subject_anchors=anchors,
-            scope_tags=["scope:committee"] if relevance_scope == "persona_and_committee" else (),
-            type_tag=f"type:{payload.memory_type}" if payload.memory_type else None)
+        groups = hs.tag_groups(subject_anchors=anchors, type_tag=f"type:{payload.memory_type}" if payload.memory_type else None,
+                               scope_tags=["scope:committee"] if relevance_scope == "persona_and_committee" else ())
     else:
         bank = hs.facts_bank(tenant_id)
-        groups = hs.tag_groups(subject_anchors=anchors,
-                               type_tag=f"type:{payload.knowledge_type}" if payload.knowledge_type else None)
+        groups = hs.tag_groups(subject_anchors=anchors, type_tag=f"type:{payload.knowledge_type}" if payload.knowledge_type else None)
     body = {"query": payload.query, "budget": "low", "max_tokens": 2048, "include": {"facts": {}}}
     if groups:
         body["tag_groups"] = groups
@@ -809,21 +806,34 @@ async def reflect_memory(payload: ReflectPayload, authorization: Optional[str] =
     except hs.HindsightError as exc:
         raise unavailable(exc.reason) from exc
 
-    # Citations are canonical ids that re-authorise against the owner stores.
+    # Contributing sources must re-authorise and validate against the canonical owner store; fail closed.
+    based_on = (result.get("based_on") if isinstance(result, dict) else None) or {}
+    memories = based_on.get("memories") if isinstance(based_on, dict) else None
+    citations = hs.reflect_citations(result) if isinstance(result, dict) else []
+    if (not isinstance(memories, list) or not memories or not citations
+            or any(not isinstance(m, dict) or not str(m.get("document_id") or "").strip() for m in memories)
+            or any(based_on.get(k) for k in ("mental_models", "directives"))):
+        raise unavailable("canonical_source_unverified")
     store = _persona_store() if payload.bank == "persona" else _store()
-    citations = []
-    for cid in hs.reflect_citations(result):
+    wanted_anchors = {hs.parse_subject_anchor(a) for a in anchors} - {None}
+    req_type = payload.memory_type if payload.bank == "persona" else payload.knowledge_type
+    for cid in citations:
         entry = store.get(cid)
-        if entry is None or not entry.is_active or entry.is_expired():
-            continue
-        if (entry.tenant_id or "default") != (tenant_id or "default") and tenant_id is not None:
-            continue
-        if payload.bank == "persona":
-            if entry.persona_id != payload.persona_id:
-                continue
-            if relevance_scope and entry.relevance_scope != relevance_scope:
-                continue
-        citations.append(cid)
+        if entry is None:
+            raise unavailable("canonical_source_missing")
+        if (entry.tenant_id or "default") != (tenant_id or "default"):
+            raise unavailable("tenant_scope_mismatch", status=403, error="memory_reflect_unauthorized")
+        if payload.bank == "persona" and entry.persona_id != payload.persona_id:
+            raise unavailable("persona_scope_mismatch", status=403, error="memory_reflect_unauthorized")
+        if payload.bank == "persona" and relevance_scope and entry.relevance_scope != relevance_scope:
+            raise unavailable("committee_scope_mismatch", status=403, error="memory_reflect_unauthorized")
+        if entry.is_expired():
+            raise unavailable("canonical_source_expired")
+        if not entry.is_active:
+            raise unavailable("canonical_source_inactive")
+        entry_type = entry.memory_type if payload.bank == "persona" else entry.knowledge_type
+        if (req_type and entry_type != req_type) or (wanted_anchors and wanted_anchors.isdisjoint(hs.anchors_for(entry))):
+            raise unavailable("canonical_source_filtered")
     return {
         "text": result.get("text", ""),
         "citations": citations,

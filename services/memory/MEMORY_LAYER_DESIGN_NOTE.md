@@ -309,13 +309,16 @@ Wildcard tenants narrow to `default`.
 
 **Reflect (H9 route).** `POST /api/memory/reflect` is read-only, authorised like
 retrieve, one bank per call (`bank` = `institutional` or `persona`), low budget,
-and returns text plus citations mapped back to canonical ids that re-authorise
-from the owner store. While `PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED` is not
-true, or the index rejects reflect, it returns 503 `reflect_unavailable` with a
-reason. In Hindsight 1.2.1, reflect temperature is a static service setting
-configured on the `hindsight` container via
-`HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` (default `0.1` in `docker-compose.yml`),
-while the per-request payload uses `budget="low"`.
+and returns text plus citations mapped back to canonical ids only after every
+contributing source in `based_on` re-authorises and validates (active,
+non-expired, matching tenant, persona, relevance scope and request filters)
+against the canonical owner store; any rejected or unverified source fails
+closed before returning generated text. While
+`PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED` is not true, or the index rejects
+reflect, it returns 503 `reflect_unavailable` with a reason. In Hindsight 1.2.1,
+reflect temperature is a static service setting configured on the `hindsight`
+container via `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` (default `0.1` in
+`docker-compose.yml`), while the per-request payload uses `budget="low"`.
 
 ### 5.3 Retrieval Trigger Contexts
 

@@ -2,12 +2,16 @@
   "task_id": "MEMORY-HINDSIGHT-INDEX-20261113",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-11-14T06:59:30Z",
+  "recorded_at": "2026-11-14T07:26:30Z",
   "scope": "H3-H7, H9 route, H11 in services/memory. Search-service side of H7, case file, cycle and panel are other tasks.",
   "commands": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/hindsight/tests services/memory",
-      "result": "142 passed, 9 skipped (real-container tests skipped without env)"
+      "result": "142 passed, 9 skipped, 2 subtests passed (real-container tests skipped without env)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_main.py -k test_reflect_route_unavailable_reasons_and_scoped_citation_hydration",
+      "result": "1 passed (AC6 fail-closed HTTP regressions: 503 canonical_source_inactive/canonical_source_expired/canonical_source_missing/canonical_source_unverified and 403 tenant_scope_mismatch/persona_scope_mismatch/committee_scope_mismatch without returning generated text)"
     },
     {
       "command": ".venv-pantheon/bin/python3 -c \"import sys; sys.path[0] = '/tmp/pantheon-worker-worktrees/pantheon/memory-hindsight-index-20261113'; exec(open('/tmp/pantheon-goal-resume-20261111/Memory7337-AC1-frozen-isolated-probe-20261114T0310/probe.py').read())\"",
@@ -114,6 +118,7 @@
       {
         "path": "services/memory/main.py",
         "sha256": "40411ce8fdd81fc305a1f07628c4442cd3a5d2c89fbf66cbc67795634cbacbc7",
+        "current_head_sha256": "5e58d70dfc414e071e31c2c53a1037dcc07059225ffa85ef31d172893683147d",
         "snapshot_matches_frozen": true
       },
       {
@@ -139,6 +144,7 @@
       {
         "path": "services/memory/test_main.py",
         "sha256": "3074ab77c1492b5da896a8acf25b9942caf370b7c1bf53973fd2a531cafcb82d",
+        "current_head_sha256": "d9deee93018a0659c6d2762aa16f18869127037762c9794925029865319e5b0e",
         "snapshot_matches_frozen": true
       },
       {
@@ -232,7 +238,7 @@
   },
   "known_gaps": [
     "Observation-to-canonical-id mapping through source_fact_ids is covered by a fake-transport unit test only; consolidation is disabled (no LLM provider), so no real observations exist.",
-    "Reflect low temperature is pinned on the hindsight service via HINDSIGHT_API_LLM_TEMPERATURE_REFLECT=${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1} in docker-compose.yml (Hindsight 1.2.1 static config field; ReflectRequest has budget='low' and no per-request temperature field). Scoped citation hydration and unavailable reasons are verified by unit tests in test_main.py, while the live reflect LLM success path remains untested against a real LLM provider because the default provider is `none`."
+    "Reflect low temperature is pinned on the hindsight service via HINDSIGHT_API_LLM_TEMPERATURE_REFLECT=${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1} in docker-compose.yml (Hindsight 1.2.1 static config field; ReflectRequest has budget='low' and no per-request temperature field). Scoped citation validation, fail-closed rejection of stale/inactive/expired/missing/unmapped and unauthorized tenant/persona/committee sources, and unavailable reasons are verified by HTTP tests in test_main.py, while the live reflect LLM success path remains untested against a real LLM provider because the default provider is `none`."
   ],
   "api_facts_verified_on_real_container": [
     "retain with document_id replaces; caller entities kept with resolve_entities false",
