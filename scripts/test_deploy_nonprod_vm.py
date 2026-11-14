@@ -510,8 +510,10 @@ def test_required_loop_workers_includes_agora_interaction_worker() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 29
+    assert len(required) == 31
     assert "retrieval-postgres" in required
+    assert "memory-index-postgres" in required
+    assert "hindsight" in required
     assert "agora-interaction-worker" in required
     assert "policy-learning-svc" in required
     assert "operator-bff" in required
@@ -3712,3 +3714,27 @@ def test_steady_validator_accepts_collector_pull_only_on_exact_collector_host() 
         proc = _validate_steady("collector_steady_pull", egress, hosts)
         assert proc.returncode != 0, (egress, hosts)
     assert _validate_steady("reconcile_and_pull", "allowlist", "collector.example.test").returncode != 0
+
+
+def test_memory_index_deploy_overrides_are_optional_and_shell_quoted(tmp_path):
+    text = DEPLOY_SCRIPT.read_text()
+    # Execute the actual loop with a secret-like value containing shell syntax.
+    start = text.index('  local memory_index_env\n')
+    end = text.index('  command_prefix+=', text.index('\n  done', start))
+    block = text[start:end].replace('  local memory_index_env', '  memory_index_env=')
+    sentinel = tmp_path / 'must-not-exist'
+    supplied = 'literal dollars $HOME and $(touch ' + str(sentinel) + ') and quote\''
+    env = {**os.environ, 'HINDSIGHT_API_KEY': supplied}
+    for name in ('MEMORY_INDEX_POSTGRES_PASSWORD', 'HINDSIGHT_REFLECT_LLM_API_KEY'):
+        env.pop(name, None)
+    script = '''set -euo pipefail
+shell_quote() { printf '%q' "$1"; }
+command_prefix=''
+''' + block + '''
+eval "export $command_prefix"
+python3 -c 'import json,os; print(json.dumps({k:v for k,v in os.environ.items() if k in ("HINDSIGHT_API_KEY","MEMORY_INDEX_POSTGRES_PASSWORD","HINDSIGHT_REFLECT_LLM_API_KEY")}))'
+'''
+    result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {'HINDSIGHT_API_KEY': supplied}
+    assert not sentinel.exists()
