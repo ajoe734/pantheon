@@ -50,6 +50,8 @@ class Docker(FakeDocker):
                                  "started_at": "2026-09-09T00:00:00Z", "restart_count": 0}
                        for index, service in enumerate(d.OWNERS)}
         self.owner_status = {}
+        self.issuer_env = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+                           "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}
         self.recreate_seq = 0
         self.config = {**d.a.BASELINE_PRINCIPAL_CONFIG,
                        **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, "false")}
@@ -103,6 +105,15 @@ class Docker(FakeDocker):
                                "status": state.get("status", "running"), "exit_code": state.get("exit_code", 0),
                                "health_test": state.get("health_test", ["CMD", "true"]),
                                "health": state.get("health", "healthy")})
+        issuer = self.owners.get(d.a.ISSUER_SERVICE)
+        if issuer and args[0] == "inspect" and args[-1] == issuer["container_id"]:
+            # Existing issuer posture capture: nonsecret names only, byte-for-byte as recorded.
+            if args[2] == d.a.ISSUER_ENV_FORMAT:
+                self.calls.append(args)
+                return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in self.issuer_env.items())
+            if args[2] == d.a.RESTART_FORMAT:
+                self.calls.append(args)
+                return json.dumps("unless-stopped")
         if args[0] == "inspect" and args[2] == d.OWNER_FORMAT:
             self.calls.append(args)
             if int(args[-1], 16) <= 3:
