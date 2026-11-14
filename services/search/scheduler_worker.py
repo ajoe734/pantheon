@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,16 @@ def _post_json(api_url: str, path: str, body: dict[str, Any], *, timeout_seconds
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         text = response.read().decode("utf-8")
     return json.loads(text) if text else {}
+
+
+def _describe_error(exc: BaseException) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:500]
+        except Exception:
+            detail = ""
+        return f"HTTP {exc.code} {exc.reason}: {detail}"
+    return str(exc) or repr(exc)
 
 
 def run_tick(
@@ -78,16 +89,32 @@ def main() -> int:
     tick = 0
     while True:
         tick += 1
-        result = run_tick(api_url=api_url, force_full=force_full, materialize=materialize)
-        alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
-        if alive_path:
-            try:
-                alive_p = Path(alive_path)
-                alive_p.parent.mkdir(parents=True, exist_ok=True)
-                alive_p.touch()
-            except Exception:
-                pass
-        print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
+        try:
+            result = run_tick(api_url=api_url, force_full=force_full, materialize=materialize)
+        except Exception as exc:  # noqa: BLE001 - recoverable tick failure must stay observable, not fatal
+            # Failed tick: report reason, do NOT touch the alive file (health stays honest), keep looping.
+            print(
+                json.dumps(
+                    {
+                        "tick": tick,
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "error": _describe_error(exc),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        else:
+            alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
+            if alive_path:
+                try:
+                    alive_p = Path(alive_path)
+                    alive_p.parent.mkdir(parents=True, exist_ok=True)
+                    alive_p.touch()
+                except Exception:
+                    pass
+            print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
         if max_ticks and tick >= max_ticks:
             return 0
         time.sleep(interval_seconds)

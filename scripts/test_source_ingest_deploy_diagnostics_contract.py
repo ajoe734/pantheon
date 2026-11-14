@@ -1,6 +1,10 @@
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,8 +15,182 @@ DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 def _failure_diagnostics_function() -> str:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = deploy.index("dump_dev_root_failure_diagnostics() {")
-    end = deploy.index("\n}\n\nverify_dev_evolution_daily_sweep()", start)
+    end = deploy.index("\n}\n\nretire_dormant_and_one_off_profile_containers()", start) + 2
     return deploy[start:end]
+
+
+def _run_root_failure(tmp_path: Path, **settings: str) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    """Execute the real diagnostics and rollback functions against Docker stubs."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        f"#!{sys.executable}\n" + """
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+with open(os.environ['DOCKER_CALLS'], 'a') as stream:
+    stream.write(json.dumps(args) + '\\n')
+if args[:1] == ['compose']:
+    if args[-4:-1] == ['ps', '-a', '-q']:
+        service = args[-1]
+        if service == 'search-index-scheduler':
+            if os.getenv('MISSING'):
+                sys.exit(0)
+            if os.getenv('PS_FAIL'):
+                sys.exit(19)
+            print('failing-worker-id')
+        elif service == 'search-svc':
+            print('healthy-service-id')
+    elif 'logs' in args:
+        print('healthy-service-log' if args[-1] == 'search-svc' else 'other-service-log')
+    sys.exit(0)
+if args[:1] == ['logs']:
+    assert args == ['logs', '--tail', '200', 'failing-worker-id']
+    assert not Path(os.environ['RESTORE_MARKER']).exists()
+    if os.getenv('LOGS_FAIL'):
+        print('Error response from daemon: DAEMON_ERROR_SENTINEL '
+              'Authorization: Bearer LOG_COMMAND_SECRET_SENTINEL', file=sys.stderr)
+        sys.exit(20)
+    print(os.environ['WORKER_LOG'], flush=True)
+    print(os.environ['WORKER_STDERR'], file=sys.stderr, flush=True)
+    sys.exit(0)
+if args[:1] == ['inspect']:
+    assert args[1] == '--format'
+    if args[-1] == 'failing-worker-id':
+        assert not Path(os.environ['RESTORE_MARKER']).exists()
+        assert args[2] == ('status={{.State.Status}} restart_count={{.RestartCount}} '
+                           'health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} '
+                           'exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}')
+        if os.getenv('INSPECT_FAIL'):
+            print('INSPECT_SECRET_SENTINEL', file=sys.stderr)
+            sys.exit(21)
+        print('status=restarting restart_count=5 health=unhealthy exit_code=1 oom_killed=false')
+    else:
+        assert args[-1] == 'healthy-service-id'
+        print('status=running restart_count=0 health=healthy exit_code=0 oom_killed=false')
+    sys.exit(0)
+sys.exit(91)
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    redact_start = deploy.index("redact_bounded_refresh_log() {")
+    redact_end = deploy.index("\n}\n", redact_start) + 2
+    rollback_start = deploy.index("rollback_dev_bff_on_failure() {")
+    rollback_end = deploy.index("\n}\n", rollback_start) + 2
+    script = """set -euo pipefail
+info() { echo "$*"; }
+run_dev_artifact_driver() {
+  printf '%s\\n' "$1" > "$RESTORE_MARKER"
+  echo "artifact-driver:$1"
+  return "${RESTORE_STATUS:-0}"
+}
+""" + deploy[redact_start:redact_end] + "\n" + _failure_diagnostics_function() + "\n" + deploy[rollback_start:rollback_end] + """
+rollback_dev_bff_on_failure exact_component_deployment
+echo UNREACHABLE_SUCCESS
+"""
+    calls = tmp_path / "docker-calls.jsonl"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "DOCKER_CALLS": str(calls),
+        "RESTORE_MARKER": str(tmp_path / "restore"),
+        "DEV_CANDIDATE_RECEIPT_ACKED": "true",
+        "WORKER_LOG": "",
+        "WORKER_STDERR": "",
+        **settings,
+    }
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env=env, timeout=10, check=False,
+    )
+    return result, [json.loads(line) for line in calls.read_text().splitlines()]
+
+
+@pytest.mark.parametrize('trace_stream', ['stdout', 'stderr'])
+def test_search_worker_failure_retained_before_compensation_without_payloads(
+    tmp_path: Path, trace_stream: str,
+) -> None:
+    # Synthetic fixture: a healthy API, a crashing worker, successful business
+    # snapshots and failed-tick payloads must remain distinguishable.
+    worker_log = '\n'.join([
+        json.dumps({"tick": 1, "result": {"document": "SUCCESS_PAYLOAD_SENTINEL", "error_type": "RuntimeError"}}),
+        json.dumps({"tick": 2, "status": "failed", "error_type": "HTTPError", "detail": "FAILED_PAYLOAD_SENTINEL", "token": "SECRET_TOKEN_SENTINEL"}),
+        'Authorization: Bearer SECRET_HEADER_SENTINEL',
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzZWNyZXQifQ.signature',
+    ])
+    traceback_log = '\n'.join([
+        'Traceback (most recent call last):',
+        '  File "/app/services/search/scheduler_worker.py", line 99, in main',
+        '  File "/private/PRIVATE_PATH_SENTINEL/client.py", line 23, in request',
+        '    request(payload="SOURCE_PAYLOAD_SENTINEL")',
+        'TimeoutError: RAW_DOCUMENT_SENTINEL Authorization: Bearer SECRET_BEARER_SENTINEL',
+        'Authorization: Bearer STDERR_SECRET_SENTINEL',
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcml2YXRlIn0.stderr_signature',
+    ])
+    # Non-TTY Docker logs sends Python stderr to CLI stderr; successful and
+    # failed tick JSON remains on stdout. Also keep the former stdout control.
+    result, calls = _run_root_failure(
+        tmp_path,
+        WORKER_LOG=worker_log + ('\n' + traceback_log if trace_stream == 'stdout' else ''),
+        WORKER_STDERR=traceback_log if trace_stream == 'stderr' else '',
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert 'healthy-service-log' in output
+    assert 'Traceback (most recent call last):' in output
+    assert '  File "scheduler_worker.py", line 99, in main' in output
+    assert '/app/' not in output
+    assert '/private/' not in output
+    assert 'TimeoutError: [details omitted]' in output
+    assert '{"error_type": "HTTPError", "status": "failed", "tick": 2}' in output
+    assert 'status=restarting restart_count=5 health=unhealthy exit_code=1 oom_killed=false' in output
+    assert output.index('TimeoutError:') < output.index('artifact-driver:restore')
+    assert output.index('"error_type": "HTTPError"') < output.index('artifact-driver:restore')
+    assert output.index('restart_count=5') < output.index('artifact-driver:restore')
+    assert 'automatic BFF exact-artifact restore verified' in output
+    assert 'SENTINEL' not in output
+    assert 'eyJ' not in output
+    assert 'RuntimeError' not in output
+    assert 'UNREACHABLE_SUCCESS' not in output
+    assert ['logs', '--tail', '200', 'failing-worker-id'] in calls
+
+
+@pytest.mark.parametrize('failure', ['MISSING', 'PS_FAIL', 'LOGS_FAIL', 'INSPECT_FAIL'])
+@pytest.mark.parametrize('restore_status,acked,operation', [('0', 'true', 'restore'), ('23', 'true', 'restore'), ('0', 'false', 'verify')])
+def test_search_worker_diagnostics_unavailable_preserve_failure_and_rollback(
+    tmp_path: Path, failure: str, restore_status: str, acked: str, operation: str,
+) -> None:
+    result, calls = _run_root_failure(
+        tmp_path, **{failure: '1', 'RESTORE_STATUS': restore_status, 'DEV_CANDIDATE_RECEIPT_ACKED': acked},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert f'artifact-driver:{operation}' in output
+    assert 'UNREACHABLE_SUCCESS' not in output
+    assert 'SENTINEL' not in output
+    if failure in ('MISSING', 'PS_FAIL'):
+        assert 'search-index-scheduler container unavailable after failure' in output
+        assert not any('failing-worker-id' in call for call in calls)
+    if failure == 'LOGS_FAIL':
+        assert 'restart_count=5' in output
+        assert 'Error response from daemon' not in output
+    if restore_status == '23':
+        assert 'automatic BFF exact-artifact restore failed; no source-build fallback' in output
+
+
+def test_search_worker_success_only_logs_do_not_export_business_snapshot(tmp_path: Path) -> None:
+    result, _ = _run_root_failure(
+        tmp_path, WORKER_LOG=json.dumps({"tick": 1, "result": {"body": "SUCCESS_ONLY_SENTINEL"}}),
+    )
+    assert result.returncode == 1
+    assert 'SUCCESS_ONLY_SENTINEL' not in result.stdout + result.stderr
+    assert '"tick": 1' not in result.stdout
+    assert 'artifact-driver:restore' in result.stdout
 
 
 def _bounded_wait_function() -> str:
