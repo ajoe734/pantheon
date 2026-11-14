@@ -222,8 +222,10 @@ jobs:
       - name: Execute bounded Taiwan chip refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: chip_refresh
-        continue-on-error: true
+        timeout-minutes: 15
         env:
+          SOURCE_INGEST_MAX_RECORDS: 500
+          SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: 120
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           TARGET_ENV: dev
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}

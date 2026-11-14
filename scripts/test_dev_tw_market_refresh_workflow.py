@@ -357,6 +357,10 @@ def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> No
 def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures(tmp_path):
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     step = next(s for s in _load_workflow()['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
+    assert step['timeout-minutes'] == 15
+    assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
+    assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 120
+    assert step.get('continue-on-error', False) is False
     wrapper = tmp_path / '.lease-controller/scripts/run_with_dev_environment_lease.sh'
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text('#!/usr/bin/env bash\nexec "$@"\n')

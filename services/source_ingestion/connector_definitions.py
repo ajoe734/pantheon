@@ -1200,6 +1200,7 @@ _BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
 _CANONICAL_DEFINITIONS += tuple(
     replace(_BASE_DEFINITIONS[profile["base"]], definition_id=connector_id,
             datasets=(profile["dataset"],),
+            default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits, "max_records": 500},
             test_manifest_ref="evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114",
             metadata={**_BASE_DEFINITIONS[profile["base"]].metadata,
                       "refresh_profile": profile})

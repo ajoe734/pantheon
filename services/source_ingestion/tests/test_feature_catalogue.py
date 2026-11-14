@@ -939,3 +939,14 @@ def test_market_chip_rejects_legacy_default_zero_and_incomplete_taifex_cells():
     assert fc.market_chip_observations('taifex_market_put_call', broken_ratio)['observations'] == []
     with pytest.raises(fc.FeatureCatalogueError, match='completeness'):
         fc.observations_from_row('tw_market_margin_balances', rows[0])
+
+
+def test_market_chip_records_malformed_payloads_and_overflow_as_withheld():
+    rows = _recorded_chip_rows('tw_institutional_flow', 'TPEx')
+    entities = [r['symbol_canonical'] for r in rows]
+    huge = [{**row, 'foreign_net': 1e308} for row in rows]
+    assert fc.market_chip_observations('tw_market_institutional_flows', huge,
+                                     required_entities=entities)['reason'] == 'nonfinite_market_total'
+    assert fc.market_chip_observations('taifex_market_put_call', [None])['reason'] == 'malformed_session_rows'
+    options = _recorded_chip_rows('taifex_options_chip', 'TAIFEX')[:1]
+    assert fc.market_chip_observations('taifex_market_put_call', [{**options[0], 'raw_row': 5}])['reason'] == 'malformed_source_row'

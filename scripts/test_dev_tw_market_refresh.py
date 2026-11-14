@@ -3421,7 +3421,7 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
 def test_chip_preflight_does_not_require_equity_price_snapshots():
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
-        result = _run_preflight_script('2026-11-13T11:00:00Z', None,
+        result = _run_preflight_script(False, datetime(2026, 11, 13, 11, tzinfo=timezone.utc), None,
                                        profile=(cid, profile['dataset']), readback={'connectors': []})
         assert result['status'] == 'proceed', (cid, result)
         assert result['reason'] != 'snapshot_missing'

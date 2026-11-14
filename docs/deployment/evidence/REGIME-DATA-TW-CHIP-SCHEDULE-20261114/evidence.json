@@ -301,9 +301,76 @@
       "sample_only": true
     }
   ],
-  "validation": [],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon resolves imports from a foreign cwd; supervisor-provided dependency interpreter."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_provider_management_coverage.py services/registry/test_factor_rule.py services/source_ingestion/tests/test_controller_worker.py scripts/test_dev_tw_market_refresh_workflow.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "423 passed, 1 skipped, 1 warning in 65.71s. Subsequent malformed-input/overflow, unit metadata and workflow-budget changes rechecked by focused validation below."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python -m pytest services/source_ingestion/tests/test_feature_catalogue.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_deploy_nonprod_vm.py::test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "63 passed in 26.98s; final catalogue guards, exact host/dataset acceptance/rejection and actual workflow shell execution."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python -m pytest scripts/test_dev_tw_market_refresh.py -k 'chip_terminal or chip_preflight' scripts/test_dev_tw_market_refresh_workflow.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "2 passed, 143 deselected in 16.76s; loops cover all five profiles with correct and wrong dataset/schema/venue/session/run proof."
+    },
+    {
+      "command": "/tmp/gfd-venv/bin/python -m pytest scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_deploy_nonprod_vm.py::test_workflows_pass_collector_host_and_token_names services/source_ingestion/tests/test_feature_catalogue.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "82 passed in 45.48s; corrected diagnostics regressions plus market catalogue."
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
   "limitations": [
     "Official TWSE MI_MARGN OpenAPI response has no source date; no run-date substitution is permitted. Market observations withhold these rows.",
     "Equity tables exceed the unchanged 500-record bound. Whole-market aggregates remain withheld pending a governed complete entity set and complete pull; partial totals are never market truth."
-  ]
+  ],
+  "delivery_scope": "Source-only scheduled ingestion and governed market series; no hosted deployment or live-capital action.",
+  "implementation": {
+    "configured_instances": "Five independently scheduled instances of the two existing adapter implementations. Venue-specific margin instances prevent one capped venue from consuming the other venue budget; no new adapter or endpoint.",
+    "admission": "Each added identity admits one exact dataset and the existing official host pair. Existing tw_price_daily and taifex_ssf_contracts profiles retain their behavior and reject unrelated datasets.",
+    "workflow": "Existing 07:00/08:00 UTC weekday refresh; each chip run has a 120-second bounded runtime and 500-row cap, within a 15-minute chip step. All five outcomes are attempted and uploaded. Any failed chip run fails the step after remaining runs are attempted.",
+    "series": "Four market datasets / thirteen fields; same-session completeness, governed entity identity, source event date, release lag, actual acquisition time, separate reported put/call ratios and raw net-OI verification.",
+    "aggregation_entrypoint": "services.source_ingestion.feature_catalogue.market_chip_observations returns complete observations or a withheld result with a reason. It consumes one session of stored normalized rows plus the caller-governed complete entity set; it does not invent an entity set from a capped slice.",
+    "units": "Market margin balances retain reported trading-unit counts, without converting them to TWD or relabelling them as individual shares. Existing per-symbol entries are unchanged."
+  },
+  "validation_history": [
+    {
+      "suite": "Initial expanded deploy/workflow/catalogue/reconciler batch",
+      "result": "255 passed, 2 skipped, 1 failed. Existing collector-env test expected two bounded workflow steps; updated it to assert the three named steps including chip refresh, then reran successfully."
+    },
+    {
+      "suite": "Initial controller/registry/diagnostics batch",
+      "result": "253 passed, 2 failed. Both diagnostics assertions also failed against the unchanged origin/dev deploy script: FinMind was omitted from the existing connector allowlist assertion, and the old before-close assertion contradicted the current latest-closed-session recovery behavior. Fixed the assertions without altering that runtime behavior; diagnostics rerun passed."
+    },
+    {
+      "suite": "Full scripts/test_dev_tw_market_refresh.py regression batch",
+      "result": "129 passed, 1 failed. New preflight test used the wrong existing harness signature; fixed force/datetime arguments. Targeted final rerun passed, including the terminal verifier matrix. No killed, timed-out or still-running batch is recorded as passed."
+    }
+  ],
+  "acceptance_notes": {
+    "hosted_behavior_claimed": false,
+    "complete_market_proof": false,
+    "fixture_scope": "Recorded samples are real provider rows; positive completeness tests govern only the explicitly named sample entities. They do not certify a complete live Taiwan market.",
+    "raw_date_policy": "TWSE MI_MARGN is requested and its raw rows can be persisted, but the recorded response is undated. Terminal verification and market-series conversion refuse valid-session claims for it; the current run date is never substituted.",
+    "cap_policy": "Official equity response counts (1309 / 922 / 896) exceed the unchanged 500-row bound. No whole-market margin/flow value is claimed or produced from those capped pulls.",
+    "review_status": "Pending independent review by assigned reviewer Claude; owner has not approved or marked done."
+  }
 }

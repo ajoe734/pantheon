@@ -105,7 +105,7 @@ MARKET_CHIP_DATASETS = {
 DATASET_SPECS: tuple[DatasetSpec, ...] = (
     _ds("tw_market_margin_balances", "tw_margin_short_balance", "market", "daily", "date", 0,
         ("twse:exchangeReport/MI_MARGN", "tpex:tpex_mainboard_margin_balance"),
-        "Complete governed TWSE/TPEx margin and short balances; shares as normalized, not TWD credit"),
+        "Complete governed TWSE/TPEx reported margin and short balance counts; not TWD credit"),
     _ds("tw_market_institutional_flows", "tw_institutional_flow", "market", "daily", "date", 0,
         ("twse:fund/T86 via collector bundle", "tpex:tpex_3insti_daily_trading"),
         "Complete same-session market foreign, trust and dealer net shares"),
@@ -191,7 +191,7 @@ _FIELDS.append(
                    "TPEx total 3-institution net shares")
 )
 for _f in ("margin_balance", "short_balance"):
-    _FIELDS.append(CatalogueField("tw_market_margin_balances", _f, _f, "shares",
+    _FIELDS.append(CatalogueField("tw_market_margin_balances", _f, _f, "reported_trading_units",
                                   "Complete governed market balance; no partial totals"))
 for _f, _src, _d in _INST_FIELDS:
     _FIELDS.append(CatalogueField("tw_market_institutional_flows", _f, _src, "shares", _d))
@@ -504,6 +504,8 @@ def market_chip_observations(
         return withheld("record_cap_prevents_complete_market", record_cap=record_cap, received=len(items))
     if not items:
         return withheld("missing_session_rows")
+    if any(not isinstance(row, Mapping) for row in items):
+        return withheld("malformed_session_rows")
     dates = set()
     for row in items:
         event = str(row.get("date") or "")
@@ -522,7 +524,7 @@ def market_chip_observations(
     constituents = []
     if dataset in {"tw_market_margin_balances", "tw_market_institutional_flows"}:
         entities = set(required_entities or ())
-        if not entities or any(not e.endswith((".TWSE", ".TPEX")) for e in entities):
+        if not entities or any(not isinstance(e, str) or not e.endswith((".TWSE", ".TPEX")) for e in entities):
             return withheld("governed_entity_set_missing")
         by_entity = {}
         for row in items:
@@ -539,7 +541,10 @@ def market_chip_observations(
             nums = [_number(row.get(f.source_field)) for row in constituents]
             if any(v is None or not math.isfinite(v) for v in nums):
                 return withheld("missing_or_invalid_constituent_value", field=f.field)
-            values[f.field] = math.fsum(nums)
+            try:
+                values[f.field] = math.fsum(nums)
+            except OverflowError:
+                return withheld("nonfinite_market_total")
     elif dataset == "taifex_market_positions":
         investor_names = {"外資及陸資": "foreign", "外資": "foreign", "投信": "trust", "自營商": "dealer",
                           "foreign_investors": "foreign", "investment_trust": "trust", "dealers": "dealer"}
@@ -553,6 +558,8 @@ def market_chip_observations(
             if entity in by_entity:
                 return withheld("duplicate_entity_rows", entity=entity)
             raw = row.get("raw_row") or {}
+            if not isinstance(raw, Mapping):
+                return withheld("malformed_source_row")
             # The legacy adapter defaults absent numbers to zero. Require the
             # actual source net field before admitting that normalized value.
             reported = next((raw[k] for k in ("OpenInterest(Net)", "多空未平倉口數淨額", "NetOpenInterest", "net_oi") if k in raw), None)
@@ -572,6 +579,8 @@ def market_chip_observations(
         constituents = items
         entities = {"TXO"}
         raw = items[0].get("raw_row") or {}
+        if not isinstance(raw, Mapping):
+            return withheld("malformed_source_row")
         # Use the two distinct published ratios. The adapter's legacy
         # put_call_ratio field represents OI and cannot stand in for volume.
         for f in catalogue_fields():
