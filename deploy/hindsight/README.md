@@ -24,6 +24,10 @@ only the memory facade may authorise callers and hydrate canonical records.
   `postgresql-17-pgvector=0.8.6-1.pgdg13+1`. The official signed PGDG archive
   supplies the older package after it left the live index. Init creates both
   `vector` and `pgroonga` in the separate index database.
+  The Dockerfile explicitly invokes the upstream `docker-entrypoint.sh` with
+  Bash (its existing shebang) and keeps `postgres` as the default command, so
+  Stage0 can check the actual script without changing native initialisation,
+  argument forwarding, privilege drop or signal handling.
 * Embeddings: exactly `services/search/model-manifest.json`, including external
   ONNX weights and all tokenizer files. Mean pooling, L2 normalisation, 1024
   dimensions and the `query: ` / `passage: ` prefixes match search. The same
