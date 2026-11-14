@@ -656,7 +656,6 @@ def test_deploy_nonprod_vm_docker_builder_cache_bounded_by_default_and_image_pru
         for name in (
             "docker_storage_diagnostics",
             "run_bounded_docker_prune",
-            "remove_dev_untagged_unreferenced_images_for_build",
             "protect_dev_compose_container_images_for_builder_prune",
             "prune_dev_docker_storage_for_build",
         )
@@ -889,7 +888,6 @@ sys.exit(0)
         for name in (
             "docker_storage_diagnostics",
             "run_bounded_docker_prune",
-            "remove_dev_untagged_unreferenced_images_for_build",
             "protect_dev_compose_container_images_for_builder_prune",
             "prune_dev_docker_storage_for_build",
         )
@@ -1129,7 +1127,6 @@ printf "Filesystem Size Used Avail Use%% Mounted on\\n/dev/sda1 193G 183G 10G 95
         for name in (
             "docker_storage_diagnostics",
             "run_bounded_docker_prune",
-            "remove_dev_untagged_unreferenced_images_for_build",
             "prune_dev_release_artifacts_for_build",
             "protect_dev_compose_container_images_for_builder_prune",
             "prune_dev_docker_storage_for_build",

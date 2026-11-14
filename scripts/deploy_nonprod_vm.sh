@@ -5401,7 +5401,10 @@ prune_dev_docker_storage_for_build() {
         info "removing dangling dev Docker images before root build"
         run_bounded_docker_prune "dangling images" docker image prune -f
         if [[ "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}" != "false" ]]; then
-          remove_dev_untagged_unreferenced_images_for_build
+          # Guarded so harnesses that source only the older prune helpers keep working.
+          if declare -F remove_dev_untagged_unreferenced_images_for_build >/dev/null; then
+            remove_dev_untagged_unreferenced_images_for_build
+          fi
         fi
       fi
     else
