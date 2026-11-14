@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import types
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -80,10 +81,16 @@ def test_recorded_weekend_and_preclose_runs_use_rows_and_same_date_never_resets(
     assert p.priority_trade_date == "2026-11-12"
 
 
-def test_completed_same_session_new_run_has_no_raw_resend(tmp_path):
+def test_completed_same_session_new_run_has_no_raw_resend(tmp_path, monkeypatch):
     files, first = recorded_run(count=2, fetched="2026-11-13T12:18:42Z")
+    # Observe each recorded run while fresh, regardless of the CI wall clock.
+    observed_at = datetime.fromisoformat(first["finished_at"].replace("Z", "+00:00")) + timedelta(minutes=1)
+    real_observed = cb.observed_from_collector_status
+    monkeypatch.setattr(cb, "observed_from_collector_status", lambda *args, **kwargs: real_observed(
+        *args, **{**kwargs, "now": observed_at}))
     a = adapter(tmp_path, files, [first]); pull = a.pull(); a.save_resume_cursor(pull)
     more, entry = recorded_run(count=2); files.update(more)
+    observed_at = datetime.fromisoformat(entry["finished_at"].replace("Z", "+00:00")) + timedelta(minutes=1)
     a = adapter(tmp_path, files, [first, entry])
     reads = []
     original = a.transport.read
