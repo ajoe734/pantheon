@@ -1,31 +1,92 @@
 {
-  "task_id": "BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114",
-  "persona_health": {
-    "change": "_build_persona_health_items_impl now calls overlay_source_health_truth(..., thin=True)",
-    "test": "test_persona_health_rows_use_thin_source_health_overlay_and_stay_under_1mb (4 personas, ~1 MB of required source health each; response < 1 MB; fails without the change)",
-    "frontend_consumers_checked": "NOT VERIFIED in this repo: the execute-plans frontend lives in a separate repository and was not available in this worktree. Only the in-repo e2e spec docs/05/.../03-execution-loop.spec.ts references persona-health. Thin mode removes only data_source_status.required_source_health/requiredSourceHealth/connector_health/connectorHealth and sets source_health_bindings to []; all scalar fields (state, summary, provider_statuses, live_* ids, source_health_source, row statuses) are unchanged. A reviewer must confirm the frontend does not read the removed blobs from persona-health.",
-    "not_measured": "68 MB / 12.5 s hosted figures not reproduced locally"
+ "task_id": "BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114",
+ "persona_health": {
+  "change": "_build_persona_health_items_impl calls overlay_source_health_truth(..., thin=True)",
+  "tests": [
+   "test_persona_health_rows_use_thin_source_health_overlay_and_stay_under_1mb (builder rows)",
+   "test_v5_persona_health_full_response_stays_under_1mb_with_heavy_source_health (GET via runtime router; serialized body incl. duplicated data+items; 4 personas x ~1MB source health; without thin the body is 96,353,977 bytes, with thin < 1,000,000)"
+  ],
+  "frontend_consumers_checked": {
+   "repository": "execute-plans (separate checkout /home/chloe_ong_dev_cctech_support_com/code/execute-plans, read via git show/grep only)",
+   "commit": "7a2f02e0bfdef2610f960ffb1fae87fe7ee98df5",
+   "chain": [
+    "src/lib/bff-v1/paths.ts:144 v5ExecutionPersonaHealth",
+    "src/lib/bff-v1/v5Client.ts:129-137 personas.health -> strictItemsFrom -> adaptBffPersonaHealth",
+    "src/lib/bff-v1/v5.ts:449-475 adaptBffPersonaHealth",
+    "src/management/pages/v5/ExecutionLoop.tsx:51 useV5Live(v5.personas.health) -> PersonaHealthMatrix"
+   ],
+   "other_references": "repo-wide grep at that commit finds only tests/mocks/e2e route stubs (src/lib/v5/__tests__/bff.test.ts, e2e/02,03,17,18,19 specs), probe scripts and docs; no other src consumer of the persona-health route",
+   "fields_read_by_adapter": [
+    "id/persona_id/personaId",
+    "name/persona_name/personaName",
+    "mode",
+    "status|health",
+    "score",
+    "suspendedReason/suspended_reason",
+    "routedStrategies/routed_strategies",
+    "openFindings/open_findings",
+    "updatedAt/updated_at"
+   ],
+   "removed_by_thin": "data_source_status.required_source_health/requiredSourceHealth/connector_health/connectorHealth and source_health_bindings (set to []). The adapter never reads any of them and builds a typed DTO, so no consumer field changes.",
+   "caveats": "personaFleetDataSources.ts reads connector_health on the different management persona-fleet surface; this change does not touch that surface. Thin clones existing data_source_status and does not overwrite heavy keys already present on a row; it removes only what the overlay itself adds."
+  }
+ },
+ "dominant_costs_167_personas": {
+  "method": "cProfile of the handler thread, 167 fixture-pack-shaped personas (cloned from B3 fixture records, 8 required sources each), script profile_167_concurrent.py",
+  "persona_health": "Before: 7.7 MB response; per-persona required_source_health/source_health_bindings JSON build, clone and serialisation. Removed by thin=True (response 1.93 MB, handler 0.17 s).",
+  "persona_league": "~46% of handler time was _pm12_attach_ranking_snapshot -> snapshot_record, which built the full content twice, deep-froze every item (RankingSnapshotRecord.__post_init__) and hashed evidence assertions, only to keep ranking_snapshot_id. Removed: id now built from snapshot_content_digest alone (one content pass), asserted equal to snapshot_record().ranking_snapshot_id for several periods.",
+  "persona_league_rankings": "same snapshot cost (removed as above) plus N+1 per-persona get_route_policy_for_persona/get_persona_allowed_actions reads (340 calls for 167 personas), removed by passing include_route_policy/health/allowed_actions=False.",
+  "persona_fleet": "No single item dominates: _pm12_persona_league_rows 0.128 s, per-row projection (_project_persona_fleet_row_impl 0.109 s), quarterly ranking items 0.049 s; it also called _pm12_attach_ranking_snapshot (line 7204), so it gets the snapshot saving. Its before p95 above 2 s in the concurrent run was GIL contention with the 7.7 MB persona-health response.",
+  "not_reproduced": "Hosted store round-trip latency is not reproduced; local stores are in-process."
+ },
+ "parity": {
+  "rankings": "test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity (full serialised response, old vs new row flags)",
+  "snapshot_identity": "test_pm12_attach_ranking_snapshot_id_matches_snapshot_record_identity",
+  "fleet": "test_persona_fleet_rows_identical_with_digest_only_snapshot_identity (items and summary identical with previous full-record identity)",
+  "measurement_byte_sizes": "league 71,649 / rankings 319,585 / fleet 96,286 bytes identical before and after"
+ },
+ "concurrent_measurement_167_personas": {
+  "method": "4 endpoints requested concurrently (4 threads, one per endpoint) x 20 rounds, in-process TestClient, 167 personas; reproduce: run profile_167_concurrent.py from repo root (before = same script against `git archive d7141eb45 services`)",
+  "before_base_d7141eb45": {
+   "persona_health": {
+    "p50_s": 1.946,
+    "p95_s": 2.199,
+    "bytes": 7736160
+   },
+   "persona_league": {
+    "p50_s": 0.65,
+    "p95_s": 1.783
+   },
+   "rankings": {
+    "p50_s": 0.739,
+    "p95_s": 1.931
+   },
+   "persona_fleet": {
+    "p50_s": 1.905,
+    "p95_s": 2.038
+   }
   },
-  "persona_league_rankings": {
-    "dominant_cost_found": "N+1 per-persona store reads: _pm12_persona_league_rows ran with default include_route_policy/health/allowed_actions, issuing get_route_policy_for_persona and get_persona_allowed_actions once per persona (170 + 170 calls for 167 personas). Ranking blocks never read those fields.",
-    "removed": "get_persona_league_rankings passes include_route_policy=False, include_health=False, include_allowed_actions=False; calls drop to 0 each",
-    "parity_test": "test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity compares the full serialized response old path vs new path for equality (ranking order, scores, tiers)"
+  "after": {
+   "persona_health": {
+    "p50_s": 0.722,
+    "p95_s": 0.812,
+    "bytes": 1926772
+   },
+   "persona_league": {
+    "p50_s": 0.552,
+    "p95_s": 0.691
+   },
+   "rankings": {
+    "p50_s": 0.559,
+    "p95_s": 0.726
+   },
+   "persona_fleet": {
+    "p50_s": 0.615,
+    "p95_s": 0.735
+   }
   },
-  "persona_league": {
-    "dominant_cost_found": "Local profile (167 personas, in-memory fixture store): ~75% of time is _list_persona_records -> MemoryPersonaProvisioningStore.list_by_tenant deepcopy of every record. This is a test-store cost; the production persona owner read path is not reproduced locally. The league route already skips route-policy/health/allowed-actions for non-page rows.",
-    "removed": "Nothing; no in-scope read-path cost was identifiable beyond the shared record read. Not claimed as fixed."
-  },
-  "persona_fleet": {
-    "profile": "167 personas, page_size 50, fixture ports: p50 ~0.04 s; cost spread across row projection, no dominant item. Owner reads are already overlapped by BFF-PERSONA-FLEET-CURRENT-LATENCY-20261106.",
-    "removed": "Nothing."
-  },
-  "local_measurement_167_personas_in_memory_store_sequential": {
-    "rankings_before": {"p50_s": 0.608, "p95_s": 0.658, "per_persona_store_reads": 340},
-    "rankings_after": {"p50_s": 0.613, "p95_s": 0.631, "per_persona_store_reads": 0},
-    "persona_league_after": {"p50_s": 0.605, "p95_s": 0.614},
-    "persona_fleet_after": {"p50_s": 0.04},
-    "caveats": "Fixture store reads are in-process and free, so wall time does not change locally; the benefit is the removed 340 store round-trips per request against a real store. Requests were measured sequentially, not concurrently, and persona-health was not timed with 167 real-shaped personas. Acceptance 5 (concurrent p50/p95 incl. persona-health) is therefore only partially evidenced; hosted re-measurement is needed.",
-    "persona_health_167": "not measured"
-  },
-  "constraints": "No new cache, setting, endpoint or background job; response shapes unchanged. New tests were added to existing registered files, so no inventory change was needed."
+  "all_after_p95_under_2s": true,
+  "caveats": "Local in-process measurement on one host; hosted 68 MB / 12.5 s figures are not reproduced and hosted re-measurement remains the release proof. persona-health still returns 1.9 MB for 167 personas locally (other row fields), not changed."
+ },
+ "constraints": "No new cache, setting, endpoint or background job; response shapes unchanged. New tests were added to already registered test files, so bff_test_architecture_inventory.json needed no change (test_bff_test_architecture verified)."
 }

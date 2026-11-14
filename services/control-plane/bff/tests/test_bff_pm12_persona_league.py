@@ -1787,3 +1787,19 @@ def test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity
             personas_service._pm12_persona_league_rows = original
         assert store.calls["get_persona_allowed_actions"] > 0
         assert new == old
+
+
+def test_pm12_attach_ranking_snapshot_id_matches_snapshot_record_identity() -> None:
+    """BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114: the read path derives the
+    snapshot id from the digest only; it must equal the full record's id."""
+    from services.rankings.snapshots import snapshot_record
+
+    items = [
+        {"persona_id": f"p-{i}", "overall_score": 90 - i, "rank": i + 1, "evidence_refs": [{"ref": f"e{i}"}]}
+        for i in range(5)
+    ]
+    for period in ("current", "2026-Q4", "  Weird Period/ 1 ", ""):
+        _, snapshot_id = personas_service._pm12_attach_ranking_snapshot(
+            items, surface="league", period=period
+        )
+        assert snapshot_id == snapshot_record(items, surface="league", period=period).ranking_snapshot_id
