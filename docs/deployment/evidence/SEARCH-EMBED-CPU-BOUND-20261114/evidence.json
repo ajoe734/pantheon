@@ -1,0 +1,716 @@
+{
+  "schema_version": "search_embedding_cpu_bound.v1",
+  "task_id": "SEARCH-EMBED-CPU-BOUND-20261114",
+  "recorded_at": "2026-11-14T13:29:20.291414+00:00",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Antigravity",
+  "review_status": "owner_validation_complete_pending_independent_review",
+  "scope": {
+    "production_changes": [
+      "Fixed FastEmbed threads=2 for the shared document/query engine",
+      "search-svc Compose cpus=2.0 and cpu_shares=256"
+    ],
+    "unchanged": [
+      "model name, pinned revision and file digests",
+      "1024 dimensions, task prefixes and normalization",
+      "batch_size=64, tokenizer and truncation",
+      "index and retrieval implementation",
+      "pipeline checkpoints, triggers, freshness SLA and scheduler contract",
+      "product endpoints, caches, environment settings and background jobs"
+    ],
+    "additional_test_fixture_correction": {
+      "file": "services/search/tests/test_pg_retrieval.py",
+      "change": "MagicMock() -> MagicMock(dimension=1024) in the existing unavailable-embedding test",
+      "reason": "With a live local database this test failed before reaching either fail-closed assertion because an unspecified mock dimension fails the existing 1024-dimensional constructor guard.",
+      "baseline_reproduction": "Original embedding source from 0940f6248ad1003a7cc6406c083875d9061cfb3a reproduced the same fixture failure before any assertion; baseline process exited 1.",
+      "baseline_exit_status": 1,
+      "assertions_changed_or_removed": [],
+      "existing_tests_deleted": []
+    }
+  },
+  "resource_choices": {
+    "threads": 2,
+    "cpus": 2.0,
+    "cpu_shares": 256,
+    "docker_default_cpu_shares": 1024,
+    "rationale": "Two ONNX compute threads avoid unrestricted intra/inter-op pools; the two-CPU container quota also caps tokenizer/other CPU work. On eight shared CPUs this reserves at least six CPUs of potential capacity for neighbours. Shares 256 are one quarter of the default 1024, yielding relative priority when sibling cgroups contend. Shares are relative priority, not a fixed allocation.",
+    "observed_after_cpu_max": "200000 100000",
+    "observed_before_cpu_weight": "100",
+    "observed_after_cpu_weight": "35",
+    "runtime_enforcement": "Docker inspect confirmed NanoCpus=2000000000, CpuShares=256, CpusetCpus=0-7 for the bounded worker. These are local container observations; hosted activation is not claimed."
+  },
+  "model": {
+    "name": "intfloat/multilingual-e5-large",
+    "revision": "ac6781cd1cf88b8306a536d7c9d18a5bd57cc14b",
+    "dimension": 1024,
+    "max_sequence_length": 512,
+    "files": {
+      "config.json": {
+        "sha256": "1de8c3be1f344c0eefa4962480a006f8639f416dfafaa95a770e3cf4bceae6a4",
+        "source_path": "config.json"
+      },
+      "model.onnx": {
+        "sha256": "1c09780c907c8a91a77a6ab1fd231f79e090d2907ca431223703dfebeed3d36c",
+        "source_path": "model.onnx"
+      },
+      "model.onnx_data": {
+        "sha256": "0cf1883fee81c63819a44e2ba0efa51d4043d9759685a4ebebbde97e0623d15c",
+        "source_path": "model.onnx_data"
+      },
+      "special_tokens_map.json": {
+        "sha256": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835",
+        "source_path": "special_tokens_map.json"
+      },
+      "tokenizer.json": {
+        "sha256": "f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af",
+        "source_path": "tokenizer.json"
+      },
+      "tokenizer_config.json": {
+        "sha256": "f90024142df07163e5e6c5b9a6ad7c8c68b22a9112af11e3db4559a9ff90f737",
+        "source_path": "tokenizer_config.json"
+      }
+    },
+    "versions": {
+      "fastembed": "0.8.0",
+      "onnxruntime": "1.29.0",
+      "numpy": "2.5.2"
+    },
+    "network": "Both inference containers ran with --network none and verified the existing manifest-pinned model; no fake embeddings or alternate model.",
+    "existing_fastembed_warning": "FastEmbed 0.8.0 reports mean pooling rather than historical CLS. Both sides use this same version and existing pooling; this task does not alter it."
+  },
+  "benchmark": {
+    "baseline_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+    "baseline_source": "git show 18fbecadc^:services/search/local_embeddings.py, loaded unchanged as its own module with the original manifest_path",
+    "baseline_source_sha256": "6c1ecdcce512c63f7bf5d454f9cd0dd0b8f22d2ea1e741916555f55e69395f78",
+    "bounded_engine_anchor": "18fbecadc8c6b8434a23507f245482258e7b1453",
+    "harness_anchor": "54edb403e",
+    "subsequent_harness_change": "Only the fixture SIGTERM/exit-status handling was corrected after measurement and separately smoke-tested; embedding generation and numerical measurements are identical.",
+    "final_source_sha256": {
+      "services/search/local_embeddings.py": "da9a4116b9a7b3cb2031258589117c9e6d7fda1e1149e9e7e9d6754993580e1c",
+      "services/search/tests/test_embedding_cpu_bound.py": "4351c30ca7ad47c4577702affbb42f337229d5fb9b90e3f47ed903d4ba63b95e",
+      "services/search/tests/test_pg_retrieval.py": "ecb0d2634d25821e7314ac4db186c9afa357ce37cade516eec42bf69fd3de5dd"
+    },
+    "image": "pantheon-search-r2-test:local",
+    "image_id": "sha256:fcb575792dc1df5a08b78c7c55a26f5fbc83adcb48d0ac481716de22c6f0359d",
+    "host": {
+      "host_logical_cpus": 12,
+      "memory_bytes": 50506579968,
+      "kernel": "7.0.0-1017-gcp",
+      "cgroup_version": 2,
+      "embedding_and_neighbour_shared_cpu_affinity": "0-7",
+      "client_and_separate_regression_cpu_affinity": "8-11",
+      "eight_cpu_limit_method": "Both service containers are pinned to the same eight CPUs; baseline quota is eight CPUs, bounded quota two. No access to CPUs 8-11 for the measured services.",
+      "shared_host_limit": "CPU affinity isolates the benchmark services from the separate validation containers. Other pre-existing host work is not controlled; this is a local comparison, not a hosted BFF load test."
+    },
+    "corpus": {
+      "count": 132,
+      "kind": "Deterministic synthetic real-shaped KnowledgeObjects containing long TWSE/TPEx daily price and TDCC ownership-reference JSON, using Chinese names and numeric records.",
+      "provenance": "Generated by _benchmark_documents in the committed test module; fields mirror existing official-reference test data. Values are synthetic, not captured hosted documents or claimed market observations.",
+      "index_text_path": "KeywordIndexAdapter.documents_for, then LocalEmbeddingEngine.embed_documents with the existing batch_size=64 default",
+      "sha256": "431a9b60bcb45c0edd7e45922a8923f622184ec4820ba474b6b473e908b85c3f",
+      "same_before_after": true,
+      "query_count": 6,
+      "knowledge_text_bytes": {
+        "min": 13006,
+        "max": 13238,
+        "mean": 13127.0
+      },
+      "embedding_text_bytes": {
+        "min": 13062,
+        "max": 13296,
+        "mean": 13186.166666666666
+      }
+    },
+    "method": {
+      "embedding_measurement": "Warm the same verified engine with one query, then measure only the entire 132-document embed_documents call. Wall time uses perf_counter; CPU seconds use getrusage(RUSAGE_SELF) deltas including all native threads. Model load, integrity hashing and the six comparison queries are excluded.",
+      "http_read": "Separate neighbouring container with a fixed ~13-KB JSON response and 200 SHA-256 operations per request, CPU shares 1024, quota eight CPUs, same CPUs 0-7. This is a deterministic HTTP read-service proxy, not the product BFF.",
+      "http_sampling": "One sequential HTTP request every 20 ms, 5 s timeout, separate measuring client on CPUs 8-11. Warm HTTP for 2 s; measure 20 s idle immediately before each burst and the complete concurrent embedding burst. p50/p95 use sorted samples at floor((n-1)*q). Every observed request was checked for HTTP 200 and response bytes.",
+      "comparison_order": [
+        "before",
+        "after"
+      ],
+      "benchmark_process_exit_status": 0,
+      "worker_terminal_exit_statuses": {
+        "before": 0,
+        "after": 0
+      },
+      "initial_neighbour_shutdown_exit_status": 137,
+      "corrected_neighbour_shutdown_smoke_exit_status": 0,
+      "neighbour_shutdown": "After both inference workers and all HTTP samples completed, the initial read-service fixture ignored SIGTERM as container PID 1 and Docker killed it during requested cleanup (137). This cleanup is not counted as a passed worker. The harness now handles SIGTERM and requires exit 0; a separate bounded HTTP read plus stop smoke completed with exit 0. Numerical benchmark code and measured results are unchanged."
+    },
+    "before": {
+      "mode": "before",
+      "count": 132,
+      "batch_size": 64,
+      "wall_seconds": 229.479906133,
+      "cpu_user_seconds": 1072.394424,
+      "cpu_system_seconds": 15.448708,
+      "objects_per_hour": 2070.769541471695,
+      "intra_op_threads": 0,
+      "inter_op_threads": 0,
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "cpu_max": "800000 100000",
+      "cpu_weight": "100",
+      "cpu_stat_at_end": "usage_usec 1099029346\nuser_usec 1080939654\nsystem_usec 18089691\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 2668\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0\n",
+      "corpus_sha256": "431a9b60bcb45c0edd7e45922a8923f622184ec4820ba474b6b473e908b85c3f",
+      "versions": {
+        "fastembed": "0.8.0",
+        "onnxruntime": "1.29.0",
+        "numpy": "2.5.2"
+      },
+      "knowledge_text_bytes": {
+        "min": 13006,
+        "max": 13238,
+        "mean": 13127.0
+      },
+      "embedding_text_bytes": {
+        "min": 13062,
+        "max": 13296,
+        "mean": 13186.166666666666
+      },
+      "cpu_seconds": 1087.843132,
+      "cpu_seconds_per_object": 8.241235848484848,
+      "mean_cpu_cores": 4.7404722719797405
+    },
+    "after": {
+      "mode": "after",
+      "count": 132,
+      "batch_size": 64,
+      "wall_seconds": 338.8077629919999,
+      "cpu_user_seconds": 673.519763,
+      "cpu_system_seconds": 2.2513889999999996,
+      "objects_per_hour": 1402.5652653396278,
+      "intra_op_threads": 2,
+      "inter_op_threads": 2,
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "cpu_max": "200000 100000",
+      "cpu_weight": "35",
+      "cpu_stat_at_end": "usage_usec 683544842\nuser_usec 680129578\nsystem_usec 3415264\nnice_usec 0\ncore_sched.force_idle_usec 0\nnr_periods 3660\nnr_throttled 701\nthrottled_usec 1086208\nnr_bursts 0\nburst_usec 0\n",
+      "corpus_sha256": "431a9b60bcb45c0edd7e45922a8923f622184ec4820ba474b6b473e908b85c3f",
+      "versions": {
+        "fastembed": "0.8.0",
+        "onnxruntime": "1.29.0",
+        "numpy": "2.5.2"
+      },
+      "knowledge_text_bytes": {
+        "min": 13006,
+        "max": 13238,
+        "mean": 13127.0
+      },
+      "embedding_text_bytes": {
+        "min": 13062,
+        "max": 13296,
+        "mean": 13186.166666666666
+      },
+      "cpu_seconds": 675.771152,
+      "cpu_seconds_per_object": 5.119478424242424,
+      "mean_cpu_cores": 1.9945562818050209
+    },
+    "http_before": {
+      "idle": {
+        "count": 995,
+        "errors": [],
+        "p50_ms": 3.1053099999098777,
+        "p95_ms": 4.687590000003183,
+        "min_ms": 2.6028989999531404,
+        "max_ms": 7.375668999998197,
+        "mean_ms": 3.259710984923287,
+        "histogram_ms": {
+          "2": 0,
+          "4": 935,
+          "6": 972,
+          "8": 995,
+          "10": 995,
+          "20": 995,
+          "50": 995,
+          "100": 995,
+          "1000": 995
+        }
+      },
+      "during_burst": {
+        "count": 11220,
+        "errors": [],
+        "p50_ms": 5.7507489999579775,
+        "p95_ms": 10.447789000068042,
+        "min_ms": 2.715969999940171,
+        "max_ms": 32.19696799999383,
+        "mean_ms": 6.210994210071532,
+        "histogram_ms": {
+          "2": 0,
+          "4": 1306,
+          "6": 6190,
+          "8": 9329,
+          "10": 10492,
+          "20": 11211,
+          "50": 11220,
+          "100": 11220,
+          "1000": 11220
+        }
+      },
+      "p95_to_idle_ratio": 2.228818860024223,
+      "worker_exit_status": 0
+    },
+    "http_after": {
+      "idle": {
+        "count": 995,
+        "errors": [],
+        "p50_ms": 2.973999999994703,
+        "p95_ms": 3.410489999851052,
+        "min_ms": 2.5653099999090045,
+        "max_ms": 5.4479499999615655,
+        "mean_ms": 3.007563057286717,
+        "histogram_ms": {
+          "2": 0,
+          "4": 987,
+          "6": 995,
+          "8": 995,
+          "10": 995,
+          "20": 995,
+          "50": 995,
+          "100": 995,
+          "1000": 995
+        }
+      },
+      "during_burst": {
+        "count": 16784,
+        "errors": [],
+        "p50_ms": 3.3669199999621924,
+        "p95_ms": 4.672179999943182,
+        "min_ms": 2.5635199999669567,
+        "max_ms": 13.481359000024895,
+        "mean_ms": 3.5035826207100795,
+        "histogram_ms": {
+          "2": 0,
+          "4": 15292,
+          "6": 16370,
+          "8": 16754,
+          "10": 16778,
+          "20": 16784,
+          "50": 16784,
+          "100": 16784,
+          "1000": 16784
+        }
+      },
+      "p95_to_idle_ratio": 1.3699439083965157,
+      "worker_exit_status": 0
+    },
+    "vector_comparison": {
+      "documents": {
+        "count": 132,
+        "min_cosine": 0.9999999999999999,
+        "cosines": [
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0000000000000002,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0000000000000002,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0,
+          0.9999999999999999,
+          1.0000000000000002,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0000000000000002,
+          1.0,
+          1.0000000000000002,
+          1.0,
+          0.9999999999999999,
+          0.9999999999999999,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0
+        ]
+      },
+      "queries": {
+        "count": 6,
+        "min_cosine": 0.9999999999999999,
+        "cosines": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.9999999999999999,
+          1.0000000000000002
+        ]
+      },
+      "top_10_document_ids_identical": true,
+      "before_top_10": [
+        [
+          31,
+          63,
+          3,
+          39,
+          73,
+          79,
+          0,
+          30,
+          61,
+          37
+        ],
+        [
+          67,
+          109,
+          37,
+          103,
+          61,
+          31,
+          79,
+          91,
+          127,
+          73
+        ],
+        [
+          17,
+          23,
+          71,
+          131,
+          47,
+          107,
+          116,
+          2,
+          77,
+          113
+        ],
+        [
+          87,
+          78,
+          63,
+          27,
+          66,
+          111,
+          39,
+          90,
+          0,
+          6
+        ],
+        [
+          67,
+          91,
+          79,
+          97,
+          61,
+          121,
+          127,
+          109,
+          19,
+          37
+        ],
+        [
+          86,
+          14,
+          11,
+          131,
+          47,
+          116,
+          89,
+          8,
+          38,
+          113
+        ]
+      ],
+      "after_top_10": [
+        [
+          31,
+          63,
+          3,
+          39,
+          73,
+          79,
+          0,
+          30,
+          61,
+          37
+        ],
+        [
+          67,
+          109,
+          37,
+          103,
+          61,
+          31,
+          79,
+          91,
+          127,
+          73
+        ],
+        [
+          17,
+          23,
+          71,
+          131,
+          47,
+          107,
+          116,
+          2,
+          77,
+          113
+        ],
+        [
+          87,
+          78,
+          63,
+          27,
+          66,
+          111,
+          39,
+          90,
+          0,
+          6
+        ],
+        [
+          67,
+          91,
+          79,
+          97,
+          61,
+          121,
+          127,
+          109,
+          19,
+          37
+        ],
+        [
+          86,
+          14,
+          11,
+          131,
+          47,
+          116,
+          89,
+          8,
+          38,
+          113
+        ]
+      ]
+    },
+    "raw_output_sha256": {
+      "worker-before.json": "2482262dfcb3a6f71eaafdbc786c9b4da8f538de17f4efc66d5d650c36da4ed4",
+      "worker-after.json": "f555a5bded787b199b2cf69ebc43e987748d20b035172cda4ac1fd61a28fe561",
+      "http.json": "96886af298016f73479e669d590c8cac068629a6a092086b9af51017aa82de3a",
+      "comparison.json": "d1813f711d9e6845fdf02cf44faeacc01f812623acd5c21a07a1a714e142e070",
+      "vectors-before.npz": "155163038866146c41903e87f0f6c92f35608fa637a84f9fcec27c5caec9d1e2",
+      "vectors-after.npz": "155163038866146c41903e87f0f6c92f35608fa637a84f9fcec27c5caec9d1e2"
+    }
+  },
+  "capacity": {
+    "bounded_objects_per_hour": 1402.5652653396278,
+    "minimum_required_per_hour": 300,
+    "hosted_arrivals_per_day_from_task_brief": 1800,
+    "hosted_mean_arrivals_per_hour": 75,
+    "capacity_to_mean_arrival_ratio": 18.70087020452837,
+    "maximum_burst_objects": 132,
+    "measured_burst_seconds": 338.8077629919999,
+    "daily_arrivals_embedding_wall_hours_at_measured_rate": 1.28336273860606,
+    "daily_arrivals_mean_cpu_cores_at_measured_cost": 0.1066558005050505,
+    "existing_freshness_sla_seconds": 3600,
+    "burst_below_existing_freshness_sla": true,
+    "limits": "Throughput/freshness are measured embedding capacity for these long reference shapes, not a claim about all hosted indexing/database or source-ingestion time. Existing checkpoint and scheduler behavior is unchanged."
+  },
+  "validation": {
+    "focused_unittest_host": {
+      "result": "3 passed, 1 skipped (no host-mounted model)",
+      "exit_status": 0
+    },
+    "full_search_with_real_model_and_isolated_pgvector": {
+      "command": "PostgresRetrievalBackend().setup_schema(); pytest -p no:cacheprovider -q -rs services/search",
+      "image": "pantheon-search-r2-test:local",
+      "test_only_dependencies": [
+        "pytest",
+        "httpx",
+        "jsonschema"
+      ],
+      "postgres_image": "pgvector/pgvector:0.8.0-pg16",
+      "dsn": "postgresql://postgres:<local-test-password>@127.0.0.1:25432/pantheon_search",
+      "environment": {
+        "PANTHEON_SEARCH_POSTGRES_DSN": "isolated local DSN above",
+        "PANTHEON_RETRIEVAL_INTEGRATION_DSN": "same isolated local DSN",
+        "PYTHONPATH": "/deps:/workspace"
+      },
+      "result": "191 passed, 7 skipped, 4 subtests passed",
+      "exit_status": 0,
+      "skips": [
+        "SKIPPED [1] services/search/test_postgres_store.py:407: SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured",
+        "SKIPPED [1] services/search/test_postgres_store.py:513: SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured",
+        "SKIPPED [1] services/search/tests/test_qdrant_backend.py:121: Qdrant test container not available at localhost:26333",
+        "SKIPPED [1] services/search/tests/test_qdrant_backend.py:30: Qdrant test container not available at localhost:26333",
+        "SKIPPED [1] services/search/tests/test_qdrant_backend.py:78: Qdrant test container not available at localhost:26333",
+        "SKIPPED [1] services/search/tests/test_qdrant_backend.py:36: Qdrant test container not available at localhost:26333",
+        "SKIPPED [1] services/search/tests/test_retrieval_query_log.py:151: could not import 'ranx': No module named 'ranx'"
+      ],
+      "summary": "191 passed, 7 skipped, 6 warnings, 4 subtests passed in 53.02s",
+      "log_sha256": "d78cb5b3a01403b46259653196f8850f20b5ddb3505eda1f3a49a27ee5545d4a",
+      "real_onnx_thread_assertions": "Both intra_op_num_threads and inter_op_num_threads are 2; packaged-model tests executed, not skipped."
+    },
+    "initial_failed_batches": [
+      {
+        "exit_status": 2,
+        "reason": "Test-image collection lacked jsonschema; installed only into temporary /deps and reran."
+      },
+      {
+        "exit_status": 1,
+        "result": "190 passed, 7 skipped, 1 failed",
+        "reason": "Existing mock dimension fixture; reproduced with original embedding source before correcting fixture without changing assertions."
+      }
+    ],
+    "git_diff_check": {
+      "exit_status": 0
+    },
+    "compose_render": {
+      "command": "docker compose --profile core config --no-interpolate --format json",
+      "cpus": 2,
+      "cpu_shares": 256,
+      "exit_status": 0
+    },
+    "reproduction": [
+      "Build or retain the manifest-pinned services/search/Dockerfile image tagged pantheon-search-r2-test:local.",
+      "Use a host with CPUs 0-11 and Docker. Create a Python venv with pytest, pyyaml, fastapi, httpx, psycopg[binary], pgvector and jieba for importing the test driver.",
+      "python -u -m services.search.tests.test_embedding_cpu_bound --benchmark-driver /tmp/search-cpu-run-NEW",
+      "The driver creates managed foreground Docker children, collects all worker exit statuses, enforces a 40-minute bound per burst, and stops/collects the read service in finally. Output directory must not already exist.",
+      "For regression, run an isolated pgvector:0.8.0-pg16 database on port 25432 and share its network namespace with the search test container. Bind this checkout at /workspace:ro and test-only dependencies at /deps:ro, set PYTHONPATH=/deps:/workspace and both test DSNs to the local database; run the command above after setup_schema()."
+    ]
+  },
+  "acceptance": {
+    "1_fixed_compute_threads_passed_to_real_engine": true,
+    "2_container_limit_and_lower_relative_cpu_weight": true,
+    "3_all_document_and_query_cosines_at_least_0_9999": true,
+    "4_eight_cpu_132_object_burst_and_http_p95_within_1_5_idle": true,
+    "5_bounded_capacity_at_least_300_per_hour_and_arrival_comparison": true,
+    "6_index_retrieval_pipeline_scheduler_unchanged_and_search_regression_passed": true,
+    "7_no_tests_weakened_or_deleted": true
+  },
+  "delivery": {
+    "target": "dev",
+    "pr_and_exact_head_binding": "Recorded through governed owner handoff after this manifest is committed; no approval or merge is claimed here.",
+    "hosted_deployment": "Not performed by this task execution; local source acceptance evidence only."
+  }
+}

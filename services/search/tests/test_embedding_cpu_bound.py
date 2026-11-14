@@ -415,8 +415,11 @@ def _benchmark_worker(mode: str, output: Path) -> None:
 def _benchmark_neighbour() -> None:
     """A local read-service proxy with fixed JSON/CPU work, not a product endpoint."""
     import hashlib
+    import signal
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
+    # Python is PID 1 in this container; explicitly handle Docker's stop signal.
+    signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))
     payload = json.dumps({"records": [{"id": i, "state": "available", "symbol": "2330"}
                                       for i in range(256)]}).encode()
 
@@ -535,6 +538,8 @@ def _benchmark_driver(output: Path) -> None:
                 subprocess.run(["docker", "stop", "--time", "5", name], capture_output=True, timeout=30)
             code = child.wait(timeout=30)
             print(json.dumps({"container": name, "terminal_exit_status": code}), flush=True)
+            if name == server_name:
+                assert code == 0, "Read-service proxy did not shut down cleanly"
         server_log.close()
 
 
