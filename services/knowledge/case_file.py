@@ -218,6 +218,27 @@ def lesson_query(subject: Subject) -> tuple:
     return " ".join(t for t in terms if t), tags
 
 
+def subject_anchors(subject: Subject) -> list:
+    """Subject anchors for association-first memory recall (H8).
+
+    Built only from fields the subject carries.  The decision type is a
+    category, not a subject, so it is never an anchor; ``regime`` is added only
+    when the subject carries ``regime_tag`` (nothing invents a regime).
+    """
+    families = dict.fromkeys((subject.strategy_family, *subject.strategy_families))
+    pairs = [("family", f) for f in families]
+    pairs += [("underlying", u) for u in subject.underlyings]
+    pairs += [("dataset", d) for d in subject.missing_datasets]
+    pairs.append(("instrument", subject.instrument_class))
+    pairs.append(("regime", subject.regime_tag))
+    out: list = []
+    for kind, value in pairs:
+        text = str(value or "").strip().lower()
+        if text and f"{kind}:{text}" not in out:
+            out.append(f"{kind}:{text}")
+    return out
+
+
 # ---- facts (owner APIs only) -------------------------------------------------
 
 def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> None:
@@ -287,6 +308,7 @@ def _memory_hits(owners: Owners, subject: Subject, caller: Caller, *, scope: str
         params.append(("persona_id", subject.persona_id))
         params.append(("session_persona_id", subject.persona_id))
     params += [("tags", t) for t in tags]
+    params += [("subject_anchors", a) for a in subject_anchors(subject)]
     if memory_type:
         params.append(("memory_type", memory_type))
     return http_json(owners.memory, "/api/memory/retrieve", tenant_id=subject.tenant_id, params=params) or {}

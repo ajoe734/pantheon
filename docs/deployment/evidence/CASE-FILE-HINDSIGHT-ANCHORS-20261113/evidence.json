@@ -1,0 +1,10 @@
+{
+  "task_id": "CASE-FILE-HINDSIGHT-ANCHORS-20261113",
+  "change": "services/knowledge/case_file.py: subject_anchors(subject) sent as subject_anchors on every /api/memory/retrieve call (lessons + negative memory). Anchors: family, underlying, dataset, instrument, regime (only when subject.regime_tag). decision type is never an anchor.",
+  "unchanged": ["budgets", "groups", "citation rules", "fail-closed unavailable groups"],
+  "verification": {
+    "unit": "python3 -m unittest services.knowledge.test_case_file: 8 ran, 2 new tests pass; 1 error test_schema_valid_with_four_groups is pre-existing (system jsonschema 4.10.3 RefResolutionError), same without this change",
+    "integration_hindsight": "NOT RUN: test CaseFileHindsightAnchors added (skips without PANTHEON_HINDSIGHT_IT_URL/KEY); this worker env has no uvicorn/fastapi/pytest and no running hindsight container",
+    "acceptance_4_verified": false
+  }
+}

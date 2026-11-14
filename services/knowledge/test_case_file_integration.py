@@ -256,5 +256,68 @@ class CaseFileIntegration(unittest.TestCase):
         self.assertIn("registry:reg-m1", [u["owner"] for u in out["groups"]["facts"]["unavailable"]])
 
 
+HS_URL = os.getenv("PANTHEON_HINDSIGHT_IT_URL", "")
+HS_KEY = os.getenv("PANTHEON_HINDSIGHT_IT_KEY", "")
+
+
+@unittest.skipUnless(HS_URL and HS_KEY, "set PANTHEON_HINDSIGHT_IT_URL and PANTHEON_HINDSIGHT_IT_KEY")
+class CaseFileHindsightAnchors(unittest.TestCase):
+    """Real memory route backed by real Hindsight: anchors exclude decision-tag-only lessons."""
+
+    def test_decision_tag_only_lesson_excluded_and_on_subject_lesson_returned(self):
+        import uuid
+        from services.memory import hindsight_index as hs
+        memory = importlib.import_module("services.memory.main")
+        from services.memory.institutional_memory_store import InstitutionalMemoryStore
+        from services.memory.persona_memory_store import PersonaMemoryStore
+        from services.memory.test_hindsight_index import institution
+        tenant = "it-" + uuid.uuid4().hex[:10]
+        stores = (InstitutionalMemoryStore(), PersonaMemoryStore())
+        saved = {k: os.environ.get(k) for k in (
+            "PANTHEON_MEMORY_AUTHZ_MODE", hs.URL_ENV, hs.KEY_ENV, "PANTHEON_RUNTIME_AUTH_MODE")}
+        os.environ.update({"PANTHEON_MEMORY_AUTHZ_MODE": "local", hs.URL_ENV: HS_URL, hs.KEY_ENV: HS_KEY})
+        os.environ.pop("PANTHEON_RUNTIME_AUTH_MODE", None)
+        hs.set_hindsight_client(None)
+        client = hs.HindsightClient(HS_URL, HS_KEY)
+        orig = (memory._store, memory._persona_store)
+        memory._store, memory._persona_store = (lambda: stores[0]), (lambda: stores[1])
+        port = _port()
+        server = uvicorn.Server(uvicorn.Config(memory.app, host="127.0.0.1", port=port, log_level="error"))
+        threading.Thread(target=server.run, daemon=True).start()
+
+        def cleanup():
+            server.should_exit = True
+            memory._store, memory._persona_store = orig
+            hs.flush_mirrors()
+            client.delete_bank(hs.facts_bank(tenant))
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            hs.set_hindsight_client(None)
+        self.addCleanup(cleanup)
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        self.assertTrue(server.started)
+        on_subject = stores[0].create(institution(tenant_id=tenant, content={
+            "headline": "momentum 2330 trial admission lesson", "body": "momentum 2330 trial admission lesson",
+            "tags": ["family:momentum", "underlying:2330", "decision:trial_admission"]}))
+        decision_only = stores[0].create(institution(tenant_id=tenant, content={
+            "headline": "carry trial admission lesson", "body": "carry trial admission lesson",
+            "tags": ["family:carry", "decision:trial_admission"]}))
+        self.assertTrue(hs.flush_mirrors())
+        subject = cf.Subject(decision_type="trial_admission", persona_id="persona-a", tenant_id=tenant,
+                             strategy_family="momentum", underlyings=("2330",), member_artifact_refs=("reg-1",))
+        caller = cf.Caller("op-1", ("operator",), "sess-1")
+        g = cf._Group("lessons")
+        cf._lessons(subject, caller, cf.Owners(None, None, None, None,
+                                              cf.OwnerEndpoint(f"http://127.0.0.1:{port}"), None),
+                    cf.Budgets(), g)
+        got = {i["source_id"]: i for i in g.items}
+        self.assertIn(on_subject.entry_id, got)
+        self.assertNotIn(decision_only.entry_id, got)
+        self.assertEqual(got[on_subject.entry_id]["retrieval_mode"], "hindsight")
+
+
 if __name__ == "__main__":
     unittest.main()

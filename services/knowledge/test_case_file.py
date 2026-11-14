@@ -97,6 +97,19 @@ class CaseFileTests(unittest.TestCase):
         for t in ("family:momentum", "underlying:2330", "instrument:equity", "decision:trial_admission"):
             self.assertIn(t, tags)
 
+    def test_subject_anchors_passed_to_lessons_and_negative_memory(self):
+        seen = []
+        compose(overrides={"/api/memory/retrieve": lambda p: seen.append(list(p)) or {"hits": []}})
+        self.assertTrue(seen)
+        for params in seen:
+            anchors = [v for k, v in params if k == "subject_anchors"]
+            self.assertEqual(anchors, ["family:momentum", "underlying:2330", "instrument:equity"])
+
+    def test_regime_anchor_only_when_subject_carries_it(self):
+        self.assertFalse([a for a in cf.subject_anchors(subject()) if a.startswith("regime:")])
+        self.assertIn("regime:bull", cf.subject_anchors(subject(regime_tag="Bull")))
+        self.assertFalse([a for a in cf.subject_anchors(subject()) if a.startswith("decision:")])
+
     def _persona_hits(self, params):
         scope = dict(params)["scope"]
         if scope == "institutional":
