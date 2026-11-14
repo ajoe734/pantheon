@@ -1,0 +1,222 @@
+Pantheon 新舊實作、相容尾巴與開發偏移盤點
+工作版本：2026-11-11T23:04Z。A01–A18 來源／刪留與十個來源依賴已核對；原唯一 publisher 的 root43104597393、FE gate43108247755、FE deploy43111484860 真正 terminal SUCCESS，公開與 authenticated 唯讀結果已補齊 exact pair 身分。但原 gate 的 auth／load／F12 失敗仍是真實失敗，REAL_WRITES=true 也不是安全預設 false；完整驗收仍保留未證實事項。這是 PR #7193 的可續作證據草稿，不是 DONE。
+目前 owner／reviewer：Codex／Codex2，以本次 canonical task 為準。下列有時間的實作／CI 續查是原始歷史，不把舊 head 測試或舊 pair 的 hosted 結果冒充本輪結果。最新來源身分、23:01 補查與剩餘驗收列於文末；可攜的匿名盤點、18 項處置、來源 frozen manifest 與驗證 exit 收於同目錄 evidence.json。
+
+判斷方法
+每項分開判斷原有能力、新實作的用途、仍有誰呼叫、資料／回復需求，再決定刪留。測試或路由清單自己引用自己，不等於產品仍需要。沒有 access log 不宣稱零流量；沒有掃到檔案不等於沒有資料。
+以下「改善」是依來源、契約及操作證據判讀；未量測的效能提升不作宣稱。對缺少原始決策記錄的重構，不猜測開發者動機，也不把重構本身當作新產品功能。
+
+A01 SourceIngestionRuntime 與舊 main.py globals
+新實作把 store、lock、config 放到明確 runtime context，讓服務不必從入口模組反查狀態。保留的 _active_attr、sys.modules、__code__ 分派及 forwarding aliases 原本用來接舊呼叫與舊測試，延長後形成理解與修改負擔。
+處置：遷移呼叫者與測試後刪除這些相容機制，保留既有 ingestion 能力與 context。這是清理重構留下的尾巴，沒有另寫 ingestion 引擎。
+來源交付：Pantheon PR #7056；merge 757a804536d5d10710a6f1e07d53bba767efaad3。
+
+A02 Agora audit 的兩個 writer
+AgoraAuditStore 與 Governance decision store 的資料 schema／業務語意不同，不能因都叫 audit 就當作重複儲存直接刪除。真正多餘的是 Agora/management 寫入時又退回 read_store 的第二條 writer。
+處置：統一經既有 AgoraAuditStore 寫入，刪 read_store writer fallback，保留原有 JSONL 儲存。改善是寫入權責一致；沒有新增另一套 audit 平台。
+來源交付：Pantheon PR #7053；merge 83ebb82ec33c5d5d31eb60b59bc1564dae9c2dad。
+
+A03 Management 新中心頁與舊頁／網址
+新中心是導航與資訊架構整理，既有 PortfolioBook、PerformanceAttribution、PersonaLeague、QuarterlyRanking 元件仍被嵌入使用，不是已無用的舊業務功能。
+處置：移除死的 PromotionAllocation 檔案，遷移前端自行產生的舊連結；保留仍被嵌入的元件。網址 redirect 有實際來源需求：BFF services/control-plane/bff/pm12/service.py 的 holding links 仍產生 /management/performance-attribution?...，不能把整組 redirect 視為零使用。
+來源交付：execute-plans PR #970；merge 7aa32465bdda0a90914220df04e8213a6b396996。
+
+A04 runtime config 與多個舊 global readers
+同 origin 的 runtime-config.js／__PANTHEON_DEPLOYMENT_CONFIG__ 用來讓同一 immutable bundle 帶入實際環境設定，具部署用途。舊 __PANTHEON_BFF_RUNTIME__、__PANTHEON_ENV__、window.VITE_BFF_* 等多入口讓設定來源不明。
+處置：保留正式 runtime config，刪舊 globals readers；live mode、strict fallback、安全寫入預設仍保留。這不是要求另造設定平台。
+來源交付：execute-plans PR #970。
+
+A05 多套 timeout policy／轉接檔
+同一非同步操作若經多個 policy/shim，很難確認實際 timeout。多一個 v4/v5 檔名不是產品能力提升的證據。
+處置：收斂到 src/lib/v4/asyncTransitionPolicy.ts；刪 v5/timeoutPolicy.ts、v4/asyncTransitions.ts 相容轉接。保留既有操作語意並驗證呼叫者。
+來源交付：execute-plans PR #970。
+
+A06 root static paper-runtime 與 fleet
+fleet 依 RuntimeBinding 管理執行個體；原有 root Compose 靜態 paper-runtime 又形成另一個啟動入口。舊引擎本身仍被有效執行路徑使用，不能把靜態啟動入口與引擎混為一談。
+處置：刪 root pantheon-paper-runtime service、static-paper-runtime profile、對應啟用例外。保留 paper-fleet-reconciler；保留 docker-compose.exec.yml 所代表的另一種明確拓樸，沒有讓 root 兩條入口一起跑。
+來源交付：Pantheon PR #7058；merge e6c3c76e24db1e7c30bc25d7ee5358228f94c9b7。
+
+A07 已完成過渡的 FIFO 轉換程式
+歷史 FIFO fence 曾處理舊 writer 與新儲存路徑的過渡；普通程式換版仍自動呼叫歷史轉換，已不符合現況。
+本次刪除前實測：11/11 11:43 時 supervisor／worker 使用 command runtime 872f9eb20e7fa68113bbcf1d4365e08506cd00b6；舊 state/approval 路徑不存在，舊 journal lock/head 是空 0700 目錄，不是 FIFO。當時實際 promotion 記錄中的上一版 c3db67420d63845f1e2a4b635f9ef564c48905fb 也支援現行 worker-runtime 路徑與 directory fences。
+本次修改：移除 _upgrade_retired_fifo_fences、FIFO renameat2 轉換分支及普通 promotion 呼叫。保留 restrictive directory fences、辨識 FIFO 後拒絕不支援狀態、writer drain、unchanged-storage guard、真正 rollback。沒有移動 journal／資料，沒有 live promotion 或 watchdog restart。
+狀態：PR #7174 已於 2026-11-11T12:34:09Z 合併；merge a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5；102 項既有測試、獨立審查及必要 CI 通過。沒有 live promotion。
+後續環境讀回（14:00）：既有協調流程已把 live config 的 command runtime 換成 811b714a6f17d94b090970fbb86f4413863a2afc；在該已安裝 checkout 執行 git merge-base --is-ancestor a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5 811b714a6f17d94b090970fbb86f4413863a2afc，exit 0。代表這次 tooling 清理已包含在該工具版本；不是產品 FE/BFF 部署驗收，也不是本清理任務另行執行 promotion 或資料遷移。
+
+A08 worker receipt 舊 state.json fallback
+worker 已使用 .orchestrator/worker-runtime/state.json，回頭讀 .orchestrator/state.json 會增加錯讀舊狀態的風險。
+處置：移除舊 receipt fallback，遷移 fixtures；不搬移 canonical task journal。
+來源交付：Pantheon PR #7059；merge a41a5780308af70e7e308e87633f96cf1768b8cf。
+
+A09 無呼叫的 alias／wrapper
+SSEReconciler alias、Cron promotion_gate_factory 舊參數、TwelveLoopProjector._recompute_observation_status wrapper 沒有獨立能力或需要保留的有效呼叫。
+處置：刪除並使用目前正式介面，不留下新舊雙名稱。
+來源交付：Pantheon PR #7053。
+
+A10 多層 internal_api wrapper
+最外層 services/control_plane/internal_api.py、internal_api_min.py 只是多一層轉接；實際實作已有正式內部路徑。
+處置：刪外層 wrapper，CI py_compile 指向真正實作。保留 hyphen 目錄的 import shim：Python 模組命名與實際目錄的整合需求仍存在，這不是兩代業務邏輯並行。
+來源交付：Pantheon PR #7053。
+
+A11 wave_workflow 舊設定 fallback
+正式工作流使用現行 branch_workflow。多保留 wave_workflow 會讓同一行為有兩種設定來源，沒有新增產品價值。
+處置：移除 supervisor、auto_integrator、commit trailer check、publish_promote、release discipline 的舊 key fallback。
+來源交付：Pantheon PR #7059。
+
+A12 舊 W&B flag
+正式開關是 PANTHEON_ENABLE_WANDB_OFFLINE_STORE；舊 DEFERRED_PREP alias 與 helper 沒有額外能力。
+處置：刪 alias/helper，遷移現行 smoke/tests。現行文件殘留已在 PR #7168 修正；不重寫歷史證據。
+來源交付：Pantheon PR #7053；文件 PR #7168，merge 71171811ccd5938b8d737292fb95d6da21353a1c。
+
+A13 已退役網址的通知路由與多餘相容 mock
+前次刪除 4 個 /bff/ranking/formulas CRUD 通知 wrapper，其餘通知路由曾因 own catalog／tests 與假設的七天 access log 條件保留。這些引用不是獨立的有效產品需求。
+本次實測：dev Caddy 沒有啟用 access log，也沒有這類 log 檔；不能宣稱零流量，也不能把等待七天當成已授權清理的先決條件，更不為此新建 logging 系統。
+補充實測（2026-11-11T12:57:42Z）：Caddy 未開 access log 不代表 BFF 沒有記錄。直接讀既有 BFF 容器 Uvicorn HTTP access log，11/10T17:14:49 至 11/11T12:57:33 共 7,720 筆 HTTP 請求（回傳7,735行，未達200,000行 tail 上限），本次通知路由家族命中0。這是可見當前容器期間的結果，不是七天完整覆蓋或全球零流量。匿名統計在 remote_bff_access_inventory-result.json，沒有新建 logging 或輸出原始請求內容。
+現役前端盤點：實際舊呼叫集中在 mock、envelope/path tests 與 onboarding probe。paths.ts 明寫舊 nested action builders 僅為 in-process mock compatibility 保留；strategyAction 與已退役 paths.action 的實際呼叫只有測試。StartRuntime probe 所打路由原本就只回 410，未找到正式 StartRuntime command executor，不能為了讓 probe 綠燈而新造能力。
+本次範圍：清除這些舊 mock/builders／相依測試及失效 probe 網路呼叫；StartRuntime 階段明示 UNSUPPORTED/skipped，不計通過，也不新增 executor。POST deployment-plan probe 只驗證既有 operator-checked 410 拒絕，不能當成計畫建立成功。刪通知型 410 endpoint、重複 helper、app factory 注入、錯誤的 catalog/manifest 自引用。
+明確保留：persona AdvanceLifecycle/Promote/PromoteCandidate/Demote 的有效分支；MCP create/action/tools 的有效 handler；POST /api/v1/deployment-plans 的 operator 檢查與 ACTION_RETIRED 業務拒絕（不能建立計畫，通知型路由退役目標只有 GET）；真正檢查身分及拒絕無 executor 動作的 ACTION_RETIRED 業務 guard。不能整條混合路由一起刪。
+狀態（16:52）：前端 PR #982 最新 source/evidence head67ac192977d864b310f03d69cbd7b143af72d0a2 已納入真正合併的 CI 修復 dab26e1；paths.action 與五個無有效呼叫的舊名稱 alias 均已刪，產品 notification／SSE 保留。新工作樹實跑46files／480tests、app typecheck、node syntax與七類狀態的離線 probe 契約全通過；StartRuntime 請求數0，deployment-plan guard 不計建立成功。正式 PRrun43060399603 與 PUSHrun43060391130 的四項原工作均 terminal SUCCESS，包含完整 unit/contract/typecheck/build/credential scan／Playwright及Smoke alias。16:56 已通過真實 Codex2 獨立審查；16:58 讀回 PR 已合併到 dev，merge acf3efaeb9141e1abd80375c9c2a357328c02c79。來源已合併，尚待 hosted exact pair 驗收；先前43f的失敗 CI 保留歷史結果。BFF PR #7178 本輪 frozen head9f7a259e9528073dd60a52b9ff1b0b8376b426e1 已納入實際 dev6547，產品清理邏輯與先前72a8一致。九個純通知型路由、helper、注入、自引用目錄已在來源清除；混合 persona 只保留 live4，其他使用既有404 RESOURCE_NOT_FOUND，沒有改名保留410 replacement通知。新基底實跑12項路由／guard／MCP檢查及36項生命週期／owner／confirm／auth檢查通過（14.02s／28.08s），17:25已通過新head真實Codex2獨立審查（manifest b992c38022e436980b7f921352e0429f848961d7）；審查者另實跑12路由、36生命週期／auth與100catalog／安全／composition批次全exit0，批次不加總。完整正式CI已完成；17:58讀回gh pr checks exit0（55pass、6條件式skip），PR已實際合併dev13b1be189fde14e1cd68fcc9213d4d8e177e1e1e。來源已交付，實際hosted pair仍待驗收。先前192lifecycle、217route/contract、28write-gap與4dedupe是舊head的真實歷史批次，彼此可能重疊，不加總成獨立測試數。現行契約、命名規範及證據仍保持一致。
+範圍澄清：本項「通知」是告知舊網址退役的回應，不是產品的 notification／SSE 功能。後者仍保留；靜態 catalog 的字串引用不能用來證明不存在通用呼叫者。
+前次來源交付：Pantheon PR #7070，merge b9aefbfede3ede522f7204459aa75e0f3f3fee8e；FE PR #970。
+
+A14 隱藏測試 DOM
+display:none completeness-grade/workshop-readiness 節點只為測試存在，不能代表使用者看到功能已就緒，沒有產品改善。
+處置：刪隱藏節點，測試改看可見 UI；11/8 hosted 檢查這兩類節點數均為 0。保留真實 empty／loading／readiness UI。
+來源交付：execute-plans PR #970。
+
+A15 X-Idempotency-Key 雙 header
+統一入口是 Idempotency-Key；前端完成遷移後繼續支援 X-Idempotency-Key 是多餘入口。
+處置：前端遷移並刪 BFF ingress alias。先前 hosted dryRun 驗證：只有 X header 得到 400 VALIDATION_FAILED，正式 header 能通過 header 驗證進到真正 confirmation gate。內部 downstream wire headers 仍依對應服務契約使用，不做全域字串替換。
+來源交付：execute-plans PR #970、Pantheon PR #7070。
+
+A16 artifact_state／deployment_stage 與 promotion_state fallback
+新增兩個正式欄位有明確語意：artifact_state 是 draft/candidate/approved/retired，deployment_stage 是 none/paper/canary/live/frozen。拆開後才能同時驗證「已核准」與「執行在何處」，不是再造執行引擎。舊 promotion_state fallback 曾允許沒有正式核准欄位的舊 metadata，不能只用 source grep 就判斷能刪。
+本次直接實測（11:56:56Z）：配置中的 /data/runtime/runtime_bindings.json 主檔及程式實際支援的 .bak，各 159 筆（152 retired、3 failed、4 paused），一個 tenant，各 158 份 metadata 全部同時有正式欄位與舊欄位，零 legacy-only，零非 approved。MinIO 另外透過既有 mc 唯讀列舉，一個 bucket、零物件。fleet 已配置本地路徑的唯讀檢查未找到符合執行 prefix 的 metadata 檔；這不代替上述 S3 API 列舉。
+159/158 差異另於 12:14:06Z 實測：唯一沒有 projection 的 binding 已 retired，Object Store 0 keys，也沒有 strategy_artifact。
+回復範圍：支援的 binding .bak 已直接讀取，沒有從 API 推論備份。metadata.rollback 的 target_registry_id 是業務回復引用，不直接等於另一個 Object Store；需依 RuntimeManager、outbox consumer 與 DeploymentPlanner 的實際解析確認。任意歷史備存不宣稱全球不存在；是否可執行依支援的 loader／recovery 路徑判斷，沒有搬資料或刪 archive。
+本次修改：loader 只接受 approved + deployment_stage；移除 experiments adapter 兩處冗餘 emission，補掉 DeploymentPlanner.build_execution_projection 的舊欄位 producer 與 helper。保留 training/research 仍消費的 telemetry target.promotion_state，兩者不是同一資料契約。
+狀態：PR #7173 修正版 head 48acabca3e9f4080889773342b510bdeaf82278b 已通過獨立審查；13:59 實際 gh pr checks exit 0（55 pass、6 skip、無 pending/fail），14:01 已由既有整合流程合併為 9ce4f3396f44b402290cd94578d20ba628b0ac48。獨立批次 204 tests 與 16 subtests 通過（42.06s、exit 0）；既有 smoke 已修為 paper→canary→live，實際執行 exit 0。主檔／備份分開實測與第159筆空紀錄已記入 evidence；保留所有 promotion gate，沒有新造核准能力。來源已合併，尚待本次 hosted exact pair 驗收。
+
+A17 TaskStore 舊 keyword
+load_snapshot(observational=True) 明確表達唯讀觀察；這屬介面名稱清理，不是產品能力提升。
+處置：遷移 refresh_checkpoint=False 的所有呼叫，沒有保留雙 keyword。現行 runnable docs 的殘留在 PR #7168 修正；歷史證據仍保留原貌。
+來源交付：Pantheon PR #7059、#7168。
+
+A18 Registry 根目錄舊轉接入口與過時相容文件
+補查發現：根目錄 gate.py 只有轉出正式模組的四個名稱，cli.py 只有轉呼叫正式 main；根目錄 README 明寫 legacy wrappers，範例仍從 gate 匯入。既有實作在 services/registry/promotion/，多一層根目錄入口沒有新增業務能力。
+仍有實際需求的是正式 PromotionGate：services/research/alpha_replication/revalidation_worker.py 直接使用它建立 draft entry 與檢查 candidate 條件。因此不能把整個舊名字相似的 gate 引擎一起刪掉。service-local CLI 的直接檔案執行與 module 匯入也須依實際解析分辨，不能只憑 from gate 字串認定依賴根目錄 wrapper。
+處置：REGISTRY-ENTRYPOINT-ALIAS-RETIRE-20261111 已經既有 supervisor 接受；A16 已合併並正式結案，現行設定允許實作且有健康容量的 Codex worker 已於 14:15 接手。核對正式入口後刪多餘 root wrappers、遷移 README，修正 package tests 對舊檔案必須存在的要求，同時保留實際 package export allowlist 與不匯出通用舊名稱的保護。
+一併修正文檔：現行 registry promotion README／registry 與 lineage 契約仍說 loader 讀 promotion_state、producer 必須雙寫；這與 A16 修正後的程式不符。更新現行操作說明，不改寫歷史審查紀錄、不搬移資料、不刪 archive。實際還在使用的 lifecycle_state 輸入與 telemetry target.promotion_state 必須分別說明。
+整合漏項：第一次本地測試使用已 provision 的 interpreter，漏查 .github/pantheon-stage0-matrix.json 中直接執行 smoke_test_gate.py 的 CI 呼叫。舊 smoke 的 from gate 解析到相鄰 service-local gate，不能據此認定根目錄 alias 有業務呼叫；改成正式 services.registry 匯入後，未安裝套件的 CI 直接檔案執行缺少 repo root。已在同一 PR 將現行 matrix 呼叫改為 python3 -m services.registry.promotion.smoke_test_gate，沒有補新的 import shim、相容入口或依賴。這是助手漏做完整呼叫鏈檢查造成的返工。
+狀態（17:22）：PR #7182 本輪 frozen head600bb1214609ee9b00840fdf8eb571d0f293a779 已含實際 dev6547（merge anchor d5361c368）。原c9c98fa的刪除與正式module caller修正保留；新基底在空venv、無pip／PYTHONPATH下執行實際matrix smoke成功，21項 focused integration tests通過且0skip，CLI／matrix／ancestry／diff／trailers檢查通過。17:28已通過真實Codex2新head獨立審查（manifest 8faf89967360a07976e1c4085961009228e5b76d），審查者重跑117tests與12subtests通過，並驗證空venv實際matrix caller；正式CI已全數完成，gh pr checks exit0（55pass、6條件式skip）；18:01讀回PR已合併dev a61c3d4f3786607ccfa976eb5975315c786bc8e4。來源已交付，尚待hosted exact pair驗收。舊head曾真實通過94tests＋4subtests、20package provisioning tests＋8subtests、3installed-distribution tests，另有外部cwd真實CLI非--inplace不改輸入、candidate→live拒絕exit2等證據；這些保留為歷史驗證，不冒充新head結果。
+
+可以認定的開發偏移／多餘延伸
+1. 以原本測試 patch 方式為由，把 globals 反查與 __code__ 分派長期留在服務入口。
+2. 為退役 endpoint 保留 mock、path builder，再以這些 mock/tests 自己引用舊路由作為不能刪的理由。
+3. 只有測試會看見的隱藏 DOM，被當成產品 readiness 證據。
+4. 過渡完成後普通 promotion 仍跑歷史 FIFO 轉換。
+5. 正式 producer 已有 canonical 欄位，卻繼續雙寫舊欄位，或只刪一個 producer 漏掉真正的 DeploymentPlanner。
+6. 正式 service-local Registry 入口已存在，根目錄仍留純轉接檔，且測試反過來要求舊檔案必須存在；現行文件又把已完成的欄位遷移寫成尚未完成。
+這些是可由來源與引用關係支持的偏移，不推測個別 agent 動機。新 context、狀態語意拆分、fleet 與現行 config 有實際用途，應復用有效舊元件並刪掉多餘轉接，而不是一律因為新就刪、或因為舊就保留。
+這些複雜度與漏項屬助手的工程判斷、實作與整合責任；清理是返工，不列為新增產品能力。測試引用、工具健康、刪除行數與 commit／PR 數，都不能代替真實使用者流程驗收。
+
+來源、測試、合併與部署分開
+前次收尾驗收：Pantheon PR #7085，merge 7924be0c0dd6feae39792450b5000151b8ec8cec；記錄 2026-11-08 真實 authenticated 導航、header 與舊路由操作。
+本次文件 #7168、FIFO #7174、metadata #7173、FE #982、BFF #7178、Registry #7182 來源清理均已合併。COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111 的真正 hosted exact pair 驗收與最終報告尚未完成，不能稱全部交付。
+本次另外確認最新 manifest 標示 accepted 也不代表發布成功：現有 publisher 的 root workflow 曾在最後封存／回復失敗。後續必須沿用既有唯一 publisher，確認包含本次 merge 的 exact FE/BFF pair、root workflow 成功與實際 authenticated readback。沒有另開部署器、沒有重播已驗收 Loops、沒有偽造 MFA／核准／市場資料或解除真實 paper/live 邊界。
+交付阻礙補充（14:47 實際 decoded CI logs）：Pantheon PR #7176 的第二次 Smoke retry job 130582344330 在 host 的 sudo apt-get update／bubblewrap 安裝前置步驟，持續無法解析 azure.archive.ubuntu.com，五分鐘 timeout，測試尚未開始；FE PR #982 的 Chromium job 130587613365 也在 Playwright --with-deps 取得 Ubuntu 字型套件時遇到同一 DNS 錯誤，14:45:02 exit 1，瀏覽器測試尚未開始。原始匿名摘要在 ci-apt-failures.json。既有 CI-SANDBOX-APT-DNS-20261111 與同批 FE-CI-APT-DNS-20261111 分別處理兩個 repo 的最小套件來源／安裝修復；保留套件簽章、sandbox 與真正瀏覽器檢查，不用跳過測試換綠燈。這是解除已重現的交付阻礙，不是另造產品新舊相容系統；尚未完成前不能宣稱全部交付。
+
+原始實測證據目錄：/tmp/pantheon-compat-residual-20261111/
+主要檔案：local-writer-inventory.json、local-rollback-source-inventory.json、remote_inventory-result.json、remote_metadata-result.json、remote_minio_inventory-result.json、remote_binding_recovery_inventory-result.json、remote_binding_missing_projection-result.json、fe-retired-route-consumers.json、remote_bff_access_inventory-result.json。
+
+CI 續查（15:57）：只從 Azure 改成 archive/security.ubuntu.com 的第一版沒有解決問題，真實 CI 仍失敗，未列為完成。run43047282085/job130615043050 中 runner、root、_apt 三種身分對三個 Ubuntu 原站均 DNS timeout，但 github.com 成功；三者都沒有 proxy 環境鍵，APT Proxy／Proxy-Auto-Detect 也不存在，不能把原因推給 sudo 丟失代理設定。
+同一 CI 環境的後續實測 run43049658097/job130628915523：三種身分都能解析 Princeton 與 Kernel 已登錄鏡像；Kernel HTTPS 驗證失敗 exit60，不能採用。Princeton HTTPS fetch exit0，以 runner 既有 Ubuntu archive keyring 驗簽 exit0，Origin=Ubuntu、Codename=noble 均符合。這僅證實該來源與索引可用，仍須實際 APT 安裝與原有 sandbox／瀏覽器測試通過；未停用 TLS、套件簽章或任何產品邊界。暫時診斷不應擴成通用工具，最終保留解除當前阻礙所需的最小變更。
+
+CI 實際進展（16:02）：後端 PR #7183 exact head 7bb062a3bba00f6ee4cdbe01615b8ee595551096，run43051904067/job130632539407 的 Provision real worker sandbox 已成功；前端 PR #983 exact head 444bcb33a9dfd1cf5096cf572fbed57dd1aa6ba0，PR run43052449968/job130637487868 已通過原 Chromium 安裝步驟並進入 unit/integration，原 push run43052441922/job130634870286 亦有安裝成功紀錄。兩者完整 CI 與獨立審查尚未完成，不能當作已合併或已部署。
+
+後端後續失敗（16:04）：同一 exact7bb062a3b 的 Smoke job130632539407 在成功安裝與實際 bwrap probe 後，期貨估值整合測試 test_summary_projection_and_drift_see_futures_valuation 於 test_futures_session_inputs.py:1038 讀取 row[mark_price] 發生 KeyError。Verify real worker sandbox boundaries 因前一步失敗而 skipped，不能宣稱通過。CI 修復 branch 相對 frozen base9ce4f3396 僅改五個既有授權 CI／證據路徑，產品檔案未改；仍須重現並釐清來源原因，不能再歸類為 Ubuntu DNS 或以盲目重試處理。
+
+期貨測試根因（16:12）：root 以既有 Python3.12 venv 重現原節點失敗（1 failed，3.18s），唯讀重播證明其他 risk/order/fill/position 事件帶入 11/11 wall clock，令 _binding_latest_event_at 晚於固定 11/10 估值。將合成事件時間固定到情境日期後，既有 freshness 規則正確產生 mark_price97.1。原 CI 任務已透過既有 artifact-contract 增加唯一現有測試檔；worker 只修 fixture，原節點通過（2.97s），全部原斷言保留，未修改正式 runtime／freshness／calendar／交易程式。完整測試與新 head CI 仍須取得真實結果；沒有跳過舊失敗。
+
+前端 CI 真實結果（16:23）：PR #983 exactd553e11c642cae28da54d2ace68e2319fdca7fe6 的原 push run43054766164 與 PR run43054778275 均 terminal SUCCESS。兩份完整 component logs 分別證明既有簽章檢查下安裝依賴、原 Chromium --with-deps 成功，helper5／safety57／unit-integration2941／contract11／browser49 tests 通過，完整 app／Agora typecheck、build 與 credential scan 成功。正式獨立審查已由原 supervisor 派給 Codex2；尚未合併，不等於清理 PR #982 或 hosted exact pair 已交付。
+
+前端 CI 修復已合併（16:31）：execute-plans PR #983 frozen reviewed head d553e11c642cae28da54d2ace68e2319fdca7fe6 已由 canonical_auto_integrator 合併到 dev，merge dab26e1f69181b7b6cbbae47ef4cf3d86050278c，真實 integration receipt observed_at16:31:00Z。gh pr checks exit0，包含已發布的真正獨立審查證明與原完整 CI，沒有 root 自造 review tag。此項解除前端交付阻礙；原清理 PR #982 還須採用實際修復後的 dev、完成自己的新 head 審查與 CI，不等於來源清理或產品部署已完成。
+
+原前端清理續作（16:39）：FE-CI 修復已在 canonical state DONE（16:34:29Z），原 FE-RETIRED-PROBE worker 於16:35:46Z 實際接手。原 PR #982 已合入真正 dev 修復 dab26e1（merge46b6e0a19），再凍結 evidence head67ac192977d864b310f03d69cbd7b143af72d0a2。產品 diff 仍為原六檔清理範圍，沒有新 executor／replacement endpoint。新工作樹實跑46files／480tests、app typecheck、node syntax、七類狀態的離線 probe 契約、diff/trailers/budget 全 exit0；StartRuntime 網路請求數0、計畫 guard 不得判為建立成功。新版本正式 CI、獨立審查及合併尚待完成；原43f兩次 CI 失敗仍保留，不改成通過。
+
+後端 CI 修復來源交付（17:11）：PR #7183 final a162e1da12dd6b4fcde479fb22a8745f211768e4 已真正合併到 dev6547ff3493dc110b1537941f3ddf24c61495d0a0。gh pr checks exit0：15pass／7依路徑條件skip／0pending／0fail；完整Smoke26m36s成功，實際lean588pass／13既有skip／70subtests通過，三項必跑real sandbox negative controls皆成功、0skip。核心修正只為現有套件取得與合成測試時鐘，沒有產品能力新增、全域DNS／代理／簽章放寬或資料搬移。BFF #7178、Registry #7182 已透過既有reopen於17:12恢復，須在原PR採用真實currentdev後驗證新head、重新獨立審查並合併；此CI修復合併不能代替兩者來源交付與最後hosted驗收。
+
+本輪彙整讀回（2026-11-11T20:23Z）
+本 task 在正確的 task/COMPAT-RESIDUAL-HOSTED-ACCEPT-20261111 分支、乾淨 worktree 接續既有 anchor01b1c884；正常 merge current dev5c6afce，沒有重寫任何來源 task 或歷史 evidence。九個 declared parents 均以 AI_NAME=Codex 經 supervisor 提供的 command root show 讀回 canonical DONE；GitHub 實際 PR MERGED、reviewed head、merge SHA 與 canonical frozen manifest blob 逐一相符。下表是本輪實際讀回值，不是預定 merge：
+
+項目／repo PR／reviewed head／merge commit
+FIFO Pantheon#7174 8d0fefbf77d25856d0a9d4b85a7d6e1740d63d29 -> a504a3cbb03bfcc3ed51978d98351ac2cf7bb4f5
+Metadata Pantheon#7173 48acabca3e9f4080889773342b510bdeaf82278b -> 9ce4f3396f44b402290cd94578d20ba628b0ac48
+FE retired probe execute-plans#982 67ac192977d864b310f03d69cbd7b143af72d0a2 -> acf3efaeb9141e1abd80375c9c2a357328c02c79
+BFF notification Pantheon#7178 9f7a259e9528073dd60a52b9ff1b0b8376b426e1 -> 13b1be189fde14e1cd68fcc9213d4d8e177e1e1e
+Refresh image pin Pantheon#7170 e8c0c1ad7bfb95163f86bb4486ea0ee860ea3239 -> 4bd3f74cab0add621441c3c8017d8717a77010a2
+Refresh ordering Pantheon#7176 6a76cf5c9310d31a775e21db743f203d3fadf6bb -> 596abd9c1b5247f48e9d45a1610857cd6653b37d
+Registry entrypoint Pantheon#7182 600bb1214609ee9b00840fdf8eb571d0f293a779 -> a61c3d4f3786607ccfa976eb5975315c786bc8e4
+FE signed APT execute-plans#983 d553e11c642cae28da54d2ace68e2319fdca7fe6 -> dab26e1f69181b7b6cbbae47ef4cf3d86050278c
+Source rollback posture Pantheon#7192 d6c62a617efe489bf3c962abe4e6ecafcafa1c29 -> 5c6afce7cd68ff88b6a21106da29e02172fe4f34
+
+所有 backend merge 都是 publisher candidate5c6afce 的 ancestor，前次驗收六個來源 PR 同樣成立。FE#970、#983、#982 也都在 exact FEacf3efa 內。每個 ancestry 與 frozen evidence blob 比對 exit0；FE 僅在 /tmp 外部 bare audit repo 讀取，沒有把 frontend source 放進 Pantheon。逐 PR 的實際 SUCCESS／SKIPPED 數已記入 evidence.json；條件式 SKIPPED 不算 passed。歷史失敗／timeout 保留，不因後來成功而改寫。
+
+A01–A18 驗證範圍與資料／回復決策
+A01：既有 SourceIngestionRuntime／source tests 與 BFF 讀取契約支持移除 globals dispatch；繼續使用原有 ingestion store，沒有資料搬移；未做前後效能量測。
+A02：既有 Agora audit、management 與 internal smoke receipts 支持單一 Agora writer；保留 JSONL 與不同 schema 的 Governance store；沒有把測試筆數當作真實交易使用量。
+A03：既有 route/center tests 與 11/8 browser 是歷史證據。BFF pm12/service.py:1349 仍實際產生 performance-attribution link，因此保留 redirect 與嵌入元件；本輪 browser 仍待 publisher。
+A04：既有 runtime-config／runtimeEnv／devLoginHelper tests；正式同 origin config 仍有 immutable bundle 綁環境用途。舊 globals 不再讀；本輪 live/strict／write posture 尚待實際 readback。
+A05：既有 asyncTransitionPolicy 契約支持刪 shim；沒有證據宣稱 timeout 效能提升，保留原有 transition 語意。
+A06：既有 lease/deploy/paper-runtime tests 與先前 VM inventory 支持 fleet 權責；只退役 root 靜態入口，保留 exec 分離拓樸與引擎；本 task 不操作 runtime。
+A07：102 項來源測試；11:43 的 writer/path/prior-runtime 盤點與已安裝 runtime811b 的 ancestry 分別證明過渡完成及工具已包含修正。保留 directory fence、writer drain 與 rollback，沒有 journal 遷移或本輪 promotion。
+A08：worker receipt tests 已遷移現行 worker-runtime/state.json；不搬 canonical task journal，不把 supervisor 健康當作產品健康。
+A09：Agora/Cron/projector 既有測試支持刪無獨立呼叫的 alias；不碰真正 SSE 功能、業務 audit 或事件紀錄。
+A10：internal_api smoke 與更新後 py_compile caller；保留必要的 hyphen import shim，不新增資料／API 能力。
+A11：既有 workflow configuration caller tests 支持只留 branch_workflow；舊歷史設定記錄保留，不製造新的遷移服務。
+A12：既有 W&B smoke／matrix 加文件 PR#7168；現役只留 OFFLINE_STORE，歷史字串不當成 runtime caller。沒有外部 provider 寫入或量測效能宣稱。
+A13：BFF 新基底12 route/guard/MCP、36 lifecycle/auth 測試及 reviewer100 批次為來源證據，互有重疊不加總；FE46 files/480 tests、typecheck、syntax、七狀態離線 probe 及 exact-head push/PR CI 成功。實測流量僅7,720筆部分日視窗。StartRuntime零fetch且skipped，POST plan guard永不計建立成功；persona live4／MCP／產品notification/SSE保留，沒有執行 lifecycle 或通用 onboarding 寫入 probe。
+A14：既有可見 UI tests 與 11/8 browser 的兩類 hidden-node count0 是舊 pair 證據；本輪不以 hidden DOM 或測試 hook 冒充產品 readiness。
+A15：既有契約與 11/8 dryRun header驗證：舊 header400、canonical header走到428 confirmation。這不是本輪的成功 command，也不改 downstream 私有 wire 契約。
+A16：204 tests＋16 subtests 獨立來源驗證與 canonical paper→canary→live smoke 都 exit0；各別 source batches 可能重疊。主檔／支援.bak 各159筆、158 canonical、0 legacy-only；MinIO一bucket零objects是獨立時間點實測。第159筆已retired且無projection／artifact／keys。無物件可載入不能宣稱 hosted 物件執行成功；canonical loader能力由來源測試驗證。RuntimeManager._rollback_once 使用 proven prior_binding 欄位與 replacement_metadata；services/deployment/outbox_consumer_worker.py 組 compensation metadata。真正target_registry_id/target_version及人類核准／checksum／stage gates保留；沒有 archive刪除、資料遷移或 hosted rollback。
+A17：既有 TaskStore／worker tests 與文件 PR#7168 支持 observational keyword；沒有狀態儲存遷移或另造調度器。
+A18：真實 alpha_replication revalidation worker 仍用正式 PromotionGate 建draft／驗candidate；root forwarders移除。新基底21 focused tests、空venv實際matrix caller與CLI exit0；reviewer117tests＋12subtests通過。最初漏查未安裝環境caller的失敗已如實保留；package exports、lifecycle_state輸入、telemetry promotion_state 與真正業務 rollback 不變。
+除上述具名實測，沒有 before/after latency 或產品流量／效能提升量測。對 A01–A18 的清理收益只主張移除多餘轉接、單一設定／writer權責與較清楚的契約；不將返工算成新增產品功能。任意外部 caller、所有歷史 archive 或未來寫入物件是否存在，沒有全球不存在證明；刪留以當前 supported caller、writer、loader／recovery 路徑與明列實測範圍為準。
+
+原唯一發布 lane 的實際阻礙與修正
+除了 A01–A18 清理來源，PR#7170 把 bounded refresh／restore 固定到 running image ID，避免 stale plain tag；PR#7176 將既有 refresh 放到候選 stack 切換後，失敗仍補償。這些是既有交付路徑修復，不是相容平台。
+Root43079517858 曾因未要求的 bounded proof／DLQ 與 whole-stack restore 控制設定漏存失敗，不能拿其 manifest accepted 或短暫200當成功。本 task 不重跑該舊 payload。PR#7192 使既有 capture/restore 記錄 source scheduler五個非秘密控制鍵、source API egress兩鍵及restart policy；absent與empty分開，真實Compose以 !reset null 清除缺值，restore後fail closed比對。來源三suite589pass、1既有FE-helper skip；reviewer另驗真實Compose及controller13tests；不聲稱已替舊 sealed baseline補出這些欄位。舊artifact保持不動，新的capture仍走同一入口。臨時恢復舊來源健康是救援歷史，不是新pair交付。
+
+20:23Z hosted 驗收歷史快照（以下當時 pending；最新狀態以文末23:04Z續查為準）
+唯一 publisher仍是 STRAT-DATASRC-HOSTED-ACCEPT-20261110；root43093653611、job130776856810，建立20:08:16Z。預期 BFF5c6afce7cd68ff88b6a21106da29e02172fe4f34 + FEacf3efaeb9141e1abd80375c9c2a357328c02c79。20:23Z GitHub讀回仍in_progress／Deploy dev VM stack under lease，尚無terminal success；L1-L12及all-12 chain為skipped，不算PASS。
+沿用原publisher的operator-live前端與strict auth設定；這是現有發布輸入，不是此worker新授權真實寫入。必須讀回實際live/strict／安全預設與任何已由operator明示啟用的write姿態，不由profile名稱推論安全或擅自改動。
+完成前仍需：(1) 該root整體terminal SUCCESS；(2) 同run之hosted deployment.json、BFF/version、exact FE/BFF／pair／artifact身分與gate-before-switch／post-switch／rollback receipts；(3) 同pair真實authenticated唯讀GUI及canonical persona/deployment/ranking/metadata/MCP API讀取；(4) 只在確保零業務mutation時，以impossible IDs驗證相關retired paths；不送life-cycle command、不跑會寫入的onboarding probe；(5) 最終evidence commit、push／PR、獨立Codex2 exact-head審查、必要CI與既有integrator合併。
+本worker只做read-only inventory／報告，不接管publisher的deploy／lease／guard／登入憑證。已在本task native note記錄對原publisher的sanitized hosted receipts需求；跨task note遭現行worker lease mismatch拒絕，未繞過或改變對方task。沒有重用舊auth/login、秘密輸出、服務restart、provider/data/business write或新增部署器。
+目前不能凍結最終驗收、handoff為完成證據或標DONE。Financial／market／Collector與fresh Loops的原始驗收仍由原publisher承擔，本清理報告不延伸主張。source合併、安裝後工具健康、greenCI、public200或manifest accepted label，均不能替代這些hosted證據。
+
+本輪續作與實際 hosted 讀回（2026-11-11T23:04Z）
+乾淨 task worktree 以 merge babff775d 採用 current dev bee62bc29；沒有變更產品來源、root workflow、runtime 或其他 task evidence。新增第十個已完成來源：DEV-ROLLBACK-PAPER-READER-POSTURE-20261111，Pantheon PR#7194，reviewed head05768656c2ee9d85e14e17c00331e7eb69258289，merge d9c730ea4e4e03c8f2ea3cbed7feb58d03c25ac7；frozen manifest blob d9e605889dde6602ba66f85a303e648a00bc2ce6。canonical DONE、GitHub MERGED、blob 與 ancestry 各 exit0。既有 reviewer 實跑593pass／1skip，真實Compose已通過；skip是另一個FE digest/Node helper。原owner的Compose skip仍保留為歷史。此修正只保存既有paper reader三個非秘密設定，不把憑證值封存，也不回填舊artifact。
+
+唯一 publisher 原root43104597393於22:42:20Z terminal SUCCESS；FE gate43108247755、FE deploy43111484860亦terminal SUCCESS。本worker直接重讀GitHub三run與jobs（exit0），沒有另dispatch、取消或重新部署。BFF d9c730ea4e4e03c8f2ea3cbed7feb58d03c25ac7、FE acf3efaeb9141e1abd80375c9c2a357328c02c79；前述十個來源merge均包含於相應served head。pair8d946a5723013b437f7382ff273337da3a245851d3d26b48d88d550c24422ef8，artifact d66a48288719a898b0e40093ca09401556553329865d344cf6beb7f84125e40a，BFF image sha256:ea37dba9b9ceb834829b9c8f2e885efe493bdaa037dbb526e61f40acf0699b31。
+23:00:59–23:01:12Z讀取的deployment.json SHA256 d43b4bbe87660621d80d61f7ca5aa95f3cf40aa907c30c65fc1504f0888e1aa3、BFF/version SHA256 2b41328860aa93008f51432ce20d25b4cca3203744e1b62731e9f278156972c0，前後完全相同，controller=root43104597393。manifest報accepted、candidatePreSwitch/postSwitch報passed；rollbackRequired=false，未執行rollback drill。獨立restore、Persona proof及Loops jobs是SKIPPED，沒有改稱PASS。完整candidate／compatibility／artifact identity與run URL收於evidence.json。
+實際姿態：live／strict、auth_stub=false、dev login=true、mfa_required=false、stub writes=false、embedded bearer=false、emergencyOverride=false；operator-live的REAL_WRITES=true。這不是safe default false，且本task artifact尚無明確綁定的operator啟用授權引用；不能從profile名稱推論授權。這次worker沒有啟用、停用或使用業務寫入；既有來源command kill switches回應仍false。
+
+不可洗白的gate原始結果
+直接取得原job130817129871完整logs，下載exit0；原始log摘要和檔案SHA256列於evidence.json。22:22:09Z route timing/readiness GET401、load gate fail／exit1、Management hosted acceptance因缺少short-lived BFF_AUTH_TOKEN而exit1；22:23:42Z Desktop42pass／11skip／1fail，F12在authHeaders前即缺token，owner readback未執行。workflow最終success與正式identity/admission步驟success均是真實事實，但不是這些probe通過。後補GUI不能補造原F12、load gate或missing-auth步驟的PASS。完整gate-before-switch適用驗收仍未被證實。
+
+真實authenticated唯讀證據及界限
+原publisher於22:43:11–22:43:41Z的four-profile-HL1Svb，以TEST_ADMIN、OPERATOR_A、OPERATOR_B、VIEWER四個真正不同subject/roles登入，tenant均tenant-dev；GUI login/me200、API logout200之後me401。零pageerror／真正network failure；ERR_ABORTED另外保留。Admin fresh API3265ms／visible3338ms超原2000／2500ms門檻；其他3個fresh樣本通過，但原aggregate pass=false不改寫。不是跨tenant滲透測試。22:47:51–22:47:56Z four-profile-BQOd5Z另實點admin的Sign out，399ms回登入頁、logout200／me401；顯示3個真實持倉，全數報價／telemetry仍stale或unavailable，不宣稱財務驗收完成。
+本worker於23:00:59–23:01:12Z透過既有OPERATOR_A設定做真GUI登入與只讀補查，process exit0。9個canonical GET（含me、personas、strategies、deployments、runtimes、ranking-formulas、mcp-servers、mcp-tools、真strategy detail）均200；personas20/total167、strategies5/total3380、runtimes20/total159、ranking1、MCP兩清單確實0。Strategy detail具真rules、strategy_rules來源registry_strategy_artifacts；這是實際Registry讀取，但不是空MinIO的production execution object載入證據。Deployments的saga_stage unavailable、runtime_fleet/deployment_stage_truth degraded保留，200不代表完整健康。
+同一operator的退役GET：/bff/ranking/formulas→404 RESOURCE_NOT_FOUND；/api/v1/deployment-plans→405 VALIDATION_FAILED；/bff/mcp/servers→405 VALIDATION_FAILED；/bff/mcp/servers/__compat_residual_nonexistent__→404 RESOURCE_NOT_FOUND。405因相同path仍有保留的POST，不是CRUD成功。未送任何nested action／lifecycle／deployment-plan POST、MCP create/action或onboarding command；保留行為以原reviewed source/test receipts判斷，不宣稱本輪完成業務action。
+實際導航/management/deployments、/management/rankings、/management/mcp可見正式heading；/management/performance-attribution?tab=overview轉到/management/performance?tab=attribution，heading績效中心。這支持保留BFF仍會產生的舊連結redirect。每頁截圖與hash收於本機receipt；heading可見的時間不是全頁資料載入完成。零pageerror／非取消network failure／blocked business writes；12個ERR_ABORTED依原receipt保留，不當成已完成成功請求。Auth只有正常login/refresh/logout POST允許，沒有business mutation。第一次launcher使用舊code checkout helper遭SSH system-config ownership拒絕（兩次exit1、未登入）；改用本task既有-F /dev/null的pinned-key helper後才成功，沒有修改host/config/credential。
+
+原13條baseline回應差異的逐類判讀
+strategy-readonly-19JTI6保存12個原策略查詢與1個資料源查詢，13個均200，before/after exact pair一致；page errors、failed API requests與business writes皆0。對12個策略完整tree比較，38個leaf差異僅meta.snapshot_at及data/items內metricsAsOf：metrics原02:09:57Z變05:16:35／36Z，其餘owner／數值／狀態／filter／pagination／total均相同。這是明列時間更新，不宣稱byte equality；12個exact_equal仍false。
+資料源另837個leaf差異，不得一律忽略：146項TAIFEX runtime是成功refresh時間／receipt／distillation references更換，row_count25→10，attempts及successful9→11；559項TW runtime包括fresh→stale、external_egress/host_not_allowlisted錯誤、attempts74→85、failed20→30、successful54→55、health row_count100→0及receipt/due變化；這些是實際degradation，不是純時間漂移。116項metadata/catalog語意變更包含T86改collector_bundle但保留upstream URL、holiday/fundamental datasets、FinMind價格改raw/reference與broker-branch detail及陣列索引位移；不屬本cleanup，不能藉時間欄位豁免原publisher的parity AC。10項policy projection是generated_at及兩connector lifecycle副本；其餘6項為五個舊connector的age_seconds與snapshot_at。7個connector身分、legacy_projection/degraded、commands=false與無action fields維持；完整source/catalog正確性及原publisher parity仍未全部證實。baseline、current response、完整837diff檔均以原路徑與SHA256綁定，沒有刪改原始capture。
+原20次真browser Fleet warm p95=1036.7ms，未達1000；default/per-persona各10次p50=1397.46／1322.52ms，未達1200；hide-retired1584.68ms符合5000、Persona detail3606.51ms快於原6400。原result measured_checks_pass=false／all_acceptances_proven=false保留，沒有丟outlier或變門檻。這些global性能與gate修復由既有supervisor已派發的BFF-HOSTED-READ-LATENCY-RESIDUAL-20261111及FE-RELEASE-GATE-AUTH-TRUTH-20261111擁有，不新增本task dependency、另publisher、模型／provider／Loops或產品實作。
+
+目前交付邊界
+A07工具啟用、A13退役GET與保留mixed handlers、A16 supported metadata/canonical loader來源與真Registry讀取、A18正式入口都有具名適用證據；empty MinIO、不測mutation、有限tenant/traffic與舊rollback archive的限制仍在。原AC3/4完整gate適用驗收與safe-default／明示授權姿態尚無充分證據，不能由來源完成或有限GUI成功代替。PR#7193僅保留可續作證據，不凍結completed-delivery handoff、不標DONE；後續由原publisher/既有修復lane提供真正缺少的結果或已有明示授權引用，再由本task沿原review/CI/integrator流程完成。沒有要求重授既有權限，也沒有改canonical acceptance。
+
+23:08Z補充完成載入的導航驗證：檢視首批截圖後確認其只證明heading可見，因此另做有界唯讀batch，逐頁等實際intended GET200／response完成／loading marker消失才截圖，23:08:56Z process exit0。部署表161列、耗12.903s；排名明確EMPTY／Live data unavailable（1個placeholder列，不是1個persona）；MCP明確Live MCP registry is empty且actions disabled；績效歸因共30個table rows。四頁response與截圖hash、5個ERR_ABORTED（包含離頁的quarterly recommendations）、零pageerror／真正network failure／business writes及logout200→me401，都在render_complete_followup與原始receipt；前批heading-only證據未刪改。這解決載入截圖範圍，不把12.903s或empty/degraded狀態稱為性能／全功能PASS。
+本輪驗證收齊：python3 /tmp/compat-residual-validate.py終局exit0，十個canonical DONE／frozen blob／merge receipt／served ancestry、六個舊來源ancestry、原inventory內容與hash、全部raw receipt hashes及13條baseline完整diff重算均通過。前兩次因governed show task-lock busy exit75中止，未算通過；有限重試後的成功與失敗分開記錄。JSON、diff、trailers、two-file scope與每個evidence檔400新增行上限檢查通過；未重跑未變更產品的廣泛測試。
