@@ -156,6 +156,16 @@ class ResearchServiceClient:
         if not isinstance(res, list):
             raise ResearchCommandError("Research artifact collection response was not a list", status_code=502)
         return res
+    def list_research_artifacts_page(self, *, page_size: int, page_token: Optional[str] = None) -> Dict[str, Any]:
+        """One bounded ordered page of the caller's saved outputs (``items``/``total``/``next_page_token``)."""
+        path = f"/api/research/artifacts?page_size={int(page_size)}"
+        if page_token:
+            path += f"&page_token={urllib.parse.quote(str(page_token), safe='')}"
+        res = self._call("GET", path, headers=self._caller_headers())
+        # A previous-release owner answers a bare list; that is not a page and must not be mistaken for one.
+        if not isinstance(res, dict) or not isinstance(res.get("items"), list):
+            raise ResearchCommandError("Research artifact page response was not a page", status_code=502)
+        return res
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not artifact_id:
             return None

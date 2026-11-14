@@ -27,12 +27,15 @@ try:
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
+        ArtifactOwnerPageResult,
         ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
         _naive_utc,
         _parse_rfc3339,
+        artifact_catalog_key,
+        encode_artifact_owner_token,
         normalize_registry_catalog_row,
         normalize_research_catalog_row,
     )
@@ -43,18 +46,46 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
+        ArtifactOwnerPageResult,
         ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
         _naive_utc,
         _parse_rfc3339,
+        artifact_catalog_key,
+        encode_artifact_owner_token,
         normalize_registry_catalog_row,
         normalize_research_catalog_row,
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
 log = logging.getLogger(__name__)
+
+_CATALOG_CURSOR_PREFIX = "m1:"
+
+
+def _encode_catalog_cursor(state: Dict[str, Dict[str, Any]]) -> str:
+    import base64
+
+    raw = json.dumps(state, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(token: Optional[str]) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Per-owner ``{token, done, total}`` anchors; ``None`` for no token or one that is not a merge cursor."""
+    import base64
+
+    text = str(token or "").strip()
+    if not text.startswith(_CATALOG_CURSOR_PREFIX):
+        return None
+    body = text[len(_CATALOG_CURSOR_PREFIX):]
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+    except (ValueError, UnicodeError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
@@ -738,6 +769,18 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             "ok",
             source if source not in ("missing", "unavailable") else "typed_store",
         )
+
+    def read_registry_strategy_artifacts_page(self, *, page_size: int, page_token: Optional[str] = None):
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_registry_strategy_artifacts_page"):
+                return owner.read_registry_strategy_artifacts_page(page_size=page_size, page_token=page_token)
+        raise NotImplementedError("read_registry_strategy_artifacts_page")
+
+    def read_research_artifact_catalog_page(self, *, page_size: int, page_token: Optional[str] = None):
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_research_artifact_catalog_page"):
+                return owner.read_research_artifact_catalog_page(page_size=page_size, page_token=page_token)
+        raise NotImplementedError("read_research_artifact_catalog_page")
 
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "compare_research_artifacts"):
@@ -1437,6 +1480,116 @@ class ResearchRouterService:
         payload["meta"] = meta
         return payload
 
+    def _list_artifact_catalog_paged(
+        self, port: Any, snapshot_at: str, page_token: Optional[str], page_size: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Cross-owner merge of one bounded page per owner; ``None`` when the port has no owner page reads.
+
+        Each owner serves its own ``(created_at, id)`` descending order and keyset token. The merged page is the
+        top ``page_size`` of both owner heads under the BFF's ordering, and each owner's next token is anchored on
+        the last row of that owner actually served, so a page boundary never skips or repeats a row. A merge token
+        (``m1:``) carries both owner anchors; a token that is not one falls back to the legacy full merge.
+        """
+        cursor = _decode_catalog_cursor(page_token)
+        if cursor is None and str(page_token or "").strip():
+            return None
+        cursor = cursor or {}
+        owners = (
+            ("registry", "read_registry_strategy_artifacts_page"),
+            ("research", "read_research_artifact_catalog_page"),
+        )
+        reads: Dict[str, ArtifactOwnerReadResult] = {}
+        for name, method in owners:
+            state = cursor.get(name) or {}
+            if state.get("done"):
+                reads[name] = ArtifactOwnerPageResult([], "ok", "typed_store", total=state.get("total"))
+                continue
+            try:
+                reads[name] = getattr(port, method)(page_size=page_size, page_token=state.get("token"))
+            except NotImplementedError:
+                return None
+            except AttributeError:
+                return None
+            except Exception as exc:
+                reads[name] = ArtifactOwnerPageResult([], "failed", "unavailable", str(exc))
+        reg_read, res_read = reads["registry"], reads["research"]
+
+        def _order(tagged: Tuple[str, Dict[str, Any]]):
+            row = tagged[1]
+            return (_naive_utc(_parse_rfc3339(row.get("updatedAt"))), str(row.get("id") or ""))
+
+        tagged = [("registry", r) for r in reg_read.items or []] + [("research", r) for r in res_read.items or []]
+        tagged.sort(key=_order, reverse=True)
+        served = tagged[:page_size]
+        page_items = [row for _, row in served]
+
+        next_cursor: Dict[str, Dict[str, Any]] = {}
+        any_more = False
+        for name, read in reads.items():
+            prior = cursor.get(name) or {}
+            mine = [row for tag, row in served if tag == name]
+            fetched = list(read.items or [])
+            if read.status != "ok":
+                next_cursor[name] = dict(prior)
+                continue
+            total = getattr(read, "total", None)
+            if total is None:
+                total = prior.get("total")
+            if mine:
+                token = encode_artifact_owner_token(artifact_catalog_key(mine[-1]))
+            else:
+                token = prior.get("token")
+            done = len(mine) == len(fetched) and not getattr(read, "next_page_token", None)
+            next_cursor[name] = {"token": token, "done": done, "total": total}
+            any_more = any_more or not done
+        failed_sources = [n for n, r in reads.items() if r.status == "failed"]
+        ok_sources = [n for n, r in reads.items() if r.status == "ok"]
+        meta = self.snapshot_meta(snapshot_at)
+        next_page_token = _encode_catalog_cursor(next_cursor) if any_more and page_items else None
+        if failed_sources and ok_sources:
+            surface: Dict[str, Any] = {
+                "status": "degraded",
+                "source": ok_sources[0],
+                "failed_source": failed_sources[0],
+                "failed_sources": list(failed_sources),
+                "degraded_sources": list(failed_sources),
+                "message": (
+                    f"Artifact catalog is degraded because {', '.join(failed_sources)} owner read failed."
+                ),
+            }
+            page_info: Dict[str, Any] = {"next_page_token": next_page_token, "total": None, "total_complete": False}
+            meta["total_complete"] = False
+        elif not ok_sources:
+            page_items, next_page_token = [], None
+            surface = {
+                "status": "unavailable",
+                "source": "unavailable" if failed_sources else "missing",
+                "failed_sources": list(failed_sources),
+                "message": "Artifact catalog owners are unavailable.",
+            }
+            page_info = {"next_page_token": None, "total": None if failed_sources else 0}
+        else:
+            totals = [next_cursor[n].get("total") for n in ok_sources]
+            surface = {
+                "status": "ok",
+                "source": (
+                    "service_client"
+                    if "service_client" in (reg_read.source, res_read.source)
+                    else "typed_store"
+                ),
+            }
+            page_info = {
+                "next_page_token": next_page_token,
+                "total": sum(totals) if all(isinstance(t, int) for t in totals) else None,
+            }
+        meta["surfaces"] = {"artifact_list": surface}
+        return {
+            "data": [dict(item) for item in page_items],
+            "items": [dict(item) for item in page_items],
+            "page_info": page_info,
+            "meta": meta,
+        }
+
     def list_artifact_catalog(
         self,
         *,
@@ -1445,6 +1598,10 @@ class ResearchRouterService:
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
         port = self._port()
+        if not str(page_token or "").strip() or str(page_token).startswith(_CATALOG_CURSOR_PREFIX):
+            paged = self._list_artifact_catalog_paged(port, snapshot_at, page_token, page_size)
+            if paged is not None:
+                return paged
         if hasattr(port, "read_registry_strategy_artifacts"):
             try:
                 reg_read = port.read_registry_strategy_artifacts()

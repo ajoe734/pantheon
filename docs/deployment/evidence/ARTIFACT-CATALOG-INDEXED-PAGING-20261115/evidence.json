@@ -1,0 +1,28 @@
+{
+  "task_id": "ARTIFACT-CATALOG-INDEXED-PAGING-20261115",
+  "page_size": 20,
+  "method": "In-process BFF merge over bisect-indexed owner fakes (services/control-plane/bff/tests/test_artifact_catalog_indexed_paging.py::_measure); median of 31 first-page reads after warm-up.",
+  "hosted_sized": {
+    "population": 291,
+    "registry_rows_read_per_page": 21,
+    "research_rows_read_per_page": 21,
+    "median_ms": 0.11625000479398295
+  },
+  "ten_times": {
+    "population": 2910,
+    "registry_rows_read_per_page": 21,
+    "research_rows_read_per_page": 21,
+    "median_ms": 0.11688999802572653
+  },
+  "ratios": {
+    "registry_rows": 1.0,
+    "research_rows": 1.0,
+    "median_ms": 1.006
+  },
+  "before_baseline_from_PR_7364": "Page of 100 at 10x read 6620 owner rows and made 14 Registry HTTP calls (was 2); now each owner returns at most page_size rows in 1 call.",
+  "not_verified": [
+    "Real Postgres execution of the page/count SQL and index usage: no Postgres or psycopg in the worker environment. SQL is asserted by shape only; EXPLAIN on hosted dev is still needed.",
+    "Research owner artifacts are JSON-file backed: the wire page is bounded and ordered, but the file is still read and sorted in-process per request."
+  ],
+  "migration": "CREATE INDEX IF NOT EXISTS only (partial expression index on created_at/registry_id for execution_bundle, partial index on legacy string payloads); no table/column/constraint change, previous release unaffected."
+}
