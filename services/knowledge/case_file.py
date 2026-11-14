@@ -218,6 +218,24 @@ def lesson_query(subject: Subject) -> tuple:
     return " ".join(t for t in terms if t), tags
 
 
+def subject_anchors(subject: Subject) -> list:
+    """Subject anchors from ``lesson_query`` for association-first memory recall (H8).
+
+    Built only from fields the subject carries.  The decision type is a
+    category, not a subject, so it is never an anchor; ``regime`` is added only
+    when the subject carries ``regime_tag`` (nothing invents a regime).
+    """
+    _query, tags = lesson_query(subject)
+    out: list = []
+    for tag in tags:
+        kind, sep, value = str(tag).partition(":")
+        text = value.strip().lower()
+        anchor = f"{kind.strip().lower()}:{text}"
+        if sep and text and kind.strip().lower() != "decision" and anchor not in out:
+            out.append(anchor)
+    return out
+
+
 # ---- facts (owner APIs only) -------------------------------------------------
 
 def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> None:
@@ -287,6 +305,7 @@ def _memory_hits(owners: Owners, subject: Subject, caller: Caller, *, scope: str
         params.append(("persona_id", subject.persona_id))
         params.append(("session_persona_id", subject.persona_id))
     params += [("tags", t) for t in tags]
+    params += [("subject_anchors", a) for a in subject_anchors(subject)]
     if memory_type:
         params.append(("memory_type", memory_type))
     return http_json(owners.memory, "/api/memory/retrieve", tenant_id=subject.tenant_id, params=params) or {}
@@ -300,12 +319,19 @@ def _memory_item(group: str, hit: dict, budgets: Budgets, layer: str, response: 
     # The route does not yet report retrieval mode on every deployment; say so
     # instead of guessing (MEMORY-INDEX-PROJECTION adds it).
     mode = str(hit.get("retrieval_mode") or response.get("retrieval_mode") or "unreported")
+    llm_layers = str(hit.get("llm_layers") or response.get("llm_layers") or "unreported")
     return _item(group, f"memory_{layer}", "memory", sid, text,
                  score=hit.get("relevance_score"), mode=mode, budgets=budgets,
                  subject_fields={"tags": list(content.get("tags") or []),
                                  "memory_type": entry.get("memory_type") or entry.get("knowledge_type")},
                  memory_layer=layer, relevance_scope=entry.get("relevance_scope"),
-                 source_event_id=entry.get("source_event_id"))
+                 source_event_id=entry.get("source_event_id"), llm_layers=llm_layers)
+
+
+def _decision_matches(subject: Subject, entry: Mapping[str, Any]) -> bool:
+    etags = {str(t).strip().lower() for t in ((entry.get("content") or {}).get("tags") or []) if str(t).strip()}
+    decisions = {t for t in etags if t.startswith("decision:")}
+    return not decisions or f"decision:{subject.decision_type.strip().lower()}" in decisions
 
 
 def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
@@ -317,6 +343,8 @@ def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
     def add(hits: Iterable[dict], layer: str, response: dict, *, allow_private: bool) -> None:
         for hit in hits:
             entry = hit.get("entry") or {}
+            if not _decision_matches(subject, entry):
+                continue
             if hit.get("type") == "persona":
                 if entry.get("persona_id") != subject.persona_id:
                     continue  # never another persona's memory
@@ -401,7 +429,7 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
                 continue  # negative history only consumes the institutional read
             etags = {str(t).strip().lower() for t in ((hit.get("entry") or {}).get("content") or {}).get("tags") or []}
             # require an actual negative marker AND subject relevance (not just the OR-matched marker)
-            if "negative_memory" not in etags or not (etags & subject_tags):
+            if "negative_memory" not in etags or not (etags & subject_tags) or not _decision_matches(subject, hit.get("entry") or {}):
                 continue
             g.items.append(_memory_item("similar_history", hit, budgets, "negative_memory", resp))
     except OwnerUnavailable as exc:
