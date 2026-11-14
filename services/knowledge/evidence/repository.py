@@ -49,6 +49,18 @@ def evidence_item_in_capture_window(
     return (start is None or start <= captured) and (end is None or captured < end)
 
 
+def evidence_item_linked_entity_types(item: EvidenceItem) -> set[str]:
+    """Owner linkage hints; these do not create links in the BFF projection."""
+    metadata = item.metadata
+    linked = metadata.get("linked_object_summary") or {}
+    values = [metadata.get("linked_entity_type")]
+    if isinstance(linked, Mapping):
+        values.append(linked.get("entity_type"))
+    for key in ("linked_decisions", "linked_entities", "related_entities"):
+        values.extend(x.get("entity_type") for x in metadata.get(key) or [] if isinstance(x, Mapping))
+    return {str(v).strip().lower() for v in values if v}
+
+
 class _Unscoped:
     """Omitted scope is the legacy administrative view; explicit None is legacy-only."""
 
@@ -213,6 +225,7 @@ class InMemoryEvidenceRepository:
         offset: int = 0,
         captured_from: str | None = None,
         captured_before: str | None = None,
+        linked_entity_types: tuple[str, ...] | None = None,
     ) -> Tuple[List[EvidenceItem], int]:
         """Newest-first page of list-weight evidence items plus the total.
 
@@ -225,6 +238,9 @@ class InMemoryEvidenceRepository:
         omitted; ``get_evidence_item`` still returns the full record.
         """
         items = self.list_evidence_items(tenant_id=tenant_id)
+        if linked_entity_types is not None:
+            wanted = set(linked_entity_types)
+            items = [i for i in items if evidence_item_linked_entity_types(i) & wanted]
         if captured_from is not None or captured_before is not None:
             items = [i for i in items if evidence_item_in_capture_window(i, captured_from, captured_before)]
         total = len(items)

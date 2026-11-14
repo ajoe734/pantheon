@@ -22,7 +22,7 @@ from services.knowledge.evidence import (
     JsonlEvidenceRepository,
     KnowledgeObject,
 )
-from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped, _capture_datetime, evidence_item_in_capture_window
+from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped, _capture_datetime, evidence_item_in_capture_window, evidence_item_linked_entity_types
 from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError, strip_list_heavy_metadata
 from services.source_ingestion.connectors.base import SourceRecord
 
@@ -174,6 +174,36 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     UNIQUE (record_type, record_id)
                 )
                 """
+            )
+
+
+            # Stored scalar projections avoid repeatedly detoasting the payload in
+            # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
+            # writes from independent owner processes; no cache invalidation path.
+            verified_expr = (
+                "CASE "
+                "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
+                "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+                "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+                "ELSE FALSE "
+                "END"
+            )
+            projections = {
+                "evidence_tenant_id": ("TEXT", "payload->'metadata'->>'tenant_id'"),
+                "evidence_source_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal')"),
+                "evidence_link_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting')"),
+                "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
+                "evidence_verified": ("BOOLEAN", verified_expr),
+            }
+            alterations = ", ".join(
+                f"ADD COLUMN IF NOT EXISTS {name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
+                for name, (kind, expr) in projections.items()
+            )
+            conn.execute(f"ALTER TABLE {self.table} {alterations}")
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
+                "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
+                "evidence_credibility_tier, evidence_verified) WHERE record_type = 'evidence_item'"
             )
 
     def reload(self) -> None:
@@ -383,28 +413,42 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         offset: int = 0,
         captured_from: str | None = None,
         captured_before: str | None = None,
+        linked_entity_types: tuple[str, ...] | None = None,
     ) -> tuple[List[EvidenceItem], int]:
         if getattr(self, "_replaying", False):
             return super().list_evidence_items_page(
                 tenant_id=tenant_id, limit=limit, offset=offset,
                 captured_from=captured_from, captured_before=captured_before,
+                linked_entity_types=linked_entity_types,
             )
         if tenant_id is not _UNSCOPED:
             where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
+        if linked_entity_types is not None:
+            # Bind the requested types. Link arrays use an EXISTS predicate so
+            # evidence with several links is still counted/paged exactly once.
+            where += " AND (" + " OR ".join([
+                "LOWER(BTRIM(payload->'metadata'->>'linked_entity_type')) = ANY(%s)",
+                "LOWER(BTRIM(payload->'metadata'->'linked_object_summary'->>'entity_type')) = ANY(%s)",
+                *[
+                    f"EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload->'metadata'->'{key}') = 'array' THEN payload->'metadata'->'{key}' ELSE '[]'::jsonb END) link WHERE LOWER(BTRIM(link->>'entity_type')) = ANY(%s))"
+                    for key in ("linked_decisions", "linked_entities", "related_entities")
+                ],
+            ]) + ")"
+            scope_params += (list(linked_entity_types),) * 5
         windowed = captured_from is not None or captured_before is not None
         if windowed:
             try:
                 return self._list_evidence_items_window(
-                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, sql_cast=True
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, linked_entity_types=linked_entity_types, sql_cast=True
                 )
             except RuntimeError:
                 # A stored timestamp the SQL cast rejects must not fail the whole
                 # read: filter the same population in Python with identical rules.
                 return self._list_evidence_items_window(
-                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, sql_cast=False
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, linked_entity_types=linked_entity_types, sql_cast=False
                 )
         # The heavy metadata keys are dropped in SQL so they never leave the DB.
         stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
@@ -434,6 +478,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         captured_before: str | None,
         *,
         sql_cast: bool,
+        linked_entity_types: tuple[str, ...] | None = None,
     ) -> tuple[List[EvidenceItem], int]:
         """Page the evidence items captured in ``[captured_from, captured_before)``.
 
@@ -446,6 +491,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             items = [
                 i for i in self._read_many("evidence_item", tenant_id)
                 if evidence_item_in_capture_window(i, captured_from, captured_before)
+                and (linked_entity_types is None or evidence_item_linked_entity_types(i) & set(linked_entity_types))
             ]
             window = list(reversed(items))[int(offset): int(offset) + int(limit)]
             return [strip_list_heavy_metadata(i) for i in window], len(items)
@@ -527,25 +573,13 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         if getattr(self, "_replaying", False):
             return super().summarize_evidence_items(tenant_id=tenant_id)
         if tenant_id is not _UNSCOPED:
-            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            where = "evidence_tenant_id = %s" if tenant_id is not None else "(evidence_tenant_id IS NULL OR evidence_tenant_id = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
-        verified_expr = (
-            "CASE "
-            "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
-            "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-            "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-            "ELSE FALSE "
-            "END"
-        )
         sql = (
-            "SELECT "
-            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal') AS source_type, "
-            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting') AS link_type, "
-            f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END) AS credibility_tier, "
-            f"({verified_expr}) AS verified, "
-            "COUNT(*) AS row_count "
+            "SELECT evidence_source_type, evidence_link_type, evidence_credibility_tier, "
+            "evidence_verified, COUNT(*) AS row_count "
             f"FROM {self.table} WHERE record_type = %s AND {where} "
             "GROUP BY 1, 2, 3, 4"
         )
@@ -642,7 +676,7 @@ def read_source_records_for_tenant(
             conn.execute("SET TRANSACTION READ ONLY")
             rows = conn.execute(
                 f"SELECT payload FROM {table} "
-                "WHERE record_type = %s AND payload->'metadata'->>'tenant_id' = %s "
+                "WHERE record_type = %s AND evidence_tenant_id = %s "
                 "ORDER BY append_id ASC",
                 ("source_record", tenant),
             ).fetchall()
