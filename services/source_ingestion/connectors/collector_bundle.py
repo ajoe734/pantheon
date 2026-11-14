@@ -345,11 +345,9 @@ def _bundle_trade_date(entry: Mapping[str, Any], items: Sequence[Mapping[str, An
     """Session identity comes from row dates, never the bundle's fetch directory."""
     days = {str(row.get("trade_date") or "") for row in items}
     declared = str(entry.get("trade_date") or "")
-    if declared:
-        days.add(declared)
-    if not days or "" in days:
+    if "" in days or (not days and not declared):
         raise SourceEvidenceError("price-history bundle requires row trade_date")
-    day = max(days)
+    day = max(days) if days else declared
     if declared and declared != day:
         raise SourceEvidenceError("collector trade_date disagrees with rows")
     try:
@@ -930,8 +928,9 @@ class CollectorBundleAdapter:
             return str(e.get("trade_date") or (match.group(1) if match else e.get("date")) or "")
 
         state = self._priority_document()
-        state_key, delivered, done, state_held = self._load_priority_state()
+        state_key, delivered, _, state_held = self._load_priority_state()
         best: tuple[str, str, VerifiedBundle] | None = None
+        candidates: list[tuple[str, str, VerifiedBundle]] = []
         for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
             if best and upper_bound(entry) < best[0]:
                 continue
@@ -941,11 +940,13 @@ class CollectorBundleAdapter:
                                    priority_codes=held)
             if not bundle.items:
                 continue
-            trade_date = _bundle_trade_date({**entry, **({"trade_date": bundle.manifest["trade_date"]}
-                                                       if "trade_date" in bundle.manifest else {})}, bundle.items)
+            trade_date = _bundle_trade_date(entry, bundle.items)
+            if "trade_date" in bundle.manifest:
+                _bundle_trade_date(bundle.manifest, bundle.items)
             if digest:
                 if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
                     raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+            candidates.append((trade_date, key, bundle))
             if best is None or (trade_date, key) > best[:2]:
                 best = (trade_date, key, bundle)
         if best is None:
@@ -969,25 +970,51 @@ class CollectorBundleAdapter:
                 if _bundle_trade_date(old_entry, old.items) == trade_date:
                     delivered_items = {str(r["id"]): str(old.manifest_items[str(r["id"])]["content_sha256"]).lower()
                                        for r in old.items[:delivered]}
-        pending = tuple(r for r in bundle.items if delivered_items.get(str(r["id"])) !=
-                        str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower())
+        # A later complete run can omit an instrument. Keep the union of this
+        # session's items, choosing the latest revision of each native identity.
+        # Its pending tail must survive both a new run and a worker restart.
+        session_items: dict[str, tuple[VerifiedBundle, Mapping[str, Any]]] = {}
+        for day, _, candidate in sorted(candidates, key=lambda c: c[1], reverse=True):
+            if day == trade_date:
+                for row in candidate.items:
+                    session_items.setdefault(str(row["id"]), (candidate, row))
+        pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
+                   if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
+        pending.sort(key=lambda pair: not (
+            str(pair[1].get("symbol") or "").upper() in held
+            or str(pair[1]["id"]).rsplit("-", 1)[-1].upper() in held))
         if not pending:
             if state_key != key or not state.get("trade_date") or state_held != held:
-                return [], key, (), len(bundle.items), True, held, trade_date, delivered_items
+                return [], key, (), len(session_items), True, held, trade_date, delivered_items
             return None
         if _DEFER_ACK.get():
             total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)
-        windowed = _verify_raw_window(transport, replace(bundle, items=pending), item_window=(0, total_cap),
-                                      deadline=_OP_DEADLINE.get(), raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY)
-        stop = total_cap if windowed.verified_through is None else windowed.verified_through
-        window = pending[:stop]
-        rows = [self._record(windowed, row, trace_id=trace_id) for row in window]
-        self._write_raw([(windowed, {})], rows)
-        delivered_items.update({str(r["id"]): str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
-                                for r in window})
-        count = sum(delivered_items.get(str(r["id"])) == str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
-                    for r in bundle.items)
-        return rows, key, (), count, len(window) == len(pending), held, trade_date, delivered_items
+        rows = []
+        offset = 0
+        deadline = _OP_DEADLINE.get()
+        while offset < min(len(pending), total_cap):
+            if rows and deadline is not None and time.monotonic() >= deadline:
+                break
+            candidate = pending[offset][0]
+            end = offset + 1
+            while end < min(len(pending), total_cap) and pending[end][0].cursor == candidate.cursor:
+                end += 1
+            items = tuple(row for _, row in pending[offset:end])
+            windowed = _verify_raw_window(transport, replace(candidate, items=items), item_window=(0, len(items)),
+                                          deadline=deadline, raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY)
+            stop = len(items) if windowed.verified_through is None else windowed.verified_through
+            window = items[:stop]
+            batch = [self._record(windowed, row, trace_id=trace_id) for row in window]
+            self._write_raw([(windowed, {})], batch)
+            rows.extend(batch)
+            delivered_items.update({str(r["id"]): str(candidate.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                                    for r in window})
+            offset += len(window)
+            if len(window) < len(items):
+                break
+        count = sum(delivered_items.get(item_id) == str(candidate.manifest_items[item_id]["content_sha256"]).lower()
+                    for item_id, (candidate, _) in session_items.items())
+        return rows, key, (), count, count == len(session_items), held, trade_date, delivered_items
 
     def _pull_ordered(
         self,
@@ -1023,6 +1050,7 @@ class CollectorBundleAdapter:
         # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
+        acknowledged_only_keys: set[str] = set()
         window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
@@ -1047,6 +1075,7 @@ class CollectorBundleAdapter:
                         # Every identity of this session was persisted by the newer priority run.
                         # Older revisions must not overwrite a subsequently delivered correction.
                         verified.append(replace(metadata_bundle, items=()))
+                        acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
                 bundle = verify_bundle(
@@ -1145,7 +1174,7 @@ class CollectorBundleAdapter:
             cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
             delivery_complete=complete and not feature_rejected,
         )
-        no_new_data = bool(verified and all(not b.items for b in verified) and complete
+        no_new_data = bool(verified and all(b.cursor in acknowledged_only_keys for b in verified) and complete
                            and not records and not feature_records and not feature_rejected
                            and observed["health_state"] == "healthy")
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:

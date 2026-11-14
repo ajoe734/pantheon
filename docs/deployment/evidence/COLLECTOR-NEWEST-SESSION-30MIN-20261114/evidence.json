@@ -1,0 +1,174 @@
+{
+  "task_id": "COLLECTOR-NEWEST-SESSION-30MIN-20261114",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "stage": "source_implementation_complete_validation_in_progress",
+  "recorded_hosted_evidence": {
+    "provenance": "Task-scoped brief and governed show at 2026-11-14; operator read-only observations, not re-probed by this worker.",
+    "candidate": "a9284b68c",
+    "latest_priority": {
+      "key": "run-20261114T001933Z",
+      "delivered": 156,
+      "done": false,
+      "actual_trade_date": "2026-11-13"
+    },
+    "identical_bundle_sha_prefix": "e10e2bd496bd",
+    "identical_content_runs": [
+      "run-20261113T121842Z",
+      "run-20261113T181844Z",
+      "run-20261114T001933Z"
+    ],
+    "preclose_run": {
+      "fetched_at": "2026-11-13T06:17:00Z",
+      "actual_trade_date": "2026-11-12"
+    },
+    "snapshots": {
+      "TWSE_latest": 392,
+      "TWSE_total_approx": 998,
+      "TPEx_latest": 456,
+      "TPEx_total_approx": 1634,
+      "2330.TW_trade_date": "2026-11-12"
+    },
+    "run_scheduled_wall_seconds_approx": 120,
+    "TWSE_rows_delivered": 156,
+    "TPEx_run_scheduled_wall_seconds": null,
+    "raw_fresh_connection_seconds": [
+      0.14,
+      0.19
+    ],
+    "controller": {
+      "timeout_seconds": 30,
+      "mode": "collector_steady_pull",
+      "interval_seconds": 60,
+      "max_ticks": 0,
+      "recorded_failures_after_first_healthy_tick": 7,
+      "failure": "ControllerTickError: TimeoutError: timed out"
+    },
+    "config_journal": {
+      "bytes": 1445430,
+      "lines": 1980,
+      "sha256": "86bd1dd8530d46dbeb519f12967d91b65039b208d6dd0884193403611321482c"
+    },
+    "provided_stack_interpretation": "Controller sample proves it is waiting on POST /api/source-ingest/run-scheduled with timeout=30. A separate API sample in config-journal replay during reconciliation is not proof of the cause of that earlier scheduled request timeout."
+  },
+  "diagnosis": [
+    "Exact a9284b68c source uses index.date for run-* trade dates and resets the delivered offset when a later run key appears. The executable candidate benchmark below reproduces the same item/hash prefix on all three recorded keys for each price-history source.",
+    "A round-robin least-recently-attempted collector selection places the latest close behind backlog/non-market sources between continuation pulls.",
+    "The raw read budget alone does not bound post-read per-item evidence work. Configured newest-session pulls now cap that work at 256 rows while retaining the existing 15-second shared read deadline and four raw readers.",
+    "Verified collector native source ids include item identity and hash. Their existing dedupe key can only own that same source id, so a per-row source-dedupe metadata lookup is redundant. Removing it avoids PostgreSQL dedupe scans while retaining normal per-item writes and identity validation; no claim is made that this was the sole hosted 120-second cost.",
+    "The final local binding cost is measured from the real controller, configured adapter, scheduler, normalization, raw/normalized persistence, source evidence, receipts and snapshot store plus virtual hosted raw-read latency. The hosted cost outside this model still needs release-coordinator verification."
+  ],
+  "implementation": {
+    "trade_date": "Maximum validated row trade_date (for a multi-date bundle); additive index/manifest trade_date must agree. Fetch-directory date and dated run ids are candidate upper bounds only, never admitted session identity.",
+    "acknowledgement": "Additive latest_priority.json trade_date and items (native item id -> content hash) retain existing source_id/key/delivered/done/held. Save only after native persistence acknowledgement. Migrate old prefixes using their original manifest and held ordering.",
+    "same_session": "Retain union of same-session bundle items, latest revision per native id. Do not resend acknowledged id/hash pairs. Re-deliver changed hashes. Keep missing undelivered tail when a new run is smaller, including after restart.",
+    "ordered_sweep": "A persisted latest-session identity is not fetched/delivered again by the older ordered sweep. Older revisions cannot overwrite later corrections. Older sessions retain cursor-ordered delivery and partition reuse.",
+    "controller": "Pending newest price sessions and due price-source discovery rank before backlog/non-market sources. Retain least-recently-attempted ordering inside each class, normal cadence and failure guards.",
+    "fixed_persisted_newest_rows_per_pull": 256,
+    "raw_read_budget_seconds": 15,
+    "newest_raw_read_concurrency": 4,
+    "unchanged": [
+      "collector host code/request policy",
+      "provider fetch policy",
+      "settings/endpoints/services/queues/caches",
+      "held-symbol ordering",
+      "PIT/provenance/native per-item source and evidence identities",
+      "30-second controller timeout",
+      "tenant and capital boundaries"
+    ]
+  },
+  "exact_candidate_benchmark": {
+    "method": "Actual a9284b68c module loaded with git show; generated collector_bundle.v1 manifests/index entries and recorded run keys; exchange row/raw JSON fixtures; 0.19s virtual raw receive, 0.14s metadata receive, actual overlapping reader threads and actual raw-file writes. This is local reproduction, not hosted wall time.",
+    "measurements": [
+      {
+        "candidate": "a9284b68c",
+        "source": "collector-tw-twse-price-history",
+        "rows_in_bundle": 1377,
+        "pulls": [
+          {
+            "run_id": "run-20261113T121842Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.4403634369955398,
+            "transport_seconds": 15.189999999999989
+          },
+          {
+            "run_id": "run-20261113T181844Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.42788386798929423,
+            "transport_seconds": 15.190000000000095
+          },
+          {
+            "run_id": "run-20261114T001933Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.42920552199939266,
+            "transport_seconds": 15.189999999999852
+          }
+        ]
+      },
+      {
+        "candidate": "a9284b68c",
+        "source": "collector-tw-tpex-price-history",
+        "rows_in_bundle": 6090,
+        "pulls": [
+          {
+            "run_id": "run-20261113T121842Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.5534639949910343,
+            "transport_seconds": 15.189999999999989
+          },
+          {
+            "run_id": "run-20261113T181844Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.592291081964504,
+            "transport_seconds": 15.190000000000095
+          },
+          {
+            "run_id": "run-20261114T001933Z",
+            "rows": 308,
+            "delivered": 308,
+            "done": false,
+            "wall_seconds": 0.5511470380006358,
+            "transport_seconds": 15.189999999999852
+          }
+        ]
+      }
+    ]
+  },
+  "rollback_readers": {
+    "commits": [
+      "bee62bc29",
+      "a9284b68c"
+    ],
+    "method": "Load the actual git objects. a9284b68c parses the additive latest_priority.json using its original reader; bee62bc29 predates the sidecar and still reads the original resume-cursor format."
+  },
+  "validation": [],
+  "review_hold": {
+    "reason": "Canonical task update explicitly retains six allowed artifacts and requires the smallest demonstrated extension before editing another existing path. Two existing test files contain assertions requiring resets/replay/continuation that now contradict AC3. Their semantic updates require Human/Ops artifact-contract authority.",
+    "requested_paths": [
+      "services/source_ingestion/tests/test_collector_bundle_connector.py",
+      "services/source_ingestion/tests/test_scheduled_connector.py"
+    ],
+    "necessary_updates": [
+      "Keep cumulative held-set progress; add a separate historical bundle to the rollback partial-cursor fixture; benchmark historical sweep with a separately acknowledged newest close.",
+      "At a fully consumed newest-only boundary expect normal cadence and no pending work; expect only older rows to replay after rewind, retaining unchanged normalized partitions."
+    ],
+    "unnecessary_extension_removed": "Readback snapshot reuse was removed to retain the existing internal API and avoid changing test_controller_worker.py. No existing test file is included in the implementation commits."
+  },
+  "hosted_acceptance": {
+    "status": "not_performed_by_author",
+    "authority": "Existing release coordinator; no VM/SSH/provider/deploy operations authorized to author/reviewer.",
+    "existing_task": "TW-SAME-DAY-CLOSE-HOSTED-ACCEPTANCE-20261112",
+    "window": "2026-11-16 14:40-17:00 Asia/Taipei",
+    "required": "Deploy the independently reviewed exact source head through the existing release process, then verify healthy continuation requests under 30 seconds and all latest-session snapshots under 30 minutes."
+  }
+}

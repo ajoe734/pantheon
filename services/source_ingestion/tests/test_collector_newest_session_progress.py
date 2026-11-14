@@ -9,7 +9,6 @@ import sys
 import threading
 import time
 import types
-from dataclasses import replace
 
 import pytest
 
@@ -159,6 +158,22 @@ def test_hosted_size_sessions_through_controller_and_real_persistence(admission_
     enabled = {TWSE, TPEX} | set(sorted(set(wanted) - {TWSE, TPEX})[:11])
     files["status.json"] = json.dumps({"sources": {s: {"status": "ok", "offered": s in enabled,
         "last_run_at": "2026-11-14T00:19:33Z", "cadence_seconds": 21600} for s in wanted}}).encode()
+    # Reproduce the supplied hosted journal cardinality/size with valid local
+    # historical fetch-state envelopes. This is synthetic data, not a VM copy.
+    tick(cw.RECONCILE_ONLY_MODE)
+    journal = module.runtime.connector_store.path
+    content = journal.read_text()
+    n = 1980 - len(content.splitlines())
+    event = {"schema_version": "source_connector_config_store.v1", "record_type": "connector_fetch_state",
+             "record_id": "collector-news-rss", "payload": {"connector_id": "collector-news-rss",
+             "attempts": 0, "successful_attempts": 0, "failed_attempts": 0, "last_error": None,
+             "collector_outcome": {"complete": False, "observed": {}, "paused_reasons": []}}}
+    line = json.dumps(event, separators=(",", ":"))
+    padding = max((1445430 - len(content.encode())) // n - len(line.encode()) - 3, 0)
+    event["payload"]["collector_outcome"]["paused_reasons"] = ["x" * padding]
+    journal.write_text(content + (json.dumps(event, separators=(",", ":")) + "\n") * n)
+    journal_metadata = {"lines": len(journal.read_text().splitlines()), "bytes": journal.stat().st_size}
+    assert journal_metadata["lines"] == 1980 and journal_metadata["bytes"] >= 1400000
     clock = [0.0]
     lock = threading.Lock()
     original_read = transport.read
@@ -176,7 +191,6 @@ def test_hosted_size_sessions_through_controller_and_real_persistence(admission_
 
     monkeypatch.setattr(transport, "read", read)
     monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
-    from services.source_ingestion.pipeline import persist_source_evidence_refs
     original_dedupe = module.runtime.evidence_repository.get_source_record_by_dedupe_key
     def dedupe(key, **kwargs):
         assert not key.startswith("collector-close:"), "native per-item ids must not scan the entire evidence table"
@@ -213,4 +227,81 @@ def test_hosted_size_sessions_through_controller_and_real_persistence(admission_
     assert result["status"] == "ok"
     assert module.runtime.store.read_freshness_snapshot()["receipts"][-1].connector_id not in {TWSE, TPEX}
     print("NEWEST_SESSION_TIMING " + json.dumps({"enabled_connectors": sorted(enabled), "pulls": measurements,
-        "elapsed_seconds_upper_bound_including_worst_cadence_phase": elapsed, "snapshot_counts": counts}))
+        "elapsed_seconds_upper_bound_including_worst_cadence_phase": elapsed, "snapshot_counts": counts,
+        "initial_config_journal": journal_metadata}))
+
+
+@pytest.mark.parametrize("source,count", [(TWSE, 1377), (TPEX, 6090)])
+def test_exact_candidate_restarts_same_session_on_recorded_run_keys(tmp_path, monkeypatch, source, count):
+    old = subprocess.run(["git", "show", "a9284b68c:services/source_ingestion/connectors/collector_bundle.py"],
+                         capture_output=True, text=True, timeout=10)
+    assert old.returncode == 0
+    path = tmp_path / "candidate.py"; path.write_text(old.stdout)
+    name = "services.source_ingestion.connectors.session_candidate"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec); sys.modules[name] = module
+    spec.loader.exec_module(module)
+    clock, lock = [0.0], threading.Lock()
+    files, entries, measurements, identities = {}, [], [], []
+    class Transport(FakeTransport):
+        def read(self, path, *, max_bytes):
+            with lock:
+                start = clock[0]
+            if "/raw/" in path:
+                time.sleep(0.002)
+            try:
+                return super().read(path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    clock[0] = max(clock[0], start + (0.19 if "/raw/" in path else 0.14))
+    module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
+    try:
+        for fetched in ("2026-11-13T12:18:42Z", "2026-11-13T18:18:44Z", "2026-11-14T00:19:33Z"):
+            more, entry = recorded_run(source, count, fetched=fetched)
+            files.update(more); entries.append(entry)
+            files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+            files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": fetched}}}).encode()
+            a = module.CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
+                dataset="tw_price_daily", cadence_seconds=600, max_records=1000, raw_root=str(tmp_path / "store"),
+                attribution_required=True, transport=Transport(files))
+            start, wall = clock[0], time.perf_counter()
+            pull = a.pull(); a.save_resume_cursor(pull)
+            measurements.append({"run_id": entry["run_id"], "rows": len(pull.records),
+                "delivered": pull.priority_delivered, "done": pull.priority_done,
+                "wall_seconds": time.perf_counter() - wall, "transport_seconds": clock[0] - start})
+            identities.append({r.source_id for r in pull.records})
+        assert identities[0] == identities[1] == identities[2]
+        assert not any(m["done"] for m in measurements)
+        print("CANDIDATE_SESSION_TIMING " + json.dumps({"candidate": "a9284b68c", "source": source,
+                                                      "rows_in_bundle": count, "pulls": measurements}))
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_smaller_same_day_run_retains_undelivered_tail(tmp_path):
+    files, first = recorded_run(count=8, fetched="2026-11-13T12:18:42Z")
+    a = adapter(tmp_path, files, [first]); pull = a.pull(); a.save_resume_cursor(pull)
+    ids = {r.source_id for r in pull.records}
+    fewer, entry = recorded_run(count=4); files.update(fewer)
+    for _ in range(3):
+        a = adapter(tmp_path, files, [first, entry])
+        pull = a.pull(cursor=pull.next_cursor); a.save_resume_cursor(pull)
+        assert not ids.intersection(r.source_id for r in pull.records)
+        ids.update(r.source_id for r in pull.records)
+        if pull.priority_done:
+            break
+    assert len(ids) == 8 and pull.priority_delivered == 8 and pull.priority_done
+
+
+def test_empty_unacknowledged_bundle_does_not_claim_no_new_data(tmp_path):
+    files, entry = recorded_run(count=0)
+    pull = adapter(tmp_path, files, [entry]).pull()
+    assert not pull.no_new_data
+
+
+@pytest.mark.parametrize("declared", ["2026-11-12", "2026-11-14"])
+def test_additive_trade_date_must_agree_with_rows(tmp_path, declared):
+    files, entry = recorded_run()
+    entry["trade_date"] = declared
+    with pytest.raises(cb.SourceEvidenceError, match="disagrees with rows"):
+        adapter(tmp_path, files, [entry]).pull()
