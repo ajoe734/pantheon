@@ -322,6 +322,8 @@ class CollectorPullResult:
     priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
     priority_done: bool = False
     priority_held: tuple[str, ...] = ()  # held instrument codes the delivery order was built for
+    priority_trade_date: str | None = None
+    priority_items: Mapping[str, str] = field(default_factory=dict)  # persisted item id -> verified hash
     no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
     delivery: CollectorDelivery | None = None
 
@@ -339,10 +341,21 @@ def _held_codes(symbols: Sequence[str]) -> tuple[str, ...]:
     return tuple(sorted({str(s).strip().split(".", 1)[0].upper() for s in symbols if str(s).strip()}))
 
 
-def _bundle_trade_date(entry: Mapping[str, Any]) -> str:
-    """Trade date a price-history bundle covers: backfill/close run ids name it, others use the run date."""
-    match = _BUNDLE_TRADE_DATE_RE.match(str(entry.get("run_id") or ""))
-    return match.group(1) if match else str(entry.get("date") or "")
+def _bundle_trade_date(entry: Mapping[str, Any], items: Sequence[Mapping[str, Any]] = ()) -> str:
+    """Session identity comes from row dates, never the bundle's fetch directory."""
+    days = {str(row.get("trade_date") or "") for row in items}
+    declared = str(entry.get("trade_date") or "")
+    if declared:
+        days.add(declared)
+    if not days or "" in days:
+        raise SourceEvidenceError("price-history bundle requires row trade_date")
+    day = max(days)
+    if declared and declared != day:
+        raise SourceEvidenceError("collector trade_date disagrees with rows")
+    try:
+        return date.fromisoformat(day).isoformat()
+    except ValueError as exc:
+        raise SourceEvidenceError("price-history bundle has invalid trade_date") from exc
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
@@ -483,13 +496,22 @@ def verify_bundle(
             items = first + [r for r in items if id(r) not in lead]
             item_ids = [str(row.get("id") or "").strip() for row in items]
 
-    if item_window is None:
-        wanted_ids = list(manifest_items)
-    else:
-        wanted_ids = item_ids[max(item_window[0], 0) : max(item_window[1], 0)]
+    bundle = VerifiedBundle(source_id, date, run_id, finished_at, manifest, tuple(items), manifest_items,
+                            {}, _cursor_key(finished_at, run_id))
+    return _verify_raw_window(transport, bundle, item_window=item_window, deadline=deadline,
+                              raw_read_concurrency=raw_read_concurrency)
+
+
+def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
+                       item_window: tuple[int, int] | None, deadline: float | None,
+                       raw_read_concurrency: int) -> VerifiedBundle:
+    item_ids = [str(row["id"]) for row in bundle.items]
+    wanted_ids = item_ids if item_window is None else item_ids[max(item_window[0], 0):max(item_window[1], 0)]
     raw_bytes: dict[str, bytes] = {}
     verified_through: int | None = None
     window_start = max(item_window[0], 0) if item_window is not None else 0
+    base = f"bundles/{bundle.source_id}/{bundle.date}/{bundle.run_id}"
+    manifest_items = bundle.manifest_items
     def read_verified(item_id: str) -> tuple[str, bytes]:
         item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
@@ -533,18 +555,7 @@ def verify_bundle(
             if verified_through is not None:
                 break
 
-    return VerifiedBundle(
-        source_id=source_id,
-        date=date,
-        run_id=run_id,
-        finished_at=finished_at,
-        manifest=manifest,
-        items=tuple(items),
-        manifest_items=manifest_items,
-        raw_bytes=raw_bytes,
-        cursor=_cursor_key(finished_at, run_id),
-        verified_through=verified_through,
-    )
+    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
 
 
 def observed_from_collector_status(
@@ -796,13 +807,14 @@ class CollectorBundleAdapter:
         )
         if priority is None:
             return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
-        records, key, paused, delivered, done, held = priority
+        records, key, paused, delivered, done, held, trade_date, delivered_items = priority
         remaining = total_cap - len(records)
         op_deadline = _OP_DEADLINE.get()
         base = None
         if remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
             try:
-                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining)
+                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining,
+                                          priority_state={"trade_date": trade_date, "key": key, "items": delivered_items})
             except TimeoutError:
                 # The shared deadline cut the ordered sweep before any of its rows verified:
                 # keep the already verified priority prefix; ordered work stays pending.
@@ -824,7 +836,7 @@ class CollectorBundleAdapter:
             paused_reasons=(*paused, *base.paused_reasons),
             # Newest-session rows still undelivered: the controller may re-pull before the
             # finished-source cadence. Only this pull's own acknowledged outcome carries it.
-            observed=({**base.observed, "continuation_pending": True}
+            observed=({**base.observed, "continuation_pending": True, "newest_session_pending": not done}
                       if merged and (not done or not base.complete) and not paused and not base.paused_reasons
                       else base.observed),
             feature_rejected=base.feature_rejected,
@@ -834,6 +846,8 @@ class CollectorBundleAdapter:
             priority_delivered=delivered,
             priority_done=done,
             priority_held=held,
+            priority_trade_date=trade_date,
+            priority_items=delivered_items,
         )
         if _DEFER_ACK.get():
             def acknowledge() -> None:
@@ -878,9 +892,16 @@ class CollectorBundleAdapter:
                     tuple(str(c) for c in held) if isinstance(held, list) else ())
         return None, 0, False, ()
 
+    def _priority_document(self) -> Mapping[str, Any]:
+        try:
+            doc = json.loads(self._priority_key_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) and doc.get("source_id") == self.source_id else {}
+
     def _pull_priority_latest(
         self, cursor: str | None, *, trace_id: str, total_cap: int, held: tuple[str, ...] = ()
-    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool, tuple[str, ...]] | None:
+    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool, tuple[str, ...], str, Mapping[str, str]] | None:
         if (
             not self._priority_latest_enabled()
             or self.source_type != "market"
@@ -900,40 +921,71 @@ class CollectorBundleAdapter:
         ]
         if not mine:
             return None
-        newest = max(
-            mine,
-            key=lambda e: (
-                _bundle_trade_date(e),
-                _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or "")),
-            ),
-        )
-        key = _cursor_key(_utc(newest.get("finished_at"), "index finished_at"), str(newest.get("run_id") or ""))
+        # Fetch date / dated run ids are upper bounds for candidate pruning only.
+        # An actual session is admitted only after manifest/hash/id coverage and row dates verify.
+        def upper_bound(e: Mapping[str, Any]) -> str:
+            match = _BUNDLE_TRADE_DATE_RE.match(str(e.get("run_id") or ""))
+            return str(e.get("trade_date") or (match.group(1) if match else e.get("date")) or "")
+
+        state = self._priority_document()
+        state_key, delivered, done, state_held = self._load_priority_state()
+        best: tuple[str, str, VerifiedBundle] | None = None
+        seen_hashes: set[str] = set()
+        for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
+            if best and upper_bound(entry) < best[0]:
+                continue
+            key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
+            digest = str(entry.get("bundle_sha256") or "")
+            if digest and digest in seen_hashes:
+                continue
+            bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0),
+                                   priority_codes=held)
+            if not bundle.items:
+                continue
+            trade_date = _bundle_trade_date({**entry, **({"trade_date": bundle.manifest["trade_date"]}
+                                                       if "trade_date" in bundle.manifest else {})}, bundle.items)
+            if digest:
+                if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
+                    raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+                seen_hashes.add(digest)
+            if best is None or (trade_date, key) > best[:2]:
+                best = (trade_date, key, bundle)
+        if best is None:
+            return None
+        trade_date, key, bundle = best
         base_cursor, _ = _split_cursor(cursor)
         if base_cursor is not None and (key < base_cursor or (key == base_cursor and _PARTIAL_CURSOR_MARK not in str(cursor))):
-            return None  # the sweep already consumed it
-        state_key, delivered, done, state_held = self._load_priority_state()
-        if state_key is not None:
-            if key < state_key or (key == state_key and done):
-                return None
-            if key > state_key or state_held != held:
-                # New session, or the held set changed so the persisted prefix no longer names
-                # the same rows: restart this session's order (idempotent replay, never a skip).
-                delivered = 0
-        else:
-            delivered = 0
-        bundle = verify_bundle(
-            transport, expected_source_id=self.source_id, entry=newest, item_window=(delivered, delivered + total_cap),
-            priority_codes=held,
-            raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY,
-        )
-        if bundle.status == "paused":
-            return [], key, (f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}",), delivered, False, held
-        stop = delivered + total_cap if bundle.verified_through is None else bundle.verified_through
-        window = bundle.items[delivered:stop]
-        rows = [self._record(bundle, row, trace_id=trace_id) for row in window]
-        self._write_raw([(bundle, {})], rows)
-        new_delivered = delivered + len(window)
-        return rows, key, (), new_delivered, new_delivered >= len(bundle.items), held
+            return None
+        if state.get("trade_date") and trade_date < state["trade_date"]:
+            return None
+        delivered_items = dict(state.get("items") or {}) if state.get("trade_date") == trade_date else {}
+        if not state.get("trade_date") and state_key:
+            # Migrate the old acknowledged prefix using its own original manifest/order,
+            # never the offset in a newer run. This preserves corrections and reordered rows.
+            old_entry = next((e for e in mine if _cursor_key(_utc(e.get("finished_at"), "index finished_at"),
+                                                           str(e.get("run_id") or "")) == state_key), None)
+            if old_entry:
+                old = bundle if state_key == key and state_held == held else verify_bundle(
+                    transport, expected_source_id=self.source_id, entry=old_entry, item_window=(0, 0),
+                    priority_codes=state_held)
+                if _bundle_trade_date(old_entry, old.items) == trade_date:
+                    delivered_items = {str(r["id"]): str(old.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                                       for r in old.items[:delivered]}
+        pending = tuple(r for r in bundle.items if delivered_items.get(str(r["id"])) !=
+                        str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower())
+        if not pending:
+            return None
+        windowed = _verify_raw_window(transport, replace(bundle, items=pending), item_window=(0, total_cap),
+                                      deadline=_OP_DEADLINE.get(), raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY)
+        stop = total_cap if windowed.verified_through is None else windowed.verified_through
+        window = pending[:stop]
+        rows = [self._record(windowed, row, trace_id=trace_id) for row in window]
+        self._write_raw([(windowed, {})], rows)
+        delivered_items.update({str(r["id"]): str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                                for r in window})
+        count = sum(delivered_items.get(str(r["id"])) == str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                    for r in bundle.items)
+        return rows, key, (), count, len(window) == len(pending), held, trade_date, delivered_items
 
     def _pull_ordered(
         self,
@@ -941,8 +993,10 @@ class CollectorBundleAdapter:
         cursor: str | None = None,
         trace_id: str = "",
         max_records: int | None = None,
+        priority_state: Mapping[str, Any] | None = None,
     ) -> CollectorPullResult:
         transport = self._transport()
+        priority_state = priority_state or self._priority_document()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
         entries = index.get("bundles") if isinstance(index, dict) else None
         if not isinstance(entries, list):
@@ -983,6 +1037,16 @@ class CollectorBundleAdapter:
                 break
             skip = partial_skip if key == base_cursor else 0
             try:
+                metadata_bundle = None
+                if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
+                    metadata_bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+                    if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
+                            and all(str(row["id"]) in priority_state["items"] for row in metadata_bundle.items)):
+                        # Every identity of this session was persisted by the newer priority run.
+                        # Older revisions must not overwrite a subsequently delivered correction.
+                        verified.append(replace(metadata_bundle, items=()))
+                        window_stops[key] = 0
+                        continue
                 bundle = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
                     deadline=deadline,
@@ -1161,6 +1225,7 @@ class CollectorBundleAdapter:
                     "source_id": self.source_id, "key": result.priority_key,
                     "delivered": result.priority_delivered, "done": result.priority_done,
                     "held": list(result.priority_held),
+                    "trade_date": result.priority_trade_date, "items": dict(result.priority_items),
                 }),
                 encoding="utf-8",
             )

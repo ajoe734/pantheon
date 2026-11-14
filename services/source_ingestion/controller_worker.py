@@ -1556,6 +1556,7 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
     """
 
     last_attempt: dict[str, str] = {}
+    newest_pending: set[str] = set()
     for item in actual.get("connectors") or []:
         if isinstance(item, Mapping):
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
@@ -1563,8 +1564,20 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
                 _attempt_sort_key(freshness.get("last_success_at")),
                 _attempt_sort_key(freshness.get("last_failure_at")),
             ]
-            last_attempt[str(item.get("connector_id") or "")] = max(attempts)
-    ranked = sorted(selected, key=lambda connector_id: (last_attempt.get(connector_id, ""), connector_id))
+            cid = str(item.get("connector_id") or "")
+            last_attempt[cid] = max(attempts)
+            connector = item.get("connector") or {}
+            definition = deployed_connector_definitions().get(str((connector.get("metadata") or {}).get("definition_id") or ""))
+            collector = (definition.metadata.get("collector") or {}) if definition else {}
+            outcome = (item.get("fetch_state") or {}).get("collector_outcome") or {}
+            observed = outcome.get("observed") or {}
+            if (collector.get("dataset") == "tw_price_daily"
+                    and (freshness.get("is_due") is True
+                         or (_collector_continuation_pending(item, freshness)
+                             and observed.get("newest_session_pending") is not False))):
+                newest_pending.add(cid)
+    ranked = sorted(selected, key=lambda connector_id: (connector_id not in newest_pending,
+                                                       last_attempt.get(connector_id, ""), connector_id))
     return sorted(ranked[: max(int(limit), 1)])
 
 
