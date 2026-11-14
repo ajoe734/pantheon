@@ -671,7 +671,59 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
     )
     if lineage_write_store is not None and getattr(lineage_write_store, "_binding_store", None) is None:
         lineage_write_store._binding_store = binding_store
+    _bind_compiled_schema_validators(ingest_svc)
     return ingest_svc
+
+
+def _bind_compiled_schema_validators(ingest_svc: TelemetryIngestService) -> None:
+    """Pre-compile loaded JSON schemas on ingest_svc to avoid per-event check_schema overhead."""
+    import jsonschema
+    from .ingest_svc import INFRASTRUCTURE_HEALTH_EVENT_TYPE, TRADE_JOURNAL_EVENT_TYPES
+
+    compiled: dict[int, tuple[dict[str, Any], Any]] = {}
+    for attr in ("_schema", "_trade_journal_schema"):
+        schema_obj = getattr(ingest_svc, attr, None)
+        if isinstance(schema_obj, dict):
+            try:
+                cls = jsonschema.validators.validator_for(schema_obj)
+                cls.check_schema(schema_obj)
+                compiled[id(schema_obj)] = (schema_obj, cls(schema_obj))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _fast_validate_event(event: dict[str, Any]) -> tuple[bool, str | None]:
+        event_type = event.get("event_type")
+        if event_type == INFRASTRUCTURE_HEALTH_EVENT_TYPE:
+            return False, (
+                "infrastructure_health events must be admitted through the "
+                "infrastructure health authority, not the trading telemetry path"
+            )
+        schema = (
+            ingest_svc._trade_journal_schema
+            if event_type in TRADE_JOURNAL_EVENT_TYPES
+            else ingest_svc._schema
+        )
+        if not schema:
+            return (
+                (False, "Telemetry schema is unavailable")
+                if ingest_svc._schema_path
+                else (True, None)
+            )
+        entry = compiled.get(id(schema))
+        try:
+            if entry is not None and entry[0] is schema:
+                error = jsonschema.exceptions.best_match(entry[1].iter_errors(event))
+                if error is not None:
+                    raise error
+            else:
+                jsonschema.validate(instance=event, schema=schema)
+            return True, None
+        except jsonschema.ValidationError as exc:
+            return False, exc.message
+        except jsonschema.SchemaError as exc:
+            return False, f"Schema error: {exc.message}"
+
+    ingest_svc._validate_event = _fast_validate_event  # type: ignore[method-assign]
 
 
 def _get_service() -> TelemetryIngestService:
@@ -914,10 +966,16 @@ def shutdown():
     """Gracefully stop the ingest service."""
     global _svc, _loop, _lineage_svc
     if _svc is not None:
+        summary_store = getattr(_svc, "_runtime_summary_store", None)
         try:
             _run_async(_svc.stop(graceful=True), timeout=15.0)
         except Exception as exc:
             log.error(f"Error during graceful shutdown: {exc}")
+        if summary_store is not None and hasattr(summary_store, "close"):
+            try:
+                summary_store.close()
+            except Exception as exc:
+                log.error(f"Error flushing runtime summary store on shutdown: {exc}")
         _svc = None
     if _loop is not None:
         _loop.call_soon_threadsafe(_loop.stop)
@@ -1445,11 +1503,21 @@ def forensic_plan_trace(plan_id: str):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import atexit
+    import signal
+
     logging.basicConfig(level=logging.INFO)
     startup()
 
-    import atexit
     atexit.register(shutdown)
+
+    def _handle_stop_signal(signum: int, _frame: Any) -> None:
+        log.info("Received signal %s; shutting down telemetry service", signum)
+        shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_stop_signal)
+    signal.signal(signal.SIGINT, _handle_stop_signal)
 
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=False)
