@@ -10,6 +10,7 @@ import threading
 import time
 import types
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -28,6 +29,44 @@ def isolated_cache():
     yield
     with cb._METADATA_CACHE_LOCK:
         cb._METADATA_CACHE.clear()
+
+
+def test_collector_same_second_readback_keeps_latest_native_run(admission_stack, monkeypatch):
+    from services.source_ingestion.connectors import base
+
+    http, module, _, _, files, _, tick = admission_stack
+    more, entry = recorded_run(TPEX, fetched="2026-11-14T06:19:33Z")
+    files.update(more)
+    files["bundles/index.json"] = json.dumps({"bundles": [entry]}).encode()
+    files["status.json"] = json.dumps({"sources": {TPEX: {
+        "status": "ok", "last_run_at": entry["finished_at"], "cadence_seconds": 21600,
+    }}}).encode()
+    tick(cw.RECONCILE_ONLY_MODE)
+    fixed = datetime.now(timezone.utc).replace(microsecond=0)
+    monkeypatch.setattr(base, "_utc_now", lambda: fixed)
+    # Random-ID ordering must not select the earlier run when times tie.
+    identifiers = iter(("f" * 32, "a" * 32))
+    monkeypatch.setattr(base, "uuid4", lambda: types.SimpleNamespace(hex=next(identifiers)))
+    counts = []
+    for _ in range(2):
+        response = http.post("/api/source-ingest/run-scheduled", json={
+            "force_connector_ids": [TPEX], "exclusive_connector_ids": [TPEX],
+        }, headers={"Authorization": f"Bearer {module.runtime.controller_token}"})
+        assert response.status_code == 200, response.text
+        assert response.json()["summary"]["total_failed"] == 0, response.text
+        item = next(c for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]
+                    if c["connector_id"] == TPEX)
+        counts.append(item["freshness"]["latest_run"]["normalized_count"])
+    assert counts == [8, 0]
+    for reload in (False, True):
+        if reload:
+            module.runtime.store.reload()
+        item = next(c for c in module.runtime._controller_connector_readbacks() if c["connector_id"] == TPEX)
+        latest = "ingest-" + "a" * 12
+        assert item["source_health"]["metadata"]["last_ingest_run_id"] == latest
+        assert item["freshness"]["latest_run"]["ingest_run_id"] == latest
+        assert item["freshness"]["latest_receipt"]["ingest_run_id"] == latest
+        assert module.runtime._connector_freshness_summary(TPEX)["latest_run"]["ingest_run_id"] == latest
 
 
 def make_adapter(root, transport, source=TWSE, cap=2):
