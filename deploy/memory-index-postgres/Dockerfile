@@ -6,3 +6,5 @@ RUN echo 'deb [signed-by=/usr/local/share/keyrings/postgres.gpg.asc] https://apt
     postgresql-17-pgvector=0.8.6-1.pgdg13+1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY deploy/memory-index-postgres/init.sql /docker-entrypoint-initdb.d/01-memory-index.sql
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$GIT_SHA

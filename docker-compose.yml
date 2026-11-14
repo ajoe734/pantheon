@@ -102,6 +102,8 @@ services:
     build:
       context: .
       dockerfile: deploy/memory-index-postgres/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
       POSTGRES_USER: memory_index_owner
@@ -121,6 +123,8 @@ services:
     build:
       context: .
       dockerfile: deploy/hindsight/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
       HINDSIGHT_API_DATABASE_URL: postgresql://memory_index_owner:${MEMORY_INDEX_POSTGRES_PASSWORD:-memory_index_dev_only}@memory-index-postgres:5432/pantheon_memory_index

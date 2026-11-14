@@ -23,6 +23,7 @@ def test_internal_index_and_only_memory_holds_client_key():
     for service in (pg, api):
         assert not service.get('ports')
         assert service['profiles'] == ['core', 'root']
+        assert service['build']['args']['GIT_SHA'] == '${GIT_SHA:-unknown}'
     assert pg['volumes'] == ['memory-index-postgres-data:/var/lib/postgresql/data']
     assert pg['networks'] == ['memory-index-storage']
     assert api['networks'] == ['memory-index', 'memory-index-storage']
@@ -54,6 +55,8 @@ def test_version_digest_and_extension_pins():
     assert 'CREATE EXTENSION IF NOT EXISTS vector;' in init
     assert 'CREATE EXTENSION IF NOT EXISTS pgroonga;' in init
     assert 'onnxruntime==' in DOCKERFILE
+    assert 'LABEL org.opencontainers.image.revision=$GIT_SHA' in DOCKERFILE
+    assert 'LABEL org.opencontainers.image.revision=$GIT_SHA' in pg
     assert 'torch' not in re.search(r'RUN uv pip install.*?(?=COPY)', DOCKERFILE, re.S)[0]
 
 

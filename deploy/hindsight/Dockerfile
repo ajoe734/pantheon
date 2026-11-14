@@ -50,6 +50,10 @@ if __name__ == '__main__':
 PY
 RUN python /opt/hindsight/models.py package \
     && chmod -R a-w /opt/hindsight
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$GIT_SHA \
+    org.opencontainers.image.base.name="ghcr.io/vectorize-io/hindsight-api:1.2.1-slim" \
+    org.opencontainers.image.base.digest="sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c"
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
     HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx \
     HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH=/opt/hindsight/embeddings/model.onnx \
