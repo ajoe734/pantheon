@@ -1,6 +1,6 @@
 {
-  "contract_version": "pantheon.search-backend-contract.v2",
-  "task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113",
+  "contract_version": "pantheon.search-backend-contract.v3",
+  "task_id": "SEARCH-MEMORY-PROJECTION-REMOVAL-20261113",
   "accepted": true,
   "chosen_backend": "postgres_pgvector",
   "delivery_state": "activated_pending_real_query_evaluation",
@@ -10,8 +10,8 @@
     "retained_ranker_base": "5d15c7b821a846d24b76ce4f653f990482da0518",
     "source": "origin/dev at recovery; exact base verified in task evidence",
     "search": "PostgresRetrievalBackend integrated via SearchGateway facade; durable-only isolation preserved when durable_index_only=true.",
-    "memory": "Unified institutional and persona semantic retrieval wired to selected PostgresRetrievalBackend with fallback to local store.",
-    "negative_memory": "Unified negative-memory hybrid retrieval wired to selected PostgresRetrievalBackend.",
+    "memory": "Canonical memory is owned and authorized by the memory service; its rebuildable Hindsight index is reachable only by that service. Search exposes no memory projection write or retrieval route; legacy index rows still require rebuild cleanup.",
+    "negative_memory": "Negative memory retrieval belongs to the canonical memory service and its Hindsight index.",
     "retained_additive_checks": [
       "tenant comparison",
       "as-of cutoff narrowing"
@@ -19,8 +19,7 @@
   },
   "candidate_modules": [
     "services/search/pg_retrieval.py",
-    "services/search/local_embeddings.py",
-    "services/memory/search_retrieval.py"
+    "services/search/local_embeddings.py"
   ],
   "candidate_status": "PostgreSQL pgvector backend accepted as sole production backend; Qdrant benchmarked as comparative evaluation baseline and retained for regression verification.",
   "dependencies_and_models": "multilingual-e5-large pinned in model-manifest.json with checksums, packaged offline into the search image, verified at start (fail-closed readiness).",
@@ -31,5 +30,13 @@
   "validation_entrypoint": "services/search/evaluation/run_retrieval_eval.py",
   "validation_exit_status": 0,
   "rebuild_rollback": "Idempotent schema migration via services/search/sql/retrieval_index.sql; soft-delete tombstones and checkpoint recovery verified.",
-  "model_acceptance_required": false
+  "model_acceptance_required": false,
+  "backend_activation_task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113",
+  "memory_index": {
+    "owner_service": "memory",
+    "backend": "hindsight",
+    "search_projection_enabled": false,
+    "design_ref": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_HINDSIGHT_ADOPTION_2026-11-13.md",
+    "decision": "H7: one memory index; knowledge-base retrieval is unchanged"
+  }
 }

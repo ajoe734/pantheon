@@ -1,0 +1,158 @@
+{
+  "task_id": "SEARCH-MEMORY-PROJECTION-REMOVAL-20261113",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-14T14:53:52.669688+00:00",
+  "delivery_status": "implementation_verified_hosted_blocked",
+  "base_sha": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+  "implementation_anchor": "ab1f6582c8ab94e7c247f9c6814d9ee3c1e4f3e0",
+  "design_ref": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_HINDSIGHT_ADOPTION_2026-11-13.md#H7",
+  "acceptance": {
+    "AC1": {
+      "status": "locally_verified",
+      "evidence": "Removed MemoryProjectionBody and both memory HTTP execution branches. A before-validator rejects memory_entries and memory_record_kind including null, empty, invalid and both legacy kinds with HTTP 422 memory_search_projection_removed before backend calls or checkpoint writes. Covered query, compat, v2, alpha, refresh and source-completions; 48 rejection cases plus 4 focused contract/regression tests."
+    },
+    "AC2": {
+      "status": "locally_verified",
+      "evidence": "Backend contract v3 removes memory-backend wiring claims and memory candidate module, names canonical memory service ownership and Hindsight, and cites H7. Postgres knowledge backend activation remains accepted."
+    },
+    "AC3": {
+      "status": "locally_verified_hosted_blocked",
+      "evidence": "Existing rebuild_index now calls purge_legacy_memory after schema setup and returns memory_cleanup counts. Schema-admin connection uses SET LOCAL row_security=off, which fails instead of silently counting a tenant subset when bypass authority is absent. SHARE ROW EXCLUSIVE lock makes before/deleted/after counts atomic with respect to writers; count mismatch rolls back. Purge predicate includes only institutional_memory/persona_memory across all tenants, including inactive and uncheckpointed rows. Three real pgvector integration tests passed. Hosted cleanup remains unverified because served dev search image lacks current module dependencies and has no configured retrieval database."
+    },
+    "AC4": {
+      "status": "locally_verified_with_integration_limits",
+      "evidence": "Existing knowledge-base tests unchanged. Full search suite exit 0: 221 passed, 24 skipped, 4 subtests passed. Knowledge query still uses record_kind=knowledge_object; real DB cleanup retains both tenants knowledge rows, query log, labels and fail-closed request RLS."
+    }
+  },
+  "validation": [
+    {
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/search/tests/test_memory_projection_removed.py",
+      "exit_status": 0,
+      "result": "36 passed at initial anchor; subsequently expanded to cover v2 and alpha in the full-suite run"
+    },
+    {
+      "command": "timeout 240 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/search",
+      "exit_status": 2,
+      "result": "Initial collection failed: qdrant_client missing from worker Python environment"
+    },
+    {
+      "command": "Search suite with qdrant-client==1.19.0 installed in isolated /tmp test dependency directory",
+      "exit_status": 1,
+      "result": "199 passed, 24 skipped, 3 failed: jieba missing; resolved by isolated installation of repository pin jieba==0.42.1"
+    },
+    {
+      "command": "timeout 240 \"$PANTHEON_DEPENDENCY_PYTHON\" -c 'import sys; sys.path.append(\"/tmp/search-memory-projection-removal-20261113-test-deps\"); import pytest; raise SystemExit(pytest.main([\"-q\", \"-rs\", \"services/search\"]))'",
+      "exit_status": 0,
+      "result": "218 passed, 24 skipped, 1 warning, 4 subtests passed in 36.04s",
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-search-tests.log",
+      "terminal_log_sha256": "b02aca79071176a480fc463f7661b8d4b3742f6c8ea7f5077b465f2f1dec36c6",
+      "limits": "Integration cases skipped for missing configured Postgres DSNs, unavailable local model/pgvector backend and Qdrant, and missing ranx. This is not hosted cleanup proof."
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0
+    },
+    {
+      "command": "PANTHEON_MEMORY_PURGE_TEST_DSN=<isolated-task-pgvector> PYTHONPATH=/tmp/search-memory-projection-removal-20261113-test-deps timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/search/tests/test_memory_projection_removed.py",
+      "exit_status": 0,
+      "result": "55 passed, 1 warning in 7.19s; all three new real-Postgres integration tests executed",
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-focused.log",
+      "terminal_log_sha256": "18ad4fe06dffd01c265a5f9fc27433c54f4ffdb401d529ddbcdd5642f24b3b7d"
+    },
+    {
+      "command": "Initial focused rerun before local tokenizer dependency fixture setup",
+      "exit_status": 1,
+      "result": "54 passed, 1 failed: rebuild health unavailable without jieba/dictionary; resolved by isolated repository-pinned jieba and a test-owned dictionary."
+    },
+    {
+      "command": "Initial full suite rerun with qdrant-client installed using --no-deps",
+      "exit_status": 2,
+      "result": "Collection failed due to missing grpc. Installed qdrant-client dependencies into isolated /tmp directory; final run appends it after shared Python dependencies."
+    },
+    {
+      "command": "PANTHEON_MEMORY_PURGE_TEST_DSN=<isolated-task-pgvector> timeout 240 \"$PANTHEON_DEPENDENCY_PYTHON\" -c 'import sys; sys.path.append(\"/tmp/search-memory-projection-removal-20261113-test-deps\"); import pytest; raise SystemExit(pytest.main([\"-q\", \"-rs\", \"services/search\"]))'",
+      "exit_status": 0,
+      "result": "221 passed, 24 skipped, 1 warning, 4 subtests passed in 31.30s",
+      "limits": "Existing integration skips require other DSNs, default-port model/PG, Qdrant or ranx. New cleanup tests used a separate real pgvector DSN and did not skip.",
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-search-tests-rerun.log",
+      "terminal_log_sha256": "dbcee0d7cca7be43e3b4df3489b9a7a3dc30a6669eb1b0429cd392c6292c427a"
+    },
+    {
+      "command": "Pinned-host scripts/dev_vm_ssh.sh exec: hostname, served search image identity, docker exec read-only env/module/socket probe",
+      "exit_status": 0,
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-dev-environment.log",
+      "terminal_log_sha256": "56d36435a7bd307d9a730bd8ebd023a76fe201048639c9413614f4fa39e45ee5"
+    },
+    {
+      "command": "Pinned-host scripts/dev_vm_ssh.sh exec: feed current pg_retrieval.py into temporary Python namespace in served search container and call existing rebuild_index",
+      "exit_status": 1,
+      "result": "ModuleNotFoundError: services.search.zh_segmentation; candidate import failed before database access or writes",
+      "terminal_log_path": "/tmp/SEARCH-MEMORY-PROJECTION-REMOVAL-20261113-dev-rebuild.log",
+      "terminal_log_sha256": "868751d2b26ad8dffdb02c5bf78155f3d51100f5c056d8945dcbf2ab77cb18a9"
+    },
+    {
+      "command": "git diff --check after rebuild implementation and current dev composition",
+      "exit_status": 0
+    }
+  ],
+  "dev_host_cleanup": {
+    "status": "blocked_environment",
+    "entrypoint": "python -m services.search.pg_retrieval rebuild",
+    "host": "pantheon-dev-deploy.c.pantheon-dev-20260902.internal",
+    "configured_target": "35.194.154.62",
+    "container": "pantheon-search-svc-1",
+    "served_image_id": "sha256:6df65ce1dead062cb7ec8845367c22c995498f2e140a89ec5d3959b8b8b489bb",
+    "observed": {
+      "SEARCH_INDEX_STORE_BACKEND": "jsonl",
+      "SEARCH_EVIDENCE_BACKEND": "postgres",
+      "retrieval_dsn_configured": false,
+      "candidate_zh_segmentation_available": false,
+      "default_retrieval_endpoint_reachable": false
+    },
+    "before_counts": null,
+    "after_counts": null,
+    "reason": "Deployed search image is older than accepted retrieval activation, lacks zh_segmentation, and neither retrieval DSN environment variable is configured. Default loopback retrieval port 25432 is closed. No served index cleanup or database provisioning was performed."
+  },
+  "remaining_work": [
+    "Gemini/dev deployment lane must make the accepted retrieval activation available on current dev: matching search image with offline tokenizer/model and reachable retrieval-postgres with schema-admin rebuild authority. Use governed exact-pair deployment; do not hot-patch served containers or provision an unowned database.",
+    "Then resume this SAME task, run its existing rebuild entrypoint against the actual dev retrieval index, and record real before/deleted/after counts here. Isolated fixture counts above do not satisfy hosted cleanup.",
+    "After AC3 hosted evidence exists, update the existing draft PR #7346, perform exact-head handoff to Claude2, wait for canonical independent review and supervisor merge, and owner closeout. MEMORY-HINDSIGHT-INDEX-20261113 is done/satisfied and is not the blocker."
+  ],
+  "review_status": "not_handed_off; AC3 hosted evidence blocked by deployed environment",
+  "hosted_delivery_claimed": false,
+  "composed_dev_sha": "f3873766e36187e3ed8443feafa2eff1f83e1e23",
+  "rebuild_implementation_anchor": "7492857064ce419431c45184b69c1a7b47ff4cab",
+  "local_cleanup_integration": {
+    "status": "passed",
+    "environment": "isolated task-owned pgvector container on worker host; NOT served dev index",
+    "image": "pgvector/pgvector:0.8.0-pg16",
+    "image_id": "sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9",
+    "endpoint": "127.0.0.1:25439/pantheon_search",
+    "before_counts": {
+      "institutional_memory": 2,
+      "persona_memory": 2
+    },
+    "deleted_count": 4,
+    "after_counts": {
+      "institutional_memory": 0,
+      "persona_memory": 0
+    },
+    "retained_counts": {
+      "knowledge_object": 2
+    },
+    "query_log_before_after": [
+      1,
+      1
+    ],
+    "query_labels_before_after": [
+      1,
+      1
+    ],
+    "repeat_deleted_count": 0,
+    "rls": "Request role sees zero rows without tenant, only tenant-a knowledge with tenant-a context. Purge under tenant-only role raises InsufficientPrivilege and leaves all six fixture rows intact.",
+    "rollback": "BEFORE DELETE trigger retaining persona_memory causes count mismatch; transaction rolls back and all six fixture rows remain.",
+    "limits": "Synthetic records test maintenance wiring against real PostgreSQL. Embedding engine is mocked; empty canonical store avoids inference. No retrieval-quality or hosted cleanup claim.",
+    "cleanup": "Disposable schemas dropped by fixtures; task-owned container stopped after terminal tests."
+  }
+}
