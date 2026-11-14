@@ -8,10 +8,10 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
@@ -408,7 +408,22 @@ def _resolve_search_access_context(
     return context
 
 
-class SearchQueryBody(BaseModel):
+class KnowledgeSearchBody(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_memory_projection(cls, value: Any) -> Any:
+        # Reject even null/empty legacy fields instead of silently ignoring extras.
+        if isinstance(value, dict):
+            removed = sorted({"memory_entries", "memory_record_kind"}.intersection(value))
+            if removed:
+                raise ValueError(
+                    "memory_search_projection_removed: " + ", ".join(removed)
+                    + "; use the canonical memory service and its Hindsight index"
+                )
+        return value
+
+
+class SearchQueryBody(KnowledgeSearchBody):
     query: str = ""
     schema_version: str = "governed_search_request.v2"
     retrieval_mode: str | None = None
@@ -430,7 +445,6 @@ class SearchQueryBody(BaseModel):
     require_citations: bool = True
     filters_applied: dict[str, Any] = Field(default_factory=dict)
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
-    memory_record_kind: Literal["institutional_memory", "persona_memory"] | None = None
     caller_decision_type: str | None = None
     source_event_id: str | None = None
 
@@ -448,20 +462,13 @@ class StructuredAlphaQueryBody(BaseModel):
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
 
 
-class MemoryProjectionBody(BaseModel):
-    record_kind: Literal["institutional_memory", "persona_memory"]
-    entry: dict[str, Any]
-
-
-class IndexRefreshBody(BaseModel):
-    memory_entries: list[MemoryProjectionBody] | None = Field(default=None, max_length=100)
-
+class IndexRefreshBody(KnowledgeSearchBody):
     triggered_by: str = "manual"
     trigger_ref: str | None = None
     force_full: bool = False
 
 
-class SourceCompletionBody(BaseModel):
+class SourceCompletionBody(KnowledgeSearchBody):
     ingest_run_id: str
     connector_id: str | None = None
     source_type: str | None = None
@@ -841,51 +848,13 @@ def create_app(
         """Report retrieval mode capabilities honestly."""
         return capabilities()
 
-    def _require_memory_owner(auth_ctx):
-        if auth_ctx is None or auth_ctx.actor_id != "memory-svc" or "system" not in auth_ctx.roles:
-            raise HTTPException(status_code=403, detail="memory_projection_requires_owner_service")
-
     @app.post("/api/search/index/refresh")
     def refresh_index(
         body: IndexRefreshBody | None = Body(default=None),
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         """Trigger incremental (or full) index refresh from current evidence repository."""
-        auth_ctx = _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
-        if body is not None and body.memory_entries is not None:
-            _require_memory_owner(auth_ctx)
-            if retrieval_backend is None:
-                raise HTTPException(status_code=503, detail="memory_retrieval_backend_unavailable")
-            from services.memory.institutional_memory_store import InstitutionalMemoryEntry, validate_institutional_memory, validate_institutional_memory_json
-            from services.memory.persona_memory_store import PersonaMemoryEntry, validate_persona_memory, validate_persona_memory_json
-            from services.memory.search_retrieval import project_institutional_entry, project_persona_entry
-            records = []
-            try:
-                for item in body.memory_entries:
-                    if item.record_kind == "institutional_memory":
-                        errors = validate_institutional_memory_json(item.entry)
-                        entry = InstitutionalMemoryEntry.from_dict(item.entry)
-                        errors += validate_institutional_memory(entry)
-                        project = project_institutional_entry
-                    else:
-                        errors = validate_persona_memory_json(item.entry)
-                        entry = PersonaMemoryEntry.from_dict(item.entry)
-                        errors += validate_persona_memory(entry)
-                        project = project_persona_entry
-                    if errors:
-                        raise ValueError("invalid_memory_projection")
-                    tenant = entry.tenant_id or "default"
-                    if auth_ctx is not None:
-                        granted = auth_ctx.claims.get("tenant_id") or auth_ctx.claims.get("tenant") or "default"
-                        if granted != "*" and tenant != granted:
-                            raise HTTPException(status_code=403, detail="memory_projection_tenant_forbidden")
-                    records.append(project(entry))
-                projected = retrieval_backend.index_documents(records)
-                return {"projected": projected, "tombstones": sum(not rec.is_active for rec in records)}
-            except SearchCapabilityUnavailableError as exc:
-                raise HTTPException(status_code=503, detail="memory_projection_unavailable") from exc
-            except (ValueError, TypeError) as exc:
-                raise HTTPException(status_code=422, detail="invalid_memory_projection") from exc
+        _authenticate_search_request(authorization, required_roles=_SEARCH_ADMIN_ROLES)
         try:
             triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
             trigger_ref = body.trigger_ref if body else None
@@ -1025,38 +994,6 @@ def create_app(
         try:
             if activation_error:
                 raise SearchCapabilityUnavailableError(activation_error)
-            if body.memory_record_kind is not None:
-                _require_memory_owner(auth_ctx)
-                if retrieval_backend is None:
-                    raise SearchCapabilityUnavailableError("memory_retrieval_backend_unavailable")
-                if body.documents or body.access_context.environment != "paper":
-                    raise SearchPolicyError("memory candidates require canonical paper projections")
-                if not 1 <= body.top_k <= 300:
-                    raise SearchPolicyError("memory candidate limit must be between 1 and 300")
-                context = _resolve_search_access_context(body, auth_ctx)
-                log_context = context
-                # Institutional records have no persona binding; persona candidates always do.
-                if body.memory_record_kind == "institutional_memory":
-                    from dataclasses import replace
-                    context = replace(context, persona_id=None)
-                filters = SearchFilters.from_dict(body.filters)
-                ready = retrieval_backend.embedding_engine.is_ready()
-                mode = "hybrid" if ready else "full_text"
-                reason = None if ready else "embedding_model_unavailable"
-                started = time.perf_counter()
-                candidates = retrieval_backend.search(body.query, context=context, filters=filters,
-                    top_k=body.top_k, mode=mode, record_kind=body.memory_record_kind)
-                # IDs and scores only: memory-svc hydrates and authorizes canonical records.
-                try:
-                    retrieval_backend.record_query(context=log_context, request_id=body.request_id, query=body.query,
-                        retrieval_mode="hybrid" if ready else "lexical_only", hits=candidates,
-                        latency_ms=(time.perf_counter() - started) * 1000,
-                        caller_decision_type="memory_retrieve", source_event_id=body.source_event_id)
-                except Exception as exc:
-                    raise SearchCapabilityUnavailableError("retrieval_query_log_unavailable") from exc
-                return {"candidates": [{"id": hit.id, "score": hit.score} for hit in candidates],
-                        "retrieval_mode": "hybrid" if ready else "lexical_only",
-                        "fallback_reason": reason}
             if body.documents:
                 if durable_only:
                     raise ValueError(
