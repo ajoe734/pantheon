@@ -19,6 +19,8 @@ Fail-closed rules:
 * any hash / source id / schema mismatch rejects the whole pull; nothing is
   returned and nothing is written (raw copy happens only after every bundle
   verified and every record passed the external source contract);
+* verified daily-price bundles with typed session-time failures are quarantined
+  during the ordered sweep; no rows from that bundle are admitted;
 * every record is research-only, ``redistribution_allowed = false``.
 """
 
@@ -1163,7 +1165,8 @@ class CollectorBundleAdapter:
                             window_stops[key] = 0
                             continue
                 if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
-                    metadata_bundle = self._verify_ordered_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+                    metadata_bundle = metadata_bundle or self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
                     if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
                             and all(str(row["id"]) in priority_state["items"] for row in metadata_bundle.items)):
                         # Every identity of this session was persisted by the newer priority run.
@@ -1172,11 +1175,16 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
-                bundle = self._verify_ordered_bundle(
-                    transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
-                    deadline=deadline,
-                    raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
-                )
+                if metadata_bundle is not None:
+                    bundle = _verify_raw_window(
+                        transport, metadata_bundle, item_window=(skip, skip + remaining), deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency)
+                else:
+                    bundle = self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                        deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
+                    )
             except TimeoutError:
                 # A later bundle cut by the shared deadline before any of its rows verified
                 # keeps the already verified prefix; that bundle stays pending (no skip, no
@@ -1271,7 +1279,8 @@ class CollectorBundleAdapter:
         )
         if rejected:
             observed = {**observed, "rejected_bundles": rejected}
-        no_new_data = bool(verified and all(b.cursor in acknowledged_only_keys for b in verified) and complete
+        no_new_data = bool(verified and boundary is not None
+                           and all(b.cursor in acknowledged_only_keys | rejected_keys for b in verified) and complete
                            and not records and not feature_records and not feature_rejected
                            and observed["health_state"] == "healthy")
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
@@ -1547,6 +1556,8 @@ class CollectorBundleAdapter:
         A backfilled bundle is fetched long after the trade date, so falling back to the fetch
         time would stamp two years of history with today. The row's trade date (Taipei) is the
         event date; a stated publish time on another date is rejected, never trusted.
+        Daily prices cannot be fetched before the 13:30 Taipei session close.
+        A later conventional publish label is bounded by the verified observation.
         """
 
         try:
@@ -1557,7 +1568,7 @@ class CollectorBundleAdapter:
         session_close = datetime(trade_date.year, trade_date.month, trade_date.day, 5, 30, tzinfo=timezone.utc)
         if is_price and fetched_at < session_close:
             raise MarketTimeEvidenceError("market_price_fetched_before_session_close", item_id,
-                                          f"was fetched before { _iso(session_close) }")
+                                          f"was fetched before {_iso(session_close)}")
         if published_raw:
             if published_at.astimezone(_TAIPEI_TZ).date() != trade_date:
                 raise SourceEvidenceError(

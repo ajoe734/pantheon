@@ -10,7 +10,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
-from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -146,6 +146,21 @@ def test_preclose_price_is_rejected_with_typed_reason(tmp_path):
     assert not a._priority_key_path().exists()
 
 
+def test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy(tmp_path):
+    files, early = price_bundle(fetched="2026-11-11T05:29:59Z")
+    more, newest = price_bundle(fetched="2026-11-14T18:19:33Z", counts=(("2026-11-13", 1377),))
+    files.update(more)
+    a = adapter(tmp_path, files, [early, newest])
+    seed_priority(a, files, newest, count=1377)
+    result = a.pull()
+    assert result.records == () and result.no_new_data and result.complete
+    assert result.next_cursor.endswith("#" + newest["run_id"])
+    assert result.observed["health_state"] == "healthy"
+    assert len(result.observed["rejected_bundles"]) == 1
+    assert not a._raw_bundle_path(cb.verify_bundle(a.transport,
+        expected_source_id=TWSE, entry=early, item_window=(0, 0))).exists()
+
+
 @pytest.mark.parametrize("reject", [False, True], ids=["early-admitted", "preclose-quarantined"])
 def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(admission_stack, monkeypatch, reject):
     http, module, _, _, files, _, tick = admission_stack
@@ -194,6 +209,15 @@ def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(admissio
     assert state["collector_outcome"]["complete"]
     assert state["collector_outcome"]["observed"]["health_state"] == "healthy"
     assert not state.get("last_error")
+    partitions = {ref["uri"] for receipt in module.runtime.store.read_freshness_snapshot()["receipts"]
+                  if receipt.status == "completed" and receipt.connector_id == TWSE
+                  for ref in receipt.storage_refs.get("normalized_refs", ())
+                  if ref.get("date") == "2026-11-11"}
+    persisted = [json.loads(line) for uri in partitions for line in Path(uri).read_text().splitlines()]
+    assert len(persisted) == (0 if reject else 1376)
+    if not reject:
+        assert {r["metadata"]["event_time"] for r in persisted} == {"2026-11-11T06:16:05Z"}
+        assert {r["metadata"]["available_time"] for r in persisted} == {"2026-11-11T06:16:05Z"}
     quarantine = list(root.rglob("rejected_bundles/*.json"))
     assert len(quarantine) == int(reject)
     if reject:
