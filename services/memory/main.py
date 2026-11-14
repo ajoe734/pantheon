@@ -21,6 +21,7 @@ from .institutional_memory_store import (
     InstitutionalMemoryStore,
     build_institutional_memory_store,
 )
+from . import hindsight_index as hs
 from .usefulness import apply_usefulness
 
 from .learn_feedback_writeback import (
@@ -597,23 +598,11 @@ async def get_entry(
     return entry.to_dict()
 
 
-@app.get("/api/memory/retrieve")
-async def retrieve_memory(
-    review_required: bool = Query(default=False),
-    actor_id: str = Query(..., min_length=1),
-    actor_roles: List[str] = Query(...),
-    session_id: str = Query(..., min_length=1),
-    persona_id: Optional[str] = Query(default=None),
-    session_persona_id: Optional[str] = Query(default=None),
-    scope: str = Query(default="both", pattern="^(institutional|persona|both)$"),
-    query: str = Query(default=""),
-    knowledge_type: Optional[str] = Query(default=None),
-    memory_type: Optional[str] = Query(default=None),
-    scope_filter: Optional[str] = Query(default=None),
-    tags: Optional[List[str]] = Query(default=None),
-    limit: int = Query(default=10, ge=1, le=100),
-    authorization: Optional[str] = Header(default=None),
+def _authorize_memory_read(
+    authorization: Optional[str], *, actor_id: str, actor_roles: List[str], session_id: str,
+    scope: str, persona_id: Optional[str], session_persona_id: Optional[str],
 ):
+    """Shared identity, tenant and governance check for retrieve and reflect."""
     ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
     roles = _split_csv_values(actor_roles)
     effective_actor_id = actor_id
@@ -637,7 +626,6 @@ async def retrieve_memory(
         else:
             effective_roles = list(ctx.roles)
 
-    tag_values = _split_csv_values(tags)
     resource = {"scope": scope}
     if persona_id:
         resource["persona_id"] = persona_id
@@ -663,27 +651,51 @@ async def retrieve_memory(
                 "reason": str(decision.get("reason") or "unknown"),
             },
         )
-
-    from .search_retrieval import (
-        SearchServiceClient, get_search_retrieval_backend,
-        retrieve_institutional_with_backend, retrieve_persona_with_backend,
-    )
-    backend = get_search_retrieval_backend()
-    if isinstance(backend, SearchServiceClient):
-        backend.source_event_id = session_id
-    ranked_hits = []
-    retrieval_details = {}
     tenant_id = None
     if ctx is not None:
         tenant_id = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
         if tenant_id == "*":
             tenant_id = "default"
+    return ctx, effective_roles, tenant_id, persona_relevance_scope, decision
+
+
+@app.get("/api/memory/retrieve")
+async def retrieve_memory(
+    review_required: bool = Query(default=False),
+    actor_id: str = Query(..., min_length=1),
+    actor_roles: List[str] = Query(...),
+    session_id: str = Query(..., min_length=1),
+    persona_id: Optional[str] = Query(default=None),
+    session_persona_id: Optional[str] = Query(default=None),
+    scope: str = Query(default="both", pattern="^(institutional|persona|both)$"),
+    query: str = Query(default=""),
+    knowledge_type: Optional[str] = Query(default=None),
+    memory_type: Optional[str] = Query(default=None),
+    scope_filter: Optional[str] = Query(default=None),
+    tags: Optional[List[str]] = Query(default=None),
+    subject_anchors: Optional[List[str]] = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    _ctx, _roles, tenant_id, persona_relevance_scope, decision = _authorize_memory_read(
+        authorization, actor_id=actor_id, actor_roles=actor_roles, session_id=session_id,
+        scope=scope, persona_id=persona_id, session_persona_id=session_persona_id)
+    tag_values = _split_csv_values(tags)
+    anchor_values = _split_csv_values(subject_anchors)
+    bad_anchors = [a for a in anchor_values if hs.parse_subject_anchor(a) is None]
+    if bad_anchors:
+        raise HTTPException(status_code=422, detail={"error": "invalid_subject_anchor", "anchors": bad_anchors,
+                                                     "allowed_kinds": list(hs.ANCHOR_KINDS)})
+    from .search_retrieval import retrieve_institutional, retrieve_persona
+    client = hs.get_hindsight_client()
+    ranked_hits = []
+    retrieval_details = {}
     if scope in {"institutional", "both"}:
         diagnostics = {}
-        for hit in retrieve_institutional_with_backend(
-            _store(), backend=backend, query=query, tenant_id=tenant_id,
-            persona_id=persona_id or effective_actor_id, workspace_id=session_id, knowledge_type=knowledge_type,
-            scope_filter=scope_filter, tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
+        for hit in retrieve_institutional(
+            _store(), client=client, query=query, tenant_id=tenant_id, knowledge_type=knowledge_type,
+            scope_filter=scope_filter, tags=tag_values, subject_anchors=anchor_values, limit=limit,
+            diagnostics=diagnostics, review_required=review_required,
         ):
             ranked_hits.append(("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry))
         retrieval_details["institutional"] = diagnostics
@@ -692,11 +704,11 @@ async def retrieve_memory(
         try:
             if not persona_id:
                 raise PersonaMemoryError("persona_id is required for persona memory retrieval")
-            for hit in retrieve_persona_with_backend(
-                _persona_store(), persona_id=persona_id, backend=backend, query=query, tenant_id=tenant_id,
-                workspace_id=session_id,
+            for hit in retrieve_persona(
+                _persona_store(), persona_id, client=client, query=query, tenant_id=tenant_id,
                 memory_type=memory_type, relevance_scope=persona_relevance_scope,
-                tags=tag_values, limit=limit, diagnostics=diagnostics, review_required=review_required,
+                tags=tag_values, subject_anchors=anchor_values, limit=limit, diagnostics=diagnostics,
+                review_required=review_required,
             ):
                 ranked_hits.append(("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry))
         except PersonaMemoryError as exc:
@@ -729,15 +741,96 @@ async def retrieve_memory(
         "hits": response_hits,
         "count": len(response_hits),
         "scope": scope,
-        "retrieval_mode": min((d["retrieval_mode"] for d in retrieval_details.values()),
-                              key=lambda mode: {"keyword_fallback": 0, "lexical_only": 1, "hybrid": 2}[mode]),
+        "retrieval_mode": "keyword_fallback" if any(
+            d["retrieval_mode"] == "keyword_fallback" for d in retrieval_details.values()) else "hindsight",
         "fallback_reason": ";".join(sorted({d["fallback_reason"] for d in retrieval_details.values() if d.get("fallback_reason")})) or None,
+        "llm_layers": hs.llm_layers(),
         "retrieval_details": retrieval_details,
         "authz": {
             "allowed": True,
             "reason": str(decision.get("reason") or "authorized"),
             "policy_version": "governance-authz.v1",
         },
+    }
+
+
+class ReflectPayload(BaseModel):
+    query: str
+    bank: str  # "institutional" (facts bank) or "persona" (caller's own bank): one bank per call
+    actor_id: str
+    actor_roles: List[str]
+    session_id: str
+    persona_id: Optional[str] = None
+    session_persona_id: Optional[str] = None
+    subject_anchors: List[str] = []
+    memory_type: Optional[str] = None
+    knowledge_type: Optional[str] = None
+
+
+@app.post("/api/memory/reflect")
+async def reflect_memory(payload: ReflectPayload, authorization: Optional[str] = Header(default=None)):
+    """Read-only reflect over one Hindsight bank, scoped exactly like retrieve (H9)."""
+    if payload.bank not in {"institutional", "persona"} or not payload.query.strip():
+        raise HTTPException(status_code=422, detail={"error": "invalid_reflect_request",
+                                                     "message": "bank must be institutional|persona and query non-empty"})
+    _ctx, _roles, tenant_id, relevance_scope, decision = _authorize_memory_read(
+        authorization, actor_id=payload.actor_id, actor_roles=payload.actor_roles, session_id=payload.session_id,
+        scope=payload.bank, persona_id=payload.persona_id, session_persona_id=payload.session_persona_id)
+    if payload.bank == "persona" and not payload.persona_id:
+        raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve",
+                                                     "message": "persona_id is required for persona memory reflect"})
+    anchors = _split_csv_values(payload.subject_anchors)
+    if any(hs.parse_subject_anchor(a) is None for a in anchors):
+        raise HTTPException(status_code=422, detail={"error": "invalid_subject_anchor", "allowed_kinds": list(hs.ANCHOR_KINDS)})
+
+    def unavailable(reason: str):
+        return HTTPException(status_code=503, detail={"error": "reflect_unavailable", "reason": reason,
+                                                      "llm_layers": hs.llm_layers()})
+    if not hs.reflect_configured():
+        raise unavailable("reflect_not_configured")
+    client = hs.get_hindsight_client()
+    if client is None:
+        raise unavailable("hindsight_unconfigured")
+    if payload.bank == "persona":
+        bank = hs.persona_bank(tenant_id, payload.persona_id)
+        groups = hs.tag_groups(
+            subject_anchors=anchors,
+            scope_tags=["scope:committee"] if relevance_scope == "persona_and_committee" else (),
+            type_tag=f"type:{payload.memory_type}" if payload.memory_type else None)
+    else:
+        bank = hs.facts_bank(tenant_id)
+        groups = hs.tag_groups(subject_anchors=anchors,
+                               type_tag=f"type:{payload.knowledge_type}" if payload.knowledge_type else None)
+    body = {"query": payload.query, "budget": "low", "max_tokens": 2048, "include": {"facts": {}}}
+    if groups:
+        body["tag_groups"] = groups
+    try:
+        result = client.reflect(bank, body)
+    except hs.HindsightError as exc:
+        raise unavailable(exc.reason) from exc
+
+    # Citations are canonical ids that re-authorise against the owner stores.
+    store = _persona_store() if payload.bank == "persona" else _store()
+    citations = []
+    for cid in hs.reflect_citations(result):
+        entry = store.get(cid)
+        if entry is None or not entry.is_active or entry.is_expired():
+            continue
+        if (entry.tenant_id or "default") != (tenant_id or "default") and tenant_id is not None:
+            continue
+        if payload.bank == "persona":
+            if entry.persona_id != payload.persona_id:
+                continue
+            if relevance_scope and entry.relevance_scope != relevance_scope:
+                continue
+        citations.append(cid)
+    return {
+        "text": result.get("text", ""),
+        "citations": citations,
+        "bank": payload.bank,
+        "llm_layers": hs.llm_layers(),
+        "authz": {"allowed": True, "reason": str(decision.get("reason") or "authorized"),
+                  "policy_version": "governance-authz.v1"},
     }
 
 

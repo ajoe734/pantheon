@@ -939,23 +939,28 @@ def test_persona_retrieve_tenant_filter_precedes_ranking_limit(memory_client, mo
     assert owned_id in {h["entry"]["memory_id"] for h in response.json()["hits"]}
 
 
-def test_persona_retrieve_backend_context_uses_verified_tenant(memory_client, monkeypatch):
-    from services.memory import search_retrieval
+def test_persona_retrieve_recalls_verified_tenant_bank(memory_client, monkeypatch):
+    from services.memory import hindsight_index as hs
 
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
     seen = []
 
-    class Backend:
-        def search(self, **kwargs):
-            seen.append(kwargs["context"].tenant_id)
-            return []
+    class Client:
+        def recall(self, bank, body):
+            seen.append(bank)
+            return {"results": []}
 
-    monkeypatch.setattr(search_retrieval, "get_search_retrieval_backend", lambda: Backend())
-    response = memory_client.get(
-        "/api/memory/retrieve",
-        params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="lesson"),
-        headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
-    )
+    hs.set_hindsight_client(Client())
+    try:
+        response = memory_client.get(
+            "/api/memory/retrieve",
+            params=_retrieve_auth_params(scope="persona", persona_id="persona-alpha", query="lesson"),
+            headers={"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"},
+        )
+    finally:
+        hs.set_hindsight_client(None)
     assert response.status_code == 200, response.text
-    assert seen == ["tenant-alpha"], seen
+    assert seen == [hs.persona_bank("tenant-alpha", "persona-alpha")], seen
+    body = response.json()
+    assert body["retrieval_mode"] == "hindsight" and body["llm_layers"] == "disabled"

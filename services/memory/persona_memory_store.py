@@ -280,7 +280,7 @@ class PersonaMemoryStore:
                 raise PersonaMemoryError(f"Entry already exists: {entry.memory_id}")
             self._entries[entry.memory_id] = entry
             self._save()
-            self._project(entry)
+            self._mirror(entry)
             return entry
 
     def get(self, memory_id: str) -> Optional[PersonaMemoryEntry]:
@@ -345,7 +345,6 @@ class PersonaMemoryStore:
             updated = PersonaMemoryEntry(**marked_payload(entry, mark))
             self._entries[memory_id] = updated
             self._save()
-            self._project(updated)
             return updated
 
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
@@ -368,7 +367,7 @@ class PersonaMemoryStore:
             )
             self._entries[memory_id] = updated
             self._save()
-            self._project(updated)
+            self._mirror(updated)
             return updated
 
     def archive_expired(self, *, now: Optional[str] = None, reason: Optional[str] = None) -> List[PersonaMemoryEntry]:
@@ -386,13 +385,14 @@ class PersonaMemoryStore:
             if archived:
                 self._save()
                 for entry in archived:
-                    self._project(entry)
+                    self._mirror(entry)
         return archived
 
     @staticmethod
-    def _project(entry) -> None:
-        from .search_retrieval import sync_memory_projection
-        sync_memory_projection(entry)
+    def _mirror(entry) -> None:
+        """Mirror the persisted canonical state to the Hindsight index (never raises)."""
+        from .hindsight_index import mirror_entry
+        mirror_entry(entry)
 
     def archive(self, memory_id: str, *, reason: str) -> PersonaMemoryEntry:
         if not reason.strip():
@@ -404,7 +404,7 @@ class PersonaMemoryStore:
                 "archived_reason": reason})
             self._entries[memory_id] = updated
             self._save()
-            self._project(updated)
+            self._mirror(updated)
             return updated
 
     def retrieve(
@@ -537,7 +537,6 @@ class PostgresPersonaMemoryStore(PersonaMemoryStore):
             updated = PersonaMemoryEntry(**marked_payload(entry, mark))
             committed, _ = self._records.compare_and_set(memory_id, raw, updated.to_dict())
             if committed:
-                self._project(updated)
                 return updated
         raise ValueError("concurrent_usefulness_update")
 
