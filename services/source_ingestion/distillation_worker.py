@@ -1945,7 +1945,7 @@ class DistillationWorker:
             raise DistillationError("source record set contains foreign or unowned tenant scope")
         normalized = [
             s for s in source_records if s.status == SourceRecordStatus.NORMALIZED
-            and not s.metadata.get("collector_market_bundle")
+            and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
         ][:limit]
 
         enqueued = 0

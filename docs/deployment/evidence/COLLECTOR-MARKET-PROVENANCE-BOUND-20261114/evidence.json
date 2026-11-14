@@ -1,0 +1,170 @@
+{
+  "task_id": "COLLECTOR-MARKET-PROVENANCE-BOUND-20261114",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "implementation_validation_in_progress",
+  "scope": "Verified Collector market bundles only; normalized rows, snapshots, official connectors, request cadence and legacy evidence retained.",
+  "baseline": {
+    "source_commit": "0940f6248ad1003a7cc6406c083875d9061cfb3a",
+    "pipeline_sha256": "4fadf2e16e96dd557d762ee668cef4ce624ed4a16e9261c6560feca4f7004c6e",
+    "method": "Before editing pipeline.py, loaded the merged pipeline into a foreground Python process and ingested real-size fixture-shaped bundles into local PostgreSQL 16 with the real distillation queue.",
+    "command": ".venv-pantheon/bin/python /tmp/collector-provenance-baseline.py",
+    "script_sha256": "e8336eb7eb27bdbee964c06295c977edc7dfe997929026a9a035bf51d9ab3ccf",
+    "output_sha256": "2fc31f1ac4624bf0918ed1465684eb8249ddf6802b5eeba201c5c7ae1b3a40e4",
+    "samples": [
+      {
+        "rows": 1375,
+        "after_pipeline": {
+          "evidence_bundle": 1,
+          "evidence_item": 1375,
+          "source_record": 1375,
+          "knowledge_object": 1375
+        },
+        "jobs": 1375,
+        "after_distillation": {
+          "evidence_bundle": 1,
+          "evidence_item": 1375,
+          "source_record": 1375,
+          "knowledge_object": 1375
+        },
+        "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+      },
+      {
+        "rows": 6000,
+        "after_pipeline": {
+          "evidence_bundle": 1,
+          "evidence_item": 6000,
+          "knowledge_object": 6000,
+          "source_record": 6000
+        },
+        "jobs": 6000,
+        "after_distillation": {
+          "evidence_bundle": 1,
+          "evidence_item": 6000,
+          "knowledge_object": 6000,
+          "source_record": 6000
+        },
+        "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+      },
+      {
+        "rows": 1349,
+        "after_pipeline": {
+          "evidence_item": 1349,
+          "knowledge_object": 1349,
+          "source_record": 1349,
+          "evidence_bundle": 1
+        },
+        "jobs": 1349,
+        "after_distillation": {
+          "evidence_item": 1349,
+          "knowledge_object": 1349,
+          "source_record": 1349,
+          "evidence_bundle": 1
+        },
+        "distillation": "DistillationRunResult(processed=100, created=0, refreshed=0, skipped=100, failed=0, enqueued=0, registry_synced=0, retried=0, dead_lettered=0, deferred=0)"
+      }
+    ],
+    "head_note": "The process imported the unmodified pipeline before the anchor commit. Its end-of-run git HEAD field reports e491739d7, not the already-loaded module version; immutable module source is identified above.",
+    "hosted_observation": "Task-provided read-only psql observation, 2026-11-14 13:30-13:55Z: TWSE history 442 source records, 1495 evidence items, 1495 knowledge objects; table 22701 rows / 67 MB. This worker did not run hosted SSH or SQL.",
+    "local_vs_hosted": "A single pass through the merged pipeline reproduces linear 1:1:1 source/item/knowledge growth plus one job per row. The roughly 3.38 hosted item/source ratio is historical accumulated evidence; it was not reproduced by a clean single-pass ingest and is not claimed as a local result.",
+    "distillation_note": "The existing market worker synthesizes evidence and materializes a local seed before marking a job skipped, but that path alone does not add PostgreSQL evidence rows in this version."
+  },
+  "contract": {
+    "identity": "connector + tenant + collector source + verified bundle SHA256 + dataset + trade date; content-identical collector reruns share the record, corrected bundles retain distinct hashes.",
+    "live_records_per_bundle_date": {
+      "source_record": 1,
+      "evidence_item": 1,
+      "evidence_bundle": 1,
+      "knowledge_object": 1
+    },
+    "normalized_rows": "Every verified row is written before provenance; per-symbol daily and intraday snapshot projection consumes original rows before aggregation.",
+    "partial_delivery": "Stable identities and PostgreSQL UPSERT across capped prefixes. Row count and rows hash recomputed from normalized partitions, selecting connector/tenant/bundle hash. Only one directory locator per dataset/date, no growing symbol or partition-file list.",
+    "pit": "Aggregate event/availability min/max, validated scalar PIT, trade date, content hash, normalized selector, original licence/ACL/attribution preserved.",
+    "replay": "Completed receipt and normalized partition identity (tenant, item id, full content hash, dataset, event and availability times) authorizes reuse without requiring per-row evidence.",
+    "search": "Bundle knowledge objects remain readable provenance; numeric bundles do not enter the semantic embedding pipeline. Existing text and legacy market knowledge remain eligible.",
+    "distillation": "No automatic admission or catch-up admission for numeric bundle summaries; explicit old/manual jobs are skipped before seed/evidence synthesis. Legacy market jobs retain existing behavior.",
+    "compatibility": "No deletion, schema migration or canonical record type change; additional metadata only. Original collector: source-id namespace retained."
+  },
+  "scale": {
+    "status": "pending",
+    "planned_days_per_source": 30,
+    "normalized_rows": 261720,
+    "two_year_days": 488,
+    "two_year_normalized_rows": 4257312,
+    "two_year_bundles": 1464,
+    "two_year_new_evidence_rows": 5856,
+    "two_year_new_embeddings": 0,
+    "two_year_new_distillation_jobs": 0,
+    "health_budget_seconds": 120,
+    "health_budget_reference": "docker-compose.yml source-ingest healthcheck start_period:120s (plus 10 retries at 10s).",
+    "search_limit_reference": "SEARCH-EMBED-CPU-BOUND-20261114: <=2 compute threads/CPUs and >=300 embeddings/hour; new numeric bundles add zero embedding calls.",
+    "harness_boundary": "Local PostgreSQL and real controller, API, pipeline, partitions, queue and snapshot writer. Test uses <=1000-row historical batches and daily cadence; separate default-cadence newest-session and held-symbol tests preserve current behavior. Lossless latest-envelope snapshot journal compaction between scale ticks preserves every retained point/checksum; this is test-only and not a production repair."
+  },
+  "readers": [
+    {
+      "reader": "latest connector record/readback",
+      "path": "services/source_ingestion/runtime.py:_latest_source_record_by_connector",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; newest-session controller regression"
+    },
+    {
+      "reader": "latest/held-symbol close and intraday projection",
+      "path": "services/source_ingestion/pipeline.py:persist_latest_market_snapshots; services/source_ingestion/requirement_state.py:append_normalized_records",
+      "proof": "test_latest_market_snapshot.py; test_latest_market_snapshot_state.py; test_intraday_snapshot_projection.py; held-symbol controller regression"
+    },
+    {
+      "reader": "normalized storage replay",
+      "path": "services/source_ingestion/pipeline.py:_persist_collector_market_storage",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence (including foreign-tenant negative)"
+    },
+    {
+      "reader": "market distillation",
+      "path": "services/source_ingestion/distillation_worker.py:catch_up,_distill_one; services/source_ingestion/distillation_controller.py:eligible_records",
+      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_distillation_worker.py"
+    },
+    {
+      "reader": "management router",
+      "path": "services/source_ingestion/routers/management.py:list_management_sources,list_management_strategy_seeds",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence"
+    },
+    {
+      "reader": "ingest operations router",
+      "path": "services/source_ingestion/routers/ingest_operations.py:list_source_records,get_latest_market_snapshot",
+      "proof": "test_completed_receipt_reuses_rows_without_per_row_evidence; test_latest_market_snapshot.py"
+    },
+    {
+      "reader": "search",
+      "path": "services/search/index_pipeline.py:IncrementalIndexPipeline.run",
+      "proof": "test_bundle_provenance_does_not_reach_embedding_engine; test_index_pipeline.py"
+    },
+    {
+      "reader": "knowledge and PostgreSQL evidence repository",
+      "path": "services/knowledge/evidence/repository.py:list_source_records; services/source_ingestion/pg_store.py:reload",
+      "proof": "test_real_size_day_has_constant_evidence_and_no_distillation; test_pg_store.py; real 30-day PG scale"
+    },
+    {
+      "reader": "bee62bc29 rollback codec",
+      "path": "services/source_ingestion/connectors/base.py:SourceRecord.from_dict at bee62bc29",
+      "proof": "test_legacy_rows_and_bee_reader_accept_additive_bundle executes actual historical codec on both untouched legacy and new bundle records"
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\"",
+      "result": "8 passed before router checks; final rerun pending"
+    },
+    {
+      "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 900 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k \"not real_pg\" services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_intraday_snapshot_projection.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/test_pg_store.py services/search/test_index_pipeline.py",
+      "result": "238 passed, 1 skipped (private native RSS pack unavailable), 1 deselected, exit 0"
+    },
+    {
+      "command": "PYTHONPATH=/tmp timeout 900 .venv-pantheon/bin/python -m pytest -p collector_fixture_clock -q services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py services/source_ingestion/tests/test_latest_market_snapshot.py",
+      "result": "104 passed, 6 failed, exit 1; all failures listed below. Subsequent namespace compatibility fix resolves the first assertion; final rerun pending."
+    }
+  ],
+  "holds": {
+    "readonly_tests": "Task explicitly requires test_scheduled_connector.py unchanged. Five tests assert/derive per-row source-record counts (8,16,7467,1349,6002); these contradict bounded physical provenance. Operator clarification requested; no assertion weakened and no read-only test edited.",
+    "fixture_clock": "Unmodified newest-session no-new-data fixture is dated 2026-11-14 00:19Z and exceeds its 12-hour health threshold at current time. Raw run: 1 failed, 20 passed. A temporary test-only plugin freezes only observed_from_collector_status(now=2026-11-14T01:00Z) for that one fixture; all assertions and production staleness rules remain intact.",
+    "incomplete_runs": "Uncompacted scale run interrupted after 314.66s due unrelated append-only snapshot journal replay growth; rerun for fixture tenant/source-id fixes also interrupted. Initial compacted harness failed on optional legacy daily dataset key. These runs are not passes.",
+    "hosted": "Hosted acceptance remains owned by COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113; no hosted claim or SSH attempt."
+  }
+}

@@ -288,7 +288,7 @@ class IncrementalIndexPipeline:
         # not semantic documents. Partial deliveries update their row counts;
         # embedding those updates would reintroduce work proportional to rows.
         all_objects = [obj for obj in self.repository.list_knowledge_objects()
-                       if not obj.metadata.get("collector_market_bundle")]
+                       if not (obj.source_type == "market" and obj.metadata.get("collector_market_bundle"))]
         current_ids = {obj.knowledge_object_id for obj in all_objects}
         removed_count = len(previous_ids - current_ids)
 

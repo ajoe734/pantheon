@@ -199,12 +199,14 @@ def collector_market_bundle_records(result: Any, storage_refs: Mapping[str, Any]
                     row = json.loads(line)
                     stored = SourceRecord.from_dict({**row, "source_type": "market", "title": "partition row"})
                     if _collector_market_group(stored) == group:
-                        rows_by_id[stored.source_id] = stored
+                        prior = rows_by_id.get(stored.source_id)
+                        if prior is None or str(stored.metadata["available_time"]) >= str(prior.metadata["available_time"]):
+                            rows_by_id[stored.source_id] = stored
         if not {r.source_id for r in records}.issubset(rows_by_id):
             raise SourceEvidenceError("Collector market provenance is missing normalized rows")
         meta = first.metadata
         identity = json.dumps(group, separators=(",", ":"))
-        source_id = stable_ref("collector-bundle", identity)
+        source_id = f"collector:{group[2]}:bundle:{sha256(identity.encode()).hexdigest()}"
         row_count = len(rows_by_id)
         event_times = [str(r.metadata["event_time"]) for r in rows_by_id.values()]
         available_times = [str(r.metadata["available_time"]) for r in rows_by_id.values()]
@@ -292,7 +294,7 @@ def admit_normalized_records_to_distillation(
     # whatever admission could not enqueue here.
     admissions: dict[str, Any] = {}
     sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED
-                    and not s.metadata.get("collector_market_bundle"))
+                    and not (s.source_type.value == "market" and s.metadata.get("collector_market_bundle")))
     if not sources:
         return admissions
     context = (distillation_job_queue.admission_connection()
@@ -415,7 +417,8 @@ def persist_source_evidence_refs(
             # items. URL-only dedupe retained the first prefix's run forever,
             # failing the next controller tick's real record/run readback.
             # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
-            prefix = "collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else "collector-market"
+            prefix = ("collector-bundle" if record.metadata.get("collector_market_bundle") else
+                      "collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else "collector-market")
             candidate_source = replace(candidate_source, metadata={
                 **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
             })

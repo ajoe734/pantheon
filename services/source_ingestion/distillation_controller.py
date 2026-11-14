@@ -481,7 +481,7 @@ def run_controller_tick(
         eligible_records = [
             s for s in source_records
             if s.status == SourceRecordStatus.NORMALIZED
-            and not s.metadata.get("collector_market_bundle")
+            and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
         ]
         eligible_ids = [s.source_id for s in eligible_records]
         desired_meta = {"eligible_source_ids": sorted(eligible_ids)}
