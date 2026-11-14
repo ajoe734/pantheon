@@ -152,6 +152,7 @@ for src in \
   collector-tw-twse-price-history \
   collector-tw-twse-index-breadth \
   collector-tw-twse-taiex-history \
+  collector-tw-taifex-vix \
   collector-tw-tpex-price-history \
   collector-macro-dbnomics \
   collector-papers \
@@ -346,3 +347,31 @@ Recorded development-host endpoint checks, fixture hashes and row counts are in
 `docs/deployment/evidence/REGIME-DATA-COLLECTOR-INDEX-BREADTH-20261114/evidence.json`.
 These checks do not claim collector-host deployment or Pantheon intake behavior;
 those are owned by the separate deployment and intake tasks.
+
+## Taiwan VIX (TAIFEX)
+
+`collector-tw-taifex-vix` archives the 臺指選擇權波動率指數 from the official
+TAIFEX pages (no browser needed; confirmed live 2026-11-14). TAIFEX only serves the
+current month plus the prior three, so the first run takes all of it and later
+runs are incremental:
+
+| series | listing page | file |
+| --- | --- | --- |
+| daily close (+ 收盤前1分鐘平均) | `/cht/7/vixDaily3MNew` | `/file/taifex/Dailydownload/vix/log2data/YYYYMMnew.txt` |
+| intraday, current month | `/cht/7/vixMinNew` | `/cht/7/getVixData?filesname=YYYYMMDD` (one file per day) |
+| intraday, prior 3 months | `/cht/7/vixMin3MNew` | `/file/taifex/Dailydownload/vix/logdata/YYYYMM歷史紀錄波動率指數_新VIX.zip` (members `tvix_YYYYMMDD`) |
+
+Files are Big5 tab-separated text; the raw file (or zip) is archived byte-for-byte
+and the items carry parsed `rows` (`trade_date`, `time` HH:MM:SS.ff plus `time_raw`, value).
+Datasets: `tw_vix_daily` (one item per month file), `tw_vix_intraday` (one per
+session day) and `tw_vix_intraday_archive` (the monthly zip). Intraday sessions
+end with a `Last 1 min AVG` line, kept as `last_1min_avg`, not as a time row.
+`getVixData` answers 200 with an HTML page for an unknown date, so only dates listed
+on the pages are requested and HTML is treated as a format change. A changed header,
+bad row, missing link, bad zip or unexpected member invalidates the **whole run**
+(partial bundle, zero rows, `parse_failed: <reason>`). Finished files (past-month
+daily files, complete sessions, zips) are recorded in
+`/data/state/taifex-vix/ledger.json` only after the bundle is published, so reruns
+are idempotent and request just the new/changing files. A first run is about 30
+requests at least five seconds apart. Run once with
+`python -m collector_stack.cli --root-dir /data run --source collector-tw-taifex-vix`.

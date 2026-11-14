@@ -1,0 +1,111 @@
+{
+  "task_id": "REGIME-DATA-COLLECTOR-TAIWAN-VIX-20261114",
+  "hosted_behavior_claimed": false,
+  "scope": "Collector source implementation only; paper/research data. No deployment, Pantheon intake or hosted acceptance claim.",
+  "development_host": "pantheon-dev.c.erudite-acre-504305-m8.internal",
+  "captured_at": "2026-11-14T18:24:24Z",
+  "browser_required": false,
+  "transport": "Production CLI path: python -m collector_stack.cli run --source collector-tw-taifex-vix, LiveScraplingTransport (scrapling==0.2.99 installed in a throwaway venv, raw httpx bytes), single connection, 5s spacing, throwaway salt file.",
+  "confirmed_urls": [
+    {
+      "series": "daily close",
+      "listing": "https://www.taifex.com.tw/cht/7/vixDaily3MNew",
+      "file": "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/{YYYYMM}new.txt",
+      "format": "Big5 (cp950) tab text, CRLF; header 交易日期/時間(時/分/秒/毫秒)/臺指選擇權波動率指數/收盤前1分鐘平均指數, then dash rule; one row per session at 13:45; current month + 3 prior months (4 files at 2026-11-14: 202608-202611)"
+    },
+    {
+      "series": "intraday, current month",
+      "listing": "https://www.taifex.com.tw/cht/7/vixMinNew",
+      "file": "https://www.taifex.com.tw/cht/7/getVixData?filesname={YYYYMMDD}",
+      "format": "Big5 tab text, one file per session day, 15-second rows (time H[H]MMSSff, e.g. 9001500=09:00:15.00), final line \"Last 1 min AVG\"; unknown date returns HTTP 200 HTML (treated as format change); download link is a plain onClick window.open, page is server-rendered"
+    },
+    {
+      "series": "intraday, prior 3 months",
+      "listing": "https://www.taifex.com.tw/cht/7/vixMin3MNew",
+      "file": "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/logdata/{YYYYMM}歷史紀錄波動率指數_新VIX.zip",
+      "format": "zip, members named tvix_YYYYMMDD (no extension), same Big5 intraday format; 3 zips at 2026-11-14: 202608-202610"
+    }
+  ],
+  "robots": "https://www.taifex.com.tw/robots.txt returns a 404 HTML page (no rules)",
+  "first_run": {
+    "run_id": "run-20261114T182424Z",
+    "status": "complete",
+    "reason": null,
+    "items": 77,
+    "bundle_sha256": "c745fa57d9feb78419feae283f5c7ad30007c7ac8fe61e10b6d7d105cd9dbca9",
+    "datasets": {
+      "tw_vix_daily": {
+        "items": 4,
+        "parsed_rows": 70,
+        "first_date": "2026-08-03",
+        "last_date": "2026-11-13"
+      },
+      "tw_vix_intraday": {
+        "items": 70,
+        "parsed_rows": 79869,
+        "first_date": "2026-08-03",
+        "last_date": "2026-11-13"
+      },
+      "tw_vix_intraday_archive": {
+        "items": 3,
+        "parsed_rows": 0,
+        "first_date": null,
+        "last_date": null
+      }
+    }
+  },
+  "incremental_second_run": {
+    "run_id": "run-20261114T182614Z",
+    "status": "complete",
+    "reason": null,
+    "items": 1,
+    "bundle_sha256": "7297c305bcf3999580b2eb4342cc29ae6730fb66cc981cfa3a1695a24e912ce3",
+    "datasets": {
+      "tw_vix_daily": {
+        "items": 1,
+        "parsed_rows": 10,
+        "first_date": "2026-11-02",
+        "last_date": "2026-11-13"
+      }
+    }
+  },
+  "second_run_note": "Ledger skipped 16 finished files; only the still-growing current-month daily file (new content hash if changed, otherwise same item id) was requested again, plus the 3 listing pages.",
+  "failed_closed_probe": {
+    "run_id": "run-20261114T182343Z",
+    "reason": "parse_failed: intraday 20261113: bad time '9000000'",
+    "items": 0,
+    "note": "Initial time parser assumed 3-digit ms; live data uses 2-digit fraction. The run failed closed with zero rows and no ledger update; parser fixed."
+  },
+  "fixtures": [
+    {
+      "path": "deploy/collector/tests/fixtures/taifex_vix_daily_sample.txt",
+      "bytes": 482,
+      "sha256": "c8675473e43a0030e4b89960fee0c4390758813a6f92d80c38c42837a246fb09",
+      "source_url": "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/202611new.txt",
+      "recording": "Complete unedited Big5 file downloaded with curl on 2026-11-14 (daily=month file 202611; intraday=getVixData 20261113)"
+    },
+    {
+      "path": "deploy/collector/tests/fixtures/taifex_vix_intraday_sample.txt",
+      "bytes": 30701,
+      "sha256": "3d9e6caafd0e4d9055fc8e3675e4fc7f0e305bfe0d711e81f3871de60c2d6305",
+      "source_url": "https://www.taifex.com.tw/cht/7/getVixData?filesname=20261113",
+      "recording": "Complete unedited Big5 file downloaded with curl on 2026-11-14 (daily=month file 202611; intraday=getVixData 20261113)"
+    }
+  ],
+  "tests": "deploy/collector tests: 219 passed, 2 skipped (pytest in a throwaway venv)",
+  "contracts": {
+    "source": "collector-tw-taifex-vix",
+    "datasets": [
+      "tw_vix_daily",
+      "tw_vix_intraday",
+      "tw_vix_intraday_archive"
+    ],
+    "ledger": "<root>/state/taifex-vix/ledger.json, advanced only after the bundle is published",
+    "downstream_intake": "out of scope; opened with the regime engine work",
+    "collector_deployment_task": "REGIME-DATA-COLLECTOR-DEPLOY-20261114"
+  },
+  "limits": [
+    "A full session file has 1141 time rows (09:00:00 to 13:45:00 every 15 s) plus the Last 1 min AVG line, which is kept as last_1min_avg and is not a time row.",
+    "Month zips for the current month do not exist until the month ends; days not yet in a zip come from getVixData while listed on vixMinNew."
+  ]
+}
