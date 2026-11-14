@@ -271,11 +271,15 @@ class CaseFileHindsightAnchors(unittest.TestCase):
         from services.memory.institutional_memory_store import InstitutionalMemoryStore
         from services.memory.persona_memory_store import PersonaMemoryStore
         from services.memory.test_hindsight_index import institution
+        from services.memory.test_main import JWT_SECRET, _make_jwt
         tenant = "it-" + uuid.uuid4().hex[:10]
         stores = (InstitutionalMemoryStore(), PersonaMemoryStore())
         saved = {k: os.environ.get(k) for k in (
+            "PANTHEON_MEMORY_AUTH_MODE", "PANTHEON_MEMORY_JWT_SECRET",
             "PANTHEON_MEMORY_AUTHZ_MODE", hs.URL_ENV, hs.KEY_ENV, "PANTHEON_RUNTIME_AUTH_MODE")}
-        os.environ.update({"PANTHEON_MEMORY_AUTHZ_MODE": "local", hs.URL_ENV: HS_URL, hs.KEY_ENV: HS_KEY})
+        os.environ.update({
+            "PANTHEON_MEMORY_AUTH_MODE": "strict", "PANTHEON_MEMORY_JWT_SECRET": JWT_SECRET,
+            "PANTHEON_MEMORY_AUTHZ_MODE": "local", hs.URL_ENV: HS_URL, hs.KEY_ENV: HS_KEY})
         os.environ.pop("PANTHEON_RUNTIME_AUTH_MODE", None)
         hs.set_hindsight_client(None)
         client = hs.HindsightClient(HS_URL, HS_KEY)
@@ -305,18 +309,33 @@ class CaseFileHindsightAnchors(unittest.TestCase):
         decision_only = stores[0].create(institution(tenant_id=tenant, content={
             "headline": "carry trial admission lesson", "body": "carry trial admission lesson",
             "tags": ["family:carry", "decision:trial_admission"]}))
+        neg_on_subject = stores[0].create(institution(tenant_id=tenant, content={
+            "headline": "momentum 2330 failed trial negative lesson", "body": "momentum 2330 failed trial negative lesson",
+            "tags": ["family:momentum", "underlying:2330", "decision:trial_admission", "negative_memory"]}))
+        neg_decision_only = stores[0].create(institution(tenant_id=tenant, content={
+            "headline": "carry failed trial negative lesson", "body": "carry failed trial negative lesson",
+            "tags": ["family:carry", "decision:trial_admission", "negative_memory"]}))
         self.assertTrue(hs.flush_mirrors())
         subject = cf.Subject(decision_type="trial_admission", persona_id="persona-a", tenant_id=tenant,
                              strategy_family="momentum", underlyings=("2330",), member_artifact_refs=("reg-1",))
         caller = cf.Caller("op-1", ("operator",), "sess-1")
+        token = _make_jwt(sub="op-1", tenant_id=tenant, roles=["operator"])
+        owners = cf.Owners(None, None, None, None, cf.OwnerEndpoint(f"http://127.0.0.1:{port}", token=token), None)
         g = cf._Group("lessons")
-        cf._lessons(subject, caller, cf.Owners(None, None, None, None,
-                                              cf.OwnerEndpoint(f"http://127.0.0.1:{port}"), None),
-                    cf.Budgets(), g)
+        cf._lessons(subject, caller, owners, cf.Budgets(), g)
         got = {i["source_id"]: i for i in g.items}
         self.assertIn(on_subject.entry_id, got)
         self.assertNotIn(decision_only.entry_id, got)
+        self.assertNotIn(neg_decision_only.entry_id, got)
         self.assertEqual(got[on_subject.entry_id]["retrieval_mode"], "hindsight")
+        self.assertEqual(got[on_subject.entry_id]["llm_layers"], "disabled")
+        hist = cf._Group("similar_history")
+        cf._history(subject, caller, owners, cf.Budgets(), hist)
+        neg_got = {i["source_id"]: i for i in hist.items if i["kind"] == "memory_negative_memory"}
+        self.assertIn(neg_on_subject.entry_id, neg_got)
+        self.assertNotIn(neg_decision_only.entry_id, neg_got)
+        self.assertEqual(neg_got[neg_on_subject.entry_id]["retrieval_mode"], "hindsight")
+        self.assertEqual(neg_got[neg_on_subject.entry_id]["llm_layers"], "disabled")
 
 
 if __name__ == "__main__":

@@ -219,23 +219,20 @@ def lesson_query(subject: Subject) -> tuple:
 
 
 def subject_anchors(subject: Subject) -> list:
-    """Subject anchors for association-first memory recall (H8).
+    """Subject anchors from ``lesson_query`` for association-first memory recall (H8).
 
     Built only from fields the subject carries.  The decision type is a
     category, not a subject, so it is never an anchor; ``regime`` is added only
     when the subject carries ``regime_tag`` (nothing invents a regime).
     """
-    families = dict.fromkeys((subject.strategy_family, *subject.strategy_families))
-    pairs = [("family", f) for f in families]
-    pairs += [("underlying", u) for u in subject.underlyings]
-    pairs += [("dataset", d) for d in subject.missing_datasets]
-    pairs.append(("instrument", subject.instrument_class))
-    pairs.append(("regime", subject.regime_tag))
+    _query, tags = lesson_query(subject)
     out: list = []
-    for kind, value in pairs:
-        text = str(value or "").strip().lower()
-        if text and f"{kind}:{text}" not in out:
-            out.append(f"{kind}:{text}")
+    for tag in tags:
+        kind, sep, value = str(tag).partition(":")
+        text = value.strip().lower()
+        anchor = f"{kind.strip().lower()}:{text}"
+        if sep and text and kind.strip().lower() != "decision" and anchor not in out:
+            out.append(anchor)
     return out
 
 
@@ -322,12 +319,13 @@ def _memory_item(group: str, hit: dict, budgets: Budgets, layer: str, response: 
     # The route does not yet report retrieval mode on every deployment; say so
     # instead of guessing (MEMORY-INDEX-PROJECTION adds it).
     mode = str(hit.get("retrieval_mode") or response.get("retrieval_mode") or "unreported")
+    llm_layers = str(hit.get("llm_layers") or response.get("llm_layers") or "unreported")
     return _item(group, f"memory_{layer}", "memory", sid, text,
                  score=hit.get("relevance_score"), mode=mode, budgets=budgets,
                  subject_fields={"tags": list(content.get("tags") or []),
                                  "memory_type": entry.get("memory_type") or entry.get("knowledge_type")},
                  memory_layer=layer, relevance_scope=entry.get("relevance_scope"),
-                 source_event_id=entry.get("source_event_id"))
+                 source_event_id=entry.get("source_event_id"), llm_layers=llm_layers)
 
 
 def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
