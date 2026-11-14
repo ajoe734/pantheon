@@ -175,6 +175,16 @@ def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
     }
 
 
+def _ordered_run_receipts(receipts: Sequence[IngestReceipt], runs: Sequence[Any]) -> list[IngestReceipt]:
+    """Resolve second-resolution timestamp ties by durable run insertion order."""
+    positions = {run.ingest_run_id: index for index, run in enumerate(runs)}
+    return sorted(receipts, key=lambda receipt: (
+        receipt.finished_at or receipt.started_at,
+        positions.get(receipt.ingest_run_id, -1),
+        receipt.ingest_run_id,
+    ))
+
+
 def _resolve_data_dir() -> Path:
     data_dir = Path(os.getenv("SOURCE_INGEST_DATA_DIR", "/tmp/pantheon/source-ingest"))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -564,7 +574,11 @@ class SourceIngestionRuntime:
     ) -> dict[str, Any]:
         from .pipeline import _parse_utc_datetime
 
-        latest_run = max(runs, key=self._run_effective_at) if runs else None
+        # Run/receipt timestamps have second precision. Choosing the first run
+        # or breaking receipt ties with a random UUID can pair current health
+        # with an older bundle's run, failing the controller's real readback.
+        latest_run = max(reversed(runs), key=self._run_effective_at) if runs else None
+        receipts = _ordered_run_receipts(receipts, runs)
         latest_receipt = receipts[-1] if receipts else None
         latest_success_receipt = next(
             (receipt for receipt in reversed(receipts) if receipt.status == "completed"),
@@ -975,7 +989,8 @@ class SourceIngestionRuntime:
         for receipt in freshness_snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
+        latest_by_connector = self._latest_source_record_by_connector(
+            receipts_by_connector=receipts_by_connector, runs_by_connector=runs_by_connector)
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
@@ -1242,22 +1257,27 @@ class SourceIngestionRuntime:
     def _latest_source_record_by_connector(
         self,
         receipts_by_connector: Mapping[str, Sequence[IngestReceipt]] | None = None,
+        runs_by_connector: Mapping[str, Sequence[Any]] | None = None,
     ) -> dict[str, SourceRecord]:
         active_symbols = _active_contract_symbols()
         latest_run_by_connector: dict[str, str] = {}
-        if receipts_by_connector is not None:
-            for cid, recs in receipts_by_connector.items():
-                latest_completed = next((r for r in reversed(recs) if r.status == "completed"), None)
-                if latest_completed and latest_completed.ingest_run_id:
-                    latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
-        else:
+        if receipts_by_connector is None:
             try:
                 snapshot = self.store.read_freshness_snapshot()
-                for receipt in snapshot.get("receipts", ()):
-                    if receipt.status == "completed" and receipt.ingest_run_id:
-                        latest_run_by_connector[receipt.connector_id] = str(receipt.ingest_run_id)
             except Exception:
-                pass
+                snapshot = {}
+            grouped_receipts: dict[str, list[IngestReceipt]] = {}
+            grouped_runs: dict[str, list[Any]] = {}
+            for receipt in snapshot.get("receipts", ()):
+                grouped_receipts.setdefault(receipt.connector_id, []).append(receipt)
+            for run in snapshot.get("runs", ()):
+                grouped_runs.setdefault(run.connector_id, []).append(run)
+            receipts_by_connector, runs_by_connector = grouped_receipts, grouped_runs
+        for cid, recs in receipts_by_connector.items():
+            ordered = _ordered_run_receipts(recs, (runs_by_connector or {}).get(cid, ()))
+            latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
+            if latest_completed and latest_completed.ingest_run_id:
+                latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
 
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
         for record in self.evidence_repository.list_source_records():
@@ -1349,7 +1369,8 @@ class SourceIngestionRuntime:
         for receipt in snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
+        latest_by_connector = self._latest_source_record_by_connector(
+            receipts_by_connector=receipts_by_connector, runs_by_connector=runs_by_connector)
         readbacks: list[dict[str, Any]] = []
         for config in sorted(configs, key=lambda item: item.connector.connector_id):
             connector = config.connector

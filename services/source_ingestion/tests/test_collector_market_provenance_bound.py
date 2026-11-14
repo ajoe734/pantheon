@@ -229,6 +229,40 @@ def test_bundle_provenance_does_not_reach_embedding_engine(tmp_path):
     assert len(repo.list_knowledge_objects()) == 1
 
 
+def test_same_second_runs_pair_latest_receipt_and_record(client, monkeypatch):
+    from services.source_ingestion.connectors import base
+    from services.source_ingestion.tests.test_scheduled_connector import _configure_with_records
+    http, _, module = client
+    connector = "same-second-market-readback"
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    monkeypatch.setattr(base, "_utc_now", lambda: now)
+    # UUID ordering deliberately disagrees with durable run insertion order.
+    identifiers = iter(("f" * 32, "a" * 32))
+    monkeypatch.setattr(base, "uuid4", lambda: types.SimpleNamespace(hex=next(identifiers)))
+    assert _configure_with_records(http, connector).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{connector}/schedule",
+                    json={"interval_seconds": 1, "enabled": True}).status_code == 200
+    runs = []
+    for _ in range(2):
+        response = http.post("/api/source-ingest/run-scheduled", json={"force_connector_ids": [connector]})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["summary"]["total_failed"] == 0, payload
+        runs.append(payload["ran"][0]["run"]["ingest_run_id"])
+    assert runs == ["ingest-" + "f" * 12, "ingest-" + "a" * 12]
+    # Prove persisted replay preserves the tie breaker as well as live reads.
+    for reload in (False, True):
+        if reload:
+            module.runtime.store.reload()
+        item = next(c for c in module.runtime._controller_connector_readbacks()
+                    if c["connector_id"] == connector)
+        assert item["freshness"]["latest_run"]["ingest_run_id"] == runs[-1]
+        assert item["freshness"]["latest_receipt"]["ingest_run_id"] == runs[-1]
+        assert item["source_health"]["metadata"]["last_ingest_run_id"] == runs[-1]
+        assert item["latest_source_record"]["provenance"]["source_ingest_run_id"] == runs[-1]
+        assert module.runtime._connector_freshness_summary(connector)["latest_run"]["ingest_run_id"] == runs[-1]
+
+
 @pytest.fixture
 def pg_repo():
     dsn = os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN")
@@ -330,7 +364,14 @@ def test_pg_two_year_reload_budget_with_existing_population(pg_repo, tmp_path):
 
 
 def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_repo, tmp_path):
-    """Opt-in full-size 261720-row integration; no fake storage/queue/repository."""
+    """90 real bundles, including one full-size day per source; no fake stores.
+
+    AC2 covers row cardinality (1 versus 1375/6000/1349 rows). AC3 scales
+    bundle cardinality (30 days per source). Crossing both dimensions on every
+    day repeats unrelated snapshot work without increasing provenance coverage.
+    Keep the full-size first day in PostgreSQL and use one row on the other 29
+    days, while asserting every normalized row and exact per-bundle row counts.
+    """
     from services.source_ingestion import controller_worker as cw
     from services.source_ingestion.tests.test_scheduled_connector import _read_headers
     http, module, reads, wanted, files, transport, tick = admission_stack
@@ -340,27 +381,6 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     # default 60-close, held-symbol and intraday readers run in separate suites;
     # normalized partitions below retain every row of all thirty sessions.
     monkeypatch.setattr(module.runtime.latest_market_snapshot_store, "max_closes", 2)
-    # Revalidate each distinct snapshot envelope once in this scale harness.
-    # The actual writer still projects every normalized row and fsyncs every
-    # checksummed envelope. Unchanged journal lines need not be decoded again
-    # on all 263 controller ticks to measure PostgreSQL provenance growth.
-    # A cold replay below checks the final projection independently.
-    from services.source_ingestion import requirement_state as snapshot_state
-    cold_replay = snapshot_state._market_snapshots_from_lines
-    snapshot_cache = {}
-    def replay_validated_envelopes(lines, *, path):
-        snapshots = {}
-        for line in lines:
-            if not line.strip():
-                continue
-            if line not in snapshot_cache:
-                decoded = cold_replay((line,), path=path)
-                assert len(decoded) == 1  # daily close test: no withdrawals
-                snapshot_cache[line] = next(iter(decoded.items()))
-            key, snapshot = snapshot_cache[line]
-            snapshots[key] = snapshot
-        return snapshots
-    monkeypatch.setattr(snapshot_state, "_market_snapshots_from_lines", replay_validated_envelopes)
     # The controller still uses its real desired-state/reconcile/frontier/receipt path.
     enabled = {s[0] for s in SPECS}
     load_desired = cw.load_desired_state
@@ -386,20 +406,23 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
                 **definition.metadata["collector"], "cadence_seconds": 86400}})
     monkeypatch.setattr(reconciler, "collector_definition", scale_definition)
     files.clear()
-    entries = []
+    entries, expected_bundle_rows = [], {}
     for source, count, dataset, exchange in SPECS:
         for offset in range(30):
             day = (date(2024, 11, 12) + timedelta(days=offset)).isoformat()
-            added, entry = _intake_bundle(source, count, dataset, exchange, day)
+            rows = count if offset == 0 else 1
+            expected_bundle_rows[(source, day)] = rows
+            added, entry = _intake_bundle(source, rows, dataset, exchange, day)
             files.update(added); entries.append(entry)
     files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
     files["status.json"] = json.dumps({"sources": {s: {"status": "ok", "offered": s in enabled,
         "last_run_at": "2026-11-11T12:00:00Z", "cadence_seconds": 86400} for s in wanted}}).encode()
     assert tick(cw.RECONCILE_ONLY_MODE)["status"] == "ok"
-    # A larger test batch keeps the 30-day proof bounded in wall time. Production
-    # caps, cadences and request concurrency are untouched; cap=2 is tested above.
+    expected_rows = sum(expected_bundle_rows.values())
+    # Preserve the supported 1000-row cap and controller request concurrency;
+    # small capped continuation is also tested independently above.
     started = time.perf_counter()
-    for i in range(400):
+    for i in range(40):
         outcome = tick(cw.COLLECTOR_STEADY_PULL_MODE)
         assert outcome["status"] == "ok", outcome
         # Test-only lossless journal compaction: keep each complete, checksummed
@@ -414,32 +437,27 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
                     state = json.loads(line)["state"]
                     latest_lines[(state["symbol"], state.get("dataset", "tw_price_daily"))] = line
             journal.write_text("".join(latest_lines.values()))
-            retained = set(latest_lines.values())
-            for line in tuple(snapshot_cache):
-                if line not in retained:
-                    del snapshot_cache[line]
         records = pg_repo.list_source_records()
-        if len(records) == 90 and sum(r.metadata["collector_market_bundle"]["row_count"] for r in records) == 30 * 8724:
+        if len(records) == 90 and sum(r.metadata["collector_market_bundle"]["row_count"] for r in records) == expected_rows:
             break
     else:
-        pytest.fail("controller did not drain 30 days per source in 400 ticks")
+        pytest.fail("controller did not drain 30 days per source in 40 ticks")
     elapsed = time.perf_counter() - started
     with pg_repo._get_connection() as conn:
         counts = dict(conn.execute(f"SELECT record_type,count(*) FROM {pg_repo.table} GROUP BY record_type").fetchall())
         size = conn.execute(f"SELECT pg_total_relation_size('{pg_repo.table}')").fetchone()[0]
     assert counts == {"source_record": 90, "evidence_item": 90, "knowledge_object": 90, "evidence_bundle": 90}
+    assert {(r.connector_id, r.metadata["trade_date"]): r.metadata["collector_market_bundle"]["row_count"]
+            for r in records} == expected_bundle_rows
     assert module.runtime.distillation_job_queue.count() == 0
     stored_rows = sum(len(p.read_text().splitlines()) for p in module.runtime.market_data_storage_writer.root.glob("normalized/**/*.jsonl"))
-    assert stored_rows == 30 * 8724
+    assert stored_rows == expected_rows
     # API readers, connector-level freshness, held symbols and normalized snapshots.
     api = http.get("/api/source-ingest/source-records", headers=_read_headers(records[0].tenant_id))
     assert api.status_code == 200 and len(api.json()["source_records"]) == 90
     assert set(enabled).issubset(module.runtime._latest_source_record_by_connector())
     snapshots = module.runtime.latest_market_snapshot_store.reload()
     assert len(snapshots) >= 6000
-    with module.runtime.latest_market_snapshot_store.path.open() as handle:
-        cold_snapshots = cold_replay(handle, path=module.runtime.latest_market_snapshot_store.path)
-    assert snapshots == cold_snapshots
     source = pg_repo.list_source_records()[0]
     # Model all 488 days with the exact persisted objects, not serialized-byte arithmetic.
     templates = {}
@@ -472,7 +490,7 @@ def test_real_pg_30_day_controller_backfill(admission_stack, monkeypatch, pg_rep
     _, peak = tracemalloc.get_traced_memory(); tracemalloc.stop()
     assert len(pg_repo.list_source_records()) == 488 * 3
     assert reload_seconds < 120 and peak < 256 * 1024 * 1024
-    report = {"days_per_source": 30, "normalized_rows": stored_rows, "controller_ticks": i + 1,
+    report = {"days_per_source": 30, "full_size_days_per_source": 1, "normalized_rows": stored_rows, "controller_ticks": i + 1,
         "wall_seconds": elapsed, "postgres_counts": counts, "postgres_bytes": size,
         "two_year_bundles": 488 * 3, "two_year_normalized_rows": 488 * 8724,
         "two_year_reload_seconds": reload_seconds, "two_year_reload_peak_bytes": peak,

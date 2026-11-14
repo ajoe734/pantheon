@@ -432,10 +432,11 @@
       }
     ],
     "changes": [
-      "Retain the real 1000-row fetch cap, all 30 full-size days per source, real controller/pipeline/writer/PostgreSQL, and all cardinality assertions.",
-      "Test-only memoization of byte-identical, already cold-validated snapshot envelopes avoids repeated unrelated snapshot decoding. Every new envelope still goes through the production checksum/model decoder. Final snapshot state must equal an independent cold replay. Obsolete cache entries are discarded after journal compaction."
+      "Preserve the real 1000-row cap and request concurrency. AC2 independently proves row cardinality (1 vs 1375/6000/1349); AC3 proves 30 backfill days per source (90 bundles), including one full-size day per source and exact per-bundle normalized counts. No snapshot decoder/cache patch remains.",
+      "Resolve second-resolution run/receipt timestamp ties by durable run insertion order in runtime freshness and latest-record readback; UUID lexical order is not time order.",
+      "Add deterministic live/reloaded same-second readback regression with descending UUIDs."
     ],
-    "status": "Original scale reproduction and cached replay comparison running; final validation pending.",
+    "status": "Same-second runtime fix anchored; current-dev compose and full validation pending. Historical candidate clock scope authorization pending.",
     "attempts": [
       {
         "change": "6000-row test cap",
@@ -444,6 +445,28 @@
       {
         "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres PYTHONPATH=. timeout --kill-after=15 90 .venv-pantheon/bin/python /tmp/collector-bound-profile.py",
         "result": "Diagnostic profile deliberately bounded at 90s; exit 124, not a passing test. Of 17 ticks, snapshot replay consumed 27.09s and constructed 85875 snapshots for 17000 input rows."
+      },
+      {
+        "change": "Test-only exact validated snapshot-envelope cache",
+        "result": "Stopped with SIGTERM, exit 143; not passed, not final implementation. Replaced with independent row/bundle dimensions using the unmodified snapshot reader."
+      }
+    ],
+    "reproduction": [
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 1200 .venv-pantheon/bin/python -m pytest -vv -s services/source_ingestion/tests/test_collector_market_provenance_bound.py -k real_pg_30_day",
+        "result": "Original code: 1 passed, 10 deselected in 915.11s; exit 0. 261720 rows / 90 bundles / 263 controller ticks; controller drain 892.75s; reload 1.2495s / 56227118 bytes. Alone already exceeds the full 900s CI step."
+      },
+      {
+        "command": "timeout 150 bash -c loop: pytest -q services/source_ingestion/tests/test_collector_newest_session_progress.py -k \"exact_candidate and 6090\" (up to 10 attempts, stop at first failure)",
+        "result": "First two attempts passed; third failed at line 280 with a 4-row identity-set difference, 6.21s, exit 1. Frozen candidate scheduling-dependent fake clock reproduced; module remains read-only/outside task artifacts."
+      },
+      {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres timeout 240 .venv-pantheon/bin/python -m pytest -vv -s services/source_ingestion/tests/test_collector_market_provenance_bound.py -k real_pg_30_day",
+        "result": "Reduced row/bundle matrix before runtime fix: 1 failed, 10 deselected in 25.44s, exit 1; actual_readback health_run_mismatch and record_run_mismatch for T86."
+      },
+      {
+        "command": "timeout 90 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_collector_market_provenance_bound.py -k same_second",
+        "result": "Before fix: 1 failed, 11 deselected in 2.17s; old ingest-ffffffffffff selected instead of latest ingest-aaaaaaaaaaaa. After fix: 1 passed, 11 deselected in 2.18s; exit 0, live and reloaded pairing verified."
       }
     ]
   }
