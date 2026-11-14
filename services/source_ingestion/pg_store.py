@@ -22,8 +22,8 @@ from services.knowledge.evidence import (
     JsonlEvidenceRepository,
     KnowledgeObject,
 )
-from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped
-from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError
+from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped, _capture_datetime, evidence_item_in_capture_window
+from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError, strip_list_heavy_metadata
 from services.source_ingestion.connectors.base import SourceRecord
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -381,14 +381,31 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         *,
         limit: int,
         offset: int = 0,
+        captured_from: str | None = None,
+        captured_before: str | None = None,
     ) -> tuple[List[EvidenceItem], int]:
         if getattr(self, "_replaying", False):
-            return super().list_evidence_items_page(tenant_id=tenant_id, limit=limit, offset=offset)
+            return super().list_evidence_items_page(
+                tenant_id=tenant_id, limit=limit, offset=offset,
+                captured_from=captured_from, captured_before=captured_before,
+            )
         if tenant_id is not _UNSCOPED:
             where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
+        windowed = captured_from is not None or captured_before is not None
+        if windowed:
+            try:
+                return self._list_evidence_items_window(
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, sql_cast=True
+                )
+            except RuntimeError:
+                # A stored timestamp the SQL cast rejects must not fail the whole
+                # read: filter the same population in Python with identical rules.
+                return self._list_evidence_items_window(
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, sql_cast=False
+                )
         # The heavy metadata keys are dropped in SQL so they never leave the DB.
         stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
         base = f"FROM {self.table} WHERE record_type = %s AND {where}"
@@ -401,6 +418,70 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         items = self._fetch_records(
             f"SELECT {stripped} {base} ORDER BY append_id DESC LIMIT %s OFFSET %s",
             ("evidence_item", *scope_params, int(limit), int(offset)),
+            "evidence_item",
+            tenant_id=tenant_id,
+        )
+        return items, total
+
+    def _list_evidence_items_window(
+        self,
+        where: str,
+        scope_params: tuple[Any, ...],
+        tenant_id: str | None | _Unscoped,
+        limit: int,
+        offset: int,
+        captured_from: str | None,
+        captured_before: str | None,
+        *,
+        sql_cast: bool,
+    ) -> tuple[List[EvidenceItem], int]:
+        """Page the evidence items captured in ``[captured_from, captured_before)``.
+
+        Capture time is ``available_time`` then ``event_time`` (the BFF rule);
+        rows with no parsable time never match. ``sql_cast`` filters in SQL
+        behind a strict ISO guard; otherwise the tenant population is filtered
+        in Python with the shared repository predicate.
+        """
+        if not sql_cast:
+            items = [
+                i for i in self._read_many("evidence_item", tenant_id)
+                if evidence_item_in_capture_window(i, captured_from, captured_before)
+            ]
+            window = list(reversed(items))[int(offset): int(offset) + int(limit)]
+            return [strip_list_heavy_metadata(i) for i in window], len(items)
+        raw_ts = "COALESCE(NULLIF(BTRIM(payload->>'available_time'), ''), NULLIF(BTRIM(payload->>'event_time'), ''))"
+        iso_guard = (
+            r"'^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+            r"([T ][0-2][0-9]:[0-5][0-9](:[0-5][0-9]([.][0-9]+)?)?)?(Z|[+-][0-9]{2}:[0-9]{2})?$'"
+        )
+        has_zone = r"'(Z|[+-][0-9]{2}:[0-9]{2})$'"
+        captured = (
+            f"(CASE WHEN {raw_ts} ~ {iso_guard} THEN "
+            f"(CASE WHEN {raw_ts} ~ {has_zone} THEN REPLACE({raw_ts}, 'Z', '+00:00')::timestamptz "
+            f"ELSE ({raw_ts})::timestamp AT TIME ZONE 'UTC' END) END)"
+        )
+        clauses = [f"{captured} IS NOT NULL"]
+        params: list[Any] = []
+        for value, op in ((captured_from, ">="), (captured_before, "<")):
+            if value is None:
+                continue
+            parsed = _capture_datetime(value)
+            if parsed is None:
+                return [], 0
+            clauses.append(f"{captured} {op} %s")
+            params.append(parsed)
+        stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
+        base = f"FROM {self.table} WHERE record_type = %s AND {where} AND " + " AND ".join(clauses)
+        base_params = ("evidence_item", *scope_params, *params)
+        try:
+            with self._get_connection() as conn:
+                count_row = conn.execute(f"SELECT COUNT(*) {base}", base_params).fetchone()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        total = int((count_row[0] if isinstance(count_row, tuple) else list(count_row.values())[0]) if count_row else 0)
+        items = self._fetch_records(
+            f"SELECT {stripped} {base} ORDER BY append_id DESC LIMIT %s OFFSET %s",
+            (*base_params, int(limit), int(offset)),
             "evidence_item",
             tenant_id=tenant_id,
         )

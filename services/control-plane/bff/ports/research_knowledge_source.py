@@ -8,6 +8,8 @@ monkey patches, experiment overlays, and fixture-pack loading.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1300,7 +1302,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return detail
 
     def _read_owner_evidence_page(
-        self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE
+        self,
+        *,
+        start: int = 0,
+        page_size: int = EVIDENCE_OWNER_PAGE_SIZE,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
@@ -1313,11 +1320,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise
         except Exception:
             pass
+        path = f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}"
+        if captured_from is not None:
+            path += f"&captured_from={quote(str(captured_from), safe='')}"
+        if captured_before is not None:
+            path += f"&captured_before={quote(str(captured_before), safe='')}"
         try:
-            avail, payload = self._http_get(
-                self._source_ingest_service_url,
-                f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
-            )
+            avail, payload = self._http_get(self._source_ingest_service_url, path)
         except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
         items = payload.get("items") if avail and isinstance(payload, dict) else None
@@ -1348,10 +1357,17 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_scope_metadata: bool = False,
         page_token: Optional[str] = None,
         page_size: Optional[int] = None,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
     ) -> EvidenceReadResult:
         """One evidence read. With ``page_size`` and no scope filter against the
         owner service, exactly one owner page is fetched; otherwise every owner
-        page is streamed and filtered so totals stay correct."""
+        page is streamed and filtered so totals stay correct.
+
+        ``captured_from`` / ``captured_before`` ask the owner to page only items
+        captured in ``[captured_from, captured_before)`` (a population hint for
+        the paged branches). An older owner ignores them and returns the
+        unfiltered population, so callers must still apply the window to rows."""
         from services.knowledge.evidence.models import summarize_evidence_items_collection
 
         unscoped = not linked_entities and not source_types
@@ -1376,14 +1392,24 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             except ValueError:
                 start = 0
             try:
+                repo_kwargs: Dict[str, Any] = {"limit": page_size, "offset": start}
                 if effective_tenant is not None:
+                    repo_kwargs["tenant_id"] = effective_tenant
+                window_kwargs = {
+                    k: v
+                    for k, v in (("captured_from", captured_from), ("captured_before", captured_before))
+                    if v is not None
+                }
+                try:
                     repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        tenant_id=effective_tenant, limit=page_size, offset=start
+                        **repo_kwargs, **window_kwargs
                     )
-                else:
-                    repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        limit=page_size, offset=start
-                    )
+                except TypeError:
+                    if not window_kwargs:
+                        raise
+                    # Repository without window support: unfiltered page, the
+                    # caller applies the window to rows.
+                    repo_items, total = self._evidence_repo.list_evidence_items_page(**repo_kwargs)
             except Exception:
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             repo_summary: Optional[Dict[str, Any]] = None
@@ -1437,7 +1463,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 except Exception:
                     tenant_tok = None
             try:
-                items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
+                items, total, owner_summary = self._read_owner_evidence_page(
+                    start=start,
+                    page_size=page_size,
+                    captured_from=captured_from,
+                    captured_before=captured_before,
+                )
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             finally:

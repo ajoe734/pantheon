@@ -5930,7 +5930,21 @@ _PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
 _PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
 
 
-def _pm12_read_all_evidence_pages(read_fn: Any) -> Optional[List[Dict[str, Any]]]:
+def _pm12_read_fn_accepts_window(read_fn: Any) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(read_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "captured_from" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
+def _pm12_read_all_evidence_pages(
+    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None
+) -> Optional[List[Dict[str, Any]]]:
     """Read every owner evidence page exactly (no truncation, no ordering
     assumption), or return ``None`` when the owner is unavailable.
 
@@ -5954,12 +5968,25 @@ def _pm12_read_all_evidence_pages(read_fn: Any) -> Optional[List[Dict[str, Any]]
     except Exception:
         deadline = time.monotonic() + 4.0
     page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
+    # Ask the owner to page only the quarter's rows so the request count follows
+    # the quarter population, not the total evidence count. An owner that
+    # predates the window ignores it and the quarter filter downstream still
+    # makes the output identical, only with more pages.
+    window_kwargs: Dict[str, Any] = {}
+    if quarter_window and _pm12_read_fn_accepts_window(read_fn):
+        start_at = _audit_datetime(quarter_window.get("start_at"))
+        end_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
+        if start_at is not None and end_at is not None:
+            window_kwargs = {
+                "captured_from": start_at.isoformat(),
+                "captured_before": end_at.isoformat(),
+            }
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
 
     def _submit(token: Optional[str]) -> Any:
         return pool.submit(
             contextvars.copy_context().run,
-            lambda: read_fn(page_size=page_size, page_token=token),
+            lambda: read_fn(page_size=page_size, page_token=token, **window_kwargs),
         )
 
     def _sorted(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -6022,7 +6049,7 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            all_rows = _pm12_read_all_evidence_pages(read_fn)
+            all_rows = _pm12_read_all_evidence_pages(read_fn, quarter_window)
             if all_rows is not None:
                 raw_evidence_refs = all_rows
                 evidence_dataset_available = True

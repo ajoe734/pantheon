@@ -118,5 +118,11 @@
     "added": "test_quarterly_ranking_read_latency.py (21 tests): exact owner request counts per total (no truncation) on 3 routes; unavailable paid once; slow-available wait not per page; over-timeout => unavailable; owner order preserved for 3100 rows; 300-row parity; linked >500 evidence parity; 501 in-quarter rows behind 1600 newer owner-order rows parity on 3 routes.",
     "existing_run": "see commit/validation notes",
     "assertions_changed": "test_rows_keep_owner_order_and_are_not_truncated renamed to test_rows_match_unpaged_read_order_and_are_not_truncated (new test in this task, not an existing one): owner append order was the wrong oracle; legacy order is newest-first."
+  },
+  "owner_window_contract": {
+    "change": "Existing GET /api/source-ingest/evidence/items gains optional captured_from/captured_before (half-open [from,before), capture time = available_time then event_time, naive=UTC, unparsable/missing never match). total counts the matching population; response echoes `filters` only when applied; summary stays whole-tenant. Shared by InMemory/JSONL (repository.py) and Postgres (pg_store.py: SQL with strict ISO guard and bound instants, Python fallback with identical predicate if the cast fails).",
+    "bff": "_pm12_read_all_evidence_pages passes the quarter window; request count = ceil(quarter population/500), independent of total evidence. Old owners ignore the window and are paged fully (truthful, identical output, quarter filter still applied downstream).",
+    "limits": "Linked-ness is not filtered owner side (source-ingest normalisation carries no linked_* fields; BFF filter unchanged). Population within the quarter still pages, so count grows with quarter population, not total. Real-Postgres parity test is skipped when no test DSN is available (skipped here); SQL shape and fallback are covered with a fake connection.",
+    "counterexamples_tested": "1600 newer + 501 Q1 rows: 2 calls with window vs 5 on old owner, same output; other-tenant rows never leak; empty window = 1 call; owner failure stays 503/unavailable."
   }
 }

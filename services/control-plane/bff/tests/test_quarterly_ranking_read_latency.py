@@ -359,3 +359,59 @@ def test_deadline_is_enforced_on_every_path(monkeypatch: pytest.MonkeyPatch) -> 
 
     out, took = timed(opaque)
     assert out is None and took < 0.25, took
+
+
+class _WindowOwner:
+    """Owner honouring captured_from/captured_before like the real route:
+    filtered total, ``filters`` echoed. ``honour=False`` models an old owner."""
+
+    def __init__(self, rows: List[Dict[str, Any]], *, honour: bool = True):
+        self.rows, self.honour, self.calls = rows, honour, []
+
+    def http_get(self, base_url: str, path: str) -> Tuple[bool, Any]:
+        from urllib.parse import parse_qs, urlparse
+
+        self.calls.append(path)
+        q = {k: v[0] for k, v in parse_qs(urlparse(path).query).items()}
+        size, start = int(q["page_size"]), int(q["page_token"])
+        rows = self.rows
+        payload: Dict[str, Any] = {"summary": None}
+        if self.honour and "captured_from" in q:
+            lo, hi = q["captured_from"], q["captured_before"]
+            rows = [r for r in rows if lo <= r["available_time"].replace("Z", "+00:00") < hi]
+            payload["filters"] = {"captured_from": lo, "captured_before": hi}
+        payload["items"] = [
+            {"evidence_item_id": r["id"], "item_type": "filing", "citation_label": r["id"],
+             "available_time": r["available_time"], "metadata": {}}
+            for r in rows[start:start + size]
+        ]
+        payload["total"] = len(rows)
+        return True, payload
+
+
+def test_quarter_window_makes_request_count_follow_the_quarter_not_the_total() -> None:
+    rows = [{"id": f"new-{i}", "available_time": "2026-06-01T00:00:00+00:00"} for i in range(1_600)]
+    rows += [{"id": f"q-{i}", "available_time": "2026-02-15T00:00:00+00:00"} for i in range(501)]
+    window = {"start_at": "2026-01-01T00:00:00Z", "end_exclusive_at": "2026-04-01T00:00:00Z"}
+
+    def run(owner: _WindowOwner) -> List[str]:
+        port = DefaultResearchKnowledgeSourcePort(
+            source_ingest_service_url="http://owner.invalid", http_get_fn=owner.http_get
+        )
+        got = personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs, window)
+        assert got is not None
+        in_q = [r["ref_id"] for r in got if str(r["ref_id"]).startswith("q-")]
+        return sorted(in_q)
+
+    new_owner, old_owner = _WindowOwner(rows), _WindowOwner(rows, honour=False)
+    assert run(new_owner) == run(old_owner) == sorted(f"q-{i}" for i in range(501))
+    assert len(new_owner.calls) == 2  # ceil(501/500): independent of the 1600 newer rows
+    assert len(old_owner.calls) == 5  # old owner ignores the window: truthful full paging
+    # a window with nothing in it is one request, not a full stream
+    empty = _WindowOwner(rows)
+    far = {"start_at": "2020-01-01T00:00:00Z", "end_exclusive_at": "2020-04-01T00:00:00Z"}
+    port = DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://owner.invalid", http_get_fn=empty.http_get
+    )
+    assert personas_service._pm12_read_all_evidence_pages(port.read_evidence_refs, far) == []
+    assert len(empty.calls) == 1
