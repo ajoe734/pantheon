@@ -92,7 +92,7 @@
       "recording": "Complete unedited Big5 file downloaded with curl on 2026-11-14 (daily=month file 202611; intraday=getVixData 20261113)"
     }
   ],
-  "tests": "deploy/collector tests: 219 passed, 2 skipped (pytest in a throwaway venv)",
+  "tests": "deploy/collector tests + services/source_ingestion/tests/test_collector_source_alignment_contract.py after merging origin/dev: 220 passed, 2 skipped. Original live TAIFEX capture preserved; hosted_behavior_claimed remains false.",
   "contracts": {
     "source": "collector-tw-taifex-vix",
     "datasets": [
@@ -102,7 +102,8 @@
     ],
     "ledger": "<root>/state/taifex-vix/ledger.json, advanced only after the bundle is published",
     "downstream_intake": "out of scope; opened with the regime engine work",
-    "collector_deployment_task": "REGIME-DATA-COLLECTOR-DEPLOY-20261114"
+    "collector_deployment_task": "REGIME-DATA-COLLECTOR-DEPLOY-20261114",
+    "hosted_ingestion_exclusion": "services/source_ingestion/default_desired_state.json collector_ingestion_exclusions entry for collector-tw-taifex-vix (temporary, same pattern as collector-tw-twse-index-breadth)"
   },
   "limits": [
     "A full session file has 1141 time rows (09:00:00 to 13:45:00 every 15 s) plus the Last 1 min AVG line, which is kept as last_1min_avg and is not a time row.",
