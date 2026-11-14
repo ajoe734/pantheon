@@ -51,6 +51,14 @@ class FakeDocker:
             service = args[-1].rsplit("=", 1)[1]
             index = artifacts.SERVICES.index(service) + 1
             return f"{index:064x}\n"
+        if args[0] == "inspect" and int(args[-1], 16) > len(artifacts.SERVICES) and args[2] in (
+                artifacts.ISSUER_ENV_FORMAT, artifacts.RESTART_FORMAT):
+            # Owner containers (e.g. the existing issuer) outside the sealed set: posture capture only.
+            if args[2] == artifacts.RESTART_FORMAT:
+                return json.dumps("unless-stopped")
+            return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in getattr(self, "issuer_env", {
+                "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+                "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}).items())
         if args[0] == "inspect":
             return json.dumps(self.containers[artifacts.SERVICES[int(args[-1], 16) - 1]])
         if args[:2] == ("image", "inspect"):
