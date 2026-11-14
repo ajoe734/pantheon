@@ -318,3 +318,51 @@ def test_cockpit_concurrent_bench(monkeypatch: pytest.MonkeyPatch) -> None:
 
         out = {r: {"p50": pct(v, 0.5), "p95": pct(v, 0.95), "max": round(max(v), 3)} for r, v in lat.items()}
         print("BENCH_RESULT " + _json.dumps({"mode": mode, "personas": personas, "rounds": rounds, "routes": out}))
+
+
+class _TelemetryStore:
+    def __init__(self, fail_on: str | None = None, delay: float = 0.0) -> None:
+        self.calls: List[str] = []
+        self.fail_on = fail_on
+        self.delay = delay
+        self._lock = threading.Lock()
+
+    def get_telemetry_summary(self, runtime_id: str):
+        with self._lock:
+            self.calls.append(runtime_id)
+        if self.delay:
+            time.sleep(self.delay)
+        if runtime_id == self.fail_on:
+            raise RuntimeError("telemetry down")
+        return None
+
+
+def _runtime_rows(n: int) -> List[Dict[str, Any]]:
+    # Two personas share each runtime; runtime_resolution marks authoritative ids.
+    return [
+        {"persona_id": f"p-{i}", "runtime_resolution": "active", "runtime_ids": [f"rt-{i // 2}"], "state": "active"}
+        for i in range(n)
+    ]
+
+
+def test_quarterly_telemetry_prefetch_dedupes_and_is_concurrent(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _TelemetryStore(delay=0.05)
+    monkeypatch.setattr(ps, "_get_active_read_store", lambda: store)
+    cache: Dict[str, Any] = {}
+    t0 = time.perf_counter()
+    ps._pm12_prefetch_runtime_telemetry(_runtime_rows(40), cache)
+    elapsed = time.perf_counter() - t0
+    assert sorted(store.calls) == sorted({f"rt-{i // 2}" for i in range(40)})  # each runtime read once
+    assert set(cache) == set(store.calls)
+    assert elapsed < 20 * 0.05 * 0.6  # serial would be 20 * 50ms
+
+
+def test_quarterly_telemetry_prefetch_failure_not_cached_and_still_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _TelemetryStore(fail_on="rt-1")
+    monkeypatch.setattr(ps, "_get_active_read_store", lambda: store)
+    cache: Dict[str, Any] = {}
+    ps._pm12_prefetch_runtime_telemetry(_runtime_rows(6), cache)
+    assert "rt-1" not in cache and "rt-0" in cache
+    # The serial path re-reads the failed runtime and raises, as before the change.
+    with pytest.raises(RuntimeError):
+        ps._pm12_persona_telemetry_metrics(_runtime_rows(6)[2], telemetry_cache=cache)

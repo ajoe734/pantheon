@@ -6220,6 +6220,52 @@ def _pm12_quarterly_ranking_governance_state(
 
 
 # --- _pm12_quarterly_ranking_items ---
+def _pm12_prefetch_runtime_telemetry(
+    rows: List[Dict[str, Any]],
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]],
+    *,
+    max_workers: int = 8,
+) -> None:
+    """Warm ``telemetry_cache`` for rows with authoritative runtime ids.
+
+    Only successful reads are cached; a failing read is left uncached so the
+    serial path re-reads it and raises exactly as before.
+    """
+    runtime_ids: List[str] = []
+    seen: set = set()
+    for row in rows:
+        if "runtime_resolution" not in row:
+            continue
+        for runtime_id in _pm12_persona_runtime_ids(row):
+            if runtime_id not in seen:
+                seen.add(runtime_id)
+                runtime_ids.append(runtime_id)
+    if len(runtime_ids) < 2:
+        return
+    store = _get_active_read_store()
+    read_fn = getattr(store, "get_telemetry_summary", None)
+    if not callable(read_fn):
+        return
+    import contextvars as _cv
+
+    def _read(runtime_id: str) -> Optional[Dict[str, Any]]:
+        return read_fn(runtime_id)
+
+    pool = ThreadPoolExecutor(max_workers=min(max_workers, len(runtime_ids)))
+    try:
+        futures = {
+            runtime_id: pool.submit(_cv.copy_context().run, _read, runtime_id)
+            for runtime_id in runtime_ids
+        }
+        for runtime_id, future in futures.items():
+            try:
+                telemetry_cache[runtime_id] = future.result()
+            except Exception:
+                continue
+    finally:
+        pool.shutdown(wait=True)
+
+
 def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
@@ -6229,6 +6275,12 @@ def _pm12_quarterly_ranking_items(
     # Explicit non-trading assistants never enter the trading cohort; ranks are
     # computed over the whole trading cohort, not renumbered per page.
     rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
+    if telemetry_cache is None:
+        # One cache per ranking pass: runtimes shared by several personas are
+        # read once, and distinct runtimes are prefetched concurrently instead
+        # of one serial store round trip per persona.
+        telemetry_cache = {}
+        _pm12_prefetch_runtime_telemetry(rows, telemetry_cache)
 
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         return _pm12_persona_league_ranking_item(
