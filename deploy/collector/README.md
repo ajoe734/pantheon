@@ -150,6 +150,8 @@ for src in \
   collector-tw-macro-ndc \
   collector-tw-twse-t86 \
   collector-tw-twse-price-history \
+  collector-tw-twse-index-breadth \
+  collector-tw-twse-taiex-history \
   collector-tw-tpex-price-history \
   collector-macro-dbnomics \
   collector-papers \

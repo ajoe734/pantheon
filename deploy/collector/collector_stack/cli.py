@@ -11,10 +11,12 @@ from typing import Sequence
 
 from .backfill import (
     BACKFILL_SOURCES,
+    MONTHLY_SOURCE,
     TW_EXCHANGE_HOLIDAYS,
     estimate,
     load_extra_holidays,
     resolve_dates,
+    resolve_months,
     run_backfill,
     two_year_range,
 )
@@ -25,6 +27,8 @@ from .runner import CollectorRunner
 
 
 def _add_range_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--start-month", default=None, help="First TAIEX month YYYY-MM (2012-01 or later)")
+    p.add_argument("--end-month", default=None, help="Last TAIEX month YYYY-MM (defaults to current UTC month)")
     p.add_argument("--start-date", default=None, help="First trade date YYYY-MM-DD")
     p.add_argument("--end-date", default=None, help="Last trade date (default: newest published trading day)")
     p.add_argument("--trading-days", type=int, default=None, help="Last N trading days instead of a start date")
@@ -62,9 +66,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_range_args(run_p)
     bf = sub.add_parser(
         "backfill",
-        help="Resumable per-date price-history backfill (one request per trading day, >= 5s apart)",
+        help="Resumable exchange backfill (one request per day or TAIEX month, >= 5s apart)",
     )
-    bf.add_argument("--source", required=True, help="TWSE/TPEx price history or T86 source ID")
+    bf.add_argument("--source", required=True, help="TWSE/TPEx history, index/breadth, TAIEX or T86 source ID")
     bf.add_argument("--two-years", action="store_true", help="Backfill the last two years")
     _add_range_args(bf)
     bf.add_argument("--holidays-file", default=None, help="JSON list of extra closure dates (YYYY-MM-DD)")
@@ -140,7 +144,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         now_iso = utc_iso()
         holidays = TW_EXCHANGE_HOLIDAYS | load_extra_holidays(args.holidays_file)
         try:
-            if args.two_years:
+            if args.source == MONTHLY_SOURCE:
+                if args.two_years or args.start_date or args.end_date or args.trading_days is not None:
+                    raise ValueError("TAIEX monthly backfill uses --start-month / --end-month only")
+                if not args.start_month:
+                    raise ValueError("TAIEX monthly backfill requires --start-month")
+                dates = resolve_months(args.start_month, args.end_month or now_iso[:7])
+            elif args.start_month or args.end_month:
+                raise ValueError("month options require the TAIEX history source")
+            elif args.two_years:
                 start, end = two_year_range(now_iso)
                 dates = resolve_dates(start_date=start, end_date=args.end_date or end,
                                       trading_days=None, now_iso=now_iso, holidays=holidays)
@@ -172,14 +184,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         run_id = args.run_id or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
         collect_kwargs = None
-        if args.start_date or args.end_date or args.trading_days:
+        if args.start_date or args.end_date or args.trading_days or args.start_month or args.end_month:
             if args.source not in BACKFILL_SOURCES:
                 parser.error(f"date range options are only supported for {sorted(BACKFILL_SOURCES)}")
             try:
-                run_dates = resolve_dates(
-                    start_date=args.start_date, end_date=args.end_date,
-                    trading_days=args.trading_days, now_iso=utc_iso(),
-                )
+                if args.source == MONTHLY_SOURCE:
+                    if args.start_date or args.end_date or args.trading_days is not None or not args.start_month:
+                        raise ValueError("TAIEX ranges require --start-month / --end-month only")
+                    run_dates = resolve_months(args.start_month, args.end_month or utc_iso()[:7])
+                elif args.start_month or args.end_month:
+                    raise ValueError("month options require the TAIEX history source")
+                else:
+                    run_dates = resolve_dates(
+                        start_date=args.start_date, end_date=args.end_date,
+                        trading_days=args.trading_days, now_iso=utc_iso(),
+                    )
             except ValueError as exc:
                 parser.error(str(exc))
             cap = config.get_source(args.source).max_requests_per_run
