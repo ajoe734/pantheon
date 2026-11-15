@@ -703,3 +703,190 @@ def test_evidence_carries_scope_and_common_validity_enforces_it():
     unscoped = ApprovalEvidence.model_validate(approval_snapshot())
     assert unscoped.require_valid() is unscoped
     assert unscoped.require_valid(usage_context=ApprovalUsageContext("prod", "live", 100)) is unscoped
+
+
+# ---------------------------------------------------------------------------
+# Paper-ladder persona lifecycle widening (operator decision 2026-11-15)
+# ---------------------------------------------------------------------------
+PROPOSER = "persona-enrollment-proposer"
+LIFECYCLE_GRANT = scope_module.PersonaLifecycleGrant(proposer_subject=PROPOSER, grant_id="dev-paper-grant:test")
+WIDE_GRANT = DevPaperGrant(subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=TENANT, persona_lifecycle=LIFECYCLE_GRANT)
+BINDINGS = {"capital_binding_id": "bind-1", "capital_pool_id": POOL, "runtime_binding_id": "rt-1",
+            "deployment_plan_id": "plan-1"}
+
+
+class _Bindings:
+    def __init__(self, result=None, error=None):
+        self.result, self.error, self.calls = result or dict(BINDINGS), error, []
+
+    def verify(self, *, tenant_id, persona_id):
+        self.calls.append((tenant_id, persona_id))
+        if self.error:
+            raise self.error
+        return dict(self.result)
+
+
+def _lifecycle(**overrides):
+    values = dict(
+        tenant_id=TENANT, owner_user_id=PROPOSER, target_type="persona_lifecycle_transition", target_id=PERSONA,
+        persona_id=PERSONA, risk_level="low", created_at="2026-09-08T12:00:00Z",
+        expires_at="2026-09-09T11:00:00Z", authorization_scope=None,
+        metadata={"subject": {"persona_id": PERSONA, "from_state": "research_only", "to_state": "consultable"}},
+    )
+    values.update(overrides)
+    return values
+
+
+def _require(decision, *, grant=WIDE_GRANT, bindings=None, env=None):
+    return scope_module.require_paper_lifecycle_decision(
+        decision, grant=grant, now=NOW, binding_verifier=bindings or _Bindings(), env=env or ENABLED_ENV)
+
+
+def test_baseline_grant_denies_proposer_owned_lifecycle_decision():
+    """Reproduction (criterion 1): today's gate check refuses the enrolment decision.
+
+    paper_approval_scope.require_paper_owned_decision requires owner == grant
+    subject and the registry_entry target only.
+    """
+    with pytest.raises(PaperApprovalDenied, match="another owner's decision"):
+        require_paper_owned_decision(_lifecycle(), grant=GRANT, now=NOW)
+    with pytest.raises(PaperApprovalDenied, match="registry_entry"):
+        require_paper_owned_decision(_lifecycle(owner_user_id=DEV_PAPER_PROVISIONER_SUBJECT,
+                                                authorization_scope=copy.deepcopy(DEV_PAPER_AUTHORIZATION_SCOPE)),
+                                     grant=GRANT, now=NOW)
+
+
+@pytest.mark.parametrize("source,target", [("research_only", "consultable"), ("consultable", "paper_owner")])
+def test_widened_grant_admits_paper_ladder_steps_with_evidence(source, target):
+    bindings = _Bindings()
+    evidence = _require(_lifecycle(metadata={"subject": {"persona_id": PERSONA, "from_state": source,
+                                                         "to_state": target}}), bindings=bindings)
+    assert evidence == {"grant_id": "dev-paper-grant:test", "persona_id": PERSONA, "from_state": source,
+                        "to_state": target, **BINDINGS}
+    assert bindings.calls == [(TENANT, PERSONA)]
+
+
+@pytest.mark.parametrize("source,target", [
+    ("draft", "research_only"), ("paper_owner", "live_owner"), ("research_only", "frozen"),
+    ("consultable", "frozen"), ("paper_owner", "frozen"), ("live_owner", "retired"), ("frozen", "retired"),
+    ("frozen", "research_only"), ("research_only", "paper_owner"), ("consultable", "consultable"), ("", ""),
+])
+def test_every_other_lifecycle_transition_stays_denied(source, target):
+    with pytest.raises(PaperApprovalDenied, match="covers only"):
+        _require(_lifecycle(metadata={"subject": {"persona_id": PERSONA, "from_state": source, "to_state": target}}))
+
+
+@pytest.mark.parametrize("change", [
+    {"owner_user_id": "someone-else"}, {"owner_user_id": DEV_PAPER_PROVISIONER_SUBJECT},
+    {"tenant_id": "tenant-other"}, {"risk_level": "medium"}, {"risk_level": "high"},
+    {"target_id": "persona-other"}, {"persona_id": "persona-other"}, {"metadata": None},
+    {"expires_at": "2026-09-08T11:59:59Z"}, {"expires_at": "2026-09-10T00:00:00Z"},
+])
+def test_lifecycle_identity_and_expiry_changes_are_denied(change):
+    with pytest.raises(PaperApprovalDenied):
+        _require(_lifecycle(**change))
+
+
+def test_grant_without_widening_behaves_as_today():
+    with pytest.raises(PaperApprovalDenied, match="does not authorise persona lifecycle"):
+        _require(_lifecycle(), grant=GRANT)
+
+
+def test_non_paper_environment_is_denied():
+    with pytest.raises(PaperApprovalDenied, match="paper environment"):
+        _require(_lifecycle(), env={"PANTHEON_ENV": "prod"})
+
+
+@pytest.mark.parametrize("error", [PaperApprovalDenied("no active paper capital binding"),
+                                   PaperCandidateUnavailable("Capital read unavailable")])
+def test_missing_or_unverifiable_bindings_fail_closed(error):
+    with pytest.raises(type(error)):
+        _require(_lifecycle(), bindings=_Bindings(error=error))
+
+
+def _capital_row(**overrides):
+    row = dict(binding_id="bind-1", persona_id=PERSONA, capital_pool_id=POOL, status="active", role="paper_owner",
+               allowed_deployment_scope="paper", tenant_id=TENANT)
+    row.update(overrides)
+    return row
+
+
+def _runtime_row(**overrides):
+    row = dict(binding_id="rt-1", state="active", deployment_mode="paper", plan_id="plan-1", capital_pool_id=POOL,
+               persona_capital_binding_id="bind-1", metadata={"persona_id": PERSONA, "tenant_id": TENANT})
+    row.update(overrides)
+    return row
+
+
+def _verifier(capital, runtime):
+    seen = []
+
+    def read_capital(query):
+        seen.append(query)
+        return capital
+
+    def read_runtime(query):
+        seen.append(query)
+        return {"bindings": runtime}
+
+    return scope_module.PersonaPaperBindingVerifier(read_capital=read_capital, read_runtime=read_runtime), seen
+
+
+def test_binding_verifier_reads_both_owners_and_returns_ids():
+    verifier, seen = _verifier([_capital_row()], [_runtime_row()])
+    assert verifier.verify(tenant_id=TENANT, persona_id=PERSONA) == BINDINGS
+    assert seen[0].startswith("/api/bindings?persona_id=") and "pool_id=" in seen[1]
+
+
+@pytest.mark.parametrize("capital,runtime,text", [
+    ([], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(status="suspended")], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(role="canary_owner")], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(allowed_deployment_scope="live")], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(persona_id="other")], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(tenant_id="tenant-other")], [_runtime_row()], "no single active paper capital"),
+    ([_capital_row(), _capital_row(binding_id="bind-2")], [_runtime_row()], "more than one"),
+    ("garbage", [_runtime_row()], "no single active paper capital"),
+    ([_capital_row()], [], "no single active paper runtime"),
+    ([_capital_row()], [_runtime_row(state="stopped")], "no single active paper runtime"),
+    ([_capital_row()], [_runtime_row(deployment_mode="live")], "no single active paper runtime"),
+    ([_capital_row()], [_runtime_row(persona_capital_binding_id="bind-9")], "no single active paper runtime"),
+    ([_capital_row()], [_runtime_row(metadata={"persona_id": "other", "tenant_id": TENANT})], "no single active paper runtime"),
+    ([_capital_row()], [_runtime_row(), _runtime_row(binding_id="rt-2")], "no single active paper runtime"),
+])
+def test_binding_verifier_denies_missing_or_inconsistent_owner_bindings(capital, runtime, text):
+    verifier, _ = _verifier(capital, runtime)
+    with pytest.raises(PaperApprovalDenied, match=text):
+        verifier.verify(tenant_id=TENANT, persona_id=PERSONA)
+
+
+def _grant_env(tmp_path, content, mode=0o600):
+    path = tmp_path / "grant"
+    path.write_text(content)
+    path.chmod(mode)
+    return {**ENABLED_ENV, "GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)}
+
+
+def test_widened_grant_content_is_explicit_and_plain_enabled_is_unchanged(tmp_path):
+    wide = _grant_env(tmp_path, "enabled;persona_lifecycle=paper_ladder;proposer=" + PROPOSER)
+    grant = resolve_dev_paper_grant(_ctx(), env=wide)
+    assert grant.persona_lifecycle.proposer_subject == PROPOSER
+    assert grant.persona_lifecycle.grant_id.startswith("dev-paper-grant:persona-lifecycle-paper-ladder:")
+    assert resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled")).persona_lifecycle is None
+    assert resolve_dev_paper_grant(_ctx(), env=ENABLED_ENV).persona_lifecycle is None  # unmounted
+
+
+@pytest.mark.parametrize("content", [
+    "enabled;persona_lifecycle=paper_ladder;proposer=", "enabled;persona_lifecycle=live;proposer=x",
+    "enabled;persona_lifecycle=paper_ladder;proposer=" + DEV_PAPER_PROVISIONER_SUBJECT,
+    "enabled;persona_lifecycle=paper_ladder;proposer=a/b", "disabled", "enabled;other",
+])
+def test_malformed_widening_never_enables_or_widens(tmp_path, content):
+    with pytest.raises(PaperApprovalDenied):
+        resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, content))
+
+
+def test_unsafe_grant_file_is_not_a_widening(tmp_path):
+    env = _grant_env(tmp_path, "enabled;persona_lifecycle=paper_ladder;proposer=" + PROPOSER, mode=0o644)
+    with pytest.raises(PaperApprovalDenied):
+        resolve_dev_paper_grant(_ctx(), env=env)
