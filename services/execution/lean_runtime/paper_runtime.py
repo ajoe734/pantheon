@@ -1064,10 +1064,13 @@ class PaperExecutionAlgorithm:
         pool: Any = None
         if not pool_id:
             raise ValueError("starting cash unavailable: no capital pool id")
-        if self._capital_pool_reader is not None:
-            pool = self._capital_pool_reader(pool_id)
-        if not isinstance(pool, Mapping):
-            pool = read_capital_pool_record(pool_id)
+        try:
+            if self._capital_pool_reader is not None:
+                pool = self._capital_pool_reader(pool_id)
+            if not isinstance(pool, Mapping):
+                pool = read_capital_pool_record(pool_id)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"starting cash unavailable: capital pool {pool_id} read failed: {exc}") from exc
         if not isinstance(pool, Mapping):
             raise ValueError(f"starting cash unavailable: capital pool {pool_id} not readable")
         budget = pool.get("budget")
@@ -1079,6 +1082,22 @@ class PaperExecutionAlgorithm:
         self._initial_cash = budget_value
         self._cash = budget_value
         self._starting_cash_resolved = True
+        self._starting_cash_error = None
+        # Record the starting cash now so a later budget change cannot rewrite it.
+        self._persist_state()
+
+    def resolve_starting_cash(self) -> bool:
+        """Non-raising form of ``_ensure_starting_cash``; the reason stays readable."""
+        try:
+            self._ensure_starting_cash()
+        except Exception as exc:  # noqa: BLE001
+            self._starting_cash_error = str(exc)
+            return False
+        return True
+
+    @property
+    def starting_cash_error(self) -> str | None:
+        return self._starting_cash_error
 
     @staticmethod
     def _parse_strict_iso_date(raw: Any) -> Any:
@@ -2795,7 +2814,6 @@ class PaperExecutionAlgorithm:
         security = self._security(symbol)
         holding = self._holding(symbol)
         try:
-            self._ensure_starting_cash()
             target_percent_value = _finite_float(
                 target_percent,
                 field="target percent",
@@ -2809,6 +2827,7 @@ class PaperExecutionAlgorithm:
                 holding.Quantity,
                 field="current holding quantity",
             )
+            self._ensure_starting_cash()
             current_cash = _finite_float(self._cash, field="current cash")
             target_quantity = (self._initial_cash * target_percent_value) / price
             delta = target_quantity - current_quantity
@@ -2874,6 +2893,7 @@ class PaperExecutionAlgorithm:
                 holding.Quantity,
                 field="current holding quantity",
             )
+            self._ensure_starting_cash()
             current_cash = _finite_float(self._cash, field="current cash")
             next_quantity = current_quantity + fill_quantity
             next_cash = current_cash - (fill_quantity * price)
@@ -2910,6 +2930,7 @@ class PaperExecutionAlgorithm:
                 holding.Quantity,
                 field="current holding quantity",
             )
+            self._ensure_starting_cash()
             current_cash = _finite_float(self._cash, field="current cash")
             next_quantity = current_quantity + fill_quantity
             next_cash = current_cash - (fill_quantity * fill_price)
@@ -2978,6 +2999,7 @@ class PaperExecutionAlgorithm:
                 field="liquidation fill price",
                 positive=True,
             )
+            self._ensure_starting_cash()
             current_cash = _finite_float(self._cash, field="current cash")
             next_cash = current_cash + (quantity * price)
             if not math.isfinite(next_cash):
@@ -3250,6 +3272,7 @@ class PaperExecutionAlgorithm:
         return marks
 
     def performance_ledger(self) -> dict[str, Any]:
+        self.resolve_starting_cash()
         pending = self._pending_performance_pair or {}
         return {
             "binding_id": self._performance_binding_id,
@@ -4046,6 +4069,8 @@ class PaperExecutionAlgorithm:
     def _persist_state(self) -> bool:
         if self._state_path is None:
             return True
+        if not self._starting_cash_resolved:
+            return True  # nothing to record before the starting cash is known
         if self._state_load_error:
             # Never replace a ledger that failed validation during load.  The
             # operator needs the original bytes for diagnosis/recovery.

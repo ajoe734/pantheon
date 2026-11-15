@@ -1,0 +1,53 @@
+{
+  "task_id": "PAPER-LEDGER-CAPITAL-COSTS-LIMITS-20261115",
+  "branch_base": "dev a68d30e49",
+  "reproduction_before_change": {
+    "cmd": "PYTHONPATH=. python3 repro.py (outside repo, same scenario as PAPER-LEDGER-ACCOUNTING-AUDIT-20261115 evidence: default ctor, Taiwan MARKET buy 1000 shares @1000)",
+    "observed": {"initial_cash_default": 100000.0, "unbound_policy_limits": "all null", "oversize_buy_events": ["paper_fill_simulated"], "cash_after_oversize_buy": -900000.0, "round_trip_cash_after": 100000.0, "round_trip_costs": 0.0},
+    "claims_reproduced": ["1_start_cash", "2_costs", "3_risk_policy_unbound", "4_cash_sufficiency"]
+  },
+  "same_scenario_after_change": {
+    "default_ctor": "order_rejection reason=starting_cash_unavailable (no capital pool id); initial_cash 0.0, no fill, no default amount",
+    "explicit_cash_no_policy": "RiskPolicyError: no active risk policy is bound to the capital pool -> order_rejection reason=risk_policy_unavailable",
+    "explicit_cash_and_policy_buy_1000_at_1000": "order_rejection reason=insufficient_cash required=1001425.0 available=100000.0, cash unchanged"
+  },
+  "implementation": {
+    "shared_cost_definition": "services/execution/lean_runtime/taiwan_cash_costs.py (member_virtual_book imports its rates; paper_runtime debits via cash_share_costs)",
+    "rates_marked_for_reviewer_confirmation": {"commission_each_side": 0.001425, "sell_tax_stock": 0.003, "sell_tax_etf_code_prefix_00": 0.001, "rounding": "none", "minimum_fee": "not modelled", "source": "rates and the 00 ETF rule carried over unchanged from member_virtual_book.py; statutory source not re-verified in this task"},
+    "starting_cash": "capital pool budget read through capital_pool_reader, falling back to read_capital_pool_record; unfunded ledger rejects orders with starting_cash_unavailable; funded value is persisted at first resolution; a loaded ledger keeps its recorded initial_cash",
+    "risk_policy": "unbound or non-active policy raises RiskPolicyError -> risk_policy_unavailable; same active-policy requirement as expression_inputs.ExpressionInputsProvider",
+    "cash_check": "cash_share buy rejected with insufficient_cash when cash after price plus commission is negative; futures margin path untouched",
+    "persisted_format": "no new keys; costs flow through existing total_costs and instrument position costs; test loads a ledger in the shape read back from the hosted version",
+    "valuation_method": "fill_cash_ledger_mark_to_market unchanged and asserted by test",
+    "not_changed": ["services/broker/paper_simulation.py (already carries fee and tax fields)", "services/execution/lean_runtime/expression_inputs.py (already requires an active policy and the pool budget before fills)", "canary and live", "fill timing, flat view close, signal drain ticks (other tasks)"]
+  },
+  "hosted_return_change_estimate": {
+    "source": "coordinator readback hosted-readback-raw.txt; per-fill quantity and price are open fields and two ledger files are truncated, so these are bounds, not exact figures",
+    "starting_cash": "budget 100000 in all three pools equals the recorded initial_cash 100000: no change to starting cash; existing ledgers keep recorded values",
+    "risk_policy": "all three pools have an active policy (gross 2.0 net 2.0 leverage 2.0): no change in gate behaviour except the new cash check",
+    "persona-2448c7053e33ea48da47": {"reported_return_pct": 2.365, "fills": 3, "holdings": "1 share 2330 at 2350", "cost_upper_bound_twd": 24.2, "return_change_upper_bound_pp": -0.025, "basis": "3 fills of at most 2350 notional: commission 0.1425 percent on all, 0.3 percent tax on at most 2 sells"},
+    "persona-ee7112a829d38b9135ac": {"reported_return_pct": 12.84, "fills": 3, "recorded_futures_costs": 60.07, "cash_share_quantity": "unknown", "return_change_upper_bound_pp": -0.385, "basis": "0050 ETF fills priced 100.0 with unknown quantity; a round trip costs 0.385 percent of notional and notional cannot exceed the 100000 budget; futures costs unchanged"},
+    "persona-6507750312870d03a241": {"reported_return_pct": -0.621, "fills": 3, "holdings": "1 share 2317 at 241", "cost_upper_bound_twd": 2.5, "return_change_upper_bound_pp": -0.003, "basis": "3 fills of at most 241 notional"},
+    "note": "exact figures need the per-fill rows the coordinator marked open; change direction is a reduction for every ledger"
+  },
+  "validation": {
+    "runner": "python3 -m unittest <module>",
+    "in_scope": [
+      {"module": "services.execution.lean_runtime.test_paper_runtime", "ran": 128, "result": "OK", "baseline_before_task": 119, "new_tests": 9},
+      {"module": "services.execution.lean_runtime.test_taiwan_cash_costs", "ran": 5, "result": "OK"},
+      {"module": "services.execution.lean_runtime.test_member_virtual_book", "ran": 8, "result": "OK (1 skipped, as before)"},
+      {"module": "services.execution.lean_runtime.test_expression_inputs", "ran": 21, "result": "OK"},
+      {"module": "services.broker.test_paper_simulation", "ran": 4, "result": "OK"},
+      {"module": "services.execution.lean_runtime.test_runtime_bootstrap", "ran": 11, "result": "OK"}
+    ],
+    "existing_test_edits": "test_paper_runtime.py now sets explicit fixture defaults (starting cash 100000, permissive active policy) because production no longer has either; expected cash and cost numbers for cash-share fills now include commission and tax"
+  },
+  "blocker_outside_artifact_list": {
+    "description": "These tests encode the removed behaviour (default 100000 cash, no policy, no cash-share costs) and are outside the artifact list, so they were not edited",
+    "failing": [
+      "services/execution/lean_runtime/test_performance_telemetry.py: test_e2e_paper_execution_algorithm_ledger_provider_valuator, test_taiwan_sell_fill_is_signed_and_credits_cash (2 of 39)",
+      "services/execution/lean_runtime/test_paper_runtime_smoke.py: test_bracket_order_smoke_produces_verifiable_leg_evidence, test_paper_smoke_full_pipeline_canonical_evidence_shape, test_paper_smoke_produces_fill_evidence_for_buy_signal, test_paper_smoke_produces_pnl_evidence, test_paper_smoke_produces_position_evidence (5 of 16)"
+    ],
+    "needed": "add both files to scope: give the service-built ledgers a capital pool budget and active policy, and add statutory costs to the two telemetry cash expectations"
+  }
+}
