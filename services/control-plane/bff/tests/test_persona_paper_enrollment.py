@@ -584,3 +584,51 @@ def test_harness_content_has_no_invented_guardrail_and_fails_closed_without_iden
         render_harness_surface_v1({"strategy_family": "f"})
     with pytest.raises(EnrollmentRefused, match="harness_source_missing:strategy_family"):
         render_harness_surface_v1({"mandate": "m"})
+
+
+@pytest.fixture(autouse=True)
+def _reset_seed_backoff():
+    from services.control_plane.bff import persona_paper_enrollment as mod
+
+    mod._SEED_BACKOFF.clear()
+    yield
+    mod._SEED_BACKOFF.clear()
+
+
+def test_failed_pool_seed_backs_off_without_immediate_retry_and_records_reason():
+    from datetime import datetime, timedelta, timezone
+    from services.control_plane.bff import persona_paper_enrollment as mod
+
+    class Owner:
+        seeds = 0
+
+        def get_strategy_pool(self, *a, **k):
+            return None
+
+        def seed_strategy_pool(self, *a, **k):
+            Owner.seeds += 1
+            raise RuntimeError("registry 500")
+
+    clock = [datetime(2026, 11, 16, 5, 0, tzinfo=timezone.utc)]
+    enr = mod.PersonaPaperEnrollment(
+        tenant_id="t", persona_id="p", capital_pool_id="c", persona_capital_binding_id="b",
+        deployment_plan_id="d", persona_owner=Owner(), transport=None,
+        runtime_binding_reader=lambda *a: [], governance_actor_id="g", now=lambda: clock[0],
+    )
+    out = mod.EnrollmentOutcome(persona_id="p", status="refused")
+    with pytest.raises(mod.EnrollmentRefused, match="pool_seed_refused"):
+        enr._ensure_pool(out)
+    assert Owner.seeds == 1
+    for _ in range(3):  # reconcile passes inside the window: no owner call
+        with pytest.raises(mod.EnrollmentRefused, match="pool_seed_backoff") as ei:
+            enr._ensure_pool(out)
+        assert "registry 500" in ei.value.reason
+    assert Owner.seeds == 1
+    clock[0] += mod.SEED_BACKOFF_BASE + timedelta(seconds=1)
+    with pytest.raises(mod.EnrollmentRefused, match="pool_seed_refused"):
+        enr._ensure_pool(out)
+    assert Owner.seeds == 2
+    clock[0] += mod.SEED_BACKOFF_BASE + timedelta(seconds=1)  # second window is doubled
+    with pytest.raises(mod.EnrollmentRefused, match="pool_seed_backoff"):
+        enr._ensure_pool(out)
+    assert Owner.seeds == 2

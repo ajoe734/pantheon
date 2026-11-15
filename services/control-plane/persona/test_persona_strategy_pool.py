@@ -686,3 +686,62 @@ def test_trial_stays_trial_when_baseline_no_longer_resolves(env, monkeypatch):
     body = _decision(client, 2, **common).json()
     assert next(m for m in body["members"] if m["artifact_ref"] == "candidate")["stage"] == "trial"
     assert body["decision"]["trial_promotions"][0]["reason"] == "baseline_not_resolved:approval_withdrawn"
+
+
+def _keyset_registry(monkeypatch, psp, n_foreign=5):
+    psp._foreign_entries.clear()
+    base, run = _provisioning_entries()
+    entries = {e["registry_id"]: e for e in (base, run)}
+    for i in range(n_foreign):
+        entries[f"other-{i}"] = {"registry_id": f"other-{i}", "owner_tenant": "tenant-a",
+                                 "metadata": {"persona_id": "persona-2", "execution_context": "paper"}}
+    ids = list(entries)
+    pages = {None: (ids[:4], "k1:abc"), "k1:abc": (ids[4:], None)}
+    calls: list[str] = []
+
+    def fake_http(path, tenant):
+        calls.append(path)
+        if "strategy-artifacts?" in path:
+            tok = None
+            if "page_token=" in path:
+                from urllib.parse import unquote
+                tok = unquote(path.split("page_token=")[1])
+            assert "offset=" not in path
+            rows, nxt = pages[tok]
+            return {"items": [{"registry_id": k} for k in rows], "next_page_token": nxt}
+        return {"entry": entries[path.rsplit("/", 1)[1]]}
+
+    monkeypatch.setattr(psp, "_http_json", fake_http)
+    return entries, calls
+
+
+def test_lister_follows_keyset_token_and_bounds_registry_calls(monkeypatch):
+    import persona_strategy_pool as psp
+    entries, calls = _keyset_registry(monkeypatch, psp)
+    found = psp.http_owner_artifact_lister("persona-1", "tenant-a")
+    assert [e["registry_id"] for e in found] == ["run-1"]
+    assert any("page_token=k1%3Aabc" in c for c in calls)
+    # first attempt: 2 pages + one entry read per approved artifact (7)
+    assert len(calls) == 2 + len(entries)
+    calls.clear()
+    psp.http_owner_artifact_lister("persona-1", "tenant-a")
+    # steady state: 2 pages + only the persona's own entries (baseline-0, run-1)
+    assert len(calls) == 2 + 2
+
+
+def test_lister_still_accepts_legacy_integer_token(monkeypatch):
+    import persona_strategy_pool as psp
+    psp._foreign_entries.clear()
+    _, run = _provisioning_entries()
+    seen: list[str] = []
+
+    def fake_http(path, tenant):
+        seen.append(path)
+        if "strategy-artifacts?" in path:
+            if "page_token=200" in path:
+                return {"items": [], "next_page_token": None}
+            return {"items": [{"registry_id": "run-1"}], "next_page_token": "200"}
+        return {"entry": run}
+
+    monkeypatch.setattr(psp, "_http_json", fake_http)
+    assert [e["registry_id"] for e in psp.http_owner_artifact_lister("persona-1", "tenant-a")] == ["run-1"]

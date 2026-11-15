@@ -228,34 +228,64 @@ def http_registry_entry_reader(registry_id: str, tenant_id: str) -> Mapping[str,
     return entry
 
 
+# Registry entries that are not this persona's paper artifacts are identified
+# once and remembered: an approved artifact's persona binding does not change,
+# so repeat seed attempts only re-read the persona's own entries.  The catalog
+# row carries no persona identity and the registry has no persona filter, so
+# this bounds a steady-state attempt to (pages + matching entries) calls.
+_FOREIGN_ENTRY_TTL_SECONDS = 900.0
+_FOREIGN_ENTRY_MAX = 20000
+_foreign_entries: dict[tuple[str, str, str], float] = {}
+
+
+def _entry_is_owned(entry: Mapping[str, Any], persona_id: str, tenant_id: str) -> bool:
+    metadata = entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else {}
+    return bool(
+        metadata.get("persona_id") == persona_id
+        and metadata.get("execution_context") == "paper"
+        and entry.get("owner_tenant") in (tenant_id, None)
+    )
+
+
 def http_owner_artifact_lister(persona_id: str, tenant_id: str) -> list[Mapping[str, Any]]:
     """Approved paper execution artifacts the registry binds to this persona."""
+    import time
+
     found: list[Mapping[str, Any]] = []
-    offset = 0
+    page_token: str | None = None
+    seen_tokens: set[str] = set()
     while True:
-        payload = _http_json(
-            f"/api/registry/strategy-artifacts?artifact_state=approved&limit=200&offset={offset}",
-            tenant_id,
-        )
+        path = "/api/registry/strategy-artifacts?artifact_state=approved&limit=200"
+        if page_token:
+            # Opaque token (keyset ``k1:...`` or legacy integer): echo it back verbatim.
+            path += "&page_token=" + quote(page_token, safe="")
+        payload = _http_json(path, tenant_id)
         items = payload.get("items") if isinstance(payload, Mapping) else None
         if not isinstance(items, list):
             raise RegistryUnavailable("registry catalog response is malformed")
+        now = time.monotonic()
         for row in items:
             registry_id = str((row or {}).get("registry_id") or "")
             if not registry_id:
                 continue
+            key = (tenant_id, persona_id, registry_id)
+            if _foreign_entries.get(key, 0.0) > now:
+                continue
             entry = http_registry_entry_reader(registry_id, tenant_id)
-            metadata = entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else {}
-            if (
-                metadata.get("persona_id") == persona_id
-                and metadata.get("execution_context") == "paper"
-                and entry.get("owner_tenant") in (tenant_id, None)
-            ):
+            if _entry_is_owned(entry, persona_id, tenant_id):
                 found.append(entry)
+            else:
+                if len(_foreign_entries) >= _FOREIGN_ENTRY_MAX:
+                    _foreign_entries.clear()
+                _foreign_entries[key] = now + _FOREIGN_ENTRY_TTL_SECONDS
         nxt = payload.get("next_page_token")
         if not nxt:
             return select_running_artifacts(found)
-        offset = int(nxt)
+        nxt = str(nxt)
+        if nxt in seen_tokens:
+            raise RegistryUnavailable("registry catalog paging did not advance")
+        seen_tokens.add(nxt)
+        page_token = nxt
 
 
 def select_running_artifacts(entries: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:

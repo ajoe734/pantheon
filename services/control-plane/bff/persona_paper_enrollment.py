@@ -226,6 +226,14 @@ def render_harness_surface_v1(persona: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+# A failed pool seed backs off per (tenant, persona): bounded exponential, so a
+# reconcile loop cannot hammer the persona owner (and through it the registry).
+# Module-level because the reconciler may build a fresh enrollment per pass.
+SEED_BACKOFF_BASE = timedelta(seconds=30)
+SEED_BACKOFF_MAX = timedelta(minutes=15)
+_SEED_BACKOFF: dict[tuple[str, str], tuple[int, datetime, str]] = {}
+
+
 class PersonaPaperEnrollment:
     """GET-first, idempotent enrolment of one paper-provisioned persona."""
 
@@ -349,12 +357,23 @@ class PersonaPaperEnrollment:
         if existing is not None:
             outcome.steps["pool"] = {"status": "present", "version": (existing.get("pool_version") or existing.get("version"))}
             return
+        held = _SEED_BACKOFF.get((self.tenant_id, self.persona_id))
+        if held is not None and self._now() < held[1]:
+            raise EnrollmentRefused(
+                f"pool_seed_backoff:until={_utc(held[1])}:last={held[2]}"[:300], retryable=True
+            )
         try:
             seeded = self.persona_owner.seed_strategy_pool(self.persona_id, tenant_id=self.tenant_id)
+            _SEED_BACKOFF.pop((self.tenant_id, self.persona_id), None)
         except Exception as exc:  # noqa: BLE001
             # A concurrent replica may have seeded between the read and write.
             existing = self.persona_owner.get_strategy_pool(self.persona_id, tenant_id=self.tenant_id)
             if existing is None:
+                key = (self.tenant_id, self.persona_id)
+                failures = (_SEED_BACKOFF.get(key) or (0,))[0] + 1
+                delay = min(SEED_BACKOFF_BASE * (2 ** min(failures - 1, 10)), SEED_BACKOFF_MAX)
+                reason = f"{exc.__class__.__name__}: {exc}"[:200]
+                _SEED_BACKOFF[key] = (failures, self._now() + delay, reason)
                 raise EnrollmentRefused(f"pool_seed_refused:{exc}"[:300]) from exc
             seeded = existing
         outcome.steps["pool"] = {"status": "seeded", "version": (seeded.get("pool_version") or seeded.get("version"))}

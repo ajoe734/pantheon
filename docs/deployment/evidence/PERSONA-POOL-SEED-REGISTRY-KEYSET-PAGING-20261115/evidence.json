@@ -1,0 +1,28 @@
+{
+  "task": "PERSONA-POOL-SEED-REGISTRY-KEYSET-PAGING-20261115",
+  "hosted_before": {
+    "observed_at": "2026-11-15T14:30Z",
+    "registry_entry_gets_in_5min": 15594,
+    "distinct_entry_ids": 200,
+    "source": "pantheon-persona-1",
+    "valueerror_tracebacks_in_5min": 78,
+    "traceback_site": "persona_strategy_pool.py:258 offset = int(nxt)",
+    "registry_cpu_percent": 69,
+    "postgres_cpu_percent_range": "80-270"
+  },
+  "changes": [
+    "http_owner_artifact_lister echoes next_page_token verbatim as page_token (keyset k1: and legacy integer), guards a non-advancing token",
+    "registry has no persona filter and catalog rows carry no persona, so non-owned entries are remembered (15 min TTL, per tenant/persona) and not re-read; steady-state attempt = pages + persona's own entries",
+    "BFF _ensure_pool: failed seed backs off per (tenant, persona), 30s doubling to 15min cap, reason recorded in readback (pool_seed_backoff:until=..:last=..)"
+  ],
+  "tests": {
+    "command": "python -m pytest services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/tests/test_persona_paper_enrollment.py -q",
+    "result": "57 passed",
+    "new_tests": [
+      "test_lister_follows_keyset_token_and_bounds_registry_calls (first attempt 2+7 calls, steady state 2+2)",
+      "test_lister_still_accepts_legacy_integer_token",
+      "test_failed_pool_seed_backs_off_without_immediate_retry_and_records_reason"
+    ]
+  },
+  "not_changed": ["registry paging contract", "persona pool semantics"]
+}
