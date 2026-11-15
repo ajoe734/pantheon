@@ -1,6 +1,6 @@
 {
   "task_id": "CARD-ADMISSION-PRODUCTION-WIRING-20261115",
-  "status": "blocked_on_one_file_outside_artifact_list",
+  "status": "implemented_awaiting_review",
   "blocker": {
     "file": "services/governance/main.py",
     "why": "ApprovalDecision.validate() requires authorization_scope whenever the paper gate subject is the actor or owner. Governance stamps the scope only in the persona-lifecycle branch of _approval_command (main.py, 'if is_persona_lifecycle_decision(current)'). A research-owned card decision takes the 'else' branch, which cannot stamp it, so the real gate gets HTTP 400 'authorization_scope is required whenever the dedicated dev paper subject is the actor or owner of a decision'. paper_approval_scope.py cannot stamp it: require_paper_owned_decision receives decision.to_dict(), a copy.",
@@ -12,7 +12,8 @@
       "        lifecycle_evidence = require_card_admission_decision(current, grant=grant, now=now)"
     ],
     "verified_with_patch": "all 5 integration tests in services/research/tests/test_card_admission_production_integration.py passed with this 6-line patch applied; reverted because the file is not in the artifact list",
-    "without_patch": "2 of the 5 integration tests fail (matched spec admitted+gated; pass registers pool candidate); the 3 others pass (unmatched stays draft; grant without widening denies with a readable reason; missing credential disables the path)"
+    "without_patch": "2 of the 5 integration tests fail (matched spec admitted+gated; pass registers pool candidate); the 3 others pass (unmatched stays draft; grant without widening denies with a readable reason; missing credential disables the path)",
+    "resolution": "2026-11-15 reopen: services/governance/main.py patched (stamp authorization_scope + card admission evidence only when the widened grant names the decision owner as card proposer); tests in services/governance/test_paper_approval_scope.py cover the stamp, a grant without widening, and another target type."
   },
   "criterion_1_reproduction": {
     "dev_head": "32fc7da61",
@@ -39,7 +40,20 @@
   },
   "criterion_4_compose": {
     "service": "alpha-replication-worker",
-    "new_env": ["PANTHEON_GOVERNANCE_URL", "RESEARCH_API_URL", "PERSONA_API_URL", "RESEARCH_GOVERNANCE_PROPOSER_ID", "RESEARCH_GOVERNANCE_GATE_ID", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN(_FILE)", "RESEARCH_GOVERNANCE_GATE_TOKEN(_FILE)", "RESEARCH_REGISTRY_SERVICE_TOKEN(_FILE)", "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN(_FILE)", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN(_FILE)", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"],
+    "new_env": [
+      "PANTHEON_GOVERNANCE_URL",
+      "RESEARCH_API_URL",
+      "PERSONA_API_URL",
+      "RESEARCH_GOVERNANCE_PROPOSER_ID",
+      "RESEARCH_GOVERNANCE_GATE_ID",
+      "RESEARCH_GOVERNANCE_PROPOSER_TOKEN(_FILE)",
+      "RESEARCH_GOVERNANCE_GATE_TOKEN(_FILE)",
+      "RESEARCH_REGISTRY_SERVICE_TOKEN(_FILE)",
+      "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN(_FILE)",
+      "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN(_FILE)",
+      "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH",
+      "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"
+    ],
     "volume_added": "bff-data:/data/bff:ro (canonical dataset pointer, same as research-orchestrator-svc)",
     "contract_test": "scripts/test_persona_cycle_owner_ports_compose_contract.py area card_admission_path (13 names in card_production_wiring.py, 2 in candidate_registration.py)",
     "issuer": "new principals: research card proposer (approval_proposer, propose-only), gate token for the worker (same paper gate subject), two read-only viewers; all withdrawn by revoked_environment"
@@ -59,16 +73,51 @@
     "test_only": "the pass-path test injects the attested market recorded by the card gate test; production code adds none"
   },
   "validation": [
-    {"command": "pytest services/governance/test_paper_approval_scope.py", "result": "264 passed"},
-    {"command": "pytest services/research/alpha_replication/test_card_production_wiring.py", "result": "22 passed"},
-    {"command": "pytest services/research/alpha_replication/test_replication_controller.py", "result": "13 passed"},
-    {"command": "pytest test_admission, test_card_production_wiring, test_replication_controller, test_hypothesis_card_gate_candidate, test_candidate_registration", "result": "48 passed"},
-    {"command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/governance/tests/test_paper_grant_persona_lifecycle_integration.py", "result": "115 passed, 1 failed: test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others needs flask, absent in this sandbox (unrelated to this task)"},
-    {"command": "pytest services/research/tests/test_card_admission_production_integration.py", "result": "3 passed, 2 failed without the services/governance/main.py patch; 5 passed with it (patch reverted)"},
-    {"command": "pytest services/governance/test_governance_api.py", "result": "needs a database; errors before and after this change"}
+    {
+      "command": "pytest services/governance/test_paper_approval_scope.py",
+      "result": "264 passed"
+    },
+    {
+      "command": "pytest services/research/alpha_replication/test_card_production_wiring.py",
+      "result": "22 passed"
+    },
+    {
+      "command": "pytest services/research/alpha_replication/test_replication_controller.py",
+      "result": "13 passed"
+    },
+    {
+      "command": "pytest test_admission, test_card_production_wiring, test_replication_controller, test_hypothesis_card_gate_candidate, test_candidate_registration",
+      "result": "48 passed"
+    },
+    {
+      "command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/governance/tests/test_paper_grant_persona_lifecycle_integration.py",
+      "result": "115 passed, 1 failed: test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others needs flask, absent in this sandbox (unrelated to this task)"
+    },
+    {
+      "command": "pytest services/research/tests/test_card_admission_production_integration.py",
+      "result": "3 passed, 2 failed without the services/governance/main.py patch; 5 passed with it (patch reverted)"
+    },
+    {
+      "command": "pytest services/governance/test_governance_api.py",
+      "result": "needs a database; errors before and after this change"
+    }
   ],
   "findings_for_followup": [
     "Card artifacts built by services/source_ingestion/replication_bridge.py set lineage.source_strategy_spec_id to the spec strategy_id, which Registry cannot read as an entry id, so Governance's existing paper bundle verification (_verify_paper_bundle_payload) cannot resolve the parent spec for a card bundle. The card bundle check therefore binds to persona, demand and replication proof instead of re-reading the parent.",
     "The worker authority call POST /api/research-orchestrator/runs/<id>/complete returned 409 'rejected research run cannot be completed' in the integration run; existing behaviour, not changed here."
+  ],
+  "final_validation_2026_11_15": [
+    {
+      "command": "pytest services/research/tests/test_card_admission_production_integration.py",
+      "result": "5 passed"
+    },
+    {
+      "command": "pytest services/governance/test_paper_approval_scope.py",
+      "result": "all passed incl. 3 new stamping tests"
+    },
+    {
+      "command": "pytest governance test_governance_api test_approval_targets scripts issuer+compose contract, services/research/alpha_replication, integration",
+      "result": "592 passed; test_approval_targets shows 4 errors that are identical on the base without this change (pre-existing; 48 when run in the combined order)"
+    }
   ]
 }

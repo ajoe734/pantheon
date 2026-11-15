@@ -1022,3 +1022,81 @@ def test_candidate_verification_routes_only_non_gate_owners_to_the_card_check():
             return {"entry": {"registry_id": "other"}}
     with pytest.raises(PaperCandidateInvalid, match="does not match the approval target"):
         verify_paper_candidate_for_decision(_card(), reader=Reader())
+
+
+# ---------------------------------------------------------------------------
+# CARD-ADMISSION-PRODUCTION-WIRING-20261115: Governance stamps the scope for the card admission target
+# ---------------------------------------------------------------------------
+
+def _governance_world(tmp_path, monkeypatch, grant_content):
+    """The real Governance application with the real issued principals and a mounted grant file."""
+    from fastapi.testclient import TestClient
+
+    from scripts import issue_dev_paper_principals as issuer
+    from services.governance import main as gov_main
+    from services.governance.test_approval_authority_postgres import OperatorMemoryStore
+
+    secret, issuing = "s" * 40, {}
+    issuing = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": TENANT,
+               "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true", "PANTHEON_DEV_BFF_JWT_SECRET": secret,
+               "PANTHEON_DEV_BFF_JWT_ISSUER": "iss-test", "PANTHEON_DEV_BFF_JWT_AUDIENCE": "aud-test"}
+    issued = issuer.issue_environment(issuing)
+    grant_file = tmp_path / "grant"
+    grant_file.write_text(grant_content)
+    grant_file.chmod(0o600)
+    for name, value in {"JWT_SECRET": secret, "JWT_ISSUER": "iss-test", "JWT_AUDIENCE": "aud-test"}.items():
+        monkeypatch.setenv(f"PANTHEON_GOVERNANCE_{name}", value)
+    monkeypatch.setenv("GOVERNANCE_DEV_PAPER_GRANT_FILE", str(grant_file))
+    monkeypatch.setenv("GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setattr(gov_main, "store", OperatorMemoryStore())
+    monkeypatch.setattr(gov_main, "verify_paper_candidate_for_decision", lambda *a, **k: None)
+    monkeypatch.setattr(gov_main, "_paper_registry_reader", lambda: None)
+    return TestClient(gov_main.app), gov_main.store, issued
+
+
+def _propose_and_review(client, issued, decision_id, **overrides):
+    expires = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
+    body = {"decision_id": decision_id, "expected_version": 0, "tenant_id": TENANT,
+            "target_type": "registry_entry", "target_id": "reg-1", "target_version": "1", "risk_level": "low",
+            "persona_id": PERSONA, "owner_user_id": "pantheon-dev-research-card-proposer",
+            "proposal_id": "rd-1", "proposal_revision": 1, "proposal_content_digest": "d1",
+            "validation_result_digest": "d1", "candidate_digest": "d1", "expires_at": expires}
+    body.update(overrides)
+    proposer = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_PROPOSER_TOKEN"],
+                "Idempotency-Key": "p-" + decision_id}
+    gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"],
+            "Idempotency-Key": "r-" + decision_id}
+    created = client.post("/api/governance/approvals", json=body, headers=proposer)
+    if created.status_code != 201:
+        return created, None
+    reviewed = client.post(f"/api/governance/approvals/{decision_id}/review", headers=gate, json={
+        "actor_role": "automated_gate", "actor_id": "pantheon-dev-paper-provisioner", "expected_version": 1})
+    return created, reviewed
+
+
+def test_widened_grant_stamps_scope_on_the_card_admission_decision(tmp_path, monkeypatch):
+    client, store, issued = _governance_world(
+        tmp_path, monkeypatch,
+        "enabled;card_admission=paper_research;card_proposer=pantheon-dev-research-card-proposer")
+    _, reviewed = _propose_and_review(client, issued, "card-1")
+    assert reviewed.status_code == 200, reviewed.text
+    assert store.get("card-1").to_dict()["authorization_scope"] == DEV_PAPER_AUTHORIZATION_SCOPE
+
+
+@pytest.mark.parametrize("grant_content,overrides", [
+    # a grant without the widening behaves as today: the gate may not act on another owner's decision
+    ("enabled", {}),
+    # a decision of any other target type is not admitted by the widening
+    ("enabled;card_admission=paper_research;card_proposer=pantheon-dev-research-card-proposer",
+     {"target_type": "persona_lifecycle_transition", "risk_level": "high"}),
+])
+def test_no_widening_or_other_target_type_is_never_stamped(tmp_path, monkeypatch, grant_content, overrides):
+    client, store, issued = _governance_world(tmp_path, monkeypatch, grant_content)
+    created, reviewed = _propose_and_review(client, issued, "card-2", **overrides)
+    if reviewed is not None:
+        assert reviewed.status_code in (400, 403, 422, 503), reviewed.text
+        stored = store.get("card-2")
+        assert stored is None or stored.to_dict()["authorization_scope"] is None
+    else:
+        assert created.status_code in (400, 403, 422), created.text
