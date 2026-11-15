@@ -1127,7 +1127,7 @@ class CurrentArtifactStrategy:
                     "close": closes[-1],
                     # The decision session's own open: the fill price of the previous session's
                     # decision for the member virtual books (shared next-open convention).
-                    "open": (features.get("open") if isinstance(features, Mapping) else None),
+                    "open": _decision_bar_open(features),
                     "event_time": market_input.get("event_time"),
                     "source_ref": market_input.get("source_ref"),
                 },
@@ -1156,8 +1156,8 @@ class CurrentArtifactStrategy:
         ):
             # Operator decision 2026-11-15 (option A): a daily decision computed from the close of
             # session D is parked and settled at the official open of D+1 like the intraday path.
-            # It is never filled at D's close.  The gate backtest still fills daily at the close
-            # until GATE-DAILY-NEXT-OPEN-REBASELINE-20261115 merges (known temporary difference).
+            # It is never filled at D's close.  The gate backtest, pool admission replay and member
+            # virtual books use the same convention (GATE-DAILY-NEXT-OPEN-REBASELINE-20261115).
             if not market_input.get("event_time") or not market_input.get("observed_at"):
                 raise SignalDecisionUnavailable(
                     "daily_availability_missing",
@@ -2354,6 +2354,14 @@ def official_daily_open_reader(symbol: str, session_date: str, now: datetime) ->
             "open": entry.get("open"),
         }]
     return []
+
+
+def _decision_bar_open(features: Any) -> Any:
+    """The decision session's own open from the feature map (scalar or the series' last element)."""
+    value = features.get("open") if isinstance(features, Mapping) else None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        value = value[-1] if value else None
+    return value
 
 
 class PaperSignalProducer:
