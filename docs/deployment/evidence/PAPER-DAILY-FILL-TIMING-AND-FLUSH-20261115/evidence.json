@@ -1,27 +1,56 @@
 {
   "task_id": "PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115",
-  "status": "stopped_at_acceptance_2_operator_decision_required",
-  "code_changed": false,
-  "claim_5_reproduced": {
-    "daily_fill_at_decision_close": "executor.py:466-472 passes the signal market_price; paper_signal_producer.py:1125 sets close=closes[-1]; services/broker/paper_simulation.py fill_price = market_price",
-    "intraday_parks_pending_settlement": "paper_signal_producer.py:1044-1051 region (unchanged, out of scope)"
+  "status": "implemented_pending_out_of_scope_test_updates",
+  "code_changed": true,
+  "operator_decision": {
+    "date": "2026-11-15",
+    "answer": "回測和 paper 都改成隔日開盤 (Recommended)",
+    "option": "A",
+    "scope_here": "paper side only; gate/admission/member books/re-baseline belong to GATE-DAILY-NEXT-OPEN-REBASELINE-20261115"
   },
-  "claim_7_reproduced": {
-    "rebalance_timeout_bars": "signal_consumer.py:51 _REBALANCE_TIMEOUT_BARS = 3",
-    "non_test_flush_rebalance_callers": ["integrations/lean/pantheon_algo/base.py:238 (wrapper only; no production caller of the wrapper)"],
-    "command": "grep -rn '\\.flush_rebalance(' --include=*.py . | grep -v '/test_\\|/tests/'"
+  "known_temporary_difference": {
+    "until": "GATE-DAILY-NEXT-OPEN-REBASELINE-20261115 merges",
+    "detail": "paper fills daily decisions at the D+1 official open; the gate backtest (vectorbt_adapter.py:1005-1012,1089-1095,1456-1534) and pool admission replay (pool_admission.py:22-100) still fill at the decision-bar close."
   },
-  "acceptance_2_fill_convention_today": {
+  "claims_reproduced_before_change": {
+    "claim_5": {
+      "daily_fill_at_decision_close": "executor.py:466-472 passes the signal market_price; paper_signal_producer.py:1125 sets close=closes[-1]; services/broker/paper_simulation.py fill_price = market_price",
+      "intraday_parks_pending_settlement": "paper_signal_producer.py:1044-1051 region (unchanged, out of scope)"
+    },
+    "claim_7": {
+      "rebalance_timeout_bars": "signal_consumer.py:51 _REBALANCE_TIMEOUT_BARS = 3",
+      "non_test_flush_rebalance_callers": [
+        "integrations/lean/pantheon_algo/base.py:238 (wrapper only; no production caller of the wrapper)"
+      ],
+      "command": "grep -rn '\\.flush_rebalance(' --include=*.py . | grep -v '/test_\\|/tests/'"
+    }
+  },
+  "acceptance_2_convention_before_change": {
     "daily_vectorbt_single_symbol": "services/research/vectorbt/adapter/vectorbt_adapter.py:1005-1012 non-intraday branch sets order_kwargs = dict(freq='1D') with no price, so from_orders fills at CLOSE; :1089-1095 vbt.Portfolio.from_signals(closes, ...) fills at close of the signal bar",
     "daily_portfolio_target_replay": "vectorbt_adapter.py:1456-1534 _portfolio_target_sequence trades at prices[symbol] = bar close (index 3) on the decision bar",
     "pool_admission_replay": "services/research/pool_admission.py:22-100 _replay uses prior-bar exposure with price = bar[3] close-to-close",
     "intraday_only": "vectorbt_adapter.py:1005-1010 and replication/gate.py:316 use next_bar_open for intraday only"
   },
-  "stop_reason": "Acceptance 2 says: if the backtest itself fills at the decision close, stop and report. The daily gate backtest and the pool admission replay fill at the decision bar close, so moving paper daily fills to the next session open would make paper diverge from the gate/admission convention, or changing the gate convention would invalidate approved baselines. Both need an operator decision.",
-  "decision_options": [
-    "A: change the daily gate backtest and pool admission replay to next-session-open fills, then re-baseline approved candidates, then change paper",
-    "B: keep daily close fills everywhere and only do the flush fix (acceptance 4 and 5), recording the look-ahead as accepted",
-    "C: do the flush fix now (independent of fill convention) and defer the fill convention to an operator-approved gate task"
+  "changes": {
+    "criterion_3_daily_parking": "paper_signal_producer.py parks a BUY/SELL daily TW decision (plan_daily_next_open_decision, intraday_settlement.py) as pending_settlement; settle_pending_intraday releases it with the official D+1 open (official_daily_open_reader from Source snapshot 'opens'); missing session stays pending then expires_no_price (reason target_session_not_reconciled_by_expiry) with no fallback to the decision close. Data landing after D+1 08:55 targets the next open still ahead, never a past open. Price and source recorded in market_data (price, event_time, price_observed_at, settlement_mode).",
+    "source_open": "requirement_state.py MarketSnapshotPoint.open (official rows only; collector closes never carry one) published as public 'opens'; daily snapshot ids and URLs unchanged when no open exists.",
+    "criterion_4_flush": "paper_signal_producer.py stamps metadata.rebalance_batch_size (leg count); signal_consumer.py executes a run batch in the same drain once its declared legs are all buffered; legacy signals without the stamp keep the 3-bar timeout (signal_producer.py, outside scope, unchanged).",
+    "criterion_5": "decision_id/signal_id/run_id derivation untouched; parked record keyed decision_id#intraday-pending, ENQUEUED marker prevents a second release; counterfactual grading marks are written at release.",
+    "criterion_6": "intraday plan/park/settle/grade code paths unchanged; daily grade is skipped only for bar_frequency 1d."
+  },
+  "tests_run": {
+    "interpreter": ".venv-pantheon/bin/python3 (provision_python_distribution.py)",
+    "in_scope_green": "186 passed, 15 subtests: test_paper_signal_producer.py, test_signal_consumer.py, test_intraday_settlement.py (new), test_daily_settlement_integration.py (new, real producer+consumer-runtime+ledger, two sessions 2026-11-13/16/17), source_ingestion/tests/test_latest_market_snapshot.py",
+    "baseline_before_change": "test_paper_signal_producer.py 124 passed",
+    "test_paper_signal_producer_adaptation": "module-level PaperSignalProducer subclass plays the next session (open == decision close) for tests that cover expression/grading, not fill timing; a few expectations updated (market_data now carries the settled open, persistence order, restart reuses stored decision)."
+  },
+  "out_of_scope_tests_needing_the_same_adaptation": [
+    "services/execution/lean_runtime/test_current_artifact_signal.py",
+    "services/execution/lean_runtime/test_futures_session_inputs.py",
+    "services/execution/lean_runtime/test_notional_target_exit_integration.py",
+    "services/execution/lean_runtime/test_pool_market_inputs_integration.py",
+    "services/execution/lean_runtime/test_portfolio_target_positions.py",
+    "services/research/tests/test_portfolio_envelope_parity.py"
   ],
-  "validation": "no code changed; no tests run"
+  "stop_history": "Acceptance 2 says: if the backtest itself fills at the decision close, stop and report. The daily gate backtest and the pool admission replay fill at the decision bar close, so moving paper daily fills to the next session open would make paper diverge from the gate/admission convention, or changing the gate convention would invalidate approved baselines. Both need an operator decision."
 }
