@@ -620,7 +620,14 @@ class SignalConsumer:
         completed: list[str] = []
         for run_id, batch in self._rebalance_buffer.items():
             batch["bars_waited"] += 1
-            if batch["bars_waited"] >= self._rebalance_timeout:
+            declared = _declared_batch_size(batch["signals"])
+            if declared is not None and len(batch["signals"]) >= declared:
+                # The producer declared how many legs this decision has and all of them are
+                # buffered: the batch is complete, so it executes in this drain (atomic grouping
+                # kept) instead of waiting for the legacy timeout.
+                self._execute_resolved(batch["signals"], algo)
+                completed.append(run_id)
+            elif batch["bars_waited"] >= self._rebalance_timeout:
                 n = len(batch["signals"])
                 log.warning(
                     "run_id %s: rebalance timeout after %d bars with %d signal(s) — "
@@ -847,6 +854,16 @@ class SignalConsumer:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _declared_batch_size(signals: list[dict]) -> int | None:
+    """Leg count the producer declared for a run batch, or None for legacy signals."""
+    sizes = []
+    for signal in signals:
+        value = (signal.get("metadata") or {}).get("rebalance_batch_size")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            sizes.append(value)
+    return max(sizes) if sizes else None
+
 
 def _parse_dt(ts_str: str) -> datetime | None:
     try:
