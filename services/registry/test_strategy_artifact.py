@@ -1247,7 +1247,8 @@ def test_list_strategy_artifacts_catalog_flat_projection_and_paging():
     body1 = page1.json()
     assert body1["total"] == 3
     assert body1["page_size"] == 2
-    assert body1["next_page_token"] == "2"
+    # Keyset token (ARTIFACT-CATALOG-INDEXED-PAGING-20261115): anchored on the last row, not an offset.
+    assert body1["next_page_token"].startswith("k1:")
     assert [r["registry_id"] for r in body1["items"]] == ["bundle-3", "bundle-2"]
     for row in body1["items"]:
         assert set(row.keys()) == expected_keys

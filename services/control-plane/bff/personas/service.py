@@ -9825,6 +9825,116 @@ def _persona_fleet_submit_post_rank_reads(
             futures.append(future)
 
 
+# --- _persona_fleet_shared_payload ---
+# Single-flight + short memo for the whole persona-fleet response (slim list plus
+# per-row persona_cycle_health), same pattern as _pm12_persona_league_rows_shared.
+# Reuse window is measured from computation start (hard ceiling 30s); failures
+# are never stored; every caller receives its own deep copy. A reused payload
+# keeps the snapshot_at of when it was actually computed.
+_PERSONA_FLEET_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PERSONA_FLEET_WAIT_SECONDS = 30.0
+_persona_fleet_shared_lock = threading.Lock()
+_persona_fleet_shared_entries: Dict[Any, Any] = {}
+_persona_fleet_shared_inflight: Dict[Any, Any] = {}
+
+
+def _persona_fleet_shared_cache_clear() -> None:
+    with _persona_fleet_shared_lock:
+        _persona_fleet_shared_entries.clear()
+
+
+def _persona_fleet_shared_payload(
+    *,
+    tenant_id: str,
+    state: Optional[str],
+    health: Optional[str],
+    deployment_stage: Optional[str],
+    market_scope: Optional[str],
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+    purpose: Optional[str],
+    data_scope: Optional[str],
+    archived: Optional[str],
+    viewer_user_id: Optional[str],
+    read_cycle_health: Callable[[str, List[str]], Dict[str, Any]],
+    now: Callable[[], str] = utc_now,
+    slim_payload: Optional[Callable[..., Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    import weakref
+
+    def compute() -> Dict[str, Any]:
+        result = (slim_payload or _persona_fleet_slim_list_payload)(
+            tenant_id=tenant_id,
+            snapshot_at=now(),
+            state=state,
+            health=health,
+            deployment_stage=deployment_stage,
+            market_scope=market_scope,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+            purpose=purpose,
+            data_scope=data_scope,
+            archived=archived,
+            viewer_user_id=viewer_user_id,
+        )
+        items = result["data"]["items"]
+        ids = [str(row.get("persona_id") or row.get("id")) for row in items]
+        health_by_persona = read_cycle_health(tenant_id, ids)
+        for row, pid in zip(items, ids):
+            row["persona_cycle_health"] = health_by_persona[pid]
+        return result
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+        state, health, deployment_stage, market_scope, q, purpose, data_scope,
+        archived, page_token, page_size, viewer_user_id,
+    )
+    while True:
+        with _persona_fleet_shared_lock:
+            entry = _persona_fleet_shared_entries.get(key)
+            if entry is not None:
+                expires, ref, payload = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(payload)
+                _persona_fleet_shared_entries.pop(key, None)
+            flight = _persona_fleet_shared_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "payload": None}
+                _persona_fleet_shared_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PERSONA_FLEET_WAIT_SECONDS)
+            if flight["payload"] is not None:
+                return copy.deepcopy(flight["payload"])
+            continue  # leader failed: recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            payload = compute()
+            flight["payload"] = payload
+            with _persona_fleet_shared_lock:
+                _persona_fleet_shared_entries[key] = (
+                    started + min(_PERSONA_FLEET_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    payload,
+                )
+            return copy.deepcopy(payload)
+        finally:
+            with _persona_fleet_shared_lock:
+                if _persona_fleet_shared_inflight.get(key) is flight:
+                    del _persona_fleet_shared_inflight[key]
+            flight["event"].set()
+
+
 # --- _persona_fleet_slim_list_payload ---
 @request_read_scope()
 def _persona_fleet_slim_list_payload(

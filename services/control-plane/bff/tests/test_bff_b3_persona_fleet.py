@@ -736,6 +736,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
         )
 
+        personas_service._persona_fleet_shared_cache_clear()
         decisions[:] = [
             {
                 "id": "evo-dec-focus",
@@ -785,6 +786,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             }
         ]
 
+        personas_service._persona_fleet_shared_cache_clear()
         resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
         invalid = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
         assert invalid["last_mutation_kind"] == "fleet_summary"

@@ -10,7 +10,9 @@ needs no changes to select between them.
 """
 from __future__ import annotations
 
+import base64
 import dataclasses
+import json
 from functools import lru_cache
 import os
 import threading
@@ -180,6 +182,72 @@ def strategy_artifact_row(entry: RegistryEntry) -> dict:
     for k in STRATEGY_ARTIFACT_EVAL_KEYS:
         row[k] = eval_summary.get(k)
     return row
+
+
+# Stable keyset page token for the execution-bundle catalog (ARTIFACT-CATALOG-INDEXED-PAGING-20261115).
+# Order is ``(created_at, registry_id)`` descending over code-point (``"C"``) string order, NULL as ''.
+# A bare non-negative integer token stays accepted as a legacy offset so a previous-release caller still pages.
+_ARTIFACT_PAGE_TOKEN_PREFIX = "k1:"
+
+
+def strategy_artifact_sort_key(row: dict) -> tuple[str, str]:
+    return (str(row.get("created_at") or ""), str(row.get("registry_id") or ""))
+
+
+def encode_strategy_artifact_page_token(key: tuple[str, str]) -> str:
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_PAGE_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_strategy_artifact_page_token(token: Optional[str]) -> Optional[tuple[str, tuple]]:
+    """``None`` for no token, ``("offset", (n,))`` legacy, or ``("after", (created_at, registry_id))``; ValueError if invalid."""
+    text = str(token).strip() if token is not None else ""
+    if not text:
+        return None
+    if text.startswith(_ARTIFACT_PAGE_TOKEN_PREFIX):
+        body = text[len(_ARTIFACT_PAGE_TOKEN_PREFIX):]
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError("Invalid page_token") from exc
+        if not (isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded)):
+            raise ValueError("Invalid page_token")
+        return ("after", (decoded[0], decoded[1]))
+    try:
+        offset = int(text)
+    except ValueError as exc:
+        raise ValueError("Invalid page_token") from exc
+    if offset < 0:
+        raise ValueError("Invalid page_token")
+    return ("offset", (offset,))
+
+
+def page_strategy_artifact_rows(
+    rows: list[dict],
+    *,
+    artifact_state: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    limit: int,
+    cursor: Optional[tuple[str, tuple]] = None,
+) -> tuple[list[dict], int, Optional[str]]:
+    """In-memory twin of the SQL page: ``(items, exact_total, next_page_token)``."""
+    filtered = [
+        dict(r) for r in rows
+        if (artifact_state is None or r.get("artifact_state") == artifact_state)
+        and (strategy_id is None or r.get("strategy_id") == strategy_id)
+    ]
+    filtered.sort(key=strategy_artifact_sort_key, reverse=True)
+    total = len(filtered)
+    start = 0
+    if cursor is not None:
+        kind, value = cursor
+        if kind == "offset":
+            start = value[0]
+        else:
+            start = next((i for i, r in enumerate(filtered) if strategy_artifact_sort_key(r) < value), total)
+    items = filtered[start:start + limit]
+    more = start + len(items) < total and bool(items)
+    return items, total, (encode_strategy_artifact_page_token(strategy_artifact_sort_key(items[-1])) if more else None)
 
 
 def _lineage_ids(value: Any) -> list[str]:
@@ -1273,6 +1341,20 @@ class RegistryStore:
                 entry.to_dict(), visible_tenants, "execution_bundle"
             )
         ]
+
+    def list_strategy_artifact_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_state: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        limit: int,
+        cursor: Optional[tuple[str, tuple]] = None,
+    ) -> tuple[list[dict], int, Optional[str]]:
+        return page_strategy_artifact_rows(
+            self.list_strategy_artifact_rows(visible_tenants=visible_tenants),
+            artifact_state=artifact_state, strategy_id=strategy_id, limit=limit, cursor=cursor,
+        )
 
     def list_strategy_spec_summary_rows(
         self,

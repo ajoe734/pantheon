@@ -1,0 +1,21 @@
+{
+  "task_id": "POOL-ENVELOPE-DEPLOYMENT-PLAN-20261115",
+  "base_head": "40f024389",
+  "reproduction": {
+    "before_change": "create_plan for a singleton persona_portfolio_v1 envelope (paper) raised KeyError 'lookback_parameter' at services/deployment/service.py:515; the real-deployment publish test failed with 'deployment did not persist ... after mutation error: lookback_parameter'",
+    "fake_owner_note": "services/control-plane/bff/tests/test_persona_pool_publish_route.py fakes Deployment plan creation via FakeOwnerTransport, so it never reached the defect"
+  },
+  "changes": {
+    "registry_helper": "services/registry/strategy_artifact.py::strategy_artifact_minimum_closes (momentum: lookback parameter; factor_rule_v1: required_history_bars; persona_portfolio_v1: member maximum; unknown kind: StrategyArtifactValidationError)",
+    "deployment": "services/deployment/service.py create_plan uses the helper; derivation failure raises DeploymentPlanError",
+    "multi_symbol_decision": "refused with named reason multi_symbol_paper_plan_unsupported because the paper runtime path (and fleet eligibility, owned by POOL-MARKET-INPUTS-PRODUCTION-20261115) runs one symbol per binding; the publisher surfaces it as the 409 refusal reason"
+  },
+  "commands": [
+    {"cmd": "pytest services/registry/test_strategy_artifact_minimum_closes.py services/deployment/test_inline_paper_execution_projection.py services/deployment/test_pool_envelope_plan.py services/control-plane/bff/tests/test_persona_pool_publish_real_deployment.py services/control-plane/bff/tests/test_persona_pool_publish_route.py", "result": "45 passed"},
+    {"cmd": "pytest services/registry/test_strategy_artifact.py services/registry/test_factor_rule.py services/registry/test_portfolio_envelope.py", "result": "94 passed"},
+    {"cmd": "pytest services/deployment services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/tests/test_persona_pool_publish_real_deployment.py services/registry/test_strategy_artifact_minimum_closes.py (earlier run)", "result": "356 passed, 1 error"}
+  ],
+  "preexisting_error": "services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding errors identically on base 40f024389 (unrelated)",
+  "momentum_byte_identical": "test_momentum_plan_market_data_policy_is_byte_identical_to_legacy_derivation compares serialized policy to the legacy expression",
+  "integration_scope_note": "Deployment owner is the real DeploymentPlannerService (real approval verification) and dispatch is the real dispatch_to_runtime_manager adapter; Registry/Governance/Capital state and the runtime-manager client remain the provisioning transport / single-runtime fake"
+}
