@@ -115,7 +115,11 @@ OpenAI-compatible endpoint `POST /internal/memory-llm/v1/chat/completions`,
 which always runs the OpenClaw agent `memory-index` (tools deny `*`, exec
 security deny) whatever model name is sent.
 
-- Off by default: adapter `MEMORY_LLM_BRIDGE_ENABLED=false`, Hindsight providers `none`.
+- Off by default: adapter `MEMORY_LLM_BRIDGE_ENABLED=false`, Hindsight providers `none`. The same
+  `MEMORY_LLM_BRIDGE_ENABLED` also starts Hindsight's worker and sets the memory service's
+  `PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED`; the memory service then switches each bank to verbatim
+  retain + consolidation and serves persona standing questions (`MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114`).
+  Compose still ships chunks mode and no consolidation as the Hindsight-level defaults.
 - Enable: set `MEMORY_LLM_BRIDGE_ENABLED=true`, a random `MEMORY_LLM_BRIDGE_TOKEN`
   (a dedicated token; it is the only credential Hindsight receives, never the
   gateway token), `HINDSIGHT_LLM_BRIDGE_BASE_URL=http://openclaw-gateway-adapter:8104/internal/memory-llm/v1`,

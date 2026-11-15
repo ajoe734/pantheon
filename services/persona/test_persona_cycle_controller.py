@@ -886,3 +886,62 @@ def test_lesson_steps_that_cannot_run_are_recorded_and_never_fail_the_cycle(syst
     assert cycle["lesson_governance"]["status"] == "unavailable" and cycle["lesson_governance"]["reason"]
     assert cycle["lesson_staging"][0]["status"] == "not_staged" and cycle["lesson_staging"][0]["reason"]
     assert result["personas"]["persona-cycle-test"]["lessons"]["governance"] == "unavailable"
+
+
+def _cycle_with_memory_double(system, monkeypatch, memory):
+    from services.persona.lesson_cycle import LessonCycle
+    controller, gateway, _owner, _ = system
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "controller-test-secret")
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.test")
+    controller.lesson_cycle = LessonCycle(turn_runner=controller.turn_runner, registrar=_LessonRegistrar(), http=memory)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    return next(iter(read_packets(controller.path).values()))["persona_cycle"]
+
+
+def test_daily_cycle_declares_one_question_per_pool_family_and_risk_lessons_without_regime(system, monkeypatch):
+    sent = []
+
+    def memory(method, url, headers, body):
+        if method == "PUT":
+            sent.append((url, headers, body))
+            return 200, {"created": ["risk_lessons"], "updated": [], "unchanged": [], "retired": ["family:old"]}
+        return 200, {"candidates": []}
+
+    cycle = _cycle_with_memory_double(system, monkeypatch, memory)
+    assert cycle["failure_reason"] is None
+    assert len(sent) == 1
+    url, headers, body = sent[0]
+    assert url == "http://memory.test/api/memory/persona-standing-questions"
+    assert headers["Authorization"].startswith("Bearer ") and headers["X-Tenant-Id"]
+    families = cycle["observe_bundle"]["cycle_subject"]["families"]
+    keys = [q["key"] for q in body["questions"]]
+    assert keys == [f"family:{f}" for f in sorted(families)] + ["risk_lessons"]
+    assert not any("regime" in k for k in keys) and body["persona_id"]
+    assert cycle["standing_questions"]["status"] == "declared" and cycle["standing_questions"]["retired"] == ["family:old"]
+    # The declaration is deterministic: the same pool yields byte-identical questions.
+    controller = system[0]
+    assert controller.standing_questions(families) == body["questions"]
+
+
+@pytest.mark.parametrize("response,status,reason", [
+    ((503, {"detail": {"reason": "llm_layers_disabled"}}), "not_run", "llm_layers_disabled"),
+    ((503, {"detail": {"reason": "hindsight_unreachable"}}), "unavailable", "hindsight_unreachable"),
+    ((403, None), "unavailable", "http_403"),
+])
+def test_standing_question_declaration_failure_never_fails_the_cycle(system, monkeypatch, response, status, reason):
+    def memory(method, url, headers, body):
+        return response if method == "PUT" else (200, {"candidates": []})
+
+    cycle = _cycle_with_memory_double(system, monkeypatch, memory)
+    assert cycle["failure_reason"] is None
+    assert cycle["standing_questions"] == {"status": status, "reason": reason}
+
+
+def test_standing_questions_not_declared_without_pool_families(system):
+    controller = system[0]
+    assert controller._declare_standing_questions({"tenant_id": "t", "persona_id": "p"}, {}) == {
+        "status": "not_run", "reason": "pool_families_unavailable"}
+    assert controller.standing_questions([]) == [q for q in controller.standing_questions([]) if q["key"] == "risk_lessons"]
+    assert [q["key"] for q in controller.standing_questions(["Momentum", "momentum", " "])] == ["family:momentum", "risk_lessons"]
