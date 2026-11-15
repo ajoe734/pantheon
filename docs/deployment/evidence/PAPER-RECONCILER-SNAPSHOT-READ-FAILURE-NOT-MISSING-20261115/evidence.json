@@ -7,11 +7,11 @@
     "sample": "04:19:04 timed out -> pausing rb-3823397e (market_input_missing) -> 04:19:07 resuming with mss-e69f16dcf2b6dc64a11733a7",
     "cause": "5s read timeout during ~30s source-ingest steady pull; transport failure treated as no snapshot"
   },
-  "change": "transport failure raises SourceSnapshotUnavailable; admission uses last successfully read per-symbol snapshot under unchanged rules; no cache/stale -> pause (fail-closed); paused bindings never resumed on unavailable read; warning log + per-symbol consecutive count in status (market_input_unavailable_counts, last_error)",
+  "change": "transport failure (timeout, URLError, HTTP 5xx, invalid JSON) raises SourceSnapshotUnavailable, HTTP 4xx incl. 404 market_snapshot_not_found returns None (real no-snapshot); admission uses last successfully read per-symbol snapshot under unchanged rules; no cache/stale -> pause (fail-closed); paused bindings never resumed on unavailable read; warning log + per-symbol consecutive count in status (market_input_unavailable_counts, last_error)",
   "unchanged": ["admission thresholds", "5s read timeout"],
   "local_test": {
     "command": "python3 -m unittest services.paper_fleet_reconciler.test_paper_fleet_reconciler",
-    "result": "Ran 89 tests, 0 failures, 2 errors (ModuleNotFoundError: flask; identical on base commit: 83 tests, same 2 errors), 1 skipped",
-    "new_tests": "TestPaperFleetSourceSnapshotReadUnavailable (6 tests) all pass"
+    "result": "Ran 91 tests, 0 failures, 2 errors (ModuleNotFoundError: flask; identical on base commit: 83 tests, same 2 errors), 1 skipped",
+    "new_tests": "TestPaperFleetSourceSnapshotReadUnavailable (8 tests incl. real HTTP 404 -> market_input_missing with cache, 5xx -> unavailable) all pass"
   }
 }

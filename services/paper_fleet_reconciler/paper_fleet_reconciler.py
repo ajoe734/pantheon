@@ -57,6 +57,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -1884,9 +1887,6 @@ class PaperFleetReconciler:
         if not self._source_ingest_url or not symbol:
             return None
         try:
-            import urllib.parse
-            import urllib.request
-
             url = (
                 f"{self._source_ingest_url}/api/source-ingest/snapshots/latest"
                 f"?symbol={urllib.parse.quote(symbol, safe='')}"
@@ -1899,6 +1899,16 @@ class PaperFleetReconciler:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return payload if isinstance(payload, dict) else None
+        except urllib.error.HTTPError as exc:
+            # 4xx (e.g. 404 market_snapshot_not_found) is Source's real
+            # "no snapshot" answer; only 5xx is a transport failure.
+            if 400 <= exc.code < 500:
+                log.info(
+                    "Source has no stored snapshot for %s (HTTP %s)", symbol, exc.code
+                )
+                return None
+            log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
+            raise SourceSnapshotUnavailable(symbol, exc) from exc
         except Exception as exc:  # noqa: BLE001
             log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
             raise SourceSnapshotUnavailable(symbol, exc) from exc

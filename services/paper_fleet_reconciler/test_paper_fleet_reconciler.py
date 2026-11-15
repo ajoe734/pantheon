@@ -2615,6 +2615,30 @@ class TestPaperFleetSourceSnapshotReadUnavailable(unittest.TestCase):
         self.assertEqual(saved.status, "paused")
         self.assertEqual(saved.metadata["session_admission"]["reason_code"], "market_input_missing")
 
+    def test_real_http_404_pauses_market_input_missing_even_with_cache(self) -> None:
+        import io
+        import urllib.error
+        store, recon = self._recon(self._binding("b-unavail-404"))
+        recon._source_snapshot_cache["AAPL.US"] = self._snap()
+        err = urllib.error.HTTPError(
+            "http://x", 404, "not found", {}, io.BytesIO(b'{"detail":"market_snapshot_not_found"}')
+        )
+        with patch("urllib.request.urlopen", side_effect=err):
+            recon.reconcile_once()
+        saved = store.get("b-unavail-404")
+        self.assertEqual(saved.status, "paused")
+        self.assertEqual(saved.metadata["session_admission"]["reason_code"], "market_input_missing")
+
+    def test_http_5xx_is_unavailable(self) -> None:
+        import io
+        import urllib.error
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import SourceSnapshotUnavailable
+        _, recon = self._recon(self._binding("b-unavail-503"))
+        err = urllib.error.HTTPError("http://x", 503, "busy", {}, io.BytesIO(b""))
+        with patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(SourceSnapshotUnavailable):
+                recon._fetch_source_snapshot("AAPL.US")
+
     def test_paused_binding_with_timeout_stays_paused(self) -> None:
         now = datetime.now(timezone.utc)
         b = self._binding(
