@@ -226,19 +226,19 @@
   },
   "validation": [
     {
-      "command": "/tmp/hc-venv/bin/python -m pytest -q deploy/collector/tests/test_tw_suspension_holidays.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/collector/tests/test_tw_suspension_holidays.py",
       "exit_status": 0,
-      "result": "10 passed in 1.47s"
+      "result": "10 passed in 1.65s"
     },
     {
-      "command": "/tmp/hc-venv/bin/python -m pytest -q deploy/collector",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q deploy/collector",
       "exit_status": 0,
-      "result": "261 passed, 2 skipped in 12.99s"
+      "result": "261 passed, 2 skipped in 23.58s"
     },
     {
-      "command": "/tmp/hc-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_feature_catalogue.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_feature_catalogue.py",
       "exit_status": 0,
-      "result": "98 passed, 1 skipped in 6.25s"
+      "result": "100 passed, 1 skipped in 14.00s"
     }
   ]
 }
