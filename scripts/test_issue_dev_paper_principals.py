@@ -454,3 +454,45 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     assert "dev-paper-research-tokens" in compose["volumes"]
     training_env = compose["services"]["training-session-svc"]["environment"]
     assert "research-orchestrator" in training_env["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"].split(":-", 1)[1].rstrip("}").split(",")
+
+
+def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_mounted():
+    values = issue_environment(configured(), now=NOW)
+    expected_persona_files = {
+        "PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_SOURCE_READ_TOKEN",
+        "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_EVOLUTION_SERVICE_TOKEN",
+        "PERSONA_CONSULTATION_SERVICE_TOKEN",
+        "LESSON_RULE_PROPOSER_TOKEN",
+        "PERSONA_SEARCH_SERVICE_TOKEN",
+    }
+    assert set(CONSUMER_FILES["persona"]) == expected_persona_files
+    jti_by_var = {}
+    for var in expected_persona_files:
+        claims = verify(values[var])
+        assert claims["tenant_id"] == "tenant-dev"
+        assert claims["allowed_tenants"] == ["tenant-dev"]
+        assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+        assert values[var + "_FILE"] == f"/run/pantheon-principals/{var}"
+        jti_by_var[var] = claims["jti"]
+    # No credential is shared across owners.
+    assert len(set(jti_by_var.values())) == len(expected_persona_files)
+
+    search_claims = verify(values["PERSONA_SEARCH_SERVICE_TOKEN"])
+    assert search_claims["sub"] == "persona_cycle_controller"
+    assert search_claims["roles"] == ["researcher", "persona_session"]
+    assert search_claims["access_scopes"] == ["operator", "research", "public"]
+
+    memory_claims = verify(values["PERSONA_MEMORY_SERVICE_TOKEN"])
+    assert memory_claims["sub"] == "persona_cycle_controller"
+    assert memory_claims["roles"] == ["persona_session"]
+    assert memory_claims["scope"] == "pantheon:dev-owner-write"
+
+    proposer_claims = verify(values["LESSON_RULE_PROPOSER_TOKEN"])
+    assert proposer_claims["sub"] == "persona-svc"
+    assert proposer_claims["roles"] == ["approval_proposer"]
+    assert proposer_claims["scope"] == "pantheon:dev-owner-write"
+
