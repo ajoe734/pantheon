@@ -121,11 +121,12 @@ def test_two_member_same_symbol_pool_publishes_with_member_maximum(real_world, m
     assert len(route._live(world)) == 1
 
 
-def test_multi_symbol_pool_is_refused_with_named_reason_surfaced(real_world, monkeypatch, tmp_path):
+def test_multi_symbol_pool_publishes_and_declares_every_symbol(real_world, monkeypatch, tmp_path):
     world = real_world
     client = route._client(world, monkeypatch, tmp_path)
     world.append([world.member("artifact-a", 0.5), world.member("artifact-b", 0.5)], 0)
     response = client.post(route.PATH, json={}, headers=route.H)
-    assert response.status_code >= 400, response.text
-    assert "multi_symbol_paper_plan_unsupported" in response.text
-    assert world.runtime.calls == ["deploy"]  # previous envelope keeps running
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "published"
+    plan = world.transport.real_plans.plan_store.get(world.transport.real_plan_calls[-1])
+    assert len(plan.metadata["symbols"]) > 1 and "symbol" not in plan.metadata

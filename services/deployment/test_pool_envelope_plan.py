@@ -1,4 +1,4 @@
-"""create_plan accepts pool envelopes for paper; multi-symbol is refused by name."""
+"""create_plan accepts pool envelopes for paper, including multi-symbol (binding.metadata.symbols)."""
 import copy
 import json
 
@@ -61,10 +61,35 @@ def test_two_member_same_symbol_envelope_uses_member_maximum(client):
     assert response.json()["metadata"]["market_data_policy"]["minimum_closes"] == 12
 
 
-def test_multi_symbol_envelope_is_refused_with_named_reason_and_not_persisted(client):
+def test_multi_symbol_envelope_plan_is_accepted_and_declares_every_symbol(client):
     test_client, governance_dir = client
-    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 0.5), (["2317.TW"], 5, 0.5)])
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 0.5), (["2317.TW"], 8, 0.5)])
     response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-env-3"))
+    assert response.status_code == 201, response.text
+    md = response.json()["metadata"]
+    assert md["symbols"] == ["2317.TW", "2330.TW"]  # the envelope declares them sorted
+    assert "symbol" not in md  # no single symbol is invented
+    assert md["market_data_policy"]["minimum_closes"] == 8
+    assert test_client.get("/api/deployment/plans/plan-env-3").status_code == 200
+
+
+def test_single_symbol_plan_keeps_symbol_and_never_emits_symbols(client):
+    test_client, governance_dir = client
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    md = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-env-4")).json()["metadata"]
+    assert md["symbol"] == "2330.TW" and "symbols" not in md
+
+
+def test_duplicate_symbols_are_refused_and_not_persisted(client):
+    test_client, governance_dir = client
+    env = _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    entries = json.loads(test_client.registry_snapshot.read_text())
+    reg = next(iter(entries.values()))
+    env["parameters"]["symbols"] = ["2330.TW", "2330.TW"]
+    env2 = json.loads(json.dumps(env))
+    reg["metadata"] = {"strategy_artifact": env2}
+    reg["checksum"] = strategy_artifact_checksum(env2)
+    test_client.registry_snapshot.write_text(json.dumps(entries))
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-env-5"))
     assert response.status_code == 422, response.text
-    assert "multi_symbol_paper_plan_unsupported" in response.text
-    assert test_client.get("/api/deployment/plans/plan-env-3").status_code == 404
+    assert test_client.get("/api/deployment/plans/plan-env-5").status_code == 404

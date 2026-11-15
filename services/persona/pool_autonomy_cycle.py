@@ -13,6 +13,12 @@ every action goes through an existing owner route, paper only:
                    answer queues an operator decision (evolution proposal) instead.
   reweight/remove  persona owner   POST .../strategy-pool/decisions (reweight; the
                                    owner removes members past its drawdown rule)
+  publish          after the act step, an applied pool version that changes live membership, a stage or a
+                   weight beyond the policy tolerance is published through the BFF publish route (the
+                   existing publisher + owner chain); a membership change proceeds only with the verified
+                   envelope_publication memo. An unchanged re-weight publishes nothing; a failed publish is
+                   recorded on the cycle record and retried by the next cycle (compared with the last
+                   confirmed publication).
   propose_mutate   evolution owner proposal (same builder as the pool scheduler)
   propose_widen    staged only: no permitted-universe owner exists yet, so no
                    authority to widen is inferred
@@ -30,6 +36,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+from services.persona.pool_publish_port import PoolPublishPort
 
 DECISIONS = ("open_demand", "admit_trial", "reweight", "remove", "propose_mutate", "propose_widen", "no_action")
 MEASURE_BY_REASON = {"low_risk_budget_utilisation": "gross_utilisation",
@@ -137,6 +145,8 @@ class PoolAutonomyCycle:
         receipts, learned = self._act(persona, pool, observe, health, decision, tried, packet_id)
         # Discovery: each open demand drives the existing persona strategy discovery (design 6.6)
         discovery = self._discover(persona, pool)
+        # Publish: every applied pool version that changes what runs goes through the owner chain (R6).
+        publication = self._publish(persona, packet_id)
         # Learn
         self._learn(persona, learned, packet_id, memory_errors)
         learned = pre_learned + learned
@@ -144,7 +154,7 @@ class PoolAutonomyCycle:
                 "health": health}, "orient": orient,
                 "decide": {k: v for k, v in decision.items() if k not in ("candidate", "member")}
                          | ({"candidate_ref": decision["candidate"]["artifact_ref"]} if "candidate" in decision else {}),
-                "act": {"receipts": receipts, "paper_only": True, "discovery": discovery}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
+                "act": {"receipts": receipts, "paper_only": True, "discovery": discovery, "publication": publication}, "learn": {"memory_entries": [e["outcome"] for e in learned], "memory_write_errors": memory_errors,
                 "tried_families": sorted({e["family"] for e in learned if e.get("family") and e["outcome"] in TRIED_OUTCOMES})}}
 
     def _discover(self, persona, pool) -> list[dict[str, Any]]:
@@ -199,6 +209,42 @@ class PoolAutonomyCycle:
             return {**base, **self.ports.execute_match_action(persona, demand, match)}
         except Exception as exc:  # noqa: BLE001 - the owner refused or was down: record, do not retry blindly
             return {**base, "status": "failed", "reason": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _publish(self, persona, packet_id) -> dict[str, Any]:
+        """Publish the owner's current pool version when it changes what runs; never raises.
+
+        Compared with the newest *confirmed* publication, so an unchanged daily re-weight publishes
+        nothing and a failed or unconfirmed publish is retried by the next cycle. A change of live
+        membership proceeds only with the verified envelope_publication memo.
+        """
+        ports = self.ports
+        if not hasattr(ports, "publish_pool") or not hasattr(ports, "publication_state"):
+            return {"status": "not_attempted", "reason": "publish_port_unconfigured"}
+        try:
+            from services.control_plane.persona.pool_policy import last_published, load_policy, publication_change
+
+            pool = ports.current_pool(persona)
+            change = publication_change(last_published(ports.publication_state(persona)), pool, load_policy())
+        except Exception as exc:  # noqa: BLE001 - unreadable state is reported, retried next cycle
+            return {"status": "failed", "step": "compare", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        base = {"pool_version": pool["pool_version"], "reasons": change["reasons"]}
+        if not change["changed"]:
+            return {**base, "status": "unchanged"}
+        try:
+            if change["membership_changed"]:
+                consult = ports.envelope_publication_consultation(persona, pool, packet_id)
+                if consult["state"] != "verified":
+                    reason = consult.get("reason") or "consultation_" + consult["state"]
+                    return {**base, "status": "consultation_" + consult["state"], "reason": reason,
+                            "request_id": consult.get("request_id"), "decision_id": consult.get("decision_id")}
+                base["consultation_memo_id"] = consult["memo_id"]
+            receipt = ports.publish_pool(persona, pool["pool_version"])
+        except Exception as exc:  # noqa: BLE001 - the previous envelope keeps running; the next cycle retries
+            return {**base, "status": "failed", "step": "publish", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        status = receipt.get("status")
+        return {**base, "status": "published" if status == "published" else "unconfirmed",
+                "envelope_artifact_id": receipt.get("envelope_artifact_id"),
+                "deployment_plan_id": receipt.get("deployment_plan_id"), "note": receipt.get("note")}
 
     def _learn(self, persona, entries, packet_id, errors):
         for entry in entries:
@@ -331,6 +377,10 @@ class PoolAutonomyCycle:
 def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
     """Fill the persona's daily OODA record with the pool cycle's real content."""
     packet["pool_autonomy"] = dict(result)
+    publication = (result.get("act") or {}).get("publication") or {}
+    if publication.get("status") in ("failed", "unconfirmed"):
+        packet["audit_refs"].append(
+            f"pool-publication:{publication['status']}:{publication.get('reason') or publication.get('note')}"[:300])
     if result.get("status") != "completed":
         packet["audit_refs"].append(f"pool-autonomy:{result.get('status')}:{result.get('reason')}"[:300])
         return
@@ -408,19 +458,21 @@ def governed_discovery_loader(*, seeds: Callable[[Mapping], list], specs: Callab
     return load
 
 
-class HttpPoolCyclePorts:
+class HttpPoolCyclePorts(PoolPublishPort):
     """Owner HTTP ports. ``transport(method, service, path, tenant, body)`` is the only I/O."""
 
     SERVICE_URL_ENV = {"persona": ("PERSONA_API_URL", "http://persona:8002"),
                        "research": ("RESEARCH_API_URL", "http://research-orchestrator:8100"),
                        "memory": ("MEMORY_API_URL", "http://memory:8086"),
                        "evolution": ("EVOLUTION_API_URL", "http://evolution:8093"),
-                       "registry": ("REGISTRY_URL", "http://registry:8087")}
+                       "registry": ("REGISTRY_URL", "http://registry:8087"),
+                       "bff": ("PANTHEON_BFF_URL", "http://operator-bff:8001")}
 
     # Owner-specific credentials already configured for the persona service; the
     # persona owner itself is called in-process through ``pool_store`` (no self-HTTP).
     TOKEN_VARIABLE = {"research": "PERSONA_RESEARCH_SERVICE_TOKEN", "memory": "PANTHEON_MEMORY_AUTH_TOKEN",
-                      "evolution": "EVOLUTION_AUTH_TOKEN", "registry": "PERSONA_REGISTRY_SERVICE_TOKEN"}
+                      "evolution": "EVOLUTION_AUTH_TOKEN", "registry": "PERSONA_REGISTRY_SERVICE_TOKEN",
+                      "bff": "PERSONA_POOL_PUBLISH_BFF_TOKEN"}
 
     def __init__(self, transport: Callable[..., Any] | None = None, *, pool_store: Any = None,
                  dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None,

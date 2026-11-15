@@ -3593,6 +3593,43 @@ def ensure_persona_opinion_agent(
     return JSONResponse(status_code=status_code, content=payload)
 
 
+@app.post("/api/openclaw-adapter/shadow-replay/agent/ensure")
+def ensure_shadow_replay_agent_route() -> JSONResponse:
+    """Ensure the one deny-all agent used by harness shadow replay."""
+
+    from shadow_replay_provisioning import ShadowReplayProvisioningError, ensure_shadow_replay_agent
+
+    try:
+        result = ensure_shadow_replay_agent(
+            _OPENCLAW_AGENT_PROVIDER,
+            policy=_PERSONA_OPINION_RUNTIME_POLICY,
+            workspace_root=_OPENCLAW_AGENT_WORKSPACE_ROOT,
+        )
+    except ShadowReplayProvisioningError as exc:
+        return JSONResponse(status_code=503, content={"status": "blocked", "message": str(exc)})
+    except Exception:  # noqa: BLE001 - never echo gateway payloads
+        return JSONResponse(status_code=503, content={"status": "blocked", "message": "replay agent ensure failed"})
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.get("/api/openclaw-adapter/shadow-replay/policy/{agent_id}")
+def shadow_replay_policy_route(agent_id: str) -> JSONResponse:
+    """Live deny-all probe consumed by the persona owner before any replay turn."""
+
+    from shadow_replay_provisioning import (
+        ShadowReplayProvisioningError, replay_agent_id, shadow_replay_policy,
+    )
+
+    if agent_id != replay_agent_id():
+        return JSONResponse(status_code=404, content={"status": "unknown_replay_agent"})
+    try:
+        return JSONResponse(status_code=200, content=shadow_replay_policy(_OPENCLAW_AGENT_PROVIDER, agent_id))
+    except ShadowReplayProvisioningError as exc:
+        return JSONResponse(status_code=503, content={"status": "blocked", "message": str(exc)})
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"status": "blocked", "message": "replay policy probe failed"})
+
+
 # ---------------------------------------------------------------------------
 # Session metadata facade
 # ---------------------------------------------------------------------------

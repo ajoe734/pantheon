@@ -830,6 +830,23 @@ from services.persona.lesson_governance import MemoryLessonRegistrar
 
 EP_A, EP_B, EP_C = (str(uuid.uuid4()) for _ in range(3))
 
+# The trade journal owner as seen by memory: only this table is ever consulted, never the caller's payload.
+JOURNAL: dict = {}
+_REAL_READ_JOURNAL_EPISODE = main._read_journal_episode
+
+
+@pytest.fixture(autouse=True)
+def _journal(monkeypatch):
+    JOURNAL.clear()
+
+    def read(episode_id: str, tenant_id: str):
+        row = JOURNAL.get(episode_id)
+        return dict(row) if row and row.get("tenant_id") == tenant_id else None
+
+    monkeypatch.setattr(main, "_read_journal_episode", read)
+    yield
+    JOURNAL.clear()
+
 
 class _LessonProvider:
     name = "mock-openclaw"
@@ -860,6 +877,7 @@ def _bridge(memory_client: TestClient):
 def _run_reflection(monkeypatch, tmp_path, client: TestClient, lessons: list[dict], episode_id: str = EP_A):
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", _reflection_tests.JWT_SECRET)
     telemetry = {episode_id: {"trade_episode_id": episode_id, "persona_id": "p-alpha", "tenant_id": "tenant-1", "status": "closed", "realized_pnl": 1.0}}
+    JOURNAL.update(telemetry)
     _unused, _owner, _ = _reflection_tests._setup_app(str(tmp_path), monkeypatch, provider=_LessonProvider(lessons), telemetry_data=telemetry)
     # rebuild the persona app with the real registrar wired to the memory app
     from services.persona.write_owner import create_app
@@ -902,9 +920,10 @@ def test_reflection_to_registered_candidate_to_endorsement_to_merged_memory(clie
     # self review, non-risk reviewer refused at record time; fabricated / rejecting reviews refused at endorse time
     assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(actor="p-alpha")).status_code == 403
     assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(roles=("operator",))).status_code == 403
-    rejected = _record_review(client, cid, verdict="reject")
-    for bad in ({"review_id": str(uuid.uuid4())}, {"review_id": rejected["review_id"]}):
+    for bad in ({"review_id": str(uuid.uuid4())}, {"review_id": ""}):
         assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": bad}, headers=auth).status_code == 422
+    # supporting episodes are never accepted from the caller
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": {"review_id": "x"}, "episodes": []}, headers=auth).status_code == 422
     review = _record_review(client, cid)
     done = client.post(f"/api/memory/trade-lessons/{cand['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth)
     assert done.status_code == 200, done.text
@@ -964,10 +983,14 @@ def test_pattern_gate_ignores_unrelated_episodes(client):
     token = encode_jwt_hs256({"sub": "p-risk", "roles": ["operator", "risk"], "tenant_id": "tenant-alpha", "exp": 4102444800}, secret=JWT_SECRET)
     review = client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers={"Authorization": f"Bearer {token}"}).json()
     ep = lambda i, tenant, persona, regime: {"trade_episode_id": i, "tenant_id": tenant, "persona_id": persona, "regime": regime}
-    unrelated = [ep("x1", "tenant-alpha", payload["persona_id"], "bull"), ep(ids[0], "foreign", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", "other", "bear"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bear")]
-    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": unrelated}).status_code == 422
-    good = [ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")]
-    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": good})
+    JOURNAL.update({i: e for i, e in zip(ids, (ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", "other", "bear"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bull")))})
+    # a journal episode of another persona is refused outright (never counted)
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}).status_code == 422
+    # all one regime: the cross-regime gate refuses
+    JOURNAL[ids[1]] = ep(ids[1], "tenant-alpha", payload["persona_id"], "bull")
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}).status_code == 422
+    JOURNAL[ids[1]] = ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")
+    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review})
     assert done.status_code == 200 and done.json()["review_state"] == "merged"
 
 
@@ -979,7 +1002,7 @@ def test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates(client, tmp_
     for cand in client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]:
         cid = cand["lesson_candidate_id"]
         review = _record_review(client, cid)
-        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": []}, headers=auth)
+        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=auth)
         assert resp.status_code == 422, resp.text
         assert client.get(f"/api/memory/trade-lessons/{cid}", headers=auth).json()["review_state"] != "merged"
         assert main._persona_store().get(f"pmem-lesson-{cid}") is None
@@ -1015,3 +1038,92 @@ def test_registrar_service_path_fails_closed_without_secret(monkeypatch):
     with pytest.raises(RuntimeError):
         MemoryLessonRegistrar("http://memory.test", urlopen_fn=lambda *a, **k: None).register(
             [{"lesson_candidate_id": "x", "tenant_id": "t"}], "Bearer opaque")
+
+
+# --- paper endorsement callers (TRADE-LESSON-LOOP-CALLERS-20261115) ---------------------------
+
+def _persona_svc_auth(tenant="tenant-1") -> dict:
+    token = encode_jwt_hs256({"sub": "persona-service", "roles": ["persona-svc"], "tenant_id": tenant, "exp": 4102444800}, secret=_reflection_tests.JWT_SECRET)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _journal_candidate(client, monkeypatch, tmp_path, lessons=None):
+    _run_reflection(monkeypatch, tmp_path, client, lessons or [{"scope": "execution", "proposed_change": "enter on pullbacks", "confidence": 0.8}])
+    return client.get("/api/memory/trade-lessons", headers=_memory_auth(client)).json()["candidates"][0]
+
+
+def test_persona_service_endorses_paper_lessons_on_a_recorded_risk_review_without_operator_roles(client, tmp_path, monkeypatch):
+    cand = _journal_candidate(client, monkeypatch, tmp_path)
+    cid, svc = cand["lesson_candidate_id"], _persona_svc_auth()
+    assert client.get("/api/memory/trade-lessons", headers=svc).json()["count"] == 1  # lists its own tenant's candidates
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": {"review_id": str(uuid.uuid4())}}, headers=svc).status_code == 422
+    # the service principal cannot use the other governance routes
+    assert client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=svc, json={"action": "endorse", "operator_id": "persona-service", "reason": "x", "audit_receipt_id": str(uuid.uuid4())}).status_code == 403
+    review = _record_review(client, cid)
+    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=svc)
+    assert done.status_code == 200 and done.json()["review_state"] == "merged"
+    entry = main._persona_store().get(f"pmem-lesson-{cid}")
+    assert {"strategy_lesson", "execution", "p-alpha"} <= set(entry.content["tags"])
+
+
+def test_merged_lesson_carries_the_journal_family_and_underlying_tags(client, tmp_path, monkeypatch):
+    cand = _journal_candidate(client, monkeypatch, tmp_path)
+    JOURNAL[EP_A] = {**JOURNAL[EP_A], "strategy_id": "Trend", "instrument_id": "2330.TW"}
+    cid = cand["lesson_candidate_id"]
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": _record_review(client, cid)}, headers=_persona_svc_auth()).status_code == 200
+    tags = main._persona_store().get(f"pmem-lesson-{cid}").content["tags"]
+    assert "family:trend" in tags and "underlying:2330" in tags
+
+
+def test_risk_persona_rejection_is_the_terminal_paper_decision(client, tmp_path, monkeypatch):
+    cand = _journal_candidate(client, monkeypatch, tmp_path)
+    cid = cand["lesson_candidate_id"]
+    rejected = _record_review(client, cid, verdict="reject")
+    stored = client.get(f"/api/memory/trade-lessons/{cid}", headers=_memory_auth(client)).json()
+    assert stored["review_state"] == "rejected" and rejected["review_id"] in stored["receipt"]["reason"]
+    again = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": rejected}, headers=_persona_svc_auth())
+    assert again.status_code == 422 and main._persona_store().get(f"pmem-lesson-{cid}") is None
+
+
+def test_supporting_episodes_come_only_from_the_journal_owner_and_fail_closed(client, tmp_path, monkeypatch):
+    cand = _journal_candidate(client, monkeypatch, tmp_path)
+    cid, svc = cand["lesson_candidate_id"], _persona_svc_auth()
+    review = _record_review(client, cid)
+    # a caller-supplied episode list is refused outright
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": [JOURNAL[EP_A]]}, headers=svc).status_code == 422
+    # journal has no such episode
+    saved = JOURNAL.pop(EP_A)
+    missing = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=svc)
+    assert missing.status_code == 422 and missing.json()["detail"]["error"] == "supporting_episode_not_found"
+    # another persona's episode never supports this lesson
+    JOURNAL[EP_A] = {**saved, "persona_id": "p-other"}
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=svc).json()["detail"]["error"] == "supporting_episode_foreign"
+    # journal owner unreachable / unconfigured: 503 with the reason, candidate untouched
+    def down(episode_id, tenant_id):
+        raise RuntimeError("trade journal owner is not configured")
+    monkeypatch.setattr(main, "_read_journal_episode", down)
+    unavailable = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=svc)
+    assert unavailable.status_code == 503 and unavailable.json()["detail"]["error"] == "supporting_episodes_unavailable"
+    assert client.get(f"/api/memory/trade-lessons/{cid}", headers=_memory_auth(client)).json()["review_state"] == "proposed"
+
+
+def test_journal_reader_calls_the_owner_with_the_service_credential(monkeypatch):
+    seen = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps({"trade_episode_id": "e1"}).encode()
+
+    def fake(request, timeout=None):
+        seen.update(url=request.full_url, auth=request.get_header("Authorization"), tenant=request.get_header("X-tenant-id"))
+        return Response()
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.test/")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "svc-token")
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake)
+    assert _REAL_READ_JOURNAL_EPISODE("e1", "tenant-1") == {"trade_episode_id": "e1"}
+    assert seen == {"url": "http://telemetry.test/api/telemetry/trade-episodes/e1", "auth": "Bearer svc-token", "tenant": "tenant-1"}
+    monkeypatch.delenv("PANTHEON_TELEMETRY_SERVICE_TOKEN")
+    with pytest.raises(RuntimeError, match="not configured"):
+        _REAL_READ_JOURNAL_EPISODE("e1", "tenant-1")

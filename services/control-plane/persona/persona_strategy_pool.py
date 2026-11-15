@@ -597,7 +597,8 @@ class PersonaStrategyPoolStore:
                     for v in reversed(self.versions(persona_id, tenant_id))
                     if "member_statistics" in (v.get("decision") or {})), {})
                 members, stats = reweight(members, request.books, policy, now, previous_stats)
-                decision.update(status="applied", member_statistics=stats)
+                decision.update(status="applied", member_statistics=stats,
+                                trial_promotions=self._promote_trials(members, stats, policy, persona_id, tenant_id))
             else:
                 candidate = request.candidate
                 if candidate is None:
@@ -697,6 +698,33 @@ class PersonaStrategyPoolStore:
             expected_version=request.expected_version, members=[PoolMember.model_validate(m) for m in members],
             change_reason=f"paper pool {request.action}: {decision['status']}; " + "; ".join(decision["reasons"])),
             actor_id=actor_id, decision=decision)
+
+    def _promote_trials(self, members, stats, policy, persona_id, tenant_id):
+        """Trial -> active at a re-weight (coordinator-proposed condition in the policy file).
+
+        The member's own virtual book and drawdown come from the re-weight statistics; its
+        approved baseline must still resolve through the registry owner. Anything else keeps
+        the member a trial (or the existing removal rule already removed it) with the reason.
+        """
+        from pool_policy import promotion_verdict
+        from services.evolution.approved_baselines import resolve_member_baseline
+
+        outcomes = []
+        for member in members:
+            if member["stage"] != "trial" or member["artifact_ref"] not in stats:
+                continue
+            ref = member["artifact_ref"]
+            verdict = promotion_verdict(member, stats[ref], policy)
+            if verdict["eligible"]:
+                baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=persona_id, artifact_ref=ref,
+                    checksum=member["checksum"], entry=self._reader(ref, tenant_id))
+                if baseline["status"] != "approved":
+                    verdict = {"eligible": False, "reason": "baseline_not_resolved:" + str(baseline["reason"])}
+            if verdict["eligible"]:
+                member["stage"] = "active"
+            outcomes.append({"artifact_ref": ref, "promoted": verdict["eligible"], "reason": verdict["reason"],
+                             "days": stats[ref]["days"], "drawdown": stats[ref]["drawdown"]})
+        return outcomes
 
     def _record_refusal(
         self,

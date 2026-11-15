@@ -1,0 +1,31 @@
+{
+  "task_id": "SOURCE-INGEST-STEADY-PULL-DLQ-DELTA-GATE-20261115",
+  "hosted_before": {
+    "deployed_revision": "94b73806a",
+    "window_start": "2026-11-15T07:28Z",
+    "ok_ticks": 17,
+    "failed_ticks": 15,
+    "failed_ticks_with_dead_letter_error": 14,
+    "error": "authoritative source readback has 14 unresolved dead-letter entrie(s) in selected connector scope",
+    "collector-tw-tpex-price-history": {"pending": 14, "rejected_window": "06:19Z-07:09Z", "new_after_07:28Z": 0}
+  },
+  "change": {
+    "file": "services/source_ingestion/controller_worker.py",
+    "summary": "steady-pull passes the per-connector unresolved DLQ counts from the tick's pre-pull readback to _validate_terminal_readback; tick fails only if a selected connector's count rose. Bounded/reconcile_and_pull pass None and keep the absolute rule. Scoped-count validation is unchanged. Success payload actual_readback carries pre_existing_unresolved_dlq_by_connector and pre_existing_unresolved_dlq_count. If the pre readback lacks dlq_status_counts_by_connector the absolute rule applies."
+  },
+  "tests": {
+    "venv": "/tmp/venv-acip/bin/python",
+    "commands": [
+      "python -m pytest services/source_ingestion/tests/test_controller_worker.py -q -p no:cacheprovider",
+      "per-file pytest of every services/source_ingestion/test_*.py and tests/test_*.py (91 files, xargs -P6, each bounded 500s)"
+    ],
+    "results": "90 of 91 files pass (incl. test_controller_worker.py with 4 new tests). test_finmind_broker_backfill.py fails 9 tests only because pyarrow is not installed in the local venv (unrelated to this change, untouched). A single serial full-suite run exceeds the 590s tool bound, hence per-file batches.",
+    "new_tests": [
+      "test_steady_dlq_gate_accepts_preexisting_entries_and_reports_them",
+      "test_steady_dlq_gate_rejects_new_entry_over_backlog",
+      "test_bounded_mode_still_rejects_preexisting_entries",
+      "test_steady_dlq_gate_still_rejects_contradictory_scoped_counts"
+    ]
+  },
+  "not_done": "No hosted dead-letter entries replayed or deleted (operator decision). Hosted after-numbers pending deploy."
+}

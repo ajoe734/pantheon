@@ -276,6 +276,49 @@ closed; no synthetic data in production code".
 | O-18 | Child replacing parent | (a) child waits for a free slot (today); (b) retire a lagging parent with `superseded_by_child` when an eligible child exists | (b) |
 | O-19 | Expression-policy learning | (a) defer until 20 trading days of counterfactuals; (b) design now | (a) |
 | O-20 | Model use for demand → query terms | (a) none, fixed vocabulary; (b) model-proposed terms with operator review | (a) |
+| O-21 | Who creates/approves the admission of a card-derived StrategySpec | (a) Human Inbox item with a human approver; (b) named paper-only authority | **Answered 2026-11-15 by §6A: (b)**, per P-4; superseded by (a) only if the operator objects |
+
+---
+
+## 6A. Amendment 2026-11-15 — who creates and approves the admission of a hypothesis-card StrategySpec
+
+**Status of this wording:** the coordinator's application of operator decision P-4 of 2026-11-12, reported to the
+operator on 2026-11-15 (operator direction 「都做一做」 on the coordinator's proposal to open the fix tasks). If the
+operator objects, this section is superseded and option (a) (a Human Inbox item with a human approver) is taken.
+
+**Authority (quoted).** `SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md` §1, decision P-4, Autonomy:
+「within paper, adding/removing strategies and re-weighting need no approval; anything beyond paper needs the operator (「好」)」.
+Validating a candidate is a step inside adding a strategy within paper and moves no capital.
+
+**Rule.**
+- *Creates:* the research owner creates the replication admission for a StrategySpec derived from a hypothesis card, only
+  when the existing discovery scorer (`discover_for_demand`) matched that spec to an open persona demand.
+- *Approves:* the existing paper `automated_gate` identity approves it through a real Governance decision
+  (review, then decide) whose proposer is a different identity from the approver. The resulting
+  `approval_decision_id` and `approver` are what `create_admission` records; no admission is written without them.
+- Precedent in code: demand-driven template search candidates and evolution children already pass the gate without a
+  human admission, using the same `automated_gate` role.
+
+**Limits.**
+1. Research and paper stage only.
+2. A spec not matched to an open demand stays a research draft; it gets no admission.
+3. Canary and live keep the operator approval (P-4: anything beyond paper needs the operator).
+4. A refused or unavailable Governance decision leaves the spec unadmitted, with a readable reason recorded; it is not
+   retried as an approval by any other identity and does not fall back to a synthetic decision.
+5. The gate and pool admission criteria and the risk consultation are unchanged.
+
+**Code entry points the rule binds (dev head, 2026-11-15).**
+
+| Entry point | Role |
+| --- | --- |
+| `services/research/alpha_replication/admission.py:63-137` (`create_admission`) | requires `approval_decision_id` and `approver`; unchanged |
+| `services/research/main.py:997-1009` (`create_alpha_replication_admission`) | admissions route the research owner calls |
+| `services/research/alpha_replication/replication_controller.py:164-197` | only approved specs that hold an admission are processed |
+| `services/control-plane/persona/persona_strategy_discovery.py:1358-1424` (`discover_for_demand`) | demand match scorer; the match is the precondition |
+| `services/evolution/auto_consumer_runtime.py:224-246` | existing `automated_gate` review/decide precedent |
+| `services/research/template_demand_search.py` | existing demand-driven candidates precedent |
+
+**Implementing task:** `HYPOTHESIS-CARD-GATE-CANDIDATE-20261115`. This section is documentation only; no code changes here.
 
 ---
 
