@@ -1,0 +1,90 @@
+{
+  "task_id": "REGIME-RESEARCH-CLASSIFIER-20261115",
+  "hosted_behavior_claimed": false,
+  "scope": "Source and test change only: regime classifier research package, filtered statsmodels backend, stub fail-closed, research fit route, dependency lock. No deployment, no hosted run, no model fitted on Taiwan history.",
+  "captured_at": "2026-11-15T12:35:28.113352+00:00",
+  "python_env": {
+    "dev": "/tmp/regime-venv python 3.12 (unpinned latest numpy 2.5.4, pandas 3.1.1, statsmodels 0.15.0, ruptures 1.1.10)",
+    "locked": "/tmp/lock-venv python 3.11 installed with `uv pip install --require-hashes -r dependencies/locks/services-research.txt` (the research image lock) plus pytest, pytest-asyncio, httpx, jsonschema, pyyaml"
+  },
+  "acceptance": {
+    "1": "services/research/runtime-requirements.txt gains statsmodels==0.15.0 and ruptures==1.1.10; dependencies/locks/services-research.txt regenerated with uv (python 3.11, hashes): only additions (formulaic, interface-meta, patsy, ruptures, statsmodels, wrapt); no existing pin moved. jumpmodels 0.1.1 is vendored under services/research/regime/vendor/jumpmodels (Apache-2.0 LICENSE, VENDORED.md with sdist sha256; plot.py omitted because it is the only matplotlib importer). test_locked_dependencies_and_vendored_jumpmodels_load passes in the venv built from the lock. docker-compose needs no build change: research-orchestrator-svc already builds services/research/Dockerfile from that lock and copies the repo.",
+    "2": "StatsmodelsBackend.run_markov_switching now fits via regime.models.fit_volatility and reports filtered marginal probabilities only, with per-session state, probability vector, transition matrix, expected durations, sessions in state, last switch session. Tests: test_real_markov_backend_reports_filtered_probabilities_only, test_markov_output_never_reads_smoothed_probabilities (reading smoothed_* from Pantheon code raises), test_filtered_state_at_t_ignores_later_observations, test_volatility_never_reads_smoothed_probabilities.",
+    "3": "run_statsmodels_workflow with no backend fails closed unless PANTHEON_STATSMODELS_BACKEND=real; the stub is accepted only under test (PANTHEON_STATSMODELS_TEST_STUB=1 or running under pytest), so every production entry point is closed to it: the container worker (names the stub when the real backend is off), experiment dispatch and the persona OSS harness (no backend given) all raise instead of returning placeholder regimes. Tests with the deployed-process environment (no pytest marker, no switch): test_production_entry_points_fail_closed, test_stub_unreachable_without_real_backend_and_test_switch.",
+    "4": "features.py reads every input through feature_catalogue.read_feature_series (test_read_goes_through_read_feature_series), lists dataset refs as input_refs, and returns an AxisInputs(available=False, reason=...) for a missing, unavailable-at-decision-time, non-finite or too-short input (test_missing_input_makes_axis_unavailable_with_reason and siblings). Features are causal (test_features_are_causal).",
+    "5": "Volatility: statsmodels MarkovRegression(k_regimes=2, trend='c', switching_variance=True), filtered via model.filter(params). Trend (3 states) and risk appetite (2 states): vendored continuous jump model, predict_proba_online. Macro: rules over tw_macro_ndc monitoring_score and leading_index. The regime package imports no language-model or network client (test_no_language_model_or_network_import_in_regime_package).",
+    "6": "validation.walk_forward_validate: expanding window, refit every refit_sessions, inference filtered/online only, signal delayed one session, reports switches per year, expected durations (run lengths and model-implied), label stability across consecutive refits, ruptures.Pelt agreement as a non-gating audit; the report is stored in the registry entry's evaluation_summary.",
+    "7": "registration.register_regime_model: model_artifact draft -> candidate -> approved (paper) only when validation passed and training sessions >= min_training_sessions; model_version = '<method>@<library version>/<artifact id>' (artifact id is content-derived: regime-tw-<axis>-<horizon>-<sha256[:16]>). Tests in test_registration.py including the forced-pass-with-short-history case.",
+    "8": "POST /api/research/regime-models/fit (cycle principal, like the persona research demand writes) queues a normal Research run (adapter regime_classifier_fit, executed by the existing retrain executor thread) that loads governed rows from the source-ingest normalized store, fits, validates and registers through the registry owner. Integration test test_real_recorded_index_and_breadth_rows_fail_closed_with_recorded_reasons runs it over the unedited official TWSE responses (deploy/collector/tests/fixtures) pushed through the real collector spiders, the production pull entry point and MarketDataStorageWriter; the recorded history is 16 TAIEX sessions and one breadth day, so every model axis is reported unavailable with its reason and nothing is registered. No synthetic history is substituted in that test.",
+    "9": "RegimeConfig holds horizons (half-lives 10 and 60), min_training_years, refit_sessions, jump penalty grid and every gate as configuration with the design values as defaults; PROPOSALS lists the rest (see proposals).",
+    "10": "This file records commands and results; it contains no credential."
+  },
+  "proposals": {
+    "note": "Every default the design does not fix is a coordinator proposal to be calibrated by walk-forward results on real history.",
+    "from_design_r4_r11": [
+      "half-life 10 sessions (short) and 60 sessions (medium), stated as 'about'",
+      "minimum training history 10 years of TAIEX",
+      "refit every six months"
+    ],
+    "not_fixed_by_design": [
+      "sessions_per_year=245 (so min_training_sessions=2450 and refit_sessions=122)",
+      "volatility medium horizon fits non-overlapping 5-session returns (short fits daily returns)",
+      "min_input_sessions=500: floor to fit anything; below it the axis is unavailable",
+      "trend states: 3 (up, mean_reverting, down), with the middle state by descending cumulative return mapped to mean_reverting; risk appetite states: 2 (on, off)",
+      "jump_penalty_grid=(10,30,100) chosen on a trailing validation window as the smallest penalty within the switch gate; grid_size=0.05; n_init=5",
+      "gates: max_switches_per_year=6.0, min_expected_duration_sessions=5.0 (smallest mean run length of the delayed signal), min_label_stability=0.8, min_refits=3, stability_window_sessions=60",
+      "ruptures audit: Pelt l2, penalty 10.0, tolerance 10 sessions; reported, not gating",
+      "macro rules: expansion if monitoring score >= 23 and leading index not falling, contraction if score <= 16, otherwise slowdown",
+      "feature definitions: EWM return, EWM downside deviation, Sortino-like ratio, EWM breadth ratio (advancers-decliners)/(advancers+decliners); risk appetite: trailing z-scores of institutional net flow, TX foreign net OI, put/call OI ratio, margin balance change, breadth",
+      "approver id regime-validation-gate and approval_decision_id regime-validation:<artifact id> on the approved transition"
+    ]
+  },
+  "findings": [
+    "services/research is first on sys.path in the deployed image (Dockerfile --app-dir services/research and PYTHONPATH), and it contains a package named statsmodels (the governed adapter). A plain `import statsmodels` there loads the adapter, not the library, so adding statsmodels to the lock alone would not have made it importable. regime.real_statsmodels() imports the library with that directory removed from the path; test_library_loads_when_the_research_directory_shadows_statsmodels reproduces the shadow in a subprocess. services/research/statsmodels/adapter/cointegration.py still does a plain `from statsmodels.tsa.stattools import coint` (not changed here; production_cointegration.py already removes the directory).",
+    "The jumpmodels sort_by='cumret' orders states by descending cumulative return (state 0 = best), verified in vendored base.py; labels are (up, mean_reverting, down) and (on, off).",
+    "Backfilled rows carry available_time = first acquisition, so read_feature_series shows a historical row only after its acquisition. The fit reads once at the decision time and uses strictly causal transforms; walk-forward does not re-read at historical decision times (that would hide every backfilled row).",
+    "Unrelated to this task: tests/e2e/test_persona_oss_runtime_matrix.py fails in an environment without QuantLib (it passes in the locked venv).",
+    "services/research/statsmodels/worker.py (not in this task's contract, not edited) still falls back to the sample dataset when STATSMODELS_DATASET_PATH is unset; it now ends in a StatsmodelsWorkflowError because it passes the stub when the real backend is off. A follow-up could drop the sample fallback."
+  ],
+  "data_required_for_a_real_fit": {
+    "volatility": "tw_index_daily TAIEX close for at least 2012-01-02..latest (about 3630 sessions already on the collector host; needs REGIME-DATA-INDEX-BREADTH-INTAKE deployed and the history pulled into hosted source-ingest). Medium horizon uses every fifth session of the same series.",
+    "trend": "tw_market_breadth_daily whole_market_advancers and whole_market_decliners, one row per session, at least 500 sessions (min_input_sessions) and ideally the same ten years as the TAIEX history for walk-forward approval. The collector holds them only from 2026-11-13, so the coordinator needs to run the MI_INDEX backfill (--start-date/--end-date) on the host for 2016-11-01..2026-11-12 (ten years; the minimum to fit a candidate is the most recent ~500 sessions, from about 2024-11).",
+    "risk_appetite": "tw_market_institutional_flows (foreign, trust, dealer net shares), tw_market_margin_balances margin_balance, taifex_market_positions tx_foreign_net_open_interest, taifex_market_put_call open_interest_ratio, each complete per session (the market chip loader withholds incomplete sessions), at least 500 sessions, plus the breadth above. Per-stock T86 holds two years from 2024-11-11 (about 490 sessions, just under the floor); depth of the margin, TAIFEX positions and put/call market series is not stated in the task context.",
+    "macro": "tw_macro_ndc monitoring_score and leading_index monthly. The loader converts normalized rows through observations_from_row, which needs a `field` and `value` on the row; if hosted NDC rows are stored in the provider-series shape the macro axis stays unavailable until a mapping is added (follow-up).",
+    "taiwan_vix": "Not used: archived from 2026-08-03 only."
+  },
+  "out_of_contract_edits": [
+    "None. An earlier attempt edited conftest.py, services/research/statsmodels/worker.py, services/persona/oss_runtime.py and added a regime/tests package marker and fixtures module; those were removed because the artifact contract does not list them. The stub gating lives entirely in statsmodels_adapter.resolve_backend, and the shared synthetic-shape test fixtures live at the end of services/research/tests/test_regime_research_route.py.",
+    "dependencies/constraints-research.txt was not changed: it constrains the mlflow and quantlib images (numpy 1.26.4), not the research-orchestrator image that the services-research lock builds.",
+    "services/research/experiments/models.py was not changed: nothing needed it."
+  ],
+  "commands": [
+    {
+      "cmd": "uv pip compile --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --generate-hashes services/research/runtime-requirements.txt -o dependencies/locks/services-research.txt",
+      "result": "only additions: formulaic, interface-meta, patsy, ruptures, statsmodels, wrapt"
+    },
+    {
+      "cmd": "uv pip install --python /tmp/lock-venv/bin/python --require-hashes -r dependencies/locks/services-research.txt (python 3.11)",
+      "result": "installed; numpy 2.4.6 pandas 3.0.6 scipy 1.17.1 scikit-learn 1.9.1 statsmodels 0.15.0 ruptures 1.1.10"
+    },
+    {
+      "cmd": "[lock venv] pytest services/research/regime/tests services/research/tests/test_regime_research_route.py services/research/statsmodels tests/e2e/test_persona_oss_runtime_matrix.py",
+      "result": "100 passed (includes experiment_orchestrator tests); earlier same-venv run of services/research/tests excluding the new files: 377 passed"
+    },
+    {
+      "cmd": "pytest --collect-only services/research services/registry/tests services/persona (lock venv)",
+      "result": "no import-file-mismatch errors for the regime tests directory"
+    }
+  ],
+  "not_run": [
+    "No hosted run, no deployment, no run against the collector host's TAIEX history (workers have no host access).",
+    "No walk-forward result on Taiwan history exists yet, so no gate value is calibrated; synthetic-series tests prove only the protocol and the fail-closed rules.",
+    "Registry-side acceptance of the approved transition (approver / approval_decision_id) was exercised against a fake registry client, not the registry service.",
+    "docker compose config / image build not run in this environment."
+  ],
+  "ci_repair": {
+    "cause": "CI research venv did not install statsmodels/ruptures (ModuleNotFoundError in regime tests)",
+    "fix": ".github/workflows/branch-ci.yml installs statsmodels==0.15.0 and ruptures==1.1.10 (same pins as runtime-requirements.txt) before pip check",
+    "local_verification": "pytest services/research/regime services/research/statsmodels services/research/tests/test_regime_research_route.py -> 85 passed; pip check clean"
+  }
+}

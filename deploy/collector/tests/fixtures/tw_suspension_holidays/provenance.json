@@ -1,0 +1,81 @@
+{
+  "recorded_at": "2026-11-15T12:23:30.983003+00:00",
+  "task_id": "COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115",
+  "existing_twse_all_market_fixture": {
+    "path": "deploy/collector/tests/fixtures/twse_mi_index_full_20261110.json",
+    "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261110&type=ALLBUT0999&response=json",
+    "size": 248709,
+    "sha256": "e5cdb5fd66f44853a2dd674891f6c96feafb38e0b164bc73eeb1a885c0aea560"
+  },
+  "files": [
+    {
+      "path": "twse_holiday_schedule_2024.json",
+      "url": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date=20240101&response=json",
+      "size": 2209,
+      "sha256": "af465bb1c10da0e4acfe99f9a6cc0edfdb96fa3f0d89835bed1316670a4de26d"
+    },
+    {
+      "path": "tpex_trading_date_2024.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date=2024&response=json",
+      "size": 7243,
+      "sha256": "158f176e439a83d28652f9e7b374fdf02381d0b141075f7281280dc7b90e332d"
+    },
+    {
+      "path": "twse_holiday_schedule_2025.json",
+      "url": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date=20250101&response=json",
+      "size": 2227,
+      "sha256": "5c85396aa2c0bf45add08a257aa6343aac2d48f9d6bb54da17c7f88fefcb71f8"
+    },
+    {
+      "path": "tpex_trading_date_2025.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date=2025&response=json",
+      "size": 8590,
+      "sha256": "e9ae814af4ef5879eedf21e46f1d70816fa790fc1bb4814f7ed0d64d9379a775"
+    },
+    {
+      "path": "twse_holiday_schedule_2026.json",
+      "url": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date=20260101&response=json",
+      "size": 2783,
+      "sha256": "7fefe785ea7155a5004a2eb74486ad865ea5c4b5f02ee0cffbbdacb1ca2ea390"
+    },
+    {
+      "path": "tpex_trading_date_2026.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date=2026&response=json",
+      "size": 8792,
+      "sha256": "c5cea6bd3a10bc7cd3e577d9ad78e600ae7d64508a1bc9b09be32fb396d0dc41"
+    },
+    {
+      "path": "twse_twtawu_2024_2026.json",
+      "url": "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU?startDate=20240101&endDate=20261115&response=json",
+      "size": 178795,
+      "sha256": "309146e181f0e5022dfc45e3cf198f8fe4e283d00012c8630f21fe6b4e7e7655"
+    },
+    {
+      "path": "tpex_sprc_his_2024.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date=2024&cate=1&response=json",
+      "size": 2695,
+      "sha256": "4bd5a42f8dd698e9d4e1a51bc7e800c606f7ccf4a69aae13cdfcec8a63b63bc3"
+    },
+    {
+      "path": "tpex_sprc_his_2025.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date=2025&cate=1&response=json",
+      "size": 3211,
+      "sha256": "3c50b8dcda06504ee30f021e34c5bc767e87fe473092a6fc42e6c2415a9212eb"
+    },
+    {
+      "path": "tpex_sprc_his_2026.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date=2026&cate=1&response=json",
+      "size": 2364,
+      "sha256": "20f0db96d709e562bf831c6793cdc4a92ce8f5e44993ef47de3fa16a84041166"
+    },
+    {
+      "path": "tpex_daily_quotes_20260618_excerpt.json",
+      "url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/06/18&response=json",
+      "size": 2408,
+      "sha256": "e0e0f51aa92f99e8b2351589423bf3bde87e593705e68b29b4a92995a5fb8e0e",
+      "full_upstream_size": 1519763,
+      "full_upstream_sha256": "7c1706d972b73673a8af06e80ca18eafe854724d3d553946853ea883f84aff2f",
+      "note": "Unaltered official table header/fields and rows for 1788 (suspended on 2026-06-18), 1813 (not traded), 6488, and 8069 from official TPEx dailyQuotes."
+    }
+  ]
+}

@@ -384,10 +384,21 @@ sys.exit(code)
                                'CALLS': str(tmp_path / 'calls')}, text=True, capture_output=True, timeout=20)
     assert proc.returncode == 1, proc.stderr
     calls = [json.loads(l) for l in (tmp_path / 'calls').read_text().splitlines()]
-    assert len(calls) == len(TW_CHIP_REFRESH_PROFILES) == 5
+    assert len(calls) == len(TW_CHIP_REFRESH_PROFILES) == 6
     for call in calls:
         cid = call[call.index('--connector-id') + 1]
         assert call[call.index('--dataset') + 1] == TW_CHIP_REFRESH_PROFILES[cid]['dataset']
         assert '--force' in call and '--refresh-only' in call
         assert (tmp_path / f'{cid}-refresh-outcome.json').is_file()
     assert "30 10" in step['if'] and "30 12" in step['if']
+
+
+def test_workflow_requests_taifex_tx_daily_once_and_publishes_its_outcome():
+    workflow = _load_workflow()
+    step = next(s for s in workflow['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
+    lines = [ln.split() for ln in step['run'].split("<<'PROFILES'\n", 1)[1].split('\nPROFILES')[0].splitlines() if ln.strip()]
+    assert [ln for ln in lines if ln[1] == 'taifex_tx_daily'] == [
+        ['tw-taifex-tx-daily', 'taifex_tx_daily', 'openapi.taifex.com.tw,www.taifex.com.tw']
+    ]
+    upload = next(s for s in workflow['jobs']['refresh']['steps'] if s.get('name') == 'Upload refresh outcome artifact')
+    assert 'tw-taifex-tx-daily-refresh-outcome.json' in upload['with']['path']
