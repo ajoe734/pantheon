@@ -121,6 +121,14 @@ def default_agent_provisioner(persona_id: str) -> Mapping[str, Any]:
     return client.ensure_trading_persona_agent(dict(persona))
 
 
+def default_persona_owner() -> Any:
+    """Production Persona owner port (lazy so the coordinator stays importable)."""
+
+    from .personas.service import _get_active_write_owner
+
+    return _get_active_write_owner()
+
+
 class PoolDispatchUncertain(Exception):
     """Pool envelope dispatch outcome could not be confirmed by readback."""
 
@@ -274,6 +282,7 @@ class PersonaProvisioningCoordinator:
         runtime_binding_reader: RuntimeBindingReader | None = None,
         persona_archiver: PersonaArchiver | None = None,
         agent_provisioner: AgentProvisioner | None = None,
+        persona_owner_provider: Callable[[], Any] | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -300,6 +309,7 @@ class PersonaProvisioningCoordinator:
         self.runtime_binding_reader = runtime_binding_reader
         self.persona_archiver = persona_archiver
         self.agent_provisioner = agent_provisioner or default_agent_provisioner
+        self.persona_owner_provider = persona_owner_provider or default_persona_owner
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -561,11 +571,91 @@ class PersonaProvisioningCoordinator:
             active = self._checkpoint(active)
         except Exception as exc:  # noqa: BLE001 - downstream boundaries are injected
             active = self._record_failure(active, ids, failed_step=failed_step, error=exc)
+        else:
+            # Outside the saga: an enrolment problem is a readable readback on
+            # the record and never fails or compensates paper admission.
+            active = self._enroll_in_place(active)
         return self.store.release(
             active,
             lease_owner=self.lease_owner,
             lease_seconds=self.lease_seconds,
         )
+
+    def _paper_enrollment(self, record: ProvisioningRecord) -> Any:
+        from .persona_paper_enrollment import PersonaPaperEnrollment
+
+        ids = deterministic_provisioning_ids(record)
+        owner = self.persona_owner_provider()
+        if owner is None or not all(
+            callable(getattr(owner, name, None))
+            for name in (
+                "get_persona",
+                "advance_lifecycle_governed",
+                "get_strategy_pool",
+                "seed_strategy_pool",
+                "get_harness",
+                "initialize_harness",
+            )
+        ):
+            raise RuntimeError("persona_owner_unavailable_for_paper_enrollment")
+        if self.runtime_binding_reader is None:
+            raise RuntimeError("runtime_binding_reader_unavailable_for_paper_enrollment")
+        return PersonaPaperEnrollment(
+            tenant_id=record.tenant_id,
+            persona_id=record.persona_id,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            deployment_plan_id=ids.deployment_plan_id,
+            persona_owner=owner,
+            transport=self.transport,
+            runtime_binding_reader=self.runtime_binding_reader,
+            governance_actor_id=self.governance_actor_id,
+        )
+
+    def _enroll_in_place(self, record: ProvisioningRecord) -> ProvisioningRecord:
+        """Enrol under the lease this coordinator already holds; readback on the ledger."""
+
+        try:
+            outcome = self._paper_enrollment(record).enroll().to_dict()
+        except Exception as exc:  # noqa: BLE001 - never blocks paper admission
+            outcome = {
+                "persona_id": record.persona_id,
+                "status": "unavailable",
+                "reason": f"{exc.__class__.__name__}: {exc}"[:300],
+                "lifecycle_state": None,
+                "steps": {},
+            }
+        if record.references.get("paper_enrollment") == outcome:
+            return record
+        record.references["paper_enrollment"] = outcome
+        return self._checkpoint(record)
+
+    def reconcile_paper_enrollment(self, record: ProvisioningRecord) -> ProvisioningRecord:
+        """Provisioning reconcile step: enrol an already paper-provisioned persona.
+
+        Idempotent and safe under restart or concurrent replicas: it takes the
+        record's lease (another holder means skip) and every owner write is
+        GET-first.  Failed, compensated, retired and unreserved records are not
+        enrolled.
+        """
+
+        if record.state not in {"provisioning", "succeeded"}:
+            return record
+        active = self.store.acquire(
+            record.tenant_id,
+            record.idempotency_key,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+        if active is None:
+            return record
+        try:
+            active = self._enroll_in_place(active)
+        finally:
+            active = self.store.release(
+                active, lease_owner=self.lease_owner, lease_seconds=self.lease_seconds
+            )
+        return active
 
     def provision_persona_agent(self, persona_id: str) -> dict[str, Any]:
         """Create/update the persona's own OpenClaw agent without gating paper.

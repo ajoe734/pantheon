@@ -86,6 +86,8 @@ def _error_reason(raw: bytes, fallback: str) -> str:
         detail = payload.get("detail")
         if isinstance(detail, str) and detail.strip():
             return detail.strip()[:300]
+        if isinstance(detail, dict) and detail:
+            return json.dumps(detail, sort_keys=True, default=str)[:300]
         error = payload.get("error")
         if isinstance(error, dict):
             message = error.get("message") or error.get("code")
@@ -151,6 +153,7 @@ class PersonaRegistryHttpWritePort:
         params: Mapping[str, Any] | None = None,
         write: bool = False,
         authorization: str | None = None,
+        tenant_id: str | None = None,
     ) -> Any:
         self._require_configuration(dependency, write=write and authorization is None)
         url = f"{self._base_url}{path}"
@@ -181,7 +184,9 @@ class PersonaRegistryHttpWritePort:
             )
         if auth:
             headers["Authorization"] = auth
-        tenant = _tenant_var.get()
+        # An explicit tenant (background enrolment has no ambient request
+        # scope) is the authoritative tenant of the record being written.
+        tenant = str(tenant_id or "").strip() or _tenant_var.get()
         if tenant:
             headers["X-Tenant-Id"] = tenant
         request = urllib.request.Request(
@@ -350,6 +355,131 @@ class PersonaRegistryHttpWritePort:
         ):
             raise PersonaWriteOwnerUnavailable(
                 "persona_lifecycle_owner", "Persona lifecycle owner returned invalid readback"
+            )
+        return value
+
+    # -- paper enrolment owner routes --------------------------------------
+    # Background enrolment has no inbound caller, so these calls carry the
+    # configured service credential and an explicit tenant. They only reach
+    # existing Persona owner routes; nothing here writes a lifecycle field or
+    # a pool/harness record directly.
+    def advance_lifecycle_governed(
+        self,
+        persona_id: str,
+        *,
+        actor_id: str,
+        target_state: str,
+        governance_decision_id: str,
+        tenant_id: str,
+    ) -> Dict[str, Any]:
+        """One governed lifecycle step through the owner route, then readback."""
+        if not str(governance_decision_id or "").strip():
+            raise PersonaWriteConflict("a Governance decision id is required")
+        try:
+            value = self._request(
+                "PATCH",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",
+                dependency="persona_lifecycle_owner",
+                body={
+                    "actor_id": actor_id,
+                    "target_state": target_state,
+                    "governance_decision_id": governance_decision_id,
+                },
+                write=True,
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            self._raise_write_error(exc, "persona_lifecycle_owner")
+        metadata = value.get("metadata") if isinstance(value, dict) else None
+        if (
+            not isinstance(value, dict)
+            or not isinstance(metadata, dict)
+            or value.get("persona_id") != persona_id
+            or value.get("tenant_id") != tenant_id
+            or value.get("lifecycle_state") != target_state
+            or metadata.get("last_lifecycle_governance_decision_id") != governance_decision_id
+        ):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_lifecycle_owner", "Persona lifecycle owner returned invalid readback"
+            )
+        return value
+
+    def get_strategy_pool(self, persona_id: str, *, tenant_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            value = self._request(
+                "GET",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/strategy-pool",
+                dependency="persona_strategy_pool_owner",
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise PersonaWriteOwnerUnavailable("persona_strategy_pool_owner", exc.reason) from exc
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_strategy_pool_owner", "Persona service returned an invalid pool response"
+            )
+        return value
+
+    def seed_strategy_pool(self, persona_id: str, *, tenant_id: str) -> Dict[str, Any]:
+        """Version 1 from the owner records; the owner refuses zero or many artifacts."""
+        try:
+            value = self._request(
+                "POST",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/strategy-pool/seed",
+                dependency="persona_strategy_pool_owner",
+                body={},
+                write=True,
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            self._raise_write_error(exc, "persona_strategy_pool_owner")
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_strategy_pool_owner", "Persona service returned an invalid seed response"
+            )
+        return value
+
+    def get_harness(self, persona_id: str, *, tenant_id: str) -> Optional[Dict[str, Any]]:
+        """The persisted harness state, or ``None`` while it is not initialised."""
+        try:
+            value = self._request(
+                "GET",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/harness",
+                dependency="persona_harness_owner",
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise PersonaWriteOwnerUnavailable("persona_harness_owner", exc.reason) from exc
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_harness_owner", "Persona service returned an invalid harness response"
+            )
+        if value.get("status") == "unavailable" or not value.get("versions"):
+            return None
+        return value
+
+    def initialize_harness(
+        self, persona_id: str, surface: Mapping[str, Any], *, tenant_id: str
+    ) -> Dict[str, Any]:
+        """Harness version 1 through the owner's initialise route."""
+        try:
+            value = self._request(
+                "POST",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/harness",
+                dependency="persona_harness_owner",
+                body=surface,
+                write=True,
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            self._raise_write_error(exc, "persona_harness_owner")
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_harness_owner", "Persona service returned an invalid harness response"
             )
         return value
 
