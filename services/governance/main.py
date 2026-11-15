@@ -1582,6 +1582,9 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
                 # bindings are rechecked on every review/decide.
                 lifecycle_evidence = require_paper_lifecycle_decision(
                     current, grant=grant, now=now, binding_verifier=_persona_paper_binding_verifier())
+                # The dedicated subject never holds an unscoped decision: stamp
+                # the exact grant scope on the lifecycle decision it acts on.
+                decision.authorization_scope = grant.authorization_scope
                 if operation == 'decide':
                     validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
             else:
