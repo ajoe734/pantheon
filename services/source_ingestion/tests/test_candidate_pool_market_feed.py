@@ -105,3 +105,12 @@ def test_endpoint_serves_market_and_names_missing_dataset(tmp_path):
     ok = client.post("/api/source-ingest/candidate-pool-market", json={"inputs": INPUTS})
     assert ok.status_code == 200 and ok.json()["schema_version"] == "candidate_pool_market.v1"
     assert client.post("/api/source-ingest/candidate-pool-market", json={"inputs": "x"}).status_code == 422
+
+
+def test_market_without_capture_evidence_attests_nothing_and_names_missing_dataset(tmp_path):
+    _write(tmp_path, [_row("2330.TW", "2026-10-29", 10), _row("2330.TW", "2026-10-30", 11)])
+    market = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    assert market["includes_delisted"] is False and market["includes_suspended"] is False
+    att = market["survivorship_attestation"]
+    assert att["suspended"]["missing_dataset"].startswith("tw_trading_suspension")
+    _, _ = _market(market)
