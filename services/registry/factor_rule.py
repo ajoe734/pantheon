@@ -183,9 +183,17 @@ def _seed_default_feature_catalogue() -> None:
                     release_cadence="daily",
                 )
             )
-    from services.source_ingestion.feature_catalogue import MARKET_CHIP_DATASETS, catalogue_fields, lag_days_for
+    from services.source_ingestion.feature_catalogue import (
+        MARKET_CHIP_DATASETS, REGIME_DATASETS, catalogue_fields, lag_days_for,
+    )
     for field in catalogue_fields():
         if field.dataset in MARKET_CHIP_DATASETS:
+            register_feature_definition(FeatureDefinition(
+                dataset=field.dataset, field=field.field,
+                min_availability_lag_days=lag_days_for(field.dataset, field.field),
+                description=field.description, release_cadence="daily",
+            ))
+        elif field.dataset in REGIME_DATASETS:
             register_feature_definition(FeatureDefinition(
                 dataset=field.dataset, field=field.field,
                 min_availability_lag_days=lag_days_for(field.dataset, field.field),

@@ -352,6 +352,13 @@ class CollectorPullResult:
 
 
 PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
+TW_INDEX_DATASET = "tw_index_daily"
+TW_INDEX_OHLC_COLLECTOR_DATASET = "tw_index_ohlc_daily"
+TW_MARKET_BREADTH_DATASET = "tw_market_breadth_daily"
+# Collector row datasets that are normalized as index / breadth rows, never as per-symbol prices.
+REGIME_INDEX_BREADTH_DATASETS = frozenset({TW_INDEX_DATASET, TW_INDEX_OHLC_COLLECTOR_DATASET, TW_MARKET_BREADTH_DATASET})
+BREADTH_GROUPS = ("whole_market", "stocks")
+BREADTH_COUNT_KEYS = ("advancers", "limit_up", "decliners", "limit_down", "unchanged", "untraded", "no_comparison")
 PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
 
@@ -1457,6 +1464,11 @@ class CollectorBundleAdapter:
             "investment_trust_net_shares",
             "dealer_net_shares",
             "total_institutional_net_shares",
+            "index_name",
+            "change_points",
+            "change_percent",
+            "whole_market",
+            "stocks",
             "series_id",
             "period_end",
             "value",
@@ -1509,6 +1521,11 @@ class CollectorBundleAdapter:
                 "investment_trust_net_shares",
                 "dealer_net_shares",
                 "total_institutional_net_shares",
+                "index_name",
+                "change_points",
+                "change_percent",
+                "whole_market",
+                "stocks",
             ):
                 if metadata.get(market_key) not in (None, "", [], {}):
                     market_row.setdefault(market_key, metadata[market_key])
@@ -1518,6 +1535,9 @@ class CollectorBundleAdapter:
                 # official closes land on one symbol series and can be compared.
                 market_row.setdefault("symbol_canonical", f"{str(market_row['symbol']).strip().upper()}.{exchange}")
                 market_row.setdefault("market", "TW")
+            if market_row.get("dataset") in REGIME_INDEX_BREADTH_DATASETS:
+                market_row = self._regime_market_row(item_id, market_row, metadata)
+                metadata["dataset"] = market_row["dataset"]
             if market_row:
                 metadata.setdefault("normalized_row", market_row)
             if self.dataset in PRIORITY_LATEST_DATASETS:
@@ -1546,6 +1566,44 @@ class CollectorBundleAdapter:
             trace_id=trace_id,
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
+
+    @staticmethod
+    def _regime_market_row(item_id: str, row: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalized index / breadth row; raw source values are kept, nothing is derived or filled.
+
+        Index rows (the TAIEX monthly OHLC history lands in the same ``tw_index_daily``
+        dataset) are keyed by the index name as the series key. A row missing its key or a
+        required close fails closed. Breadth keeps the source's whole-market and stock
+        groups and adds flat per-group counts for the catalogue.
+        """
+        source_dataset = str(row["dataset"])
+        out: dict[str, Any] = {k: v for k, v in row.items() if v not in (None, "", [], {})}
+        trade_date = str(row.get("trade_date") or "").strip()
+        if not trade_date:
+            raise SourceEvidenceError(f"collector item {item_id} has no trade_date")
+        out["date"] = trade_date
+        out["market"] = "TW"
+        if source_dataset == TW_MARKET_BREADTH_DATASET:
+            for group in BREADTH_GROUPS:
+                counts = row.get(group)
+                if not isinstance(counts, Mapping):
+                    raise SourceEvidenceError(f"collector breadth item {item_id} has no {group} counts")
+                for key in BREADTH_COUNT_KEYS:
+                    value = counts.get(key)
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                        raise SourceEvidenceError(f"collector breadth item {item_id} has an invalid {group}.{key}")
+                    out[f"{group}_{key}"] = value
+            return out
+        name = str(row.get("index_name") or "").strip()
+        close = row.get("close")
+        if not name:
+            raise SourceEvidenceError(f"collector index item {item_id} has no index_name")
+        if isinstance(close, bool) or not isinstance(close, (int, float)) or not close > 0:
+            raise SourceEvidenceError(f"collector index item {item_id} has no valid close")
+        out["series_id"] = name
+        out["source_collector_dataset"] = source_dataset
+        out["dataset"] = TW_INDEX_DATASET
+        return out
 
     def _market_event_time(
         self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime,
