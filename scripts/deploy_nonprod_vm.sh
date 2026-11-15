@@ -34,6 +34,8 @@ PANTHEON_DEV_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER-${DEV
 DEV_EVOLUTION_AUTO_CONSUMER_ENABLED="${DEV_EVOLUTION_AUTO_CONSUMER_ENABLED:-${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}}"
 DEV_L2_EXTRACTION_ENABLED="${DEV_L2_EXTRACTION_ENABLED:-false}"
 DEV_L2_EXTRACTION_DAILY_CALL_CAP="${DEV_L2_EXTRACTION_DAILY_CALL_CAP:-400}"
+DEV_MEMORY_LLM_BRIDGE_ENABLED="${DEV_MEMORY_LLM_BRIDGE_ENABLED:-false}"
+DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET="${DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}"
 DEV_PERSONA_EVALUATOR_PAPER_POOL_ID="${DEV_PERSONA_EVALUATOR_PAPER_POOL_ID:-${PERSONA_EVALUATOR_PAPER_POOL_ID:-pool-paper-default}}"
 DEV_PERSONA_RANKING_TOKEN_FILE="${DEV_PERSONA_RANKING_TOKEN_FILE:-${PERSONA_RANKING_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RANKING_TOKEN}}"
 DEV_PERSONA_ALLOCATION_TOKEN_FILE="${DEV_PERSONA_ALLOCATION_TOKEN_FILE:-${PERSONA_ALLOCATION_TOKEN_FILE:-/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN}}"
@@ -1014,6 +1016,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_EVOLUTION_AUTO_CONSUMER_ENABLED=$(shell_quote "$DEV_EVOLUTION_AUTO_CONSUMER_ENABLED")"
   command_prefix+=" PANTHEON_DEV_L2_EXTRACTION_ENABLED=$(shell_quote "$DEV_L2_EXTRACTION_ENABLED")"
   command_prefix+=" PANTHEON_DEV_L2_EXTRACTION_DAILY_CALL_CAP=$(shell_quote "$DEV_L2_EXTRACTION_DAILY_CALL_CAP")"
+  command_prefix+=" PANTHEON_DEV_MEMORY_LLM_BRIDGE_ENABLED=$(shell_quote "$DEV_MEMORY_LLM_BRIDGE_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET=$(shell_quote "$DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET")"
   command_prefix+=" PANTHEON_DEV_PERSONA_EVALUATOR_PAPER_POOL_ID=$(shell_quote "$DEV_PERSONA_EVALUATOR_PAPER_POOL_ID")"
   command_prefix+=" PANTHEON_DEV_PERSONA_RANKING_TOKEN_FILE=$(shell_quote "$DEV_PERSONA_RANKING_TOKEN_FILE")"
   command_prefix+=" PANTHEON_DEV_PERSONA_ALLOCATION_TOKEN_FILE=$(shell_quote "$DEV_PERSONA_ALLOCATION_TOKEN_FILE")"
@@ -5623,10 +5627,40 @@ cleanup_stale_compose_replacement_containers() {
   fi
 }
 
+# Host-side bridge token: created (mode 600) or read, exported to compose only,
+# never echoed. Hindsight gets this token and nothing else; no provider key and
+# no gateway token are ever passed to it.
+memory_llm_bridge_env() {
+  if [[ "${PANTHEON_DEV_MEMORY_LLM_BRIDGE_ENABLED:-false}" != "true" ]]; then
+    printf '%s\n' "MEMORY_LLM_BRIDGE_ENABLED=false"
+    return 0
+  fi
+  local token_file="${PANTHEON_MEMORY_LLM_BRIDGE_TOKEN_FILE:-${HOME}/.pantheon/memory-llm-bridge.token}"
+  if [[ ! -s "${token_file}" ]]; then
+    mkdir -p "$(dirname "${token_file}")"
+    ( umask 077; python3 -c 'import secrets;print(secrets.token_urlsafe(48))' > "${token_file}" )
+  fi
+  chmod 600 "${token_file}"
+  printf '%s\n' \
+    "MEMORY_LLM_BRIDGE_ENABLED=true" \
+    "MEMORY_LLM_BRIDGE_TOKEN=$(tr -d '\n' < "${token_file}")" \
+    "MEMORY_LLM_BRIDGE_DAILY_BUDGET=${PANTHEON_DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}" \
+    "HINDSIGHT_LLM_BRIDGE_BASE_URL=http://openclaw-gateway-adapter:8104/internal/memory-llm/v1" \
+    "HINDSIGHT_LLM_PROVIDER=openai" "HINDSIGHT_LLM_MODEL=memory-index" \
+    "HINDSIGHT_RETAIN_LLM_PROVIDER=openai" "HINDSIGHT_RETAIN_LLM_MODEL=memory-index" \
+    "HINDSIGHT_CONSOLIDATION_LLM_PROVIDER=openai" "HINDSIGHT_CONSOLIDATION_LLM_MODEL=memory-index" \
+    "HINDSIGHT_REFLECT_LLM_PROVIDER=openai" "HINDSIGHT_REFLECT_LLM_MODEL=memory-index" \
+    "HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER=openai" "HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL=memory-index"
+}
+
 with_dev_bff_runtime_env() {
   local target_sha="$1"
   local proof_flag="$2"
   shift 2
+  local bridge_line
+  while IFS= read -r bridge_line; do
+    export "${bridge_line}"
+  done < <(memory_llm_bridge_env)
   # Preserve the caller's selection: root rollout supplies root profiles,
   # while the explicit BFF-only branch deliberately supplies an empty value.
   COMPOSE_BAKE=false \
