@@ -1402,6 +1402,7 @@ profile = TW_CHIP_REFRESH_PROFILES.get(sys.argv[2])
 if profile is not None:
     required = ({"openapi.taifex.com.tw", "www.taifex.com.tw"}
                 if profile["base"] == "tw-taifex-futures-options-chip"
+                else {"api.finmindtrade.com"} if profile["base"] == "tw-finmind-fundamentals"
                 else {"openapi.twse.com.tw", "www.tpex.org.tw"})
     if hosts != required:
         raise SystemExit("chip refresh requires exact hosts: " + ",".join(sorted(required)))
@@ -2539,7 +2540,7 @@ if action == "bounded":
     # FinMind reads env://FINMIND_API_TOKEN; the recorded container env may carry
     # an old or empty value, so the supplied secret overrides it for this window only.
     # Restore rebuilds env from the recorded pre-environment, so the old value returns.
-    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") == "tw-finmind-broker-daily-report":
+    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") in ("tw-finmind-broker-daily-report", "tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation"):
         finmind_token = os.environ.get("FINMIND_API_TOKEN") or ""
         if not finmind_token:
             raise SystemExit("FINMIND_API_TOKEN is required for the FinMind bounded refresh")
@@ -2816,7 +2817,7 @@ RECOVER_DLQ_PY
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
   case "${connector_id}:${dataset}" in
-    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily|tw-finmind-monthly-revenue:tw_monthly_revenue|tw-finmind-quarterly-statements:tw_financial_statement|tw-finmind-valuation:tw_valuation_bwibbu)
       return 0 ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
@@ -3311,7 +3312,7 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
   }
   trap handle_pre_mutation_refresh_exit EXIT INT TERM
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}" ]]; then
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}" ]]; then
     # No credential: record the reason and leave the stack untouched.
     write_bounded_refresh_outcome "skipped" "missing_credential" '{"status": "skipped", "reason": "missing_credential"}'
     info "FinMind broker refresh skipped: missing_credential (no container mutation)"

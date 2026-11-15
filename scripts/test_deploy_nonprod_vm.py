@@ -3757,6 +3757,7 @@ def test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs():
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         hosts = ('openapi.taifex.com.tw,www.taifex.com.tw' if profile['base'] == 'tw-taifex-futures-options-chip'
+                 else 'api.finmindtrade.com' if profile['base'] == 'tw-finmind-fundamentals'
                  else 'openapi.twse.com.tw,www.tpex.org.tw')
         accepted = _chip_admission(cid, profile['dataset'], hosts)
         assert accepted.returncode == 0, accepted.stderr
@@ -3948,3 +3949,34 @@ def test_tx_daily_admission_is_exact_and_does_not_widen_the_ssf_profile():
         assert _chip_admission('tw-taifex-tx-daily', dataset, hosts).returncode != 0
     assert _chip_admission('tw-taifex-futures-options-chip', 'taifex_tx_daily', hosts).returncode != 0
     assert 'tw-taifex-tx-daily:taifex_tx_daily' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+
+
+FINMIND_FUNDAMENTAL_PAIRS = (
+    ('tw-finmind-monthly-revenue', 'tw_monthly_revenue'),
+    ('tw-finmind-quarterly-statements', 'tw_financial_statement'),
+    ('tw-finmind-valuation', 'tw_valuation_bwibbu'),
+)
+
+
+def test_finmind_fundamentals_admission_is_exactly_the_three_datasets_on_the_exact_host():
+    host = 'api.finmindtrade.com'
+    for cid, dataset in FINMIND_FUNDAMENTAL_PAIRS:
+        assert _chip_admission(cid, dataset, host).returncode == 0
+        assert f'{cid}:{dataset}' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+        # a profile admits only its own dataset, on exactly the FinMind host
+        for other in [d for _, d in FINMIND_FUNDAMENTAL_PAIRS if d != dataset] + ['tw_broker_top', 'tw_price_daily', 'tw_institutional_flow', '']:
+            assert _chip_admission(cid, other, host).returncode != 0
+        for bad_hosts in (host + ',storage.googleapis.com', host + ',example.com', 'openapi.twse.com.tw,www.tpex.org.tw', ''):
+            assert _chip_admission(cid, dataset, bad_hosts).returncode != 0
+    # no other connector id gains these datasets, and no unlisted FinMind connector is admitted
+    assert _chip_admission('tw-finmind-broker-daily-report', 'tw_monthly_revenue', 'api.finmindtrade.com,storage.googleapis.com').returncode != 0
+    assert _chip_admission('tw-twse-tpex-official-market', 'tw_valuation_bwibbu', 'openapi.twse.com.tw,www.tpex.org.tw').returncode != 0
+    assert _chip_admission('tw-finmind-fundamentals', 'tw_monthly_revenue', host).returncode != 0
+    assert _chip_admission('tw-finmind-other', 'tw_monthly_revenue', host).returncode != 0
+
+
+def test_finmind_fundamentals_bounded_refresh_requires_the_credential_and_overrides_it_only_for_the_window():
+    source = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    for cid, _ in FINMIND_FUNDAMENTAL_PAIRS:
+        assert source.count(cid) >= 3
+    assert 'missing_credential' in source and 'FINMIND_API_TOKEN is required for the FinMind bounded refresh' in source

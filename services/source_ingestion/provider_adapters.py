@@ -29,6 +29,10 @@ from .connectors.finmind_taiwan import (
     fetch_kbar as _finmind_fetch_kbar,
     shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
+    FinMindTaiwanFundamentalsAdapter,
+    FINMIND_FUNDAMENTAL_CATALOG,
+    finmind_fundamental_venues,
+    finmind_fundamental_window,
 )
 from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, CollectorPullResult
 from .connectors.social import AdmittedSocialMediaAdapter
@@ -334,6 +338,80 @@ def _finmind_broker(
         replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
         for record in records
     )
+
+
+def _finmind_fundamentals(
+    adapter: FinMindTaiwanFundamentalsAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    """Governed FinMind revenue / statements / valuation for the resolved active symbols.
+
+    The result is complete or the run fails: a record cap that cannot hold every
+    resolved symbol's window raises instead of truncating, and a symbol with no rows
+    is recorded as missing coverage rather than counted as fresh.
+    """
+    dataset = str(_require(request.get("dataset"), "dataset"))
+    spec = next((item for item in FINMIND_FUNDAMENTAL_CATALOG if item["normalized_dataset"] == dataset), None)
+    if spec is None:
+        raise SourceEvidenceError(f"FinMind fundamentals does not admit dataset {dataset!r}")
+    symbols = list(dict.fromkeys(
+        item for item in (*_string_list(request.get("symbols")), *([_single_symbol(request)] if _single_symbol(request) else []))
+        if item
+    ))
+    if not symbols:
+        raise SourceEvidenceError("provider-owned adapter request.symbols is required")
+    venues = finmind_fundamental_venues(symbols)
+    run_date = str(_require(request.get("run_date") or request.get("date"), "run_date"))
+    start, end = finmind_fundamental_window(dataset, run_date)
+    names = [spec["dataset"], *([spec["companion_dataset"]] if spec.get("companion_dataset") else [])]
+    supplied = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else None
+    fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
+    if supplied is None and not fetcher.credential_status().get("available"):
+        raise FinMindCredentialError(f"missing credential at {adapter.secret_ref_id}")
+    rows: list[dict[str, Any]] = []
+    covered: list[str] = []
+    for code in venues:
+        if supplied is not None:
+            payloads = {name: [r for r in _rows_of(supplied.get(name)) if str(r.get("stock_id")) == code] for name in names}
+        else:
+            payloads = {}
+            for name in names:
+                try:
+                    payloads[name], _ = fetcher.fetch_dataset(name, symbol=code, start_date=start, end_date=end)
+                except FinMindCredentialError:
+                    raise
+                except FinMindFetchError as exc:
+                    raise SourceEvidenceError(f"FinMind {name} fetch failed for {code}: {exc}") from exc
+        symbol_rows = adapter.rows_from_payloads(
+            dataset, payloads, symbols=[venues[code][1]], ingest_time=request.get("ingest_time"))
+        if symbol_rows:
+            rows.extend(symbol_rows)
+            covered.append(code)
+    max_records = int(request.get(EFFECTIVE_MAX_RECORDS_KEY) or adapter.max_records)
+    if len(rows) > max_records:
+        raise SourceEvidenceError(
+            f"FinMind {dataset}: max_records cannot hold the complete window; required={len(rows)} "
+            f"allowed={max_records}; no records emitted"
+        )
+    if not rows:
+        raise SourceEvidenceError(f"FinMind {dataset} returned no rows for any requested symbol: {','.join(venues)}")
+    missing = [code for code in venues if code not in covered]
+    coverage = {
+        "status": "partial" if missing else "complete",
+        "dataset": dataset, "window_start": start, "window_end": end,
+        "requested_symbols": list(venues), "covered_symbols": covered, "missing_symbols": missing,
+    }
+    return tuple(
+        replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
+        for record in adapter.records_from_rows(rows, trace_id=trace_id)
+    )
+
+
+def _rows_of(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        payload = payload.get("data")
+    return [row for row in (payload or ()) if isinstance(row, Mapping)]
 
 
 def _finmind_kbar(
@@ -1149,6 +1227,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
     "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
     "FinMindTaiwanKBarAdapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+    "FinMindTaiwanFundamentalsAdapter": "FinMindTaiwanFundamentalsAdapter.records_from_rows",
     "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
     "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
     "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
@@ -1188,6 +1267,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
         adapter_cls=FinMindTaiwanDatasetAdapter,
         handler=_finmind_dataset,
+        config_keys=("secret_ref_id", "max_records", "entitlement_tier"),
+    ),
+    "FinMindTaiwanFundamentalsAdapter.records_from_rows": ProviderAdapterSpec(
+        token="FinMindTaiwanFundamentalsAdapter.records_from_rows",
+        adapter_cls=FinMindTaiwanFundamentalsAdapter,
+        handler=_finmind_fundamentals,
         config_keys=("secret_ref_id", "max_records", "entitlement_tier"),
     ),
     "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload": ProviderAdapterSpec(

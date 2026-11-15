@@ -384,10 +384,11 @@ sys.exit(code)
                                'CALLS': str(tmp_path / 'calls')}, text=True, capture_output=True, timeout=20)
     assert proc.returncode == 1, proc.stderr
     calls = [json.loads(l) for l in (tmp_path / 'calls').read_text().splitlines()]
-    assert len(calls) == len(TW_CHIP_REFRESH_PROFILES) == 6
+    chip_profiles = {k: v for k, v in TW_CHIP_REFRESH_PROFILES.items() if v['base'] != 'tw-finmind-fundamentals'}
+    assert len(calls) == len(chip_profiles) == 6
     for call in calls:
         cid = call[call.index('--connector-id') + 1]
-        assert call[call.index('--dataset') + 1] == TW_CHIP_REFRESH_PROFILES[cid]['dataset']
+        assert call[call.index('--dataset') + 1] == chip_profiles[cid]['dataset']
         assert '--force' in call and '--refresh-only' in call
         assert (tmp_path / f'{cid}-refresh-outcome.json').is_file()
     assert "30 10" in step['if'] and "30 12" in step['if']
@@ -402,3 +403,26 @@ def test_workflow_requests_taifex_tx_daily_once_and_publishes_its_outcome():
     ]
     upload = next(s for s in workflow['jobs']['refresh']['steps'] if s.get('name') == 'Upload refresh outcome artifact')
     assert 'tw-taifex-tx-daily-refresh-outcome.json' in upload['with']['path']
+
+
+def test_workflow_requests_each_finmind_fundamental_dataset_once_after_publication_with_the_secret():
+    workflow = _load_workflow()
+    steps = workflow['jobs']['refresh']['steps']
+    step = next(s for s in steps if s.get('id') == 'finmind_fundamentals_refresh')
+    lines = [ln.split() for ln in step['run'].split("<<'PROFILES'\n", 1)[1].split('\nPROFILES')[0].splitlines() if ln.strip()]
+    assert lines == [
+        ['tw-finmind-monthly-revenue', 'tw_monthly_revenue', 'api.finmindtrade.com'],
+        ['tw-finmind-quarterly-statements', 'tw_financial_statement', 'api.finmindtrade.com'],
+        ['tw-finmind-valuation', 'tw_valuation_bwibbu', 'api.finmindtrade.com'],
+    ]
+    # FinMind publishes after the close: never on the early crons; the credential is the dev environment secret.
+    assert "'0 7 * * 1-5'" in step['if'] and "'0 8 * * 1-5'" in step['if'] and '!=' in step['if']
+    assert step['env']['FINMIND_API_TOKEN'] == '${{ secrets.FINMIND_API_TOKEN }}'
+    assert int(step['env']['SOURCE_INGEST_MAX_RECORDS']) <= 500
+    assert 'missing_credential' in step['run']
+    upload = next(s for s in steps if s.get('name') == 'Upload refresh outcome artifact')
+    for cid in ('tw-finmind-monthly-revenue', 'tw-finmind-quarterly-statements', 'tw-finmind-valuation'):
+        assert f'{cid}-refresh-outcome.json' in upload['with']['path']
+    # the early-cron chip profiles are unchanged: FinMind fundamentals are not among them
+    chip = next(s for s in steps if s.get('id') == 'chip_refresh')
+    assert 'finmind' not in chip['run']

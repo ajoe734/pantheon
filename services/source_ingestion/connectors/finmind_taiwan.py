@@ -1775,3 +1775,369 @@ def build_finmind_fetch_plan(
                          "universe_tier": _tier(sym), "fetcher": "broker_report"})
 
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Governed point-in-time fundamentals (monthly revenue, quarterly statements,
+# daily valuation) from the existing FinMind /data endpoint.
+#
+# These datasets are deliberately NOT in FINMIND_TAIWAN_DATASETS: the generic
+# adapter stamps available_time with the row date, which for a monthly or
+# quarterly figure is a point-in-time leak. This adapter stamps the statutory
+# publication deadline instead (feature_catalogue.statutory_available_time).
+# ---------------------------------------------------------------------------
+
+FINMIND_MONTH_REVENUE_DATASET = "TaiwanStockMonthRevenue"
+FINMIND_FINANCIAL_STATEMENTS_DATASET = "TaiwanStockFinancialStatements"
+FINMIND_BALANCE_SHEET_DATASET = "TaiwanStockBalanceSheet"
+FINMIND_PER_DATASET = "TaiwanStockPER"
+FINMIND_FUNDAMENTALS_CONNECTOR_ID = "tw-finmind-fundamentals"
+FINMIND_FUNDAMENTALS_SCHEMA_HASHES = {
+    "tw_monthly_revenue": "tw_monthly_revenue.v1",
+    "tw_financial_statement": "tw_financial_statement.v1",
+    "tw_valuation_bwibbu": "tw_valuation_bwibbu.v1",
+}
+FINMIND_FUNDAMENTALS_HISTORY_DAYS = 730
+# Revenue yoy needs the same month one year earlier for the oldest governed month.
+FINMIND_REVENUE_FETCH_DAYS = FINMIND_FUNDAMENTALS_HISTORY_DAYS + 366
+FINMIND_VALUATION_PAGE_DAYS = 60
+FINMIND_VALUATION_LATEST_DAYS = 5
+# FinMind serves its latest revision of every figure; first-release values are not kept.
+FINMIND_FUNDAMENTALS_VALUE_REVISION = "provider_latest_revision_not_first_release"
+# FinMind reports revenue and statement amounts in NT$; the catalogue states TWD thousand.
+FINMIND_AMOUNT_UNIT_DIVISOR = 1000.0
+FINMIND_FUNDAMENTAL_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "dataset": FINMIND_MONTH_REVENUE_DATASET,
+        "normalized_dataset": "tw_monthly_revenue",
+        "minimum_tier": "sponsor",
+        "history_days": FINMIND_FUNDAMENTALS_HISTORY_DAYS,
+        "cadence": "daily_after_close",
+    },
+    {
+        "dataset": FINMIND_FINANCIAL_STATEMENTS_DATASET,
+        "companion_dataset": FINMIND_BALANCE_SHEET_DATASET,
+        "normalized_dataset": "tw_financial_statement",
+        "minimum_tier": "sponsor",
+        "history_days": FINMIND_FUNDAMENTALS_HISTORY_DAYS,
+        "cadence": "daily_after_close",
+    },
+    {
+        "dataset": FINMIND_PER_DATASET,
+        "normalized_dataset": "tw_valuation_bwibbu",
+        "minimum_tier": "sponsor",
+        "history_days": FINMIND_FUNDAMENTALS_HISTORY_DAYS,
+        "cadence": "daily_after_close",
+    },
+)
+_FINMIND_BY_NORMALIZED = {item["normalized_dataset"]: item for item in FINMIND_FUNDAMENTAL_CATALOG}
+_FINMIND_VENUE_SUFFIX = {"TW": "TWSE", "TWSE": "TWSE", "TWO": "TPEx", "TPEX": "TPEx"}
+
+
+def finmind_fundamental_venues(symbols: Sequence[str]) -> dict[str, tuple[str, str]]:
+    """Map bare FinMind ``data_id`` -> (venue, canonical symbol); a bare ticker is rejected."""
+    out: dict[str, tuple[str, str]] = {}
+    for item in symbols:
+        text = _text(item).upper()
+        code, _, suffix = text.rpartition(".")
+        venue = _FINMIND_VENUE_SUFFIX.get(suffix)
+        if not code or venue is None:
+            raise SourceEvidenceError(f"Taiwan fundamentals symbol needs an explicit market suffix: {item!r}")
+        out[code] = (venue, f"{code}.{'TWSE' if venue == 'TWSE' else 'TPEX'}")
+    return out
+
+
+def finmind_fundamental_window(normalized_dataset: str, run_date: Any) -> tuple[str, str]:
+    """Inclusive (start, end) FinMind request window for one scheduled run.
+
+    Revenue and statements re-read the complete governed history every run (idempotent).
+    Valuation is daily: every run reads the newest days plus one rotating history page
+    chosen by the run date, so the two-year history completes within a bounded number of
+    daily runs without any stored cursor and without exceeding the per-run record cap.
+    """
+    end = date.fromisoformat(str(run_date)[:10])
+    if normalized_dataset == "tw_monthly_revenue":
+        return (end - timedelta(days=FINMIND_REVENUE_FETCH_DAYS)).isoformat(), end.isoformat()
+    if normalized_dataset == "tw_financial_statement":
+        return (end - timedelta(days=FINMIND_FUNDAMENTALS_HISTORY_DAYS)).isoformat(), end.isoformat()
+    if normalized_dataset == "tw_valuation_bwibbu":
+        pages = -(-FINMIND_FUNDAMENTALS_HISTORY_DAYS // FINMIND_VALUATION_PAGE_DAYS)
+        page = end.toordinal() % pages
+        page_end = end - timedelta(days=FINMIND_VALUATION_LATEST_DAYS + page * FINMIND_VALUATION_PAGE_DAYS)
+        return (page_end - timedelta(days=FINMIND_VALUATION_PAGE_DAYS)).isoformat(), end.isoformat()
+    raise ValueError(f"unsupported FinMind fundamentals dataset: {normalized_dataset}")
+
+
+def _fundamental_row(
+    dataset: str, code: str, venue: str, canonical: str, *, event_time: str, available_time: str,
+    lag_days: int, ingest_time: str, source_dataset: str, api_endpoint: str | None,
+) -> dict[str, Any]:
+    return {
+        "dataset": dataset,
+        "symbol": code,
+        "symbol_canonical": canonical,
+        "market": "TW",
+        "venue": venue,
+        "event_time": event_time,
+        "date": event_time,
+        "available_time": available_time,
+        "ingest_time": ingest_time,
+        "availability_lag_days": lag_days,
+        "source_dataset": source_dataset,
+        "api_endpoint": api_endpoint,
+        "value_revision": FINMIND_FUNDAMENTALS_VALUE_REVISION,
+    }
+
+
+def _month_end(year: int, month: int) -> date:
+    return (date(year + (month == 12), month % 12 + 1, 1)) - timedelta(days=1)
+
+
+def normalize_month_revenue_rows(
+    rows: Sequence[Mapping[str, Any]], *, venues: Mapping[str, tuple[str, str]], ingest_time: str,
+    api_endpoint: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """TaiwanStockMonthRevenue -> tw_monthly_revenue rows; yoy/mom use only earlier-available months."""
+    from ..feature_catalogue import iso_utc, parse_time, statutory_available_time
+
+    by_symbol: dict[str, dict[tuple[int, int], float]] = {}
+    for row in rows:
+        code = _text(_first(row, "stock_id", "data_id")).upper()
+        amount = _number(row.get("revenue"))
+        year, month = row.get("revenue_year"), row.get("revenue_month")
+        if code not in venues or amount is None or not isinstance(year, int) or not isinstance(month, int):
+            continue
+        if not 1 <= month <= 12:
+            continue
+        by_symbol.setdefault(code, {})[(year, month)] = amount
+    out: list[dict[str, Any]] = []
+    for code, series in sorted(by_symbol.items()):
+        venue, canonical = venues[code]
+        for (year, month), amount in sorted(series.items()):
+            event = _month_end(year, month).isoformat()
+            available = statutory_available_time("tw_monthly_revenue", event)
+            assert available is not None
+
+            def comparable(key: tuple[int, int]) -> float | None:
+                prior = series.get(key)
+                if prior is None or prior <= 0:
+                    return None
+                # A comparison month is only usable if it was itself already available.
+                prior_available = statutory_available_time("tw_monthly_revenue", _month_end(*key).isoformat())
+                return prior if prior_available is not None and prior_available <= available else None
+
+            prev_key = (year - 1, 12) if month == 1 else (year, month - 1)
+            prev, last_year = comparable(prev_key), comparable((year - 1, month))
+            item = _fundamental_row(
+                "tw_monthly_revenue", code, venue, canonical, event_time=event,
+                available_time=iso_utc(available), lag_days=(available.date() - parse_time(event).date()).days,
+                ingest_time=ingest_time, source_dataset=FINMIND_MONTH_REVENUE_DATASET, api_endpoint=api_endpoint,
+            )
+            item.update(
+                revenue=amount / FINMIND_AMOUNT_UNIT_DIVISOR,
+                revenue_previous_month=None if prev is None else prev / FINMIND_AMOUNT_UNIT_DIVISOR,
+                revenue_previous_year_month=None if last_year is None else last_year / FINMIND_AMOUNT_UNIT_DIVISOR,
+                mom=None if prev is None else (amount / prev - 1.0) * 100.0,
+                yoy=None if last_year is None else (amount / last_year - 1.0) * 100.0,
+            )
+            out.append(item)
+    return tuple(out)
+
+
+def _statement_values(rows: Sequence[Mapping[str, Any]], venues: Mapping[str, tuple[str, str]]) -> dict[tuple[str, str], dict[str, float]]:
+    values: dict[tuple[str, str], dict[str, float]] = {}
+    for row in rows:
+        code = _text(_first(row, "stock_id", "data_id")).upper()
+        day, kind, amount = _text(row.get("date"))[:10], _text(row.get("type")), _number(row.get("value"))
+        if code in venues and len(day) == 10 and kind and amount is not None:
+            values.setdefault((code, day), {})[kind] = amount
+    return values
+
+
+def normalize_financial_statement_rows(
+    income_rows: Sequence[Mapping[str, Any]], balance_rows: Sequence[Mapping[str, Any]], *,
+    venues: Mapping[str, tuple[str, str]], ingest_time: str, api_endpoint: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Statement + balance sheet -> tw_financial_statement rows (ratios of single-quarter amounts)."""
+    from ..feature_catalogue import iso_utc, parse_time, statutory_available_time
+
+    income, balance = _statement_values(income_rows, venues), _statement_values(balance_rows, venues)
+    out: list[dict[str, Any]] = []
+    for (code, day), amounts in sorted(income.items()):
+        try:
+            event = date.fromisoformat(day)
+        except ValueError:
+            continue
+        if (event.month, event.day) not in {(3, 31), (6, 30), (9, 30), (12, 31)}:
+            continue
+        available = statutory_available_time("tw_quarterly_statements", day)
+        assert available is not None
+        revenue, gross, operating = amounts.get("Revenue"), amounts.get("GrossProfit"), amounts.get("OperatingIncome")
+        net_parent = amounts.get("EquityAttributableToOwnersOfParent")
+        equity = balance.get((code, day), {}).get("EquityAttributableToOwnersOfParent")
+        eps = amounts.get("EPS")
+        venue, canonical = venues[code]
+        item = _fundamental_row(
+            "tw_financial_statement", code, venue, canonical, event_time=day,
+            available_time=iso_utc(available), lag_days=(available.date() - parse_time(day).date()).days,
+            ingest_time=ingest_time, source_dataset=FINMIND_FINANCIAL_STATEMENTS_DATASET, api_endpoint=api_endpoint,
+        )
+        item.update(
+            fiscal_year=event.year,
+            fiscal_quarter=event.month // 3,
+            revenue=None if revenue is None else revenue / FINMIND_AMOUNT_UNIT_DIVISOR,
+            eps=eps,
+            gross_margin=(gross / revenue) if gross is not None and revenue else None,
+            operating_margin=(operating / revenue) if operating is not None and revenue else None,
+            roe=(net_parent / equity) if net_parent is not None and equity else None,
+        )
+        if all(item[k] is None for k in ("eps", "gross_margin", "operating_margin", "roe")):
+            continue
+        out.append(item)
+    return tuple(out)
+
+
+def normalize_per_rows(
+    rows: Sequence[Mapping[str, Any]], *, venues: Mapping[str, tuple[str, str]], ingest_time: str,
+    api_endpoint: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """TaiwanStockPER -> tw_valuation_bwibbu rows; same-session close availability."""
+    from ..feature_catalogue import default_available_time
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        code, day = _text(_first(row, "stock_id", "data_id")).upper(), _text(row.get("date"))[:10]
+        if code not in venues or len(day) != 10:
+            continue
+        pe, pb, dy = _number(row.get("PER")), _number(row.get("PBR")), _number(row.get("dividend_yield"))
+        # FinMind reports 0 for a loss-making company's PER; a missing ratio is not zero.
+        pe = pe if pe is not None and pe > 0 else None
+        pb = pb if pb is not None and pb > 0 else None
+        if pe is None and pb is None and dy is None:
+            continue
+        venue, canonical = venues[code]
+        item = _fundamental_row(
+            "tw_valuation_bwibbu", code, venue, canonical, event_time=day,
+            available_time=default_available_time(day, 0), lag_days=0, ingest_time=ingest_time,
+            source_dataset=FINMIND_PER_DATASET, api_endpoint=api_endpoint,
+        )
+        item.update(pe_ratio=pe, pb_ratio=pb, dividend_yield=dy)
+        out.append(item)
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class FinMindTaiwanFundamentalsAdapter(SourceConnectorProvider):
+    """FinMind monthly revenue, quarterly statements and daily valuation as governed datasets."""
+
+    connector_id: str = FINMIND_FUNDAMENTALS_CONNECTOR_ID
+    secret_ref_id: str = "env://FINMIND_API_TOKEN"
+    max_records: int = 500
+    entitlement_tier: str = "sponsor"
+    source_metadata: SourceMetadata | Mapping[str, Any] | None = None
+    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def connector(self) -> SourceConnector:
+        base = FinMindTaiwanDatasetAdapter(
+            connector_id=self.connector_id, secret_ref_id=self.secret_ref_id,
+            entitlement_tier=self.entitlement_tier, source_metadata=self.source_metadata,
+        ).connector()
+        payload = base.to_dict()
+        metadata = dict(payload.get("metadata") or {})
+        metadata.update(
+            primary_for=["tw_monthly_revenue", "tw_financial_statement", "tw_valuation_bwibbu"],
+            dataset_catalog=[dict(item) for item in FINMIND_FUNDAMENTAL_CATALOG],
+            value_revision=FINMIND_FUNDAMENTALS_VALUE_REVISION,
+            availability_basis="statutory_publication_deadline",
+            schema_hash=FINMIND_DATASET_SCHEMA_HASH,
+            **dict(self.connector_metadata),
+        )
+        return SourceConnector(
+            connector_id=self.connector_id,
+            source_type="market",
+            provider="FinMind",
+            license_scope="vendor_research",
+            auth_type=AuthType.API_KEY,
+            secret_ref_id=self.secret_ref_id,
+            supported_modes=(ConnectorMode.BATCH,),
+            auth_policy=base.auth_policy,
+            license_policy=base.license_policy,
+            rate_limit_policy=base.rate_limit_policy,
+            source_metadata=base.source_metadata,
+            metadata=metadata,
+        )
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        return {
+            "mode": "provider_owned_adapter",
+            "next_watermark": None,
+            "adapter": "FinMindTaiwanFundamentalsAdapter.records_from_rows",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_records": self.max_records,
+                "entitlement_tier": self.entitlement_tier,
+            },
+            "request": {},
+            "max_records": self.max_records,
+        }
+
+    def rows_from_payloads(
+        self, dataset: str, payloads: Mapping[str, Any], *, symbols: Sequence[str], ingest_time: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Normalize recorded/fetched provider payloads (keyed by FinMind dataset name)."""
+        spec = _FINMIND_BY_NORMALIZED.get(dataset)
+        if spec is None:
+            raise ValueError(f"unsupported FinMind fundamentals dataset: {dataset}")
+        venues = finmind_fundamental_venues(symbols)
+        common = {"venues": venues, "ingest_time": ingest_time or _utc_now(), "api_endpoint": _finmind_url(
+            FINMIND_DATA_ENDPOINT, {"dataset": spec["dataset"]})}
+        primary = _rows_from_payload(payloads.get(spec["dataset"]) or ())
+        if dataset == "tw_monthly_revenue":
+            return normalize_month_revenue_rows(primary, **common)
+        if dataset == "tw_valuation_bwibbu":
+            return normalize_per_rows(primary, **common)
+        return normalize_financial_statement_rows(
+            primary, _rows_from_payload(payloads.get(spec["companion_dataset"]) or ()), **common)
+
+    def records_from_rows(
+        self, rows: Sequence[Mapping[str, Any]], *, trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        records: list[SourceRecord] = []
+        for row in rows:
+            dataset, symbol = str(row["dataset"]), str(row["symbol"])
+            row_hash = _stable_hash({"dataset": dataset, "row": dict(row)})
+            records.append(
+                SourceRecord(
+                    source_id=f"finmind:{dataset}:{row['venue']}:{symbol}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"FinMind {dataset} {row['venue']} {symbol} {row['event_time']}",
+                    content_ref=f"finmind://fundamentals/{dataset}/{row['venue']}/{symbol}/{row['event_time']}/{row_hash}",
+                    metadata={
+                        "source_class": "research_grade",
+                        "source_plan": "finmind_first_low_cost_paid_layer",
+                        "provider": "FinMind",
+                        "dataset": dataset,
+                        "source_dataset": row.get("source_dataset"),
+                        "venue": row["venue"],
+                        "symbol": symbol,
+                        "symbol_canonical": row.get("symbol_canonical"),
+                        "date": row["event_time"],
+                        "event_time": row["event_time"],
+                        "available_time": row["available_time"],
+                        "ingest_time": row["ingest_time"],
+                        "availability_lag_days": row["availability_lag_days"],
+                        "value_revision": FINMIND_FUNDAMENTALS_VALUE_REVISION,
+                        "api_endpoint": row.get("api_endpoint"),
+                        "normalized_row": dict(row),
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "redistribution_allowed": False,
+                        "access_scope": ["research"],
+                        "license_scope": "vendor_research",
+                        "entitlement_tier": self.entitlement_tier,
+                        "schema_hash": FINMIND_FUNDAMENTALS_SCHEMA_HASHES[dataset],
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
