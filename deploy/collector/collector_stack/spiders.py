@@ -944,7 +944,7 @@ class TwseDailyPriceHistorySpider:
                 for table in payload["tables"]:
                     if isinstance(table, Mapping) and table.get("data"):
                         fields = [str(f).strip() for f in (table.get("fields") or [])]
-                        if not fields or any("證券代號" in f or "收盤價" in f for f in fields):
+                        if not fields or any("收盤價" in f or f.lower() == "close" for f in fields):
                             tables.append(table)
             if not tables and payload.get("data"):
                 tables.append(payload)
@@ -972,6 +972,15 @@ class TwseDailyPriceHistorySpider:
                         continue
                     if allowed_symbols is not None and symbol not in allowed_symbols:
                         continue
+                    if "收盤價" not in row_map and "close" not in row_map:
+                        continue
+                    raw_close_cell = (
+                        row_map.get("收盤價")
+                        if "收盤價" in row_map
+                        else row_map.get("close")
+                    )
+                    if raw_close_cell is None or str(raw_close_cell).strip() == "":
+                        continue
 
                     security_name = str(
                         row_map.get("證券名稱")
@@ -985,46 +994,46 @@ class TwseDailyPriceHistorySpider:
                         else default_trade_date
                     )
                     close_price = _clean_num(
-                        row_map.get("收盤價")
-                        if "收盤價" in row_map
-                        else row_map.get("close"),
+                        raw_close_cell,
                         allow_zero=False,
                     )
-                    if close_price is None:
-                        continue
-                    open_price = (
-                        _clean_num(
-                            row_map.get("開盤價")
-                            if "開盤價" in row_map
-                            else row_map.get("open"),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    not_traded = close_price is None
+                    trading_status = "not_traded" if not_traded else "traded"
+                    raw_close = str(raw_close_cell).strip()
+                    open_price = _clean_num(
+                        row_map.get("開盤價")
+                        if "開盤價" in row_map
+                        else row_map.get("open"),
+                        allow_zero=False,
                     )
-                    high_price = (
-                        _clean_num(
-                            row_map.get("最高價")
-                            if "最高價" in row_map
-                            else row_map.get("high"),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    if open_price is None and close_price is not None:
+                        open_price = close_price
+                    high_price = _clean_num(
+                        row_map.get("最高價")
+                        if "最高價" in row_map
+                        else row_map.get("high"),
+                        allow_zero=False,
                     )
-                    low_price = (
-                        _clean_num(
-                            row_map.get("最低價")
-                            if "最低價" in row_map
-                            else row_map.get("low"),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    if high_price is None and close_price is not None:
+                        high_price = close_price
+                    low_price = _clean_num(
+                        row_map.get("最低價")
+                        if "最低價" in row_map
+                        else row_map.get("low"),
+                        allow_zero=False,
                     )
+                    if low_price is None and close_price is not None:
+                        low_price = close_price
                     sign_raw = str(row_map.get("漲跌(+/-)") or "").strip()
-                    diff_val = _clean_num(
-                        row_map.get("漲跌價差")
-                        if "漲跌價差" in row_map
-                        else row_map.get("change"),
-                        allow_zero=True,
+                    diff_val = (
+                        None
+                        if not_traded
+                        else _clean_num(
+                            row_map.get("漲跌價差")
+                            if "漲跌價差" in row_map
+                            else row_map.get("change"),
+                            allow_zero=True,
+                        )
                     )
                     if diff_val is not None and ("-" in sign_raw or "green" in sign_raw.lower()) and diff_val > 0:
                         change_val: float | None = -diff_val
@@ -1068,6 +1077,10 @@ class TwseDailyPriceHistorySpider:
                         "volume_shares": volume_shares,
                         "turnover_twd": turnover_twd,
                         "transactions": transactions,
+                        "not_traded": not_traded,
+                        "suspended_or_not_traded": not_traded,
+                        "trading_status": trading_status,
+                        "raw_close": raw_close,
                     }
                     raw_row = json.dumps(
                         {
@@ -1088,7 +1101,7 @@ class TwseDailyPriceHistorySpider:
                             published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TWSE MI_INDEX {symbol} {security_name} ({trade_date}): "
-                                f"close={close_price}, volume_shares={volume_shares}"
+                                f"close={close_price}, trading_status={trading_status}, volume_shares={volume_shares}"
                             ),
                             lang="zh-TW",
                             hashed_author=None,
@@ -1100,6 +1113,10 @@ class TwseDailyPriceHistorySpider:
                                 "volume_shares": volume_shares,
                                 "turnover_twd": turnover_twd,
                                 "transactions": transactions,
+                                "not_traded": not_traded,
+                                "suspended_or_not_traded": not_traded,
+                                "trading_status": trading_status,
+                                "raw_close": raw_close,
                             },
                             raw_bytes=raw_row,
                             raw_extension="json",
@@ -1425,6 +1442,15 @@ class TpexDailyPriceHistorySpider:
                         continue
                     if allowed_symbols is not None and symbol not in allowed_symbols:
                         continue
+                    if "收盤" not in row_map and "收盤價" not in row_map and "close" not in row_map:
+                        continue
+                    raw_close_cell = (
+                        row_map.get("收盤")
+                        if "收盤" in row_map
+                        else (row_map.get("收盤價") if "收盤價" in row_map else row_map.get("close"))
+                    )
+                    if raw_close_cell is None or str(raw_close_cell).strip() == "":
+                        continue
 
                     security_name = str(
                         row_map.get("名稱")
@@ -1439,45 +1465,45 @@ class TpexDailyPriceHistorySpider:
                         else default_trade_date
                     )
                     close_price = _clean_num(
-                        row_map.get("收盤")
-                        if "收盤" in row_map
-                        else (row_map.get("收盤價") if "收盤價" in row_map else row_map.get("close")),
+                        raw_close_cell,
                         allow_zero=False,
                     )
-                    if close_price is None:
-                        continue
-                    open_price = (
-                        _clean_num(
-                            row_map.get("開盤")
-                            if "開盤" in row_map
-                            else (row_map.get("開盤價") if "開盤價" in row_map else row_map.get("open")),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    not_traded = close_price is None
+                    trading_status = "not_traded" if not_traded else "traded"
+                    raw_close = str(raw_close_cell).strip()
+                    open_price = _clean_num(
+                        row_map.get("開盤")
+                        if "開盤" in row_map
+                        else (row_map.get("開盤價") if "開盤價" in row_map else row_map.get("open")),
+                        allow_zero=False,
                     )
-                    high_price = (
-                        _clean_num(
-                            row_map.get("最高")
-                            if "最高" in row_map
-                            else (row_map.get("最高價") if "最高價" in row_map else row_map.get("high")),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    if open_price is None and close_price is not None:
+                        open_price = close_price
+                    high_price = _clean_num(
+                        row_map.get("最高")
+                        if "最高" in row_map
+                        else (row_map.get("最高價") if "最高價" in row_map else row_map.get("high")),
+                        allow_zero=False,
                     )
-                    low_price = (
-                        _clean_num(
-                            row_map.get("最低")
-                            if "最低" in row_map
-                            else (row_map.get("最低價") if "最低價" in row_map else row_map.get("low")),
-                            allow_zero=False,
-                        )
-                        or close_price
+                    if high_price is None and close_price is not None:
+                        high_price = close_price
+                    low_price = _clean_num(
+                        row_map.get("最低")
+                        if "最低" in row_map
+                        else (row_map.get("最低價") if "最低價" in row_map else row_map.get("low")),
+                        allow_zero=False,
                     )
-                    change_val = _clean_num(
-                        row_map.get("漲跌")
-                        if "漲跌" in row_map
-                        else row_map.get("change"),
-                        allow_zero=True,
+                    if low_price is None and close_price is not None:
+                        low_price = close_price
+                    change_val = (
+                        None
+                        if not_traded
+                        else _clean_num(
+                            row_map.get("漲跌")
+                            if "漲跌" in row_map
+                            else row_map.get("change"),
+                            allow_zero=True,
+                        )
                     )
                     volume_shares = _clean_int(
                         row_map.get("成交股數")
@@ -1516,6 +1542,10 @@ class TpexDailyPriceHistorySpider:
                         "volume_shares": volume_shares,
                         "turnover_twd": turnover_twd,
                         "transactions": transactions,
+                        "not_traded": not_traded,
+                        "suspended_or_not_traded": not_traded,
+                        "trading_status": trading_status,
+                        "raw_close": raw_close,
                     }
                     raw_row = json.dumps(
                         {
@@ -1536,7 +1566,7 @@ class TpexDailyPriceHistorySpider:
                             published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TPEx dailyQuotes {symbol} {security_name} ({trade_date}): "
-                                f"close={close_price}, volume_shares={volume_shares}"
+                                f"close={close_price}, trading_status={trading_status}, volume_shares={volume_shares}"
                             ),
                             lang="zh-TW",
                             hashed_author=None,
@@ -1548,6 +1578,10 @@ class TpexDailyPriceHistorySpider:
                                 "volume_shares": volume_shares,
                                 "turnover_twd": turnover_twd,
                                 "transactions": transactions,
+                                "not_traded": not_traded,
+                                "suspended_or_not_traded": not_traded,
+                                "trading_status": trading_status,
+                                "raw_close": raw_close,
                             },
                             raw_bytes=raw_row,
                             raw_extension="json",
@@ -1825,3 +1859,558 @@ class TaifexVixSpider:
             pending.add(key)
         self._pending = pending
         return items
+
+
+class TwTradingHolidayScheduleSpider(TwseIndexBreadthSpider):
+    """Official TWSE and TPEx trading holiday and market opening/closing schedules (2024-2026)."""
+
+    source_id = "collector-tw-trading-holidays"
+    dataset = "tw_trading_holidays"
+    DEFAULT_YEARS: tuple[int, ...] = (2024, 2025, 2026)
+    TWSE_URL_TEMPLATE = (
+        "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date={yyyy}0101&response=json"
+    )
+    TPEX_URL_TEMPLATE = "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date={yyyy}&response=json"
+    TWSE_PUBLICATION_REF = "https://www.twse.com.tw/zh/trading/holiday.html"
+    TPEX_PUBLICATION_REF = "https://www.tpex.org.tw/zh-tw/announce/market/holiday.html"
+    TWSE_FIELDS = ["日期", "名稱", "說明"]
+    TPEX_ALLOWED_HEADERS = (
+        ["紀念節日名稱", "日期", "星期", "說明"],
+        ["紀念節日名稱", "日期", "星期", "休市/開市說明"],
+    )
+
+    @classmethod
+    def build_twse_url(cls, year: int) -> str:
+        return cls.TWSE_URL_TEMPLATE.format(yyyy=int(year))
+
+    @classmethod
+    def build_tpex_url(cls, year: int) -> str:
+        return cls.TPEX_URL_TEMPLATE.format(yyyy=int(year))
+
+    @classmethod
+    def _parse_tpex_html_table(cls, html: str, year: int) -> list[dict[str, Any]]:
+        trs = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S)
+        pending: dict[tuple[int, int], str] = {}
+        grid: list[list[str | None]] = []
+        for r_idx, tr in enumerate(trs):
+            cells = re.findall(r"<(t[hd])([^>]*)>(.*?)</\1>", tr, re.S)
+            if not cells:
+                continue
+            row_vals: list[str | None] = [None] * 4
+            for col in range(4):
+                if (r_idx, col) in pending:
+                    row_vals[col] = pending.pop((r_idx, col))
+            c_idx = 0
+            for _tag, attrs, inner in cells:
+                while c_idx < 4 and row_vals[c_idx] is not None:
+                    c_idx += 1
+                text = re.sub(r"<[^>]+>", "", inner).replace("&nbsp;", " ").strip()
+                rs_match = re.search(r"rowspan=[\"']?(\d+)", attrs, re.I)
+                cs_match = re.search(r"colspan=[\"']?(\d+)", attrs, re.I)
+                rs = int(rs_match.group(1)) if rs_match else 1
+                cs = int(cs_match.group(1)) if cs_match else 1
+                for dr in range(rs):
+                    for dc in range(cs):
+                        if c_idx + dc < 4:
+                            if dr == 0:
+                                row_vals[c_idx + dc] = text
+                            else:
+                                pending[(r_idx + dr, c_idx + dc)] = text
+                c_idx += cs
+            grid.append(row_vals)
+
+        if len(grid) < 3:
+            raise TwseRegimeParseError(f"TPEx tradingDate {year}: missing holiday schedule table")
+        roc_year = int(year) - 1911
+        title_cell = str(grid[0][0] or "").strip()
+        if f"中華民國{roc_year}年" not in title_cell:
+            raise TwseRegimeParseError(f"TPEx tradingDate {year}: unexpected table title {title_cell!r}")
+        header = [str(x or "").strip() for x in grid[1]]
+        if header not in cls.TPEX_ALLOWED_HEADERS:
+            raise TwseRegimeParseError(f"TPEx tradingDate {year}: changed table headers {header!r}")
+
+        rows_out: list[dict[str, Any]] = []
+        for raw_row in grid[2:]:
+            name, date_cell, weekday_cell, description = [str(x or "").strip() for x in raw_row]
+            if not name or not date_cell:
+                raise TwseRegimeParseError(f"TPEx tradingDate {year}: malformed row {raw_row!r}")
+            month_days = re.findall(r"(\d{1,2})\s*月\s*(\d{1,2})\s*日", date_cell)
+            if not month_days:
+                raise TwseRegimeParseError(f"TPEx tradingDate {year}: unparseable date cell {date_cell!r}")
+            weekdays = [w.strip() for w in re.split(r"\s+", weekday_cell) if w.strip()]
+            for idx, (m_str, d_str) in enumerate(month_days):
+                iso_date = f"{int(year):04d}-{int(m_str):02d}-{int(d_str):02d}"
+                try:
+                    datetime.strptime(iso_date, "%Y-%m-%d")
+                except ValueError as exc:
+                    raise TwseRegimeParseError(f"TPEx tradingDate {year}: invalid date {iso_date!r}") from exc
+                weekday = weekdays[idx] if idx < len(weekdays) else (weekdays[-1] if weekdays else "")
+                is_closed = not (
+                    "開始交易" in name
+                    or "最後交易" in name
+                    or "開始交易" in description
+                )
+                rows_out.append(
+                    {
+                        "date": iso_date,
+                        "holiday_name": name,
+                        "weekday": weekday,
+                        "description": description,
+                        "is_closed": is_closed,
+                        "raw_row": {
+                            "title": title_cell,
+                            "headers": header,
+                            "cells": [name, date_cell, weekday_cell, description],
+                        },
+                    }
+                )
+        if not rows_out:
+            raise TwseRegimeParseError(f"TPEx tradingDate {year}: zero schedule rows parsed")
+        return rows_out
+
+    def collect(
+        self,
+        *,
+        years: Sequence[int] | None = None,
+        venues: Sequence[str] | None = None,
+        fetched_at: datetime | str | None = None,
+    ) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        target_years = tuple(int(y) for y in (years if years is not None else self.DEFAULT_YEARS))
+        target_venues = tuple(v.upper() for v in (venues if venues is not None else ("TWSE", "TPEX")))
+        if not target_years or not target_venues:
+            raise TwseRegimeParseError("holiday schedule collection requires non-empty years and venues")
+
+        items: list[CollectedItem] = []
+        self.no_data_confirmed = False
+        for year in dict.fromkeys(target_years):
+            if "TWSE" in target_venues:
+                url = self.build_twse_url(year)
+                response = self.fetcher.fetch(url)
+                payload = json.loads(response.text)
+                if not isinstance(payload, dict) or str(payload.get("stat") or "").strip().lower() != "ok":
+                    raise TwseRegimeParseError(f"TWSE holidaySchedule {year}: expected stat=ok")
+                rows = _regime_rows(payload, self.TWSE_FIELDS, f"TWSE holidaySchedule {year}")
+                for idx, row in enumerate(rows):
+                    raw_date, raw_name, raw_desc = [str(c).strip() for c in row]
+                    iso_date = _normalize_iso_date(raw_date)
+                    datetime.strptime(iso_date, "%Y-%m-%d")
+                    if not iso_date.startswith(f"{year:04d}-") or not raw_name:
+                        raise TwseRegimeParseError(
+                            f"TWSE holidaySchedule {year}: out-of-year or unnamed row {row!r}"
+                        )
+                    is_closed = not ("開始交易" in raw_name or "最後交易" in raw_name)
+                    market_status = "closed" if is_closed else "open_session_marker"
+                    raw_values = {
+                        "title": payload.get("title"),
+                        "fields": list(self.TWSE_FIELDS),
+                        "row": list(row),
+                    }
+                    record = {
+                        "dataset": self.dataset,
+                        "venue": "TWSE",
+                        "exchange": "TWSE",
+                        "source_dataset": "holidaySchedule",
+                        "year": year,
+                        "date": iso_date,
+                        "trade_date": iso_date,
+                        "holiday_name": raw_name,
+                        "weekday": None,
+                        "description": raw_desc,
+                        "is_closed": is_closed,
+                        "market_status": market_status,
+                        "official_publication_ref": self.TWSE_PUBLICATION_REF,
+                        "api_endpoint": url,
+                        "raw_values": raw_values,
+                    }
+                    items.append(
+                        CollectedItem(
+                            item_id=f"twse-holiday-{iso_date}-{idx}",
+                            url=url,
+                            fetched_at=fetched_iso,
+                            published_at=f"{year:04d}-01-01T00:00:00Z",
+                            text=f"TWSE holidaySchedule {iso_date} {raw_name} ({market_status})",
+                            lang="zh-TW",
+                            hashed_author=None,
+                            metrics={"year": year, "is_closed": is_closed},
+                            raw_bytes=json.dumps(raw_values, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+                            raw_extension="json",
+                            http_status=response.http_status,
+                            extra_fields=record,
+                        )
+                    )
+
+            if "TPEX" in target_venues:
+                url = self.build_tpex_url(year)
+                response = self.fetcher.fetch(url)
+                payload = json.loads(response.text)
+                if not isinstance(payload, dict) or str(payload.get("stat") or "").strip().lower() != "ok":
+                    raise TwseRegimeParseError(f"TPEx tradingDate {year}: expected stat=ok")
+                data_obj = payload.get("data")
+                if not isinstance(data_obj, Mapping) or not isinstance(data_obj.get("html"), str):
+                    raise TwseRegimeParseError(f"TPEx tradingDate {year}: missing data.html table")
+                parsed_rows = self._parse_tpex_html_table(data_obj["html"], year)
+                for idx, entry in enumerate(parsed_rows):
+                    iso_date = entry["date"]
+                    is_closed = bool(entry["is_closed"])
+                    market_status = "closed" if is_closed else "open_session_marker"
+                    raw_values = entry["raw_row"]
+                    record = {
+                        "dataset": self.dataset,
+                        "venue": "TPEx",
+                        "exchange": "TPEX",
+                        "source_dataset": "tradingDate",
+                        "year": year,
+                        "date": iso_date,
+                        "trade_date": iso_date,
+                        "holiday_name": entry["holiday_name"],
+                        "weekday": entry["weekday"],
+                        "description": entry["description"],
+                        "is_closed": is_closed,
+                        "market_status": market_status,
+                        "official_publication_ref": self.TPEX_PUBLICATION_REF,
+                        "api_endpoint": url,
+                        "raw_values": raw_values,
+                    }
+                    items.append(
+                        CollectedItem(
+                            item_id=f"tpex-holiday-{iso_date}-{idx}",
+                            url=url,
+                            fetched_at=fetched_iso,
+                            published_at=f"{year:04d}-01-01T00:00:00Z",
+                            text=f"TPEx tradingDate {iso_date} {entry['holiday_name']} ({market_status})",
+                            lang="zh-TW",
+                            hashed_author=None,
+                            metrics={"year": year, "is_closed": is_closed},
+                            raw_bytes=json.dumps(raw_values, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+                            raw_extension="json",
+                            http_status=response.http_status,
+                            extra_fields=record,
+                        )
+                    )
+        return items
+
+
+class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
+    """Official TWSE (TWTAWU) and TPEx (sprcHis) trading suspension and resumption records (2024-2026)."""
+
+    source_id = "collector-tw-trading-suspension"
+    dataset = "tw_trading_suspension"
+    DEFAULT_YEARS: tuple[int, ...] = (2024, 2025, 2026)
+    TWSE_URL_TEMPLATE = (
+        "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU"
+        "?startDate={start_yyyymmdd}&endDate={end_yyyymmdd}&response=json"
+    )
+    TPEX_URL_TEMPLATE = (
+        "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date={yyyy}&cate=1&response=json"
+    )
+    TWSE_PUBLICATION_REF = "https://www.twse.com.tw/zh/trading/historical/twtawu.html"
+    TPEX_PUBLICATION_REF = "https://www.tpex.org.tw/zh-tw/announce/market/halt/historical.html"
+    TWSE_FIELDS = ["編號", "證券代號", "證券名稱", "暫停交易日期", "暫停交易時間", "恢復交易日期", "恢復交易時間"]
+    TPEX_FIELDS = [
+        "編號",
+        "有價證券類別",
+        "有價證券代號",
+        "有價證券名稱",
+        "暫停交易日期",
+        "暫停交易時間",
+        "恢復交易日期",
+        "恢復交易時間",
+    ]
+    WARRANT_SYMBOL_RE = re.compile(r"^0[3-8]\d{3}[0-9A-Za-z]$")
+
+    @classmethod
+    def build_twse_url(cls, *, start_yyyymmdd: str = "20240101", end_yyyymmdd: str) -> str:
+        return cls.TWSE_URL_TEMPLATE.format(
+            start_yyyymmdd=str(start_yyyymmdd).replace("-", ""),
+            end_yyyymmdd=str(end_yyyymmdd).replace("-", ""),
+        )
+
+    @classmethod
+    def build_tpex_url(cls, year: int) -> str:
+        return cls.TPEX_URL_TEMPLATE.format(yyyy=int(year))
+
+    @staticmethod
+    def _parse_optional_roc_date(raw_value: Any, *, label: str) -> str | None:
+        text = str(raw_value or "").strip()
+        if not text or text in {"-", "--", "---"}:
+            return None
+        try:
+            iso = _normalize_iso_date(text)
+            datetime.strptime(iso, "%Y-%m-%d")
+            return iso
+        except Exception as exc:
+            raise TwseRegimeParseError(f"{label}: invalid date {raw_value!r}") from exc
+
+    def collect(
+        self,
+        *,
+        years: Sequence[int] | None = None,
+        venues: Sequence[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        include_warrants: bool = False,
+        fetched_at: datetime | str | None = None,
+    ) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        target_years = tuple(int(y) for y in (years if years is not None else self.DEFAULT_YEARS))
+        target_venues = tuple(v.upper() for v in (venues if venues is not None else ("TWSE", "TPEX")))
+        if not target_years or not target_venues:
+            raise TwseRegimeParseError("trading suspension collection requires non-empty years and venues")
+
+        start_compact = (
+            _normalize_iso_date(start_date).replace("-", "")
+            if start_date is not None
+            else f"{min(target_years):04d}0101"
+        )
+        end_compact = (
+            _normalize_iso_date(end_date).replace("-", "")
+            if end_date is not None
+            else latest_published_trading_date(fetched_iso).replace("-", "")
+        )
+
+        items: list[CollectedItem] = []
+        self.no_data_confirmed = False
+
+        if "TWSE" in target_venues:
+            url = self.build_twse_url(start_yyyymmdd=start_compact, end_yyyymmdd=end_compact)
+            response = self.fetcher.fetch(url)
+            payload = json.loads(response.text)
+            if not isinstance(payload, dict) or str(payload.get("stat") or "").strip().upper() != "OK":
+                raise TwseRegimeParseError(f"TWSE TWTAWU: expected stat=OK, got {payload.get('stat')!r}")
+            if payload.get("fields") != self.TWSE_FIELDS:
+                raise TwseRegimeParseError(f"TWSE TWTAWU: changed fields {payload.get('fields')!r}")
+            rows = payload.get("data")
+            if not isinstance(rows, list) or not rows:
+                raise TwseRegimeParseError("TWSE TWTAWU: missing data rows")
+            for row in rows:
+                if not isinstance(row, list) or len(row) != len(self.TWSE_FIELDS):
+                    raise TwseRegimeParseError(f"TWSE TWTAWU: malformed row {row!r}")
+                serial_no, raw_code, raw_name, susp_date_raw, susp_time_raw, res_date_raw, res_time_raw = row
+                symbol = str(raw_code or "").strip()
+                security_name = str(raw_name or "").strip()
+                if not symbol or not security_name:
+                    raise TwseRegimeParseError(f"TWSE TWTAWU: missing symbol/name in row {row!r}")
+                susp_iso = self._parse_optional_roc_date(susp_date_raw, label="TWSE TWTAWU")
+                res_iso = self._parse_optional_roc_date(res_date_raw, label="TWSE TWTAWU")
+                if susp_iso is None and res_iso is None:
+                    raise TwseRegimeParseError(f"TWSE TWTAWU: row lacks both suspension and resumption dates {row!r}")
+                if not include_warrants and self.WARRANT_SYMBOL_RE.match(symbol):
+                    continue
+                event_date = susp_iso or res_iso or f"{min(target_years):04d}-01-01"
+                raw_values = {
+                    "title": payload.get("title"),
+                    "fields": list(self.TWSE_FIELDS),
+                    "row": list(row),
+                }
+                record = {
+                    "dataset": self.dataset,
+                    "venue": "TWSE",
+                    "exchange": "TWSE",
+                    "source_dataset": "TWTAWU",
+                    "serial_no": serial_no,
+                    "symbol": symbol,
+                    "security_name": security_name,
+                    "security_category": "上市證券",
+                    "suspended_date": susp_iso,
+                    "suspended_date_raw": str(susp_date_raw).strip(),
+                    "suspended_time_raw": str(susp_time_raw).strip(),
+                    "resumed_date": res_iso,
+                    "resumed_date_raw": str(res_date_raw).strip(),
+                    "resumed_time_raw": str(res_time_raw).strip(),
+                    "trade_date": event_date,
+                    "official_publication_ref": self.TWSE_PUBLICATION_REF,
+                    "api_endpoint": url,
+                    "raw_values": raw_values,
+                }
+                items.append(
+                    CollectedItem(
+                        item_id=f"twse-suspension-{symbol}-{susp_iso or 'none'}-{res_iso or 'none'}-{serial_no}",
+                        url=url,
+                        fetched_at=fetched_iso,
+                        published_at=_price_published_at(event_date, fetched_iso),
+                        text=(
+                            f"TWSE TWTAWU {symbol} {security_name}: "
+                            f"suspended={susp_iso} ({susp_time_raw}), resumed={res_iso} ({res_time_raw})"
+                        ),
+                        lang="zh-TW",
+                        hashed_author=None,
+                        metrics={"suspended": susp_iso is not None, "resumed": res_iso is not None},
+                        raw_bytes=json.dumps(raw_values, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+                        raw_extension="json",
+                        http_status=response.http_status,
+                        extra_fields={**record, "symbols": [symbol]},
+                    )
+                )
+
+        if "TPEX" in target_venues:
+            for year in dict.fromkeys(target_years):
+                url = self.build_tpex_url(year)
+                response = self.fetcher.fetch(url)
+                payload = json.loads(response.text)
+                if not isinstance(payload, dict) or str(payload.get("stat") or "").strip().lower() != "ok":
+                    raise TwseRegimeParseError(f"TPEx sprcHis {year}: expected stat=ok")
+                tables = payload.get("tables")
+                if not isinstance(tables, list) or not tables or not isinstance(tables[0], Mapping):
+                    raise TwseRegimeParseError(f"TPEx sprcHis {year}: missing tables[0]")
+                t0 = tables[0]
+                if t0.get("fields") != self.TPEX_FIELDS:
+                    raise TwseRegimeParseError(f"TPEx sprcHis {year}: changed fields {t0.get('fields')!r}")
+                rows = t0.get("data")
+                if not isinstance(rows, list) or not rows:
+                    raise TwseRegimeParseError(f"TPEx sprcHis {year}: missing data rows")
+                for row in rows:
+                    if not isinstance(row, list) or len(row) != len(self.TPEX_FIELDS):
+                        raise TwseRegimeParseError(f"TPEx sprcHis {year}: malformed row {row!r}")
+                    (
+                        serial_no,
+                        raw_cat,
+                        raw_code,
+                        raw_name,
+                        susp_date_raw,
+                        susp_time_raw,
+                        res_date_raw,
+                        res_time_raw,
+                    ) = row
+                    symbol = str(raw_code or "").strip()
+                    security_name = str(raw_name or "").strip()
+                    category = str(raw_cat or "").strip()
+                    if not symbol or not security_name:
+                        raise TwseRegimeParseError(f"TPEx sprcHis {year}: missing symbol/name in row {row!r}")
+                    susp_iso = self._parse_optional_roc_date(susp_date_raw, label=f"TPEx sprcHis {year}")
+                    res_iso = self._parse_optional_roc_date(res_date_raw, label=f"TPEx sprcHis {year}")
+                    if susp_iso is None and res_iso is None:
+                        raise TwseRegimeParseError(
+                            f"TPEx sprcHis {year}: row lacks both suspension and resumption dates {row!r}"
+                        )
+                    if not include_warrants and self.WARRANT_SYMBOL_RE.match(symbol):
+                        continue
+                    event_date = susp_iso or res_iso or f"{year:04d}-01-01"
+                    raw_values = {
+                        "date": payload.get("date"),
+                        "fields": list(self.TPEX_FIELDS),
+                        "row": list(row),
+                    }
+                    record = {
+                        "dataset": self.dataset,
+                        "venue": "TPEx",
+                        "exchange": "TPEX",
+                        "source_dataset": "sprcHis",
+                        "year": year,
+                        "serial_no": serial_no,
+                        "symbol": symbol,
+                        "security_name": security_name,
+                        "security_category": category,
+                        "suspended_date": susp_iso,
+                        "suspended_date_raw": str(susp_date_raw).strip(),
+                        "suspended_time_raw": str(susp_time_raw).strip(),
+                        "resumed_date": res_iso,
+                        "resumed_date_raw": str(res_date_raw).strip(),
+                        "resumed_time_raw": str(res_time_raw).strip(),
+                        "trade_date": event_date,
+                        "official_publication_ref": self.TPEX_PUBLICATION_REF,
+                        "api_endpoint": url,
+                        "raw_values": raw_values,
+                    }
+                    items.append(
+                        CollectedItem(
+                            item_id=f"tpex-suspension-{year}-{symbol}-{susp_iso or 'none'}-{res_iso or 'none'}-{serial_no}",
+                            url=url,
+                            fetched_at=fetched_iso,
+                            published_at=_price_published_at(event_date, fetched_iso),
+                            text=(
+                                f"TPEx sprcHis {symbol} {security_name}: "
+                                f"suspended={susp_iso} ({susp_time_raw}), resumed={res_iso} ({res_time_raw})"
+                            ),
+                            lang="zh-TW",
+                            hashed_author=None,
+                            metrics={"year": year, "suspended": susp_iso is not None, "resumed": res_iso is not None},
+                            raw_bytes=json.dumps(raw_values, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+                            raw_extension="json",
+                            http_status=response.http_status,
+                            extra_fields={**record, "symbols": [symbol]},
+                        )
+                    )
+        return items
+
+
+def estimate_two_year_survivorship_recovery_plan(
+    *,
+    retained_full_page_dates_twse: int = 0,
+    retained_full_page_dates_tpex: int = 0,
+    trading_days_per_year: int = EXCHANGE_TRADING_DAYS_PER_YEAR,
+    years: int = 2,
+    min_interval_seconds: float = 5.0,
+) -> dict[str, Any]:
+    """Return the exact 2-year recovery analysis and bounded re-collection plan (AC 4).
+
+    Nothing is re-collected by this function or by COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115.
+    """
+    trading_days = int(trading_days_per_year) * int(years)
+    twse_retained = max(0, min(trading_days, int(retained_full_page_dates_twse)))
+    tpex_retained = max(0, min(trading_days, int(retained_full_page_dates_tpex)))
+    twse_recollect = trading_days - twse_retained
+    tpex_recollect = trading_days - tpex_retained
+    holiday_requests = 6  # TWSE (2024, 2025, 2026) + TPEx (2024, 2025, 2026)
+    suspension_requests = 4  # TWSE TWTAWU (2024..2026 range) + TPEx sprcHis (2024, 2025, 2026)
+    interval = float(min_interval_seconds)
+    total_requests = twse_recollect + tpex_recollect + holiday_requests + suspension_requests
+    return {
+        "recollected_in_this_task": False,
+        "requests_executed_for_backfill": 0,
+        "years": int(years),
+        "trading_days_per_year": int(trading_days_per_year),
+        "trading_days_total": trading_days,
+        "raw_retention_days": 90,
+        "retained_raw_capture_recovery": {
+            "per_item_price_bundle_raw_files_recoverable_dates": 0,
+            "per_item_price_bundle_raw_files_reason": (
+                "Prior TwseDailyPriceHistorySpider (lines 993-994) and TpexDailyPriceHistorySpider (lines 1447-1448) "
+                "dropped rows with close_price is None before constructing CollectedItem or writing raw/<item_id>.json, "
+                "and each raw/<item_id>.json stores only a single security row rather than the full upstream table."
+            ),
+            "retained_full_page_dates_twse": twse_retained,
+            "retained_full_page_dates_tpex": tpex_retained,
+            "retained_full_page_new_requests": 0,
+        },
+        "bounded_recollection_plan": {
+            "published_rate_limit": {
+                "max_connections": 1,
+                "min_interval_seconds": interval,
+            },
+            "sources": {
+                "collector-tw-twse-price-history": {
+                    "endpoint_template": TWSE_MI_INDEX_WEBSITE_URL_TEMPLATE,
+                    "page_granularity": "per_date_all_stocks",
+                    "dates_recoverable_without_requests": twse_retained,
+                    "requests_required": twse_recollect,
+                    "estimated_wall_seconds": twse_recollect * interval,
+                },
+                "collector-tw-tpex-price-history": {
+                    "endpoint_template": TPEX_DAILY_QUOTES_WEBSITE_URL_TEMPLATE,
+                    "page_granularity": "per_date_all_stocks",
+                    "dates_recoverable_without_requests": tpex_retained,
+                    "requests_required": tpex_recollect,
+                    "estimated_wall_seconds": tpex_recollect * interval,
+                },
+                "collector-tw-trading-holidays": {
+                    "twse_endpoint_template": TwTradingHolidayScheduleSpider.TWSE_URL_TEMPLATE,
+                    "tpex_endpoint_template": TwTradingHolidayScheduleSpider.TPEX_URL_TEMPLATE,
+                    "covered_years": list(TwTradingHolidayScheduleSpider.DEFAULT_YEARS),
+                    "requests_required": holiday_requests,
+                    "estimated_wall_seconds": holiday_requests * interval,
+                },
+                "collector-tw-trading-suspension": {
+                    "twse_endpoint_template": TwTradingSuspensionSpider.TWSE_URL_TEMPLATE,
+                    "tpex_endpoint_template": TwTradingSuspensionSpider.TPEX_URL_TEMPLATE,
+                    "covered_years": list(TwTradingSuspensionSpider.DEFAULT_YEARS),
+                    "requests_required": suspension_requests,
+                    "estimated_wall_seconds": suspension_requests * interval,
+                },
+            },
+            "price_history_recollection_requests": twse_recollect + tpex_recollect,
+            "holiday_and_suspension_requests": holiday_requests + suspension_requests,
+            "total_requests": total_requests,
+            "total_estimated_wall_seconds": total_requests * interval,
+        },
+    }
