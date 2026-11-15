@@ -1,6 +1,6 @@
 # SD-PERSONA-MEETINGS-20261115 — persona meetings beyond gate reviews: evolution direction, optimisation, new strategies, post-mortem, regime, quarterly review
 
-- Status: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 left open. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
+- Status: amended 2026-11-15 (§11: operator decisions, Agora participation, Management pages). Earlier: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 left open. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
 - Every numeric value is a coordinator proposal unless a citation says otherwise.
 - Citation verification (Claude, base `137ebeb20`): line numbers in §2 and §3 re-resolved against the delivery base; corrections applied in place. Items not re-opened are marked *(unverified)* where noted.
 - Rows marked **plan** restate the original plan; rows marked **added** are coordinator additions filling what the plan left open.
@@ -162,3 +162,58 @@ The H10 interpretation turn (`PANEL-FULL-INTERPRETATIONS-R2-20261114`) is reused
 | K3 | Meetings bypass gates | M5: proposals only through existing entry points and gates |
 | K4 | Private memory leaks across personas | interpretation turn limited to `scope:committee`; rounds deny-all; only minutes are shared |
 | K5 | Too few enrolled personas | cross-persona meetings need at least 2 trading personas; otherwise recorded as `insufficient_participants` |
+
+## 11. Amendment 2026-11-15 — operator decisions, Agora participation, Management pages
+
+### 11.1 Operator decisions (verbatim)
+
+Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl`, line 9711, 2026-11-15T12:55:17.032Z, uuid `186331cd-e73d-4208-b569-8e54c1c3bdf7`, answering the four questions of §9 in order:
+
+> 1. 可以
+> 2. 可以
+> 3. 可以 還有agora的也要可以
+> 4. 可以
+> 5. 擬管理系統也要有相對應的管理頁面設計
+
+Consequences:
+- §9.1 the six meeting types and cadence (§6): **approved**.
+- §9.2 anonymised cross-visibility in round 2 of deliberative meetings, gate panels unchanged (M1, M3): **approved**.
+- §9.3 peer trading personas attend another persona's MT-1/MT-2 with the owner as sponsor (M4): **approved**, extended to Agora personas (§11.2).
+- §9.4 no vote; chair sponsors; dissent recorded (M4): **approved**.
+- New: the Management console gets the matching management pages (§11.3).
+
+### 11.2 M12 — Agora participation (coordinator reading of 「還有agora的也要可以」; reviewers check this reading)
+
+| Part | Rule | Basis |
+|---|---|---|
+| a | **Agora advisors in institutional meetings.** A deliberative meeting may invite personas that pass the existing Agora eligibility (`services/control-plane/bff/agora/interaction/router.py:340-409`: same tenant, operational, advice-only `persona_opinion` capability snapshot, environment ceiling) and are not user-private (`_private_persona`, `router.py:246-257`). They take part in every round as role `advisor`, cannot sponsor, count toward the M9 cap, and answer from their admitted opinion agent with no tools. | operator 11.1; Agora admission reused |
+| b | **Meetings convened from Agora.** A trader can convene a deliberative meeting from the Strategy Workshop. Participants: institutional personas, Agora advisors, and the trader's own private servant only when the convening user owns it (`_persona_user_allowed`, `router.py:260-270`). The servant's private memory never enters; its positions are part of that meeting's record, readable by the convening user, the participants and operators. This is the Agora Workshop adapter the plan never built (`SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md` §4.2), run on the same `persona_meeting` engine. | plan §4.2; operator 11.1 |
+| c | **Outputs of Agora-convened meetings.** When a trading persona accepts sponsorship in the synthesis, proposals go through §3.7 like any meeting. Otherwise they become Agora candidate decisions on the existing path (candidate → approval link → consumers, `services/control-plane/bff/agora/interaction/candidate_decisions/router.py:84,216`, `consumers.py:18-81`). Agora never trades, moves capital or writes canonical state (2026-09-29 Agora positioning). | 2026-09-29 decision; plan D9 |
+| d | **Agora views.** The Agora committee page lists gate panels and deliberative meetings and shows every round; the workshop shows meetings it convened. Reads forward to the consultation owner; the BFF keeps no store. | plan D11; `phase4-bff-thinning.md` |
+
+### 11.3 M13 — Management pages (operator decision 5)
+
+All reads come from the consultation owner through thin BFF forwarding; the BFF keeps no meeting store (`docs/02-architecture/phase4-bff-thinning.md`). Every page must pass the existing Management hosted acceptance crawl (`scripts/accept-management-hosted-production.mjs` in `execute-plans`): data reads complete within the gate budget, explicit empty and unavailable states instead of blank tables, honest 404 for an unknown meeting id.
+
+| Page | Route (execute-plans) | Content |
+|---|---|---|
+| Meetings center | `/management/meetings`, sidebar group `groups.researchAndEvolution`, canonical center with tabs | **Upcoming and running**: due and running meetings per persona and type with trigger, chair, participants, round in progress. **History**: finished meetings filterable by type, persona, outcome (`proposals`, `no_proposal`, `REVIEW`, `insufficient_participants`, `budget_refused`). **Proposals**: every meeting proposal with sponsor and live downstream status (research demand, evolution proposal, harness patch, lesson candidate, pool decision, governance approval, Agora candidate decision). **Rules and budgets**: the six types with triggers, cadence, participant rules and budgets, last and next due per enrolled persona, and refusal reasons (not enrolled, budget spent, too few participants); read-only, changes go through tasks. |
+| Meeting detail | `/management/meetings/:meetingId` | Header: type, trigger with link to its source event, chair and sponsor, participants tagged institutional / Agora advisor / private servant (owner shown only to operators and the owner), status, budget used (calls, tokens). Agenda and case-file items with evidence links. Pre-read interpretations in full with citations. Round 1 positions with confidence and citations. Round 2 responses with anonymised labels and an operator-only reveal of the label mapping. Synthesis: proposals with sponsor and citations, confidence tally, dissent memo. Outputs with live downstream status links. Memory writebacks listed as entry ids per participant, never private text. |
+| Persona detail tab | `/management/personas/:id`, new tab 會議 next to the cycle and pool tabs | Meetings the persona convened or attended, its positions and changes between rounds, proposals it sponsored and their outcomes, refusals affecting it. |
+| Consult rules | `/management/governance/consult` | Separates gate panels (unchanged) from deliberative meetings and links to the Rules and budgets tab. |
+| Human inbox | `/management/human-inbox` | Items for meetings ending in `REVIEW`, due meetings refused for too few participants, and proposals waiting for an operator, from the existing inbox read model. |
+| Convene action | Meetings center | Operator convenes a deliberative meeting (type, topic, participants from the eligible list, evidence references). Write-gated like existing persona interactions; the BFF forwards to the consultation owner; operators observe and do not take part in rounds. |
+
+### 11.4 Delivery (replaces §8)
+
+| Task | Scope | Depends on |
+|---|---|---|
+| MEETING-PROTOCOL-ENGINE | consultation type `persona_meeting`: catalogue, rosters including Agora advisors and owner-only private servants, budgets, rounds, anonymised round 2, chair synthesis with proposals and dissent memo, per-participant writeback, owner read routes for list, detail, proposals and rules; `CONSULTATION_SESSION_PROTOCOL.md` deliberative section | this amendment |
+| MEETING-TRIGGERS | MT-1/MT-2/MT-3 from the daily cycle; MT-4 from removal, drawdown and incident events; MT-6 at quarter end before the allocation run; `consult_request` proposals open meetings | engine |
+| MEETING-OUTPUT-ROUTING | proposals to the §3.7 entry points under the sponsor's identity; downstream status readback | engine |
+| MEETING-REGIME-TRIGGER | MT-5 from RegimeState transitions | engine, `REGIME-CONSUMERS-FIRST-WAVE-20261115` |
+| AGORA-MEETINGS | §11.2 b–d: workshop convening, Agora candidate-decision outputs, committee page reads of both classes | engine, output routing |
+| BFF-MEETINGS-VIEWS | §11.3 thin reads and the convene forward | engine |
+| FE-MANAGEMENT-MEETINGS (execute-plans) | §11.3 pages, sidebar, persona tab, consult page section, inbox items, crawl-compatible states | BFF views |
+| FE-AGORA-MEETINGS (execute-plans) | §11.2 d workshop convening and committee rounds | AGORA-MEETINGS |
+| MEETING-HOSTED-ACCEPTANCE | natural meetings on hosted with real enrolled personas, Agora advisors and Management pages | all, plus enrolled personas |
