@@ -880,6 +880,10 @@ jobs:
           # moves numpy/scipy forward (pip check is clean, mlflow needs numpy<3).
           "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
             -r services/research/vectorbt/requirements.txt
+          # Regime classifier libraries: same pins as the deployed research
+          # image (services/research/runtime-requirements.txt).
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
+            "statsmodels==0.15.0" "ruptures==1.1.10"
           "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite
