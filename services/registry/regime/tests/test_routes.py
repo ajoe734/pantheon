@@ -6,6 +6,11 @@ import time
 from pathlib import Path
 
 import pytest
+
+# Shares fixtures with test_evaluator, which needs the fitted-model stack; skip where absent.
+for _m in ("numpy", "pandas", "scipy", "statsmodels"):
+    pytest.importorskip(_m)
+
 from fastapi.testclient import TestClient
 
 from services.governance.test_approval_authority import advance_registry_http
