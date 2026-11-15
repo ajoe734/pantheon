@@ -8,7 +8,7 @@ import pytest
 import services.research.regime as regime
 from services.research.regime import features as F
 from services.research.regime import models as M
-from services.research.regime.tests.fixtures import DECISION_TIME, regime_path, small_config, synthetic_observations
+from services.research.tests.test_regime_research_route import DECISION_TIME, regime_path, small_config, synthetic_observations
 
 STATE, RET = regime_path(1800, seed=4)
 INDEX = pd.bdate_range("2018-01-01", periods=1800)

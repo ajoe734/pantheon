@@ -26,9 +26,6 @@ TASK_STATE_STORE_ENV_VARS = (
     "PANTHEON_TASK_STATE_STORE_MODE",
     "PANTHEON_TASK_STATE_EVENT_LOG",
 )
-# The statsmodels stub backend is test-only: production entry points refuse it (see
-# services/research/statsmodels/adapter/statsmodels_adapter.py resolve_backend).
-os.environ.setdefault("PANTHEON_STATSMODELS_TEST_STUB", "1")
 _STABLE_REPO_PACKAGES = {"integrations", "scripts", "services"}
 _TRANSIENT_MODULES_BY_PATH: dict[Path, dict[str, ModuleType]] = {}
 

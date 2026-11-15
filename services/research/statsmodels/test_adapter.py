@@ -50,8 +50,7 @@ def adapter() -> GovernedStatsmodelsInputAdapter:
 
 @pytest.fixture
 def stub_backend(monkeypatch) -> StubStatsmodelsBackend:
-    # The stub is test-only: it is refused unless this switch is set (see resolve_backend).
-    monkeypatch.setenv("PANTHEON_STATSMODELS_TEST_STUB", "1")
+    # The stub is test-only (see resolve_backend); pytest itself marks the test context.
     return StubStatsmodelsBackend()
 
 
@@ -322,9 +321,14 @@ def test_filtered_state_at_t_ignores_later_observations():
     assert len(part["sessions"]) == cut and len(full["sessions"]) == 900
 
 
+def _production_env(monkeypatch):
+    """What a deployed process has: no pytest marker, no test switch, real backend not enabled."""
+    for name in ("PANTHEON_STATSMODELS_BACKEND", "PANTHEON_STATSMODELS_TEST_STUB", "PYTEST_CURRENT_TEST"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_stub_unreachable_without_real_backend_and_test_switch(valid_dataset, monkeypatch):
-    monkeypatch.delenv("PANTHEON_STATSMODELS_BACKEND", raising=False)
-    monkeypatch.delenv("PANTHEON_STATSMODELS_TEST_STUB", raising=False)
+    _production_env(monkeypatch)
     with pytest.raises(StatsmodelsWorkflowError, match="statsmodels_backend_not_enabled"):
         run_statsmodels_workflow(valid_dataset)
     with pytest.raises(StatsmodelsWorkflowError, match="stub_backend_not_allowed"):
@@ -335,8 +339,7 @@ def test_stub_unreachable_without_real_backend_and_test_switch(valid_dataset, mo
 
 
 def test_production_entry_points_fail_closed(valid_dataset, monkeypatch, tmp_path):
-    monkeypatch.delenv("PANTHEON_STATSMODELS_BACKEND", raising=False)
-    monkeypatch.delenv("PANTHEON_STATSMODELS_TEST_STUB", raising=False)
+    _production_env(monkeypatch)
     # Experiment dispatch calls the workflow with no backend, and never names the stub.
     import inspect
 
@@ -344,22 +347,23 @@ def test_production_entry_points_fail_closed(valid_dataset, monkeypatch, tmp_pat
 
     source = inspect.getsource(parallel_dispatch._run_statsmodels_backend)
     assert "Stub" not in source and "backend=" not in source
-    # Persona OSS demo harness: explicit stub, refused without the test switch.
+    with pytest.raises(StatsmodelsWorkflowError, match="statsmodels_backend_not_enabled"):
+        run_statsmodels_workflow(valid_dataset, analysis_paths=["markov_switching"])
+    # Persona OSS demo harness: no backend given -> refused (a different import path gives a
+    # different exception class object, so match by message).
     from services.persona import oss_runtime
 
-    # (a different import path gives a different exception class object, so match by message)
-    with pytest.raises(Exception, match="stub_backend_not_allowed_outside_tests"):
+    with pytest.raises(Exception, match="statsmodels_backend_not_enabled"):
         oss_runtime.run_persona_oss_request(oss_runtime.PersonaOSSRequest(
             persona_id="p", session_id="s", component="statsmodels", intent="run_statsmodels"))
-    # Container worker: no dataset path / no real backend -> non-zero exit, no output artifact.
+    # Container worker: it names the stub when the real backend is off, and the workflow refuses it.
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("sm_worker", os.path.join(os.path.dirname(__file__), "worker.py"))
     worker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(worker)
-    monkeypatch.delenv("STATSMODELS_DATASET_PATH", raising=False)
-    assert worker.main() == 2
-    dataset_file = tmp_path / "d.json"
-    dataset_file.write_text('{"price_series": {}, "factor_series": {}}')
-    monkeypatch.setenv("STATSMODELS_DATASET_PATH", str(dataset_file))
-    assert worker.main() == 2
+    with pytest.raises(Exception, match="stub_backend_not_allowed_outside_tests"):
+        worker.main()
+    monkeypatch.setenv("STATSMODELS_DATASET_PATH", str(os.path.join(os.path.dirname(__file__), "examples", "regime_dataset_sample.json")))
+    with pytest.raises(Exception, match="stub_backend_not_allowed_outside_tests"):
+        worker.main()

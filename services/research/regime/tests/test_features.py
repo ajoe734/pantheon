@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from services.research.regime import features as F
-from services.research.regime.tests.fixtures import DECISION_TIME, small_config, synthetic_observations
+from services.research.tests.test_regime_research_route import DECISION_TIME, small_config, synthetic_observations
 
 CONFIG = small_config()
 OBS, _STATE, _RET = synthetic_observations(1500)

@@ -10,7 +10,7 @@
   "acceptance": {
     "1": "services/research/runtime-requirements.txt gains statsmodels==0.15.0 and ruptures==1.1.10; dependencies/locks/services-research.txt regenerated with uv (python 3.11, hashes): only additions (formulaic, interface-meta, patsy, ruptures, statsmodels, wrapt); no existing pin moved. jumpmodels 0.1.1 is vendored under services/research/regime/vendor/jumpmodels (Apache-2.0 LICENSE, VENDORED.md with sdist sha256; plot.py omitted because it is the only matplotlib importer). test_locked_dependencies_and_vendored_jumpmodels_load passes in the venv built from the lock. docker-compose needs no build change: research-orchestrator-svc already builds services/research/Dockerfile from that lock and copies the repo.",
     "2": "StatsmodelsBackend.run_markov_switching now fits via regime.models.fit_volatility and reports filtered marginal probabilities only, with per-session state, probability vector, transition matrix, expected durations, sessions in state, last switch session. Tests: test_real_markov_backend_reports_filtered_probabilities_only, test_markov_output_never_reads_smoothed_probabilities (reading smoothed_* from Pantheon code raises), test_filtered_state_at_t_ignores_later_observations, test_volatility_never_reads_smoothed_probabilities.",
-    "3": "run_statsmodels_workflow with no backend fails closed unless PANTHEON_STATSMODELS_BACKEND=real; an explicit stub is refused unless the test-only PANTHEON_STATSMODELS_TEST_STUB=1 (set by the root conftest). Container worker.py no longer falls back to the sample dataset or the stub (exit 2). Persona OSS demo harness passes the stub explicitly, so it is refused outside tests. Test: test_production_entry_points_fail_closed, test_stub_unreachable_without_real_backend_and_test_switch.",
+    "3": "run_statsmodels_workflow with no backend fails closed unless PANTHEON_STATSMODELS_BACKEND=real; the stub is accepted only under test (PANTHEON_STATSMODELS_TEST_STUB=1 or running under pytest), so every production entry point is closed to it: the container worker (names the stub when the real backend is off), experiment dispatch and the persona OSS harness (no backend given) all raise instead of returning placeholder regimes. Tests with the deployed-process environment (no pytest marker, no switch): test_production_entry_points_fail_closed, test_stub_unreachable_without_real_backend_and_test_switch.",
     "4": "features.py reads every input through feature_catalogue.read_feature_series (test_read_goes_through_read_feature_series), lists dataset refs as input_refs, and returns an AxisInputs(available=False, reason=...) for a missing, unavailable-at-decision-time, non-finite or too-short input (test_missing_input_makes_axis_unavailable_with_reason and siblings). Features are causal (test_features_are_causal).",
     "5": "Volatility: statsmodels MarkovRegression(k_regimes=2, trend='c', switching_variance=True), filtered via model.filter(params). Trend (3 states) and risk appetite (2 states): vendored continuous jump model, predict_proba_online. Macro: rules over tw_macro_ndc monitoring_score and leading_index. The regime package imports no language-model or network client (test_no_language_model_or_network_import_in_regime_package).",
     "6": "validation.walk_forward_validate: expanding window, refit every refit_sessions, inference filtered/online only, signal delayed one session, reports switches per year, expected durations (run lengths and model-implied), label stability across consecutive refits, ruptures.Pelt agreement as a non-gating audit; the report is stored in the registry entry's evaluation_summary.",
@@ -43,7 +43,8 @@
     "services/research is first on sys.path in the deployed image (Dockerfile --app-dir services/research and PYTHONPATH), and it contains a package named statsmodels (the governed adapter). A plain `import statsmodels` there loads the adapter, not the library, so adding statsmodels to the lock alone would not have made it importable. regime.real_statsmodels() imports the library with that directory removed from the path; test_library_loads_when_the_research_directory_shadows_statsmodels reproduces the shadow in a subprocess. services/research/statsmodels/adapter/cointegration.py still does a plain `from statsmodels.tsa.stattools import coint` (not changed here; production_cointegration.py already removes the directory).",
     "The jumpmodels sort_by='cumret' orders states by descending cumulative return (state 0 = best), verified in vendored base.py; labels are (up, mean_reverting, down) and (on, off).",
     "Backfilled rows carry available_time = first acquisition, so read_feature_series shows a historical row only after its acquisition. The fit reads once at the decision time and uses strictly causal transforms; walk-forward does not re-read at historical decision times (that would hide every backfilled row).",
-    "Unrelated to this task: tests/e2e/test_persona_oss_runtime_matrix.py fails in an environment without QuantLib (it passes in the locked venv)."
+    "Unrelated to this task: tests/e2e/test_persona_oss_runtime_matrix.py fails in an environment without QuantLib (it passes in the locked venv).",
+    "services/research/statsmodels/worker.py (not in this task's contract, not edited) still falls back to the sample dataset when STATSMODELS_DATASET_PATH is unset; it now ends in a StatsmodelsWorkflowError because it passes the stub when the real backend is off. A follow-up could drop the sample fallback."
   ],
   "data_required_for_a_real_fit": {
     "volatility": "tw_index_daily TAIEX close for at least 2012-01-02..latest (about 3630 sessions already on the collector host; needs REGIME-DATA-INDEX-BREADTH-INTAKE deployed and the history pulled into hosted source-ingest). Medium horizon uses every fifth session of the same series.",
@@ -53,11 +54,9 @@
     "taiwan_vix": "Not used: archived from 2026-08-03 only."
   },
   "out_of_contract_edits": [
-    "services/research/statsmodels/worker.py: the container worker is a production entry point that fell back to the stub and the sample dataset; it now exits 2 without governed data and the real backend (needed for acceptance 3).",
-    "services/persona/oss_runtime.py: `_run_statsmodels` called the workflow with no backend (stub by default); it now passes the stub explicitly so production fails closed.",
-    "conftest.py: sets PANTHEON_STATSMODELS_TEST_STUB=1 for the test suite.",
-    "services/research/regime/tests/__init__.py and fixtures.py: test package marker and synthetic-shape fixtures used by the four contract test files.",
-    "dependencies/constraints-research.txt was not changed: it constrains the mlflow and quantlib images (numpy 1.26.4), not the research-orchestrator image that the services-research lock builds."
+    "None. An earlier attempt edited conftest.py, services/research/statsmodels/worker.py, services/persona/oss_runtime.py and added a regime/tests package marker and fixtures module; those were removed because the artifact contract does not list them. The stub gating lives entirely in statsmodels_adapter.resolve_backend, and the shared synthetic-shape test fixtures live at the end of services/research/tests/test_regime_research_route.py.",
+    "dependencies/constraints-research.txt was not changed: it constrains the mlflow and quantlib images (numpy 1.26.4), not the research-orchestrator image that the services-research lock builds.",
+    "services/research/experiments/models.py was not changed: nothing needed it."
   ],
   "commands": [
     {
@@ -69,20 +68,12 @@
       "result": "installed; numpy 2.4.6 pandas 3.0.6 scipy 1.17.1 scikit-learn 1.9.1 statsmodels 0.15.0 ruptures 1.1.10"
     },
     {
-      "cmd": "[lock venv] pytest services/research/regime/tests services/research/tests/test_regime_research_route.py services/research/statsmodels",
-      "result": "85 passed"
+      "cmd": "[lock venv] pytest services/research/regime/tests services/research/tests/test_regime_research_route.py services/research/statsmodels tests/e2e/test_persona_oss_runtime_matrix.py",
+      "result": "100 passed (includes experiment_orchestrator tests); earlier same-venv run of services/research/tests excluding the new files: 377 passed"
     },
     {
-      "cmd": "[lock venv] pytest services/research/tests (excluding the new route test, run above)",
-      "result": "377 passed"
-    },
-    {
-      "cmd": "[lock venv] pytest tests/e2e/test_persona_oss_runtime_matrix.py services/research/experiment_orchestrator",
-      "result": "15 passed"
-    },
-    {
-      "cmd": "[dev venv] pytest services/research/regime/tests services/research/tests/test_regime_research_route.py services/research/statsmodels",
-      "result": "passed (44 regime + 4 route + 36 statsmodels)"
+      "cmd": "pytest --collect-only services/research services/registry/tests services/persona (lock venv)",
+      "result": "no import-file-mismatch errors for the regime tests directory"
     }
   ],
   "not_run": [

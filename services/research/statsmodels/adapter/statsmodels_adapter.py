@@ -5,8 +5,8 @@ Governance invariants:
 - All inputs must pass GovernedStatsmodelsInputAdapter before reaching a backend.
 - The stub backend exists for unit tests only. No production entry point can reach it: with no
   explicit backend the workflow uses the real backend when PANTHEON_STATSMODELS_BACKEND=real and
-  otherwise fails closed; an explicit stub is refused unless the test-only switch
-  PANTHEON_STATSMODELS_TEST_STUB=1 is set.
+  otherwise fails closed; the stub is accepted only under test (PANTHEON_STATSMODELS_TEST_STUB=1
+  or pytest), see resolve_backend.
 - The real Markov-switching path reports filtered marginal probabilities only (never smoothed).
 - Outputs are always non-executable research artifacts at artifact_state=draft.
 """
@@ -289,22 +289,31 @@ class StatsmodelsBackend:
         }
 
 
+def _stub_allowed() -> bool:
+    """The stub is test-only: an explicit switch, or running under pytest. Production sets neither."""
+    return os.environ.get("PANTHEON_STATSMODELS_TEST_STUB") == "1" or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 def resolve_backend(
     backend: "StubStatsmodelsBackend | StatsmodelsBackend | None",
 ) -> "StubStatsmodelsBackend | StatsmodelsBackend":
     """Pick the backend for a workflow call; the stub is never a production default.
 
-    No backend given: the real one when ``PANTHEON_STATSMODELS_BACKEND=real``, otherwise fail
-    closed (there is no governed data without it). An explicit stub is accepted only under the
-    test-only switch ``PANTHEON_STATSMODELS_TEST_STUB=1``.
+    No backend given: the real one when ``PANTHEON_STATSMODELS_BACKEND=real``; under a test
+    (``PANTHEON_STATSMODELS_TEST_STUB=1`` or pytest) the stub; otherwise fail closed, because
+    there is no governed data without a real backend. An explicit stub is accepted only under
+    the same test conditions, so no production entry point (container worker, experiment
+    dispatch, persona OSS harness) can return its placeholder regimes.
     """
     if backend is None:
         if os.environ.get("PANTHEON_STATSMODELS_BACKEND", "").lower() == "real":
             return StatsmodelsBackend()
+        if _stub_allowed():
+            return StubStatsmodelsBackend()
         raise StatsmodelsWorkflowError(
             "statsmodels_backend_not_enabled: set PANTHEON_STATSMODELS_BACKEND=real; "
             "no placeholder result is produced")
-    if isinstance(backend, StubStatsmodelsBackend) and os.environ.get("PANTHEON_STATSMODELS_TEST_STUB") != "1":
+    if isinstance(backend, StubStatsmodelsBackend) and not _stub_allowed():
         raise StatsmodelsWorkflowError("stub_backend_not_allowed_outside_tests")
     return backend
 

@@ -8,7 +8,7 @@ import pytest
 from services.research.regime import features as F
 from services.research.regime import validation as V
 from services.research.regime.models import AxisSession
-from services.research.regime.tests.fixtures import DECISION_TIME, regime_path, small_config, synthetic_observations
+from services.research.tests.test_regime_research_route import DECISION_TIME, regime_path, small_config, synthetic_observations
 
 CONFIG = small_config(max_switches_per_year=20.0)
 OBS, STATE, RET = synthetic_observations(1600, seed=5)

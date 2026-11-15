@@ -6,7 +6,7 @@ import pytest
 from services.research.regime import features as F
 from services.research.regime import registration as R
 from services.research.regime import validation as V
-from services.research.regime.tests.fixtures import DECISION_TIME, FakeRegistry, small_config, synthetic_observations
+from services.research.tests.test_regime_research_route import DECISION_TIME, FakeRegistry, small_config, synthetic_observations
 
 OBS, _, _ = synthetic_observations(1700, seed=7)
 

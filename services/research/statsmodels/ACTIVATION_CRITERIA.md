@@ -130,10 +130,10 @@ baseline:
   pandas frames are not a governed interface.
 - The first implementation lane must emit non-executable research artifacts at
   `artifact_state = "draft"` and `deployment_summary.current_stage = "none"`.
-- Unit tests may use `StubStatsmodelsBackend` only under the test-only switch
-  `PANTHEON_STATSMODELS_TEST_STUB=1` (set by the root `conftest.py`). Production
-  entry points (`run_statsmodels_workflow` with no backend, the container worker,
-  experiment dispatch, the persona OSS harness) never reach it: without
+- `StubStatsmodelsBackend` is accepted only under test (`PANTHEON_STATSMODELS_TEST_STUB=1`
+  or running under pytest; see `resolve_backend`). Production entry points
+  (`run_statsmodels_workflow` with no backend, the container worker, experiment
+  dispatch, the persona OSS harness) never reach it: without
   `PANTHEON_STATSMODELS_BACKEND=real` and governed data they fail closed with no
   placeholder result. This supersedes the earlier "stub is the default" rule.
 
