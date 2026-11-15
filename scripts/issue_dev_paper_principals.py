@@ -24,6 +24,14 @@ from typing import Mapping
 
 PAPER_SUBJECT = "pantheon-dev-paper-provisioner"
 PAPER_SCOPE = "pantheon:dev-paper-approval"
+# Persona paper enrolment proposes lifecycle approvals under its own propose-only
+# subject; Governance forbids decider == proposer, so it must differ from PAPER_SUBJECT.
+ENROLLMENT_PROPOSER_SUBJECT = "pantheon-dev-persona-enrollment-proposer"
+# Grant content Governance reads: explicit paper-ladder persona lifecycle widening
+# naming the enrolment proposer (services/governance/paper_approval_scope.py).
+GOVERNANCE_GRANT_CONTENT = (
+    "enabled;persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+)
 TTL_SECONDS = 24 * 60 * 60
 READERS = {
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
@@ -130,6 +138,12 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Persona paper enrolment (operator-bff) -> governance owner: propose-only, no decide.
+    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN": (
+        ENROLLMENT_PROPOSER_SUBJECT,
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
     # Persona evaluator paper-only quarterly allocation -> operator BFF (paper pool only).
     "PERSONA_ALLOCATION_TOKEN": (
         "pantheon-dev-persona-evaluator-allocation",
@@ -179,7 +193,11 @@ CONSUMER_FILES = {
         "AUTO_CONSUMER_PROPOSER_TOKEN",
         "AUTO_CONSUMER_GATE_TOKEN",
     ),
-    "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
+    "operator-bff": (
+        "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+        "PANTHEON_BFF_HEALTH_TELEMETRY_JWT",
+    ),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN", "DISTILLATION_RESEARCH_SERVICE_TOKEN"),
     "alpha-replication-worker": (
         "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
@@ -291,6 +309,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
         "AUTO_CONSUMER_GATE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": PAPER_SUBJECT,
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": ENROLLMENT_PROPOSER_SUBJECT,
         "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "true",
         "GOVERNANCE_REGISTRY_BASE_URL": "http://registry:8087",
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
@@ -318,6 +337,7 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
         raise ValueError("Explicit tenant-dev withdrawal required")
     values = {
         "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "false",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": "",
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
         "PANTHEON_MEMORY_AUTH_TOKEN": "",
         "PANTHEON_MEMORY_SERVICE_TOKEN": "",
@@ -376,7 +396,7 @@ def refresh_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
         directory = root / consumer
         for variable in variables:
             _atomic_private(directory, variable, values[variable])
-    _atomic_private(root / "governance", "grant", "enabled")
+    _atomic_private(root / "governance", "grant", GOVERNANCE_GRANT_CONTENT)
 
 
 def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None) -> bool:
@@ -384,7 +404,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
     issued = int(time.time()) if now is None else now
     # Validate current environment authorization, not only old files.
     issue_environment(env, now=issued)
-    if (root / "governance" / "grant").read_text() != "enabled":
+    if (root / "governance" / "grant").read_text() != GOVERNANCE_GRANT_CONTENT:
         return False
     secret = env["PANTHEON_DEV_BFF_JWT_SECRET"].strip().encode()
     decode = lambda value: base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))

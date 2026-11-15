@@ -598,3 +598,40 @@ def test_degraded_cycle_report_names_every_missing_owner_port() -> None:
             item["owner_port"] == port_name and item.get("persona_id") == "persona-alpha"
             for item in updated["failures"]
         )
+
+
+def test_enrollment_proposer_principal_is_wired_distinct_and_propose_only() -> None:
+    names = (
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE",
+    )
+    bff_env = _env("operator-bff")
+    for name in names:
+        # Empty default: unconfigured enrolment fails closed, no value is committed.
+        assert _default(bff_env[name]) == "", name
+    # The names are the ones the enrolment code reads.
+    source = (ROOT / "services/control-plane/bff/persona_paper_enrollment.py").read_text(encoding="utf-8")
+    assert "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID" in source
+    assert "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN" in source
+
+    variable = "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"
+    assert variable in issuer.CONSUMER_FILES["operator-bff"]
+    subject, role, scope = issuer.WRITERS[variable]
+    assert subject != issuer.PAPER_SUBJECT
+    assert role == "approval_proposer" and scope == "pantheon:dev-owner-write"
+    issued = issuer.issue_environment(
+        {
+            "PANTHEON_ENV": "dev",
+            "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+            "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+            "PANTHEON_DEV_BFF_JWT_SECRET": "enrollment-proposer-contract-secret-0123456789",
+            "PANTHEON_DEV_BFF_JWT_ISSUER": "pantheon-dev",
+            "PANTHEON_DEV_BFF_JWT_AUDIENCE": "bff-operators",
+        }
+    )
+    assert issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID"] == subject
+    assert issued[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    assert issued[variable] != issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
+    compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert issued[variable] not in compose_text

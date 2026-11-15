@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .market_data_storage import _iter_normalized_rows, _slug
+from .survivorship_attestation import ALL_MARKET_BUNDLES, HOLIDAY_DATASET, SUSPENSION_DATASET, attest_survivorship
 
 SCHEMA_VERSION = "candidate_pool_market.v1"
 SCOPE = "all_governed_tw"
@@ -97,12 +98,27 @@ def _bar(meta: Mapping[str, Any], nrow: Mapping[str, Any]) -> tuple[str, dict[st
     return symbol, bar
 
 
-def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+def _capture(meta: Mapping[str, Any], nrow: Mapping[str, Any], *, dataset: str) -> tuple[tuple[str, str], dict[str, Any]] | None:
+    """Evidence that a row came from a dated all-market official capture of one venue."""
+    venue = str(meta.get("venue") or nrow.get("venue") or "")
+    endpoint = str(meta.get("api_endpoint") or nrow.get("api_endpoint") or "")
+    session = str(nrow.get("date") or meta.get("event_time") or "")[:10]
+    if ALL_MARKET_BUNDLES.get(venue) != endpoint or len(session) != 10:
+        return None
+    source_dataset = str(meta.get("source_dataset") or nrow.get("source_dataset") or "")
+    return (session, venue), {"ref": f"{endpoint}/{dataset}/{session}@{source_dataset}"}
+
+
+def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], set[str], dict[tuple[str, str], dict[str, Any]]]:
     versions: dict[tuple[str, str], dict[str, Any]] = {}
+    captures: dict[tuple[str, str], dict[str, Any]] = {}
     for path in paths:
         for row in _iter_normalized_rows(path):
             meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
             nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+            cap = _capture(meta, nrow, dataset=DAILY_BAR_DATASET)
+            if cap is not None:
+                captures.setdefault(*cap)
             parsed = _bar(meta, nrow)
             if parsed is None:
                 continue
@@ -115,7 +131,36 @@ def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], 
     for (symbol, _), bar in sorted(versions.items()):
         bars.setdefault(symbol, []).append(bar)
     sessions = {event[:10] for (_, event) in versions}
-    return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions
+    return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions, captures
+
+
+def _read_closed_days(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """Official exchange closed days (dataset ``tw_trading_holidays``); none exist today."""
+    out: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        for row in _iter_normalized_rows(path):
+            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+            nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+            day = str(nrow.get("date") or "")[:10]
+            endpoint = str(meta.get("api_endpoint") or nrow.get("api_endpoint") or "")
+            if nrow.get("closed") is True and len(day) == 10 and endpoint.startswith("https://www.twse.com.tw/"):
+                out.setdefault(day, {"ref": f"{endpoint}/{HOLIDAY_DATASET}/{day}"})
+    return out
+
+
+def _read_suspension_captures(paths: Sequence[Path]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Per-session suspended-security captures (dataset ``tw_trading_suspension``); none exist today."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in paths:
+        for row in _iter_normalized_rows(path):
+            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+            nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+            if nrow.get("capture") != "all_market" or not isinstance(nrow.get("suspended_symbols"), list):
+                continue
+            cap = _capture(meta, nrow, dataset=SUSPENSION_DATASET)
+            if cap is not None:
+                out.setdefault(*cap)
+    return out
 
 
 def _read_observations(paths: Sequence[Path], dataset: str) -> dict[str, list[dict[str, Any]]]:
@@ -189,8 +234,10 @@ def build_candidate_pool_market(
         except FeatureCatalogueError as exc:
             raise CandidatePoolMarketNeedsData(dataset, str(exc)) from exc
 
+    suspension_paths = _partitions(root, SUSPENSION_DATASET)
+    holiday_paths = _partitions(root, HOLIDAY_DATASET)
     signature = (
-        str(root), tuple(declared), decision_day, _signature(bar_paths),
+        str(root), tuple(declared), decision_day, _signature(bar_paths), _signature(suspension_paths), _signature(holiday_paths),
         tuple((d, _signature(p)) for d, p in sorted(paths_by_dataset.items())),
     )
     with _CACHE_LOCK:
@@ -198,7 +245,7 @@ def build_candidate_pool_market(
     if cached is not None:
         return cached
 
-    bars, sessions = _read_bars(bar_paths)
+    bars, sessions, price_captures = _read_bars(bar_paths)
     if not bars:
         raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, f"{DAILY_BAR_DATASET} holds no usable daily bars")
     symbols: dict[str, dict[str, Any]] = {s: {"dataset": DAILY_BAR_DATASET, "bars": rows} for s, rows in bars.items()}
@@ -239,6 +286,9 @@ def build_candidate_pool_market(
         f"{p.relative_to(root).as_posix()}:{p.stat().st_size}"
         for p in bar_paths + [q for d in feature_datasets for q in paths_by_dataset[d]]
     ).encode()).hexdigest()
+    window = ordered[-MAX_BARS_PER_SYMBOL:]  # the sessions the carried bars span
+    attestation = attest_survivorship(window, price_captures, _read_suspension_captures(suspension_paths),
+                                   _read_closed_days(holiday_paths))
     market = {
         "schema_version": SCHEMA_VERSION,
         "scope": SCOPE,
@@ -247,6 +297,9 @@ def build_candidate_pool_market(
         "trading_sessions": ordered,
         "calendar_coverage_through": coverage,
         "symbols": symbols,
+        "includes_delisted": attestation["includes_delisted"],
+        "includes_suspended": attestation["includes_suspended"],
+        "survivorship_attestation": attestation,
     }
     with _CACHE_LOCK:
         if len(_CACHE) >= _CACHE_LIMIT:

@@ -85,6 +85,9 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
         {"id": "main"},
         {"id": "structured-extraction",
          "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}},
+        {"id": "memory-index",
+         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
+         "model": {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]}},
     ]
     # Same global ToolSearch-only launch as the shared deploy path.
     assert values['agents.defaults.cliBackends["claude-cli"].args'][-2:] == ["--tools", "ToolSearch"]
