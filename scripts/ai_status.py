@@ -5389,7 +5389,17 @@ def revise_dependency_contracts(state: dict[str, Any], batch: Mapping[str, Any],
             raise SystemExit(f"dependency-contract requires admitted nonterminal task: {task_id}")
         if task_mutation_cas_digest(task) != row["expected_sha256"]:
             raise SystemExit(f"dependency-contract expected-state CAS failed: {task_id}")
-        if task.get("status") not in {"todo", "blocked"}:
+        if task.get("status") == "in_progress":
+            # Unschedulable in_progress: at least one current dependency is
+            # unsatisfied/superseded. Runtime fence and pending-intent checks
+            # still apply; a schedulable in_progress task stays busy.
+            resolver = task_resolver(state)
+            current_deps = task.get("depends_on")
+            if not isinstance(current_deps, list) or all(
+                dependency_is_satisfied(resolver, dep, task) for dep in current_deps
+            ):
+                raise DependencyContractBusy(f"{task_id} is in_progress with all dependencies satisfied")
+        elif task.get("status") not in {"todo", "blocked"}:
             raise DependencyContractBusy(f"{task_id} is not pre-dispatch todo/blocked")
         for field in ("review_decision_intent", "review_decision_intent_recovery", "review_decision_resume", "review_requeue_intent", "worker_recovery", "finalize_intent"):
             value = task.get(field)
