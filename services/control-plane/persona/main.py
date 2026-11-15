@@ -51,6 +51,7 @@ from services.persona.owner_port_health import (
     OwnerPortEnvView,
     apply_owner_port_health_to_cycle_report,
     evaluate_owner_ports,
+    has_owner_port_env_configured,
     non_healthy_owner_ports,
     sync_owner_port_env,
 )
@@ -648,15 +649,28 @@ def _invoke_openclaw(req: InvokeRequest) -> tuple[str, RuntimeStatus]:
 
 @app.get("/health")
 async def health():
-    owner_ports = evaluate_owner_ports()
-    degraded = bool(non_healthy_owner_ports(owner_ports))
-    return {
-        "status": "degraded" if degraded else "ok",
+    payload: dict[str, Any] = {
+        "status": "ok",
         "service": "persona-agent",
         "llm_backend": LLM_BACKEND,
         "runtime_backend": "openclaw-gateway",
         "persona_id": DEFAULT_PERSONA_ID,
         "agent_id": OPENCLAW_AGENT_ID,
+    }
+    if has_owner_port_env_configured():
+        owner_ports = evaluate_owner_ports()
+        if non_healthy_owner_ports(owner_ports):
+            payload["status"] = "degraded"
+        payload["owner_ports"] = owner_ports
+    return payload
+
+
+@app.get("/api/persona/health/owner-ports")
+async def persona_owner_ports_health():
+    owner_ports = evaluate_owner_ports()
+    return {
+        "status": "degraded" if non_healthy_owner_ports(owner_ports) else "ok",
+        "service": "persona-agent",
         "owner_ports": owner_ports,
     }
 

@@ -174,11 +174,14 @@ def test_persona_main_health_and_wrapped_controller_surface_owner_ports(
     for secret in secrets:
         assert secret not in json.dumps(healthy)
 
-    # Remove search URL and verify /health degrades and controller heartbeat records search failure.
+    # Remove search URL and verify /health and /api/persona/health/owner-ports degrade and controller heartbeat records search failure.
     monkeypatch.delenv("PANTHEON_SEARCH_API_URL", raising=False)
     degraded_health = asyncio.run(persona_main.health())
     assert degraded_health["status"] == "degraded"
     assert degraded_health["owner_ports"]["search"]["status"] == "unconfigured"
+    dedicated_health = asyncio.run(persona_main.persona_owner_ports_health())
+    assert dedicated_health["status"] == "degraded"
+    assert dedicated_health["owner_ports"]["search"]["status"] == "unconfigured"
 
     heartbeats: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
 

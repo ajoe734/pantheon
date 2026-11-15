@@ -483,14 +483,21 @@ def test_persona_owner_tokens_verify_against_each_target_owner_contract(
     assert search_ctx.claims["access_scopes"] == ["operator", "research", "public"]
 
     # 8. Paper quarterly allocation BFF + Capital inbound verifier:
-    # PERSONA_EVALUATOR_BFF_TOKEN carries viewer, registry-reader, operator and azp=control-plane-bff.
+    # PERSONA_EVALUATOR_BFF_TOKEN / PERSONA_RANKING_TOKEN carry viewer, registry-reader (read-only);
+    # PERSONA_ALLOCATION_TOKEN carries operator and azp=control-plane-bff for paper allocation.
+    ranking_ctx = validate_request_auth(
+        authorization=f"Bearer {issued['PERSONA_RANKING_TOKEN']}",
+        required_roles=("viewer", "registry-reader"),
+        env=verifier_env,
+    )
+    assert set(ranking_ctx.roles) == {"viewer", "registry-reader"}
     monkeypatch.setenv("CAPITAL_AUTH_MODE", "strict")
     monkeypatch.setenv("CAPITAL_JWT_SECRET", secret)
     monkeypatch.setenv("CAPITAL_JWT_ISSUER", "pantheon-dev")
     monkeypatch.setenv("CAPITAL_JWT_AUDIENCE", "bff-operators")
     cap_authority = authenticate_capital_request(
         method="POST",
-        authorization=f"Bearer {issued['PERSONA_EVALUATOR_BFF_TOKEN']}",
+        authorization=f"Bearer {issued['PERSONA_ALLOCATION_TOKEN']}",
         tenant_id="tenant-dev",
         actor_service="control-plane-bff",
         persistence_enforced=True,
@@ -539,6 +546,12 @@ def test_quarterly_paper_allocation_and_deploy_passthrough_wiring() -> None:
     assert _default(evaluator_env["PERSONA_EVALUATOR_BFF_TOKEN_FILE"]) == (
         "/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN"
     )
+    assert _default(evaluator_env["PERSONA_RANKING_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_RANKING_TOKEN"
+    )
+    assert _default(evaluator_env["PERSONA_ALLOCATION_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN"
+    )
     assert _default(evaluator_env["AUTO_CONSUMER_CAPITAL_TOKEN_FILE"]) == (
         "/run/pantheon-principals/AUTO_CONSUMER_CAPITAL_TOKEN"
     )
@@ -560,10 +573,14 @@ def test_quarterly_paper_allocation_and_deploy_passthrough_wiring() -> None:
     deploy_script = (ROOT / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     assert 'EVOLUTION_AUTO_CONSUMER_ENABLED="${PANTHEON_DEV_EVOLUTION_AUTO_CONSUMER_ENABLED:-false}"' in deploy_script
     assert 'PERSONA_EVALUATOR_PAPER_POOL_ID="${PANTHEON_DEV_PERSONA_EVALUATOR_PAPER_POOL_ID:-pool-paper-default}"' in deploy_script
+    assert 'PERSONA_RANKING_TOKEN_FILE="${PANTHEON_DEV_PERSONA_RANKING_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RANKING_TOKEN}"' in deploy_script
+    assert 'PERSONA_ALLOCATION_TOKEN_FILE="${PANTHEON_DEV_PERSONA_ALLOCATION_TOKEN_FILE:-/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN}"' in deploy_script
 
     workflow = (ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8")
     assert "DEV_EVOLUTION_AUTO_CONSUMER_ENABLED: ${{ vars.DEV_EVOLUTION_AUTO_CONSUMER_ENABLED || 'false' }}" in workflow
     assert "DEV_PERSONA_EVALUATOR_PAPER_POOL_ID: ${{ vars.DEV_PERSONA_EVALUATOR_PAPER_POOL_ID || 'pool-paper-default' }}" in workflow
+    assert "DEV_PERSONA_RANKING_TOKEN_FILE: ${{ vars.DEV_PERSONA_RANKING_TOKEN_FILE || '/run/pantheon-principals/PERSONA_RANKING_TOKEN' }}" in workflow
+    assert "DEV_PERSONA_ALLOCATION_TOKEN_FILE: ${{ vars.DEV_PERSONA_ALLOCATION_TOKEN_FILE || '/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN' }}" in workflow
 
 
 def test_degraded_cycle_report_names_every_missing_owner_port() -> None:

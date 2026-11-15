@@ -58,7 +58,11 @@ READERS = {
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": (
         "pantheon-dev-persona-evaluator-bff-reader",
-        ("viewer", "registry-reader", "operator"),
+        ("viewer", "registry-reader"),
+    ),
+    "PERSONA_RANKING_TOKEN": (
+        "pantheon-dev-persona-evaluator-bff-reader",
+        ("viewer", "registry-reader"),
     ),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
@@ -126,6 +130,12 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Persona evaluator paper-only quarterly allocation -> operator BFF (paper pool only).
+    "PERSONA_ALLOCATION_TOKEN": (
+        "pantheon-dev-persona-evaluator-allocation",
+        "operator",
+        "pantheon:dev-owner-write",
+    ),
 }
 # Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
 # verifier needs the service role plus a producer scope inside its own allowlist.
@@ -184,6 +194,8 @@ CONSUMER_FILES = {
     ),
     "persona-evaluator-agent": (
         "PERSONA_EVALUATOR_BFF_TOKEN",
+        "PERSONA_RANKING_TOKEN",
+        "PERSONA_ALLOCATION_TOKEN",
         "PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
         "AUTO_CONSUMER_CAPITAL_TOKEN",
         "AUTO_CONSUMER_REGISTRY_TOKEN",
@@ -259,12 +271,16 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
             role,
             "pantheon:dev-owner-read",
             access_scopes=SEARCH_ACCESS_SCOPES if variable == "PERSONA_SEARCH_SERVICE_TOKEN" else None,
-            azp="control-plane-bff" if variable == "PERSONA_EVALUATOR_BFF_TOKEN" else None,
         )
         for variable, (subject, role) in READERS.items()
     }
     values.update({
-        variable: token(subject, role, scope)
+        variable: token(
+            subject,
+            role,
+            scope,
+            azp="control-plane-bff" if variable == "PERSONA_ALLOCATION_TOKEN" else None,
+        )
         for variable, (subject, role, scope) in WRITERS.items()
     })
     values.update({
@@ -402,7 +418,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                 expected["allowed_producers"] = producers
             if variable == "PERSONA_SEARCH_SERVICE_TOKEN":
                 expected["access_scopes"] = SEARCH_ACCESS_SCOPES
-            if variable == "PERSONA_EVALUATOR_BFF_TOKEN":
+            if variable == "PERSONA_ALLOCATION_TOKEN":
                 expected["azp"] = "control-plane-bff"
             if any(claims.get(key) != value for key, value in expected.items()):
                 return False

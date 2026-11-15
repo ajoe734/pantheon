@@ -265,6 +265,21 @@ def non_healthy_owner_ports(
     }
 
 
+def has_owner_port_env_configured(env: Mapping[str, str] | None = None) -> bool:
+    """Return True when daily cycle or any owner-port address/credential env var is set."""
+    source_env: Mapping[str, str] = os.environ if env is None else env
+    if str(source_env.get("PERSONA_DAILY_CYCLE_ENABLED") or "").strip().lower() in {"1", "true", "yes"}:
+        return True
+    for spec in OWNER_PORT_SPECS.values():
+        for url_var in spec.url_vars:
+            if str(source_env.get(url_var) or "").strip():
+                return True
+        for token_var in spec.token_vars:
+            if str(source_env.get(token_var) or "").strip() or str(source_env.get(f"{token_var}_FILE") or "").strip():
+                return True
+    return False
+
+
 def apply_owner_port_health_to_cycle_report(
     report: Mapping[str, Any],
     *,

@@ -1370,6 +1370,8 @@ jobs:
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           DEV_EVOLUTION_AUTO_CONSUMER_ENABLED: ${{ vars.DEV_EVOLUTION_AUTO_CONSUMER_ENABLED || 'false' }}
           DEV_PERSONA_EVALUATOR_PAPER_POOL_ID: ${{ vars.DEV_PERSONA_EVALUATOR_PAPER_POOL_ID || 'pool-paper-default' }}
+          DEV_PERSONA_RANKING_TOKEN_FILE: ${{ vars.DEV_PERSONA_RANKING_TOKEN_FILE || '/run/pantheon-principals/PERSONA_RANKING_TOKEN' }}
+          DEV_PERSONA_ALLOCATION_TOKEN_FILE: ${{ vars.DEV_PERSONA_ALLOCATION_TOKEN_FILE || '/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN' }}
           DEV_SHADOW_REPLAY_AGENT_ID: ${{ vars.DEV_SHADOW_REPLAY_AGENT_ID || '' }}
           DEV_SHADOW_REPLAY_POLICY_URL: ${{ vars.DEV_SHADOW_REPLAY_POLICY_URL || '' }}
           # The recovery switch is deliberately one boolean with a fixed
