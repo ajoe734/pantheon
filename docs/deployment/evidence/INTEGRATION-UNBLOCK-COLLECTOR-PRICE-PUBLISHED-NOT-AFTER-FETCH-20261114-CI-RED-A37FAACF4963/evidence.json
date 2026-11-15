@@ -8,7 +8,16 @@
   },
   "resolution": {
     "action": "Source branch was created before #7369 landed; it needs a merge of current dev and a CI rerun. No product code change is needed from this repair task, and the source branch must not be pushed to from here.",
-    "files_changed_by_this_task": ["docs/deployment/evidence/INTEGRATION-UNBLOCK-COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114-CI-RED-A37FAACF4963/evidence.json"],
+    "files_changed_by_this_task": [
+      "docs/deployment/evidence/INTEGRATION-UNBLOCK-COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114-CI-RED-A37FAACF4963/evidence.json"
+    ],
     "scripts/git/auto_integrator.py": "unchanged"
+  },
+  "rerun": {
+    "command": "gh run rerun 43660228405 --failed",
+    "job": 132656387740,
+    "result": "FAILURE",
+    "detail": "Same flake (assert 256 == 60, now on [early-admitted] param; 1 failed, 2012 passed). The rerun reuses the original merge ref that lacks PR #7369's fix, so rerun alone cannot go green.",
+    "needs": "Source PR #7370 branch must merge current dev (contains #7369) and push; owner reopen or Human/Ops action required."
   }
 }
