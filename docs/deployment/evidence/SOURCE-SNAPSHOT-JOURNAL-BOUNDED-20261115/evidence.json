@@ -1,0 +1,28 @@
+{
+  "task": "SOURCE-SNAPSHOT-JOURNAL-BOUNDED-20261115",
+  "root_cause": "LatestMarketSnapshotStore append skip compared observed_at, so every re-ingest of history that left the published points unchanged still appended a ~7.6 KB envelope; no compaction existed, journal reached 390702732 bytes / 50976 lines on hosted dev, above the 268435456-byte capture probe bound.",
+  "changes": {
+    "skip": "append is skipped when points, calendar evidence, market and close reconciliation are unchanged (observed_at no longer forces a line)",
+    "compaction": "LatestMarketSnapshotStore.compact(): last envelope per (symbol, dataset) with original bytes, tombstones that are the last word kept; fsynced temp file, projection digest verified before atomic os.replace, under LOCK_EX; writers re-open when the inode changed; runs at startup and after an append when journal bytes exceed compact_threshold_bytes (32 MiB)",
+    "health": "runtime._source_runtime_metrics -> /health.latest_market_snapshot_journal {journal_bytes, journal_lines, live_snapshot_count, last_compaction_at, capture_bound_bytes, warn_bytes (192 MiB, 75% of the bound), warning, last_compaction_error}"
+  },
+  "hosted_size_journal_probe": {
+    "fixture": "synthetic: 50976 lines, 1500 symbols, 60 points each, 681420074 bytes (larger than hosted 390702732)",
+    "capture_probe_before_compaction": {"ok": false, "reason": "reader_rejected"},
+    "capture_probe_after_compaction": {"ok": true, "journal_size": 20076000, "projection_sha256": "c87fdec6d258b7deb586ca0e1c6ab60e344118d68bc1c925c2caa5d23c0e8ad5"},
+    "lines_after": 1500,
+    "bytes_after": 20076000
+  },
+  "memory_hosted_size": {
+    "before_previous_reader_reload": {"live_snapshots": 1500, "peak_rss_mb": 87.9, "seconds": 74.4},
+    "after_reload_plus_startup_compaction": {"live_snapshots": 1500, "peak_rss_mb": 202.8, "seconds": 156.1},
+    "note": "peak during the one-time startup compaction holds the projection twice (source and verification copy) plus a line-number map; steady state afterwards reads a 20 MB journal. Both far below the 2.9 GiB container limit."
+  },
+  "validation": [
+    {"cmd": "pytest services/source_ingestion/tests/test_latest_market_snapshot_journal_bounded.py", "result": "11 passed"},
+    {"cmd": "pytest test_latest_market_snapshot.py test_latest_market_snapshot_state.py test_requirement_state.py test_intraday_snapshot_projection.py test_pipeline_snapshot_dataset_isolation.py test_snapshot_frequency_isolation.py", "result": "96 passed"},
+    {"cmd": "pytest services/source_ingestion/tests services/source_ingestion/test_service.py -k 'snapshot or market or health or readiness or intraday or persona'", "result": "424 passed, 4 skipped, 1605 deselected"}
+  ],
+  "test_change": "test_exact_bee_daily_roundtrip_and_extended_v1_failure_at_4883 asserted that constructing the current store never rewrites the journal; it now asserts the old readers leave it untouched and the current service compacts it to the last envelope (original bytes)",
+  "credentials": "none recorded"
+}

@@ -551,9 +551,11 @@ def test_exact_bee_daily_roundtrip_and_extended_v1_failure_at_4883(tmp_path):
     before = path.read_bytes()
     with pytest.raises(bee.MarketSnapshotStateError, match=r":4883: market snapshot point schema is invalid"):
         bee.LatestMarketSnapshotStore(path)
-    current.LatestMarketSnapshotStore(path)
     new70a.LatestMarketSnapshotStore(path)
-    assert path.read_bytes() == before
+    assert path.read_bytes() == before  # a reader never rewrites the journal
+    # The current Source service compacts at startup: last envelope per key, original bytes.
+    current.LatestMarketSnapshotStore(path)
+    assert path.read_text() == samples["collector_close"], (len(path.read_text()), len(samples["collector_close"]))
     collector = json.loads(samples["collector_close"])["state"]
     assert collector["schema_version"] == "source_ingest_latest_market_snapshot.v1"
     assert "collector_close" in collector["points"][0]
