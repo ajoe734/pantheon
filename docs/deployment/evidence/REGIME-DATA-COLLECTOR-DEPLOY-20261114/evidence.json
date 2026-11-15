@@ -1,0 +1,163 @@
+{
+  "task_id": "REGIME-DATA-COLLECTOR-DEPLOY-20261114",
+  "owner": "Human/Ops",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-15T10:35:00Z",
+  "operator_direction": "Operator replied 好 on 2026-11-15 to the coordinator question whether to deploy the collector host now (transcript /home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl).",
+  "host": {
+    "name": "pantheon-collector-sg1",
+    "install_dir": "/opt/pantheon-collector",
+    "data_root": "/var/lib/pantheon-collector"
+  },
+  "deploy": {
+    "before": {
+      "release": "acc125be0",
+      "image": "pantheon-collector-worker:1.0.0",
+      "image_id": "4a4d7748afa4"
+    },
+    "after": {
+      "release": "5ec067086",
+      "source": "git archive origin/dev deploy/collector",
+      "image": "pantheon-collector-worker:1.0.0",
+      "image_id": "4a8860929c58",
+      "built_at": "2026-11-15T10:10Z"
+    },
+    "rollback": {
+      "install_dir_copy": "/opt/pantheon-collector.acc125be0",
+      "image_tag": "pantheon-collector-worker:rollback-acc125be0-20261115t101023z",
+      "procedure": "rsync the copy back over /opt/pantheon-collector excluding .env and RELEASE, retag the rollback image as 1.0.0, disable the three timers below"
+    },
+    "changed_files": [
+      "README.md",
+      "fetch-policy.json",
+      "collector_stack/backfill.py",
+      "collector_stack/cli.py",
+      "collector_stack/runner.py",
+      "collector_stack/spiders.py",
+      "tests/test_backfill.py",
+      "tests/test_compose_and_docs.py",
+      "tests/test_config_and_startup_guards.py",
+      "tests/test_spiders_and_pollers.py",
+      "tests/test_price_published_not_after_fetch.py (new)",
+      "tests/fixtures/taifex_vix_daily_sample.txt (new)",
+      "tests/fixtures/taifex_vix_intraday_sample.txt (new)",
+      "tests/fixtures/twse_mi_5mins_hist_201201.json (new)",
+      "tests/fixtures/twse_mi_index_full_20261110.json (new)"
+    ],
+    "unchanged": "docker-compose.yml, Caddyfile, systemd units and .env.example were identical, so bundle-server and rsshub were not recreated",
+    "commands": [
+      "cp -a /opt/pantheon-collector /opt/pantheon-collector.acc125be0",
+      "docker tag pantheon-collector-worker:1.0.0 pantheon-collector-worker:rollback-acc125be0-20261115t101023z",
+      "rsync -rlc --delete --exclude .env --exclude RELEASE --exclude __pycache__ <dev deploy/collector>/ root@host:/opt/pantheon-collector/",
+      "docker compose build collector-worker",
+      "docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config  -> status valid, source_count 25",
+      "systemctl enable --now pantheon-collector@collector-tw-twse-index-breadth.timer pantheon-collector@collector-tw-twse-taiex-history.timer pantheon-collector@collector-tw-taifex-vix.timer (hourly variants disabled first)"
+    ],
+    "timers_enabled": {
+      "pantheon-collector@collector-tw-twse-index-breadth.timer": "next 2026-11-15T12:19:01Z",
+      "pantheon-collector@collector-tw-twse-taiex-history.timer": "next 2026-11-15T12:19:58Z",
+      "pantheon-collector@collector-tw-taifex-vix.timer": "next 2026-11-15T12:15:22Z"
+    },
+    "other_timers": "unchanged"
+  },
+  "taiex_history_backfill": {
+    "commands": [
+      "docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data backfill --source collector-tw-twse-taiex-history --start-month 2012-01 --dry-run  -> 179 requests, 14.9 min",
+      "same without --dry-run, started 2026-11-15T10:11:01Z, ended 10:28:53Z, exit 0"
+    ],
+    "result": {
+      "complete": true,
+      "dates_requested": 179,
+      "fetched": 179,
+      "skipped_already_done": 0,
+      "stopped_reason": null
+    },
+    "bundles": 179,
+    "bundle_status": {
+      "complete": 179
+    },
+    "months": 179,
+    "empty_months": 0,
+    "rows": 3634,
+    "distinct_sessions": 3634,
+    "first_date": "2012-01-02",
+    "last_date": "2026-11-13",
+    "dataset": "tw_index_ohlc_daily",
+    "index_name": "發行量加權股價指數",
+    "source_dataset": "MI_5MINS_HIST"
+  },
+  "index_breadth_latest_session": {
+    "command": "systemctl start pantheon-collector@collector-tw-twse-index-breadth.service (after the TAIEX backfill so only one TWSE connection was open)",
+    "run_id": "run-20261115T102909Z",
+    "status": "complete",
+    "trade_date": "2026-11-13",
+    "tw_index_daily_rows": 56,
+    "includes_taiex": true,
+    "tw_market_breadth_daily_rows": 1,
+    "breadth_fields": [
+      "advancers",
+      "decliners",
+      "limit_down",
+      "limit_up",
+      "no_comparison",
+      "unchanged",
+      "untraded"
+    ]
+  },
+  "taiwan_vix_archive": {
+    "command": "systemctl start pantheon-collector@collector-tw-taifex-vix.service (TAIFEX, concurrent with the TWSE backfill; different upstream)",
+    "run_id": "run-20261115T101329Z",
+    "status": "complete",
+    "items": 77,
+    "tw_vix_daily": {
+      "month_files": 4,
+      "rows": 70,
+      "first_month": "2026-08",
+      "last_month": "2026-11"
+    },
+    "tw_vix_intraday": {
+      "sessions": 70,
+      "rows": 79869,
+      "first_date": "2026-08-03",
+      "last_date": "2026-11-13"
+    },
+    "tw_vix_intraday_archive": {
+      "monthly_zips": 3,
+      "first_month": "2026-08",
+      "last_month": "2026-10"
+    },
+    "coverage_note": "TAIFEX serves only the current month plus the prior three; the archive covers all of it (2026-08 to 2026-11-13). Earlier VIX history is not obtainable from the official site and accumulates from here."
+  },
+  "two_year_per_stock_backfill": {
+    "measured_from": "/var/lib/pantheon-collector/state/backfill/<source>.json ledgers and /var/log/pantheon-collector-backfill.log",
+    "collector-tw-twse-price-history": {
+      "completed_sessions": 488,
+      "first": "2024-11-11",
+      "last": "2026-11-11"
+    },
+    "collector-tw-tpex-price-history": {
+      "completed_sessions": 488,
+      "first": "2024-11-11",
+      "last": "2026-11-11"
+    },
+    "collector-tw-twse-t86": {
+      "completed_sessions": 488,
+      "first": "2024-11-11",
+      "last": "2026-11-11"
+    },
+    "log": "2026-11-11T12:37:04Z end collector-tw-tpex-price-history rc=0; done; timers restarted",
+    "conclusion": "complete; sessions after 2026-11-11 are covered by the daily timers (bundle dates 2026-11-13 to 2026-11-15 present for collector-tw-twse-price-history); no rerun needed"
+  },
+  "published_status": {
+    "generated_at": "2026-11-15T10:29:09Z",
+    "collector-tw-twse-index-breadth": "complete, offered",
+    "collector-tw-twse-taiex-history": "complete, offered",
+    "collector-tw-taifex-vix": "complete, offered"
+  },
+  "not_claimed": [
+    "Pantheon intake of tw_index_daily, tw_market_breadth_daily, tw_index_ohlc_daily and VIX datasets is owned by REGIME-DATA-INDEX-BREADTH-INTAKE-20261114 and REGIME-DATA-HOSTED-ACCEPTANCE-20261114; nothing here claims hosted dataset depth.",
+    "MI_INDEX index and breadth history before 2026-11-13 was not backfilled; the acceptance asks only for the latest closed session. Whether the regime models need daily breadth history (backfill command exists with --start-date/--end-date) is for REGIME-RESEARCH-CLASSIFIER-20261115 to state."
+  ],
+  "disk": "host / 77G, 50G used, 27G free (65%) after deploy",
+  "credentials": "none recorded; credential files were listed by name and size only and never read"
+}

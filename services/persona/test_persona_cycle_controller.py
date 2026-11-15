@@ -166,7 +166,7 @@ def system(tmp_path, monkeypatch, memory_service):
             elif self.path == "/v1/responses":
                 state["turns"] += 1
                 pid = body["model"].split("/", 1)[1]
-                assert '"harness_version": 1' in body["input"]
+                assert pid != 'persona-cycle-test' or '"harness_version": 1' in body["input"]
                 state["prompts"][pid] = body["input"]
                 status = 503 if state["outage"] else 200
                 answer = state["answer_fn"](pid, body["input"]) if state["answer_fn"] else state["answer"]
@@ -802,3 +802,27 @@ def test_revision_revalidates_every_final_proposal(system, memory_service, secon
     assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
     assert packet["status"] == "observing"
     assert "decisions" not in packet["persona_cycle"]
+
+
+def test_daily_cycle_harness_patch_reaches_the_owner_and_loop_state_is_on_the_cycle_record(system):
+    """Real entry: consume the cron run; the harness loop is called by production code, not a test."""
+    controller, gateway, owner, _ = system
+    unsupported = {"orient": "Raise the evidence bar.", "memory_candidates": [], "proposals": [
+        {"kind": "harness_patch", "reason": "weak removals", "evidence_refs": [],
+         "none_applicable_reason": "No case-file item bears on this harness change.",
+         "parameters": {"patch_type": "threshold", "expected_effect": "fewer weak removals",
+                        "proposed_change": {"cycle_thresholds": {"minimum_evidence_count": 3, "minimum_confidence": 0.9}},
+                        "evidence_refs": [{"kind": "packet", "ref": "unknown-packet", "moment": "unknown-packet"}]}}]}
+    gateway["answer"] = unsupported
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    result = controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    loop = packet["persona_cycle"]["harness_loop"]
+    decision = packet["persona_cycle"]["decisions"][0]
+    assert decision["status"] == "patch_recorded"
+    patch = PersistentHarnessOwner(owner).read("persona-cycle-test")["patches"][decision["patch_id"]]
+    assert patch["proposal"]["session_id"] == packet["packet_id"] and patch["status"] == "draft"
+    # The unresolved evidence is a readable degraded state, visible in the persona cycle health.
+    assert loop["status"] == "degraded" and any("trajectory_evidence_unresolved" in r for r in loop["reasons"])
+    assert result["personas"]["persona-cycle-test"]["harness_loop"]["status"] == "degraded"

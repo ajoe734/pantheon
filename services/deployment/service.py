@@ -507,12 +507,24 @@ class DeploymentPlannerService:
             parameters = artifact["parameters"]
             if not plan.metadata.get("symbol"):
                 symbols = parameters.get("symbols")
-                if not isinstance(symbols, list) or len(symbols) != 1 or not isinstance(symbols[0], str) or not symbols[0].strip():
+                cleaned = (
+                    [x.strip() for x in symbols if isinstance(x, str)] if isinstance(symbols, list) else []
+                )
+                if (
+                    not isinstance(symbols, list) or not symbols or len(cleaned) != len(symbols)
+                    or not all(cleaned) or len(set(cleaned)) != len(cleaned)
+                ):
                     raise DeploymentPlanError(
-                        "multi_symbol_paper_plan_unsupported: inline paper artifact requires an explicit symbol "
-                        "or exactly one approved symbol; the paper runtime path runs one symbol per binding"
+                        "paper_plan_symbols_invalid: inline paper artifact requires an explicit symbol "
+                        "or a non-empty list of distinct approved symbols"
                     )
-                plan.metadata["symbol"] = symbols[0]
+                if len(symbols) == 1:
+                    plan.metadata["symbol"] = symbols[0]
+                else:
+                    # A pool envelope nets several underlyings in one binding. It declares the
+                    # complete list the producer must obtain at one common bar; there is no
+                    # single symbol, and none is invented.
+                    plan.metadata["symbols"] = list(symbols)
             if "market_data_policy" in plan.metadata:
                 minimum_closes = None
             else:

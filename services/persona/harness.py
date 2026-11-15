@@ -234,7 +234,10 @@ class PersistentHarnessOwner:
                  packet_store_path: Callable[[], Any] | None = None):
         from services.persona.harness_adoption import HarnessAdoption
         self.personas = persona_owner
-        self.evidence_verifier = evidence_verifier or _reflection_evidence
+        if evidence_verifier is None:
+            from services.persona.harness_cycle import production_evidence_verifier
+            evidence_verifier = production_evidence_verifier(_reflection_evidence)
+        self.evidence_verifier = evidence_verifier
         self.script_root = script_root
         # Owner-connected shadow runner: provider factory (None = incomplete record) and frozen packet store.
         self.shadow_provider = shadow_provider or env_shadow_provider

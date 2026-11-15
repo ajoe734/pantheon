@@ -141,3 +141,44 @@ def test_pool_admission_replays_screened_candidate_and_combined_targets():
     combined = _replay(prepared, target_envelope(), dates)
     assert len(candidate) == len(combined) == len(dates) - 1
     assert all(isinstance(value, float) for value in candidate + combined)
+
+
+def test_singleton_notional_paper_decisions_replay_to_the_same_positions_over_a_flat_and_weaker_sequence():
+    """Paper path (producer strategy) vs expression_replay on one recorded view sequence.
+
+    Backtest convention difference, reported rather than hidden: the single
+    strategy research backtest (_artifact_order_sizes in vectorbt_adapter.py,
+    the non target branch) sizes every BUY/SELL as the fixed order_quantity and
+    never calls expression_policy, so it has no trim; only the paper path and
+    expression_replay share the policy.  This test pins those two together.
+    """
+    from services.execution.lean_runtime.expression_replay import replay
+    from services.execution.lean_runtime.test_notional_target_exit_integration import flat_capable_artifact
+    artifact = flat_capable_artifact()
+    artifact["expression_policy"]["parameters"]["notional_fraction_at_full_strength"] = .2
+    for control in artifact["mutation_surface"]["controls"]:
+        if control["parameter_key"] == "notional_fraction_at_full_strength":
+            control["current_value"] = .2
+    budget = {"gross_limit": 100000, "gross_used": 0, "available_cash": 100000}
+    book, recorded, paper_units = [], [], []
+    for day, closes in (("2026-11-13", [100, 110]), ("2026-11-16", [100, 110]), ("2026-11-17", [100, 100.4]),
+                        ("2026-11-18", [100, 100])):
+        binding = _binding(artifact, binding_id="rb-parity")
+        binding["market_input"] = {"symbol": "2330.TW", "closes": closes, "source_ref": "test-only:parity",
+                                   "event_time": day + "T05:30:00Z", "observed_at": day + "T06:00:00Z"}
+        strategy = CurrentArtifactStrategy(expression_layer=True, candidates_builder=cash_candidates,
+            expression_inputs=lambda _: {"persona_book": {"positions": book}, "risk_budget": dict(budget)})
+        evaluated = strategy(binding, day + "T06:00:00Z")["expression"]["evaluate"]()
+        decision = evaluated["decision"]
+        recorded.append(evaluated["replay_input"])
+        sign = 0 if "side" not in decision else (1 if decision["side"] == "buy" else -1)
+        units = (book[0]["units"] if book else 0) + sign * int(decision.get("units") or 0)
+        book = [{"underlying": "2330", "instrument_id": "eq:2330", "direction": "LONG", "units": units,
+                 "notional": units * closes[-1]}] if units else []
+        paper_units.append(units)
+    assert [r["view"]["direction"] for r in recorded] == ["LONG", "LONG", "LONG", "FLAT"]
+    assert paper_units[1] == paper_units[0] > paper_units[2] > paper_units[3] == 0
+    replayed = replay(recorded, artifact["expression_policy"]["parameters"], carry_book=True)["decisions"]
+    replay_units = [sum(p["units"] for p in d["positions_after"]) for d in replayed]
+    # The replay carries its own book, so it sees the same holdings the paper ledger did.
+    assert replay_units == paper_units
