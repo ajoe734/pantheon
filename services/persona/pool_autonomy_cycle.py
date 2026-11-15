@@ -13,6 +13,12 @@ every action goes through an existing owner route, paper only:
                    answer queues an operator decision (evolution proposal) instead.
   reweight/remove  persona owner   POST .../strategy-pool/decisions (reweight; the
                                    owner removes members past its drawdown rule)
+  publish          after the act step, an applied pool version that changes live membership, a stage or a
+                   weight beyond the policy tolerance is published through the BFF publish route (the
+                   existing publisher + owner chain); a membership change proceeds only with the verified
+                   envelope_publication memo. An unchanged re-weight publishes nothing; a failed publish is
+                   recorded on the cycle record and retried by the next cycle (compared with the last
+                   confirmed publication).
   propose_mutate   evolution owner proposal (same builder as the pool scheduler)
   propose_widen    staged only: no permitted-universe owner exists yet, so no
                    authority to widen is inferred

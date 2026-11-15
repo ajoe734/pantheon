@@ -507,3 +507,97 @@ def test_persona_trial_count_charged_once_per_attempt_across_replays(monkeypatch
     # Subsequent candidate reads exclude the already-decided candidate even when it was refused:
     assert ports.candidates(persona, {"members": []}) == []
 
+
+
+# --- automatic publication (R6) -------------------------------------------------------------
+class PublishPorts(Ports):
+    def __init__(self, history, **kw):
+        super().__init__(**kw)
+        self.history, self.published, self.fail = history, [], None
+        self.consult_state = {"state": "verified", "memo_id": "memo-e", "decision_id": "e-1", "request_id": "r-e"}
+        self.consults = []
+    def publication_state(self, persona): return self.history
+    def envelope_publication_consultation(self, persona, pool, packet_id):
+        self.consults.append(pool["pool_version"])
+        return self.consult_state
+    def publish_pool(self, persona, version):
+        if self.fail:
+            raise self.fail
+        self.published.append(version)
+        return {"status": "published", "envelope_artifact_id": "env-%d" % version, "deployment_plan_id": "plan-%d" % version}
+
+
+def pins(*items):
+    return {"published": {"2": {"status": "published", "pool_version": 2, "members": [
+        {"artifact_ref": r, "risk_weight": w, "virtual_only": v, "stage": s} for r, w, v, s in items]}}}
+
+
+def live_pool(version, *items):
+    return {"persona_id": "p1", "tenant_id": "t1", "pool_version": version, "members": [
+        {"artifact_ref": r, "checksum": "ck", "stage": s, "risk_weight": w, "joined_at": "2026-10-01T00:00:00Z"} for r, w, s in items]}
+
+
+def run_publish(ports, p):
+    return PoolAutonomyCycle(ports).run(PERSONA, observe(p, {"demand_reasons": []}), "pk-1")["act"]["publication"]
+
+
+def test_unchanged_daily_reweight_publishes_nothing():
+    ports = PublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active")),
+                         pool_now=live_pool(3, ("a", .61, "active"), ("b", .39, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "unchanged" and ports.published == [] and ports.consults == []
+
+
+def test_weight_move_beyond_tolerance_publishes_without_consultation():
+    ports = PublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active")),
+                         pool_now=live_pool(3, ("a", .8, "active"), ("b", .2, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and ports.published == [3] and ports.consults == []
+    assert out["reasons"] == ["weight_changed:a", "weight_changed:b"] and out["envelope_artifact_id"] == "env-3"
+
+
+def test_trial_promotion_is_a_stage_change_and_publishes():
+    ports = PublishPorts(pins(("a", .6, False, "active"), ("t", .1, False, "trial")),
+                         pool_now=live_pool(3, ("a", .6, "active"), ("t", .1, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and out["reasons"] == ["stage_changed:t"] and ports.consults == []
+
+
+def test_membership_change_needs_the_verified_memo_and_proceeds_with_it():
+    held = PublishPorts(pins(("a", 1.0, False, "active")), pool_now=live_pool(3, ("a", .9, "active"), ("n", 0, "trial")))
+    held.consult_state = {"state": "pending", "decision_id": "e-1", "request_id": "r-e"}
+    out = run_publish(held, held.pool_now)
+    assert out["status"] == "consultation_pending" and held.published == []
+    operator = PublishPorts(pins(("a", 1.0, False, "active")), pool_now=held.pool_now)
+    operator.consult_state = {"state": "operator", "reason": "risk_persona_requires_operator"}
+    out = run_publish(operator, operator.pool_now)
+    assert out["status"] == "consultation_operator" and out["reason"] == "risk_persona_requires_operator" and operator.published == []
+    ok = PublishPorts(pins(("a", 1.0, False, "active")), pool_now=held.pool_now)
+    out = run_publish(ok, ok.pool_now)
+    assert out["status"] == "published" and out["consultation_memo_id"] == "memo-e" and ok.published == [3]
+
+
+def test_failed_publish_is_reported_on_the_record_and_retried_by_the_next_cycle():
+    ports = PublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active")),
+                         pool_now=live_pool(3, ("a", .8, "active"), ("b", .2, "active")))
+    ports.fail = RuntimeError("owner_unavailable")
+    result = PoolAutonomyCycle(ports).run(PERSONA, observe(ports.pool_now, {"demand_reasons": []}), "pk-1")
+    assert result["act"]["publication"]["status"] == "failed" and result["act"]["publication"]["step"] == "publish"
+    packet = {"packet_id": "pk-1", "audit_refs": [], "observe": {"telemetry_refs": []}, "orient": {"evidence_bundle_refs": []},
+              "decide": {}, "act": {}, "learn": {"telemetry_refs": []}}
+    apply_to_packet(packet, result)
+    assert any(ref.startswith("pool-publication:failed:RuntimeError: owner_unavailable") for ref in packet["audit_refs"])
+    ports.fail = None  # history still shows v2 as the last confirmed publication, so the next cycle retries
+    assert run_publish(ports, ports.pool_now)["status"] == "published" and ports.published == [3]
+
+
+def test_unreadable_publication_state_fails_closed_without_publishing():
+    ports = PublishPorts({}, pool_now=live_pool(3, ("a", .6, "active")))
+    ports.publication_state = lambda persona: (_ for _ in ()).throw(RuntimeError("bff_down"))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "failed" and out["step"] == "compare" and ports.published == []
+
+
+def test_unconfigured_publish_port_is_recorded_not_guessed():
+    ports = Ports(pool_now=live_pool(3, ("a", .6, "active")))
+    assert run_publish(ports, ports.pool_now) == {"status": "not_attempted", "reason": "publish_port_unconfigured"}
