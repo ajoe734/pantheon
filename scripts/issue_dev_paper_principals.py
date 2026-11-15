@@ -27,6 +27,11 @@ PAPER_SCOPE = "pantheon:dev-paper-approval"
 # Persona paper enrolment proposes lifecycle approvals under its own propose-only
 # subject; Governance forbids decider == proposer, so it must differ from PAPER_SUBJECT.
 ENROLLMENT_PROPOSER_SUBJECT = "pantheon-dev-persona-enrollment-proposer"
+# Grant content Governance reads: explicit paper-ladder persona lifecycle widening
+# naming the enrolment proposer (services/governance/paper_approval_scope.py).
+GOVERNANCE_GRANT_CONTENT = (
+    "enabled;persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+)
 TTL_SECONDS = 24 * 60 * 60
 READERS = {
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
@@ -391,7 +396,7 @@ def refresh_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
         directory = root / consumer
         for variable in variables:
             _atomic_private(directory, variable, values[variable])
-    _atomic_private(root / "governance", "grant", "enabled")
+    _atomic_private(root / "governance", "grant", GOVERNANCE_GRANT_CONTENT)
 
 
 def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None) -> bool:
@@ -399,7 +404,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
     issued = int(time.time()) if now is None else now
     # Validate current environment authorization, not only old files.
     issue_environment(env, now=issued)
-    if (root / "governance" / "grant").read_text() != "enabled":
+    if (root / "governance" / "grant").read_text() != GOVERNANCE_GRANT_CONTENT:
         return False
     secret = env["PANTHEON_DEV_BFF_JWT_SECRET"].strip().encode()
     decode = lambda value: base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))

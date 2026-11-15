@@ -170,3 +170,66 @@ def test_compose_wires_enrolment_proposer_names_on_operator_bff_without_values()
     for name in ("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID", "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
                  "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE"):
         assert str(env[name]).endswith(":-}"), name  # empty default: unconfigured fails closed
+
+
+@pytest.mark.parametrize("plain_grant", [False, True])
+def test_issued_paper_gate_and_issued_grant_complete_three_step_enrolment(tenant_dev, world, monkeypatch, tmp_path,
+                                                                          plain_grant):
+    """AC4: real issuer output for proposer, paper gate AND the grant file Governance reads.
+
+    Governance's real paper-ladder lifecycle verification (require_paper_lifecycle_decision) admits the
+    issued paper gate deciding the proposals of the issued enrolment proposer; owner bindings are read
+    through the real PersonaPaperBindingVerifier from owner payloads for the provisioned persona.
+    """
+    from services.governance import main as governance_main
+    from services.governance.paper_approval_scope import PersonaPaperBindingVerifier
+
+    issued = _use_issued_principals(world, monkeypatch, tmp_path, configure_proposer=True)
+    issuer.refresh_files(tmp_path / "principals", ISSUER_ENV)
+    grant_file = tmp_path / "principals" / "governance" / "grant"
+    assert grant_file.read_text().endswith("proposer=" + issuer.ENROLLMENT_PROPOSER_SUBJECT)
+    if plain_grant:  # negative control: without the widening Governance must refuse the gate
+        grant_file.write_text("enabled")
+    monkeypatch.setenv("GOVERNANCE_DEV_PAPER_GRANT_FILE", str(grant_file))
+    monkeypatch.setenv("GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    paper_token = "Bearer " + issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
+    world.gate.token = paper_token
+    ids = world.ids
+    verifier = PersonaPaperBindingVerifier(
+        read_capital=lambda _q: [{"binding_id": ids.persona_capital_binding_id, "persona_id": PERSONA,
+                                  "status": "active", "role": "paper_owner",
+                                  "allowed_deployment_scope": "paper", "tenant_id": ISSUED_TENANT,
+                                  "capital_pool_id": ids.capital_pool_id}],
+        read_runtime=lambda _q: {"bindings": [dict(row) for row in world.runtime_rows]},
+    )
+    monkeypatch.setattr(governance_main, "_persona_paper_binding_verifier", lambda: verifier)
+
+    def read_decision(_reader, decision_id):
+        response = world.governance.get(f"/api/governance/approvals/{decision_id}",
+                                        headers={"Authorization": paper_token})
+        if response.status_code != 200:
+            raise ApprovalInvalid("Governance denied exact decision read")
+        return ApprovalEvidence.model_validate(response.json())
+
+    monkeypatch.setattr(ApprovalReader, "get", read_decision)
+    _complete_paper_admission(world)
+    world.activate_runtime()
+    record = world.store.get(world.record.tenant_id, world.record.idempotency_key)
+    coordinator = world.coordinator("issued-gate", governance_proposer=None, governance_proposer_actor_id=None,
+                                    governance_actor_id=issuer.PAPER_SUBJECT)
+    readback = coordinator.reconcile_paper_enrollment(record).references["paper_enrollment"]
+    if plain_grant:
+        assert readback["status"] != "enrolled", readback
+        assert _persona(world)["lifecycle_state"] == "research_only"
+        return
+    assert readback["status"] == "enrolled", readback
+    assert _persona(world)["lifecycle_state"] == "paper_owner"
+    steps = readback["steps"]["lifecycle"]
+    assert len(steps) == 2
+    for step in steps:
+        decision = world.governance.get(f"/api/governance/approvals/{step['governance_decision_id']}",
+                                        headers={"Authorization": paper_token}).json()
+        assert decision["decision"] == "approved"
+        assert decision["owner_user_id"] == issuer.ENROLLMENT_PROPOSER_SUBJECT
+        assert decision["actor_id"] == issuer.PAPER_SUBJECT
