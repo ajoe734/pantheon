@@ -1,0 +1,22 @@
+{
+  "task": "PERSONA-ENROLLMENT-PROPOSER-PRINCIPAL-20261115",
+  "scope": "paper only; canary and live unchanged; no credential value recorded",
+  "changes": [
+    "scripts/issue_dev_paper_principals.py: new propose-only principal PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN (subject pantheon-dev-persona-enrollment-proposer, role approval_proposer, scope pantheon:dev-owner-write) delivered to operator-bff via file; PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID exported, blanked on revoke",
+    "docker-compose.yml: operator-bff passes PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID / _TOKEN / _TOKEN_FILE with empty defaults (unconfigured fails closed)",
+    "scripts/deploy_nonprod_vm.sh: unchanged; it sources the issuer env file, which now carries the new names",
+    "scripts/issue_dev_paper_principals.py: governance grant file content is now 'enabled;persona_lifecycle=paper_ladder;proposer=pantheon-dev-persona-enrollment-proposer' (GOVERNANCE_GRANT_CONTENT), the explicit widening merged in GOVERNANCE-PAPER-GRANT-PERSONA-LIFECYCLE-20261115; healthy_files checks it; scripts/test_dev_paper_principal_renewal.py asserts it"
+  ],
+  "commands": [
+    {
+      "cmd": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/control-plane/bff/tests/test_persona_paper_enrollment.py",
+      "result": "124 passed, 1 failed (test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others: ModuleNotFoundError flask in sandbox venv, unrelated to this change)"
+    }
+  ],
+  "acceptance": {
+    "1_reproduce": "passed: without the configuration enrolment readback is refused / governance_proposer_identity_unconfigured, persona stays research_only",
+    "2_issuer_and_compose": "passed",
+    "3_contract_test": "passed",
+    "4_integration": "passed: test_issued_paper_gate_and_issued_grant_complete_three_step_enrolment uses the real issuer proposer token, the real issued paper gate token (pantheon-dev-paper-provisioner) as decider, the real issued grant file, real Governance app and PersonaPaperBindingVerifier over owner payloads; both lifecycle steps approved, persona reaches paper_owner. Negative control with plain 'enabled' grant: Governance refuses, persona stays research_only."
+  }
+}
