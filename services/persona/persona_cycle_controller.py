@@ -227,6 +227,9 @@ class PersonaCycleController:
                 cycle["harness_version"] = observe.get("harness_version")
             except Exception as exc:
                 failure = f"observe_unavailable:{type(exc).__name__}"
+            if run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                # Deterministic standing questions from this persona's own pool, before any model turn (H13).
+                cycle["standing_questions"] = self._declare_standing_questions(persona, observe)
             # Independent of model, harness, memory and provider availability.
             try:
                 cycle["risk_result"] = self.owners.risk(persona, observe, packet_id)
@@ -358,6 +361,40 @@ class PersonaCycleController:
         if self.lesson_cycle is None:
             self.lesson_cycle = LessonCycle(turn_runner=self.turn_runner)
         return self.lesson_cycle
+
+    @staticmethod
+    def standing_questions(families: Any) -> list[dict[str, Any]]:
+        """One question per strategy family in the pool and one for risk lessons; no regime question (H13)."""
+        questions = [{"key": f"family:{fam}", "anchors": [f"family:{fam}"],
+                      "text": (f"What have my own retained interpretations and lessons taught me about running the "
+                               f"{fam} strategy family, and what has gone wrong with it?")}
+                     for fam in sorted({str(f).strip().lower() for f in families if str(f or "").strip()})]
+        questions.append({"key": "risk_lessons", "memory_types": ["risk_observation"],
+                          "text": "Which risk lessons have I recorded, and what should they change in how I size or stop positions?"})
+        return questions
+
+    def _declare_standing_questions(self, persona: Mapping[str, Any], observe: Mapping[str, Any]) -> dict[str, Any]:
+        """Declare this persona's standing-question set to the memory owner; never fails the cycle.
+
+        Without pool families nothing is declared (the previous set stays) and the reason is recorded.
+        """
+        subject = observe.get("cycle_subject")
+        if not isinstance(subject, Mapping) or not isinstance(subject.get("families"), list):
+            return {"status": "not_run", "reason": "pool_families_unavailable"}
+        questions = self.standing_questions(subject["families"])
+        try:
+            code, payload = self._lesson_cycle()._memory(
+                "PUT", "/api/memory/persona-standing-questions", persona["tenant_id"],
+                roles=("persona-svc",), subject=None,
+                body={"persona_id": persona["persona_id"], "questions": questions})
+        except Exception as exc:
+            return {"status": "unavailable", "reason": "memory_owner_unavailable:" + type(exc).__name__}
+        if code == 200 and isinstance(payload, Mapping):
+            return {"status": "declared", "keys": [q["key"] for q in questions],
+                    **{k: payload.get(k, []) for k in ("created", "updated", "unchanged", "retired")}}
+        detail = payload.get("detail") if isinstance(payload, Mapping) else None
+        reason = (detail.get("reason") if isinstance(detail, Mapping) else None) or f"http_{code}"
+        return {"status": "not_run" if reason == "llm_layers_disabled" else "unavailable", "reason": str(reason)[:120]}
 
     def _lesson_step(self, call: Callable, degraded: Any = None) -> Any:
         """Lesson steps never fail the cycle; an unavailable step is recorded with its reason instead."""
