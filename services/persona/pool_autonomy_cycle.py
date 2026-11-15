@@ -558,13 +558,25 @@ class HttpPoolCyclePorts:
         not the executable artifact. Only a completed, un-failed research entry is
         followed to the registry's approved execution bundle whose lineage names that
         spec and whose own gate proof resolves; anything else is skipped so an unusable
-        entry can never starve valid supply.
+        entry can never starve valid supply. Demand-originated candidates are scoped to
+        the exact tenant and persona that opened the demand.
         """
         from services.evolution.approved_baselines import resolve_member_baseline
         rows = self._call("GET", "research", "/api/research-orchestrator/alpha-replication/entries", persona)
         in_pool = {m["artifact_ref"] for m in (pool or {}).get("members", []) if m.get("stage") != "removed"}
+        if callable(getattr(self.pool_store, "versions", None)):
+            for ver in self.pool_store.versions(persona["persona_id"], persona["tenant_id"]):
+                dec = ver.get("decision") or {}
+                cand_ref = (dec.get("candidate") or {}).get("artifact_ref")
+                if dec.get("action") in ("admit", "evolution_trial") and cand_ref:
+                    in_pool.add(cand_ref)
         out, seen = [], set()
         for row in rows or []:
+            if row.get("tenant_id") and row.get("tenant_id") != persona["tenant_id"]:
+                continue
+            row_persona = row.get("persona_id")
+            if row_persona and row_persona != persona["persona_id"]:
+                continue
             spec_id, family = row.get("strategy_spec_id"), row.get("strategy_id")
             if (row.get("admission_status") or row.get("status")) != "admitted" or row.get("queue_status") != "completed" \
                     or row.get("last_error") or not spec_id or not family:
@@ -578,8 +590,20 @@ class HttpPoolCyclePorts:
                 entry = view.get("entry") if isinstance(view, dict) else None
                 if not isinstance(entry, dict):
                     continue
+                if entry.get("owner_tenant") and entry.get("owner_tenant") != persona["tenant_id"]:
+                    continue
+                meta = entry.get("metadata") or {}
+                summary = entry.get("evaluation_summary") or {}
+                entry_persona = meta.get("persona_id") or summary.get("persona_id")
+                if entry_persona and entry_persona != persona["persona_id"]:
+                    continue
+                demand_ref = row.get("demand_ref") or meta.get("demand_ref") or summary.get("demand_ref")
+                if row.get("demand_ref") and meta.get("demand_ref") and row.get("demand_ref") != meta.get("demand_ref"):
+                    continue
+                if demand_ref and (row_persona or entry_persona) != persona["persona_id"]:
+                    continue
                 ref = entry.get("registry_id")
-                artifact = (entry.get("metadata") or {}).get("strategy_artifact")
+                artifact = meta.get("strategy_artifact")
                 if (not ref or ref in in_pool or ref in seen or entry.get("artifact_type") != "execution_bundle"
                         or (entry.get("lineage") or {}).get("source_strategy_spec_id") != spec_id or not artifact):
                     continue
@@ -591,7 +615,7 @@ class HttpPoolCyclePorts:
                 self._entries[(persona["tenant_id"], ref)] = entry
                 seen.add(ref)
                 out.append({"artifact_ref": ref, "checksum": entry["checksum"],
-                            "family": artifact.get("strategy_id") or family, "demand_ref": row.get("demand_ref")})
+                            "family": artifact.get("strategy_id") or family, "demand_ref": demand_ref})
         return out
 
     def _entry(self, persona, ref):
@@ -709,7 +733,14 @@ class HttpPoolCyclePorts:
         return {"decision_id": decision_id, "status": "queued"}
 
     def decide_pool(self, persona, body):
+        import copy
         import importlib
+        cand_ref = (body.get("candidate") or {}).get("artifact_ref") if isinstance(body, Mapping) else None
+        if isinstance(body, Mapping) and body.get("action") == "admit" and cand_ref and callable(getattr(self.pool_store, "versions", None)):
+            for ver in reversed(self.pool_store.versions(persona["persona_id"], persona["tenant_id"])):
+                dec = ver.get("decision") or {}
+                if dec.get("action") == "admit" and (dec.get("candidate") or {}).get("artifact_ref") == cand_ref:
+                    return copy.deepcopy(ver)
         module = importlib.import_module("services.control_plane.persona.persona_strategy_pool")
         return self.pool_store.decide(persona["persona_id"], persona["tenant_id"],
                                       module.PoolDecisionRequest.model_validate(body), actor_id="persona-pool-cycle")

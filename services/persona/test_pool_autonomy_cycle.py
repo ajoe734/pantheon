@@ -377,3 +377,133 @@ def test_http_ports_open_once_verify_published_memo_and_queue_operator_decision(
     queued = ports.queue_operator_decision(PERSONA, pool(member("a"), version=3), cand, oppose)
     assert queued["status"] == "queued" and posts[-1][1] == "/api/evolution/proposals"
     assert posts[-1][2]["metadata"]["operator_required"] is True and posts[-1][2]["metadata"]["candidate"]["artifact_ref"] == "cand"
+
+
+def test_demand_driven_candidate_is_returned_only_for_opening_persona_and_tenant():
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+
+    module = _load_service_module()
+    bundle = {**genuine_entry(tenant="t1"), "artifact_type": "execution_bundle"}
+    bundle["lineage"] = {**bundle["lineage"], "source_strategy_spec_id": "template-demand-spec-1"}
+    bundle["metadata"] = {
+        **bundle["metadata"],
+        "persona_id": "p1",
+        "demand_ref": "rd-open-1",
+        "execution_context": "paper",
+        "capital_scale_pct": 0,
+    }
+    family = bundle["metadata"]["strategy_artifact"]["strategy_id"]
+    admission = {
+        "tenant_id": "t1",
+        "persona_id": "p1",
+        "demand_ref": "rd-open-1",
+        "strategy_spec_id": "template-demand-spec-1",
+        "strategy_id": family,
+        "checksum": bundle["checksum"],
+        "status": "admitted",
+    }
+    row = module._build_alpha_replication_entry(admission, {**admission, "status": "completed"})
+
+    def transport(method, service, path, tenant, body=None):
+        if service == "research":
+            return [row] if tenant == "t1" else []
+        return [{"entry": bundle, "deployment_stage": None}] if tenant == "t1" else []
+
+    ports = HttpPoolCyclePorts(transport)
+    # Returned for the opening persona in the opening tenant with demand_ref preserved:
+    assert ports.candidates({"persona_id": "p1", "tenant_id": "t1"}, {"members": []}) == [
+        {
+            "artifact_ref": bundle["registry_id"],
+            "checksum": bundle["checksum"],
+            "family": family,
+            "demand_ref": "rd-open-1",
+        }
+    ]
+    # Never returned for another persona in the same tenant:
+    assert ports.candidates({"persona_id": "p2", "tenant_id": "t1"}, {"members": []}) == []
+    # Never returned for another tenant:
+    assert ports.candidates({"persona_id": "p1", "tenant_id": "t2"}, {"members": []}) == []
+
+
+def test_persona_trial_count_charged_once_per_attempt_across_replays(monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.research.tests.test_research_orchestrator_http_service import _load_service_module
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "control-plane" / "persona"))
+    module = _load_service_module()
+    bundle = {**genuine_entry(tenant="t1"), "artifact_type": "execution_bundle"}
+    bundle["lineage"] = {**bundle["lineage"], "source_strategy_spec_id": "template-demand-spec-2"}
+    bundle["metadata"] = {**bundle["metadata"], "persona_id": "p1", "demand_ref": "rd-2"}
+    family = bundle["metadata"]["strategy_artifact"]["strategy_id"]
+    admission = {
+        "tenant_id": "t1",
+        "persona_id": "p1",
+        "demand_ref": "rd-2",
+        "strategy_spec_id": "template-demand-spec-2",
+        "strategy_id": family,
+        "checksum": bundle["checksum"],
+        "status": "admitted",
+    }
+    row = module._build_alpha_replication_entry(admission, {**admission, "status": "completed"})
+
+    versions = []
+    apply_calls = []
+
+    def apply_decision(persona_id, tenant_id, request, *, actor_id):
+        apply_calls.append((persona_id, tenant_id, request.candidate.artifact_ref))
+        version = {
+            "pool_version": len(versions) + 1,
+            "members": [],
+            "decision": {
+                "action": request.action,
+                "status": "refused",
+                "reasons": ["combined_oos_sharpe_did_not_improve"],
+                "persona_trial_count": len(versions) + 1,
+                "candidate": {"artifact_ref": request.candidate.artifact_ref, "checksum": request.candidate.checksum},
+            },
+        }
+        versions.append(version)
+        return version
+
+    pool_store = SimpleNamespace(
+        versions=lambda pid, tenant: list(versions),
+        decide=apply_decision,
+    )
+    ports = HttpPoolCyclePorts(
+        lambda method, service, path, tenant, body=None: (
+            [row] if service == "research" else [{"entry": bundle, "deployment_stage": None}]
+        ),
+        pool_store=pool_store,
+    )
+    persona = {"persona_id": "p1", "tenant_id": "t1"}
+    assert len(ports.candidates(persona, {"members": []})) == 1
+
+    body = {
+        "expected_version": 1,
+        "execution_context": "paper",
+        "action": "admit",
+        "initiated_by": "persona",
+        "consultation_memo_id": "memo-1",
+        "consultation_pool_version": 1,
+        "candidate": {"artifact_ref": bundle["registry_id"], "checksum": bundle["checksum"], "demand_ref": "rd-2"},
+        "books": {},
+        "observations": [],
+        "dataset": {},
+    }
+    first = ports.decide_pool(persona, body)
+    assert first["decision"]["persona_trial_count"] == 1
+    assert len(apply_calls) == 1
+
+    # Replay of decide_pool for the same candidate returns the recorded decision without re-charging:
+    second = ports.decide_pool(persona, body)
+    assert second == first
+    assert len(apply_calls) == 1
+
+    # Subsequent candidate reads exclude the already-decided candidate even when it was refused:
+    assert ports.candidates(persona, {"members": []}) == []
+

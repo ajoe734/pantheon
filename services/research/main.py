@@ -1097,6 +1097,8 @@ def _build_alpha_replication_entry(
     return {
         "admission_id": admission.get("admission_id"),
         "tenant_id": admission.get("tenant_id"),
+        "persona_id": admission.get("persona_id") or (q.get("persona_id") if has_q else None),
+        "demand_ref": admission.get("demand_ref") or (q.get("demand_ref") if has_q else None),
         "strategy_spec_id": admission.get("strategy_spec_id"),
         "strategy_id": admission.get("strategy_id") or (q.get("strategy_id") if has_q else None),
         "spec_version": admission.get("spec_version") or (q.get("spec_version") if has_q else None),
@@ -1132,15 +1134,21 @@ def list_alpha_replication_entries(
     tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
 ) -> List[Dict[str, Any]]:
     """Return every replication admission of the authenticated tenant joined with its queue entry."""
-    admissions = alpha_replication_admission_store.list_admissions(tenant_id=tenant_id)
+    admissions = list(alpha_replication_admission_store.list_admissions(tenant_id=tenant_id))
     queue_store = (
         alpha_replication_queue
         if getattr(alpha_replication_queue, "_data_dir", None)
         == getattr(alpha_replication_admission_store, "_data_dir", None)
         else AlphaReplicationQueue(alpha_replication_admission_store._data_dir)
     )
+    queue_entries = list(queue_store.list_all())
+    active_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    if active_dir != getattr(alpha_replication_admission_store, "_data_dir", None):
+        admissions.extend(ReplicationAdmissionStore(active_dir).list_admissions(tenant_id=tenant_id))
+        queue_entries.extend(AlphaReplicationQueue(active_dir).list_all())
+
     queue_by_key: Dict[tuple[str, str], Dict[str, Any]] = {}
-    for entry in queue_store.list_all():
+    for entry in queue_entries:
         if not isinstance(entry, dict):
             continue
         entry_tenant = str(entry.get("tenant_id") or "").strip()
@@ -1149,6 +1157,7 @@ def list_alpha_replication_entries(
             queue_by_key[(entry_tenant, entry_spec_id)] = entry
 
     results: List[Dict[str, Any]] = []
+    seen_specs: set[str] = set()
     for admission in admissions:
         if not isinstance(admission, dict):
             continue
@@ -1156,8 +1165,41 @@ def list_alpha_replication_entries(
         if adm_tenant != tenant_id:
             continue
         spec_id = str(admission.get("strategy_spec_id") or "").strip()
+        if not spec_id or spec_id in seen_specs:
+            continue
+        seen_specs.add(spec_id)
         queue_entry = queue_by_key.get((adm_tenant, spec_id))
         results.append(_build_alpha_replication_entry(admission, queue_entry))
+
+    for demand in research_demand_store.list(tenant_id):
+        attempts = ((demand.get("discovery") or {}).get("template_search") or {}).get("attempts") or {}
+        for receipt in attempts.values():
+            if not isinstance(receipt, dict):
+                continue
+            reg = receipt.get("registration")
+            artifact = receipt.get("artifact")
+            if not isinstance(reg, dict) or reg.get("status") != "approved" or not isinstance(artifact, dict):
+                continue
+            spec_id = str(reg.get("source_strategy_spec_id") or (artifact.get("lineage") or {}).get("source_strategy_spec_id") or "").strip()
+            if not spec_id or spec_id in seen_specs:
+                continue
+            seen_specs.add(spec_id)
+            adm = {
+                "admission_id": reg.get("admission_id") or f"adm-tpl-{spec_id}",
+                "tenant_id": tenant_id,
+                "persona_id": demand.get("persona_id"),
+                "demand_ref": demand.get("demand_id"),
+                "strategy_spec_id": spec_id,
+                "strategy_id": artifact.get("strategy_id"),
+                "spec_version": artifact.get("version"),
+                "checksum": reg.get("checksum"),
+                "approval_decision_id": reg.get("approval_decision_id"),
+                "requested_by": "persona-pool-cycle",
+                "review_ref": f"review://{reg.get('approval_decision_id')}",
+                "mode": "initial",
+                "status": "admitted",
+            }
+            results.append(_build_alpha_replication_entry(adm, {**adm, "status": "completed"}))
     return results
 
 
@@ -2768,6 +2810,52 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
+def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Load the governed dataset and policy authority for template search or fail closed."""
+    if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
+        dataset_path = (
+            os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH")
+            or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+            or os.environ.get("PERSONA_POOL_CANONICAL_DATASET_PATH")
+        )
+        policy_path = (
+            os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH")
+            or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+            or os.environ.get("PERSONA_POOL_THRESHOLD_POLICY_PATH")
+        )
+        if not dataset_path:
+            raise ValueError("governed_market_data_missing")
+        if not policy_path:
+            raise ValueError("governed_policy_authority_missing")
+        training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
+        sys.path.insert(0, training_dir)
+        try:
+            import evaluation_authority as _authority  # type: ignore
+
+            pinned = os.environ.get("RESEARCH_RETRAIN_TRUSTED_NOW")
+            trusted_now = (
+                datetime.fromisoformat(pinned.replace("Z", "+00:00"))
+                if pinned
+                else datetime.now(timezone.utc)
+            )
+            snapshot = _authority.load_evaluation_authority(
+                dataset_path,
+                policy_path,
+                trusted_now=trusted_now,
+                strategy_id=str(demand["demand_id"]),
+            )
+            return dict(snapshot.vectorbt_dataset)
+        except Exception as exc:
+            raise ValueError(f"governed_policy_authority_unavailable:{type(exc).__name__}:{exc}") from exc
+        finally:
+            if training_dir in sys.path:
+                sys.path.remove(training_dir)
+    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
+    if not dataset:
+        raise ValueError("governed_market_data_missing")
+    return dataset
+
+
 def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
     """Read the mandate universe and registered templates from their owners."""
     tenant_id = demand["tenant_id"]
@@ -2782,9 +2870,7 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
     universe = scope.get("symbols")
     if not universe:
         raise ValueError("mandate_universe_missing")
-    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
-    if not dataset:
-        raise ValueError("governed_market_data_missing")
+    dataset = _load_template_search_governed_dataset(demand)
     registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
     templates = _retrain_call(
         step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
@@ -2810,15 +2896,34 @@ def _execute_template_search(run_id: str, params: Dict[str, Any]) -> None:
         raise _RetrainFailure("template_search", "research_demand_missing")
     run.update(status="running", updated_at=utc_now())
     store.put_run(run)
+    from services.research.candidate_registration import TemplateCandidateRegistrar
     from services.research.template_demand_search import TemplateDemandSearch
     from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtest_store = SharedBacktestRunStore(data_dir / "backtest_runs.json")
     gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(),
-                                 backtest_run_store=SharedBacktestRunStore(data_dir / "backtest_runs.json"))
+                                 backtest_run_store=backtest_store)
+    adm_store = (
+        alpha_replication_admission_store
+        if getattr(alpha_replication_admission_store, "_data_dir", None) == data_dir
+        else ReplicationAdmissionStore(data_dir)
+    )
+    q_store = (
+        alpha_replication_queue
+        if getattr(alpha_replication_queue, "_data_dir", None) == data_dir
+        else AlphaReplicationQueue(data_dir)
+    )
+    registrar = TemplateCandidateRegistrar(
+        data_dir=data_dir,
+        owner_call=_retrain_call,
+        admission_store=adm_store,
+        queue_store=q_store,
+        backtest_run_store=backtest_store,
+    )
     search = TemplateDemandSearch(store=research_demand_store, gate=gate,
                                   context_loader=_template_search_context, lock_path=data_dir / "template_search.lock",
-                                  run_budget=1)
+                                  registrar=registrar, run_budget=1)
     row = search.run(demand)
     result = (row.get("discovery") or {}).get("template_search") or {}
     run = get_run(run_id)
