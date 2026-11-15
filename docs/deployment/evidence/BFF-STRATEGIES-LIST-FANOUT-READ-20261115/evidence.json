@@ -1,0 +1,1252 @@
+{
+  "task_id": "BFF-STRATEGIES-LIST-FANOUT-READ-20261115",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "recorded_at": "2026-11-15T00:05:01.245967+00:00",
+  "source_base_commit": "e2f185058632ea4873ff047d46342c2a02851a0a",
+  "anchor_commit": "2120efbe5f9d28d2bd641b3191a30ea59fcf51f6",
+  "scope": {
+    "runtime": [
+      "services/control-plane/bff/ports/research_knowledge_source.py"
+    ],
+    "tests": [
+      "services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+      "services/control-plane/bff/tests/test_strategy_list_latency.py"
+    ],
+    "existing_test_adjustment": "The equivalent-callable test now gives each case a fresh port so each must still make exactly one cold bounded owner read. Assertions were preserved.",
+    "unchanged": [
+      "strategy route signatures",
+      "tenant/RBAC route admission",
+      "owner response validation and ordering",
+      "page tokens",
+      "personas/service.py",
+      "artifact paging",
+      "execute-plans",
+      "FE gate budgets and crawler",
+      "BFF timeouts"
+    ]
+  },
+  "design": {
+    "approach": "Single-flight plus a short process-local memo of validated bounded Registry summary pages; no memo of BFF responses, persona/ranking projection or full catalog.",
+    "ttl_seconds": 5,
+    "max_completed_keys_per_port": 64,
+    "max_in_flight_keys_per_port": 64,
+    "key": [
+      "verified caller tenant",
+      "SHA256 of caller authorization",
+      "Registry URL",
+      "state",
+      "exclude_state",
+      "persona_id",
+      "page_token",
+      "page_size"
+    ],
+    "failure_policy": "Exceptions and malformed/forbidden owner payloads are never inserted into the cross-request memo. Concurrent waiters receive their in-flight outcome; the next independent request retries. Existing request-scoped owner-read semantics remain unchanged.",
+    "isolation": "Each port owns its memo. Hits and joined results are deep-copied; leader results are detached from the saved value. Unrelated keys do not wait under an I/O lock.",
+    "deadline": "A waiter uses remaining_management_read_budget; at capacity an unrelated key reads directly without growing the in-flight map. No timeout or budget changes.",
+    "freshness": "Successful Registry summary pages may be up to 5 seconds old. Hits do not extend TTL. Persona and ranking reads still use the existing request-scoped flow.",
+    "composition": "Follows sibling PR #7362 single-flight/memo pattern at the strategy owner-page layer; preserves existing strategy route parallel prefetch and leaves personas and artifact paging untouched."
+  },
+  "hosted_before_reference": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7364",
+    "commit": "d392c106525d293fc968be1eedff863d00a04df2",
+    "evidence": "docs/deployment/evidence/BFF-RISK-CENTER-FANOUT-AND-ARTIFACT-PAGING-20261115/evidence.json",
+    "strategies": {
+      "p50_seconds": 2.0678912219955237,
+      "p95_seconds": 3.2318405890036956,
+      "max_seconds": 3.598078668997914,
+      "rounds": 20,
+      "samples_seconds": [
+        3.598078668997914,
+        2.629087237000931,
+        1.9178238550011883,
+        2.1159719880015473,
+        1.7134769919939572,
+        1.9010996759971022,
+        2.0678912219955237,
+        2.2125308309987304,
+        2.0878529519977747,
+        1.8087759640038712,
+        2.027895785999135,
+        2.2453761780052446,
+        1.6511513959994772,
+        2.5053587970032822,
+        2.63418422700488,
+        3.2318405890036956,
+        2.054717883998819,
+        1.998531807999825,
+        2.376288896994083,
+        1.8305040419945726
+      ]
+    },
+    "profile_summary": "The existing hosted pre-change cProfile measured strategy owner page 0.5394 seconds, with http_request_json 0.5371 seconds (urlopen 0.4683 seconds). This supports deduplicating repeated validated owner reads. It is a single-owner profile; hosted fan-out p95 was 3.2318 seconds.",
+    "attribution_limit": "The hosted concurrent regression indicates contention beyond the isolated owner wait; no new hosted after-change claim is made by this fixture benchmark."
+  },
+  "benchmark_method": {
+    "paths": [
+      "/bff/strategies?exclude_state=draft&page_size=200",
+      "/bff/personas?page_size=200",
+      "/bff/capital-pools?page_size=200",
+      "/bff/runtimes?page_size=200",
+      "/bff/tools",
+      "/bff/mcp-servers",
+      "/bff/skills",
+      "/bff/alerts",
+      "/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200"
+    ],
+    "rounds_per_mode": 20,
+    "statistics": "Nearest-rank p50/p95 and max. Every round awaits and consumes all nine response bodies. First cold round is included, with a fresh app/port in each mode; no warmup round is discarded.",
+    "fixture": {
+      "non_draft": 166,
+      "non_retired": 3648,
+      "other_tenant": 23,
+      "injected_registry_latency_seconds": 0.54
+    },
+    "transport": "httpx ASGITransport, real production routers mounted by build_consolidated_cross_cutting_app, real RegistryService/RegistryStore summary-page projection. Owner HTTP boundary is replaced by the real Registry fixture plus time.sleep(0.54).",
+    "baseline": "The benchmark compiles the immutable original port from git show at source_base_commit; all other route, fixture, latency, auth and concurrency code is identical between modes.",
+    "profile": "cProfile covers the isolated owner read and each actual uncached read inside the strategy worker during nine-read fan-out, with both before and after profiles recorded below. Before change, wait plus Registry summary/index projection dominate; memo avoids repeating that work on subsequent page loads.",
+    "limitations": "The eight sibling routes use in-memory empty owner datasets. Strategy fixture matches requested hosted counts, but the fixture does not reproduce all hosted owner workloads, network hops, or single-process uvicorn contention. The baseline is already under 2 seconds here; these numbers establish fixture acceptance and repeated-read savings, not hosted after-change latency. No deploy was performed.",
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      "timeout 120 .venv-pantheon/bin/python services/control-plane/bff/tests/test_strategies_list_fanout_read.py --benchmark before --output /tmp/strategies-fanout-before.json",
+      "timeout 120 .venv-pantheon/bin/python services/control-plane/bff/tests/test_strategies_list_fanout_read.py --benchmark after --output /tmp/strategies-fanout-after.json"
+    ],
+    "execution": "Final before and after benchmarks ran sequentially in one bounded timeout 180 batch, with no concurrent local test batch. Both exited 0; the batch exited 0 and all terminal output was collected."
+  },
+  "before": {
+    "mode": "before",
+    "base": "e2f185058632ea4873ff047d46342c2a02851a0a",
+    "fixture": {
+      "non_draft": 166,
+      "non_retired": 3648,
+      "other_tenant": 23,
+      "injected_registry_latency_seconds": 0.54
+    },
+    "fanout": {
+      "/bff/strategies?exclude_state=draft&page_size=200": {
+        "p50_seconds": 0.6663318689970765,
+        "p95_seconds": 0.8636560480008484,
+        "max_seconds": 1.547312126000179,
+        "rounds": 20,
+        "samples_seconds": [
+          1.547312126000179,
+          0.66106103999482,
+          0.662654690000636,
+          0.6709960989974206,
+          0.6620799000011175,
+          0.6609990700017079,
+          0.6646007999952417,
+          0.8477718080030172,
+          0.6630739999964135,
+          0.67685231899668,
+          0.6645037299967953,
+          0.6661701789998915,
+          0.6710217189975083,
+          0.6817043089977233,
+          0.8636560480008484,
+          0.6663318689970765,
+          0.6652579900037381,
+          0.6694833600049606,
+          0.6896550279998337,
+          0.6851853389962343
+        ]
+      },
+      "/bff/personas?page_size=200": {
+        "p50_seconds": 0.01536686900362838,
+        "p95_seconds": 0.021047909001936205,
+        "max_seconds": 0.6387037210006383,
+        "rounds": 20,
+        "samples_seconds": [
+          0.6387037210006383,
+          0.021047909001936205,
+          0.015434519002155866,
+          0.015713609995145816,
+          0.014380459004314616,
+          0.013958290001028217,
+          0.011140059999888763,
+          0.015424149001773912,
+          0.011967270002060104,
+          0.011698959999193903,
+          0.01536686900362838,
+          0.014317979002953507,
+          0.01167118000012124,
+          0.01730912899802206,
+          0.015827889001229778,
+          0.01370401000167476,
+          0.015856108999287244,
+          0.018454108998412266,
+          0.015929029003018513,
+          0.013976308997371234
+        ]
+      },
+      "/bff/capital-pools?page_size=200": {
+        "p50_seconds": 0.017499979003332555,
+        "p95_seconds": 0.020944608993886504,
+        "max_seconds": 0.5544015070045134,
+        "rounds": 20,
+        "samples_seconds": [
+          0.5544015070045134,
+          0.018227469001431018,
+          0.018880288997024763,
+          0.017499979003332555,
+          0.018523149003158323,
+          0.01859633000276517,
+          0.01761579899903154,
+          0.017324208994978108,
+          0.015211238998745102,
+          0.01345333899371326,
+          0.015571479001664557,
+          0.015920487996481825,
+          0.012302508999709971,
+          0.016011889005312696,
+          0.01950916900386801,
+          0.018113759004336316,
+          0.020222008002747316,
+          0.020944608993886504,
+          0.01564275899727363,
+          0.01535475900163874
+        ]
+      },
+      "/bff/runtimes?page_size=200": {
+        "p50_seconds": 0.013668419000168797,
+        "p95_seconds": 0.017050198999640997,
+        "max_seconds": 0.5224570579957799,
+        "rounds": 20,
+        "samples_seconds": [
+          0.5224570579957799,
+          0.01583594900148455,
+          0.014631958998506889,
+          0.013880530001188163,
+          0.013668419000168797,
+          0.013286370005516801,
+          0.013566798996180296,
+          0.013334729002963286,
+          0.01535349900223082,
+          0.013766178999503609,
+          0.015354929004388396,
+          0.013453640000079758,
+          0.01058982900576666,
+          0.011125290002382826,
+          0.01637449899862986,
+          0.012988690003112424,
+          0.014853018998110201,
+          0.017050198999640997,
+          0.010586769996734802,
+          0.012157799006672576
+        ]
+      },
+      "/bff/tools": {
+        "p50_seconds": 0.01566642899706494,
+        "p95_seconds": 0.01995906900265254,
+        "max_seconds": 0.4974612000005436,
+        "rounds": 20,
+        "samples_seconds": [
+          0.4974612000005436,
+          0.01995906900265254,
+          0.01706255900353426,
+          0.016829839994898066,
+          0.01566642899706494,
+          0.016365048999432474,
+          0.01374873999884585,
+          0.016246628998487722,
+          0.014051887999812607,
+          0.014972229000704829,
+          0.009899238997604698,
+          0.014753620002011303,
+          0.014073188998736441,
+          0.01605874900269555,
+          0.01776099899871042,
+          0.015554299003269989,
+          0.01697548800439108,
+          0.01767566899798112,
+          0.013038960001722444,
+          0.01447029900009511
+        ]
+      },
+      "/bff/mcp-servers": {
+        "p50_seconds": 0.013321548998646904,
+        "p95_seconds": 0.01673314800427761,
+        "max_seconds": 0.02374908899946604,
+        "rounds": 20,
+        "samples_seconds": [
+          0.02374908899946604,
+          0.011727388999133836,
+          0.01673314800427761,
+          0.012679220002610236,
+          0.014679229003377259,
+          0.012547809004900046,
+          0.012643679001484998,
+          0.014937358995666727,
+          0.011489609998534434,
+          0.01072957900032634,
+          0.014099608997639734,
+          0.013764460003585555,
+          0.009472839999943972,
+          0.013636809002491646,
+          0.01661687999876449,
+          0.01566904900391819,
+          0.013321548998646904,
+          0.012871589002315886,
+          0.013397930000792257,
+          0.012275419001525734
+        ]
+      },
+      "/bff/skills": {
+        "p50_seconds": 0.012207959000079427,
+        "p95_seconds": 0.015672649002226535,
+        "max_seconds": 0.019577418999688234,
+        "rounds": 20,
+        "samples_seconds": [
+          0.019577418999688234,
+          0.015248438998241909,
+          0.015672649002226535,
+          0.012207959000079427,
+          0.014418048005609307,
+          0.011926908999157604,
+          0.012269559003470931,
+          0.01477571899886243,
+          0.01187137899978552,
+          0.011532628996064886,
+          0.013488060001691338,
+          0.01175308899837546,
+          0.011838968996016774,
+          0.007705560004978906,
+          0.012428449997969437,
+          0.010204159996646922,
+          0.015160458999162074,
+          0.007096948997059371,
+          0.012770409004588146,
+          0.011458590000984259
+        ]
+      },
+      "/bff/alerts": {
+        "p50_seconds": 0.001632450002944097,
+        "p95_seconds": 0.0027273400046397,
+        "max_seconds": 0.0031649700031266548,
+        "rounds": 20,
+        "samples_seconds": [
+          0.0031649700031266548,
+          0.001900540002679918,
+          0.0027273400046397,
+          0.0016510599962202832,
+          0.0015690599975641817,
+          0.0015791400001035072,
+          0.0015636600001016632,
+          0.0015957299983710982,
+          0.0016025300064939074,
+          0.0015820900007383898,
+          0.0016528300038771704,
+          0.0015878699996392243,
+          0.0015641700010746717,
+          0.001632450002944097,
+          0.0016684900037944317,
+          0.0016223099955823272,
+          0.0018726199996308424,
+          0.002102480000758078,
+          0.001697190004051663,
+          0.0017333709984086454
+        ]
+      },
+      "/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200": {
+        "p50_seconds": 0.009125968994339928,
+        "p95_seconds": 0.011272419003944378,
+        "max_seconds": 0.013867089000996202,
+        "rounds": 20,
+        "samples_seconds": [
+          0.013867089000996202,
+          0.0026503890039748512,
+          0.0068810099983238615,
+          0.009974838998459745,
+          0.009293119997892063,
+          0.010728888999437913,
+          0.00899677900451934,
+          0.011272419003944378,
+          0.006859319000795949,
+          0.008338298997841775,
+          0.0074310290001449175,
+          0.009852979994320776,
+          0.00507778899918776,
+          0.007868859000154771,
+          0.011028640001313761,
+          0.011155708998558111,
+          0.010479420001502149,
+          0.009125968994339928,
+          0.010940578998997808,
+          0.004638619997422211
+        ]
+      }
+    },
+    "owner_calls": 20,
+    "profile": [
+      {
+        "file": "e2f185058632ea4873ff047d46342c2a02851a0a/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2531,
+        "name": "list_strategy_specs_page",
+        "calls": 1,
+        "self_seconds": 1.4200000000000001e-05,
+        "cumulative_seconds": 0.629670242
+      },
+      {
+        "file": "e2f185058632ea4873ff047d46342c2a02851a0a/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2902,
+        "name": "_fetch_canonical_strategy_specs_page",
+        "calls": 1,
+        "self_seconds": 1.3450000000000002e-05,
+        "cumulative_seconds": 0.629654982
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/core/owner_reads.py",
+        "line": 85,
+        "name": "cached_owner_call",
+        "calls": 1,
+        "self_seconds": 2.407e-05,
+        "cumulative_seconds": 0.629640462
+      },
+      {
+        "file": "e2f185058632ea4873ff047d46342c2a02851a0a/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2949,
+        "name": "<lambda>",
+        "calls": 1,
+        "self_seconds": 3.389e-05,
+        "cumulative_seconds": 0.629589532
+      },
+      {
+        "file": "e2f185058632ea4873ff047d46342c2a02851a0a/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2958,
+        "name": "_fetch_canonical_strategy_specs_page_uncached",
+        "calls": 1,
+        "self_seconds": 0.000626,
+        "cumulative_seconds": 0.629555642
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+        "line": 90,
+        "name": "http",
+        "calls": 1,
+        "self_seconds": 0.001541485,
+        "cumulative_seconds": 0.628090472
+      },
+      {
+        "file": "~",
+        "line": 0,
+        "name": "<built-in method time.sleep>",
+        "calls": 1,
+        "self_seconds": 0.540142047,
+        "cumulative_seconds": 0.540142047
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+        "line": 416,
+        "name": "strategy_spec_summary_page",
+        "calls": 1,
+        "self_seconds": 0.000304172,
+        "cumulative_seconds": 0.086303825
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 864,
+        "name": "project_strategy_spec_summary_page",
+        "calls": 1,
+        "self_seconds": 0.014577233,
+        "cumulative_seconds": 0.044706667000000005
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+        "line": 396,
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "self_seconds": 4.0440000000000006e-05,
+        "cumulative_seconds": 0.041266448000000004
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 1299,
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "self_seconds": 0.0037575750000000004,
+        "cumulative_seconds": 0.041226008
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 624,
+        "name": "strategy_spec_summary_index_row",
+        "calls": 3648,
+        "self_seconds": 0.022108481000000003,
+        "cumulative_seconds": 0.033308106000000004
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 521,
+        "name": "_extract_strategy_summary_raw_lifecycle",
+        "calls": 3648,
+        "self_seconds": 0.007863456000000001,
+        "cumulative_seconds": 0.014732029
+      },
+      {
+        "file": "~",
+        "line": 0,
+        "name": "<method 'get' of 'dict' objects>",
+        "calls": 74995,
+        "self_seconds": 0.011508810000000001,
+        "cumulative_seconds": 0.011508810000000001
+      },
+      {
+        "file": "/usr/lib/python3.12/enum.py",
+        "line": 202,
+        "name": "__get__",
+        "calls": 22930,
+        "self_seconds": 0.0051534250000000005,
+        "cumulative_seconds": 0.007514476000000001
+      },
+      {
+        "file": "~",
+        "line": 0,
+        "name": "<built-in method builtins.hasattr>",
+        "calls": 11468,
+        "self_seconds": 0.002977242,
+        "cumulative_seconds": 0.0068448580000000005
+      }
+    ],
+    "concurrent_owner_profile": {
+      "read_count": 20,
+      "first_cold_read_top_cumulative": [
+        {
+          "file": "e2f185058632ea4873ff047d46342c2a02851a0a/services/control-plane/bff/ports/research_knowledge_source.py",
+          "line": 2958,
+          "name": "_fetch_canonical_strategy_specs_page_uncached",
+          "calls": 1,
+          "self_seconds": 0.000603537,
+          "cumulative_seconds": 0.844582809
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+          "line": 90,
+          "name": "http",
+          "calls": 1,
+          "self_seconds": 0.00167522,
+          "cumulative_seconds": 0.8436390490000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<built-in method time.sleep>",
+          "calls": 1,
+          "self_seconds": 0.529351808,
+          "cumulative_seconds": 0.529351808
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+          "line": 416,
+          "name": "strategy_spec_summary_page",
+          "calls": 1,
+          "self_seconds": 0.000330411,
+          "cumulative_seconds": 0.31260704100000003
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+          "line": 396,
+          "name": "list_strategy_spec_summary_index_rows",
+          "calls": 1,
+          "self_seconds": 4.1369e-05,
+          "cumulative_seconds": 0.266210913
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 1299,
+          "name": "list_strategy_spec_summary_index_rows",
+          "calls": 1,
+          "self_seconds": 0.003527394,
+          "cumulative_seconds": 0.26616954400000004
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 624,
+          "name": "strategy_spec_summary_index_row",
+          "calls": 3648,
+          "self_seconds": 0.24831269500000003,
+          "cumulative_seconds": 0.258779896
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 864,
+          "name": "project_strategy_spec_summary_page",
+          "calls": 1,
+          "self_seconds": 0.015341786000000001,
+          "cumulative_seconds": 0.046048217
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 521,
+          "name": "_extract_strategy_summary_raw_lifecycle",
+          "calls": 3648,
+          "self_seconds": 0.008042893,
+          "cumulative_seconds": 0.015268954000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<method 'get' of 'dict' objects>",
+          "calls": 75059,
+          "self_seconds": 0.011709319000000001,
+          "cumulative_seconds": 0.011709319000000001
+        },
+        {
+          "file": "/usr/lib/python3.12/asyncio/events.py",
+          "line": 86,
+          "name": "_run",
+          "calls": 54,
+          "self_seconds": 7.1789e-05,
+          "cumulative_seconds": 0.009492359
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<method 'run' of '_contextvars.Context' objects>",
+          "calls": 76,
+          "self_seconds": 0.00022522700000000002,
+          "cumulative_seconds": 0.009200238000000001
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+          "line": 115,
+          "name": "read",
+          "calls": 32,
+          "self_seconds": 5.5007000000000004e-05,
+          "cumulative_seconds": 0.008606681
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1751,
+          "name": "get",
+          "calls": 32,
+          "self_seconds": 2.4956000000000003e-05,
+          "cumulative_seconds": 0.008331156000000001
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1485,
+          "name": "request",
+          "calls": 32,
+          "self_seconds": 0.000802039,
+          "cumulative_seconds": 0.008308299
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1594,
+          "name": "send",
+          "calls": 31,
+          "self_seconds": 3.7682e-05,
+          "cumulative_seconds": 0.008289179
+        }
+      ],
+      "all_uncached_read_seconds": [
+        0.844582809,
+        0.619015292,
+        0.626711852,
+        0.635508539,
+        0.6256753700000001,
+        0.624157021,
+        0.6284751590000001,
+        0.809563251,
+        0.626162022,
+        0.640046462,
+        0.625570262,
+        0.63059628,
+        0.631321832,
+        0.6291961220000001,
+        0.826166727,
+        0.631242119,
+        0.6229507320000001,
+        0.626960552,
+        0.65173852,
+        0.635231521
+      ]
+    }
+  },
+  "after": {
+    "mode": "after",
+    "base": "e2f185058632ea4873ff047d46342c2a02851a0a",
+    "fixture": {
+      "non_draft": 166,
+      "non_retired": 3648,
+      "other_tenant": 23,
+      "injected_registry_latency_seconds": 0.54
+    },
+    "fanout": {
+      "/bff/strategies?exclude_state=draft&page_size=200": {
+        "p50_seconds": 0.0402003679992049,
+        "p95_seconds": 0.04803666700172471,
+        "max_seconds": 1.5536809750046814,
+        "rounds": 20,
+        "samples_seconds": [
+          1.5536809750046814,
+          0.04059458799747517,
+          0.04079106800054433,
+          0.0402003679992049,
+          0.04803666700172471,
+          0.042099216996575706,
+          0.04041964699717937,
+          0.039839857003244106,
+          0.03927552799723344,
+          0.03880903800018132,
+          0.04028999699949054,
+          0.038031707001209725,
+          0.038093088005553,
+          0.04163647700625006,
+          0.03972802800126374,
+          0.040336477002711035,
+          0.04046403800020926,
+          0.038847196999995504,
+          0.03971782699954929,
+          0.03787684699636884
+        ]
+      },
+      "/bff/personas?page_size=200": {
+        "p50_seconds": 0.013262499000120442,
+        "p95_seconds": 0.022370359001797624,
+        "max_seconds": 0.6378875320006046,
+        "rounds": 20,
+        "samples_seconds": [
+          0.6378875320006046,
+          0.013262499000120442,
+          0.012721819002763368,
+          0.022370359001797624,
+          0.011193089005246293,
+          0.014906579999660607,
+          0.011272359006397892,
+          0.021837458996742498,
+          0.0166471489937976,
+          0.01752381900587352,
+          0.009629469001083635,
+          0.017735039997205604,
+          0.01078038899868261,
+          0.01711698900180636,
+          0.011495038997964002,
+          0.010809218998474535,
+          0.011364048994437326,
+          0.016634380001050886,
+          0.016645039002469275,
+          0.010163728999032173
+        ]
+      },
+      "/bff/capital-pools?page_size=200": {
+        "p50_seconds": 0.020763849002833012,
+        "p95_seconds": 0.04151587800151901,
+        "max_seconds": 0.5508501959993737,
+        "rounds": 20,
+        "samples_seconds": [
+          0.5508501959993737,
+          0.01990690900129266,
+          0.012205289996927604,
+          0.018918048997875303,
+          0.023008648000541143,
+          0.04151587800151901,
+          0.02152288900106214,
+          0.039514707001217175,
+          0.020396359002916142,
+          0.021368648995121475,
+          0.017859129002317786,
+          0.03781394800171256,
+          0.03817443799925968,
+          0.022228219000680838,
+          0.012283469004614744,
+          0.012344979004410561,
+          0.011236298996664118,
+          0.020715518003271427,
+          0.020763849002833012,
+          0.03678103700076463
+        ]
+      },
+      "/bff/runtimes?page_size=200": {
+        "p50_seconds": 0.01612792800005991,
+        "p95_seconds": 0.03882827699999325,
+        "max_seconds": 0.5216363889994682,
+        "rounds": 20,
+        "samples_seconds": [
+          0.5216363889994682,
+          0.011468568998679984,
+          0.01779178000288084,
+          0.017761829003575258,
+          0.010044029004347976,
+          0.0128907899998012,
+          0.02121329899819102,
+          0.020208909001667053,
+          0.0376670780024142,
+          0.016391630000725854,
+          0.010556849003478419,
+          0.0166792890013312,
+          0.0185539689991856,
+          0.01612792800005991,
+          0.012178329001471866,
+          0.010958819999359548,
+          0.03882827699999325,
+          0.015517940002609976,
+          0.015552128999843262,
+          0.010414349999336991
+        ]
+      },
+      "/bff/tools": {
+        "p50_seconds": 0.019458738999674097,
+        "p95_seconds": 0.03978313799598254,
+        "max_seconds": 0.49517795899737393,
+        "rounds": 20,
+        "samples_seconds": [
+          0.49517795899737393,
+          0.03770064799755346,
+          0.010890059995290358,
+          0.016706788999726996,
+          0.017621587998291943,
+          0.03978313799598254,
+          0.019458738999674097,
+          0.0384195680017001,
+          0.03741441699821735,
+          0.03620032799517503,
+          0.016261288998066448,
+          0.03626046700082952,
+          0.03730626800097525,
+          0.021236758002487477,
+          0.011052599002141505,
+          0.009217639002599753,
+          0.010156229000131134,
+          0.03706559800048126,
+          0.015972109002177604,
+          0.010380169995187316
+        ]
+      },
+      "/bff/mcp-servers": {
+        "p50_seconds": 0.01860653900075704,
+        "p95_seconds": 0.03690587799792411,
+        "max_seconds": 0.037373698003648315,
+        "rounds": 20,
+        "samples_seconds": [
+          0.021724277998146135,
+          0.03565873800107511,
+          0.01816219800093677,
+          0.015342759004852269,
+          0.01406334999774117,
+          0.01042184999823803,
+          0.01860653900075704,
+          0.03690587799792411,
+          0.013342938997084275,
+          0.01772560899553355,
+          0.015209448996756691,
+          0.03447076700103935,
+          0.03476761799538508,
+          0.037373698003648315,
+          0.0176045289990725,
+          0.015216849002172239,
+          0.03675817800103687,
+          0.0346257780038286,
+          0.03572583800269058,
+          0.03446500800055219
+        ]
+      },
+      "/bff/skills": {
+        "p50_seconds": 0.019619648999650963,
+        "p95_seconds": 0.035500347999914084,
+        "max_seconds": 0.03646831800142536,
+        "rounds": 20,
+        "samples_seconds": [
+          0.019619648999650963,
+          0.034838577994378284,
+          0.007304149999981746,
+          0.016815868999401573,
+          0.013968999999633525,
+          0.035186897999665234,
+          0.016684468006133102,
+          0.03529508799692849,
+          0.03458819800289348,
+          0.01680080899677705,
+          0.035500347999914084,
+          0.032873098003619816,
+          0.03267694800160825,
+          0.03646831800142536,
+          0.008191249995434191,
+          0.008503479999490082,
+          0.007818149002559949,
+          0.012332488993706647,
+          0.03422832800424658,
+          0.03279089799616486
+        ]
+      },
+      "/bff/alerts": {
+        "p50_seconds": 0.0015270299991243519,
+        "p95_seconds": 0.0020205599939799868,
+        "max_seconds": 0.0027672299984260462,
+        "rounds": 20,
+        "samples_seconds": [
+          0.0027672299984260462,
+          0.0016875799992703833,
+          0.0014778500044485554,
+          0.0015302800020435825,
+          0.0015788699965924025,
+          0.0020205599939799868,
+          0.0016422190019511618,
+          0.0015513699981966056,
+          0.0015023590021883138,
+          0.0014914600033080205,
+          0.0015270299991243519,
+          0.0015004500019131228,
+          0.001477118996263016,
+          0.0015345200008596294,
+          0.0015184000003500842,
+          0.0015373499991255812,
+          0.001500479003880173,
+          0.0014652300014859065,
+          0.0015616399978171103,
+          0.0014570099956472404
+        ]
+      },
+      "/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200": {
+        "p50_seconds": 0.01286485900345724,
+        "p95_seconds": 0.031134548000409268,
+        "max_seconds": 0.0319785480023711,
+        "rounds": 20,
+        "samples_seconds": [
+          0.014087900002778042,
+          0.0041936900015571155,
+          0.002282780005771201,
+          0.0031951089986250736,
+          0.010057970001071226,
+          0.0038814300060039386,
+          0.013841860003594775,
+          0.0023061000028974377,
+          0.01286485900345724,
+          0.013873299001716077,
+          0.0031977399994502775,
+          0.030272047995822504,
+          0.030909298999176826,
+          0.015094829002919141,
+          0.013755889995081816,
+          0.004639979997591581,
+          0.0319785480023711,
+          0.031134548000409268,
+          0.00986026900500292,
+          0.02984977800224442
+        ]
+      }
+    },
+    "owner_calls": 1,
+    "profile": [
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2587,
+        "name": "list_strategy_specs_page",
+        "calls": 1,
+        "self_seconds": 1.4420000000000001e-05,
+        "cumulative_seconds": 0.6444130210000001
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2958,
+        "name": "_fetch_canonical_strategy_specs_page",
+        "calls": 1,
+        "self_seconds": 2.606e-05,
+        "cumulative_seconds": 0.644397591
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/core/owner_reads.py",
+        "line": 85,
+        "name": "cached_owner_call",
+        "calls": 1,
+        "self_seconds": 1.8730000000000002e-05,
+        "cumulative_seconds": 0.644370301
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2996,
+        "name": "read_page",
+        "calls": 1,
+        "self_seconds": 2.4180000000000002e-05,
+        "cumulative_seconds": 0.644334831
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 42,
+        "name": "read",
+        "calls": 1,
+        "self_seconds": 6.246000000000001e-05,
+        "cumulative_seconds": 0.6438616410000001
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 2997,
+        "name": "fetch",
+        "calls": 1,
+        "self_seconds": 3.487e-05,
+        "cumulative_seconds": 0.622466822
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+        "line": 3033,
+        "name": "_fetch_canonical_strategy_specs_page_uncached",
+        "calls": 1,
+        "self_seconds": 0.000621585,
+        "cumulative_seconds": 0.622431952
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+        "line": 90,
+        "name": "http",
+        "calls": 1,
+        "self_seconds": 0.001333189,
+        "cumulative_seconds": 0.6213189520000001
+      },
+      {
+        "file": "~",
+        "line": 0,
+        "name": "<built-in method time.sleep>",
+        "calls": 1,
+        "self_seconds": 0.540135677,
+        "cumulative_seconds": 0.540135677
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+        "line": 416,
+        "name": "strategy_spec_summary_page",
+        "calls": 1,
+        "self_seconds": 0.00023543000000000001,
+        "cumulative_seconds": 0.079755586
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 864,
+        "name": "project_strategy_spec_summary_page",
+        "calls": 1,
+        "self_seconds": 0.013904342,
+        "cumulative_seconds": 0.043626468
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+        "line": 396,
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "self_seconds": 1.768e-05,
+        "cumulative_seconds": 0.035870788
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 1299,
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "self_seconds": 0.003089872,
+        "cumulative_seconds": 0.035853108
+      },
+      {
+        "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+        "line": 624,
+        "name": "strategy_spec_summary_index_row",
+        "calls": 3648,
+        "self_seconds": 0.018830115,
+        "cumulative_seconds": 0.029072748000000002
+      },
+      {
+        "file": "/usr/lib/python3.12/copy.py",
+        "line": 118,
+        "name": "deepcopy",
+        "calls": 14137,
+        "self_seconds": 0.010641906000000001,
+        "cumulative_seconds": 0.021275779
+      },
+      {
+        "file": "/usr/lib/python3.12/copy.py",
+        "line": 217,
+        "name": "_deepcopy_dict",
+        "calls": 1164,
+        "self_seconds": 0.003508204,
+        "cumulative_seconds": 0.021267909
+      }
+    ],
+    "concurrent_owner_profile": {
+      "read_count": 1,
+      "first_cold_read_top_cumulative": [
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/ports/research_knowledge_source.py",
+          "line": 3033,
+          "name": "_fetch_canonical_strategy_specs_page_uncached",
+          "calls": 1,
+          "self_seconds": 0.0005963580000000001,
+          "cumulative_seconds": 0.8477661390000001
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+          "line": 90,
+          "name": "http",
+          "calls": 1,
+          "self_seconds": 0.001438919,
+          "cumulative_seconds": 0.846837088
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<built-in method time.sleep>",
+          "calls": 1,
+          "self_seconds": 0.5308807680000001,
+          "cumulative_seconds": 0.5308807680000001
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+          "line": 416,
+          "name": "strategy_spec_summary_page",
+          "calls": 1,
+          "self_seconds": 0.00025094,
+          "cumulative_seconds": 0.314512611
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/split_api.py",
+          "line": 396,
+          "name": "list_strategy_spec_summary_index_rows",
+          "calls": 1,
+          "self_seconds": 4.029e-05,
+          "cumulative_seconds": 0.269507434
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 1299,
+          "name": "list_strategy_spec_summary_index_rows",
+          "calls": 1,
+          "self_seconds": 0.003368906,
+          "cumulative_seconds": 0.269467144
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 624,
+          "name": "strategy_spec_summary_index_row",
+          "calls": 3648,
+          "self_seconds": 0.252037129,
+          "cumulative_seconds": 0.262424939
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 864,
+          "name": "project_strategy_spec_summary_page",
+          "calls": 1,
+          "self_seconds": 0.014121371,
+          "cumulative_seconds": 0.044734657000000004
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/registry/storage.py",
+          "line": 521,
+          "name": "_extract_strategy_summary_raw_lifecycle",
+          "calls": 3648,
+          "self_seconds": 0.007848923,
+          "cumulative_seconds": 0.014911184000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<method 'get' of 'dict' objects>",
+          "calls": 75059,
+          "self_seconds": 0.011498203,
+          "cumulative_seconds": 0.011498203
+        },
+        {
+          "file": "/usr/lib/python3.12/asyncio/events.py",
+          "line": 86,
+          "name": "_run",
+          "calls": 55,
+          "self_seconds": 6.5394e-05,
+          "cumulative_seconds": 0.008038445
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "name": "<method 'run' of '_contextvars.Context' objects>",
+          "calls": 77,
+          "self_seconds": 0.000173546,
+          "cumulative_seconds": 0.007695923
+        },
+        {
+          "file": "/tmp/pantheon-worker-worktrees/pantheon/bff-strategies-list-fanout-read-20261115/services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+          "line": 115,
+          "name": "read",
+          "calls": 32,
+          "self_seconds": 3.5977000000000005e-05,
+          "cumulative_seconds": 0.007184169000000001
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1751,
+          "name": "get",
+          "calls": 32,
+          "self_seconds": 1.8553e-05,
+          "cumulative_seconds": 0.0069758350000000005
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1485,
+          "name": "request",
+          "calls": 32,
+          "self_seconds": 0.000654466,
+          "cumulative_seconds": 0.006960412
+        },
+        {
+          "file": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/httpx/_client.py",
+          "line": 1594,
+          "name": "send",
+          "calls": 31,
+          "self_seconds": 3.3202000000000005e-05,
+          "cumulative_seconds": 0.006942679
+        }
+      ],
+      "all_uncached_read_seconds": [
+        0.8477661390000001
+      ]
+    }
+  },
+  "acceptance": {
+    "1": {
+      "result": "PASS_FIXTURE",
+      "p95_seconds": 0.04803666700172471,
+      "rounds": 20,
+      "threshold_seconds": 2
+    },
+    "2": {
+      "result": "PASS",
+      "location": "before/after fanout contain p50, p95, max and all 20 samples; benchmark_method.commands reruns both"
+    },
+    "3": {
+      "result": "PASS",
+      "location": "hosted_before_reference plus before.profile and before.concurrent_owner_profile"
+    },
+    "4": {
+      "result": "PASS",
+      "test": "test_response_order_tokens_and_tenant_rbac_match_baseline compares complete JSON recursively, excluding snapshot_at/snapshotAt, against the immutable pre-change port"
+    },
+    "5": {
+      "result": "PASS",
+      "tests": [
+        "test_response_order_tokens_and_tenant_rbac_match_baseline",
+        "test_same_credential_concurrent_tenants_do_not_share_rows_or_flights",
+        "test_memo_single_flight_isolation_expiry_and_detached_results"
+      ]
+    },
+    "6": {
+      "result": "PASS",
+      "tests": [
+        "test_memo_single_flight_isolation_expiry_and_detached_results",
+        "test_failed_reads_are_never_reused (503, 403, malformed payload, foreign row)",
+        "test_memo_capacity_and_waiter_deadline"
+      ]
+    },
+    "7": {
+      "result": "PASS",
+      "evidence": "Runtime diff touches only the strategy summary memo in the RKS port; no route, timeout, FE gate or crawler files changed."
+    }
+  },
+  "validation": {
+    "command": "timeout 150 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_strategies_list_fanout_read.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py --tb=short",
+    "result": "PASS",
+    "passed": 76,
+    "skipped": 1,
+    "exit_code": 0,
+    "duration_seconds": 32.18,
+    "terminal_output": "76 passed, 1 skipped, 3 warnings in 32.18s",
+    "diff_check": "git diff --check exited 0"
+  },
+  "delivery": {
+    "independent_review": "pending Claude",
+    "merge": "pending canonical supervisor integration; owner has not claimed done"
+  }
+}

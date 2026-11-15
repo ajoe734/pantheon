@@ -2964,8 +2964,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant
-        from services.control_plane.bff.command_adapters.base import registry_url
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, registry_url
 
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2992,6 +2992,30 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+
+        def read_page() -> Dict[str, Any]:
+            def fetch() -> Dict[str, Any]:
+                return self._fetch_canonical_strategy_specs_page_uncached(
+                    state=norm_state, exclude_state=norm_exclude_state,
+                    persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
+                )
+
+            auth = authorization.get()
+            if not auth:
+                return fetch()  # Preserve the canonical missing-auth error.
+            try:
+                tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            except ActionUnavailableError:
+                return fetch()  # Preserve the canonical forbidden envelope.
+            return self._strategy_summary_memo.read(
+                (
+                    tenant, hashlib.sha256(auth.encode()).digest(),
+                    registry_url("/api/registry/strategy-specs"),
+                    norm_state, norm_exclude_state, norm_persona, norm_token, int(page_size),
+                ),
+                fetch,
+            )
+
         return cached_owner_call(
             (
                 "rks_canonical_strategy_specs_page",
@@ -3003,21 +3027,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_token,
                 int(page_size),
             ),
-            lambda: self._strategy_summary_memo.read(
-                (
-                    selected_tenant.get(),
-                    hashlib.sha256((authorization.get() or "").encode()).digest(),
-                    registry_url("/api/registry/strategy-specs"),
-                    norm_state, norm_exclude_state, norm_persona, norm_token, int(page_size),
-                ),
-                lambda: self._fetch_canonical_strategy_specs_page_uncached(
-                    state=norm_state,
-                    exclude_state=norm_exclude_state,
-                    persona_id=norm_persona,
-                    page_token=norm_token,
-                    page_size=int(page_size),
-                ),
-            ),
+            read_page,
         )
 
     def _fetch_canonical_strategy_specs_page_uncached(

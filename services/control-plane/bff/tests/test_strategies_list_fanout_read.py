@@ -11,7 +11,6 @@ import asyncio
 import cProfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-import copy
 import json
 import math
 from pathlib import Path
@@ -25,11 +24,11 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from services.control_plane.bff.auth import policy
 from services.control_plane.bff.command_adapters import base
 from services.control_plane.bff.core import owner_reads
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import research_knowledge_source as rks
 from services.control_plane.bff.tests.conftest import build_consolidated_cross_cutting_app, make_composed_persona_service
 from services.control_plane.bff.tests.test_strategy_list_default_view import _make_registry_entry
 from services.registry.models import ArtifactState
@@ -170,6 +169,139 @@ def test_nine_read_fanout_p95(monkeypatch):
     assert result[PATHS[0]]["p95_seconds"] < 2.0
 
 
+def test_memo_single_flight_isolation_expiry_and_detached_results(monkeypatch):
+    _, port, calls = fixture(monkeypatch, latency=0.04)
+    barrier = threading.Barrier(8)
+
+    def request():
+        with caller():
+            barrier.wait(timeout=5)
+            return port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: request(), range(8)))
+    assert len(calls) == 1
+    assert all(r == results[0] for r in results)
+    results[0]["items"][0]["metadata"]["mutated"] = True
+    with caller():
+        again = port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+    assert "mutated" not in again["items"][0]["metadata"]
+
+    with caller("tenant-other"):
+        other = port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+    assert other["total"] == 7
+    assert all(r["tenant_id"] == "tenant-other" for r in other["items"])
+    assert all(r["tenant_id"] == "tenant-dev" for r in again["items"])
+    with caller(token="Bearer second:viewer:tenant-dev"):
+        assert port.list_strategy_specs_page(exclude_state="draft", page_size=200) == again
+    assert len(calls) == 3  # Same tenant, different credential still rereads owner.
+
+    with caller():
+        page = port.list_strategy_specs_page(exclude_state="draft", page_size=100)
+        assert page["next_page_token"] == "100"
+    with caller():
+        next_page = port.list_strategy_specs_page(exclude_state="draft", page_size=100, page_token="100")
+        assert next_page["items"] != page["items"]
+        assert next_page["next_page_token"] is None
+    assert len(calls) == 5
+    now = time.monotonic()
+    monkeypatch.setattr(rks, "time", types.SimpleNamespace(monotonic=lambda: now+30.001))
+    with caller():
+        assert port.list_strategy_specs_page(exclude_state="draft", page_size=200) == again
+    assert len(calls) == 6
+    assert 0 < rks.STRATEGY_SUMMARY_MEMO_SECONDS <= 30
+
+
+def test_same_credential_concurrent_tenants_do_not_share_rows_or_flights(monkeypatch):
+    _, port, calls = fixture(monkeypatch)
+    original = base.http_request_json
+    barrier = threading.Barrier(2)
+
+    def concurrent_http(url, **kw):
+        barrier.wait(timeout=5)  # A lock spanning tenants would fail here.
+        return original(url, **kw)
+
+    monkeypatch.setattr(base, "http_request_json", concurrent_http)
+
+    def request(tenant):
+        with caller(tenant, "Bearer shared:viewer:tenant-dev,tenant-other"):
+            return port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = list(pool.map(request, ("tenant-dev", "tenant-other")))
+    assert a["total"] == 166 and b["total"] == 7
+    assert all(row["tenant_id"] == "tenant-dev" for row in a["items"])
+    assert all(row["tenant_id"] == "tenant-other" for row in b["items"])
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "forbidden", "malformed", "foreign_row"])
+def test_failed_reads_are_never_reused(monkeypatch, failure):
+    _, port, calls = fixture(monkeypatch)
+    original = base.http_request_json
+    attempts = []
+
+    def fail_once(url, **kw):
+        attempts.append(url)
+        if len(attempts) == 1:
+            if failure in {"unavailable", "forbidden"}:
+                from urllib.error import HTTPError
+                raise HTTPError(url, 503 if failure == "unavailable" else 403, failure, None, None)
+            payload = original(url, **kw)
+            if failure == "malformed":
+                return {**payload, "items": None}
+            payload["items"][0]["tenant_id"] = "tenant-other"
+            return payload
+        return original(url, **kw)
+
+    monkeypatch.setattr(base, "http_request_json", fail_once)
+    from fastapi import HTTPException
+    with caller(), pytest.raises(HTTPException):
+        port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+    with caller():
+        result = port.list_strategy_specs_page(exclude_state="draft", page_size=200)
+        assert result["total"] == 166
+    assert len(attempts) == 2
+    with caller():
+        assert port.list_strategy_specs_page(exclude_state="draft", page_size=200) == result
+    assert len(attempts) == 2
+
+
+def test_memo_capacity_and_waiter_deadline(monkeypatch):
+    memo = rks._StrategySummaryPageMemo()
+    for n in range(rks.STRATEGY_SUMMARY_MEMO_MAX_KEYS + 3):
+        memo.read(n, lambda: {"items": []})
+    assert len(memo._values) == rks.STRATEGY_SUMMARY_MEMO_MAX_KEYS
+    assert 0 not in memo._values
+    started, release = threading.Event(), threading.Event()
+
+    def slow():
+        started.set()
+        assert release.wait(timeout=5)
+        return {"items": []}
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(memo.read, "slow", slow)
+        try:
+            assert started.wait(timeout=5)
+            token = owner_reads.management_read_deadline.set(time.monotonic()+0.01)
+            try:
+                with pytest.raises(TimeoutError):
+                    memo.read("slow", lambda: pytest.fail("duplicate read"))
+            finally:
+                owner_reads.management_read_deadline.reset(token)
+        finally:
+            release.set()
+        assert pending.result(timeout=5) == {"items": []}
+
+
+def profile_rows(profiler):
+    ps = pstats.Stats(profiler)
+    return [{"file": k[0], "line": k[1], "name": k[2], "calls": v[1],
+             "self_seconds": v[2], "cumulative_seconds": v[3]}
+            for k, v in sorted(ps.stats.items(), key=lambda kv: kv[1][3], reverse=True)[:16]]
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--benchmark", choices=("before", "after"), required=True)
@@ -180,11 +312,20 @@ if __name__ == "__main__":
         profiler = cProfile.Profile()
         with caller():
             profiler.runcall(port.list_strategy_specs_page, exclude_state="draft", page_size=200)
-        ps = pstats.Stats(profiler)
-        profile = [{"file": k[0], "line": k[1], "name": k[2], "calls": v[1], "self_seconds": v[2], "cumulative_seconds": v[3]} for k,v in sorted(ps.stats.items(), key=lambda kv: kv[1][3], reverse=True)[:16]]
+        profile = profile_rows(profiler)
         # A fresh port keeps the first timed round cold in both modes.
         app, port, calls = fixture(mp, baseline_port() if args.benchmark == "before" else DefaultResearchKnowledgeSourcePort, latency=0.54)
+        concurrent_profiles = []
+        uncached = port._fetch_canonical_strategy_specs_page_uncached
+
+        def profiled_page(**kw):
+            worker_profile = cProfile.Profile()
+            result = worker_profile.runcall(uncached, **kw)
+            concurrent_profiles.append(profile_rows(worker_profile))
+            return result
+
+        port._fetch_canonical_strategy_specs_page_uncached = profiled_page
         result = asyncio.run(nine_reads(app, 20))
-        output = {"mode": args.benchmark, "base": BASE, "fixture": {"non_draft":166, "non_retired":3648, "other_tenant":23, "injected_registry_latency_seconds":0.54}, "fanout":result, "owner_calls":len(calls), "profile":profile}
+        output = {"mode": args.benchmark, "base": BASE, "fixture": {"non_draft":166, "non_retired":3648, "other_tenant":23, "injected_registry_latency_seconds":0.54}, "fanout":result, "owner_calls":len(calls), "profile":profile, "concurrent_owner_profiles":concurrent_profiles}
         Path(args.output).write_text(json.dumps(output, indent=2)+"\n")
         print(json.dumps({"mode": args.benchmark, "strategies": result[PATHS[0]], "owner_calls":len(calls)}))
