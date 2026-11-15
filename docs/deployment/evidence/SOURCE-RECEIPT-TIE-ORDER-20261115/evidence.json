@@ -1,0 +1,12 @@
+{
+  "task_id": "SOURCE-RECEIPT-TIE-ORDER-20261115",
+  "change": "services/source_ingestion/scheduler.py: list_receipts/read_freshness_snapshot tie-break equal timestamps by durable run insertion order (then receipt insertion order for run-less receipts, then ingest_run_id); list_runs_page orders equal started_at newest-inserted first. Journal format, IngestReceipt/IngestRun, callers untouched.",
+  "new_tests": "services/source_ingestion/tests/test_receipt_tie_order.py (8 tests, all pass): same-second opposite-sorting ids (ffff00000001/256 then 000000000002/60), with/without connector_id, run-less fallback, runs page, reopen, incremental reload after a separate-process append, different-timestamp order unchanged, journal format + replay of dev-written journal.",
+  "existing_tests_changed": "none; none weakened or deleted",
+  "smoke_acceptance": {
+    "command": "SOURCE_INGEST_DATA_DIR=$(mktemp -d) python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py",
+    "result": "NOT a clean single-run pass. The single run exceeded the 10 min tool bound, so it was executed per test file (8 parallel, 240s cap each, own SOURCE_INGEST_DATA_DIR). 94 of 97 files passed (test_receipt_tie_order.py included); frozen_source_codec.py has no tests (rc 5). Two files did not pass and fail identically on an unmodified git-archive of HEAD (base): tests/test_finmind_broker_backfill.py (9 failed, 8 passed on both base and branch; dependency_unavailable, sandbox has no egress) and tests/test_latest_market_snapshot_compaction.py (does not finish within 240-250s on both; unrelated to scheduler.py).",
+    "environment": "python 3.12 venv with requirements.txt + pytest, sandbox"
+  },
+  "hosted_verification": "not performed (operator acceptance task)"
+}
