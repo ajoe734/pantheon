@@ -58,7 +58,8 @@ def source(tmp_path, monkeypatch):
     log = tmp_path / "latest.jsonl"
     store = LatestMarketSnapshotStore(log)
     app = FastAPI()
-    app.include_router(create_ingest_operations_router(SimpleNamespace(latest_market_snapshot_store=store)))
+    app.include_router(create_ingest_operations_router(SimpleNamespace(
+        latest_market_snapshot_store=store, MARKET_DATA_STORAGE_ROOT=tmp_path / "store")))
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -76,7 +77,7 @@ def source(tmp_path, monkeypatch):
         _write(log, snapshots)
         store.reload()
 
-    yield SimpleNamespace(publish=publish, requests=requests)
+    yield SimpleNamespace(publish=publish, requests=requests, root=tmp_path / "store")
     server.should_exit = True
     thread.join(timeout=5)
 
@@ -142,20 +143,84 @@ def test_symbol_on_an_older_bar_records_no_decision_for_whole_pool(source, tmp_p
     assert "pool symbol 2330.TW failed admission" in json.dumps(producer.degraded_bindings, default=str)
 
 
-def test_screened_member_without_governed_whole_market_is_needs_data(tmp_path):
-    from services.execution.lean_runtime.paper_signal_producer import SignalDecisionUnavailable
+SCREEN_DAY = "2026-11-02"  # Monday after the last recorded session (Friday 2026-10-30)
+SCREEN_NOW = SCREEN_DAY + "T04:00:00Z"
+
+
+def _store_recorded_market(root, drop=None):
+    """Write the recorded official TWSE bars as the governed normalized tw_price_daily partitions."""
+    from services.registry.test_candidate_pool import recorded_market
+
+    market = recorded_market()
+    for symbol, payload in market["symbols"].items():
+        for bar in payload["bars"]:
+            if drop and drop(symbol, bar):
+                continue
+            day = bar["event_time"][:10]
+            path = root / "normalized" / "tw_price_daily" / f"date={day}" / "run-1.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row = {"date": day, "symbol_canonical": symbol, "symbol": symbol[:4], "venue": "TWSE",
+                   "close": bar["close"], "open": bar["open"], "high": bar["high"], "low": bar["low"],
+                   "volume": bar["volume"], "value": bar["traded_value"], "available_time": bar["available_time"]}
+            with path.open("a") as handle:
+                handle.write(json.dumps({"source_id": f"s-{symbol}-{day}", "dataset": "tw_price_daily",
+                                         "metadata": {"normalized_row": row, "available_time": bar["available_time"]}}) + "\n")
+    return market
+
+
+def _screened_pool():
     from services.registry.portfolio_envelope import build_portfolio_envelope
     from services.registry.test_candidate_pool import screen_artifact
-    from services.execution.lean_runtime.test_portfolio_target_positions import portfolio_binding
+    from services.registry.test_strategy_artifact import _artifact_with_expression_policy
 
     screened = screen_artifact()
     screened["parameters"]["symbols"] = ["2330.TW"]
+    constant = _artifact_with_expression_policy()
+    constant["parameters"].update(symbols=["2330.TW", "2317.TW"], market="TW",
+                                  data_source=screened["parameters"]["data_source"])
+    constant["mutation_surface"]["immutable_parameters"].append("market")
+    # The recorded closes fall into the decision day; this member buys weakness.
+    constant["strategy_logic"].update(positive_action="SELL", non_positive_action="BUY")
+    constant["parameters"]["zero_momentum_action"] = "BUY"
     artifact = build_portfolio_envelope(artifact_id="screened-pool", strategy_id="screened-pool",
-        version="1.0.0", members=[{"member_id": "s", "artifact": screened, "risk_weight": 1}])
-    binding = portfolio_binding(artifact)
-    strategy = CurrentArtifactStrategy(expression_layer=True,
-                                       expression_inputs=lambda _: {"persona_book": {"positions": []}, "risk_budget": {}},
-                                       candidates_builder=cash_candidates)
-    with pytest.raises(SignalDecisionUnavailable) as err:
-        strategy(binding, NOW)
-    assert err.value.code == "needs_data" and "tw_price_daily" in str(err.value)
+        version="1.0.0", members=[{"member_id": "screen", "artifact": screened, "risk_weight": .5},
+                                  {"member_id": "constant", "artifact": constant, "risk_weight": .5}])
+    artifact["expression_policy"]["parameters"]["notional_fraction_at_full_strength"] = .2
+    return artifact
+
+
+def test_screened_member_pool_orders_from_governed_normalized_market(source, tmp_path, monkeypatch):
+    _store_recorded_market(source.root)
+    artifact = _screened_pool()
+    binding = _binding_for(artifact)
+    binding["symbol"] = None
+    assert "features" not in binding and "market_inputs" not in binding
+    calls = []
+    real = pmi.fetch_candidate_pool_market
+    monkeypatch.setattr(pmi, "fetch_candidate_pool_market",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    producer, service = _service(binding, tmp_path, _summary())
+    service._algo.Time = datetime.fromisoformat(SCREEN_DAY + "T04:00:00+00:00")
+    started = time.monotonic()
+    produced = producer.produce(binding, SCREEN_NOW)
+    first = time.monotonic() - started
+    assert produced > 0, producer.degraded_bindings
+    for _ in range(4):
+        snapshot = service.drain_once()
+    assert snapshot["status"] == "ok", snapshot
+    assert service._algo.positions()
+    # The whole market is requested once per decision day, not again on the next tick.
+    started = time.monotonic()
+    producer.produce(binding, SCREEN_DAY + "T04:01:00Z")
+    assert len(calls) == 1
+    assert first < 30 and time.monotonic() - started < 30
+    assert source.requests == []  # every needed symbol is inside the governed market
+
+
+def test_missing_governed_dataset_is_needs_data_naming_it(source, tmp_path):
+    binding = _binding_for(_screened_pool())
+    producer, service = _service(binding, tmp_path, _summary())
+    assert producer.produce(binding, SCREEN_NOW) == 0
+    assert "needs_data" in json.dumps(producer.degraded_bindings, default=str)
+    assert "tw_price_daily" in json.dumps(producer.degraded_bindings, default=str)
+    assert service._algo.positions() == []

@@ -54,3 +54,12 @@ def test_missing_source_url_fails_closed():
         pmi.obtain_envelope_market_inputs(["A.TW"], source_ingest_url="", max_age_seconds=1,
                                           minimum_closes=2, now_iso=NOW, fetch=lambda *_: None)
     assert err.value.code == "market_input_unavailable"
+
+
+def test_market_snapshots_carry_no_persona_position_state():
+    market = {"source_refs": ["ref"], "symbols": {"2330.TW": {"bars": [
+        {"event_time": "2026-10-30T13:30:00+08:00", "close": 10.0},
+        {"event_time": "2026-11-02T13:30:00+08:00", "close": 11.0}]}}}
+    [snap] = pmi.market_snapshots(market, "2026-11-02", "2026-11-02T04:00:00Z").values()
+    assert snap["closes"] == [10.0]  # only bars strictly before the decision day
+    assert not {"current_direction", "holding_bars"} & set(snap)  # member virtual holdings own that state

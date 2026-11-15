@@ -20,6 +20,7 @@ from services.execution.market_snapshot_admission import admit_market_snapshot
 
 MAX_ENVELOPE_SYMBOLS = 50
 REQUEST_TIMEOUT_SECONDS = 5
+CANDIDATE_POOL_TIMEOUT_SECONDS = 30
 
 
 class PoolMarketInputsUnavailable(RuntimeError):
@@ -116,3 +117,76 @@ def obtain_envelope_market_inputs(
             + ", ".join(f"{s}={bars[s]}" for s in symbols),
         )
     return admitted
+
+
+def screen_inputs(artifact: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Distinct catalogue inputs the envelope's screened members declare."""
+    from services.registry.portfolio_envelope import is_screened
+
+    seen: dict[tuple[str, str, str], dict[str, str]] = {}
+    for member in artifact["strategy_logic"]["members"]:
+        member_artifact = member["artifact"]
+        if not is_screened(member_artifact):
+            continue
+        for spec in member_artifact["strategy_logic"].get("inputs") or ():
+            key = (str(spec["name"]), str(spec["dataset"]), str(spec["field"]))
+            seen[key] = {"name": key[0], "dataset": key[1], "field": key[2]}
+    return [seen[k] for k in sorted(seen)]
+
+
+def fetch_candidate_pool_market(
+    source_ingest_url: str,
+    inputs: Sequence[Mapping[str, Any]],
+    *,
+    decision_day: str | None = None,
+) -> Mapping[str, Any]:
+    """One request for the governed whole market; ``needs_data`` names the missing dataset."""
+    if not source_ingest_url:
+        raise PoolMarketInputsUnavailable(
+            "market_input_unavailable", "PANTHEON_SOURCE_INGEST_URL is required for candidate pool market"
+        )
+    url = f"{source_ingest_url.rstrip('/')}/api/source-ingest/candidate-pool-market"
+    body = json.dumps({"inputs": list(inputs), "decision_day": decision_day}, sort_keys=True).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST", headers={"Accept": "application/json", "Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=CANDIDATE_POOL_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail: Any = {}
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("detail") or {}
+        except Exception:  # noqa: BLE001
+            pass
+        if exc.code == 404 and isinstance(detail, Mapping) and detail.get("code") == "needs_data":
+            raise PoolMarketInputsUnavailable(
+                "needs_data", f"governed dataset {detail.get('dataset')} is missing: {detail.get('detail')}"
+            ) from exc
+        raise PoolMarketInputsUnavailable(
+            "market_input_unavailable", f"candidate pool market is unavailable: HTTP {exc.code}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise PoolMarketInputsUnavailable(
+            "market_input_unavailable", f"candidate pool market is unavailable: {exc}"
+        ) from exc
+    if not isinstance(payload, Mapping) or payload.get("schema_version") != "candidate_pool_market.v1":
+        raise PoolMarketInputsUnavailable("market_input_invalid", "Source returned no candidate_pool_market.v1")
+    return payload
+
+
+def market_snapshots(market: Mapping[str, Any], decision_day: str, observed_at: str) -> dict[str, dict[str, Any]]:
+    """One snapshot per governed-market symbol, from that market's own dated bars.
+
+    ``event_time`` is the decision day: the screen only reads bars strictly before it.
+    These are not individually freshness-admitted; the screen's own eligibility
+    (missing prior session, suspension, history, liquidity) excludes a stale name.
+    """
+    ref = str((market.get("source_refs") or ["candidate_pool_market"])[0])
+    out: dict[str, dict[str, Any]] = {}
+    for symbol, payload in (market.get("symbols") or {}).items():
+        closes = [b["close"] for b in payload.get("bars") or () if str(b["event_time"])[:10] < decision_day]
+        if closes:
+            out[symbol] = {"symbol": symbol, "closes": closes, "event_time": f"{decision_day}T00:00:00+08:00",
+                           "observed_at": observed_at, "source_ref": ref}
+    return out

@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 import logging
 import math
 import os
@@ -610,22 +611,14 @@ class CurrentArtifactStrategy:
 
         from services.registry.portfolio_envelope import is_screened
         features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
-        if features.get(MARKET_FEATURE_KEY) is None and any(
-                is_screened(m["artifact"]) for m in artifact["strategy_logic"]["members"]):
-            # No production reader supplies the governed whole market yet; never synthesize one.
-            raise SignalDecisionUnavailable(
-                "needs_data",
-                "screened member requires candidate_pool_market.v1 (scope all_governed_tw) built from "
-                "governed dataset tw_price_daily; no governed whole-market input is available",
-            )
+        screened = any(is_screened(m["artifact"]) for m in artifact["strategy_logic"]["members"])
         snapshots = binding.get("market_inputs") or metadata.get("market_inputs")
         if not isinstance(snapshots, Mapping) or not snapshots:
             # A one-underlying target envelope still requires an explicit bar.
             one = binding.get("market_input")
             snapshots = {one["symbol"]: one} if isinstance(one, Mapping) and one.get("symbol") else {}
         source_admitted = not snapshots
-        if source_admitted:
-            snapshots = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso)
+        derived: set[str] = set()
         try:
             if self._expression_inputs is not None:
                 inputs = dict(self._expression_inputs(binding) or {})
@@ -634,7 +627,28 @@ class CurrentArtifactStrategy:
         except ExpressionInputsUnavailable as exc:
             inputs = {"unavailable": {"missing": exc.missing, "detail": exc.detail}}
         inputs = copy.deepcopy(inputs)
-        features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
+        if source_admitted and screened:
+            from services.execution.lean_runtime.pool_market_inputs import market_snapshots
+            day = _taipei_day(now_iso)
+            if features.get(MARKET_FEATURE_KEY) is None:
+                features[MARKET_FEATURE_KEY] = self._obtain_candidate_pool_market(artifact, day)
+            snapshots = market_snapshots(features[MARKET_FEATURE_KEY], day, now_iso)
+            derived = set(snapshots)
+            # Symbols the envelope or the member virtual holdings need outside the market
+            # still come from Source, admitted at one common bar.
+            extra = [c for c in dict.fromkeys(
+                [canonical_symbol(x) for x in artifact["parameters"]["symbols"]]
+                + [canonical_symbol(str(p["underlying"]) + ".TW") if "." not in str(p["underlying"])
+                   else canonical_symbol(str(p["underlying"]))
+                   for p in inputs.get("persona_book", {}).get("positions", []) if int(p.get("units") or 0) > 0])
+                if c not in snapshots]
+            if extra:
+                admitted = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso, symbols=extra)
+                snapshots = {**snapshots, **{s_: {**v, "event_time": f"{day}T00:00:00+08:00"} for s_, v in admitted.items()}}
+        elif source_admitted:
+            snapshots = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso)
+        elif screened and features.get(MARKET_FEATURE_KEY) is None:
+            features[MARKET_FEATURE_KEY] = self._obtain_candidate_pool_market(artifact, _taipei_day(now_iso))
         keyed = {}
         try:
             for symbol, snapshot in snapshots.items():
@@ -644,8 +658,12 @@ class CurrentArtifactStrategy:
                 row_binding = {**binding, "symbol": canonical,
                                "market_input": {**snapshot, "symbol": canonical},
                                "features": features}
+                row_metadata = metadata
+                if canonical in derived:
+                    row_binding.pop("market_data_policy", None)
+                    row_metadata = {k: v for k, v in metadata.items() if k != "market_data_policy"}
                 keyed[canonical] = _market_input_for_binding(
-                    row_binding, metadata, strategy_artifact=artifact, now_iso=now_iso)
+                    row_binding, row_metadata, strategy_artifact=artifact, now_iso=now_iso)
             positions = inputs.get("persona_book", {}).get("positions", [])
             by_code = {normalize_underlying_code(symbol): symbol for symbol in keyed}
             held = [by_code.get(str(p["underlying"]), str(p["underlying"]) + ".TW")
@@ -687,7 +705,29 @@ class CurrentArtifactStrategy:
             raise SignalDecisionUnavailable(code, str(exc)) from exc
 
     @staticmethod
-    def _obtain_pool_market_inputs(artifact, binding, metadata, now_iso):
+    def _obtain_candidate_pool_market(artifact, decision_day=None):
+        """Governed whole market (candidate_pool_market.v1) from Source; never synthesized here."""
+        from services.execution.lean_runtime.pool_market_inputs import (
+            PoolMarketInputsUnavailable, fetch_candidate_pool_market, screen_inputs,
+        )
+
+        url = os.getenv("PANTHEON_SOURCE_INGEST_URL") or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or ""
+        inputs = screen_inputs(artifact)
+        key = (url, decision_day, json.dumps(inputs, sort_keys=True))
+        cached = _POOL_MARKET_CACHE.get(key)
+        if cached is not None and time.monotonic() - cached[0] < _POOL_MARKET_TTL_SECONDS:
+            return cached[1]
+        try:
+            market = dict(fetch_candidate_pool_market(url, inputs, decision_day=decision_day))
+        except PoolMarketInputsUnavailable as exc:
+            raise SignalDecisionUnavailable(exc.code, exc.detail) from exc
+        # A screen needs the whole market once per completed daily bar, not on every tick.
+        _POOL_MARKET_CACHE.clear()
+        _POOL_MARKET_CACHE[key] = (time.monotonic(), market)
+        return market
+
+    @staticmethod
+    def _obtain_pool_market_inputs(artifact, binding, metadata, now_iso, symbols=None):
         """Production source of an envelope's bar: one admitted Source snapshot per symbol.
 
         Only reached when the binding carries no inline inputs. A symbol that fails
@@ -706,7 +746,7 @@ class CurrentArtifactStrategy:
             )
         try:
             return obtain_envelope_market_inputs(
-                envelope_symbols(artifact),
+                list(symbols) if symbols is not None else envelope_symbols(artifact),
                 source_ingest_url=(os.getenv("PANTHEON_SOURCE_INGEST_URL")
                                    or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or "").rstrip("/"),
                 max_age_seconds=policy["max_age_seconds"],
@@ -1372,6 +1412,17 @@ def _collect_explicit_market_contexts(
 
     explicit_venue = _extract_explicit_venue(market_input, binding, params, b_meta, art_meta)
     return market_origins, explicit_venue
+
+
+_POOL_MARKET_CACHE: dict = {}
+_POOL_MARKET_TTL_SECONDS = 900
+
+
+def _taipei_day(now_iso: str) -> str:
+    stamp = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone(timedelta(hours=8))).date().isoformat()
 
 
 def _market_input_for_binding(
