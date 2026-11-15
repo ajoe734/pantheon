@@ -826,3 +826,63 @@ def test_daily_cycle_harness_patch_reaches_the_owner_and_loop_state_is_on_the_cy
     # The unresolved evidence is a readable degraded state, visible in the persona cycle health.
     assert loop["status"] == "degraded" and any("trajectory_evidence_unresolved" in r for r in loop["reasons"])
     assert result["personas"]["persona-cycle-test"]["harness_loop"]["status"] == "degraded"
+
+
+# --- trade-lesson loop callers (TRADE-LESSON-LOOP-CALLERS-20261115) -----------------------------
+
+class _LessonRegistrar:
+    configured = True
+
+    def __init__(self):
+        self.sent = []
+
+    def register(self, candidates, authorization):
+        self.sent.append(candidates)
+        return {"registered": [c["lesson_candidate_id"] for c in candidates], "already_registered": []}
+
+
+def test_daily_cycle_stages_memory_candidates_as_lesson_candidates_and_runs_lesson_governance(system, monkeypatch):
+    """Real entry: consume the cron run. The default controller builds the lesson cycle itself."""
+    from services.persona.lesson_cycle import LessonCycle
+    controller, gateway, owner, _ = system
+    registrar = _LessonRegistrar()
+    listed = []
+
+    def memory(method, url, headers, body):
+        listed.append(url)
+        return 200, {"candidates": []}
+
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "controller-test-secret")
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.test")
+    assert controller.lesson_cycle is None
+    controller.lesson_cycle = LessonCycle(turn_runner=controller.turn_runner, registrar=registrar, http=memory)
+    gateway["answer"] = {**OUTPUT, "memory_candidates": [
+        {"scope": "pattern", "proposed_change": "wait for the second confirmation", "confidence": 0.6}]}
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    result = controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None
+    assert [r["status"] for r in cycle["lesson_staging"]] == ["registered"]
+    staged = registrar.sent[0][0]
+    assert staged["review_state"] == "proposed" and staged["target_env"] == "paper" and staged["trade_episode_ids"] == []
+    assert cycle["lesson_governance"] == {"status": "completed", "results": []}
+    assert any("review_state=proposed" in url for url in listed)
+    health = result["personas"]["persona-cycle-test"]["lessons"]
+    assert health["staged"] == 1 and health["governance"] == "completed"
+
+
+def test_lesson_steps_that_cannot_run_are_recorded_and_never_fail_the_cycle(system, monkeypatch):
+    controller, gateway, owner, _ = system
+    monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
+    gateway["answer"] = {**OUTPUT, "memory_candidates": [
+        {"scope": "pattern", "proposed_change": "wait for the second confirmation", "confidence": 0.6}]}
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    result = controller.reconcile_once()
+    cycle = next(iter(read_packets(controller.path).values()))["persona_cycle"]
+    assert cycle["failure_reason"] is None and cycle["decisions"][0]["status"] == "no_action"
+    assert cycle["lesson_governance"]["status"] == "unavailable" and cycle["lesson_governance"]["reason"]
+    assert cycle["lesson_staging"][0]["status"] == "not_staged" and cycle["lesson_staging"][0]["reason"]
+    assert result["personas"]["persona-cycle-test"]["lessons"]["governance"] == "unavailable"

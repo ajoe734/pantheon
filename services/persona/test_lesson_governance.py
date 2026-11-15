@@ -413,3 +413,36 @@ def test_paper_shortcut_fails_closed_for_capital_and_unknown_scope(scope: str, c
 def test_paper_shortcut_allows_explicit_paper_only_scope() -> None:
     candidate = make_valid_candidate({"scope": " Strategy ", "proposed_change": "enter on pullbacks"})
     assert is_paper_only_eligible(candidate)
+
+
+def test_supporting_episode_minimum_matches_the_evaluation_gates():
+    from services.persona.lesson_governance import supporting_episode_minimum
+    assert [supporting_episode_minimum({"scope": s}) for s in ("strategy", " Regime ", "PATTERN", "execution")] == [3, 3, 3, 1]
+
+
+def test_episode_context_tags_use_only_the_candidates_own_journal_episodes():
+    from services.persona.lesson_governance import episode_context_tags
+    cand = {"trade_episode_ids": ["e1", "e2"], "tenant_id": "t", "persona_id": "p"}
+    own = {"tenant_id": "t", "persona_id": "p"}
+    episodes = [{"trade_episode_id": "e1", "strategy_id": "Trend", "instrument_id": "2330.TW", **own},
+                {"trade_episode_id": "e2", "strategy_id": "trend", "instrument_id": "0050.TW", **own},
+                {"trade_episode_id": "e3", "strategy_id": "carry", "instrument_id": "2882.TW", **own},
+                {"trade_episode_id": "e1", "strategy_id": "foreign", "instrument_id": "9999.TW", "tenant_id": "x", "persona_id": "p"}]
+    assert episode_context_tags(cand, episodes) == ["family:trend", "underlying:2330", "underlying:0050"]
+    assert episode_context_tags(cand, [{"trade_episode_id": "e1", **own}]) == []  # nothing is invented
+
+
+def test_service_identity_minting_is_tenant_bound_and_fails_closed(monkeypatch):
+    import base64, json
+    from services.persona.lesson_governance import mint_memory_service_authorization
+    monkeypatch.delenv("PERSONA_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    with pytest.raises(RuntimeError):
+        mint_memory_service_authorization("t", roles=("risk",), service="x")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "s")
+    with pytest.raises(RuntimeError):
+        mint_memory_service_authorization("", roles=("risk",), service="x")
+    token = mint_memory_service_authorization("t", roles=("risk",), service="x", subject="who")
+    claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
+    assert claims["sub"] == "who" and claims["tenant_id"] == "t" and claims["allowed_tenants"] == ["t"] and claims["roles"] == ["risk"]
+    assert claims["exp"] - claims["iat"] == 120
