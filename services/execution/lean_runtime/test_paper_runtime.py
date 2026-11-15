@@ -19,8 +19,8 @@ from services.execution.lean_runtime.paper_runtime import (
     LifecycleTelemetryOutboxError,
     OrderEvent,
     _LifecycleBatch,
-    PaperExecutionAlgorithm,
-    PaperRuntimeService,
+    PaperExecutionAlgorithm as _RealPaperExecutionAlgorithm,
+    PaperRuntimeService as _RealPaperRuntimeService,
     RuntimeBindingResolver,
     RuntimeTelemetryEmitter,
     _extract_verified_bridge,
@@ -32,6 +32,39 @@ from services.execution.lean_runtime.runtime_context import (
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.performance_telemetry import MarketMark
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+
+# Fixture defaults. Production has no default starting cash and no policy-free mode, so
+# tests that are not about those behaviours must say so explicitly; this is the one place.
+TEST_POOL_BUDGET = 100_000.0
+TEST_POOL_RECORD = {
+    "pool_id": "pool-test",
+    "budget": TEST_POOL_BUDGET,
+    "risk_policy": {"risk_policy_id": "rp-test", "status": "active", "gross_limit": 2.0,
+                    "net_limit": 2.0, "max_leverage": 2.0},
+}
+
+
+class PaperExecutionAlgorithm(_RealPaperExecutionAlgorithm):
+    def __init__(self, *args, **kwargs):
+        if not args:
+            if "initial_cash" not in kwargs and not kwargs.get("state_path") \
+                    and not kwargs.pop("unfunded", False):
+                kwargs["initial_cash"] = TEST_POOL_BUDGET
+            if not any(k in kwargs for k in ("risk_policy", "risk_policy_ref", "capital_pool_reader")) \
+                    and not kwargs.pop("unbound", False):
+                kwargs["risk_policy"] = TEST_POOL_RECORD["risk_policy"]
+        super().__init__(*args, **kwargs)
+
+
+class PaperRuntimeService(_RealPaperRuntimeService):
+    def __init__(self, *args, **kwargs):
+        unbound = kwargs.pop("unbound", False)
+        if "capital_pool_reader" not in kwargs and not unbound:
+            kwargs["capital_pool_reader"] = lambda _pool_id: dict(TEST_POOL_RECORD)
+        super().__init__(*args, **kwargs)
+        if not unbound and not self._algo._capital_pool_id:
+            self._algo._capital_pool_id = "pool-test"
 from services.trade_journey.correlation_envelope import propagate_envelope
 
 

@@ -40,6 +40,10 @@ if str(_RUNTIME_MANAGER_DIR) not in sys.path:
     sys.path.insert(0, str(_RUNTIME_MANAGER_DIR))
 
 from runtime_manager_client import RuntimeManagerClient
+from services.execution.lean_runtime.taiwan_cash_costs import (
+    buy_cash_required,
+    cash_share_costs,
+)
 from services.execution.lean_runtime.pending_signal_store import (
     BINDING_QUEUE_KEY_PREFIX,
     PendingSignalStore,
@@ -84,6 +88,7 @@ from services.capital.risk_policy import (
     load_risk_policy,
     load_risk_policy_model,
     normalize_risk_policy,
+    read_capital_pool_record,
     resolve_bound_pool_risk_policy,
 )
 from services.trade_journey.correlation_envelope import (
@@ -350,7 +355,7 @@ class PaperExecutionAlgorithm:
     def __init__(
         self,
         *,
-        initial_cash: float = 100_000.0,
+        initial_cash: float | None = None,
         default_price: float = 100.0,
         event_sink: Callable[[OrderEvent], None] | None = None,
         deployment_stage: str = "paper",
@@ -372,10 +377,14 @@ class PaperExecutionAlgorithm:
     ) -> None:
         self._durable_fill_publication = bool(durable_fill_publication)
         self._pending_fill_publications: list[dict[str, Any]] = []
-        self._initial_cash = _finite_float(
-            initial_cash,
-            field="initial_cash",
-            positive=True,
+        # No default amount: without an explicit value the ledger is unfunded until the
+        # capital pool budget is read (``_ensure_starting_cash``) or a saved ledger loads.
+        self._starting_cash_resolved = initial_cash is not None
+        self._starting_cash_error: str | None = None
+        self._initial_cash = (
+            _finite_float(initial_cash, field="initial_cash", positive=True)
+            if initial_cash is not None
+            else 0.0
         )
         self._cash = self._initial_cash
         self._default_price = _finite_float(
@@ -1027,9 +1036,49 @@ class PaperExecutionAlgorithm:
             risk_policy_ref=self._configured_risk_policy_id,
             risk_policy_loader=self._risk_policy_loader,
         )
-        if bound_policy is not None:
-            return bound_policy
-        return RiskPolicy(risk_policy_id="paper-unbound")
+        if bound_policy is None:
+            raise RiskPolicyError("no active risk policy is bound to the capital pool")
+        if str(bound_policy.status).strip().lower() != "active":
+            raise RiskPolicyError(
+                f"bound risk policy {bound_policy.risk_policy_id!r} is not active"
+            )
+        return bound_policy
+
+    def _ensure_starting_cash(self) -> None:
+        """Fund an unfunded, fill-free ledger from the capital pool budget or raise."""
+        if self._starting_cash_resolved:
+            return
+        binding: Mapping[str, Any] | None = self._bound_runtime_binding
+        resolver = self._binding_resolver
+        if resolver is not None:
+            resolve_fn = getattr(resolver, "resolve", None) or (resolver if callable(resolver) else None)
+            if callable(resolve_fn):
+                resolved_b = resolve_fn()
+                if isinstance(resolved_b, Mapping):
+                    binding = resolved_b
+        pool_id = str(
+            (dict(binding).get("capital_pool_id") if binding else None)
+            or self._capital_pool_id
+            or os.getenv("PANTHEON_CAPITAL_POOL_ID", "")
+        ).strip()
+        pool: Any = None
+        if not pool_id:
+            raise ValueError("starting cash unavailable: no capital pool id")
+        if self._capital_pool_reader is not None:
+            pool = self._capital_pool_reader(pool_id)
+        if not isinstance(pool, Mapping):
+            pool = read_capital_pool_record(pool_id)
+        if not isinstance(pool, Mapping):
+            raise ValueError(f"starting cash unavailable: capital pool {pool_id} not readable")
+        budget = pool.get("budget")
+        if isinstance(budget, bool) or not isinstance(budget, (int, float, str)):
+            raise ValueError(f"starting cash unavailable: capital pool {pool_id} has no budget")
+        budget_value = _finite_float(budget, field="capital pool budget", positive=True)
+        if self._fill_count != 0:
+            raise ValueError("starting cash unavailable: ledger has fills but no recorded starting cash")
+        self._initial_cash = budget_value
+        self._cash = budget_value
+        self._starting_cash_resolved = True
 
     @staticmethod
     def _parse_strict_iso_date(raw: Any) -> Any:
@@ -1092,6 +1141,20 @@ class PaperExecutionAlgorithm:
         raw_decision_id = str(
             self._current_signal_metadata.get("decision_id") or ""
         ).strip()
+        try:
+            self._ensure_starting_cash()
+        except Exception as exc:  # noqa: BLE001 - any unreadable budget fails closed
+            self._starting_cash_error = str(exc)
+            return {
+                "accepted": False,
+                "risk_status": "rejected",
+                "reason": "starting_cash_unavailable",
+                "required": "capital_pool_budget",
+                "available": str(exc),
+                "limit": "positive_capital_pool_budget",
+                "instrument_id": instrument_id,
+                "decision_id": raw_decision_id or f"rg-{uuid.uuid4()}",
+            }
         try:
             policy = self._resolve_active_risk_policy()
         except (RiskPolicyError, RiskPolicyLoadError, OSError, KeyError, ValueError, TypeError) as exc:
@@ -1346,7 +1409,23 @@ class PaperExecutionAlgorithm:
         # ref_price equals current cash (adjusted for cash_share delta) + equity_holdings_after + futures_unrealized_after.
         cash_after_order = float(self._cash) - float(self._injected_equity_capital)
         if clean_kind == "cash_share":
+            order_commission, order_tax = cash_share_costs(
+                symbol, "buy" if signed_order_qty > 0 else "sell", abs(signed_order_qty), ref_price
+            )
             cash_after_order -= signed_order_qty * float(multiplier) * ref_price
+            cash_after_order -= order_commission + order_tax
+            if signed_order_qty > 0 and cash_after_order < -1e-9:
+                decision_id = raw_decision_id or f"rg-{uuid.uuid4()}"
+                return {
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": "insufficient_cash",
+                    "required": float(buy_cash_required(symbol, signed_order_qty, ref_price)),
+                    "available": float(self._cash) - float(self._injected_equity_capital),
+                    "limit": float(self._cash) - float(self._injected_equity_capital),
+                    "instrument_id": instrument_id,
+                    "decision_id": decision_id,
+                }
         elif existing_pos is not None and abs(q_before) > 1e-12:
             # If reducing/closing/flipping an existing future at ref_price, realized + unrealized
             # at ref_price equals q_before * mult * (ref_price - avg_before)
@@ -1933,7 +2012,8 @@ class PaperExecutionAlgorithm:
                 next_quantity = current_quantity + signed_fill_qty
                 if side == "sell" and (next_quantity < 0 or abs(next_quantity) <= 1e-12):
                     next_quantity = 0.0
-                next_cash = current_cash - (signed_fill_qty * fill_price)
+                fill_commission, fill_tax = cash_share_costs(symbol, side, fill_qty, fill_price)
+                next_cash = current_cash - (signed_fill_qty * fill_price) - fill_commission - fill_tax
                 if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
                     raise ValueError("Taiwan broker fill produces non-finite ledger values")
             else:
@@ -1993,6 +2073,7 @@ class PaperExecutionAlgorithm:
                 str(symbol),
                 next_quantity=next_quantity,
                 next_cash=next_cash,
+                cost_delta=fill_commission + fill_tax,
                 execution_price=fill_price,
                 price_as_of=(
                     market_price_as_of
@@ -2008,6 +2089,8 @@ class PaperExecutionAlgorithm:
                 "instrument_id": resolved_inst_id,
                 "kind": "cash_share",
                 "multiplier": 1.0,
+                "fee": fill_commission,
+                "tax": fill_tax,
                 "risk_status": gate_result["risk_status"],
                 "risk_gate_status": gate_result["risk_status"],
                 "risk_decision_id": gate_result["decision_id"],
@@ -2712,6 +2795,7 @@ class PaperExecutionAlgorithm:
         security = self._security(symbol)
         holding = self._holding(symbol)
         try:
+            self._ensure_starting_cash()
             target_percent_value = _finite_float(
                 target_percent,
                 field="target percent",
@@ -3453,6 +3537,7 @@ class PaperExecutionAlgorithm:
         *,
         next_quantity: float,
         next_cash: float,
+        cost_delta: float = 0.0,
         execution_price: float | None = None,
         price_as_of: str | None = None,
         price_source: str = "paper_fill",
@@ -3595,12 +3680,13 @@ class PaperExecutionAlgorithm:
                     "maintenance_margin_required": 0.0,
                     "unrealized_pnl": 0.0,
                     "realized_pnl": float(eq_record.get("realized_pnl", 0.0)) + realized_delta_eq,
-                    "costs": float(eq_record.get("costs", 0.0)),
+                    "costs": float(eq_record.get("costs", 0.0)) + float(cost_delta),
                     "status": "open" if abs(new_qty) > 1e-12 else "closed",
                 }
             )
             self._instrument_positions[eq_key] = eq_record
             self._realized_pnl += realized_delta_eq
+            self._total_costs += float(cost_delta)
 
             if execution_price is not None:
                 self.SetSecurityPrice(
@@ -3912,6 +3998,7 @@ class PaperExecutionAlgorithm:
                         restored_episodes[normalized_symbol] = ep_id.strip()
 
             self._initial_cash = initial_cash
+            self._starting_cash_resolved = True
             self._cash = cash
             self.Portfolio = restored
             self._instrument_positions = restored_instrument_positions
