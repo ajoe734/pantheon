@@ -4576,6 +4576,52 @@ def _persona_readback_snapshot() -> Tuple[
     return all_bindings, all_cron_registrations, monitoring_sessions
 
 
+# --- _reconcile_paper_enrollment_once ---
+def _reconcile_paper_enrollment_once() -> int:
+    """Enrol already paper-provisioned personas through the provisioning ledger.
+
+    Lease-guarded and GET-first inside the coordinator, so safe under restart
+    and concurrent replicas.  Failures stay a readable readback on the record.
+    """
+
+    enrolled = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper enrollment could not list provisioning ledger: %s", exc)
+        return 0
+    for record in records:
+        if record.state not in {"provisioning", "succeeded"}:
+            continue
+        existing = (record.references or {}).get("paper_enrollment")
+        if isinstance(existing, Mapping) and existing.get("status") == "enrolled":
+            continue
+        try:
+            coordinator = PersonaProvisioningCoordinator(
+                store=_persona_provisioning_store(),
+                transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
+                schedule_registrar=_register_persona_cron_required,
+                lease_owner=f"paper-enrollment:{uuid.uuid4().hex}",
+                lease_seconds=max(
+                    30,
+                    int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+                ),
+                actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+                runtime_binding_reader=_runtime_bindings_for_case,
+                governance_actor_id=os.getenv(
+                    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID",
+                    "pantheon-dev-paper-provisioner",
+                ),
+            )
+            coordinator.reconcile_paper_enrollment(record)
+            enrolled += 1
+        except Exception as exc:
+            log.warning(
+                "Paper enrollment reconcile failed for %s: %s", record.persona_id, exc
+            )
+    return enrolled
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
@@ -4631,7 +4677,9 @@ def _reconcile_persona_provisioning_once() -> int:
 def _reconcile_persona_provisioning_pass() -> Any:
     """One background pass in its own fresh read scope (never shared across passes)."""
     with request_read_scope():
-        return _reconcile_persona_provisioning_once()
+        result = _reconcile_persona_provisioning_once()
+        _reconcile_paper_enrollment_once()
+        return result
 
 
 async def _persona_provisioning_reconciler_loop() -> None:
@@ -5257,6 +5305,7 @@ def _coordinate_persona_create(
         # Owner mutations are authenticated as this BFF service principal; the
         # requesting human stays audit metadata inside each owner payload.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        runtime_binding_reader=_runtime_bindings_for_case,
         governance_actor_id=os.getenv(
             "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
