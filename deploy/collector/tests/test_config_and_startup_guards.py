@@ -235,3 +235,15 @@ def test_regime_sources_refuse_unsafe_policy_before_fetch(tmp_path, test_hasher,
     with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
         runner.run_source(sid, run_id='unsafe')
     assert transport.calls == []
+
+
+@pytest.mark.parametrize('field,value', [('min_interval_seconds', 1.0), ('max_connections', 2)])
+def test_taifex_vix_refuses_unsafe_policy_before_fetch(tmp_path, test_hasher, field, value):
+    raw = _raw_policy()
+    raw['sources']['collector-tw-taifex-vix'][field] = value
+    transport = FixtureTransport()
+    runner = CollectorRunner(validate_collector_config(raw, env={}), root_dir=tmp_path, hasher=test_hasher,
+                             transport=transport)
+    with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
+        runner.run_source('collector-tw-taifex-vix', run_id='unsafe')
+    assert transport.calls == []

@@ -807,3 +807,122 @@ def test_regime_month_schema_failure_is_atomic(tmp_path, fixtures_dir, test_hash
                                 collect_kwargs={'dates': ['2012-01']})
     assert outcome.status == 'partial' and outcome.bundle.manifest['reason'].startswith('parse_failed: ')
     assert outcome.bundle.items_path.read_bytes() == b''
+
+
+# --- TAIFEX Taiwan VIX (fixtures are real files recorded from taifex.com.tw on 2026-11-14) -------------
+_VIX_DAILY_PAGE = ("<input onClick=\"window.open('https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/"
+                   "202611new.txt')\" value=\"下載\" title=\"202611new.txt\">")
+_VIX_DAY_PAGE = "<input onClick=\"window.open('getVixData?filesname=20261113')\" value=\"下載\" title=\"20261113(txt)\">"
+_VIX_ZIP_NAME = "202610歷史紀錄波動率指數_新VIX.zip"
+_VIX_ZIP_PAGE = ("<input onClick=\"window.open('https://www.taifex.com.tw/file/taifex/Dailydownload/vix/logdata/"
+                 + _VIX_ZIP_NAME + "')\">")
+
+
+def _vix_transport(fixtures_dir, *, daily=None, day=None, member='tvix_20261001', zip_body=None):
+    from urllib.parse import quote
+    from collector_stack.spiders import TaifexVixSpider as S
+    day_body = (fixtures_dir / 'taifex_vix_intraday_sample.txt').read_bytes()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as zf:
+        zf.writestr(member, day_body.replace(b'20261113', b'20261001'))
+    return FixtureTransport({
+        S.DAILY_PAGE: _VIX_DAILY_PAGE, S.INTRADAY_PAGE: _VIX_DAY_PAGE, S.INTRADAY_3M_PAGE: _VIX_ZIP_PAGE,
+        S.DAILY_URL.format(yyyymm='202611'): daily if daily is not None
+        else (fixtures_dir / 'taifex_vix_daily_sample.txt').read_bytes(),
+        S.DAY_URL.format(yyyymmdd='20261113'): day if day is not None else day_body,
+        S.FILE_BASE + 'logdata/' + quote(_VIX_ZIP_NAME): zip_body if zip_body is not None else buf.getvalue(),
+    })
+
+
+def _vix_runner(tmp_path, test_hasher, transport):
+    return CollectorRunner(load_collector_config(env={}), root_dir=tmp_path, hasher=test_hasher, transport=transport)
+
+
+def test_taifex_vix_archives_raw_files_and_parsed_rows(tmp_path, fixtures_dir, test_hasher):
+    transport = _vix_transport(fixtures_dir)
+    outcome = _vix_runner(tmp_path, test_hasher, transport).run_source('collector-tw-taifex-vix', run_id='vix1')
+    assert outcome.status == 'complete'
+    items = [json.loads(line) for line in outcome.bundle.items_path.read_text().splitlines()]
+    by = {i['dataset']: i for i in items if i['dataset'] != 'tw_vix_intraday'}
+    daily = by['tw_vix_daily']
+    assert daily['row_count'] == 10 and daily['first_date'] == '2026-11-02' and daily['last_date'] == '2026-11-13'
+    assert daily['rows'][0] == {'trade_date': '2026-11-02', 'time': '13:45:00.00', 'time_raw': '13450000',
+                                'close': 31.3, 'last_1min_avg': 31.28}
+    days = {i['trade_date']: i for i in items if i['dataset'] == 'tw_vix_intraday'}
+    assert set(days) == {'2026-10-01', '2026-11-13'}
+    cur = days['2026-11-13']
+    assert cur['delivery'] == 'daily_file' and cur['complete_session'] and cur['last_1min_avg'] == 37.84
+    assert cur['rows'][0]['time'] == '09:00:00.00' and cur['rows'][0]['value'] == 39.65
+    assert cur['rows'][-1]['time'] == '13:45:00.00' and cur['row_count'] == len(cur['rows']) == 1141
+    assert days['2026-10-01']['delivery'] == 'monthly_zip'
+    assert by['tw_vix_intraday_archive']['member_days'] == ['20261001']
+    exts = sorted(p.suffix for p in (outcome.bundle.bundle_dir / 'raw').iterdir())
+    assert exts == ['.txt', '.txt', '.txt', '.zip']
+    raw_daily = next(p for p in (outcome.bundle.bundle_dir / 'raw').iterdir() if p.stat().st_size == 482)
+    assert raw_daily.read_bytes() == (fixtures_dir / 'taifex_vix_daily_sample.txt').read_bytes()
+
+
+def test_taifex_vix_is_incremental_and_idempotent(tmp_path, fixtures_dir, test_hasher):
+    runner = _vix_runner(tmp_path, test_hasher, _vix_transport(fixtures_dir))
+    first = runner.run_source('collector-tw-taifex-vix', run_id='vix1')
+    second_transport = _vix_transport(fixtures_dir)
+    runner2 = _vix_runner(tmp_path, test_hasher, second_transport)
+    second = runner2.run_source('collector-tw-taifex-vix', run_id='vix2')
+    ids1 = {json.loads(l)['id'] for l in first.bundle.items_path.read_text().splitlines()}
+    ids2 = {json.loads(l)['id'] for l in second.bundle.items_path.read_text().splitlines()}
+    # Only the still-growing current-month daily file is fetched again, with an unchanged content-derived id.
+    assert ids2 <= ids1 and len(ids2) == 1 and next(iter(ids2)).startswith('taifex-vix-daily-202611-')
+    fetched = [c['url'] for c in second_transport.calls]
+    assert not any('getVixData' in u or u.endswith('.zip') or '%' in u for u in fetched)
+    assert not any('20261113' in u for u in fetched)
+
+
+def _vix_fault_cases():
+    day = lambda f: (lambda b: f(b))
+    return {
+        'html_instead_of_file': ('day', b'<!DOCTYPE HTML><html></html>', 'HTML'),
+        'changed_header': ('day', None, 'changed header'),
+        'bad_value': ('day', None, 'bad VIX value'),
+        'wrong_date': ('day', None, 'malformed row'),
+        'daily_bad_row': ('daily', None, 'malformed row'),
+        'bad_zip': ('zip', b'not a zip', 'not a zip'),
+        'bad_member': ('member', None, 'unexpected member'),
+    }
+
+
+@pytest.mark.parametrize('fault', list(_vix_fault_cases()))
+def test_taifex_vix_format_change_fails_run_without_partial_rows(tmp_path, fixtures_dir, test_hasher, fault):
+    kind, body, reason = _vix_fault_cases()[fault]
+    day = (fixtures_dir / 'taifex_vix_intraday_sample.txt').read_bytes()
+    daily = (fixtures_dir / 'taifex_vix_daily_sample.txt').read_bytes()
+    kwargs = {}
+    if fault == 'changed_header':
+        kwargs['day'] = day.replace('臺指選擇權波動率指數'.encode('cp950'), 'VIX'.encode('cp950'), 1)
+    elif fault == 'bad_value':
+        kwargs['day'] = day.replace(b'39.65', b'N/A', 1)
+    elif fault == 'wrong_date':
+        kwargs['day'] = day.replace(b'20261113\t9001500', b'20261112\t9001500', 1)
+    elif fault == 'daily_bad_row':
+        kwargs['daily'] = daily.replace(b'31.30\t\t31.28', b'31.30', 1)
+    elif kind == 'day':
+        kwargs['day'] = body
+    elif kind == 'zip':
+        kwargs['zip_body'] = body
+    else:
+        kwargs['member'] = 'tvix_bogus'
+    transport = _vix_transport(fixtures_dir, **kwargs)
+    runner = _vix_runner(tmp_path, test_hasher, transport)
+    outcome = runner.run_source('collector-tw-taifex-vix', run_id='vix-bad')
+    assert outcome.status == 'partial'
+    assert outcome.bundle.manifest['reason'].startswith('parse_failed: ') and reason in outcome.bundle.manifest['reason']
+    assert outcome.bundle.items_path.read_bytes() == b''
+    assert not (tmp_path / 'state' / 'taifex-vix' / 'ledger.json').exists()
+
+
+def test_taifex_vix_missing_download_links_fail_closed(tmp_path, fixtures_dir, test_hasher):
+    from collector_stack.spiders import TaifexVixSpider as S
+    transport = _vix_transport(fixtures_dir)
+    transport.register(S.DAILY_PAGE, '<html>rendered dynamically</html>')
+    outcome = _vix_runner(tmp_path, test_hasher, transport).run_source('collector-tw-taifex-vix', run_id='vix-nolink')
+    assert outcome.status == 'partial' and 'no download links' in outcome.bundle.manifest['reason']
+    assert outcome.bundle.items_path.read_bytes() == b''

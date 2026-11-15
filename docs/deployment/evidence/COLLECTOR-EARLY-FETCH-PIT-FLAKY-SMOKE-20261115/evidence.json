@@ -1,0 +1,19 @@
+{
+  "task_id": "COLLECTOR-EARLY-FETCH-PIT-FLAKY-SMOKE-20261115",
+  "root_cause": {
+    "classification": "test-side ordering assumption, not a product race",
+    "summary": "The test read module.runtime.store.read_freshness_snapshot()['receipts'][-1] as 'this pull's receipt'. Receipts are sorted by (finished_at, ingest_run_id); finished_at comes from connectors/base.py _utc_now() with microsecond=0 (1s precision) and ingest_run_id is a random uuid. When two consecutive pulls finish in the same second, receipts[-1] is arbitrary, so the 60-capped pull could be read as the previous 256-row pull ('assert 256 == 60'). Pulls are sub-second on a fast runner (10.9s failing run), hence 2/5 flakiness; param-independent.",
+    "ruled_out": "_DEFER_ACK ContextVar leakage and _METADATA_CACHE sharing: the debug trace showed total_failed=0, one receipt per pull, and the real 60-row pull receipt existing with normalized_count=60. Product pull semantics unchanged.",
+    "deterministic_reproduction": "Original test body with connectors.base._utc_now frozen to a constant fails 3/3 with 'assert 256 == 60' (receipt of previous pull selected)."
+  },
+  "fix": {
+    "files": ["services/source_ingestion/tests/test_collector_market_early_fetch_pit.py"],
+    "change": "pull() snapshots receipt ids before the POST and returns the single new receipt. All assertions (256 x5, 60, delivered 1340/1377, quarantine) unchanged. Added regression param 'preclose-same-second-receipts' which freezes _utc_now so all receipts tie, reproducing the failure before the fix.",
+    "product_code_changed": false,
+    "LATEST_CLOSE_PERSISTED_ROWS_PER_PULL": 256
+  },
+  "verification": {
+    "module_runs": "50 consecutive-equivalent runs (5 batches x 10 parallel processes), each: .venv-equivalent python -m pytest -q -p no:randomly services/source_ingestion/tests/test_collector_market_early_fetch_pit.py -> 50/50 '10 passed', exit 0",
+    "source_ingestion_suite": "services/source_ingestion/tests in 8 shards: 1936 passed, 17 skipped, 0 failed (requires pyyaml in the venv)"
+  }
+}

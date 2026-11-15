@@ -580,11 +580,15 @@ def test_operational_counts_cover_the_candidate_set_before_the_hide_filter(
 
 
 def test_operational_counts_make_no_extra_owner_read_for_a_candidate_set_in_one_page(
-    client: TestClient, world: _World
+    client: TestClient, world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client.get("/bff/strategies?exclude_state=draft&page_size=200", headers=HEADERS)
     assert len(world.owner_summary_calls) == 1
     world.owner_summary_calls.clear()
+    # Keep the smaller-page case cold so it still proves the exact owner
+    # walk bound rather than reusing the first case's 200-row memo entry.
+    app, _ = _build_app(monkeypatch, world)
+    client = TestClient(app)
     client.get("/bff/strategies?exclude_state=draft&page_size=20", headers=HEADERS)
     # the page read, plus one walk of the 141 candidates for the counts
     assert [call.split("?")[1].split("&")[1] for call, _ in world.owner_summary_calls] == [

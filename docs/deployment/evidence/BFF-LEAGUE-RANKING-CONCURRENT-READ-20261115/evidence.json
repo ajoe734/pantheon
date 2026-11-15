@@ -1,0 +1,368 @@
+{
+  "task_id": "BFF-LEAGUE-RANKING-CONCURRENT-READ-20261115",
+  "change": "personas/service.py: _pm12_persona_league_rows_shared = single-flight + tenant-keyed memo (10s, hard cap 30s, measured from computation start, failures never stored, deep-copied per caller) used by get_persona_league, get_persona_league_rankings, _compose_quarterly_ranking_context.",
+  "standard_approach": "request coalescing / single-flight plus short TTL memo",
+  "acceptance_status": {
+    "AC1_p95_under_2s_hosted_sized_fixture": "MET on hosted-sized padded fixture (see hosted_sized_padded_bench); hosted five-way proof deferred to next dev Root FE gate per operator decision.",
+    "AC2_hosted_fixture_sizes": "MET: see hosted_sizes_ac2",
+    "AC3_before_after": "recorded in hosted_sized_padded_bench with exact commands",
+    "AC4_body_parity": "test_bodies_identical_to_unmemoized_code",
+    "AC5_tenant_scope": "test_memo_is_tenant_scoped",
+    "AC6_window": "test_reuse_window_is_bounded_and_store_change_visible_after_window",
+    "AC7_failure_not_reused": "test_failed_computation_is_never_reused",
+    "AC8": "no route signature, crawler, budget or timeout changes"
+  },
+  "local_bench": {
+    "command_before": "LEAGUE_BENCH=before PERSONAS=166 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "command_after": "LEAGUE_BENCH=after PERSONAS=166 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "seconds_p50_p95_max": {
+      "before": {
+        "persona-league": [
+          0.434,
+          0.6,
+          0.6
+        ],
+        "persona-league/rankings": [
+          0.45,
+          0.602,
+          0.602
+        ],
+        "quarterly-ranking": [
+          0.47,
+          0.599,
+          0.599
+        ],
+        "quarterly-ranking/formula": [
+          0.359,
+          0.516,
+          0.516
+        ],
+        "persona-fleet": [
+          0.434,
+          0.596,
+          0.596
+        ]
+      },
+      "after": {
+        "persona-league": [
+          0.484,
+          0.64,
+          0.64
+        ],
+        "persona-league/rankings": [
+          0.492,
+          0.65,
+          0.65
+        ],
+        "quarterly-ranking": [
+          0.498,
+          0.661,
+          0.661
+        ],
+        "quarterly-ranking/formula": [
+          0.355,
+          0.479,
+          0.479
+        ],
+        "persona-fleet": [
+          0.477,
+          0.66,
+          0.66
+        ]
+      }
+    },
+    "serial_cold_vs_warm_seconds": {
+      "persona-league": [
+        0.312,
+        0.081
+      ],
+      "quarterly-ranking": [
+        0.198,
+        0.101
+      ]
+    }
+  },
+  "hosted_read_only_data": {
+    "source": "Human/Ops supplied 2026-11-14T20:48Z, file claude-evidence/league-ranking-hosted-read-sizes-20261114.json (authenticated read-only GETs on hosted dev bee62bc29)",
+    "personas_total": 170,
+    "active": 11,
+    "archived": 159,
+    "quarterly_ranking_universe": 170,
+    "current_quarter_evidence_refs": 0,
+    "persona_league_rankings_bytes": 277987,
+    "hosted_latency_s_single_vs_5way_p95": {
+      "persona-league": [
+        1.3,
+        2.51
+      ],
+      "persona-league/rankings": [
+        1.1,
+        2.78
+      ],
+      "quarterly-ranking": [
+        13.4,
+        14.8
+      ],
+      "persona-fleet": [
+        1.9,
+        3.41
+      ]
+    },
+    "bindings_runtime_bindings_sessions_league_entries_counts": "not in supplied data"
+  },
+  "bench_170_personas_20_rounds": {
+    "command": "LEAGUE_BENCH=<before|after> STORE_DELAY_MS=<ms> PERSONAS=170 ROUNDS=20 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "note": "STORE_DELAY_MS adds a fixed sleep per call to list_bindings, list_runtime_bindings, list_persona_league, get_persona_allowed_actions. The delay value is an assumption, not a hosted measurement.",
+    "delay_0_p50_p95": {
+      "before": {
+        "persona-league": [
+          0.754,
+          1.094
+        ],
+        "rankings": [
+          0.784,
+          1.084
+        ],
+        "quarterly-ranking": [
+          0.782,
+          1.084
+        ],
+        "persona-fleet": [
+          0.744,
+          1.086
+        ]
+      },
+      "after": {
+        "persona-league": [
+          0.47,
+          0.684
+        ],
+        "rankings": [
+          0.493,
+          0.661
+        ],
+        "quarterly-ranking": [
+          0.495,
+          0.687
+        ],
+        "persona-fleet": [
+          0.484,
+          0.68
+        ]
+      }
+    },
+    "delay_100ms_p50_p95": {
+      "before": {
+        "persona-league": [
+          2.671,
+          2.738
+        ],
+        "rankings": [
+          0.724,
+          0.822
+        ],
+        "quarterly-ranking": [
+          0.722,
+          0.821
+        ],
+        "persona-fleet": [
+          0.678,
+          0.816
+        ]
+      },
+      "after": {
+        "persona-league": [
+          2.653,
+          2.736
+        ],
+        "rankings": [
+          0.709,
+          0.804
+        ],
+        "quarterly-ranking": [
+          0.708,
+          0.804
+        ],
+        "persona-fleet": [
+          0.619,
+          0.8
+        ]
+      }
+    },
+    "delay_20ms_with_per_persona_session_path_artifact": "before/after both ~4.1-4.5s p95 (wrapping sessions fn forced per-persona path; discarded as artifact)",
+    "table_note": "Tables reconcile by code state, not by contradiction: delay_100ms_p50_p95 above is BEFORE the allowed-actions parallel prefetch (persona-league p95 2.738 before-memo / 2.736 with memo only). allowed_actions_parallel.after_delay_100ms (persona-league p95 1.122) is the final code. Final-code numbers are the ones to cite."
+  },
+  "finding": "Memo cuts CPU/GIL contention (delay 0: p95 ~1.09s -> ~0.68s) but cannot reduce serial downstream waits. Remaining lever for persona-league: batch or parallelize per-page-item get_persona_allowed_actions in get_persona_league (service.py ~line 17430); not implemented, needs reviewer decision on scope.",
+  "allowed_actions_parallel": {
+    "change": "get_persona_league prefetches get_persona_allowed_actions for non-retired page items with ThreadPoolExecutor (max 8 workers, copied contextvars, per-call timeouts untouched); results consumed in page order, so item order, bodies and per-item exceptions match the serial loop.",
+    "command": "LEAGUE_BENCH=after STORE_DELAY_MS=<100|20> PERSONAS=170 ROUNDS=20 $PANTHEON_DEPENDENCY_PYTHON -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "before_delay_100ms_p50_p95_s": {
+      "persona-league": [
+        2.671,
+        2.738
+      ]
+    },
+    "after_delay_100ms_p50_p95_max_s": {
+      "persona-league": [
+        1.016,
+        1.122,
+        1.122
+      ],
+      "persona-league/rankings": [
+        0.728,
+        0.814,
+        0.814
+      ],
+      "quarterly-ranking": [
+        0.729,
+        0.812,
+        0.812
+      ],
+      "quarterly-ranking/formula": [
+        0.025,
+        0.119,
+        0.119
+      ],
+      "persona-fleet": [
+        0.651,
+        0.804,
+        0.804
+      ]
+    },
+    "after_delay_20ms_p50_p95_max_s": {
+      "persona-league": [
+        0.572,
+        0.683,
+        0.683
+      ],
+      "persona-league/rankings": [
+        0.515,
+        0.63,
+        0.63
+      ],
+      "quarterly-ranking": [
+        0.516,
+        0.652,
+        0.652
+      ],
+      "quarterly-ranking/formula": [
+        0.025,
+        0.122,
+        0.122
+      ],
+      "persona-fleet": [
+        0.444,
+        0.647,
+        0.647
+      ]
+    },
+    "tests": [
+      "test_allowed_actions_parallel_matches_serial_order_and_body",
+      "test_allowed_actions_item_failure_same_as_serial",
+      "test_allowed_actions_concurrency_is_bounded"
+    ],
+    "test_result": "9 passed, 1 skipped"
+  },
+  "quarterly_ranking_hosted_gap": {
+    "hosted": "quarterly-ranking 13.4s single, 14.8s p95 vs persona-league 1.3s single",
+    "cause_found_in_code": "_pm12_quarterly_ranking_items(rows, quarter_window) was called by _compose_quarterly_ranking_context with telemetry_cache=None, so each persona ranking item did its own serial get_telemetry_summary per runtime id with no shared cache (persona-fleet path already prefetches a telemetry list). Cost scales as personas-with-runtimes x store latency; the local bench fixture has no runtime bindings so it never hit this.",
+    "change": "_pm12_prefetch_runtime_telemetry: per ranking pass a shared telemetry cache, distinct authoritative runtime ids read once, bounded 8-worker parallel prefetch with copied contextvars; failed reads are not cached so the serial path re-reads and raises as before. Callers that pass their own cache are unchanged.",
+    "tests": [
+      "test_quarterly_telemetry_prefetch_dedupes_and_is_concurrent",
+      "test_quarterly_telemetry_prefetch_failure_not_cached_and_still_raises"
+    ],
+    "test_result": "70 passed, 1 skipped (concurrent_read + pm12_persona_league + pm12_request_scoped_reads)",
+    "hosted_remeasure": "PENDING: not done; no hosted access from this worker. Command to run on hosted dev after deploy: 5-way concurrent GET of the five cockpit routes x >=20 rounds, compare to 13.4s/14.8s baseline.",
+    "confidence": "cause is inferred from code reading plus the 13.4s-vs-1.3s asymmetry; not confirmed by a hosted profile."
+  },
+  "operator_delegated_decision_verbatim": "OPERATOR-DELEGATED DECISION 2026-11-14T23:45Z (operator told the Claude chatbox to fix all known release risks before the next dev Root and to handle it directly): (a) AC2 hosted sizes, measured read-only 2026-11-14T23:43:39Z on hosted dev bee62bc via GET /bff/management/persona-league?page_size=200, /bff/runtimes, /bff/capital-pools with an admin read role: league personas 170 (states {\"research_only\": 1, \"retired\": 159, \"draft\": 5, \"paper_running\": 5}), distinct binding_ids 5, distinct runtime_ids on league rows 5, distinct session_ids 5, runtimes total 162, capital pools total 167, /bff/personas total 172, current-quarter evidence refs 0. Quote these in evidence.json as the AC2 hosted sizes and size the bench fixture to them. (b) AC1 is judged on the hosted-sized fixture as written; the hosted five-way confirmation is NOT this task's obligation - it is performed by the next dev Root FE gate and tracked by MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114. This is a clarification of where hosted proof lives, not a waiver: the concurrent fixture run must still show p95 under 2s and before/after numbers must be recorded honestly.",
+  "hosted_sizes_ac2": {
+    "measured": "2026-11-14T23:43:39Z read-only on hosted dev bee62bc",
+    "league_personas": 170,
+    "league_states": {
+      "research_only": 1,
+      "retired": 159,
+      "draft": 5,
+      "paper_running": 5
+    },
+    "distinct_binding_ids": 5,
+    "distinct_runtime_ids_on_league_rows": 5,
+    "distinct_session_ids": 5,
+    "runtimes_total": 162,
+    "capital_pools_total": 167,
+    "personas_total": 172,
+    "current_quarter_evidence_refs": 0,
+    "operator_supplied_db_counts": {
+      "persona.personas": 171,
+      "persona_provisioning": 164,
+      "capital_bindings": 165,
+      "runtime_bindings": 162,
+      "league_entries": 170,
+      "active_sessions": 5,
+      "capability_snapshots": 8
+    },
+    "record_sizes": "persona median 14.8KB max 24KB (metadata ~10.5KB readback); runtime binding ~9KB metadata; capital binding ~1KB"
+  },
+  "hosted_sized_padded_bench": {
+    "command_before": "LEAGUE_BENCH=before HOSTED_PAD=1 PERSONAS=170 ROUNDS=20 python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "command_after": "LEAGUE_BENCH=after HOSTED_PAD=1 PERSONAS=170 ROUNDS=20 python3 -m pytest -q -s services/control-plane/bff/tests/test_persona_league_concurrent_read.py -k bench",
+    "seconds_p50_p95_max": {
+      "before": {
+        "persona-league": [
+          0.639,
+          1.066,
+          1.066
+        ],
+        "persona-league/rankings": [
+          0.646,
+          1.056,
+          1.056
+        ],
+        "quarterly-ranking": [
+          0.645,
+          1.059,
+          1.059
+        ],
+        "quarterly-ranking/formula": [
+          0.346,
+          0.657,
+          0.657
+        ],
+        "persona-fleet": [
+          0.631,
+          1.055,
+          1.055
+        ]
+      },
+      "after": {
+        "persona-league": [
+          0.548,
+          0.637,
+          0.637
+        ],
+        "persona-league/rankings": [
+          0.533,
+          0.632,
+          0.632
+        ],
+        "quarterly-ranking": [
+          0.542,
+          0.635,
+          0.635
+        ],
+        "quarterly-ranking/formula": [
+          0.418,
+          0.518,
+          0.518
+        ],
+        "persona-fleet": [
+          0.527,
+          0.628,
+          0.628
+        ]
+      }
+    },
+    "fixture": "170 personas (5 paper_running, 165 retired) each ~13.8KB padded metadata; 162 runtime bindings ~7.5KB metadata each (1.2MB total); 165 capital bindings; 5 concurrent routes x 20 cold rounds",
+    "verdict": "AC1 met on the hosted-sized fixture: every route p95 <= 0.637s after (<2s). Before p95 was already ~1.07s on this local fixture, so the local fixture does not reproduce the hosted 2.9-4.2s five-way; the gain here is ~40% on p95. Local fixture has no real downstream latency or hosted CPU contention. Hosted five-way confirmation is deferred to the next dev Root FE gate / MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114 per the operator decision, not claimed here."
+  }
+}
