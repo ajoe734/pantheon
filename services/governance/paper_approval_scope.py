@@ -48,6 +48,12 @@ PERSONA_LIFECYCLE_TARGET = "persona_lifecycle_transition"
 PAPER_LADDER_TRANSITIONS = frozenset({("research_only", "consultable"), ("consultable", "paper_owner")})
 PERSONA_LIFECYCLE_GRANT_PREFIX = "enabled;persona_lifecycle=paper_ladder;proposer="
 PERSONA_LIFECYCLE_GRANT_ID_PREFIX = "dev-paper-grant:persona-lifecycle-paper-ladder:"
+# Operator direction 2026-11-15 (design section 6A of SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS):
+# inside paper, research admits a hypothesis-card StrategySpec that the discovery scorer matched
+# to an open persona demand; the paper automated gate decides it.  Explicit grant widening only.
+CARD_ADMISSION_GRANT_VALUE = "paper_research"
+CARD_ADMISSION_GRANT_ID_PREFIX = "dev-paper-grant:card-admission-paper-research:"
+_GRANT_KEYS = frozenset({"persona_lifecycle", "proposer", "card_admission", "card_proposer"})
 _PROPOSER_SUBJECT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:@-")
 _ACTIVE_RUNTIME_STATES = frozenset({"active", "running", "ok"})
 PAPER_SIGNAL_INTERFACE = "services.execution.lean_runtime.paper_signal_producer:Strategy"
@@ -273,39 +279,83 @@ class PersonaLifecycleGrant:
 
 
 @dataclass(frozen=True)
+class CardAdmissionGrant:
+    """Explicit widening: the gate may decide a research-proposed card spec admission."""
+
+    proposer_subject: str
+    grant_id: str
+
+
+@dataclass(frozen=True)
 class DevPaperGrant:
     subject: str
     tenant_id: str
     persona_lifecycle: PersonaLifecycleGrant | None = None
+    card_admission: CardAdmissionGrant | None = None
 
     @property
     def authorization_scope(self) -> dict[str, Any]:
         return normalize_authorization_scope(DEV_PAPER_AUTHORIZATION_SCOPE)
 
 
-def configured_persona_lifecycle_grant(env: Mapping[str, str] | None = None) -> PersonaLifecycleGrant | None:
-    """The explicit lifecycle widening carried by the mounted grant file, else None.
+def _valid_proposer(value: str) -> bool:
+    return bool(value) and value != DEV_PAPER_PROVISIONER_SUBJECT and set(value) <= _PROPOSER_SUBJECT_CHARS
 
-    Only a mounted grant file whose whole content is
-    ``enabled;persona_lifecycle=paper_ladder;proposer=<subject>`` widens the
-    grant; the plain ``enabled`` content and an unmounted grant behave exactly
-    as before.  A malformed or unreadable widening is never a widening.
+
+def _grant_widenings(
+    env: Mapping[str, str] | None,
+) -> tuple[PersonaLifecycleGrant | None, CardAdmissionGrant | None]:
+    """Parse the mounted grant file once.  Plain ``enabled`` and any malformed content widen nothing.
+
+    Content is ``enabled`` followed by ``;key=value`` pairs.  ``persona_lifecycle=paper_ladder`` needs
+    ``proposer=<subject>``; ``card_admission=paper_research`` needs ``card_proposer=<subject>``.  An
+    unknown key, a half pair or an invalid subject makes the whole content a non-widening.
     """
     from services.service_token_file import configured_service_token
     source = env if env is not None else os.environ
     if not str(source.get("GOVERNANCE_DEV_PAPER_GRANT_FILE", "") or "").strip():
-        return None
+        return None, None
     try:
         content = configured_service_token("GOVERNANCE_DEV_PAPER_GRANT", source)
     except RuntimeError:
-        return None
-    if not content.startswith(PERSONA_LIFECYCLE_GRANT_PREFIX):
-        return None
-    proposer = content[len(PERSONA_LIFECYCLE_GRANT_PREFIX):]
-    if not proposer or proposer == DEV_PAPER_PROVISIONER_SUBJECT or not set(proposer) <= _PROPOSER_SUBJECT_CHARS:
-        return None
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
-    return PersonaLifecycleGrant(proposer_subject=proposer, grant_id=PERSONA_LIFECYCLE_GRANT_ID_PREFIX + digest)
+        return None, None
+    parts = content.split(";")
+    if parts[0] != "enabled" or len(parts) == 1:
+        return None, None
+    pairs: dict[str, str] = {}
+    for part in parts[1:]:
+        key, sep, value = part.partition("=")
+        if not sep or key not in _GRANT_KEYS or key in pairs:
+            return None, None
+        pairs[key] = value
+    lifecycle = card = None
+    if ("persona_lifecycle" in pairs) != ("proposer" in pairs) or ("card_admission" in pairs) != ("card_proposer" in pairs):
+        return None, None
+    if "persona_lifecycle" in pairs:
+        if pairs["persona_lifecycle"] != "paper_ladder" or not _valid_proposer(pairs["proposer"]):
+            return None, None
+        legacy = PERSONA_LIFECYCLE_GRANT_PREFIX + pairs["proposer"]
+        # grant id digest of the lifecycle clause alone keeps ids stable for lifecycle-only content
+        digest = hashlib.sha256(legacy.encode("utf-8")).hexdigest()[:16]
+        lifecycle = PersonaLifecycleGrant(proposer_subject=pairs["proposer"],
+                                          grant_id=PERSONA_LIFECYCLE_GRANT_ID_PREFIX + digest)
+    if "card_admission" in pairs:
+        if pairs["card_admission"] != CARD_ADMISSION_GRANT_VALUE or not _valid_proposer(pairs["card_proposer"]):
+            return None, None
+        clause = f"card_admission={CARD_ADMISSION_GRANT_VALUE};card_proposer={pairs['card_proposer']}"
+        digest = hashlib.sha256(clause.encode("utf-8")).hexdigest()[:16]
+        card = CardAdmissionGrant(proposer_subject=pairs["card_proposer"], grant_id=CARD_ADMISSION_GRANT_ID_PREFIX + digest)
+    return lifecycle, card
+
+
+def configured_persona_lifecycle_grant(env: Mapping[str, str] | None = None) -> PersonaLifecycleGrant | None:
+    """The explicit lifecycle widening carried by the mounted grant file, else None."""
+    return _grant_widenings(env)[0]
+
+
+def configured_card_admission_grant(env: Mapping[str, str] | None = None) -> CardAdmissionGrant | None:
+    """The explicit card admission widening carried by the mounted grant file, else None."""
+    return _grant_widenings(env)[1]
 
 
 def dev_paper_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -314,7 +364,7 @@ def dev_paper_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
     enabled = str(source.get("GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED", "") or "").strip().lower()
     return (enabled == "true" and current_environment(source) == DEV_PAPER_ENVIRONMENT
             and (configured_dev_paper_grant_enabled(source)
-                 or configured_persona_lifecycle_grant(source) is not None))
+                 or any(w is not None for w in _grant_widenings(source))))
 
 
 def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -> DevPaperGrant | None:
@@ -345,7 +395,8 @@ def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -
     if not isinstance(roles, (set, frozenset)) or frozenset(roles) != DEV_PAPER_ROLES:
         raise PaperApprovalDenied("Dev paper approval principal roles must be exactly automated_gate")
     return DevPaperGrant(subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=DEV_PAPER_TENANT_ID,
-                         persona_lifecycle=configured_persona_lifecycle_grant(env))
+                         persona_lifecycle=configured_persona_lifecycle_grant(env),
+                         card_admission=configured_card_admission_grant(env))
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +438,16 @@ def validate_paper_proposal(fields: Mapping[str, Any], *, grant: DevPaperGrant, 
 
 
 def require_paper_owned_decision(decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime) -> None:
-    """The dedicated subject may only act on its own exact-scope proposals."""
+    """The dedicated subject may only act on its own exact-scope proposals.
+
+    The one widening is the research card admission (``grant.card_admission``): a decision owned by
+    the named research proposer principal, never by the gate itself.
+    """
+    widening = grant.card_admission
+    if (widening is not None and decision.get("owner_user_id") == widening.proposer_subject
+            and decision.get("owner_user_id") != grant.subject):
+        require_card_admission_decision(decision, grant=grant, now=now)
+        return
     if decision.get("owner_user_id") != grant.subject:
         raise PaperApprovalDenied("Dev paper principal may not act on another owner's decision")
     if decision.get("tenant_id") != grant.tenant_id:
@@ -404,6 +464,37 @@ def require_paper_owned_decision(decision: Mapping[str, Any], *, grant: DevPaper
     if normalized != grant.authorization_scope:
         raise PaperApprovalDenied("Dev paper decision authorization_scope does not match the grant")
     validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+
+
+def require_card_admission_decision(decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime,
+                                    env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Admit the gate on one research-proposed hypothesis-card spec admission or raise (paper only).
+
+    The decision must name the research proposer (distinct from the gate), a ``registry_entry`` target,
+    low risk, the grant tenant, the persona and the open demand (``proposal_id``) the spec was matched to,
+    and carry a bounded expiry.  Nothing else about the decision is widened.
+    """
+    widening = grant.card_admission
+    if widening is None:
+        raise PaperApprovalDenied("Dev paper grant does not authorise research card admission decisions")
+    if current_environment(env) != DEV_PAPER_ENVIRONMENT:
+        raise PaperApprovalDenied("Card admission paper grant is limited to the paper environment")
+    owner = decision.get("owner_user_id")
+    if owner != widening.proposer_subject or owner == grant.subject:
+        raise PaperApprovalDenied("Card admission proposal must come from the named research proposer principal")
+    if decision.get("tenant_id") != grant.tenant_id:
+        raise PaperApprovalDenied("Dev paper decision tenant is outside authority")
+    if _enum_text(decision.get("target_type")) != "registry_entry":
+        raise PaperApprovalDenied("Card admission may only act on registry_entry targets")
+    if _enum_text(decision.get("risk_level")) != "low":
+        raise PaperApprovalDenied("Dev paper principal may only act on low-risk decisions")
+    for key in ("persona_id", "proposal_id", "target_id", "target_version", "candidate_digest"):
+        value = decision.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise PaperApprovalDenied(f"Card admission decision requires {key} (the open persona demand match)", 422)
+    validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+    return {"grant_id": widening.grant_id, "demand_id": decision["proposal_id"],
+            "persona_id": decision["persona_id"], "registry_id": decision["target_id"]}
 
 
 def validate_paper_decide_body(body: Mapping[str, Any], *, decision: Mapping[str, Any], now: datetime) -> None:
@@ -861,10 +952,55 @@ def expectation_from_decision(decision: Mapping[str, Any]) -> PaperCandidateExpe
     return PaperCandidateExpectation(**values)  # type: ignore[arg-type]
 
 
+def verify_card_admission_candidate(view: Mapping[str, Any], decision: Mapping[str, Any]) -> dict[str, Any]:
+    """Immutable checks of a hypothesis-card StrategySpec candidate (paper research, no capital pool)."""
+    from services.registry.paper_strategy_spec import validate_strategy_spec
+
+    entry = view.get("entry") if isinstance(view, Mapping) else None
+    if not isinstance(entry, Mapping):
+        raise PaperCandidateInvalid("Registry entry view is malformed")
+    for key, expected in (("registry_id", decision.get("target_id")), ("version", decision.get("target_version")),
+                          ("owner_tenant", decision.get("tenant_id")), ("checksum", decision.get("candidate_digest")),
+                          ("artifact_state", "candidate")):
+        if not isinstance(expected, str) or not expected.strip() or entry.get(key) != expected:
+            raise PaperCandidateInvalid(f"Registry candidate {key} does not match the approval target")
+    if entry.get("artifact_type") != "strategy_spec":
+        raise PaperCandidateInvalid("Card admission candidate must be a strategy_spec entry")
+    metadata = entry.get("metadata")
+    spec = metadata.get("strategy_spec") if isinstance(metadata, Mapping) else None
+    if not isinstance(spec, Mapping):
+        raise PaperCandidateInvalid("candidate metadata.strategy_spec is required")
+    if validate_strategy_spec(dict(spec)):
+        raise PaperCandidateInvalid("candidate strategy_spec failed schema validation")
+    if spec.get("strategy_id") != entry.get("strategy_id"):
+        raise PaperCandidateInvalid("candidate strategy_spec.strategy_id does not match the entry")
+    profile = spec.get("execution_profile")
+    if not isinstance(profile, Mapping) or profile.get("execution_mode_hint") != "paper":
+        raise PaperCandidateInvalid("candidate strategy_spec.execution_profile.execution_mode_hint must be 'paper'")
+    embedded = spec.get("metadata")
+    embedded = embedded if isinstance(embedded, Mapping) else {}
+    wiring = embedded.get("card_wiring")
+    if not isinstance(wiring, Mapping) or wiring.get("status") != "gate_ready":
+        raise PaperCandidateInvalid("candidate strategy_spec is not a gate-ready hypothesis card spec")
+    if embedded.get("tenant_id") != decision.get("tenant_id"):
+        raise PaperCandidateInvalid("candidate strategy_spec.metadata.tenant_id does not match the approval tenant")
+    capital = embedded.get("capital_scale_pct", 0)
+    if not _is_number(capital) or capital != 0:
+        raise PaperCandidateInvalid("candidate strategy_spec.metadata.capital_scale_pct must be 0")
+    if _canonical_sha256(spec) != _text(entry, "checksum"):
+        raise PaperCandidateInvalid("candidate strategy_spec checksum does not match the entry checksum")
+    return {"kind": "card_strategy_spec", "checksum": _text(entry, "checksum"),
+            "registry_id": entry.get("registry_id"), "tenant_id": decision.get("tenant_id")}
+
+
 def verify_paper_candidate_for_decision(
     decision: Mapping[str, Any], *, reader: PaperRegistryReader
 ) -> dict[str, Any]:
     """Governance-side recheck of the actual Registry candidate at review/decide."""
+    if decision.get("owner_user_id") != DEV_PAPER_PROVISIONER_SUBJECT:
+        # Only a research card admission reaches here with another owner (require_paper_owned_decision
+        # admits no other); it has no capital pool, so it is checked as a card-derived paper spec.
+        return verify_card_admission_candidate(reader.get_entry_view(str(decision.get("target_id") or "")), decision)
     expectation = expectation_from_decision(decision)
     view = reader.get_entry_view(expectation.target_id)
     return verify_paper_registry_candidate(
@@ -938,6 +1074,11 @@ __all__ = [
     "validate_paper_expiry",
     "validate_paper_proposal",
     "require_paper_owned_decision",
+    "require_card_admission_decision",
+    "verify_card_admission_candidate",
+    "CardAdmissionGrant",
+    "configured_card_admission_grant",
+    "CARD_ADMISSION_GRANT_VALUE",
     "validate_paper_decide_body",
     "configured_paper_registry_reader",
     "verify_paper_registry_candidate",

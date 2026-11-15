@@ -890,3 +890,114 @@ def test_unsafe_grant_file_is_not_a_widening(tmp_path):
     env = _grant_env(tmp_path, "enabled;persona_lifecycle=paper_ladder;proposer=" + PROPOSER, mode=0o644)
     with pytest.raises(PaperApprovalDenied):
         resolve_dev_paper_grant(_ctx(), env=env)
+
+
+# ---------------------------------------------------------------------------
+# Research card admission widening (CARD-ADMISSION-PRODUCTION-WIRING-20261115, design section 6A)
+# ---------------------------------------------------------------------------
+CARD_PROPOSER = "research-card-proposer"
+CARD_GRANT = DevPaperGrant(
+    subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=TENANT,
+    card_admission=scope_module.CardAdmissionGrant(proposer_subject=CARD_PROPOSER, grant_id="dev-paper-grant:card-test"))
+CARD_CONTENT = "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER
+
+
+def _card(**overrides):
+    values = dict(
+        tenant_id=TENANT, owner_user_id=CARD_PROPOSER, target_type="registry_entry", target_id="reg-spec-1",
+        target_version="1.0.0", persona_id=PERSONA, proposal_id="demand-1", candidate_digest="d" * 64,
+        risk_level="low", created_at="2026-09-08T12:00:00Z", expires_at="2026-09-09T11:00:00Z",
+        authorization_scope=None)
+    values.update(overrides)
+    return values
+
+
+def test_baseline_and_lifecycle_only_grants_deny_a_research_owned_card_decision():
+    """Reproduction (criterion 3): without the widening the gate refuses the research proposer's decision."""
+    for grant in (GRANT, WIDE_GRANT):
+        with pytest.raises(PaperApprovalDenied, match="another owner's decision"):
+            require_paper_owned_decision(_card(), grant=grant, now=NOW)
+
+
+def test_card_grant_admits_the_research_proposer_decision_with_evidence(monkeypatch):
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    require_paper_owned_decision(_card(), grant=CARD_GRANT, now=NOW)
+    evidence = scope_module.require_card_admission_decision(_card(), grant=CARD_GRANT, now=NOW, env=ENABLED_ENV)
+    assert evidence == {"grant_id": "dev-paper-grant:card-test", "demand_id": "demand-1",
+                        "persona_id": PERSONA, "registry_id": "reg-spec-1"}
+
+
+@pytest.mark.parametrize("change", [
+    {"owner_user_id": "someone-else"}, {"owner_user_id": DEV_PAPER_PROVISIONER_SUBJECT},
+    {"tenant_id": "tenant-other"}, {"risk_level": "medium"}, {"target_type": "persona_lifecycle_transition"},
+    {"proposal_id": ""}, {"proposal_id": None}, {"persona_id": ""}, {"candidate_digest": None},
+    {"expires_at": "2026-09-08T11:59:59Z"}, {"expires_at": "2026-09-10T00:00:00Z"},
+])
+def test_card_decision_identity_and_expiry_changes_are_denied(change, monkeypatch):
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    with pytest.raises(PaperApprovalDenied):
+        require_paper_owned_decision(_card(**change), grant=CARD_GRANT, now=NOW)
+
+
+def test_card_grant_is_paper_environment_only():
+    with pytest.raises(PaperApprovalDenied, match="paper environment"):
+        scope_module.require_card_admission_decision(_card(), grant=CARD_GRANT, now=NOW, env={"PANTHEON_ENV": "prod"})
+
+
+def test_card_grant_does_not_widen_the_gate_own_decisions_or_lifecycle():
+    with pytest.raises(PaperApprovalDenied, match="registry_entry"):
+        require_paper_owned_decision(_lifecycle(owner_user_id=DEV_PAPER_PROVISIONER_SUBJECT,
+                                                authorization_scope=copy.deepcopy(DEV_PAPER_AUTHORIZATION_SCOPE)),
+                                     grant=CARD_GRANT, now=NOW)
+    with pytest.raises(PaperApprovalDenied, match="does not authorise persona lifecycle"):
+        _require(_lifecycle(), grant=CARD_GRANT)
+
+
+def test_card_grant_content_is_explicit_and_combines_with_lifecycle(tmp_path):
+    grant = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, CARD_CONTENT))
+    assert grant.card_admission.proposer_subject == CARD_PROPOSER and grant.persona_lifecycle is None
+    assert grant.card_admission.grant_id.startswith("dev-paper-grant:card-admission-paper-research:")
+    both = resolve_dev_paper_grant(_ctx(), env=_grant_env(
+        tmp_path, "enabled;persona_lifecycle=paper_ladder;proposer=" + PROPOSER
+        + ";card_admission=paper_research;card_proposer=" + CARD_PROPOSER))
+    assert both.persona_lifecycle.proposer_subject == PROPOSER and both.card_admission.proposer_subject == CARD_PROPOSER
+    lifecycle_only = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled;persona_lifecycle=paper_ladder;proposer=" + PROPOSER))
+    assert lifecycle_only.card_admission is None
+    assert both.persona_lifecycle.grant_id == lifecycle_only.persona_lifecycle.grant_id
+    assert resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled")).card_admission is None
+
+
+@pytest.mark.parametrize("content", [
+    "enabled;card_admission=paper_research;card_proposer=", "enabled;card_admission=live;card_proposer=x",
+    "enabled;card_admission=paper_research", "enabled;card_proposer=x",
+    "enabled;card_admission=paper_research;card_proposer=" + DEV_PAPER_PROVISIONER_SUBJECT,
+    "enabled;card_admission=paper_research;card_proposer=a/b",
+    "enabled;card_admission=paper_research;card_proposer=x;extra=1",
+    "enabled;card_admission=paper_research;card_proposer=x;card_proposer=y",
+])
+def test_malformed_card_widening_never_enables_or_widens(tmp_path, content):
+    with pytest.raises(PaperApprovalDenied):
+        resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, content))
+
+
+def test_card_candidate_verification_requires_a_gate_ready_paper_spec():
+    from services.registry.paper_strategy_spec import build_strategy_spec  # noqa: F401
+    decision = _card()
+    with pytest.raises(PaperCandidateInvalid, match="does not match the approval target"):
+        scope_module.verify_card_admission_candidate({"entry": {"registry_id": "other"}}, decision)
+    with pytest.raises(PaperCandidateInvalid, match="malformed"):
+        scope_module.verify_card_admission_candidate({}, decision)
+    entry = {"registry_id": "reg-spec-1", "version": "1.0.0", "owner_tenant": TENANT, "checksum": "d" * 64,
+             "artifact_state": "candidate", "artifact_type": "execution_bundle", "metadata": {}}
+    with pytest.raises(PaperCandidateInvalid, match="strategy_spec entry"):
+        scope_module.verify_card_admission_candidate({"entry": entry}, decision)
+    with pytest.raises(PaperCandidateInvalid, match="strategy_spec is required"):
+        scope_module.verify_card_admission_candidate({"entry": {**entry, "artifact_type": "strategy_spec"}}, decision)
+
+
+def test_candidate_verification_routes_only_non_gate_owners_to_the_card_check():
+    class Reader:
+        def get_entry_view(self, registry_id):
+            return {"entry": {"registry_id": "other"}}
+    with pytest.raises(PaperCandidateInvalid, match="does not match the approval target"):
+        verify_paper_candidate_for_decision(_card(), reader=Reader())
