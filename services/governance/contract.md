@@ -473,3 +473,31 @@ proposal for that quarter. Content drift on replay fails closed.
 No lifecycle, Capital, rebalance or runtime consumer accepts this target.
 Approval grants candidacy only and rejection records the refusal. Real-capital
 canary entry remains a separate future delivery after production opens.
+
+## Paper-ladder persona lifecycle grant (GOVERNANCE-PAPER-GRANT-PERSONA-LIFECYCLE-20261115)
+
+Operator decision 2026-11-15 (transcript
+`/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/b1134a03-3943-4f96-86d7-19e3d4aab6a5.jsonl`
+line 11873, 10:25:40.843Z, uuid `6a795cd3-bb88-461f-9d9b-441be81526a7`, answer 「paper 自動核准」):
+the dedicated dev paper automated gate (`pantheon-dev-paper-provisioner`) may review and decide
+`persona_lifecycle_transition` decisions for exactly `research_only → consultable` and
+`consultable → paper_owner`.
+
+* **Explicit grant content.** Only a mounted `GOVERNANCE_DEV_PAPER_GRANT_FILE` whose whole content is
+  `enabled;persona_lifecycle=paper_ladder;proposer=<subject>` widens the grant. Plain `enabled` and an unmounted
+  grant behave exactly as before (the gate still denies every lifecycle decision); a malformed content, an
+  unsafe file or the gate's own subject as proposer disables the principal (fail closed).
+* **Every review/decide rechecks** (inside the owner CAS): environment is `dev` (paper), tenant, low risk,
+  the decision owner equals the named proposer and differs from the gate, the subject names the persona and one
+  of the two transitions, expiry is within 24h, and the persona has exactly one active paper capital binding
+  (Capital `GET /api/bindings`) and exactly one active paper runtime binding (Runtime Manager
+  `GET /api/runtime-bindings`) with matching persona, tenant, pool and binding identities. Owner reads use
+  `GOVERNANCE_CAPITAL_BASE_URL`/`GOVERNANCE_CAPITAL_SERVICE_TOKEN[_FILE]` and
+  `GOVERNANCE_RUNTIME_MANAGER_BASE_URL`/`GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN[_FILE]`; an unreadable owner is
+  `503`, a missing or inconsistent binding is `403` with a readable reason. No role bypass exists.
+* **Evidence.** The decision record carries an `audit_log_entry` evidence ref whose `ref_id` is the grant id
+  (`dev-paper-grant:persona-lifecycle-paper-ladder:<digest>`) and whose note lists the verified capital binding,
+  pool, runtime binding and deployment plan. The decision is stamped with the exact dev paper
+  `authorization_scope`, so a consumer must present the paper usage context.
+* **Limit.** The paper ladder only. `live_owner`, canary, live, `frozen`, `retired` and every other transition stay
+  with the operator; registry, capital, canary and live behaviour of the existing grant is unchanged.
