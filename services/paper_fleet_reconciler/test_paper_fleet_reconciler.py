@@ -2533,6 +2533,152 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         recon.reconcile_once()
         self.assertEqual([t["new_status"] for t in self.transitions], ["active"])
 
+class TestPaperFleetSourceSnapshotReadUnavailable(unittest.TestCase):
+    """A Source snapshot read failure is 'unavailable', not 'missing'."""
+
+    POLICY = {"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2}
+
+    def setUp(self) -> None:
+        self.transitions: List[Dict[str, Any]] = []
+
+    def _snap(self, age_seconds: int = 60, snapshot_id: str = "snap-1") -> Dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        return {
+            "snapshot_id": snapshot_id,
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=age_seconds)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "lineage": {"source": "test"},
+            "closes": [150.0, 151.0],
+        }
+
+    def _recon(self, binding: Dict[str, Any]) -> Tuple[Any, Any]:
+        helper = TestPaperFleetStaleSessionAdmissionAndResume
+        helper.transitions = self.transitions
+        store, recon = helper._make_store_and_recon(
+            self, [binding], market_input_bootstrap_grace_seconds=0.0
+        )
+        recon._source_ingest_url = "http://source-ingest:8097"
+        # Exercise the real resolver (the helper only overrides it when a
+        # snapshot is injected, so super() is used here).
+        return store, recon
+
+    def _binding(self, binding_id: str, **kw: Any) -> Dict[str, Any]:
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
+        return _make_binding(
+            binding_id, symbol="AAPL.US", effective_at=old,
+            market_data_policy=self.POLICY, **kw
+        )
+
+    def _unavailable(self, symbol: str = "AAPL.US") -> Any:
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import SourceSnapshotUnavailable
+        return SourceSnapshotUnavailable(symbol, TimeoutError("timed out"))
+
+    def test_timeout_with_fresh_cache_keeps_active_without_terminate(self) -> None:
+        store, recon = self._recon(self._binding("b-unavail-keep"))
+        with patch.object(recon, "_fetch_source_snapshot", return_value=self._snap()):
+            self.assertEqual(recon.reconcile_once()["worker_count"], 1)
+        with patch.object(recon, "_fetch_source_snapshot", side_effect=self._unavailable()), \
+                patch.object(recon, "_terminate_worker") as term:
+            snap = recon.reconcile_once()
+        term.assert_not_called()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(store.get("b-unavail-keep").status, "active")
+        self.assertEqual(self.transitions, [])
+        self.assertEqual(snap["market_input_unavailable_counts"], {"AAPL.US": 1})
+        self.assertIn("market input unavailable", snap["last_error"] or "")
+        self.assertIn("TimeoutError", snap["last_error"] or "")
+
+    def test_timeout_without_cache_pauses(self) -> None:
+        store, recon = self._recon(self._binding("b-unavail-nocache"))
+        with patch.object(recon, "_fetch_source_snapshot", side_effect=self._unavailable()):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(store.get("b-unavail-nocache").status, "paused")
+
+    def test_timeout_with_cache_aged_past_admission_pauses(self) -> None:
+        store, recon = self._recon(self._binding("b-unavail-aged"))
+        recon._source_snapshot_cache["AAPL.US"] = self._snap(age_seconds=100000)
+        with patch.object(recon, "_fetch_source_snapshot", side_effect=self._unavailable()):
+            recon.reconcile_once()
+        saved = store.get("b-unavail-aged")
+        self.assertEqual(saved.status, "paused")
+        self.assertEqual(saved.metadata["session_admission"]["reason_code"], "market_input_stale")
+
+    def test_successful_response_without_snapshot_still_market_input_missing(self) -> None:
+        store, recon = self._recon(self._binding("b-unavail-missing"))
+        recon._source_snapshot_cache["AAPL.US"] = self._snap()
+        with patch.object(recon, "_fetch_source_snapshot", return_value=None):
+            recon.reconcile_once()
+        saved = store.get("b-unavail-missing")
+        self.assertEqual(saved.status, "paused")
+        self.assertEqual(saved.metadata["session_admission"]["reason_code"], "market_input_missing")
+
+    def test_real_http_404_pauses_market_input_missing_even_with_cache(self) -> None:
+        import io
+        import urllib.error
+        store, recon = self._recon(self._binding("b-unavail-404"))
+        recon._source_snapshot_cache["AAPL.US"] = self._snap()
+        err = urllib.error.HTTPError(
+            "http://x", 404, "not found", {}, io.BytesIO(b'{"detail":"market_snapshot_not_found"}')
+        )
+        with patch("urllib.request.urlopen", side_effect=err):
+            recon.reconcile_once()
+        saved = store.get("b-unavail-404")
+        self.assertEqual(saved.status, "paused")
+        self.assertEqual(saved.metadata["session_admission"]["reason_code"], "market_input_missing")
+
+    def test_http_5xx_is_unavailable(self) -> None:
+        import io
+        import urllib.error
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import SourceSnapshotUnavailable
+        _, recon = self._recon(self._binding("b-unavail-503"))
+        err = urllib.error.HTTPError("http://x", 503, "busy", {}, io.BytesIO(b""))
+        with patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(SourceSnapshotUnavailable):
+                recon._fetch_source_snapshot("AAPL.US")
+
+    def test_paused_binding_with_timeout_stays_paused(self) -> None:
+        now = datetime.now(timezone.utc)
+        b = self._binding(
+            "b-unavail-paused",
+            status="paused",
+            metadata={"session_admission": {
+                "reason_code": "market_input_missing",
+                "source_snapshot_id": None,
+                "source_event_time": None,
+                "observed_at": (now - timedelta(seconds=600)).isoformat().replace("+00:00", "Z"),
+                "max_age_seconds": 86400,
+                "pause_command_ref": "cmd-1",
+                "resume_snapshot_id": None,
+                "resumed_at": None,
+            }},
+        )
+        store, recon = self._recon(b)
+        recon._source_snapshot_cache["AAPL.US"] = self._snap()
+        with patch.object(recon, "_fetch_source_snapshot", side_effect=self._unavailable()):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(store.get("b-unavail-paused").status, "paused")
+        self.assertEqual(self.transitions, [])
+
+    def test_transport_errors_classified_unavailable_and_success_resets_count(self) -> None:
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import SourceSnapshotUnavailable
+        _, recon = self._recon(self._binding("b-unavail-classify"))
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            with self.assertRaises(SourceSnapshotUnavailable):
+                recon._fetch_source_snapshot("AAPL.US")
+        binding = self._binding("b-x")
+        with patch.object(recon, "_fetch_source_snapshot", side_effect=self._unavailable()):
+            recon._resolve_market_snapshot(binding)
+            recon._resolve_market_snapshot(binding)
+        self.assertEqual(recon._source_unavailable_counts["AAPL.US"], 2)
+        with patch.object(recon, "_fetch_source_snapshot", return_value=self._snap()):
+            recon._resolve_market_snapshot(binding)
+        self.assertNotIn("AAPL.US", recon._source_unavailable_counts)
+
+
 class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
     """Governed Taiwan (Asia/Taipei) market-session freshness at the fleet
     reconciler's admission defense (services.execution.market_snapshot_admission),
@@ -2809,6 +2955,51 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         saved = store.get("b-tw-monday-unverifiable-001")
         adm = saved.metadata.get("session_admission")
         self.assertEqual(adm["reason_code"], "market_input_calendar_unverifiable")
+
+
+class TestPaperFleetPoolAdmissionCoversEverySymbol(TestPaperFleetSourceSnapshotReadUnavailable):
+    """The pause/resume gate judges every symbol a multi-underlying envelope needs."""
+
+    def _pool_binding(self, binding_id: str) -> Dict[str, Any]:
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
+        return _make_binding(
+            binding_id, effective_at=old, market_data_policy=self.POLICY,
+            symbols=["AAPL.US", "MSFT.US"],
+        )
+
+    def _by_symbol(self, ages: Dict[str, int]):
+        common_bar = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+        def fetch(symbol: str) -> Dict[str, Any]:
+            snap = self._snap(age_seconds=ages[symbol], snapshot_id=f"snap-{symbol}")
+            snap["symbol"] = symbol
+            # One common bar for every symbol at the same age.
+            snap["event_time"] = common_bar if ages[symbol] == 60 else snap["event_time"]
+            return snap
+        return fetch
+
+    def test_one_stale_symbol_pauses_whole_pool(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-stale"))
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=self._by_symbol({"AAPL.US": 60, "MSFT.US": 10 * 86400})):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(store.get("b-pool-stale").status, "paused")
+
+    def test_every_symbol_fresh_keeps_pool_active(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-ok"))
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=self._by_symbol({"AAPL.US": 60, "MSFT.US": 60})):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(store.get("b-pool-ok").status, "active")
+
+    def test_missing_symbol_snapshot_pauses_whole_pool(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-missing"))
+        fetch = self._by_symbol({"AAPL.US": 60, "MSFT.US": 60})
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=lambda s: None if s == "MSFT.US" else fetch(s)):
+            recon.reconcile_once()
+        self.assertEqual(store.get("b-pool-missing").status, "paused")
 
 
 class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):

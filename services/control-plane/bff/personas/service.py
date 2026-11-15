@@ -4576,6 +4576,52 @@ def _persona_readback_snapshot() -> Tuple[
     return all_bindings, all_cron_registrations, monitoring_sessions
 
 
+# --- _reconcile_paper_enrollment_once ---
+def _reconcile_paper_enrollment_once() -> int:
+    """Enrol already paper-provisioned personas through the provisioning ledger.
+
+    Lease-guarded and GET-first inside the coordinator, so safe under restart
+    and concurrent replicas.  Failures stay a readable readback on the record.
+    """
+
+    enrolled = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper enrollment could not list provisioning ledger: %s", exc)
+        return 0
+    for record in records:
+        if record.state not in {"provisioning", "succeeded"}:
+            continue
+        existing = (record.references or {}).get("paper_enrollment")
+        if isinstance(existing, Mapping) and existing.get("status") == "enrolled":
+            continue
+        try:
+            coordinator = PersonaProvisioningCoordinator(
+                store=_persona_provisioning_store(),
+                transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
+                schedule_registrar=_register_persona_cron_required,
+                lease_owner=f"paper-enrollment:{uuid.uuid4().hex}",
+                lease_seconds=max(
+                    30,
+                    int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+                ),
+                actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+                runtime_binding_reader=_runtime_bindings_for_case,
+                governance_actor_id=os.getenv(
+                    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID",
+                    "pantheon-dev-paper-provisioner",
+                ),
+            )
+            coordinator.reconcile_paper_enrollment(record)
+            enrolled += 1
+        except Exception as exc:
+            log.warning(
+                "Paper enrollment reconcile failed for %s: %s", record.persona_id, exc
+            )
+    return enrolled
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
@@ -4631,7 +4677,9 @@ def _reconcile_persona_provisioning_once() -> int:
 def _reconcile_persona_provisioning_pass() -> Any:
     """One background pass in its own fresh read scope (never shared across passes)."""
     with request_read_scope():
-        return _reconcile_persona_provisioning_once()
+        result = _reconcile_persona_provisioning_once()
+        _reconcile_paper_enrollment_once()
+        return result
 
 
 async def _persona_provisioning_reconciler_loop() -> None:
@@ -5257,6 +5305,7 @@ def _coordinate_persona_create(
         # Owner mutations are authenticated as this BFF service principal; the
         # requesting human stays audit metadata inside each owner payload.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        runtime_binding_reader=_runtime_bindings_for_case,
         governance_actor_id=os.getenv(
             "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
@@ -6220,6 +6269,52 @@ def _pm12_quarterly_ranking_governance_state(
 
 
 # --- _pm12_quarterly_ranking_items ---
+def _pm12_prefetch_runtime_telemetry(
+    rows: List[Dict[str, Any]],
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]],
+    *,
+    max_workers: int = 8,
+) -> None:
+    """Warm ``telemetry_cache`` for rows with authoritative runtime ids.
+
+    Only successful reads are cached; a failing read is left uncached so the
+    serial path re-reads it and raises exactly as before.
+    """
+    runtime_ids: List[str] = []
+    seen: set = set()
+    for row in rows:
+        if "runtime_resolution" not in row:
+            continue
+        for runtime_id in _pm12_persona_runtime_ids(row):
+            if runtime_id not in seen:
+                seen.add(runtime_id)
+                runtime_ids.append(runtime_id)
+    if len(runtime_ids) < 2:
+        return
+    store = _get_active_read_store()
+    read_fn = getattr(store, "get_telemetry_summary", None)
+    if not callable(read_fn):
+        return
+    import contextvars as _cv
+
+    def _read(runtime_id: str) -> Optional[Dict[str, Any]]:
+        return read_fn(runtime_id)
+
+    pool = ThreadPoolExecutor(max_workers=min(max_workers, len(runtime_ids)))
+    try:
+        futures = {
+            runtime_id: pool.submit(_cv.copy_context().run, _read, runtime_id)
+            for runtime_id in runtime_ids
+        }
+        for runtime_id, future in futures.items():
+            try:
+                telemetry_cache[runtime_id] = future.result()
+            except Exception:
+                continue
+    finally:
+        pool.shutdown(wait=True)
+
+
 def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
@@ -6229,6 +6324,12 @@ def _pm12_quarterly_ranking_items(
     # Explicit non-trading assistants never enter the trading cohort; ranks are
     # computed over the whole trading cohort, not renumbered per page.
     rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
+    if telemetry_cache is None:
+        # One cache per ranking pass: runtimes shared by several personas are
+        # read once, and distinct runtimes are prefetched concurrently instead
+        # of one serial store round trip per persona.
+        telemetry_cache = {}
+        _pm12_prefetch_runtime_telemetry(rows, telemetry_cache)
 
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
         return _pm12_persona_league_ranking_item(
@@ -7659,6 +7760,85 @@ def _pm12_persona_league_rows(
         archetype=archetype,
         q=q,
     )
+
+
+# --- _pm12_persona_league_rows_shared ---
+# Single-flight + short tenant-scoped memo for the unfiltered league rows that
+# persona-league, persona-league/rankings and quarterly-ranking all recompute.
+# Concurrent identical reads share one computation (single-flight); a finished
+# result is reused for at most _PM12_LEAGUE_ROWS_REUSE_SECONDS, measured from the
+# moment the computation STARTED, so a store change is visible to the first read
+# after that window. Failures are never stored. Every caller gets its own deep
+# copy so one response can never mutate another's rows.
+_PM12_LEAGUE_ROWS_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PM12_LEAGUE_ROWS_WAIT_SECONDS = 30.0
+_pm12_league_rows_lock = threading.Lock()
+_pm12_league_rows_entries: Dict[Any, Any] = {}
+_pm12_league_rows_inflight: Dict[Any, Any] = {}
+
+
+def _pm12_league_rows_cache_clear() -> None:
+    with _pm12_league_rows_lock:
+        _pm12_league_rows_entries.clear()
+
+
+def _pm12_persona_league_rows_shared(*, tenant_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Unfiltered, summary-free league rows; same output as _pm12_persona_league_rows."""
+    import weakref
+
+    def compute() -> List[Dict[str, Any]]:
+        return _pm12_persona_league_rows(
+            tenant_id=tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+    )
+    while True:
+        with _pm12_league_rows_lock:
+            entry = _pm12_league_rows_entries.get(key)
+            if entry is not None:
+                expires, ref, rows = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(rows)
+                _pm12_league_rows_entries.pop(key, None)
+            flight = _pm12_league_rows_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "rows": None}
+                _pm12_league_rows_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PM12_LEAGUE_ROWS_WAIT_SECONDS)
+            if flight["rows"] is not None:
+                return copy.deepcopy(flight["rows"])
+            continue  # leader failed (or timed out): recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            rows = compute()
+            flight["rows"] = rows
+            with _pm12_league_rows_lock:
+                _pm12_league_rows_entries[key] = (
+                    started + min(_PM12_LEAGUE_ROWS_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    rows,
+                )
+            return copy.deepcopy(rows)
+        finally:
+            with _pm12_league_rows_lock:
+                if _pm12_league_rows_inflight.get(key) is flight:
+                    del _pm12_league_rows_inflight[key]
+            flight["event"].set()
 
 
 # --- _pm12_persona_league_source_surfaces ---
@@ -9692,6 +9872,116 @@ def _persona_fleet_submit_post_rank_reads(
         future = submit_owner_read(_PERSONA_FLEET_READ_EXECUTOR, read, warm_key=key)
         if future is not None:
             futures.append(future)
+
+
+# --- _persona_fleet_shared_payload ---
+# Single-flight + short memo for the whole persona-fleet response (slim list plus
+# per-row persona_cycle_health), same pattern as _pm12_persona_league_rows_shared.
+# Reuse window is measured from computation start (hard ceiling 30s); failures
+# are never stored; every caller receives its own deep copy. A reused payload
+# keeps the snapshot_at of when it was actually computed.
+_PERSONA_FLEET_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PERSONA_FLEET_WAIT_SECONDS = 30.0
+_persona_fleet_shared_lock = threading.Lock()
+_persona_fleet_shared_entries: Dict[Any, Any] = {}
+_persona_fleet_shared_inflight: Dict[Any, Any] = {}
+
+
+def _persona_fleet_shared_cache_clear() -> None:
+    with _persona_fleet_shared_lock:
+        _persona_fleet_shared_entries.clear()
+
+
+def _persona_fleet_shared_payload(
+    *,
+    tenant_id: str,
+    state: Optional[str],
+    health: Optional[str],
+    deployment_stage: Optional[str],
+    market_scope: Optional[str],
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+    purpose: Optional[str],
+    data_scope: Optional[str],
+    archived: Optional[str],
+    viewer_user_id: Optional[str],
+    read_cycle_health: Callable[[str, List[str]], Dict[str, Any]],
+    now: Callable[[], str] = utc_now,
+    slim_payload: Optional[Callable[..., Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    import weakref
+
+    def compute() -> Dict[str, Any]:
+        result = (slim_payload or _persona_fleet_slim_list_payload)(
+            tenant_id=tenant_id,
+            snapshot_at=now(),
+            state=state,
+            health=health,
+            deployment_stage=deployment_stage,
+            market_scope=market_scope,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+            purpose=purpose,
+            data_scope=data_scope,
+            archived=archived,
+            viewer_user_id=viewer_user_id,
+        )
+        items = result["data"]["items"]
+        ids = [str(row.get("persona_id") or row.get("id")) for row in items]
+        health_by_persona = read_cycle_health(tenant_id, ids)
+        for row, pid in zip(items, ids):
+            row["persona_cycle_health"] = health_by_persona[pid]
+        return result
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+        state, health, deployment_stage, market_scope, q, purpose, data_scope,
+        archived, page_token, page_size, viewer_user_id,
+    )
+    while True:
+        with _persona_fleet_shared_lock:
+            entry = _persona_fleet_shared_entries.get(key)
+            if entry is not None:
+                expires, ref, payload = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(payload)
+                _persona_fleet_shared_entries.pop(key, None)
+            flight = _persona_fleet_shared_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "payload": None}
+                _persona_fleet_shared_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PERSONA_FLEET_WAIT_SECONDS)
+            if flight["payload"] is not None:
+                return copy.deepcopy(flight["payload"])
+            continue  # leader failed: recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            payload = compute()
+            flight["payload"] = payload
+            with _persona_fleet_shared_lock:
+                _persona_fleet_shared_entries[key] = (
+                    started + min(_PERSONA_FLEET_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    payload,
+                )
+            return copy.deepcopy(payload)
+        finally:
+            with _persona_fleet_shared_lock:
+                if _persona_fleet_shared_inflight.get(key) is flight:
+                    del _persona_fleet_shared_inflight[key]
+            flight["event"].set()
 
 
 # --- _persona_fleet_slim_list_payload ---
@@ -16385,12 +16675,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         quarter_window = _pm12_quarter_window(quarter, snap)
-        rows = _pm12_persona_league_rows(
-            tenant_id=caller_tenant_id,
-            include_route_policy=False,
-            include_health=False,
-            include_allowed_actions=False,
-        )
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
         (
             public_evidence_refs,
@@ -17315,7 +17600,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
-        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         all_rows = [r for r in all_rows if not _fleet_cls.is_non_trading_persona(r)]
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
@@ -17353,13 +17638,41 @@ class PersonaService:
         )
         total = len(rows)
         page_items, next_page_token = slice_fn(rows, page_token, page_size)
-        for item in page_items:
-            pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
-            item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
-            item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
-            allowed = {} if is_ret else (_get_active_read_store().get_persona_allowed_actions(pid) or {})
-            enabled = sorted(str(k) for k, v in allowed.items() if v)
-            item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        import contextvars as _cv
+
+        def _allowed_for(pid_: str) -> Any:
+            return _get_active_read_store().get_persona_allowed_actions(pid_)
+
+        _allowed_futures: Dict[int, Any] = {}
+        _allowed_pool = None
+        _to_fetch = [
+            (idx, str(it.get("persona_id") or it.get("id") or ""))
+            for idx, it in enumerate(page_items)
+            if it.get("state") != "retired"
+        ]
+        if len(_to_fetch) > 1:
+            _allowed_pool = ThreadPoolExecutor(
+                max_workers=min(8, len(_to_fetch)), thread_name_prefix="bff-league-allowed"
+            )
+            for idx, pid_ in _to_fetch:
+                _allowed_futures[idx] = _allowed_pool.submit(_cv.copy_context().run, _allowed_for, pid_)
+        try:
+            for idx, item in enumerate(page_items):
+                pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
+                item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
+                item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
+                fut = _allowed_futures.get(idx)
+                if is_ret:
+                    allowed = {}
+                elif fut is not None:
+                    allowed = fut.result() or {}
+                else:
+                    allowed = _allowed_for(pid) or {}
+                enabled = sorted(str(k) for k, v in allowed.items() if v)
+                item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        finally:
+            if _allowed_pool is not None:
+                _allowed_pool.shutdown(wait=False, cancel_futures=True)
         summary = {
             "persona_count": total,
             "returned_count": len(page_items),
@@ -17434,12 +17747,7 @@ class PersonaService:
         # Ranking blocks never read the per-persona route-policy / health /
         # allowed-actions summaries; skipping them removes 2-3 store reads per
         # persona from this read path without changing any ranking field.
-        rows = _pm12_persona_league_rows(
-            tenant_id=caller_tenant_id,
-            include_route_policy=False,
-            include_health=False,
-            include_allowed_actions=False,
-        )
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(

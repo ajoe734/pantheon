@@ -1,0 +1,33 @@
+{
+  "task_id": "POOL-MARKET-INPUTS-PRODUCTION-20261115",
+  "status": "complete",
+  "reproduction": {
+    "no_writer": "before change no production code in services/ wrote binding market_inputs or candidate_pool_market; only readers were paper_signal_producer.py _target_portfolio / screened branch / multi-symbol branch",
+    "single_symbol_gates": "fleet_desired_state.py required exactly one symbol; reconciler _check_market_admission read binding.symbol only"
+  },
+  "done": {
+    "criterion_2": "services/execution/lean_runtime/pool_market_inputs.py obtains one Source snapshot per envelope symbol (one request each), runs the shared admission rule, requires one common event_time; any failure raises and the producer records no decision for the whole pool",
+    "criterion_5": "fleet_desired_state accepts a declared symbols list (>=2, distinct, non-blank) for a pool binding; reconciler _check_pool_market_admission pauses/keeps paused/resumes on every symbol, same read-failure cache rule as single symbol",
+    "criterion_6": "singleton/passthrough and single-strategy paths are untouched (new code runs only when a target_position envelope has no inline inputs); existing producer/runtime tests unchanged and green",
+    "criterion_7_partial": "test_pool_market_inputs_integration.py: real Source router + LatestMarketSnapshotStore over HTTP -> real CurrentArtifactStrategy/PaperSignalProducer -> PaperRuntimeService fills a 2-member 3-symbol pool; requests per tick == number of symbols (3); latency asserted < 10s",
+    "criterion_3": "services/source_ingestion/candidate_pool_market_feed.py builds candidate_pool_market.v1 (all_governed_tw) from normalized tw_price_daily partitions via the existing storage reader (bars with available_time/suspended(volume<=0)/traded_value(value), session calendar, catalogued PIT observations); POST /api/source-ingest/candidate-pool-market; memoised on partition signature + decision day; producer caches per decision day. Missing dataset/field -> 404 needs_data naming the dataset -> producer needs_data. Unaccounted weekday gap (no governed holiday list) is needs_data, never a guessed calendar.",
+    "criterion_4": "derived market snapshots carry no current_direction/holding_bars (unit tested); member state is the member virtual book (existing test_member_rule_exit_reduces_combined_target_through_runtime ignores deliberately wrong persona-level state)",
+    "plan_side": "services/deployment/service.py accepts distinct multi-symbol paper plans and emits metadata.symbols (no invented symbol); single-symbol plans unchanged. BFF test test_persona_pool_publish_real_deployment.py updated from refusal to acceptance (operator pre-approved same-kind test files).",
+    "criterion_7": "test_pool_market_inputs_integration.py: 3-symbol two-member pool and a screened-member pool (recorded official TWSE bars written as normalized partitions, real Source router over HTTP) both produce orders through real producer, consumer and PaperRuntimeService; requests per tick = symbols (3) / one whole-market request per decision day (second tick 0 requests); latency bounded (<10s / <30s)"
+  },
+  "commands": [
+    {
+      "cmd": "pytest services/execution/lean_runtime services/registry/test_portfolio_envelope.py services/registry/test_candidate_pool.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_candidate_pool_market_feed.py",
+      "result": "731 passed, 14 skipped"
+    },
+    {
+      "cmd": "pytest services/runtime-manager/test_fleet_desired_state.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/deployment/test_pool_envelope_plan.py services/deployment/test_inline_paper_execution_projection.py services/control-plane/bff/tests/test_persona_pool_publish_real_deployment.py",
+      "result": "155 passed, 2 skipped, 2 failed (flask / asyncpg not installed in the venv; the same 2 reconciler tests fail identically on the prior commit)"
+    },
+    {
+      "cmd": "pytest services/deployment/test_service.py",
+      "result": "1 failed (cryptography missing in venv, unrelated), rest passed"
+    }
+  ],
+  "suspension_note": "No stored suspension flag exists; suspended is derived as volume<=0, and absent volume leaves the flag absent so the screen excludes the symbol (missing_suspension_status)."
+}

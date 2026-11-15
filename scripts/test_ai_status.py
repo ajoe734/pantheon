@@ -601,6 +601,25 @@ class DependencyContractBatchTests(unittest.TestCase):
         self.assertEqual(self._run(batch)[1]['status'], 'replayed')
         self.assertEqual(self._snapshot(), after)
 
+    def test_unschedulable_in_progress_allows_dependency_revision(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'in_progress'
+        self._seed()
+        code, _ = self._run(self._request())
+        self.assertEqual(code, 0)
+        updated = ai_status.get_task(self._snapshot()['state'], 'DEP')
+        self.assertEqual(updated['status'], 'in_progress')
+        self.assertEqual(updated['depends_on'], ['COVERAGE'])
+
+    def test_schedulable_in_progress_with_satisfied_dependencies_is_busy(self):
+        dep = self.state['tasks'][0]
+        dep.update(status='in_progress', depends_on=['COVERAGE'])
+        self._seed()
+        before = self._snapshot()
+        batch = self._request([('DEP', ['COVERAGE', 'READ'])])
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
     def test_stale_second_row_or_protected_field_changes_commit_nothing(self):
         for field, value in [('generation', 2), ('owner', 'Codex2'), ('status', 'blocked'), ('acceptance', ['changed'])]:
             with self.subTest(field=field):

@@ -1,0 +1,106 @@
+{
+  "task_id": "TEMPLATE-PASS-POOL-CANDIDATE-20261115",
+  "title": "A demand-driven template search pass becomes a pool candidate: register the gate-passed artifact with its proof and baseline so the persona pool cycle can admit it",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "recorded_at_utc": "2026-11-15T06:22:00Z",
+  "acceptance_1_reproduction": {
+    "summary": "Prior to this change, a passing template search attempt was only persisted into the demand discovery attempts map and never registered into Registry, Governance, or Alpha Replication stores; meanwhile the persona pool candidate reader required a completed admitted alpha-replication entry plus an approved Registry execution_bundle with a resolved baseline.",
+    "template_search_attempt_sink": {
+      "file": "services/research/template_demand_search.py",
+      "pre_fix_lines": "195-215",
+      "post_fix_lines": "230-251",
+      "detail": "TemplateDemandSearch._run evaluated the compiled template via evaluate_template_candidate, built receipt={'status': response.admission_status.value, 'gate': response.to_dict(), ...}, stored it in record['attempts'][aid], and called self.store.record_template_search(...). No production code read demand['discovery']['template_search']['attempts'] to register an execution_bundle or create a replication admission."
+    },
+    "pool_candidate_reader_requirements": {
+      "file": "services/persona/pool_autonomy_cycle.py",
+      "pre_fix_lines": "554-596",
+      "post_fix_lines": "554-619",
+      "detail": "HttpPoolCyclePorts.candidates reads GET /api/research-orchestrator/alpha-replication/entries (line 565), requires row['admission_status']=='admitted' and row['queue_status']=='completed' with no last_error (lines 581-583), fetches GET /api/registry/strategies/{family}/entries (line 585), requires entry['artifact_type']=='execution_bundle' and entry['lineage']['source_strategy_spec_id']==spec_id (lines 607-609), and requires resolve_member_baseline(...)['status']=='approved' (lines 610-614). No producer created the Registry execution_bundle, Governance paper approval, or completed AlphaReplication admission/queue entry from a passing template search attempt."
+    }
+  },
+  "acceptance_2_registration_and_governance_paper_path": {
+    "implementation": {
+      "registrar_module": "services/research/candidate_registration.py:265-704 (TemplateCandidateRegistrar.register_passed_attempt)",
+      "proof_capturing_gate": "services/research/candidate_registration.py:99-152 (TemplateProofCapturingGate)",
+      "replication_record": "services/research/candidate_registration.py:154-262 (record_admitted_template_replication)",
+      "search_hook": "services/research/template_demand_search.py:166-188,244-251",
+      "worker_wiring": "services/research/main.py:1085-1203,2903-2927"
+    },
+    "verified_behavior": [
+      "Passing attempt binds backtest run owner and gate verdict digest (bind_backtest_run_owner / bind_backtest_run_gate_verdict at services/research/candidate_registration.py:432-433).",
+      "Registers candidate strategy artifact via POST /api/registry/strategy-artifacts with producer_run_id, replication_proof, backtest_evaluation, and metadata carrying tenant_id, persona_id, demand_ref, execution_context='paper', capital_scale_pct=0.0 (services/research/candidate_registration.py:483-500).",
+      "Proposes, reviews, and decides paper-only low-risk governance approval apv-tpl-* with evidence_refs naming registry_entry and research_demand, then advances the registry entry to artifact_state='approved' and verifies resolve_member_baseline returns status='approved' (services/research/candidate_registration.py:527-668).",
+      "Records admitted replication entry and completed queue entry carrying persona_id and demand_ref (services/research/candidate_registration.py:673-688).",
+      "Failing attempts never call registrar and direct invocation with a non-admitted receipt raises CandidateRegistrationError('attempt_did_not_pass_gate') without writing to Registry, Governance, or Replication stores."
+    ],
+    "tests": [
+      "services/research/tests/test_candidate_registration.py::test_passing_template_attempt_registers_bundle_approves_baseline_and_records_replication_entry (lines 285-419)",
+      "services/research/tests/test_candidate_registration.py::test_failing_template_attempt_registers_nothing (lines 421-492)"
+    ]
+  },
+  "acceptance_3_persona_and_tenant_scoping_and_admission_criteria": {
+    "implementation": {
+      "candidate_scoping": "services/persona/pool_autonomy_cycle.py:574-619",
+      "replication_entry_projection": "services/research/main.py:1085-1102,1174-1203"
+    },
+    "verified_behavior": [
+      "HttpPoolCyclePorts.candidates filters alpha-replication rows and registry execution_bundle entries by tenant_id/owner_tenant and persona_id, and requires any demand-originated candidate to match the opening persona_id and demand_ref.",
+      "PoolAutonomyCycle still evaluates every existing pool policy criterion (sharpe improvement, correlation, effective bets, drawdown/gross risk limits) and opens/verifies the risk officer consultation memo before admitting as a paper trial member."
+    ],
+    "tests": [
+      "services/persona/test_pool_autonomy_cycle.py::test_demand_driven_candidate_is_returned_only_for_opening_persona_and_tenant (lines 382-428)",
+      "services/research/tests/test_persona_cycle_demand_integration.py::test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial (lines 404-709)"
+    ]
+  },
+  "acceptance_4_single_charge_trial_accounting_across_restarts_and_replays": {
+    "implementation": {
+      "family_trial_budget_recovery": "services/research/template_demand_search.py:166-188,214-216",
+      "persona_trial_count_idempotency": "services/persona/pool_autonomy_cycle.py:567-572,735-747"
+    },
+    "verified_behavior": [
+      "TemplateDemandSearch persists the gate receipt before registration; on restart or replay after a transient registration failure, already-admitted attempts complete registration before the template loop and are skipped in the evaluation loop so the family trial counter is charged once.",
+      "HttpPoolCyclePorts.decide_pool checks prior pool versions for an existing admit decision on the same candidate artifact_ref and returns the recorded version on replay without re-charging persona_trial_count; HttpPoolCyclePorts.candidates excludes any candidate that already has an admit or evolution_trial decision."
+    ],
+    "tests": [
+      "services/research/tests/test_candidate_registration.py::test_registration_retry_after_transient_owner_failure_does_not_recharge_family_trial_budget (lines 494-584)",
+      "services/persona/test_pool_autonomy_cycle.py::test_persona_trial_count_charged_once_per_attempt_across_replays (lines 430-509)"
+    ]
+  },
+  "acceptance_5_missing_governed_dataset_or_policy_authority_fails_closed": {
+    "implementation": {
+      "governed_loader": "services/research/main.py:2813-2856 (_load_template_search_governed_dataset)",
+      "search_fail_closed": "services/research/template_demand_search.py:160-164,253-256"
+    },
+    "verified_behavior": [
+      "When canonical dataset path is missing, records governed_market_data_missing on the demand and fails the run.",
+      "When threshold policy path is missing, records governed_policy_authority_missing on the demand and fails the run.",
+      "When load_evaluation_authority fails or rejects the dataset/policy, records governed_policy_authority_unavailable:<Error> on the demand and fails the run.",
+      "No synthetic market data or fallback strategy artifact is constructed and no trial counter is incremented."
+    ],
+    "tests": [
+      "services/research/tests/test_template_demand_search.py::test_missing_governed_dataset_or_policy_authority_fails_closed_with_reason_recorded_on_demand (lines 410-475)"
+    ]
+  },
+  "acceptance_6_end_to_end_integration": {
+    "test": "services/research/tests/test_persona_cycle_demand_integration.py::test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial (lines 404-709)",
+    "flow_verified": [
+      "Day 1: PersonaCycleController runs PoolAutonomyCycle, detects effective_bets shortfall, and opens a research demand in ResearchDemandStore.",
+      "Day 2: Reconcile triggers _search_demand_templates -> _execute_template_search -> TemplateDemandSearch -> SharedReplicationGate -> TemplateCandidateRegistrar -> RegistryService + RealGovernanceApprovalHarness -> AlphaReplicationAdmissionStore/Queue; HttpPoolCyclePorts.candidates discovers the approved bundle and PoolAutonomyCycle decides admit_trial and opens risk consultation.",
+      "Day 3: Risk consultation memo is published and verified; PoolAutonomyCycle applies admit_trial to PersonaStrategyPoolStore with stage='trial', demand_ref, baseline_ref, and persona_trial_count=1.",
+      "Day 4: Demand reconciliation observes the trial pool member carrying demand_ref and transitions the research demand to status='satisfied'."
+    ]
+  },
+  "acceptance_7_validation_commands_and_pass_counts": {
+    "provisioning_command": "python3 scripts/dev/provision_python_distribution.py",
+    "test_command": "\".venv-pantheon/bin/python3\" -m pytest -q services/research/tests/test_template_demand_search.py services/research/tests/test_candidate_registration.py services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_pool_autonomy_cycle.py",
+    "total_passed": 56,
+    "total_failed": 0,
+    "per_file_counts": {
+      "services/research/tests/test_template_demand_search.py": 19,
+      "services/research/tests/test_candidate_registration.py": 3,
+      "services/research/tests/test_persona_cycle_demand_integration.py": 6,
+      "services/persona/test_pool_autonomy_cycle.py": 28
+    }
+  }
+}

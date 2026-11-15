@@ -126,7 +126,7 @@ def _risk_observations(books, notional=20):
             for day in next(iter(books.values()))["dates"][-20:]]
 
 
-def test_decision_routes_admit_reweight_replace_refuse_and_read_version_history(env):
+def test_decision_routes_admit_reweight_replace_refuse_and_read_version_history(env, monkeypatch):
     """Real HTTP -> store -> policy -> recorded-data replay, no patched evaluator.
 
     Registry is the existing FakeRegistry boundary. Its test-only constant-long
@@ -159,9 +159,16 @@ def test_decision_routes_admit_reweight_replace_refuse_and_read_version_history(
     assert admitted.json()["decision"]["status"] == "applied", admitted.text
     trial = admitted.json()["members"][-1]
     assert trial["stage"] == "trial" and trial["risk_weight"] <= .1
+    import pool_policy
+    real_policy = pool_policy.load_policy()
+    # Keep the 30 day trial a trial (promotion needs 40 days) while its cap is lifted after 20 days.
+    monkeypatch.setattr(pool_policy, "load_policy", lambda path=None: real_policy.model_copy(update={"trial_promotion_min_days": 40}))
     weighted = _decision(client, 2, **common)
+    monkeypatch.setattr(pool_policy, "load_policy", lambda path=None: real_policy)
     assert weighted.status_code == 201 and weighted.json()["decision"]["status"] == "applied", weighted.text
     assert sum(m["risk_weight"] for m in weighted.json()["members"]) == pytest.approx(1)
+    assert weighted.json()["members"][-1]["stage"] == "trial"
+    assert weighted.json()["decision"]["trial_promotions"][0]["reason"] == "trial_history_30_of_40_days"
     replaced = _decision(client, 3, "admit", candidate={"artifact_ref": "stronger", "checksum": candidate["checksum"]}, **common)
     assert replaced.status_code == 201 and replaced.json()["decision"]["status"] == "applied", replaced.text
     assert replaced.json()["decision"]["replaced_artifact_ref"] == "current"
@@ -622,3 +629,60 @@ def test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_i
     store._verify_memo = lambda *a: (_ for _ in ()).throw(AssertionError("stale memo must not be verified"))
     stale = _decision(client, 3, "admit", initiated_by="persona", consultation_memo_id="memo-old", consultation_pool_version=1, **body)
     assert stale.json()["decision"]["reasons"] == ["consultation_stale_pool_membership_changed"]
+
+
+def _uncorrelated_candidate(reg, entries, one, two):
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    candidate = copy.deepcopy(entries[one["artifact_ref"]])
+    artifact = candidate["metadata"]["strategy_artifact"]
+    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+    artifact["parameters"]["zero_momentum_action"] = "BUY"
+    candidate["checksum"] = strategy_artifact_checksum(artifact)
+    candidate["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = candidate["checksum"]
+    reg.entries = {"current": {**entries[two["artifact_ref"]], "registry_id": "current"},
+                   "candidate": {**candidate, "registry_id": "candidate"}}
+
+
+def test_trial_is_promoted_at_first_reweight_after_its_own_history_and_baseline_resolves(env):
+    """Reproduces the gap: before this change a matured trial stayed a trial forever (weight lifted, stage never)."""
+    import copy
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    _uncorrelated_candidate(reg, entries, one, two)
+    assert _post(client, [_member("current", checksum=reg.entries["current"]["checksum"], risk_weight=.7)], 0).status_code == 201
+    books = {ref: _observed_book(entry["checksum"], better=ref == "candidate") for ref, entry in reg.entries.items()}
+    common = {"books": books, "dataset": recorded_dataset(), "observations": _risk_observations(books)}
+    admitted = _decision(client, 1, "admit", candidate={"artifact_ref": "candidate", "checksum": reg.entries["candidate"]["checksum"]}, **common)
+    assert admitted.json()["decision"]["status"] == "applied", admitted.json()["decision"]["reasons"]
+    assert admitted.json()["members"][-1]["stage"] == "trial"
+    reweighted = _decision(client, 2, **common)
+    body = reweighted.json()
+    assert body["decision"]["status"] == "applied", reweighted.text
+    promoted = next(m for m in body["members"] if m["artifact_ref"] == "candidate")
+    assert promoted["stage"] == "active" and promoted["risk_weight"] > .1
+    assert body["decision"]["trial_promotions"] == [
+        {"artifact_ref": "candidate", "promoted": True, "reason": "trial_history_and_drawdown_met",
+         "days": len(books["candidate"]["dates"]), "drawdown": pytest.approx(0, abs=.05)}]
+    assert reweighted.json()["decision"]["policy"]["coordinator_proposals"]
+
+
+def test_trial_stays_trial_when_baseline_no_longer_resolves(env, monkeypatch):
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    _uncorrelated_candidate(reg, entries, one, two)
+    assert _post(client, [_member("current", checksum=reg.entries["current"]["checksum"], risk_weight=.7)], 0).status_code == 201
+    books = {ref: _observed_book(entry["checksum"], better=ref == "candidate") for ref, entry in reg.entries.items()}
+    common = {"books": books, "dataset": recorded_dataset(), "observations": _risk_observations(books)}
+    assert _decision(client, 1, "admit", candidate={"artifact_ref": "candidate", "checksum": reg.entries["candidate"]["checksum"]}, **common).status_code == 201
+    import services.evolution.approved_baselines as baselines
+    real = baselines.resolve_member_baseline
+    monkeypatch.setattr(baselines, "resolve_member_baseline",
+        lambda **kw: {"status": "missing", "reason": "approval_withdrawn"} if kw["artifact_ref"] == "candidate" else real(**kw))
+    body = _decision(client, 2, **common).json()
+    assert next(m for m in body["members"] if m["artifact_ref"] == "candidate")["stage"] == "trial"
+    assert body["decision"]["trial_promotions"][0]["reason"] == "baseline_not_resolved:approval_withdrawn"

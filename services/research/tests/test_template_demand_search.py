@@ -405,3 +405,71 @@ def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeyp
     result = module.research_demand_store.list('tenant-a')[0]['discovery']['template_search']
     assert result['reason'].startswith('template_search_unavailable:owner_credential_unconfigured:')
     assert result['attempts'] == {}
+
+
+@pytest.mark.parametrize(
+    'dataset_env,policy_env,expected_reason',
+    [
+        (None, '/nonexistent/policy.json', 'governed_market_data_missing'),
+        ('/nonexistent/dataset.json', None, 'governed_policy_authority_missing'),
+        ('/nonexistent/dataset.json', '/nonexistent/policy.json', 'governed_policy_authority_unavailable:'),
+    ],
+)
+def test_missing_governed_dataset_or_policy_authority_fails_closed_with_reason_recorded_on_demand(
+    tmp_path, monkeypatch, configured_owners, dataset_env, policy_env, expected_reason
+):
+    from services.research.vectorbt.adapter import vectorbt_adapter as adapter
+
+    monkeypatch.setenv('ALPHA_REPLICATION_DATA_DIR', str(tmp_path / 'alpha'))
+    monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
+    for key in (
+        'RESEARCH_RETRAIN_CANONICAL_DATASET_PATH',
+        'TRAINING_SESSION_CANONICAL_DATASET_PATH',
+        'PERSONA_POOL_CANONICAL_DATASET_PATH',
+        'RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH',
+        'TRAINING_SESSION_THRESHOLD_POLICY_PATH',
+        'PERSONA_POOL_THRESHOLD_POLICY_PATH',
+    ):
+        monkeypatch.delenv(key, raising=False)
+    if dataset_env is not None:
+        monkeypatch.setenv('RESEARCH_RETRAIN_CANONICAL_DATASET_PATH', dataset_env)
+    if policy_env is not None:
+        monkeypatch.setenv('RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH', policy_env)
+
+    module = _load_service_module(data_dir=str(tmp_path / 'research'))
+
+    def forbidden(*a, **kw):
+        raise AssertionError('synthetic market data / fallback artifact used')
+
+    monkeypatch.setattr(adapter, 'build_governed_tw_replication_dataset', forbidden)
+    monkeypatch.setattr(adapter, 'build_canonical_tw_strategy_artifact', forbidden)
+    monkeypatch.setattr(
+        module,
+        '_retrain_call',
+        lambda **kw: (
+            {
+                'tenant_id': 'tenant-a',
+                'persona_id': BODY['persona_id'],
+                'metadata': {'market_scope': {'symbols': ['2330']}},
+            }
+            if kw['service'] == 'persona'
+            else entries('qlib_alpha158:KMID')
+        ),
+    )
+
+    demand = module.research_demand_store.open('tenant-a', BODY)
+    module._search_demand_templates([demand])
+    run_id = module.store.list_runs()[0]['run_id']
+    for t in threading.enumerate():
+        if t.name == 'retrain-executor-' + run_id:
+            t.join(15)
+            assert not t.is_alive()
+
+    run = module.get_run(run_id)
+    assert run['status'] == 'failed'
+    updated_demand = module.research_demand_store.list('tenant-a')[0]
+    ts = updated_demand['discovery']['template_search']
+    assert expected_reason in ts['reason'], ts
+    assert ts['attempts'] == {}
+    assert not (tmp_path / 'trials.json').exists()
+

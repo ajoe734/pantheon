@@ -11,16 +11,71 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import copy
+from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 log = logging.getLogger(__name__)
+
+# A small owner-page memo absorbs repeated concurrent dashboard reads. It
+# stores validated pages only, never the full catalog or projected BFF DTOs.
+STRATEGY_SUMMARY_MEMO_SECONDS = 5.0
+STRATEGY_SUMMARY_MEMO_MAX_KEYS = 64
+
+
+class _StrategySummaryPageMemo:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values: OrderedDict[Any, Tuple[float, Dict[str, Any]]] = OrderedDict()
+        self._pending: Dict[Any, Future] = {}
+
+    def read(self, key: Any, fetch: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+        from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+
+        leader = False
+        with self._lock:
+            now = time.monotonic()
+            for expired in [k for k, (deadline, _) in self._values.items() if deadline <= now]:
+                del self._values[expired]
+            hit = self._values.get(key)
+            if hit is not None:
+                self._values.move_to_end(key)
+                return copy.deepcopy(hit[1])
+            pending = self._pending.get(key)
+            if pending is None and len(self._pending) < STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                pending = self._pending[key] = Future()
+                leader = True
+        if pending is None:
+            # Key churn cannot create an unbounded in-flight map or serialize
+            # unrelated tenants behind a slow Registry read.
+            return fetch()
+        if not leader:
+            return copy.deepcopy(pending.result(timeout=remaining_management_read_budget()))
+        try:
+            value = fetch()
+            saved = copy.deepcopy(value)
+            with self._lock:
+                self._values[key] = (time.monotonic() + STRATEGY_SUMMARY_MEMO_SECONDS, saved)
+                while len(self._values) > STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                    self._values.popitem(last=False)
+            pending.set_result(saved)
+            return value
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
 
 
 class _EvidenceOwnerReadError(RuntimeError):
@@ -149,6 +204,63 @@ class ArtifactOwnerReadResult:
     status: str  # "ok" | "failed" | "unconfigured"
     source: str  # "typed_store" | "service_client" | "unavailable" | "missing"
     error: Optional[str] = None
+
+
+@dataclass
+class ArtifactOwnerPageResult(ArtifactOwnerReadResult):
+    """One bounded ordered owner page: exact owner ``total`` and an opaque keyset ``next_page_token``."""
+
+    total: Optional[int] = None
+    next_page_token: Optional[str] = None
+
+
+_ARTIFACT_OWNER_TOKEN_PREFIX = "k1:"
+
+
+def artifact_catalog_key(row: Mapping[str, Any]) -> Tuple[str, str]:
+    """Owner order key of a normalized catalog row: ``(created_at, id)`` as strings, NULL as ''."""
+    return (str(row.get("updatedAt") or ""), str(row.get("id") or ""))
+
+
+def encode_artifact_owner_token(key: Tuple[str, str]) -> str:
+    import base64
+
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_OWNER_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_artifact_owner_token(token: Optional[str]) -> Optional[Tuple[str, str]]:
+    import base64
+
+    text = str(token).strip() if token is not None else ""
+    if not text.startswith(_ARTIFACT_OWNER_TOKEN_PREFIX):
+        return None
+    body = text[len(_ARTIFACT_OWNER_TOKEN_PREFIX):]
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+    except (ValueError, UnicodeError):
+        return None
+    if isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded):
+        return (decoded[0], decoded[1])
+    return None
+
+
+def page_artifact_catalog_items(
+    items: Sequence[Dict[str, Any]], page_size: int, page_token: Optional[str],
+) -> ArtifactOwnerPageResult:
+    """Page already-normalized rows held in memory with the owners' ordering and token (typed-store twin)."""
+    ordered = sorted(items, key=artifact_catalog_key, reverse=True)
+    anchor = decode_artifact_owner_token(page_token)
+    start = 0 if anchor is None else next(
+        (i for i, r in enumerate(ordered) if artifact_catalog_key(r) < anchor), len(ordered)
+    )
+    page = ordered[start:start + page_size]
+    more = start + len(page) < len(ordered) and bool(page)
+    return ArtifactOwnerPageResult(
+        page, "ok", "typed_store",
+        total=len(ordered),
+        next_page_token=encode_artifact_owner_token(artifact_catalog_key(page[-1])) if more else None,
+    )
 
 
 def normalize_registry_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -593,6 +705,16 @@ class ResearchKnowledgeSourcePort:
     def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
         raise NotImplementedError
 
+    def read_registry_strategy_artifacts_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> "ArtifactOwnerPageResult":
+        raise NotImplementedError
+
+    def read_research_artifact_catalog_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> "ArtifactOwnerPageResult":
+        raise NotImplementedError
+
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -705,6 +827,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
         self._evidence_repo = evidence_repository
+        self._strategy_summary_memo = _StrategySummaryPageMemo()
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -2908,7 +3031,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, registry_url
 
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2935,6 +3059,30 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+
+        def read_page() -> Dict[str, Any]:
+            def fetch() -> Dict[str, Any]:
+                return self._fetch_canonical_strategy_specs_page_uncached(
+                    state=norm_state, exclude_state=norm_exclude_state,
+                    persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
+                )
+
+            auth = authorization.get()
+            if not auth:
+                return fetch()  # Preserve the canonical missing-auth error.
+            try:
+                tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            except ActionUnavailableError:
+                return fetch()  # Preserve the canonical forbidden envelope.
+            return self._strategy_summary_memo.read(
+                (
+                    tenant, hashlib.sha256(auth.encode()).digest(),
+                    registry_url("/api/registry/strategy-specs"),
+                    norm_state, norm_exclude_state, norm_persona, norm_token, int(page_size),
+                ),
+                fetch,
+            )
+
         return cached_owner_call(
             (
                 "rks_canonical_strategy_specs_page",
@@ -2946,13 +3094,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_token,
                 int(page_size),
             ),
-            lambda: self._fetch_canonical_strategy_specs_page_uncached(
-                state=norm_state,
-                exclude_state=norm_exclude_state,
-                persona_id=norm_persona,
-                page_token=norm_token,
-                page_size=int(page_size),
-            ),
+            read_page,
         )
 
     def _fetch_canonical_strategy_specs_page_uncached(
@@ -4105,6 +4247,82 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if isinstance(r, Mapping)
         ]
         return ArtifactOwnerReadResult(items, "ok", "service_client")
+
+    def read_registry_strategy_artifacts_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> ArtifactOwnerPageResult:
+        """One bounded Registry page; the owner orders, counts and tokenizes (no full-population read)."""
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            full = self.read_registry_strategy_artifacts()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        if not base_url:
+            return ArtifactOwnerPageResult([], "unconfigured", "missing")
+        from urllib.parse import quote
+
+        path = f"/api/registry/strategy-artifacts?page_size={int(page_size)}"
+        if page_token:
+            path += f"&page_token={quote(str(page_token), safe='')}"
+        status_code, payload = self._registry_http_get(base_url, path)
+        if status_code != 200 or not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            return ArtifactOwnerPageResult(
+                [], "failed", "unavailable", f"Registry strategy-artifacts read failed (status={status_code})",
+            )
+        items: List[Dict[str, Any]] = []
+        for raw_item in payload["items"]:
+            if not isinstance(raw_item, Mapping):
+                continue
+            entry = raw_item.get("entry") if isinstance(raw_item.get("entry"), Mapping) else raw_item
+            if entry.get("artifact_type") not in (None, "execution_bundle"):
+                continue
+            items.append(normalize_registry_catalog_row(entry))
+        info = payload.get("page_info") if isinstance(payload.get("page_info"), Mapping) else {}
+        total = payload.get("total") if payload.get("total") is not None else info.get("total")
+        nxt = payload.get("next_page_token") if payload.get("next_page_token") is not None else info.get("next_page_token")
+        return ArtifactOwnerPageResult(
+            items, "ok", "service_client",
+            total=int(total) if isinstance(total, int) else None,
+            next_page_token=str(nxt) if nxt else None,
+        )
+
+    def read_research_artifact_catalog_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> ArtifactOwnerPageResult:
+        if self._artifacts:
+            full = self.read_research_artifact_catalog_rows()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        owner = self._get_research_write_owner()
+        if owner is None or not hasattr(owner, "list_research_artifacts"):
+            return ArtifactOwnerPageResult([], "unconfigured", "missing")
+        try:
+            if hasattr(owner, "list_research_artifacts_page"):
+                page = owner.list_research_artifacts_page(page_size=page_size, page_token=page_token)
+            else:
+                # An owner without the page call keeps the full read, paged here with the same order and token.
+                raw_rows = owner.list_research_artifacts()
+                if not isinstance(raw_rows, list):
+                    raise ValueError("invalid research artifact list")
+                page = None
+        except Exception as exc:
+            return ArtifactOwnerPageResult([], "failed", "unavailable", str(exc))
+        if page is None:
+            full = self.read_research_artifact_catalog_rows()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        raw_items = [r for r in page.get("items", []) if isinstance(r, Mapping)]
+        items = [
+            normalize_research_catalog_row(
+                self._saved_output_artifact(r) if ("title" in r or "run" in r or "created_by" in r) else r
+            )
+            for r in raw_items
+        ]
+        info = page.get("page_info") if isinstance(page.get("page_info"), Mapping) else {}
+        total = page.get("total") if page.get("total") is not None else info.get("total")
+        nxt = page.get("next_page_token") if page.get("next_page_token") is not None else info.get("next_page_token")
+        return ArtifactOwnerPageResult(
+            items, "ok", "service_client",
+            total=int(total) if isinstance(total, int) else None,
+            next_page_token=str(nxt) if nxt else None,
+        )
 
     @staticmethod
     def _rw05_field_value(artifact: Dict[str, Any], field_key: str) -> Any:

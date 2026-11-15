@@ -219,7 +219,6 @@
         {
           "cadence": "daily",
           "connector_candidates": [
-            "collector-tw-twse-index-breadth"
           ],
           "dataset": "tw_index_daily",
           "market": "TW",
@@ -234,7 +233,6 @@
         {
           "cadence": "daily",
           "connector_candidates": [
-            "collector-tw-twse-taiex-history"
           ],
           "dataset": "tw_index_daily",
           "market": "TW",
@@ -416,6 +414,7 @@
   ],
   "schema_version": "source_ingest_desired_state.v1",
   "collector_ingestion_exclusions": {
+    "collector-tw-taifex-vix": "Temporary collector-only source emitting tw_vix_daily and tw_vix_intraday bundles from official TAIFEX VIX downloads. Hosted reader and connector admission are deferred to the regime engine intake task; remove this exclusion when that task supplies the matching readers and definitions. Do not admit these rows through the stock-price reader. Collector fetch policy and timers remain unchanged.",
     "collector-youtube-gemini-notes": "Native GeminiVideoNotesPoller emits model-generated video summaries with hashed_author=null, not authored social posts. Hosted ingestion is deferred until a generated-note evidence/attribution contract is defined; do not synthesize an author or route these into community social features. Host policy and timers remain unchanged."
   }
 }

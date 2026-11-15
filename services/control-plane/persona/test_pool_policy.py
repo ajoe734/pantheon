@@ -84,3 +84,49 @@ def test_bad_books_do_not_become_weights(mutate):
     mutate(observed)
     with pytest.raises(ValueError):
         reweight([member("a")], {"a": observed}, load_policy(), "now")
+
+
+def test_promotion_condition_and_numbers_live_in_the_policy_file_marked_as_proposals():
+    from pool_policy import promotion_verdict
+    policy = load_policy()
+    assert {"trial_promotion_min_days", "trial_promotion_max_drawdown", "publish_weight_tolerance"} <= set(policy.coordinator_proposals)
+    trial = member("t", stage="trial")
+    stat = {"days": policy.trial_promotion_min_days, "drawdown": 0.0}
+    assert promotion_verdict(trial, stat, policy)["eligible"] is True
+    assert promotion_verdict(trial, {**stat, "days": stat["days"] - 1}, policy)["reason"].startswith("trial_history_")
+    assert promotion_verdict(trial, {**stat, "drawdown": policy.trial_promotion_max_drawdown}, policy)["reason"] == \
+        "trial_drawdown_not_below_promotion_threshold"
+    assert promotion_verdict(member("a"), stat, policy)["reason"] == "not_a_trial"
+    with pytest.raises(ValueError):  # a looser promotion than the halving rule is not allowed
+        type(policy).model_validate({**policy.model_dump(), "trial_promotion_max_drawdown": policy.halve_drawdown + .01})
+
+
+def test_trial_publication_reading_virtual_before_weight_and_capped_after():
+    from pool_policy import trial_publication
+    assert trial_publication(member("t", stage="trial", risk_weight=0), .1) == (0, True)
+    assert trial_publication(member("t", stage="trial", risk_weight=.3), .1) == (.1, False)
+    assert trial_publication(member("t", stage="trial", risk_weight=.05), .1) == (.05, False)
+    assert trial_publication(member("a", risk_weight=.7), .1) == (.7, False)
+
+
+def test_publication_change_membership_stage_weight_and_tolerance():
+    from pool_policy import last_published, publication_change
+    policy = load_policy()
+    pins = [{"artifact_ref": "a", "risk_weight": .6, "virtual_only": False, "stage": "active"},
+            {"artifact_ref": "b", "risk_weight": 0, "virtual_only": True, "stage": "trial"}]
+    published = {"pool_version": 2, "members": pins}
+    pool = lambda *ms: {"members": list(ms)}
+    same = pool(member("a", risk_weight=.6 + policy.publish_weight_tolerance), member("b", stage="trial", risk_weight=0))
+    assert publication_change(published, same, policy)["changed"] is False
+    moved = pool(member("a", risk_weight=.6 + policy.publish_weight_tolerance + .01), member("b", stage="trial", risk_weight=0))
+    assert publication_change(published, moved, policy)["reasons"] == ["weight_changed:a"]
+    given_weight = pool(member("a"), member("b", stage="trial", risk_weight=.01))
+    assert "weight_changed:b" in publication_change(published, given_weight, policy)["reasons"]  # virtual -> trading
+    promoted = pool(member("a", risk_weight=.6), member("b", stage="active", risk_weight=0))
+    assert "stage_changed:b" in publication_change(published, promoted, policy)["reasons"]
+    removed = pool(member("a", risk_weight=.6), member("b", stage="removed"))
+    assert publication_change(published, removed, policy)["membership_changed"] is True
+    assert publication_change(None, same, policy)["reasons"] == ["no_publication_record"]
+    history = {"published": {"1": {"status": "published", "pool_version": 1}, "3": {"status": "dispatched", "pool_version": 3},
+                             "2": {"status": "published", "pool_version": 2}}}
+    assert last_published(history)["pool_version"] == 2 and last_published({}) is None

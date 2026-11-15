@@ -680,6 +680,7 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
             continue
         services[service] = {"image_id": row["image_id"], "state": "running" if row["status"] == "running" else "completed",
                              "has_healthcheck": _has_healthcheck(row),
+                             "healthy_at_capture": row["health"] == "healthy",
                              "env": _stack_env(docker, row["container_id"])}
         if service in CONTROL_POSTURE and row["status"] == "running":
             services[service]["control"] = _stack_control(docker, service, row["container_id"])
@@ -727,8 +728,10 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         # A running source controller/API must carry its recorded posture; nothing else may.
         controlled = service in CONTROL_POSTURE and row.get("state") == "running"
         source_snapshot = service == API_SERVICE and "source_snapshot" in row
+        # healthy_at_capture is additive: baselines captured before it existed omit it.
         _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ())
-              + (("source_snapshot",) if source_snapshot else ()),
+              + (("source_snapshot",) if source_snapshot else ())
+              + (("healthy_at_capture",) if "healthy_at_capture" in row else ()),
               "stack service")
         if source_snapshot:
             proof = row["source_snapshot"]
@@ -748,6 +751,9 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         _match(row["image_id"], IMAGE, "stack image ID")
         if row["state"] not in ("running", "completed") or type(row["has_healthcheck"]) is not bool:
             raise ArtifactError("invalid stack service state")
+        if "healthy_at_capture" in row and (type(row["healthy_at_capture"]) is not bool or
+                                            (row["healthy_at_capture"] and not row["has_healthcheck"])):
+            raise ArtifactError("invalid stack service capture health")
         if row["state"] == "completed" and row["has_healthcheck"]:
             raise ArtifactError("a completed one-shot service cannot have a healthcheck")
         _keys(row["env"], STACK_ENV_KEYS, "stack service environment")
@@ -778,7 +784,9 @@ def _stack_problems(stack: dict, current: dict[str, list[dict]]) -> tuple[dict[s
                 soft[service] = "one-shot-not-completed"
         elif row["status"] != "running":
             soft[service] = "not-running"
-        elif expected["has_healthcheck"] and row["health"] != "healthy":
+        elif expected["has_healthcheck"] and expected.get("healthy_at_capture", True) and row["health"] != "healthy":
+            # A service recorded unhealthy/starting at capture is proven by image and
+            # running state only; a baseline without the field keeps requiring healthy.
             soft[service] = "not-healthy"
     for service, containers in current.items():
         if service not in stack["services"] and any(c["status"] in ("running", "restarting", "paused") for c in containers):
@@ -873,11 +881,17 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
     if drift:
         raise _mixed(drift)
     check_lease()
+    # Health is reported, not required, for services that were not healthy at capture.
+    unhealthy = {service: current[service][0]["health"] or "none"
+                 for service, row in sorted(stack["services"].items())
+                 if row["has_healthcheck"] and not row.get("healthy_at_capture", True)
+                 and current[service][0]["health"] != "healthy"}
     return {"scope": "stack",
             "services": {service: {"baseline_image_id": row["image_id"],
                                    "observed_image_id": current[service][0]["image_id"]}
                          for service, row in sorted(stack["services"].items())},
-            "candidate_only_stopped": sorted(s for s in current if s not in stack["services"])}
+            "candidate_only_stopped": sorted(s for s in current if s not in stack["services"]),
+            **({"unhealthy_at_capture": unhealthy} if unhealthy else {})}
 
 
 def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
@@ -1036,9 +1050,14 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             raise StackError(f"{service}: failed to re-point the Compose image name", [service]) from error
     result = {"image_readback_verified": True, "services": observed}
     if stack is not None:
-        result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
+        proof = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
                                          budget_seconds=readback_seconds, compose_refs=refs)
+        # Reported beside (not inside) the strict stack proof: health is not a restore requirement here.
+        unhealthy = proof.pop("unhealthy_at_capture", None)
+        result["stack"] = proof
+        if unhealthy:
+            result["unhealthy_at_capture"] = unhealthy
         result["recreated_services"] = sorted(recreated)
         result["started_services"] = sorted(started)
     check_lease()

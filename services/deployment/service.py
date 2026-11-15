@@ -479,6 +479,7 @@ class DeploymentPlannerService:
             from services.registry.strategy_artifact import (
                 StrategyArtifactValidationError,
                 strategy_artifact_checksum,
+                strategy_artifact_minimum_closes,
                 validate_strategy_artifact,
             )
 
@@ -506,13 +507,35 @@ class DeploymentPlannerService:
             parameters = artifact["parameters"]
             if not plan.metadata.get("symbol"):
                 symbols = parameters.get("symbols")
-                if not isinstance(symbols, list) or len(symbols) != 1 or not isinstance(symbols[0], str) or not symbols[0].strip():
-                    raise DeploymentPlanError("Inline paper artifact requires an explicit symbol or one approved symbol")
-                plan.metadata["symbol"] = symbols[0]
+                cleaned = (
+                    [x.strip() for x in symbols if isinstance(x, str)] if isinstance(symbols, list) else []
+                )
+                if (
+                    not isinstance(symbols, list) or not symbols or len(cleaned) != len(symbols)
+                    or not all(cleaned) or len(set(cleaned)) != len(cleaned)
+                ):
+                    raise DeploymentPlanError(
+                        "paper_plan_symbols_invalid: inline paper artifact requires an explicit symbol "
+                        "or a non-empty list of distinct approved symbols"
+                    )
+                if len(symbols) == 1:
+                    plan.metadata["symbol"] = symbols[0]
+                else:
+                    # A pool envelope nets several underlyings in one binding. It declares the
+                    # complete list the producer must obtain at one common bar; there is no
+                    # single symbol, and none is invented.
+                    plan.metadata["symbols"] = list(symbols)
+            if "market_data_policy" in plan.metadata:
+                minimum_closes = None
+            else:
+                try:
+                    minimum_closes = strategy_artifact_minimum_closes(artifact)
+                except (StrategyArtifactValidationError, KeyError, TypeError, ValueError) as exc:
+                    raise DeploymentPlanError(f"minimum_closes cannot be derived: {exc}") from exc
             plan.metadata.setdefault("market_data_policy", {
                 "owner": "source-ingest",
                 "contract": "latest_stored_normalized",
-                "minimum_closes": parameters[artifact["strategy_logic"]["lookback_parameter"]],
+                "minimum_closes": minimum_closes,
                 "max_age_seconds": 86400,
             })
         if persist:
