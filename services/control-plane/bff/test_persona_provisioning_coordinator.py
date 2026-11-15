@@ -3107,3 +3107,32 @@ def test_without_strategy_artifact_ref_behavior_is_unchanged() -> None:
     assert entry["metadata"]["strategy_artifact"]["strategy_logic"]["kind"] == (
         "close_to_close_momentum"
     )
+
+
+def test_paper_enrollment_problem_is_a_readback_and_never_fails_paper_admission() -> None:
+    """Enrolment sits outside the saga: an unavailable owner is a readable reason."""
+
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+    coordinator.persona_owner_provider = lambda: None
+
+    done = coordinator.coordinate(record)
+
+    assert done.state == "provisioning"
+    assert done.current_step == "schedule_registered"
+    assert done.error is None and done.compensation is None
+    readback = done.references["paper_enrollment"]
+    assert readback["status"] == "unavailable"
+    assert readback["reason"] == "RuntimeError: persona_owner_unavailable_for_paper_enrollment"
+    assert readback["lifecycle_state"] is None
+
+
+def test_paper_enrollment_reconcile_skips_terminal_ledger_records() -> None:
+    store, record = _record_and_store()
+    coordinator = _coordinator(store, FakeOwnerTransport(), _schedule_receipt)
+    coordinator.persona_owner_provider = lambda: pytest.fail("terminal records are never enrolled")
+    for state in ("failed", "compensated", "retired", "reserved"):
+        record.state = state
+        assert coordinator.reconcile_paper_enrollment(record).state == state
+        assert "paper_enrollment" not in record.references

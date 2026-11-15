@@ -338,3 +338,25 @@ def test_production_reader_passes_real_memory_read_route_for_persona_owner(tmp_p
     assert reader.get(lesson["lesson_candidate_id"], "tenant-b", other) is None
     # persona.admin is not admitted to list/other read routes
     assert mem.get("/api/memory/trade-lessons", headers={"Authorization": auth}).status_code == 403
+
+
+def test_reader_mints_a_tenant_bound_read_identity_when_the_caller_credential_is_opaque(monkeypatch):
+    import base64, json as _json
+    from services.persona.lesson_rule_proposals import MemoryLessonReader, LessonRuleError
+    seen = {}
+
+    def opener(request, timeout=None):
+        seen["auth"] = request.get_header("Authorization")
+        import io
+        return io.BytesIO(b'{"lesson_candidate_id": "lc"}')
+
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "s")
+    reader = MemoryLessonReader("http://memory.test", urlopen_fn=opener)
+    assert reader.get("lc", "tenant-a", "Bearer opaque-service-token") == {"lesson_candidate_id": "lc"}
+    claims = _json.loads(base64.urlsafe_b64decode(seen["auth"].split(".")[1] + "=="))
+    assert claims["roles"] == ["persona-svc"] and claims["tenant_id"] == "tenant-a"
+    monkeypatch.delenv("PERSONA_JWT_SECRET")
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    with pytest.raises(LessonRuleError) as caught:
+        reader.get("lc", "tenant-a", "Bearer opaque-service-token")
+    assert caught.value.reason == "lesson_source_unavailable"

@@ -135,6 +135,28 @@ class TestFleetMembership(unittest.TestCase):
             "non_executable_missing_market_symbol",
         )
 
+    def test_pool_envelope_with_declared_symbol_list_is_fleet_ready(self):
+        binding = _b()
+        binding["metadata"].pop("symbol")
+        binding["metadata"]["symbols"] = ["2330.TW", "2317.TW"]
+
+        state = build_fleet_desired_state([binding])
+
+        self.assertEqual(state.active_count, 1)
+        self.assertEqual(state.excluded_count, 0)
+
+    def test_pool_symbol_list_with_blank_or_duplicate_is_not_fleet_ready(self):
+        for bad in (["2330.TW", ""], ["2330.TW", "2330.TW"], ["2330.TW"]):
+            binding = _b()
+            binding["metadata"].pop("symbol")
+            binding["metadata"]["symbols"] = bad
+
+            state = build_fleet_desired_state([binding])
+
+            self.assertEqual(state.active_count, 0, bad)
+            self.assertEqual(
+                state.excluded[0].exclusion_reason, "non_executable_missing_market_symbol")
+
     def test_active_live_is_excluded(self):
         state = build_fleet_desired_state([_b(deployment_mode="live", status="active")])
         self.assertEqual(state.active_count, 0)

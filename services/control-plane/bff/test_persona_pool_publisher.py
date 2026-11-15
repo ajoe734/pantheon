@@ -82,3 +82,19 @@ def test_publisher_pins_screen_rules_without_enumerating_picks():
     assert result["parameters"]["symbols"] == []
     assert result["expression_policy"]["kind"] == "target_position_v1"
     assert pins[0]["checksum"] == checksum
+
+
+def test_trial_publication_is_the_pool_policy_reading_not_a_blanket_zero():
+    from services.control_plane.bff.persona_pool_publisher import trial_publication
+    assert trial_publication({"stage": "trial", "risk_weight": 0}, .1) == (0, True)
+    assert trial_publication({"stage": "trial", "risk_weight": .4}, .1) == (.1, False)
+    assert trial_publication({"stage": "active", "risk_weight": .4}, .1) == (.4, False)
+
+
+def test_default_publish_records_are_durable_files_not_process_memory(tmp_path):
+    from services.control_plane.bff.persona_pool_publisher import build_publish_records
+    env = {"PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND": "memory",
+           "PANTHEON_PERSONA_POOL_PUBLISH_STORE_PATH": str(tmp_path / "r.json")}
+    first = build_publish_records(env)
+    assert first.compare_and_set("t:p", None, {"published": {"1": {"status": "published"}}})[0]
+    assert build_publish_records(env).get("t:p") == {"published": {"1": {"status": "published"}}}

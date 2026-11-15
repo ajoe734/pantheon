@@ -2957,6 +2957,51 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         self.assertEqual(adm["reason_code"], "market_input_calendar_unverifiable")
 
 
+class TestPaperFleetPoolAdmissionCoversEverySymbol(TestPaperFleetSourceSnapshotReadUnavailable):
+    """The pause/resume gate judges every symbol a multi-underlying envelope needs."""
+
+    def _pool_binding(self, binding_id: str) -> Dict[str, Any]:
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
+        return _make_binding(
+            binding_id, effective_at=old, market_data_policy=self.POLICY,
+            symbols=["AAPL.US", "MSFT.US"],
+        )
+
+    def _by_symbol(self, ages: Dict[str, int]):
+        common_bar = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+        def fetch(symbol: str) -> Dict[str, Any]:
+            snap = self._snap(age_seconds=ages[symbol], snapshot_id=f"snap-{symbol}")
+            snap["symbol"] = symbol
+            # One common bar for every symbol at the same age.
+            snap["event_time"] = common_bar if ages[symbol] == 60 else snap["event_time"]
+            return snap
+        return fetch
+
+    def test_one_stale_symbol_pauses_whole_pool(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-stale"))
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=self._by_symbol({"AAPL.US": 60, "MSFT.US": 10 * 86400})):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(store.get("b-pool-stale").status, "paused")
+
+    def test_every_symbol_fresh_keeps_pool_active(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-ok"))
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=self._by_symbol({"AAPL.US": 60, "MSFT.US": 60})):
+            snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(store.get("b-pool-ok").status, "active")
+
+    def test_missing_symbol_snapshot_pauses_whole_pool(self) -> None:
+        store, recon = self._recon(self._pool_binding("b-pool-missing"))
+        fetch = self._by_symbol({"AAPL.US": 60, "MSFT.US": 60})
+        with patch.object(recon, "_fetch_source_snapshot",
+                          side_effect=lambda s: None if s == "MSFT.US" else fetch(s)):
+            recon.reconcile_once()
+        self.assertEqual(store.get("b-pool-missing").status, "paused")
+
+
 class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):
     def test_readyz_filters_ended_sessions_and_reports_running_only(self) -> None:
         from paper_fleet_reconciler import PaperFleetReconciler, _Handler

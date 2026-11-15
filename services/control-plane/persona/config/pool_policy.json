@@ -18,5 +18,9 @@
   "periods_per_year": 252,
   "minimum_oos_days": 20,
   "in_sample_fraction": 0.7,
-  "budget_full": 1.0
+  "budget_full": 1.0,
+  "trial_promotion_min_days": 20,
+  "trial_promotion_max_drawdown": 0.05,
+  "publish_weight_tolerance": 0.02,
+  "coordinator_proposals": ["trial_promotion_min_days", "trial_promotion_max_drawdown", "publish_weight_tolerance"]
 }

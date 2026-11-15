@@ -178,6 +178,18 @@ def build_loop_truth(
     }
 
 
+def _pool_market_symbols(binding: Dict[str, Any]) -> "list[str]":
+    """Symbols a multi-underlying pool binding needs; empty for a single-symbol binding."""
+    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    if _clean_text(binding.get("symbol") or metadata.get("symbol") or ""):
+        return []
+    raw = binding.get("symbols") or metadata.get("symbols")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    symbols = [_clean_text(s) for s in raw]
+    return symbols if len(symbols) > 1 and all(symbols) and len(set(symbols)) == len(symbols) else []
+
+
 def _is_official_calendar_correction(
     session_adm: Dict[str, Any],
     snapshot: Any,
@@ -1987,6 +1999,12 @@ class PaperFleetReconciler:
         symbol = _clean_text(binding.get("symbol") or metadata.get("symbol") or "")
         binding_id = _clean_text(binding.get("binding_id") or "")
 
+        pool_symbols = _pool_market_symbols(binding)
+        if pool_symbols:
+            return self._check_pool_market_admission(
+                binding, pool_symbols, max_age=max_age, min_closes=min_closes, binding_id=binding_id,
+            )
+
         if snapshot is None:
             snapshot = self._resolve_market_snapshot(binding)
 
@@ -1998,6 +2016,47 @@ class PaperFleetReconciler:
             now_iso=_iso_now(),
             binding_id=binding_id,
         )
+
+    def _check_pool_market_admission(
+        self,
+        binding: Dict[str, Any],
+        symbols: "list[str]",
+        *,
+        max_age: int,
+        min_closes: int,
+        binding_id: str,
+    ) -> SnapshotAdmissionDecision:
+        """Admit a pool only when every symbol the envelope needs is admitted at one bar.
+
+        One failing symbol pauses (or keeps paused) the whole pool; a transport
+        failure for any symbol is a rejection, never an admission off a cache.
+        """
+        now_iso = _iso_now()
+        first: Optional[SnapshotAdmissionDecision] = None
+        bars: Dict[str, Any] = {}
+        for symbol in symbols:
+            per_symbol = {**binding, "symbol": symbol, "metadata": {
+                k: v for k, v in (binding.get("metadata") or {}).items() if k != "symbol"}}
+            per_symbol.pop("market_input", None)
+            # Same read-failure rule as a single-symbol binding: an unavailable read falls
+            # back to that symbol's last read snapshot, which admission then judges by age.
+            snap = self._resolve_market_snapshot(per_symbol)
+            decision = admit_market_snapshot(
+                snap, expected_symbol=symbol, max_age_seconds=max_age, minimum_closes=min_closes,
+                now_iso=now_iso, binding_id=binding_id,
+            )
+            if not decision.admitted:
+                return decision
+            bars[symbol] = decision.event_time
+            first = first or decision
+        if len(set(bars.values())) != 1:
+            return SnapshotAdmissionDecision(
+                admitted=False,
+                reason_code="market_input_bar_mismatch",
+                detail="pool symbols are not at one common bar: "
+                + ", ".join(f"{s}={bars[s]}" for s in symbols),
+            )
+        return first  # type: ignore[return-value]
 
     def _transition_binding(
         self,
