@@ -237,6 +237,10 @@ def test_release_probe_bound_unchanged():
     assert "512m" in text
 
 
+@pytest.mark.skipif(
+    os.environ.get("PANTHEON_RUN_COMPACTION_BENCHMARK") != "1",
+    reason="~10 minute journal growth repro benchmark; opt in with PANTHEON_RUN_COMPACTION_BENCHMARK=1",
+)
 def test_repro_unbounded_growth_and_append_latency(tmp_path):
     """Evidence harness (hosted-shaped: full state line per update, up to 60 closes per symbol).
 
