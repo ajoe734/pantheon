@@ -135,28 +135,41 @@ services:
       HINDSIGHT_API_MCP_ENABLED: "false"
       HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
       HINDSIGHT_API_TENANT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
-      HINDSIGHT_API_LLM_PROVIDER: none
+      # Hindsight's default-LLM gate: with 'none' consolidation is skipped even when the per-operation
+      # provider is set (observed in the real-container probe). The bridge deploy sets these to the bridge.
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_LLM_PROVIDER:-none}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_LLM_MODEL:-}
+      HINDSIGHT_API_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_RETAIN_EXTRACTION_MODE: chunks
       HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "false"
       # No background refresh or async retain until the LLM layers are enabled.
       HINDSIGHT_API_WORKER_ENABLED: "false"
       HINDSIGHT_API_RETAIN_LLM_PROVIDER: ${HINDSIGHT_RETAIN_LLM_PROVIDER:-none}
       HINDSIGHT_API_RETAIN_LLM_MODEL: ${HINDSIGHT_RETAIN_LLM_MODEL:-}
-      HINDSIGHT_API_RETAIN_LLM_API_KEY: ${HINDSIGHT_RETAIN_LLM_API_KEY:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_RETAIN_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_RETAIN_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER: ${HINDSIGHT_CONSOLIDATION_LLM_PROVIDER:-none}
       HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: ${HINDSIGHT_CONSOLIDATION_LLM_MODEL:-}
-      HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY: ${HINDSIGHT_CONSOLIDATION_LLM_API_KEY:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_REFLECT_LLM_PROVIDER: ${HINDSIGHT_REFLECT_LLM_PROVIDER:-none}
       HINDSIGHT_API_REFLECT_LLM_MODEL: ${HINDSIGHT_REFLECT_LLM_MODEL:-}
-      HINDSIGHT_API_REFLECT_LLM_API_KEY: ${HINDSIGHT_REFLECT_LLM_API_KEY:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_REFLECT_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_REFLECT_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_LLM_TEMPERATURE_REFLECT: ${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1}
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER:-none}
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL:-}
-      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_API_KEY:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE: "4"
       HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE: "4"
       OMP_NUM_THREADS: "2"
-    networks: [memory-index, memory-index-storage]
+    networks: [memory-index, memory-index-storage, memory-llm-bridge]
     depends_on:
       memory-index-postgres:
         condition: service_healthy
@@ -925,6 +938,8 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
+      # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
+      RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
@@ -1077,6 +1092,14 @@ services:
       PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
       PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-consultation-provider}
       PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
+      # Hindsight background-model bridge (design H5): off unless explicitly enabled.
+      MEMORY_LLM_BRIDGE_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
+      MEMORY_LLM_BRIDGE_TOKEN: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      MEMORY_LLM_BRIDGE_DEADLINE_SECONDS: ${MEMORY_LLM_BRIDGE_DEADLINE_SECONDS:-120}
+      MEMORY_LLM_BRIDGE_MAX_CONCURRENCY: ${MEMORY_LLM_BRIDGE_MAX_CONCURRENCY:-2}
+      MEMORY_LLM_BRIDGE_DAILY_BUDGET: ${MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}
+      MEMORY_LLM_BRIDGE_STATE_PATH: /root/.openclaw/memory-llm-bridge.sqlite3
+    networks: [default, memory-llm-bridge]
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -3473,4 +3496,7 @@ networks:
   memory-index:
     internal: true
   memory-index-storage:
+    internal: true
+  # Only hindsight and the adapter bridge endpoint; no other service joins.
+  memory-llm-bridge:
     internal: true

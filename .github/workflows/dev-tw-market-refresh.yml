@@ -252,6 +252,7 @@ jobs:
           tw-official-tpex-institutional-flow tw_institutional_flow openapi.twse.com.tw,www.tpex.org.tw
           tw-taifex-institutional-positions taifex_futures_chip openapi.taifex.com.tw,www.taifex.com.tw
           tw-taifex-put-call taifex_options_chip openapi.taifex.com.tw,www.taifex.com.tw
+          tw-taifex-tx-daily taifex_tx_daily openapi.taifex.com.tw,www.taifex.com.tw
           PROFILES
           exit "${failed}"
 
@@ -269,6 +270,7 @@ jobs:
             ${{ runner.temp }}/tw-official-tpex-institutional-flow-refresh-outcome.json
             ${{ runner.temp }}/tw-taifex-institutional-positions-refresh-outcome.json
             ${{ runner.temp }}/tw-taifex-put-call-refresh-outcome.json
+            ${{ runner.temp }}/tw-taifex-tx-daily-refresh-outcome.json
 
       - name: Stop heartbeat and release lease
         if: ${{ always() && steps.lease.outcome == 'success' }}
