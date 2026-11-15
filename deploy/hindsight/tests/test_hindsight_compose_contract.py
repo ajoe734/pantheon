@@ -102,7 +102,11 @@ def test_offline_manifest_and_none_provider_defaults():
     assert env['HINDSIGHT_API_LLM_API_KEY'] == '${MEMORY_LLM_BRIDGE_TOKEN:-}'
     assert env['HINDSIGHT_API_RETAIN_EXTRACTION_MODE'] == 'chunks'
     assert env['HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION'] == 'false'
-    assert env['HINDSIGHT_API_WORKER_ENABLED'] == 'false'
+    # Worker (background consolidation / standing-question refresh) follows the bridge switch, off by default.
+    assert env['HINDSIGHT_API_WORKER_ENABLED'] == '${MEMORY_LLM_BRIDGE_ENABLED:-false}'
+    memory_env = SERVICES['memory']['environment']
+    assert memory_env['PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED'] == '${MEMORY_LLM_BRIDGE_ENABLED:-false}'
+    assert 'PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED' not in memory_env
     for layer in ('RETAIN', 'CONSOLIDATION', 'REFLECT', 'MENTAL_MODEL_REFRESH'):
         assert env[f'HINDSIGHT_API_{layer}_LLM_PROVIDER'].endswith(':-none}')
         assert env[f'HINDSIGHT_API_{layer}_LLM_API_KEY'].endswith(':-}')
