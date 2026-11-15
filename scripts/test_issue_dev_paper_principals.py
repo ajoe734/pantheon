@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+from scripts import issue_dev_paper_principals as issuer
 
 from scripts.issue_dev_paper_principals import (
     CONSUMER_FILES, PAPER_SCOPE, PAPER_SUBJECT, READERS, WRITERS, TTL_SECONDS, issue_environment, write_environment,
@@ -505,3 +506,16 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
     assert proposer_claims["roles"] == ["approval_proposer"]
     assert proposer_claims["scope"] == "pantheon:dev-owner-write"
 
+
+
+def test_enrollment_proposer_is_distinct_propose_only_and_withdrawn_on_revoke():
+    variable = "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"
+    subject, role, scope = issuer.WRITERS[variable]
+    assert subject != issuer.PAPER_SUBJECT and role == "approval_proposer"
+    assert scope == "pantheon:dev-owner-write"
+    assert variable in issuer.CONSUMER_FILES["operator-bff"]
+    revoked = issuer.revoked_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false",
+    })
+    assert revoked["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID"] == "" and revoked[variable] == ""
