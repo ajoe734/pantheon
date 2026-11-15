@@ -382,3 +382,71 @@ def test_records_persist_across_a_restart(tmp_path):
     call(first, "persona_proposal_submit", PROPOSAL)
     second = PersonaToolBroker(cfg, agent_lookup=Registry(), memory_get=Memory())
     assert second.run_record(ref)["proposals"][0]["kind"] == "no_action"
+
+
+# --- adapter routes ---------------------------------------------------------------------------
+
+@pytest.fixture
+def client(monkeypatch):
+    import main as adapter
+    from fastapi.testclient import TestClient
+
+    registry, memory = Registry(), Memory()
+    config = BrokerConfig(enabled=True, token=TOKEN, registry_ttl_seconds=0.0)
+    monkeypatch.setattr(adapter, "_PERSONA_TOOL_BROKER_CONFIG", config)
+    monkeypatch.setattr(adapter, "_PERSONA_TOOL_BROKER",
+                        PersonaToolBroker(config, agent_lookup=registry, memory_get=memory))
+    monkeypatch.setattr(adapter, "_ASSISTANT_SERVICE_TOKEN", "svc-token")
+    return TestClient(adapter.app), memory
+
+
+SVC = {"X-Pantheon-Service-Token": "svc-token"}
+PLUGIN = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def test_routes_register_call_and_read_the_per_run_record(client):
+    http, memory = client
+    reg = http.post("/api/openclaw-adapter/agents/persona-tools/runs", headers=SVC,
+                    json={"persona_id": ALPHA, "purpose": "daily_cycle", "session_user": SESSION})
+    assert reg.status_code == 201
+    run_ref = reg.json()["run"]["run_ref"]
+    body = {"tool": "persona_memory_recall", "params": {"query": "momentum"}, "agent_id": ALPHA,
+            "run_id": "run-a", "session_key": SESSION_KEY}
+    assert http.post("/internal/persona-tools/v1/call", json=body, headers=PLUGIN).status_code == 200
+    authorize = http.post("/internal/persona-tools/v1/authorize", json=body, headers=PLUGIN)
+    assert authorize.status_code == 200 and "persona_memory_recall" in authorize.json()["allowed_tools"]
+    proposal = {**body, "tool": "persona_proposal_submit", "params": PROPOSAL}
+    assert http.post("/internal/persona-tools/v1/call", json=proposal, headers=PLUGIN).status_code == 200
+    record = http.get(f"/api/openclaw-adapter/agents/persona-tools/runs/{run_ref}", headers=SVC).json()["record"]
+    assert [c["tool"] for c in record["calls"]] == ["persona_memory_recall", "persona_proposal_submit"]
+    assert record["proposals"][0]["kind"] == "no_action" and len(memory.requests) == 1
+
+
+def test_internal_routes_need_the_broker_secret_and_run_routes_need_the_service_token(client):
+    http, _ = client
+    body = {"tool": "persona_memory_recall", "params": {"query": "q"}, "agent_id": ALPHA,
+            "run_id": "r", "session_key": SESSION_KEY}
+    assert http.post("/internal/persona-tools/v1/call", json=body).status_code == 401
+    assert http.post("/internal/persona-tools/v1/call", json=body,
+                     headers={"Authorization": "Bearer svc-token"}).status_code == 401
+    assert http.post("/internal/persona-tools/v1/call", content=b"not json", headers=PLUGIN).status_code == 422
+    reg = {"persona_id": ALPHA, "purpose": "daily_cycle", "session_user": SESSION}
+    assert http.post("/api/openclaw-adapter/agents/persona-tools/runs", json=reg).status_code == 401
+    assert http.post("/api/openclaw-adapter/agents/persona-tools/runs", json=reg, headers=PLUGIN).status_code == 401
+    assert http.get("/api/openclaw-adapter/agents/persona-tools/runs/ptr-x", headers=SVC).status_code == 404
+
+
+def test_registration_refusals_and_disabled_broker(client, monkeypatch):
+    import main as adapter
+
+    http, _ = client
+    bad = http.post("/api/openclaw-adapter/agents/persona-tools/runs", headers=SVC,
+                    json={"persona_id": "main", "purpose": "daily_cycle", "session_user": "s"})
+    assert bad.status_code == 403 and bad.json()["reason"] == "not_a_persona_agent"
+    purpose = http.post("/api/openclaw-adapter/agents/persona-tools/runs", headers=SVC,
+                        json={"persona_id": ALPHA, "purpose": "x", "session_user": "s"})
+    assert purpose.status_code == 422
+    monkeypatch.setattr(adapter, "_PERSONA_TOOL_BROKER_CONFIG", BrokerConfig(enabled=False, token=""))
+    off = http.post("/api/openclaw-adapter/agents/persona-tools/runs", headers=SVC,
+                    json={"persona_id": ALPHA, "purpose": "daily_cycle", "session_user": "s"})
+    assert off.status_code == 404

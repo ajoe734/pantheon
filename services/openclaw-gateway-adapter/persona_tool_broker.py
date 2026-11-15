@@ -102,9 +102,11 @@ class BrokerConfig:
             tool: max(0, _env_int(f"PERSONA_TOOL_BROKER_MAX_{tool.upper()}_PER_RUN", default))
             for tool, default in DEFAULT_RUN_LIMITS.items()
         }
+        # Default to the adapter's existing memory identity: a strict memory service binds actor_id and roles to the token.
         roles = tuple(
             part.strip()
-            for part in (os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ROLES") or "operator").split(",")
+            for part in (os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ROLES")
+                         or os.getenv("PANTHEON_MEMORY_ACTOR_ROLES") or "operator").split(",")
             if part.strip()
         ) or ("operator",)
         return cls(
@@ -112,7 +114,8 @@ class BrokerConfig:
             token=os.getenv("PERSONA_TOOL_BROKER_TOKEN", ""),
             memory_api_url=(os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or "").strip(),
             memory_auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", ""),
-            memory_actor_id=os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ID", "persona-tool-broker"),
+            memory_actor_id=(os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ID")
+                             or os.getenv("PANTHEON_MEMORY_ACTOR_ID") or "persona-tool-broker"),
             memory_actor_roles=roles,
             run_ttl_seconds=max(60, _env_int("PERSONA_TOOL_BROKER_RUN_TTL_SECONDS", 3600)),
             registry_ttl_seconds=float(max(0, _env_int("PERSONA_TOOL_BROKER_REGISTRY_TTL_SECONDS", 10))),
@@ -225,9 +228,11 @@ class _Store:
             rows = self._db.execute(
                 "SELECT * FROM runs WHERE persona_id=? AND expires_at>?", (persona_id, now)
             ).fetchall()
+        # The gateway derives the key as `agent:<id>:<prefix>-user:<user>` (case-normalised).
+        key = session_key.lower()
         matches = [
             dict(r) for r in rows
-            if session_key == r["session_user"] or session_key.endswith(":" + r["session_user"])
+            if key == r["session_user"].lower() or key.endswith(":" + r["session_user"].lower())
         ]
         return matches[0] if len(matches) == 1 else None
 
