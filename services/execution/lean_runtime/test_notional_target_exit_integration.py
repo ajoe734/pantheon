@@ -13,7 +13,9 @@ from services.execution.lean_runtime.test_current_artifact_signal import (
     _binding, _identity, _runtime_binding, _RuntimeManager, _Telemetry,
 )
 from services.execution.lean_runtime.test_expression_inputs import _pool, _summary
-from services.execution.lean_runtime.test_portfolio_target_positions import cash_candidates, production_inputs
+from services.execution.lean_runtime.test_portfolio_target_positions import (
+    cash_candidates, constant_open_reader, next_session_day, production_inputs,
+)
 from services.registry.test_strategy_artifact import _artifact_with_expression_policy
 
 
@@ -39,7 +41,7 @@ def _setup(tmp_path):
     strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=production_inputs(summary),
                                        candidates_builder=cash_candidates)
     store, telemetry = InMemoryPendingSignalStore(), _Telemetry()
-    producer = PaperSignalProducer(lambda _: store, strategy)
+    producer = PaperSignalProducer(lambda _: store, strategy, daily_bar_reader=constant_open_reader())
     service = PaperRuntimeService(store=store, identity=_identity(binding),
         runtime_manager_client=_RuntimeManager(_runtime_binding(binding)), telemetry_emitter=telemetry,
         lifecycle_outbox_path=tmp_path / "lifecycle.json", capital_pool_reader=lambda _: _pool())
@@ -53,8 +55,12 @@ def _setup(tmp_path):
         if positions or summary.get("ledger_fill_count"):
             summary.update(ledger_fill_count=1, ledger_cash=service._algo._cash,
                 positions=[{**p, "mark_price": closes[-1]} for p in positions])
-        service._algo.Time = datetime.fromisoformat(day + "T06:00:00+00:00")
-        produced = producer.produce(binding, day + "T06:00:00Z")
+        service._algo.Time = datetime.fromisoformat(day + "T10:00:00+00:00")
+        # Daily decision of session D is parked; it fills at the official open of D+1.
+        assert producer.produce(binding, day + "T10:00:00Z") == 0, producer.degraded_bindings
+        following = next_session_day(day)
+        service._algo.Time = datetime.fromisoformat(following + "T10:00:00+00:00")
+        produced = producer.settle_pending_intraday(binding, following + "T10:00:00Z")
         assert produced == 1, (produced, producer.degraded_bindings)
         for _ in range(4):
             snapshot = service.drain_once()
