@@ -61,7 +61,11 @@ from .split_api import (
     RegistryOwnerUnavailableError,
     RegistryService,
 )
-from .storage import get_store
+from .storage import (
+    decode_strategy_artifact_page_token,
+    get_store,
+    page_strategy_artifact_rows,
+)
 from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
     ensure_builtin_strategy_artifacts,
@@ -1853,33 +1857,34 @@ def register_strategy_artifact(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _strategy_artifact_catalog_rows(
+def _strategy_artifact_catalog_page(
     authorization: Optional[str],
     x_tenant_id: Optional[str],
-    artifact_state: Optional[ArtifactState] = None,
-    strategy_id: Optional[str] = None,
-) -> list[dict]:
-    """Flat execution-bundle catalog rows with the same visible-tenant rule as persona_binding."""
+    *,
+    artifact_state: Optional[ArtifactState],
+    strategy_id: Optional[str],
+    limit: int,
+    cursor: Optional[tuple],
+) -> tuple[list[dict], int, Optional[str]]:
+    """One bounded ordered catalog page with the same visible-tenant rule as persona_binding."""
     ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     visible_tenants = _persona_binding_visible_tenants(ctx, header_tenant)
     svc = get_registry_service()
+    wanted_state = artifact_state.value if artifact_state is not None else None
+    wanted_strategy = strategy_id.strip() if isinstance(strategy_id, str) and strategy_id.strip() else None
+    store = svc if hasattr(svc, "list_strategy_artifact_page") else getattr(svc, "store", None)
+    if store is not None and hasattr(store, "list_strategy_artifact_page"):
+        return store.list_strategy_artifact_page(
+            visible_tenants=visible_tenants, artifact_state=wanted_state,
+            strategy_id=wanted_strategy, limit=limit, cursor=cursor,
+        )
     if hasattr(svc, "list_strategy_artifact_rows"):
         rows = svc.list_strategy_artifact_rows(visible_tenants=visible_tenants)
     else:
         rows = svc.store.list_strategy_artifact_rows(visible_tenants=visible_tenants)
-    wanted_state = artifact_state.value if artifact_state is not None else None
-    wanted_strategy = strategy_id.strip() if isinstance(strategy_id, str) and strategy_id.strip() else None
-    filtered = [
-        dict(row)
-        for row in rows
-        if (wanted_state is None or row.get("artifact_state") == wanted_state)
-        and (wanted_strategy is None or row.get("strategy_id") == wanted_strategy)
-    ]
-    filtered.sort(
-        key=lambda r: (str(r.get("created_at") or ""), str(r.get("registry_id") or "")),
-        reverse=True,
+    return page_strategy_artifact_rows(
+        rows, artifact_state=wanted_state, strategy_id=wanted_strategy, limit=limit, cursor=cursor,
     )
-    return filtered
 
 
 @app.get("/api/registry/strategy-artifacts")
@@ -1893,28 +1898,22 @@ def list_all_strategy_artifact_entries(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    """List execution_bundle catalog rows (tenant-scoped flat projection with paging and total)."""
+    """List execution_bundle catalog rows: one bounded ordered page (exact total, stable keyset token)."""
     effective_page_size = limit if limit is not None else page_size
-    start = 0
-    if page_token is not None and str(page_token).strip() != "":
-        try:
-            start = int(str(page_token).strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid page_token") from exc
-        if start < 0:
-            raise HTTPException(status_code=400, detail="Invalid page_token")
-    elif offset is not None:
-        start = offset
-    rows = _strategy_artifact_catalog_rows(
+    try:
+        cursor = decode_strategy_artifact_page_token(page_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+    if cursor is None and offset is not None:
+        cursor = ("offset", (offset,))
+    items, total, next_page_token = _strategy_artifact_catalog_page(
         authorization,
         x_tenant_id,
         artifact_state=artifact_state,
         strategy_id=strategy_id,
+        limit=effective_page_size,
+        cursor=cursor,
     )
-    total = len(rows)
-    items = rows[start : start + effective_page_size]
-    next_offset = start + len(items)
-    next_page_token = str(next_offset) if (next_offset < total and items) else None
     return JSONResponse(
         {
             "items": items,

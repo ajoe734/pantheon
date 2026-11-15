@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -4682,9 +4682,69 @@ def _authenticated_artifact_tenant(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+_ARTIFACT_PAGE_TOKEN_PREFIX = "k1:"
+
+
+def _artifact_page_key(row: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(row.get("created_at") or ""), str(row.get("artifact_id") or ""))
+
+
+def _encode_artifact_page_token(key: Tuple[str, str]) -> str:
+    import base64
+
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_PAGE_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_artifact_page_token(token: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Keyset anchor ``(created_at, artifact_id)`` of the last row served; ``None`` for the first page."""
+    import base64
+
+    text = str(token).strip() if token is not None else ""
+    if not text:
+        return None
+    if not text.startswith(_ARTIFACT_PAGE_TOKEN_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid page_token")
+    body = text[len(_ARTIFACT_PAGE_TOKEN_PREFIX):]
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+    if not (isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded)):
+        raise HTTPException(status_code=400, detail="Invalid page_token")
+    return (decoded[0], decoded[1])
+
+
+def _saved_artifact_page(rows: List[Dict[str, Any]], page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
+    """One bounded page of already tenant-filtered, newest-first rows: exact total + stable keyset token."""
+    anchor = _decode_artifact_page_token(page_token)
+    start = 0 if anchor is None else next(
+        (i for i, r in enumerate(rows) if _artifact_page_key(r) < anchor), len(rows)
+    )
+    items = rows[start:start + page_size]
+    more = start + len(items) < len(rows) and bool(items)
+    token = _encode_artifact_page_token(_artifact_page_key(items[-1])) if more else None
+    return {
+        "items": items,
+        "total": len(rows),
+        "page_size": page_size,
+        "next_page_token": token,
+        "page_info": {"total": len(rows), "page_size": page_size, "next_page_token": token},
+    }
+
+
 @app.get("/api/research/artifacts")
-def list_saved_research_artifacts(tenant_id: str = Depends(_authenticated_artifact_tenant)) -> List[Dict[str, Any]]:
-    return _visible_saved_artifacts(tenant_id)
+def list_saved_research_artifacts(
+    page_size: Optional[int] = Query(default=None, ge=1, le=500),
+    page_token: Optional[str] = Query(default=None),
+    tenant_id: str = Depends(_authenticated_artifact_tenant),
+) -> Any:
+    """Caller-tenant saved outputs. Without ``page_size``/``page_token`` the legacy bare list is kept for the
+    previous release; with either, one bounded page ordered ``(created_at, artifact_id)`` descending."""
+    rows = _visible_saved_artifacts(tenant_id)
+    if page_size is None and not (page_token or "").strip():
+        return rows
+    return _saved_artifact_page(rows, page_size if page_size is not None else 50, page_token)
 
 
 @app.get("/api/research/artifacts/{artifact_id}")
