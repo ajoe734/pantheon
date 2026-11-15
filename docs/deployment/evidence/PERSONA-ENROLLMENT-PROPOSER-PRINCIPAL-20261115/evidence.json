@@ -1,0 +1,23 @@
+{
+  "task": "PERSONA-ENROLLMENT-PROPOSER-PRINCIPAL-20261115",
+  "scope": "paper only; canary and live unchanged; no credential value recorded",
+  "changes": [
+    "scripts/issue_dev_paper_principals.py: new propose-only principal PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN (subject pantheon-dev-persona-enrollment-proposer, role approval_proposer, scope pantheon:dev-owner-write) delivered to operator-bff via file; PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID exported, blanked on revoke",
+    "docker-compose.yml: operator-bff passes PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID / _TOKEN / _TOKEN_FILE with empty defaults (unconfigured fails closed)",
+    "scripts/deploy_nonprod_vm.sh: unchanged; it sources the issuer env file, which now carries the new names"
+  ],
+  "commands": [
+    {"cmd": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py", "result": "98 passed"},
+    {"cmd": "pytest services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/control-plane/bff/tests/test_persona_paper_enrollment.py", "result": "25 passed (4 new, 21 existing)"}
+  ],
+  "acceptance": {
+    "1_reproduce": "passed: without the configuration enrolment readback is refused / governance_proposer_identity_unconfigured, persona stays research_only",
+    "2_issuer_and_compose": "passed",
+    "3_contract_test": "passed",
+    "4_integration": "partial: with real issuer proposer output (via _FILE), the default HttpGovernanceProposer and the real Governance app, the three step enrolment completes with proposer != decider. The decider in that test is a plain automated_gate JWT, NOT the issued paper-grant principal."
+  },
+  "blocker": {
+    "summary": "The issued paper gate (pantheon-dev-paper-provisioner, dev paper grant) cannot decide persona_lifecycle_transition decisions on the deployed stack",
+    "detail": "services/governance/paper_approval_scope.py require_paper_owned_decision requires owner_user_id == grant subject, target_type == registry_entry, low risk and the exact grant authorization_scope. Enrolment decisions are owned by the proposer, target persona_lifecycle_transition. Verified by calling the function: DENIED 'Dev paper principal may not act on another owner's decision'. So the deployed stack still cannot finish enrolment until Governance paper-grant policy is widened for this target or another decider principal is approved; both are outside this task's scoped files and need an operator decision."
+  }
+}
