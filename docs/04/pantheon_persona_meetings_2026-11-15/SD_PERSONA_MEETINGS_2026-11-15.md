@@ -1,6 +1,6 @@
 # SD-PERSONA-MEETINGS-20261115 — persona meetings beyond gate reviews: evolution direction, optimisation, new strategies, post-mortem, regime, quarterly review
 
-- Status: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 left open. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
+- Status: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 answered 2026-11-15 (§11.1); §11 added by amendment. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
 - Every numeric value is a coordinator proposal unless a citation says otherwise.
 - Citation verification (Claude, base `137ebeb20`): line numbers in §2 and §3 re-resolved against the delivery base; corrections applied in place. Items not re-opened are marked *(unverified)* where noted.
 - Rows marked **plan** restate the original plan; rows marked **added** are coordinator additions filling what the plan left open.
@@ -162,3 +162,77 @@ The H10 interpretation turn (`PANEL-FULL-INTERPRETATIONS-R2-20261114`) is reused
 | K3 | Meetings bypass gates | M5: proposals only through existing entry points and gates |
 | K4 | Private memory leaks across personas | interpretation turn limited to `scope:committee`; rounds deny-all; only minutes are shared |
 | K5 | Too few enrolled personas | cross-persona meetings need at least 2 trading personas; otherwise recorded as `insufficient_participants` |
+
+## 11. Amendment 2026-11-15: operator answers, Agora participation, Management pages
+
+Design only; `hosted_behavior_claimed: false`. Citations in §11.2 and §11.3 were resolved against execute-plans `origin/dev` at `87fc32ab8`. The coordinator draft commit `c010f5781` named in the task brief was not reachable from the worker checkout or the coordination root, so this section was authored from the task brief and the transcript, not verified line-by-line against that draft.
+
+### 11.1 Operator answers (verbatim) and mapping
+
+Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl`, line 9711, 2026-11-15T12:55:17.032Z, uuid `186331cd-e73d-4208-b569-8e54c1c3bdf7`:
+
+> 1. 可以
+> 2. 可以
+> 3. 可以 還有agora的也要可以
+> 4. 可以
+> 5. 擬管理系統也要有相對應的管理頁面設計
+
+The origin request is line 9354 (uuid `ebb575da-43ce-483e-9c1f-f1fcf6ae684e`, quoted in §1).
+
+| Answer | Maps to | Effect on the design |
+|---|---|---|
+| 1. 可以 | §9 item 1 | Six meeting types and cadence of §6 accepted as written. |
+| 2. 可以 | §9 item 2 | Round 2 anonymised cross-visibility accepted for deliberative meetings; gate panels stay independent (M1, M3). |
+| 3. 可以 + Agora | §9 item 3 | Peer trading personas attend another persona's MT-1/MT-2 (M4 unchanged). The added clause is "Agora ones should also be allowed"; §11.2 gives the coordinator's reading of it. |
+| 4. 可以 | §9 item 4 | No vote; chair sponsors; dissent recorded (M4). |
+| 5. | new request | Management needs matching page design: §11.3. |
+
+No decision is added by this mapping; M1–M11 are unchanged.
+
+### 11.2 Agora participation (coordinator interpretation)
+
+**The operator wrote only 「還有agora的也要可以」. The rules below are a coordinator interpretation of that clause and need operator confirmation (§11.5).** Evidence for the Agora side: Agora has a committee page (`src/agora/pages/learning/CommitteePage.tsx`, route `committee`, `src/App.tsx:344`), a strategy workshop (`strategy-workshop`, `src/App.tsx:341`) and a per-user 交易僕人 servant status (`FE-AGORA-SERVANT-STATUS-001` evidence).
+
+| # | Rule |
+|---|---|
+| A1 | Agora advisor personas may attend institutional meetings (MT-1…MT-6) as participants, subject to the M9 budget of 5 participants. They write positions like any participant and are labelled by role and style in round 2. |
+| A2 | A trader in Agora may convene a meeting from the strategy workshop. The only private persona that may attend is that user's own private servant, and only in a meeting that user convened. A private servant never attends a meeting convened by another user or by an institution. |
+| A3 | Private memory of a servant never enters a round (K4); only `scope:committee` material reaches the interpretation turn, and the minutes are the only cross-persona carrier. |
+| A4 | A proposal with no trading-persona sponsor goes through Agora's existing candidate decision flow, not through a new route. A proposal with a trading-persona sponsor follows M5. |
+| A5 | Agora never trades, never moves capital, never writes canonical state from a meeting. A meeting executes nothing (M5). |
+| A6 | Missing roster, missing servant or missing data fails closed with a recorded reason (`insufficient_participants`, `servant_absent`, `data_unavailable`). |
+
+### 11.3 Management pages (design)
+
+Routes are `/management/...` per `src/management/navigation/managementRouteManifest.ts` on `origin/dev`. Existing anchors: sidebar group `groups.researchAndEvolution` (`:179`, items experiments, evolution-journal, evolution, alpha-factory); `human-inbox` (`:156`, `src/App.tsx:209`, page `src/management/pages/oversight/_core.tsx:1372`); `consult-rules` (`:227`, page `src/management/pages/governance/ConsultRulesPage.tsx`); persona detail route `personas/:id` (`src/App.tsx:260`) with tabs built in `src/management/pages/PersonaDetail.tsx` (values `dailyCycle`, `memory`, `tradeJournal`, `activity`, …). The BFF only forwards and shapes reads and keeps no meeting store; the meeting record lives in the consultation service.
+
+| Page | Route | Content |
+|---|---|---|
+| 會議中心 Meeting Center (new item in `researchAndEvolution`) | `/management/meetings` | Four tabs via `?tab=`: **upcoming/open** (triggered, convened, in round), **history** (closed, with outcome), **proposals** (every proposal with sponsor and downstream status link), **budget and refusals** (per-persona weekly count vs M9 limit, recorded refusals with reason). Read-only except 召開會議. |
+| 會議詳情 Meeting detail | `/management/meetings/:id` | Type (MT-1…MT-6 or gate panel), agenda, roster including Agora attendees and servant flag, case-file facts, round 1 positions with confidence, round 2 responses (names visible to operators, labels as seen by participants shown beside), chair synthesis, tally (non-binding), dissent memos, proposals with downstream status, per-participant writeback status. |
+| Persona 會議 tab | `/management/personas/:id?tab=meetings` | That persona's meetings as owner/participant/chair, its weekly count, its `consult_request` proposals and their outcome. Added to `PersonaDetail.tsx` tabs. |
+| 會診規則 Consult rules (existing page extended) | `/management/governance/consult` | Existing rule list plus a section for meeting types: enabled, weekly cadence day, roster rule, budget caps (all values coordinator proposals). Edits use the existing governed-action path. |
+| 人工收件匣 Human inbox (existing page extended) | `/management/human-inbox` | Meeting-derived items needing a human (a proposal needing sign-off, `REVIEW` synthesis, `insufficient_participants`) listed with a link to the meeting detail. |
+| 召開會議 Convene | action on `/management/meetings` | Operator picks type and topic and submits through the existing consultation route; no new privileged route. The operator reads and does not take part in rounds (M10). |
+
+Every page passes the existing Management hosted acceptance crawl (workflow `.github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml`) and defines explicit **empty** (no meetings yet) and **unavailable** (consultation service or BFF read failed, shown with reason, never a blank or fake zero) states. This is a design requirement; no crawl has been run.
+
+### 11.4 Delivery (replaces §8 table)
+
+| Task | Scope | Depends on |
+|---|---|---|
+| MEETING-PROTOCOL-ENGINE | as §8 | this design |
+| MEETING-TRIGGERS | as §8 | MEETING-PROTOCOL-ENGINE |
+| MEETING-OUTPUT-ROUTING | as §8 | MEETING-PROTOCOL-ENGINE |
+| MEETING-REGIME-TRIGGER | as §8 | MEETING-PROTOCOL-ENGINE, `REGIME-CONSUMERS-FIRST-WAVE-20261115` |
+| MEETING-AGORA-PARTICIPATION | A1–A6: Agora advisor attendance, servant-limited convening from the strategy workshop, candidate-flow routing, fail-closed reasons | MEETING-PROTOCOL-ENGINE, MEETING-OUTPUT-ROUTING |
+| MEETING-BFF-READS | forward and shape reads for list, detail, proposals, budget; no store | MEETING-PROTOCOL-ENGINE |
+| MEETING-MGMT-PAGES | §11.3 pages, persona tab, consult-rules and human-inbox extensions, empty and unavailable states, route manifest entries | MEETING-BFF-READS |
+| MEETING-AGORA-BOARD-FE | Agora committee board shows both classes, rounds, proposals, downstream status; strategy workshop convening | MEETING-BFF-READS, MEETING-AGORA-PARTICIPATION |
+| MEETING-HOSTED-ACCEPTANCE | natural meetings on hosted with real personas, Agora attendance, Management crawl over the new pages | all, plus enrolled personas |
+
+Production entry points of each task are exercised by integration tests.
+
+### 11.5 Open for the operator
+
+1. Confirm the A1–A6 reading of 「agora的也要可以」, in particular that a servant attends only meetings its own user convened.
