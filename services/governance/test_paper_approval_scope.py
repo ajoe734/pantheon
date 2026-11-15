@@ -931,12 +931,22 @@ def test_card_grant_admits_the_research_proposer_decision_with_evidence(monkeypa
     {"owner_user_id": "someone-else"}, {"owner_user_id": DEV_PAPER_PROVISIONER_SUBJECT},
     {"tenant_id": "tenant-other"}, {"risk_level": "medium"}, {"target_type": "persona_lifecycle_transition"},
     {"proposal_id": ""}, {"proposal_id": None}, {"persona_id": ""}, {"candidate_digest": None},
-    {"expires_at": "2026-09-08T11:59:59Z"}, {"expires_at": "2026-09-10T00:00:00Z"},
+    {"expires_at": "2026-09-08T11:59:59Z"}, {"expires_at": "2026-09-12T00:00:00Z"},
 ])
 def test_card_decision_identity_and_expiry_changes_are_denied(change, monkeypatch):
     monkeypatch.setenv("PANTHEON_ENV", "dev")
     with pytest.raises(PaperApprovalDenied):
         require_paper_owned_decision(_card(**change), grant=CARD_GRANT, now=NOW)
+
+
+def test_card_expiry_allows_the_72h_the_research_owner_proposes_and_the_baseline_stays_24h(monkeypatch):
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    require_paper_owned_decision(_card(expires_at="2026-09-11T12:00:00Z"), grant=CARD_GRANT, now=NOW)  # created + 72h
+    with pytest.raises(PaperApprovalDenied, match="at most 24h"):
+        require_paper_owned_decision(_card(owner_user_id=DEV_PAPER_PROVISIONER_SUBJECT,
+                                           expires_at="2026-09-11T12:00:00Z", target_type="registry_entry",
+                                           authorization_scope=copy.deepcopy(DEV_PAPER_AUTHORIZATION_SCOPE)),
+                                     grant=CARD_GRANT, now=NOW)
 
 
 def test_card_grant_is_paper_environment_only():
@@ -980,19 +990,30 @@ def test_malformed_card_widening_never_enables_or_widens(tmp_path, content):
         resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, content))
 
 
-def test_card_candidate_verification_requires_a_gate_ready_paper_spec():
-    from services.registry.paper_strategy_spec import build_strategy_spec  # noqa: F401
+def test_card_candidate_verification_requires_a_gate_ready_research_spec():
     decision = _card()
     with pytest.raises(PaperCandidateInvalid, match="does not match the approval target"):
         scope_module.verify_card_admission_candidate({"entry": {"registry_id": "other"}}, decision)
     with pytest.raises(PaperCandidateInvalid, match="malformed"):
         scope_module.verify_card_admission_candidate({}, decision)
     entry = {"registry_id": "reg-spec-1", "version": "1.0.0", "owner_tenant": TENANT, "checksum": "d" * 64,
-             "artifact_state": "candidate", "artifact_type": "execution_bundle", "metadata": {}}
+             "artifact_state": "candidate", "artifact_type": "other_type", "metadata": {}}
     with pytest.raises(PaperCandidateInvalid, match="strategy_spec entry"):
         scope_module.verify_card_admission_candidate({"entry": entry}, decision)
     with pytest.raises(PaperCandidateInvalid, match="strategy_spec is required"):
         scope_module.verify_card_admission_candidate({"entry": {**entry, "artifact_type": "strategy_spec"}}, decision)
+
+
+@pytest.mark.parametrize("change,text", [
+    ({"artifact_state": "approved"}, "artifact_state does not match"), ({"metadata": {}}, "strategy_artifact is required"),
+    ({"metadata": {"strategy_artifact": {}}}, "validation failed"),
+])
+def test_card_bundle_verification_fails_closed(change, text):
+    entry = {"registry_id": "bundle-1", "version": "1.0.0", "owner_tenant": TENANT, "checksum": "d" * 64,
+             "artifact_state": "candidate", "artifact_type": "execution_bundle", "metadata": {}, **change}
+    decision = _card(target_id="bundle-1")
+    with pytest.raises(PaperCandidateInvalid, match=text):
+        scope_module.verify_card_admission_candidate({"entry": entry}, decision)
 
 
 def test_candidate_verification_routes_only_non_gate_owners_to_the_card_check():

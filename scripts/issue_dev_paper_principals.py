@@ -35,8 +35,8 @@ CARD_PROPOSER_SUBJECT = "pantheon-dev-research-card-proposer"
 # enrolment proposer, and explicit research card admission widening naming the card proposer
 # (services/governance/paper_approval_scope.py).
 GOVERNANCE_GRANT_CONTENT = (
-    "enabled;persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
-    + ";card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
+    "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
+    + ";persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
 )
 TTL_SECONDS = 24 * 60 * 60
 READERS = {

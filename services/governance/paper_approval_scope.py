@@ -58,6 +58,10 @@ _PROPOSER_SUBJECT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ
 _ACTIVE_RUNTIME_STATES = frozenset({"active", "running", "ok"})
 PAPER_SIGNAL_INTERFACE = "services.execution.lean_runtime.paper_signal_producer:Strategy"
 PAPER_APPROVAL_MAX_TTL = timedelta(hours=24)
+# The research admission owner proposes a card admission valid for 72h (admission.py); the card widening
+# admits that bound plus one minute for the proposer-clock to created_at gap, and nothing longer.  The
+# baseline grant keeps its 24h limit.
+CARD_ADMISSION_MAX_TTL = timedelta(hours=72, minutes=1)
 
 _SCOPE_KEYS = frozenset({"environment", "allowed_target_stages", "max_capital_scale_pct"})
 _KNOWN_STAGES = frozenset({"paper", "canary", "live"})
@@ -403,8 +407,9 @@ def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -
 # Proposal / transition admission for the grant
 # ---------------------------------------------------------------------------
 
-def validate_paper_expiry(expires_at: Any, *, created_at: Any, now: datetime) -> datetime:
-    """expires_at must be finite, in the future and <= created_at + 24h."""
+def validate_paper_expiry(expires_at: Any, *, created_at: Any, now: datetime,
+                          max_ttl: timedelta = PAPER_APPROVAL_MAX_TTL) -> datetime:
+    """expires_at must be finite, in the future and <= created_at + max_ttl (24h unless widened)."""
     try:
         expiry = parse_rfc3339(expires_at, "expires_at")
         created = parse_rfc3339(created_at, "created_at")
@@ -412,8 +417,9 @@ def validate_paper_expiry(expires_at: Any, *, created_at: Any, now: datetime) ->
         raise PaperApprovalDenied(str(exc), 422) from exc
     if expiry <= now:
         raise PaperApprovalDenied("Paper approval expires_at must be in the future", 422)
-    if expiry > created + PAPER_APPROVAL_MAX_TTL:
-        raise PaperApprovalDenied("Paper approval expires_at must be at most 24h after created_at", 422)
+    if expiry > created + max_ttl:
+        hours = int(max_ttl.total_seconds() // 3600)
+        raise PaperApprovalDenied(f"Paper approval expires_at must be at most {hours}h after created_at", 422)
     return expiry
 
 
@@ -492,7 +498,8 @@ def require_card_admission_decision(decision: Mapping[str, Any], *, grant: DevPa
         value = decision.get(key)
         if not isinstance(value, str) or not value.strip():
             raise PaperApprovalDenied(f"Card admission decision requires {key} (the open persona demand match)", 422)
-    validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+    validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now,
+                          max_ttl=CARD_ADMISSION_MAX_TTL)
     return {"grant_id": widening.grant_id, "demand_id": decision["proposal_id"],
             "persona_id": decision["persona_id"], "registry_id": decision["target_id"]}
 
@@ -509,7 +516,11 @@ def validate_paper_decide_body(body: Mapping[str, Any], *, decision: Mapping[str
     if body.get("expires_at") is not None:
         # A decide body may only restate the proposal expiry; any other
         # instant (earlier, later, still inside 24h) is a divergence.
-        supplied = validate_paper_expiry(body.get("expires_at"), created_at=decision.get("created_at"), now=now)
+        # Only a widened (card admission) decision has a non-gate owner here; it keeps its own bound.
+        max_ttl = (PAPER_APPROVAL_MAX_TTL if decision.get("owner_user_id") == DEV_PAPER_PROVISIONER_SUBJECT
+                   else CARD_ADMISSION_MAX_TTL)
+        supplied = validate_paper_expiry(body.get("expires_at"), created_at=decision.get("created_at"), now=now,
+                                         max_ttl=max_ttl)
         try:
             proposed = parse_rfc3339(decision.get("expires_at"), "proposal expires_at")
         except ValueError as exc:
@@ -952,20 +963,14 @@ def expectation_from_decision(decision: Mapping[str, Any]) -> PaperCandidateExpe
     return PaperCandidateExpectation(**values)  # type: ignore[arg-type]
 
 
-def verify_card_admission_candidate(view: Mapping[str, Any], decision: Mapping[str, Any]) -> dict[str, Any]:
-    """Immutable checks of a hypothesis-card StrategySpec candidate (paper research, no capital pool)."""
+def _verify_card_spec_entry(entry: Mapping[str, Any], *, tenant_id: Any, state: str) -> dict[str, Any]:
+    """The immutable content of a gate-ready hypothesis-card StrategySpec entry (no capital pool)."""
     from services.registry.paper_strategy_spec import validate_strategy_spec
 
-    entry = view.get("entry") if isinstance(view, Mapping) else None
-    if not isinstance(entry, Mapping):
-        raise PaperCandidateInvalid("Registry entry view is malformed")
-    for key, expected in (("registry_id", decision.get("target_id")), ("version", decision.get("target_version")),
-                          ("owner_tenant", decision.get("tenant_id")), ("checksum", decision.get("candidate_digest")),
-                          ("artifact_state", "candidate")):
-        if not isinstance(expected, str) or not expected.strip() or entry.get(key) != expected:
-            raise PaperCandidateInvalid(f"Registry candidate {key} does not match the approval target")
     if entry.get("artifact_type") != "strategy_spec":
         raise PaperCandidateInvalid("Card admission candidate must be a strategy_spec entry")
+    if entry.get("artifact_state") != state or entry.get("owner_tenant") != tenant_id:
+        raise PaperCandidateInvalid("card strategy_spec entry state or tenant does not match the approval")
     metadata = entry.get("metadata")
     spec = metadata.get("strategy_spec") if isinstance(metadata, Mapping) else None
     if not isinstance(spec, Mapping):
@@ -975,22 +980,97 @@ def verify_card_admission_candidate(view: Mapping[str, Any], decision: Mapping[s
     if spec.get("strategy_id") != entry.get("strategy_id"):
         raise PaperCandidateInvalid("candidate strategy_spec.strategy_id does not match the entry")
     profile = spec.get("execution_profile")
-    if not isinstance(profile, Mapping) or profile.get("execution_mode_hint") != "paper":
-        raise PaperCandidateInvalid("candidate strategy_spec.execution_profile.execution_mode_hint must be 'paper'")
+    # A card spec is compiled as a research spec; canary / live (or no) hint is never admitted here.
+    if not isinstance(profile, Mapping) or profile.get("execution_mode_hint") not in ("research", "paper"):
+        raise PaperCandidateInvalid(
+            "candidate strategy_spec.execution_profile.execution_mode_hint must be 'research' or 'paper'")
     embedded = spec.get("metadata")
     embedded = embedded if isinstance(embedded, Mapping) else {}
     wiring = embedded.get("card_wiring")
     if not isinstance(wiring, Mapping) or wiring.get("status") != "gate_ready":
         raise PaperCandidateInvalid("candidate strategy_spec is not a gate-ready hypothesis card spec")
-    if embedded.get("tenant_id") != decision.get("tenant_id"):
-        raise PaperCandidateInvalid("candidate strategy_spec.metadata.tenant_id does not match the approval tenant")
+    # entry.owner_tenant is already exact; any tenant the spec or the entry metadata names must agree.
+    for label, bound in (("strategy_spec.metadata", embedded), ("metadata", metadata)):
+        if bound.get("tenant_id") not in (None, tenant_id):
+            raise PaperCandidateInvalid(f"candidate {label}.tenant_id does not match the approval tenant")
     capital = embedded.get("capital_scale_pct", 0)
     if not _is_number(capital) or capital != 0:
         raise PaperCandidateInvalid("candidate strategy_spec.metadata.capital_scale_pct must be 0")
     if _canonical_sha256(spec) != _text(entry, "checksum"):
         raise PaperCandidateInvalid("candidate strategy_spec checksum does not match the entry checksum")
     return {"kind": "card_strategy_spec", "checksum": _text(entry, "checksum"),
-            "registry_id": entry.get("registry_id"), "tenant_id": decision.get("tenant_id")}
+            "registry_id": entry.get("registry_id"), "tenant_id": tenant_id}
+
+
+def _verify_card_bundle_entry(entry: Mapping[str, Any], *, decision: Mapping[str, Any]) -> dict[str, Any]:
+    """The pool candidate a card-derived spec produced: a checksummed paper bundle bound to the demand.
+
+    The artifact's ``lineage.source_strategy_spec_id`` names the spec by strategy id, which Registry cannot
+    resolve as an entry id, so the parent spec is not re-read here; the bundle is bound to the open demand
+    and persona the research proposer named, to paper / zero capital, and to the gate's verified proof.
+    """
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError, strategy_artifact_checksum, validate_strategy_artifact)
+
+    tenant_id = decision.get("tenant_id")
+    if entry.get("owner_tenant") != tenant_id or entry.get("artifact_state") != "candidate":
+        raise PaperCandidateInvalid("card bundle entry state or tenant does not match the approval")
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise PaperCandidateInvalid("bundle metadata is required")
+    artifact = metadata.get("strategy_artifact")
+    if not isinstance(artifact, Mapping):
+        raise PaperCandidateInvalid("bundle metadata.strategy_artifact is required")
+    try:
+        validate_strategy_artifact(artifact)
+        computed = strategy_artifact_checksum(artifact)
+    except StrategyArtifactValidationError as exc:
+        raise PaperCandidateInvalid(f"bundle strategy_artifact validation failed: {exc}") from exc
+    if computed != _text(entry, "checksum"):
+        raise PaperCandidateInvalid("bundle strategy_artifact checksum does not match the entry checksum")
+    for artifact_key, entry_key in (("artifact_id", "registry_id"), ("version", "version"), ("strategy_id", "strategy_id")):
+        if artifact.get(artifact_key) != entry.get(entry_key):
+            raise PaperCandidateInvalid(f"bundle strategy_artifact.{artifact_key} does not match the entry")
+    algorithm_ref = artifact.get("algorithm_ref")
+    if not isinstance(algorithm_ref, Mapping) or algorithm_ref.get("signal_interface") != PAPER_SIGNAL_INTERFACE:
+        raise PaperCandidateInvalid("bundle algorithm_ref.signal_interface is not the paper signal interface")
+    lineage = artifact.get("lineage")
+    source_id = lineage.get("source_strategy_spec_id") if isinstance(lineage, Mapping) else None
+    entry_lineage = entry.get("lineage")
+    if not isinstance(source_id, str) or not source_id.strip() or not isinstance(entry_lineage, Mapping) \
+            or entry_lineage.get("source_strategy_spec_id") != source_id:
+        raise PaperCandidateInvalid("bundle lineage.source_strategy_spec_id is required and must match the entry")
+    if metadata.get("execution_context") != "paper" or not _is_number(metadata.get("capital_scale_pct")) \
+            or metadata.get("capital_scale_pct") != 0:
+        raise PaperCandidateInvalid("bundle metadata must be paper execution context with zero capital")
+    if metadata.get("persona_id") != decision.get("persona_id") or metadata.get("demand_ref") != decision.get("proposal_id"):
+        raise PaperCandidateInvalid("bundle metadata persona/demand does not match the approval")
+    if metadata.get("tenant_id") not in (None, tenant_id):
+        raise PaperCandidateInvalid("bundle metadata.tenant_id does not match the approval tenant")
+    if entry.get("replication_success") is not True or not isinstance(entry.get("replication_proof"), Mapping):
+        raise PaperCandidateInvalid("bundle has no verified replication proof")
+    return {"kind": "card_execution_bundle", "checksum": computed, "tenant_id": tenant_id,
+            "source_strategy_spec_id": source_id}
+
+
+def verify_card_admission_candidate(view: Mapping[str, Any], decision: Mapping[str, Any]) -> dict[str, Any]:
+    """Immutable checks of what a research card admission may approve (paper research, no capital pool).
+
+    Either the gate-ready hypothesis-card StrategySpec itself or the pool candidate (execution bundle) a
+    card-derived spec produced after passing the gate.
+    """
+    entry = view.get("entry") if isinstance(view, Mapping) else None
+    if not isinstance(entry, Mapping):
+        raise PaperCandidateInvalid("Registry entry view is malformed")
+    for key, expected in (("registry_id", decision.get("target_id")), ("version", decision.get("target_version")),
+                          ("owner_tenant", decision.get("tenant_id")), ("checksum", decision.get("candidate_digest")),
+                          ("artifact_state", "candidate")):
+        if not isinstance(expected, str) or not expected.strip() or entry.get(key) != expected:
+            raise PaperCandidateInvalid(f"Registry candidate {key} does not match the approval target")
+    tenant_id = decision.get("tenant_id")
+    if entry.get("artifact_type") == "execution_bundle":
+        return _verify_card_bundle_entry(entry, decision=decision)
+    return _verify_card_spec_entry(entry, tenant_id=tenant_id, state="candidate")
 
 
 def verify_paper_candidate_for_decision(
@@ -1035,6 +1115,17 @@ def paper_candidate_usage_context(
             raise PaperCandidateInvalid("source strategy spec entry not found")
         return {"entry": record}
 
+    owner = evidence.get("owner_user_id")
+    if owner not in (None, "", DEV_PAPER_PROVISIONER_SUBJECT):
+        # A scoped approval owned by another principal exists only through the research card admission
+        # widening (Governance stamps the scope on nothing else): the entry must be that gate-ready,
+        # zero-capital card spec, or the pool candidate it produced, at exactly the approved version/digest
+        # (persona and proposal_id are the ones the approval names).
+        verify_card_admission_candidate({"entry": entry}, {
+            "tenant_id": evidence.get("tenant_id"), "target_id": evidence.get("target_id"),
+            "target_version": evidence.get("target_version"), "candidate_digest": evidence.get("candidate_digest"),
+            "persona_id": evidence.get("persona_id"), "proposal_id": evidence.get("proposal_id")})
+        return ApprovalUsageContext(environment=environment, target_stage="paper", capital_scale_pct=0)
     verify_paper_registry_candidate({"entry": entry}, expectation=expectation, read_entry_view=_view)
     return ApprovalUsageContext(environment=environment, target_stage="paper", capital_scale_pct=0)
 
