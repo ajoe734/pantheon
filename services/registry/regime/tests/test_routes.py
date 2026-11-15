@@ -9,15 +9,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.governance.test_approval_authority import advance_registry_http
-from services.registry import service as registry_service
+from services.registry import main as registry_service
+from services.registry import service as registry_auth
 from services.registry.regime import routes
 from services.registry.regime.store import WRITE_METHODS, get_regime_store
-from services.registry.regime.tests import support as S
+from services.registry.regime.tests import test_evaluator as S
 from services.registry.storage import reset_store
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 SECRET = "regime-routes-test-secret"
-PKG = Path(registry_service.__file__).resolve().parent
+PKG = Path(registry_auth.__file__).resolve().parent
 
 
 @pytest.fixture(autouse=True)

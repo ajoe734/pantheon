@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 
 import pytest
@@ -9,29 +10,89 @@ import pytest
 from services.registry.regime import evaluator as E
 from services.registry.regime.profiles import RegimeProfile
 from services.registry.regime.store import RegimeStore
-from services.registry.regime.tests import support as S
+from services.research.regime.features import BUILDERS
+from services.research.regime.models import fit_jump_axis, fit_volatility
+from services.research.regime.registration import artifact_id_for, model_version_for
+from services.research.tests.test_regime_research_route import small_config, synthetic_observations
+
+CONFIG = small_config()
 
 
-def _evaluator(store, observations=None, calls=None):
-    obs = S.observations() if observations is None else observations
+def visible(observations):
+    """Make each observation available on its own event day, so every session is visible at its close."""
+    out = []
+    for o in observations:
+        day = str(o["event_time"])[:10]
+        out.append({**o, "available_time": f"{day}T10:00:00Z", "ingest_time": f"{day}T10:00:00Z"})
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _built():
+    obs = visible(synthetic_observations(1500, seed=0)[0])
+    days = sorted({str(o["event_time"])[:10] for o in obs if o["dataset"] == "tw_index_daily"})
+    session = days[-1]
+    models = {}
+    for axis in E.MODEL_AXES:
+        for horizon in E.HORIZONS:
+            inputs = BUILDERS[axis](obs, decision_time=session, horizon=horizon, config=CONFIG)
+            assert inputs.available, inputs.reason
+            if axis == "volatility":
+                model = fit_volatility(inputs.frame, horizon=horizon)
+            else:
+                model = fit_jump_axis(inputs.frame, inputs.returns, axis=axis, horizon=horizon,
+                                      n_states=3 if axis == "trend" else 2, jump_penalty=30.0, config=CONFIG)
+            models[(axis, horizon)] = model
+    return obs, days, models
+
+
+def observations():
+    return list(_built()[0])
+
+
+def sessions():
+    return list(_built()[1])
+
+
+def model_entries(state: str = "approved", *, scope: str = "paper", axes=E.MODEL_AXES):
+    entries = []
+    for (axis, horizon), model in _built()[2].items():
+        if axis not in axes:
+            continue
+        entries.append({
+            "registry_id": f"model-{axis}-{horizon}-{state}", "artifact_state": state, "created_at": "2026-11-15T00:00:00Z",
+            "metadata": {"regime_classifier": True, "model_family": model.method, "model_version": model_version_for(model),
+                         "model_artifact_id": artifact_id_for(model), "axis": axis, "horizon": horizon, "market": "TW",
+                         "scope": scope, "model": model.to_dict()}})
+    return entries
+
+
+def strategy(strategy_id="strat-a", tenant="tenant-a", **meta):
+    return {"strategy_id": strategy_id, "registry_id": f"reg-{strategy_id}", "metadata": meta, "owner_tenant": tenant}
+
+
+
+
+def _evaluator(store, rows=None, calls=None):
+    obs = observations() if rows is None else rows
 
     def load():
         if calls is not None:
             calls.append(1)
         return obs
 
-    return E.RegimeEvaluator(store, load, clock=lambda: "2026-11-16T09:00:00Z", config=S.CONFIG)
+    return E.RegimeEvaluator(store, load, clock=lambda: "2026-11-16T09:00:00Z", config=CONFIG)
 
 
 def _run(store, session, models=None, strategies=None, **kw):
     ev = kw.pop("evaluator", None) or _evaluator(store)
-    return ev.evaluate(session=session, models=S.model_entries() if models is None else models,
-                       strategies=strategies if strategies is not None else [S.strategy()], **kw)
+    return ev.evaluate(session=session, models=model_entries() if models is None else models,
+                       strategies=strategies if strategies is not None else [strategy()], **kw)
 
 
 def test_every_axis_reports_filtered_state_and_no_smoothed_value():
     store = RegimeStore()
-    session = S.sessions()[-1]
+    session = sessions()[-1]
     _run(store, session)
     ms = store.list_market_states("TW", session)[0]
     for axis in E.MODEL_AXES:
@@ -47,9 +108,9 @@ def test_every_axis_reports_filtered_state_and_no_smoothed_value():
 
 def test_strategy_record_is_schema_valid_and_derived_from_profile():
     store = RegimeStore()
-    session = S.sessions()[-1]
-    _run(store, session, strategies=[S.strategy("vol", regime={"primary_axis": "volatility", "horizon": "short"}),
-                                      S.strategy("trend")])
+    session = sessions()[-1]
+    _run(store, session, strategies=[strategy("vol", regime={"primary_axis": "volatility", "horizon": "short"}),
+                                      strategy("trend")])
     vol = store.list_regimes(strategy_id="vol")[0]["record"]
     trend = store.list_regimes(strategy_id="trend")[0]["record"]
     validator = E._schema_validator()
@@ -68,7 +129,7 @@ def test_strategy_record_is_schema_valid_and_derived_from_profile():
 def test_evaluate_is_idempotent_and_reads_governed_data_once():
     store, calls = RegimeStore(), []
     ev = _evaluator(store, calls=calls)
-    session = S.sessions()[-1]
+    session = sessions()[-1]
     first = _run(store, session, evaluator=ev)
     second = _run(store, session, evaluator=ev)
     assert first["sets"][0]["computed"] is True and second["sets"][0]["computed"] is False
@@ -79,8 +140,8 @@ def test_evaluate_is_idempotent_and_reads_governed_data_once():
 
 def test_incomplete_session_stores_nothing():
     store = RegimeStore()
-    session = S.sessions()[-1]
-    obs = [o for o in S.observations() if not (o["dataset"] == "tw_index_daily" and str(o["event_time"])[:10] == session)]
+    session = sessions()[-1]
+    obs = [o for o in observations() if not (o["dataset"] == "tw_index_daily" and str(o["event_time"])[:10] == session)]
     with pytest.raises(E.EvaluationRefused) as exc:
         _run(store, session, evaluator=_evaluator(store, obs))
     assert exc.value.code == "session_data_incomplete"
@@ -91,14 +152,14 @@ def test_incomplete_session_stores_nothing():
 
 def test_no_model_refuses():
     with pytest.raises(E.EvaluationRefused) as exc:
-        _run(RegimeStore(), S.sessions()[-1], models=[])
+        _run(RegimeStore(), sessions()[-1], models=[])
     assert exc.value.code == "no_regime_model"
 
 
 def test_candidate_records_are_proposed_and_never_served():
     store = RegimeStore()
-    session = S.sessions()[-1]
-    out = _run(store, session, models=S.model_entries("candidate"))
+    session = sessions()[-1]
+    out = _run(store, session, models=model_entries("candidate"))
     assert out["sets"][0]["model_status"] == "candidate"
     assert [r["record"]["state"] for r in store.list_regimes(served_only=False)] == ["proposed"]
     assert store.list_regimes() == [] and store.list_market_states("TW") == []
@@ -106,7 +167,7 @@ def test_candidate_records_are_proposed_and_never_served():
 
 def test_approved_record_moves_validated_active_then_superseded():
     store = RegimeStore()
-    prev, last = S.sessions()[-2], S.sessions()[-1]
+    prev, last = sessions()[-2], sessions()[-1]
     _run(store, prev)
     first = store.list_regimes()[0]["record"]
     assert first["state"] == "active"
@@ -120,7 +181,7 @@ def test_approved_record_moves_validated_active_then_superseded():
 
 def test_late_backfill_never_displaces_a_later_active_record():
     store = RegimeStore()
-    prev, last = S.sessions()[-2], S.sessions()[-1]
+    prev, last = sessions()[-2], sessions()[-1]
     _run(store, last)
     _run(store, prev)
     rows = {r["session"]: r["record"] for r in store.list_regimes()}
@@ -130,11 +191,11 @@ def test_late_backfill_never_displaces_a_later_active_record():
 
 def test_revised_inputs_invalidate_and_recompute_when_verified():
     store = RegimeStore()
-    session = S.sessions()[-1]
+    session = sessions()[-1]
     _run(store, session)
-    revised = copy.deepcopy(S.observations())
+    revised = copy.deepcopy(observations())
     for o in revised:
-        if o["dataset"] == "tw_index_daily" and str(o["event_time"])[:10] == S.sessions()[-5]:
+        if o["dataset"] == "tw_index_daily" and str(o["event_time"])[:10] == sessions()[-5]:
             o["value"] = o["value"] * 1.01
             o["available_time"] = "2026-11-16T08:00:00Z"
     unchanged = _run(store, session, evaluator=_evaluator(store, revised))  # no verify: stored result returned
@@ -150,10 +211,10 @@ def test_revised_inputs_invalidate_and_recompute_when_verified():
 
 def test_missing_primary_axis_gives_no_record_and_missing_secondary_is_recorded():
     store = RegimeStore()
-    session = S.sessions()[-1]
-    no_breadth = [o for o in S.observations() if o["dataset"] != "tw_market_breadth_daily"]
+    session = sessions()[-1]
+    no_breadth = [o for o in observations() if o["dataset"] != "tw_market_breadth_daily"]
     out = _run(store, session, evaluator=_evaluator(store, no_breadth),
-               strategies=[S.strategy("trendy"), S.strategy("volly", regime={"primary_axis": "volatility", "horizon": "short"})])
+               strategies=[strategy("trendy"), strategy("volly", regime={"primary_axis": "volatility", "horizon": "short"})])
     assert [s["strategy_id"] for s in out["sets"][0]["skipped"]] == ["trendy"]
     assert out["sets"][0]["skipped"][0]["reason"].startswith("primary_axis_unavailable:trend/medium")
     assert [r["record"]["strategy_id"] for r in store.list_regimes()] == ["volly"]
@@ -164,8 +225,8 @@ def test_missing_primary_axis_gives_no_record_and_missing_secondary_is_recorded(
 
 def test_axis_without_model_is_recorded_unavailable():
     store = RegimeStore()
-    _run(store, S.sessions()[-1], models=S.model_entries(axes=("volatility",)),
-         strategies=[S.strategy("v", regime={"primary_axis": "volatility", "horizon": "short"})])
+    _run(store, sessions()[-1], models=model_entries(axes=("volatility",)),
+         strategies=[strategy("v", regime={"primary_axis": "volatility", "horizon": "short"})])
     axes = store.list_regimes()[0]["record"]["feature_snapshot"]["axes"]
     assert axes["trend"] == {"available": False, "reason": "no_approved_model:trend:short", "model": None}
     assert "trend_strength" not in store.list_regimes()[0]["record"]["feature_snapshot"]
@@ -195,7 +256,7 @@ def _state(primary_probs, primary_axis="trend", sessions_in_state=30, last_switc
 
 
 def _derive(ms, axis="trend"):
-    return E.derive_record(S.strategy(), RegimeProfile(axis, "medium", "spec_regime"), ms, now="2026-11-16T09:00:00Z")
+    return E.derive_record(strategy(), RegimeProfile(axis, "medium", "spec_regime"), ms, now="2026-11-16T09:00:00Z")
 
 
 @pytest.mark.parametrize("axis,probs,expected", [
