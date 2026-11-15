@@ -3615,6 +3615,10 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                         task,
                         commit_ref=metadata_ref if approved_ref else "",
                     )
+                    delivery["commit_timestamp"] = commit_timestamp
+                    delivery["commit_timestamp_ref"] = (
+                        metadata_ref if approved_ref else "reviewed_head_or_workspace_head"
+                    )
                 if field_name == "LLM-Agent":
                     delivery["commit_owner_reassignment"] = (
                         _verified_done_owner_reassignment(
