@@ -613,6 +613,9 @@ class CurrentArtifactStrategy:
             # A one-underlying target envelope still requires an explicit bar.
             one = binding.get("market_input")
             snapshots = {one["symbol"]: one} if isinstance(one, Mapping) and one.get("symbol") else {}
+        source_admitted = not snapshots
+        if source_admitted:
+            snapshots = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso)
         try:
             if self._expression_inputs is not None:
                 inputs = dict(self._expression_inputs(binding) or {})
@@ -659,6 +662,11 @@ class CurrentArtifactStrategy:
                 for selector in selectors:
                     row_binding = {**binding, "symbol": symbol, "features": features,
                                    "market_input": {**keyed[symbol], "symbol": symbol}}
+                    if source_admitted:
+                        # Admitted once, at the common bar, against the Source snapshot itself;
+                        # the normalized row must not be re-admitted as if it were that snapshot.
+                        row_binding.pop("market_data_policy", None)
+                        row_binding["metadata"] = {k: v for k, v in metadata.items() if k != "market_data_policy"}
                     out = self(row_binding, now_iso, _portfolio_symbol=symbol,
                                _portfolio_result=result, _allocation=allocation if target_policy else None,
                                _frozen_inputs=inputs, _reconcile_instrument_id=selector)
@@ -667,6 +675,37 @@ class CurrentArtifactStrategy:
         except (ValueError, TypeError, KeyError) as exc:
             code = "market_input_missing" if "snapshot missing" in str(exc) else "market_input_invalid"
             raise SignalDecisionUnavailable(code, str(exc)) from exc
+
+    @staticmethod
+    def _obtain_pool_market_inputs(artifact, binding, metadata, now_iso):
+        """Production source of an envelope's bar: one admitted Source snapshot per symbol.
+
+        Only reached when the binding carries no inline inputs. A symbol that fails
+        admission, or symbols at different bars, raise so the whole pool records
+        no decision for the bar rather than netting a partial book.
+        """
+        from services.execution.lean_runtime.pool_market_inputs import (
+            PoolMarketInputsUnavailable, envelope_symbols, obtain_envelope_market_inputs,
+        )
+
+        policy = _market_input_policy(binding, metadata)
+        if policy is None:
+            raise SignalDecisionUnavailable(
+                "market_input_missing",
+                f"binding {binding.get('binding_id') or '<unknown>'} has no RuntimeBinding market_data_policy",
+            )
+        try:
+            return obtain_envelope_market_inputs(
+                envelope_symbols(artifact),
+                source_ingest_url=(os.getenv("PANTHEON_SOURCE_INGEST_URL")
+                                   or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or "").rstrip("/"),
+                max_age_seconds=policy["max_age_seconds"],
+                minimum_closes=policy["minimum_closes"],
+                now_iso=now_iso,
+                binding_id=str(binding.get("binding_id") or "") or None,
+            )
+        except PoolMarketInputsUnavailable as exc:
+            raise SignalDecisionUnavailable(exc.code, exc.detail) from exc
 
     @staticmethod
     def _expression_base_view(view: Mapping[str, Any], decision_id: str, symbol: str) -> dict[str, Any]:

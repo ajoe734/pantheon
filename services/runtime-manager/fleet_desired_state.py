@@ -308,7 +308,12 @@ def _execution_projection_exclusion_reason(
 
     symbol = str(binding_dict.get("symbol") or metadata.get("symbol") or "").strip()
     if not symbol:
-        return "non_executable_missing_market_symbol"
+        # A multi-underlying pool envelope has no single symbol; it declares the
+        # complete list it needs and every one must be a non-blank, distinct name.
+        pool = binding_dict.get("symbols") or metadata.get("symbols")
+        names = [str(s or "").strip() for s in pool] if isinstance(pool, (list, tuple)) else []
+        if not (len(names) > 1 and all(names) and len(set(names)) == len(names)):
+            return "non_executable_missing_market_symbol"
 
     market_data_policy = (
         binding_dict.get("market_data_policy") or metadata.get("market_data_policy")
