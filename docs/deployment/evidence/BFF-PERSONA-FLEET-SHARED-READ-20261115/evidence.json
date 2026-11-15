@@ -1,0 +1,23 @@
+{
+  "task_id": "BFF-PERSONA-FLEET-SHARED-READ-20261115",
+  "hosted_before": {
+    "gate_run": "execute-plans 43679289721",
+    "artifact": "pantheon-integration-evidence-attempt-1 current-run/management-hosted-acceptance-2026-11-15.json",
+    "routes": ["/management/performance-attribution", "/management/data-sources"],
+    "persona_fleet_requests": 19,
+    "p50_ms": 1484,
+    "requests_without_response_within_5500ms": 2,
+    "earlier_gates_max_ms": 5430
+  },
+  "change": {
+    "service": "personas/service.py::_persona_fleet_shared_payload (single-flight + memo, 10s reuse from computation start, 30s hard ceiling; includes persona_cycle_health enrichment; failures never stored; deep copy per caller; snapshot_at preserved)",
+    "route": "personas/routes/collection.py::bff_management_persona_fleet now calls the shared function"
+  },
+  "local_tests": [
+    {"command": "pytest services/control-plane/bff/tests/test_persona_fleet_shared_read.py test_bff_b3_persona_fleet.py test_mgmt_read_001_persona_fleet_owner_observations.py test_persona_fleet_current_latency.py test_persona_cycle_views.py", "result": "54 passed"},
+    {"command": "pytest test_persona_router.py test_persona_cycle_views.py test_bff_auth_facade.py test_management_nl_assistant_provider.py test_pm12_request_scoped_reads.py test_owner_unavailable_503_consistency.py (HEAD vs change)", "result": "HEAD: 16 failed/163 passed; change before test memo-clear fix: 17 failed (one new: test_management_fleet_has_controller_health, fixed by clearing memo after file unlink); remaining 16 failures identical to HEAD (pre-existing in this environment)"},
+    {"command": "pytest test_bff_b3_human_inbox.py test_event_loop_owner_reads_guard.py test_persona_create_data_scope.py test_management_session_harness.py test_agora_servant_production_write_owner.py (HEAD vs change)", "result": "identical outcomes"}
+  ],
+  "test_adjustments": "memo cleared (personas_service._persona_fleet_shared_cache_clear()) in test_bff_b3_persona_fleet.py (2 places) and test_persona_cycle_views.py where a test mutates data between identical calls within the 10s window",
+  "caveat": "Full BFF suite not run to completion in this environment; many persona suites fail at HEAD for unrelated environment reasons. No hosted after-measurement yet."
+}

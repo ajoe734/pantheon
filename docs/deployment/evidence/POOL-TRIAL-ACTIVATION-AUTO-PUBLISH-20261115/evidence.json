@@ -1,0 +1,28 @@
+{
+  "task_id": "POOL-TRIAL-ACTIVATION-AUTO-PUBLISH-20261115",
+  "date": "2026-11-15",
+  "reproduction_on_dev_head_94b73806a": {
+    "trial_published_weight_zero_virtual_only": "services/control-plane/bff/persona_pool_publisher.py _build_envelope (virtual = stage == trial; weight = 0)",
+    "no_path_changes_trial_to_active": "services/control-plane/persona/pool_policy.py reweight lifts the cap after trial_history_days but never changes stage; only evolution_compete (persona_strategy_pool.py) sets active",
+    "decide_never_publishes": "services/control-plane/persona/persona_strategy_pool.py decide() docstring and body; publish callers were only the operator route and the evolution consumer (off)",
+    "publish_records_in_process_memory": "services/control-plane/bff/personas/routes/lifecycle.py _POOL_PUBLISH_RECORDS = InMemoryPublishRecords()",
+    "test_reproduction": "test_trial_member_becomes_trading_member_after_twenty_days_and_publishes asserts the admitted trial publishes weight 0 virtual_only before promotion"
+  },
+  "changes": {
+    "promotion": "PersonaStrategyPoolStore._promote_trials at reweight; condition in pool_policy.json (trial_promotion_min_days 20, trial_promotion_max_drawdown 0.05, publish_weight_tolerance 0.02) marked in coordinator_proposals for reviewer confirmation; baseline must still resolve via resolve_member_baseline; reason recorded in decision.trial_promotions",
+    "trial_publication_reading": "pool_policy.trial_publication: weight 0 -> virtual only; weight > 0 -> trades, at most trial_risk_cap, until promoted (design 4.2/5.3 reading)",
+    "auto_publish": "PoolAutonomyCycle._publish after act; publication_change vs last confirmed publication (membership, stage, weight beyond tolerance); unchanged publishes nothing; failure reported in act.publication and audit_refs, retried next cycle",
+    "envelope_publication_consultation": "pool_publish_port.envelope_publication_consultation using consult_triggers.required_consultation (file unmodified); membership change needs verified published memo, pure re-weight does not",
+    "durable_publish_records": "persona_pool_publisher.build_publish_records (postgres or atomic json file), plus GET /bff/personas/{id}/strategy-pool/publish-history",
+    "new_configuration": "PERSONA_POOL_PUBLISH_BFF_TOKEN (cycle -> BFF publish route credential) and PANTHEON_BFF_URL; unset fails closed with owner_credential_unconfigured:bff. The BFF role this token maps to must be an operator-level role (not provisioned by this task)"
+  },
+  "validation": [
+    {"command": "pytest services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py", "result": "45 passed"},
+    {"command": "pytest services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/bff/tests/test_persona_pool_publish_route.py", "result": "38 passed"},
+    {"command": "pytest services/persona/test_pool_autonomy_cycle.py services/persona/test_pool_publish_port.py", "result": "39 passed"},
+    {"command": "pytest services/persona services/evolution -k 'pool or publish or cycle or trial'", "result": "160 passed, 2 failed (test_deployed_persona_lifespan_consumes_cycle_and_stops: asyncpg not installed in the local venv)"}
+  ],
+  "integration_note": "Integration test uses the real policy re-weight/promotion, baseline resolver on a gate-minted registry entry, BFF route, publisher, coordinator, StagePlanner and Deployment dispatch adapter. The admission result is appended through the store's policy-applied path because two gate-minted entries share one artifact id and cannot both pass the publisher's own member identity check; admission itself is covered in test_persona_strategy_pool.py. Runtime Manager and owner HTTP are fakes as in the existing publish route tests.",
+  "not_verified": ["hosted dev deployment", "BFF role provisioning of the cycle token", "unrelated pre-existing failures in services/control-plane/bff capital/governance/loop-inventory tests (same failures on the parent commit)"],
+  "contains_credentials": false
+}
