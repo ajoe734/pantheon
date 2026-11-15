@@ -1143,7 +1143,12 @@ class CurrentArtifactStrategy:
             out["intraday_settlement"] = pending_record(
                 ExecutionPlan(**intraday_plan), decision_id=decision_id, symbol=symbol, direction=direction
             )
-        elif action in ("BUY", "SELL") and is_taiwan_venue_symbol(symbol) and (
+        elif (
+            action in ("BUY", "SELL")
+            # A flat or reduced target view is a HOLD action that the expression layer turns into a
+            # close/trim order from the same decision-bar close: it settles at the next open too.
+            or (expression_enabled and view is not None)
+        ) and is_taiwan_venue_symbol(symbol) and (
             _declared_bar_frequency(strategy_artifact) in (None, DAILY_FREQUENCY)
         ):
             # Operator decision 2026-11-15 (option A): a daily decision computed from the close of
@@ -2580,7 +2585,13 @@ class PaperSignalProducer:
             )
             dsp = DecisionSignalProducer(store)
 
-            if (out.get("metadata") or {}).get("target_expression_required") and not out.get("expression"):
+            # A released daily decision was parked after its expression was resolved and applied,
+            # so the missing expression is expected there and must not downgrade it to HOLD.
+            if (
+                settled_fill is None
+                and (out.get("metadata") or {}).get("target_expression_required")
+                and not out.get("expression")
+            ):
                 out["action"] = "HOLD"
                 out["metadata"]["reason_code"] = "candidates_unavailable"
                 out["metadata"]["detail"] = "target_position_v1 requires expression layer"

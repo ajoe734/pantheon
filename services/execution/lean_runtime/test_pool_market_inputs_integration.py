@@ -34,15 +34,20 @@ from services.source_ingestion.routers.ingest_operations import create_ingest_op
 SYMBOLS = ["2330.TW", "2317.TW", "2454.TW"]
 DAY = "2026-11-13"
 NOW = DAY + "T06:00:00Z"
+NEXT_DAY = "2026-11-16"
 
 
-def _snapshot(symbol, closes, day=DAY):
+def produce_count(producer, binding, now):
+    return producer.produce(binding, now)
+
+
+def _snapshot(symbol, closes, day=DAY, observed_day=DAY):
     points = tuple(
         MarketSnapshotPoint(event_time=f"{day}T05:30:00Z" if i == len(closes) - 1 else "2026-11-10T05:30:00Z",
                             close=c, source_id=f"s-{symbol}-{i}", connector_id="tw-twse-tpex-official-market",
                             content_ref=f"tw-official:{symbol}:{i}", ingest_run_id="run-1")
         for i, c in enumerate(closes))
-    return LatestMarketSnapshot(symbol=symbol.replace(".TW", ".TWSE"), points=points, observed_at=DAY + "T05:45:00Z", market="TW")
+    return LatestMarketSnapshot(symbol=symbol.replace(".TW", ".TWSE"), points=points, observed_at=observed_day + "T05:45:00Z", market="TW")
 
 
 def _write(path, snapshots):
@@ -90,11 +95,21 @@ def _binding_for(artifact):
     return binding
 
 
-def _service(binding, tmp_path, summary):
+def _official_open_reader(opens):
+    """Recorded official daily opens keyed by trade date; an unreconciled session returns no row."""
+    def reader(symbol, session_date, now):
+        if session_date not in opens:
+            return []
+        return [{"symbol": symbol, "bar_start": f"{session_date}T09:00:00+08:00", "bar_frequency": "1d",
+                 "bar_availability_ts": f"{session_date}T16:00:00+08:00", "open": opens[session_date]}]
+    return reader
+
+
+def _service(binding, tmp_path, summary, opens=None):
     strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=production_inputs(summary),
                                        candidates_builder=cash_candidates)
     store, telemetry = InMemoryPendingSignalStore(), _Telemetry()
-    producer = PaperSignalProducer(lambda _: store, strategy)
+    producer = PaperSignalProducer(lambda _: store, strategy, daily_bar_reader=_official_open_reader(opens or {}))
     service = PaperRuntimeService(store=store, identity=_identity(binding),
         runtime_manager_client=_RuntimeManager(_runtime_binding(binding)), telemetry_emitter=telemetry,
         lifecycle_outbox_path=tmp_path / "lifecycle.json", capital_pool_reader=lambda _: _pool())
@@ -109,16 +124,24 @@ def test_two_member_three_symbol_pool_orders_from_real_source(source, tmp_path):
     binding = _binding_for(artifact)
     assert "market_inputs" not in binding
     source.publish([_snapshot(s, [100, 102]) for s in SYMBOLS])
-    producer, service = _service(binding, tmp_path, _summary())
+    producer, service = _service(binding, tmp_path, _summary(), opens={NEXT_DAY: 103.0})
     started = time.monotonic()
-    assert producer.produce(binding, NOW) == 3, producer.degraded_bindings
+    # Daily decisions settle at the next session open: the Friday bar is parked, nothing fills yet.
+    assert produce_count(producer, binding, NOW) == 0, producer.degraded_bindings
     latency = time.monotonic() - started
+    first_tick_requests = list(source.requests)
+    assert service.drain_once()["status"] == "ok" and service._algo.positions() == []
+    # Next session step: the official Monday data lands and the producer releases the parked pool.
+    source.publish([_snapshot(s, [102, 104], day=NEXT_DAY, observed_day=NEXT_DAY) for s in SYMBOLS])
+    assert producer.produce(binding, NEXT_DAY + "T10:00:00Z") == 3, producer.degraded_bindings
+    service._algo.Time = datetime.fromisoformat(NEXT_DAY + "T10:00:00+00:00")
     for _ in range(4):
         snapshot = service.drain_once()
     assert snapshot["status"] == "ok", snapshot
     assert {p["symbol"] for p in service._algo.positions()} == set(SYMBOLS)
     # one request per envelope symbol per tick, bounded latency
-    assert sorted(source.requests) == sorted(SYMBOLS)
+    assert sorted(first_tick_requests) == sorted(SYMBOLS)
+    assert sorted(source.requests[len(first_tick_requests):]) == sorted(SYMBOLS)
     assert latency < 10
 
 
@@ -144,7 +167,8 @@ def test_symbol_on_an_older_bar_records_no_decision_for_whole_pool(source, tmp_p
 
 
 SCREEN_DAY = "2026-11-02"  # Monday after the last recorded session (Friday 2026-10-30)
-SCREEN_NOW = SCREEN_DAY + "T04:00:00Z"
+SCREEN_NOW = SCREEN_DAY + "T10:00:00Z"  # after the 13:30 close: a daily decision needs the closed session
+SCREEN_NEXT_DAY = "2026-11-03"
 
 
 def _store_recorded_market(root, drop=None):
@@ -199,21 +223,27 @@ def test_screened_member_pool_orders_from_governed_normalized_market(source, tmp
     real = pmi.fetch_candidate_pool_market
     monkeypatch.setattr(pmi, "fetch_candidate_pool_market",
                         lambda *a, **k: (calls.append(1), real(*a, **k))[1])
-    producer, service = _service(binding, tmp_path, _summary())
-    service._algo.Time = datetime.fromisoformat(SCREEN_DAY + "T04:00:00+00:00")
+    producer, service = _service(binding, tmp_path, _summary(), opens={SCREEN_NEXT_DAY: 101.0})
+    service._algo.Time = datetime.fromisoformat(SCREEN_DAY + "T10:00:00+00:00")
     started = time.monotonic()
-    produced = producer.produce(binding, SCREEN_NOW)
+    # The decision is parked for the next session open: no order and no position yet.
+    assert producer.produce(binding, SCREEN_NOW) == 0, producer.degraded_bindings
     first = time.monotonic() - started
+    assert service.drain_once()["status"] == "ok" and service._algo.positions() == []
+    # The whole market is requested once per decision day, not again on the next tick.
+    started = time.monotonic()
+    producer.produce(binding, SCREEN_DAY + "T10:01:00Z")
+    assert len(calls) == 1
+    second = time.monotonic() - started
+    # Next session step: a later tick after the official 2026-11-03 open releases the parked pool.
+    produced = producer.produce(binding, SCREEN_NEXT_DAY + "T10:00:00Z")
     assert produced > 0, producer.degraded_bindings
+    service._algo.Time = datetime.fromisoformat(SCREEN_NEXT_DAY + "T10:00:00+00:00")
     for _ in range(4):
         snapshot = service.drain_once()
     assert snapshot["status"] == "ok", snapshot
     assert service._algo.positions()
-    # The whole market is requested once per decision day, not again on the next tick.
-    started = time.monotonic()
-    producer.produce(binding, SCREEN_DAY + "T04:01:00Z")
-    assert len(calls) == 1
-    assert first < 30 and time.monotonic() - started < 30
+    assert first < 30 and second < 30
     assert source.requests == []  # every needed symbol is inside the governed market
 
 
