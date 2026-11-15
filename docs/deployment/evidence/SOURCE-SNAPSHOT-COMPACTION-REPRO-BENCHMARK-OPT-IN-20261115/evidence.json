@@ -1,0 +1,23 @@
+{
+  "task_id": "SOURCE-SNAPSHOT-COMPACTION-REPRO-BENCHMARK-OPT-IN-20261115",
+  "change": "test_repro_unbounded_growth_and_append_latency skipped unless PANTHEON_RUN_COMPACTION_BENCHMARK=1; body unchanged; no product code change",
+  "before": {
+    "dev_branch_ci_run": "43724757273 timed out at 87 percent in 'Run source ingestion tests' (15 min budget)",
+    "local_repro_test_seconds": 602.66,
+    "local_two_snapshot_test_files_seconds": 619
+  },
+  "after": {
+    "compaction_file_default_run": "9 passed, 1 skipped in 20.00s",
+    "bounded_growth_coverage": "test_store_compacts_automatically_and_stays_bounded and test_compaction_keeps_projection_and_bounds_growth still run by default (~3s each)",
+    "full_suite_batches_seconds": {"batch1_of_4": 467.90, "batch2_of_4": 92.31, "batch3_of_4": 94.99, "batch4_of_4": 193.59},
+    "full_suite_total_seconds_approx": 849,
+    "full_suite_total_minutes_approx": 14.2,
+    "full_suite_results": "642+529+388+487 passed, 22 skipped, 0 failed",
+    "note": "Total was measured as 4 sequential file batches on a 12-core GCP host with a fresh venv (no Postgres, so Postgres-gated tests skipped); a single uninterrupted run exceeded the 10 min tool limit. Remaining time is dominated by unrelated slow files: test_scheduled_connector.py (>170s), test_collector_newest_session_progress.py, test_collector_newest_session_hosted_throughput.py (~97s), test_collector_bundle_connector.py (~97s under load). Only ~1 min headroom under the 15 min CI budget; a follow-up to trim those files is advisable."
+  },
+  "commands": [
+    "SOURCE_INGEST_DATA_DIR=$(mktemp -d) python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py",
+    "SOURCE_INGEST_DATA_DIR=$(mktemp -d) python -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py   # run as 4 sequential file batches",
+    "PANTHEON_RUN_COMPACTION_BENCHMARK=1 python -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py   # opt-in benchmark"
+  ]
+}
