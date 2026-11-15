@@ -6084,8 +6084,8 @@ class PaperRuntimeService:
                     binding_id=signal_metadata["binding_id"],
                     envelope_checksum=signal_metadata["artifact_checksum"],
                     symbol=event.symbol, event_time=mark.get("event_time"),
-                    price=mark.get("close"), source_ref=mark.get("source_ref"),
-                    members=member_views,
+                    price=mark.get("close") if mark.get("close") is not None else mark.get("price"),
+                    source_ref=mark.get("source_ref"), members=member_views,
                     bar_frequency=signal_metadata["portfolio_bar_frequency"],
                 )
                 signal_metadata["member_virtual_books"] = self._member_book_snapshot(
