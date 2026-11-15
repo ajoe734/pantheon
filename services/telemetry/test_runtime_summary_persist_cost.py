@@ -1133,6 +1133,54 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
             finally:
                 _main._svc = orig_svc
 
+    def test_ac5_deterministic_4mb_store_full_rewrites_before_and_after(self) -> None:
+        """AC 5 (default CI path): timing-independent guarantee. For the same
+        4 MB store and call mix, the new path performs at most one full rewrite
+        while the legacy path rewrites the whole file on every ingest."""
+        self.assertGreaterEqual(self._base_4mb_size, 4_000_000)
+        ingest_calls = 40
+        runtime_pairs = [
+            (item["runtime_id"], item["binding_id"])
+            for item in self._base_4mb_summaries.values()
+        ]
+        results: dict[str, tuple[int, int]] = {}
+        for mode, store_cls in (
+            ("before", _LegacyFullRewriteStore),
+            ("after", RuntimeSummaryProjectionStore),
+        ):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                summary_path = Path(tmp_dir) / "runtime_summaries.json"
+                summary_path.write_text(self._base_4mb_serialized, encoding="utf-8")
+                clock = [1000.0]
+                with patch(
+                    "services.telemetry.runtime_summary.time.monotonic",
+                    side_effect=lambda: clock[0],
+                ):
+                    store = store_cls(path=summary_path)
+                    base_full = store._full_persist_count
+                    for i in range(ingest_calls):
+                        clock[0] = 1000.0 + (i + 1) * 0.2
+                        rt_id, b_id = runtime_pairs[i % len(runtime_pairs)]
+                        projected = store.project_event(
+                            _make_heartbeat_event(
+                                runtime_id=rt_id, binding_id=b_id, seq=i + 1
+                            )
+                        )
+                        self.assertIsNotNone(projected)
+                    results[mode] = (
+                        store._full_persist_count - base_full,
+                        store._delta_persist_count,
+                    )
+        self.assertLessEqual(results["after"][0], 1)
+        self.assertGreaterEqual(results["after"][1], ingest_calls - 1)
+        self.assertGreaterEqual(results["before"][0], ingest_calls)
+        self.assertEqual(results["before"][1], 0)
+
+    @unittest.skipUnless(
+        os.environ.get("PANTHEON_RUN_PERSIST_COST_BENCHMARK") == "1",
+        "wall-clock CPU/write-rate benchmark is opt-in; set "
+        "PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 to run it (flaky on busy CI runners)",
+    )
     def test_ac5_local_measurement_4mb_store_cpu_and_write_bytes_before_and_after(self) -> None:
         """AC 5: Local measurement with a real-shaped 4 MB summary store and
         200 ingest calls plus 70 infrastructure-health calls per minute records

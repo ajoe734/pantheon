@@ -1,0 +1,10 @@
+{
+  "task_id": "TELEMETRY-PERSIST-COST-BENCHMARK-CI-FLAKY-20261115",
+  "change": "test-only: services/telemetry/test_runtime_summary_persist_cost.py",
+  "summary": "Wall-clock test_ac5 benchmark is opt-in via PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 (skipped with a reason otherwise). New deterministic test_ac5_deterministic_4mb_store_full_rewrites_before_and_after asserts after<=1 full rewrite and legacy full rewrite on every ingest using _full_persist_count/_delta_persist_count. Benchmark function and thresholds unchanged.",
+  "commands": [
+    {"cmd": "for i in 1..30: .venv/bin/python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py", "result": "30/30 passed (5 passed, 1 skipped each)"},
+    {"cmd": "PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py -k local_measurement", "result": "1 passed in 25.53s"},
+    {"cmd": "python -m pytest -q services/telemetry", "result": "561 passed, 2 skipped"}
+  ]
+}
