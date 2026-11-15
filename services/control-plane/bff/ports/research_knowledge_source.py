@@ -11,16 +11,71 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import copy
+from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 log = logging.getLogger(__name__)
+
+# A small owner-page memo absorbs repeated concurrent dashboard reads. It
+# stores validated pages only, never the full catalog or projected BFF DTOs.
+STRATEGY_SUMMARY_MEMO_SECONDS = 5.0
+STRATEGY_SUMMARY_MEMO_MAX_KEYS = 64
+
+
+class _StrategySummaryPageMemo:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values: OrderedDict[Any, Tuple[float, Dict[str, Any]]] = OrderedDict()
+        self._pending: Dict[Any, Future] = {}
+
+    def read(self, key: Any, fetch: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+        from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+
+        leader = False
+        with self._lock:
+            now = time.monotonic()
+            for expired in [k for k, (deadline, _) in self._values.items() if deadline <= now]:
+                del self._values[expired]
+            hit = self._values.get(key)
+            if hit is not None:
+                self._values.move_to_end(key)
+                return copy.deepcopy(hit[1])
+            pending = self._pending.get(key)
+            if pending is None and len(self._pending) < STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                pending = self._pending[key] = Future()
+                leader = True
+        if pending is None:
+            # Key churn cannot create an unbounded in-flight map or serialize
+            # unrelated tenants behind a slow Registry read.
+            return fetch()
+        if not leader:
+            return copy.deepcopy(pending.result(timeout=remaining_management_read_budget()))
+        try:
+            value = fetch()
+            saved = copy.deepcopy(value)
+            with self._lock:
+                self._values[key] = (time.monotonic() + STRATEGY_SUMMARY_MEMO_SECONDS, saved)
+                while len(self._values) > STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                    self._values.popitem(last=False)
+            pending.set_result(saved)
+            return value
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
 
 
 class _EvidenceOwnerReadError(RuntimeError):
@@ -705,6 +760,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
         self._evidence_repo = evidence_repository
+        self._strategy_summary_memo = _StrategySummaryPageMemo()
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -2908,7 +2964,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant
+        from services.control_plane.bff.command_adapters.base import registry_url
 
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2946,12 +3003,20 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_token,
                 int(page_size),
             ),
-            lambda: self._fetch_canonical_strategy_specs_page_uncached(
-                state=norm_state,
-                exclude_state=norm_exclude_state,
-                persona_id=norm_persona,
-                page_token=norm_token,
-                page_size=int(page_size),
+            lambda: self._strategy_summary_memo.read(
+                (
+                    selected_tenant.get(),
+                    hashlib.sha256((authorization.get() or "").encode()).digest(),
+                    registry_url("/api/registry/strategy-specs"),
+                    norm_state, norm_exclude_state, norm_persona, norm_token, int(page_size),
+                ),
+                lambda: self._fetch_canonical_strategy_specs_page_uncached(
+                    state=norm_state,
+                    exclude_state=norm_exclude_state,
+                    persona_id=norm_persona,
+                    page_token=norm_token,
+                    page_size=int(page_size),
+                ),
             ),
         )
 
