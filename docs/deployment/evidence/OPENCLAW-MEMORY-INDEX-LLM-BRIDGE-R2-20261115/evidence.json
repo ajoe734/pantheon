@@ -1,0 +1,54 @@
+{
+  "task_id": "OPENCLAW-MEMORY-INDEX-LLM-BRIDGE-R2-20261115",
+  "hosted_behavior_claimed": false,
+  "base": "origin/dev f9c1b39730e10a7dedf8a384552767725accd29c (carrying predecessor OPENCLAW-MEMORY-INDEX-LLM-BRIDGE-20261114 AC1-AC5 plus R2 AC6-AC8)",
+  "commands": [
+    {
+      "cmd": "pytest services/openclaw-gateway-adapter/test_memory_llm_bridge.py services/openclaw-gateway-adapter/test_compose_activation.py deploy/hindsight/tests scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_memory_llm_bridge_deploy_switch_contract.py",
+      "result": "see test_result"
+    }
+  ],
+  "test_result": "53 passed, 2 skipped (opt-in probes); compose contract updated for global LLM vars",
+  "ac6_gateway_double": {
+    "status": "run",
+    "what": "real adapter app served by uvicorn + reusable GatewayDouble in services/openclaw-gateway-adapter/test_memory_llm_bridge.py (pinned /v1/responses SSE shape, deny-all config.get snapshot); retain-extraction-shaped and consolidation-shaped json_schema requests return schema-valid JSON, only agent memory-index is dispatched, caller model name never forwarded",
+    "tests": "test_retain_and_consolidation_requests_reach_deny_all_agent_with_valid_json[*]"
+  },
+  "ac6_real_hindsight_container": {
+    "status": "run",
+    "command": "PANTHEON_RUN_HINDSIGHT_CONTAINER_PROBE=1 pytest services/openclaw-gateway-adapter/test_memory_llm_bridge.py -k test_real_container_bridge_probe",
+    "what": "real hindsight image pantheon-case-file-hindsight:local + pgroonga/pgvector Postgres (pantheon-hindsight-eval-pg:pgroonga-pgvector) on a private docker network, real adapter app via uvicorn, gateway double; Hindsight configured with bridge token only and PROVIDER=openai, RETAIN_EXTRACTION_MODE=verbatim, worker on",
+    "result": {
+      "retain": {
+        "status": 200,
+        "latency_s": 1.06,
+        "bridge_calls": 1,
+        "extract_facts_s": 0.727
+      },
+      "consolidation": {
+        "status": 200,
+        "processed": "1/1",
+        "bridge_calls": 1,
+        "llm_s": 0.035
+      },
+      "only_agent_dispatched": "memory-index",
+      "double_requests": 2
+    },
+    "finding": "With HINDSIGHT_API_LLM_PROVIDER=none (previous compose) consolidation is skipped ('LLM provider is none') and verbatim retain made no bridge call (0 requests). Compose now exposes HINDSIGHT_API_LLM_PROVIDER/MODEL/API_KEY/BASE_URL (default none; API key is the bridge token only) and the deploy bridge env sets HINDSIGHT_LLM_PROVIDER=openai.",
+    "caveats": "Gateway was a double returning prompt-kind-shaped JSON: no claim on real-gateway latency or JSON validity (left to MEMORY-HINDSIGHT-HOSTED-ACCEPTANCE-20261113). Worker/extraction-mode switches are probe-only; compose keeps chunks/worker off until MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114.",
+    "harness": "test_memory_llm_bridge.py::test_real_container_bridge_probe"
+  },
+  "ac7_deploy_switch": {
+    "workflow_vars": [
+      "DEV_MEMORY_LLM_BRIDGE_ENABLED (default false)",
+      "DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET (default 500)"
+    ],
+    "script": "scripts/deploy_nonprod_vm.sh memory_llm_bridge_env: off unless PANTHEON_DEV_MEMORY_LLM_BRIDGE_ENABLED=true; token created/read at ~/.pantheon/memory-llm-bridge.token (mode 600), exported to compose only, never printed",
+    "contract_test": "scripts/test_memory_llm_bridge_deploy_switch_contract.py (4 passed)"
+  },
+  "open_items": [
+    "Coordinator sets DEV_MEMORY_LLM_BRIDGE_ENABLED=true on hosted dev after deploy and measures real latency/JSON validity.",
+    "Legacy HINDSIGHT_*_LLM_API_KEY passthrough names in deploy_nonprod_vm.sh are unchanged; compose ignores them."
+  ],
+  "credentials_in_evidence": false
+}
