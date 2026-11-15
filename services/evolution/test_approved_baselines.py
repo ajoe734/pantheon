@@ -116,6 +116,25 @@ class ApprovedBaselineTests(unittest.TestCase):
         self.assertEqual((b["status"], b["reason"]),
                          ("no_approved_baseline", "gate_verdict_not_recorded"))
 
+    def test_baseline_records_the_next_open_fill_convention(self):
+        from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION
+        self.assertEqual(self.one["evaluation_summary"]["fill_convention"], FILL_CONVENTION)
+        self.assertEqual(resolve(self.one)["fill_convention"], FILL_CONVENTION)
+
+    def test_proof_computed_with_a_close_fill_is_reported_for_operator_decision_not_approved(self):
+        """An old proof is neither kept as approved nor removed: it names the re-baseline requirement."""
+        from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, LEGACY_FILL_CONVENTION
+        old = copy.deepcopy(self.one)
+        del old["evaluation_summary"]["fill_convention"]
+        del old["replication_proof"]["evaluation_summary"]["fill_convention"]
+        baseline = resolve(old)
+        self.assertEqual((baseline["status"], baseline["reason"]),
+                         ("no_approved_baseline", "baseline_computed_under_decision_close_fill"))
+        self.assertIs(baseline["operator_decision_required"], True)
+        self.assertEqual(baseline["recorded_fill_convention"], LEGACY_FILL_CONVENTION)
+        self.assertEqual(baseline["required_fill_convention"], FILL_CONVENTION)
+        self.assertEqual(compare_member_book(baseline, {})["status"], "no_approved_baseline")
+
     def test_two_members_resolve_distinct_baselines_from_their_own_proof(self):
         a, b = resolve(self.one), resolve(self.two, universe=("2330.TW", "2317.TW"))
         self.assertEqual((a["status"], b["status"]), ("approved", "approved"))

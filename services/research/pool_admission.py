@@ -21,7 +21,8 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 )
 
 
-def _replay(prepared, artifact, dates):
+def _replay(prepared, artifact, dates, fills_out=None):
+    """``fills_out`` (optional list) receives every per-session fill of the daily next-open replay."""
     """Same dated inputs/interpreter/netting as paper, previous-bar exposure only."""
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
@@ -56,7 +57,9 @@ def _replay(prepared, artifact, dates):
                     rows.append({"exposure": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction] * strength,
                                  "open": prepared.ohlcv_by_instrument[symbol][index][0],
                                  "close": prepared.ohlcv_by_instrument[symbol][index][3], "date": calendar[index]})
-            values, _ = next_open_net_returns(symbol, rows, liquidate_final=True)
+            values, fills = next_open_net_returns(symbol, rows, liquidate_final=True)
+            if fills_out is not None:
+                fills_out.extend({"symbol": symbol, **fill} for fill in fills)
             if any(not math.isfinite(v) or v <= -1 for v in values):
                 raise ValueError("backtest_return_invalid")
             series.append(values)
@@ -85,7 +88,9 @@ def _replay(prepared, artifact, dates):
             rows.append({"exposure": exposure, "open": opens[index], "close": prices[index], "date": day})
         # A decision from day D's close fills at day D+1's open; the untouched window's final
         # position is marked out at the last close with its liquidation costs.
-        returns, _ = next_open_net_returns(symbol, rows, liquidate_final=True)
+        returns, fills = next_open_net_returns(symbol, rows, liquidate_final=True)
+        if fills_out is not None:
+            fills_out.extend({"symbol": symbol, **fill} for fill in fills)
         if any(not math.isfinite(v) or v <= -1 for v in returns):
             raise ValueError("backtest_return_invalid")
         series.append(returns)
