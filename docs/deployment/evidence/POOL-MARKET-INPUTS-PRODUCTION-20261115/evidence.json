@@ -1,0 +1,25 @@
+{
+  "task_id": "POOL-MARKET-INPUTS-PRODUCTION-20261115",
+  "status": "partial",
+  "reproduction": {
+    "no_writer": "before change no production code in services/ wrote binding market_inputs or candidate_pool_market; only readers were paper_signal_producer.py _target_portfolio / screened branch / multi-symbol branch",
+    "single_symbol_gates": "fleet_desired_state.py required exactly one symbol; reconciler _check_market_admission read binding.symbol only"
+  },
+  "done": {
+    "criterion_2": "services/execution/lean_runtime/pool_market_inputs.py obtains one Source snapshot per envelope symbol (one request each), runs the shared admission rule, requires one common event_time; any failure raises and the producer records no decision for the whole pool",
+    "criterion_5": "fleet_desired_state accepts a declared symbols list (>=2, distinct, non-blank) for a pool binding; reconciler _check_pool_market_admission pauses/keeps paused/resumes on every symbol, same read-failure cache rule as single symbol",
+    "criterion_6": "singleton/passthrough and single-strategy paths are untouched (new code runs only when a target_position envelope has no inline inputs); existing producer/runtime tests unchanged and green",
+    "criterion_7_partial": "test_pool_market_inputs_integration.py: real Source router + LatestMarketSnapshotStore over HTTP -> real CurrentArtifactStrategy/PaperSignalProducer -> PaperRuntimeService fills a 2-member 3-symbol pool; requests per tick == number of symbols (3); latency asserted < 10s"
+  },
+  "not_done": {
+    "criterion_3": "No governed reader exists that builds candidate_pool_market.v1 (scope all_governed_tw, trading calendar, bars with available_time/suspended/traded_value, catalogued feature observations) from the normalized datasets; Source stores normalized rows as content_ref+metadata only. Producer now fails closed with needs_data naming tw_price_daily instead of a generic invalid. A Source endpoint and builder are required.",
+    "criterion_4": "member virtual holdings already feed exit rules (PERSONA-POOL-TARGET-POSITIONS); not re-verified against screened members here",
+    "plan_side": "services/deployment/service.py (outside this task's artifact list) still refuses multi-symbol paper plans with multi_symbol_paper_plan_unsupported, so no multi-symbol binding can be provisioned in production yet; it must read the symbols list this task's fleet gate accepts (binding.metadata.symbols)",
+    "source_files": "services/source_ingestion/* untouched"
+  },
+  "commands": [
+    {"cmd": "pytest services/execution/lean_runtime services/registry/test_portfolio_envelope.py services/registry/test_candidate_pool.py services/source_ingestion/tests/test_latest_market_snapshot.py", "result": "720 passed, 14 skipped (before final needs_data move); services/execution/lean_runtime alone after: 680 passed, 14 skipped"},
+    {"cmd": "pytest services/runtime-manager/test_fleet_desired_state.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py", "result": "143 passed, 2 skipped"},
+    {"cmd": "pytest services/execution/lean_runtime/test_pool_market_inputs.py services/execution/lean_runtime/test_pool_market_inputs_integration.py", "result": "9 passed"}
+  ]
+}

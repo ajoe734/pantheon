@@ -140,3 +140,22 @@ def test_symbol_on_an_older_bar_records_no_decision_for_whole_pool(source, tmp_p
     assert producer.produce(binding, NOW) == 0
     # The real Taiwan admission rule rejects the older bar and names the symbol; no partial net view.
     assert "pool symbol 2330.TW failed admission" in json.dumps(producer.degraded_bindings, default=str)
+
+
+def test_screened_member_without_governed_whole_market_is_needs_data(tmp_path):
+    from services.execution.lean_runtime.paper_signal_producer import SignalDecisionUnavailable
+    from services.registry.portfolio_envelope import build_portfolio_envelope
+    from services.registry.test_candidate_pool import screen_artifact
+    from services.execution.lean_runtime.test_portfolio_target_positions import portfolio_binding
+
+    screened = screen_artifact()
+    screened["parameters"]["symbols"] = ["2330.TW"]
+    artifact = build_portfolio_envelope(artifact_id="screened-pool", strategy_id="screened-pool",
+        version="1.0.0", members=[{"member_id": "s", "artifact": screened, "risk_weight": 1}])
+    binding = portfolio_binding(artifact)
+    strategy = CurrentArtifactStrategy(expression_layer=True,
+                                       expression_inputs=lambda _: {"persona_book": {"positions": []}, "risk_budget": {}},
+                                       candidates_builder=cash_candidates)
+    with pytest.raises(SignalDecisionUnavailable) as err:
+        strategy(binding, NOW)
+    assert err.value.code == "needs_data" and "tw_price_daily" in str(err.value)

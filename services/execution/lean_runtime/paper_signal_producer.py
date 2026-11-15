@@ -608,6 +608,16 @@ class CurrentArtifactStrategy:
         from services.execution.lean_runtime.expression_policy import allocate_targets
         from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
 
+        from services.registry.portfolio_envelope import is_screened
+        features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
+        if features.get(MARKET_FEATURE_KEY) is None and any(
+                is_screened(m["artifact"]) for m in artifact["strategy_logic"]["members"]):
+            # No production reader supplies the governed whole market yet; never synthesize one.
+            raise SignalDecisionUnavailable(
+                "needs_data",
+                "screened member requires candidate_pool_market.v1 (scope all_governed_tw) built from "
+                "governed dataset tw_price_daily; no governed whole-market input is available",
+            )
         snapshots = binding.get("market_inputs") or metadata.get("market_inputs")
         if not isinstance(snapshots, Mapping) or not snapshots:
             # A one-underlying target envelope still requires an explicit bar.
