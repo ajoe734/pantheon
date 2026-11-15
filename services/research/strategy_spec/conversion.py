@@ -12,13 +12,16 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
+import copy
 from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
+    strategy_artifact_checksum,
     validate_execution_recipe,
     validate_execution_recipe_against_spec,
+    validate_strategy_artifact,
 )
 from services.research.strategy_spec.lineage import (
     StrategySpecLineageRefs,
@@ -71,7 +74,11 @@ class StrategySpecConversionService:
         *,
         created_by: str = "Codex",
         default_version: str = "1.0.0",
+        dataset_binding: Mapping[str, Any] | None = None,
     ) -> None:
+        # Governed dataset reference (dataset_id, source_dataset_refs, symbols,
+        # bar_frequency) a compiled hypothesis rule is bound to. Never records.
+        self.dataset_binding = dict(dataset_binding) if dataset_binding else None
         self.created_by = _require_text(created_by, "created_by")
         self.default_version = _validate_semver(default_version)
         self._seed_builder = StrategySpecSeedBuilder()
@@ -205,6 +212,12 @@ class StrategySpecConversionService:
     ) -> dict[str, Any]:
         conversion_metadata = _conversion_metadata(seed, metadata)
         recipe = _execution_recipe(conversion_metadata)
+        card_dataset_deps = _apply_hypothesis_card(
+            conversion_metadata,
+            seed=seed,
+            strategy_id=strategy_id,
+            dataset_binding=self.dataset_binding,
+        )
         payload = {
             "spec_version": "1.0",
             "strategy_id": strategy_id,
@@ -218,7 +231,7 @@ class StrategySpecConversionService:
                 "venues": list(seed.market_scope),
                 "frequency": _frequency(seed, conversion_metadata),
             },
-            "data_dependencies": _data_dependencies(seed),
+            "data_dependencies": _merge_dependencies(_data_dependencies(seed), card_dataset_deps),
             "execution_profile": {
                 "signal_schema_version": str(conversion_metadata.get("signal_schema_version") or "research-signal-v1"),
                 "quantity_type": recipe["quantity_type"] if recipe else "PERCENT_PORTFOLIO",
@@ -270,6 +283,138 @@ def convert_strategy_spec_seed_to_strategy_spec(
     """Convenience wrapper for StrategySpecSeed -> StrategySpec conversion."""
 
     return StrategySpecConversionService().convert_seed(seed, **kwargs)
+
+
+CARD_WIRING_KEY = "card_wiring"
+CARD_STATUS_GATE_READY = "gate_ready"
+CARD_STATUS_RESEARCH_ONLY = "research_only_draft"
+
+_ARTIFACT_ALGORITHM_REF = {
+    "engine": "lean",
+    "repository": "ajoe734/pantheon",
+    "commit": "1cfaf933fbcc119605a455ebea483d54d2521ebb",
+    "path": "services/registry/strategy_artifact.py",
+    "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+    "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+    "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+    "signal_schema_version": "1.0",
+}
+
+
+def build_card_strategy_artifact(
+    rule: Mapping[str, Any],
+    *,
+    strategy_id: str,
+    dataset_binding: Mapping[str, Any],
+    source_ids: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Wrap a compiled ``factor_rule_v1`` in an executable StrategyArtifact.
+
+    The compiled logic, parameters and mutation surface are carried verbatim;
+    only the execution envelope declared by the governed dataset binding is
+    added where the rule did not state it. Raises ``ValueError`` when invalid.
+    """
+    logic = copy.deepcopy(dict(rule["strategy_logic"]))
+    parameters = copy.deepcopy(dict(rule["parameters"]))
+    surface = copy.deepcopy(dict(rule["mutation_surface"]))
+    dataset_id = _require_text(dataset_binding.get("dataset_id"), "dataset_id")
+    envelope = {
+        "market": "TW",
+        "symbols": list(dataset_binding.get("symbols") or []),
+        "bar_frequency": str(dataset_binding.get("bar_frequency") or "1d"),
+        "order_quantity": 10,
+        "quantity_type": "SHARES",
+    }
+    for key, value in envelope.items():
+        parameters.setdefault(key, value)
+    parameters["data_source"] = dataset_id
+    immutable = list(surface.get("immutable_parameters") or [])
+    controlled = {c.get("parameter_key") for c in surface.get("controls") or [] if isinstance(c, Mapping)}
+    for key in (*envelope, "data_source"):
+        if key not in controlled and key not in immutable:
+            immutable.append(key)
+    surface["immutable_parameters"] = immutable
+    identity = hashlib.sha256(
+        json.dumps([strategy_id, logic, parameters, dataset_id], sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:24]
+    artifact = {
+        "artifact_schema_version": "1.0",
+        "artifact_id": f"card-rule-{identity}",
+        "strategy_id": strategy_id,
+        "version": "1.0.0",
+        "algorithm_ref": dict(_ARTIFACT_ALGORITHM_REF),
+        "strategy_logic": logic,
+        "parameters": parameters,
+        "mutation_surface": surface,
+        "lineage": {
+            "source_strategy_spec_id": strategy_id,
+            "source_run_ids": [str(rule.get("rule_fingerprint") or identity)],
+            "source_dataset_refs": [str(r) for r in dataset_binding.get("source_dataset_refs") or [dataset_id]],
+        },
+        "provenance_refs": [f"source:{sid}" for sid in source_ids] or [f"rule:{identity}"],
+    }
+    try:
+        validate_strategy_artifact(artifact)
+    except StrategyArtifactValidationError as exc:
+        raise ValueError(str(exc)) from exc
+    return artifact
+
+
+def _apply_hypothesis_card(
+    metadata: dict[str, Any],
+    *,
+    seed: StrategySpecSeed,
+    strategy_id: str,
+    dataset_binding: Mapping[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Carry a verified hypothesis card into the Spec and bind its compiled rule.
+
+    A card without a compiled rule, governed dataset binding or valid artifact
+    stays a research-only draft and records the reason; nothing is invented.
+    Returns the extra dataset data_dependencies the binding requires.
+    """
+    card = seed.metadata.get("hypothesis_card")
+    if not isinstance(card, Mapping):
+        return []
+    card = copy.deepcopy(dict(card))
+    rule = card.get("factor_rule_v1")
+    metadata["hypothesis_card"] = {k: v for k, v in card.items() if k != "factor_rule_v1"}
+    predictions = [dict(p) for p in card.get("predictions") or [] if isinstance(p, Mapping)]
+    if predictions:
+        metadata["hypothesis_predictions"] = predictions
+
+    def draft(reason: str) -> list[dict[str, str]]:
+        metadata[CARD_WIRING_KEY] = {"status": CARD_STATUS_RESEARCH_ONLY, "reason": reason}
+        return []
+
+    if not isinstance(rule, Mapping):
+        return draft("no_compiled_rule")
+    if not dataset_binding or not dataset_binding.get("dataset_id") or not dataset_binding.get("symbols"):
+        return draft("governed_dataset_binding_unavailable")
+    try:
+        artifact = build_card_strategy_artifact(
+            rule, strategy_id=strategy_id, dataset_binding=dataset_binding, source_ids=seed.source_ids
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        return draft(f"invalid_compiled_rule:{str(exc)[:200]}")
+    dataset_id = str(dataset_binding["dataset_id"])
+    metadata["factor_rule_v1"] = dict(rule)
+    metadata["strategy_artifact"] = artifact
+    metadata["strategy_artifact_checksum"] = strategy_artifact_checksum(artifact)
+    metadata["backtest_dataset"] = {
+        "dataset_id": dataset_id,
+        "source_dataset_refs": list(dataset_binding.get("source_dataset_refs") or [dataset_id]),
+        "binding": "governed_reference",
+    }
+    metadata[CARD_WIRING_KEY] = {"status": CARD_STATUS_GATE_READY, "reason": "compiled_rule_bound"}
+    return [{"ref": dataset_id, "kind": "dataset"}]
+
+
+def _merge_dependencies(
+    base: list[dict[str, str]], extra: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    seen = {(d["kind"], d["ref"]) for d in base}
+    return base + [d for d in extra if (d["kind"], d["ref"]) not in seen]
 
 
 def _build_registry_payload(

@@ -13,9 +13,9 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 
 def _utc_now(now: datetime | None = None) -> str:
@@ -204,6 +204,147 @@ class ReplicationAdmissionStore:
                 temp_path.unlink()
 
 
+class CardAdmissionError(RuntimeError):
+    """A card-derived StrategySpec could not be admitted or its pass registered."""
+
+
+def _card_wiring(entry: Mapping[str, Any]) -> Mapping[str, Any]:
+    spec = (entry.get("metadata") or {}).get("strategy_spec") or {}
+    wiring = (spec.get("metadata") or {}).get("card_wiring")
+    return wiring if isinstance(wiring, Mapping) else {}
+
+
+class CardSpecAdmissionOwner:
+    """Research-owned admission of a card-derived StrategySpec (paper research only).
+
+    Design D03 / SD-RESEARCH-ADMISSION-AUTHORITY-20261115 (standing decision P-4:
+    inside paper, adding strategies needs no approval): Research creates the
+    ReplicationAdmission only for a spec whose card wiring is ``gate_ready`` AND
+    that the existing discovery scorer (``matcher``) matched to an open persona
+    demand. The approval is a real Governance decision proposed by the research
+    proposer principal and decided by the distinct automated paper gate principal
+    through ``registrar`` (the template path's owner-call plumbing). Unmatched
+    specs stay drafts; no human item is created and nothing is approved without
+    the Governance decision.
+    """
+
+    def __init__(self, *, registrar: Any, store: ReplicationAdmissionStore,
+                 matcher: Callable[[Mapping[str, Any], Mapping[str, Any]], bool]) -> None:
+        if registrar.proposer_id == registrar.gate_id:
+            raise CardAdmissionError("proposer_and_gate_principals_must_differ")
+        self._r, self._store, self._matcher = registrar, store, matcher
+
+    def admit(self, entry: Mapping[str, Any], demands: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        registry_id = str(entry.get("registry_id") or "")
+        wiring = _card_wiring(entry)
+        if entry.get("artifact_type") != "strategy_spec" or wiring.get("status") != "gate_ready":
+            return {"status": "draft", "reason": str(wiring.get("reason") or "not_card_gate_ready"),
+                    "registry_id": registry_id}
+        tenant_id = str((entry.get("metadata") or {}).get("tenant_id") or "")
+        demand = next((d for d in demands
+                       if d.get("tenant_id") == tenant_id and self._matcher(entry, d)), None)
+        if demand is None:
+            return {"status": "draft", "reason": "no_open_demand_match", "registry_id": registry_id}
+        existing = self._store.get_admission(tenant_id, registry_id)
+        if existing is not None:
+            return {"status": "admitted", "admission": existing, "registry_id": registry_id}
+
+        import hashlib, urllib.parse
+        r = self._r
+        checksum = str(entry["checksum"])
+        approval_id = "apv-card-" + hashlib.sha256(
+            f"{tenant_id}:{demand['demand_id']}:{registry_id}:{checksum}".encode()).hexdigest()[:24]
+        approval_url = f"{r.governance_url}/api/governance/approvals/{urllib.parse.quote(approval_id, safe='')}"
+        spec_url = f"{r.registry_url}/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}"
+
+        if entry.get("artifact_state") == "draft":
+            advanced = r.owner_call(
+                step="advance_card_spec_candidate", service="registry", method="POST",
+                url=f"{spec_url}/advance", tenant_id=tenant_id, token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+                body={"target_state": "candidate", "expected_artifact_state": "draft",
+                      "expected_version": entry["version"], "expected_updated_at": entry.get("updated_at"),
+                      "command_key": approval_id + ":candidate"})
+            entry = (advanced or {}).get("entry") or entry
+        approval = r._read_optional(step="read_card_approval", service="governance", url=approval_url,
+                                    tenant_id=tenant_id, token_variable=r._proposer_token_var())
+        if approval is None:
+            approval = r.owner_call(
+                step="propose_card_approval", service="governance", method="POST",
+                url=f"{r.governance_url}/api/governance/approvals", tenant_id=tenant_id,
+                token_variable=r._proposer_token_var(), extra_headers={"Idempotency-Key": f"propose:{approval_id}"},
+                body={"decision_id": approval_id, "expected_version": 0, "tenant_id": tenant_id,
+                      "target_type": "registry_entry", "target_id": registry_id, "target_version": entry["version"],
+                      "risk_level": "low", "persona_id": demand["persona_id"], "owner_user_id": r.proposer_id,
+                      "proposal_id": demand["demand_id"], "proposal_revision": 1,
+                      "proposal_content_digest": checksum, "validation_result_digest": checksum,
+                      "candidate_digest": checksum,
+                      "expires_at": (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat()})
+        for step in ("review", "decide"):
+            if approval.get("decision_state") == "decided":
+                break
+            if step == "review" and approval.get("decision_state") == "under_review":
+                continue
+            body: dict[str, Any] = {"actor_role": "automated_gate", "actor_id": r.gate_id,
+                                    "expected_version": approval["version"]}
+            if step == "decide":
+                body.update(outcome="approved", candidate_digest=checksum, expires_at=approval["expires_at"],
+                            rationale=f"Card-derived spec matched to open demand {demand['demand_id']} (paper research only)",
+                            evidence_refs=[{"ref_type": "registry_entry", "ref_id": registry_id},
+                                           {"ref_type": "research_demand", "ref_id": demand["demand_id"]}])
+            approval = r.owner_call(step=f"{step}_card_approval", service="governance", method="POST",
+                                    url=f"{approval_url}/{step}", tenant_id=tenant_id,
+                                    token_variable=r._gate_token_var(),
+                                    extra_headers={"Idempotency-Key": f"{step}:{approval_id}"}, body=body)
+        if approval.get("decision_state") != "decided" or approval.get("decision") != "approved":
+            raise CardAdmissionError("governance_approval_not_decided_approved")
+        advanced = r.owner_call(
+            step="advance_card_spec_approved", service="registry", method="POST", url=f"{spec_url}/advance",
+            tenant_id=tenant_id, token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
+            body={"target_state": "approved", "approval_decision_id": approval_id, "approver": r.gate_id,
+                  "expected_artifact_state": "candidate", "expected_version": entry["version"],
+                  "expected_updated_at": entry.get("updated_at"), "command_key": approval_id})
+        approved = (advanced or {}).get("entry") or {}
+        if approved.get("artifact_state") != "approved":
+            raise CardAdmissionError("registry_spec_not_approved")
+        admission = self._store.create_admission({
+            "tenant_id": tenant_id, "strategy_spec_id": registry_id, "strategy_id": approved["strategy_id"],
+            "spec_version": approved["version"], "checksum": approved["checksum"],
+            "approval_decision_id": str(approved.get("approval_decision_id") or approval_id),
+            "approver": str(approved.get("approver") or r.gate_id), "requested_by": r.proposer_id,
+            "approved_at": approved.get("approved_at"), "mode": "initial"})
+        with self._store._lock_context():
+            rows = self._store._read()
+            for row in rows:
+                if row.get("tenant_id") == tenant_id and row.get("strategy_spec_id") == registry_id:
+                    row.update(persona_id=demand["persona_id"], demand_ref=demand["demand_id"])
+                    admission = dict(row)
+            self._store._rewrite_durable(rows)
+        return {"status": "admitted", "admission": admission, "registry_id": registry_id,
+                "demand_ref": demand["demand_id"]}
+
+
+def register_card_pass(*, registrar: Any, entry: Mapping[str, Any], demand: Mapping[str, Any],
+                       run_metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Register a gate-passed card candidate through the template path's function.
+
+    ``entry`` is the approved Registry StrategySpec; ``run_metadata`` is the
+    completed ExperimentRun metadata (carries the gate response and run id).
+    """
+    gate = run_metadata.get("replication_gate")
+    spec = (entry.get("metadata") or {}).get("strategy_spec") or {}
+    meta = spec.get("metadata") or {}
+    artifact = meta.get("strategy_artifact")
+    if not isinstance(gate, Mapping) or not isinstance(artifact, Mapping):
+        raise CardAdmissionError("gate_proof_or_artifact_missing")
+    inputs = (artifact.get("strategy_logic") or {}).get("inputs") or []
+    family = str(gate.get("family_id") or (run_metadata.get("backtest_summary") or {}).get("family_id")
+                 or f"card:{entry['strategy_id']}")
+    receipt = {"status": "admitted", "gate": dict(gate), "family_id": family}
+    return registrar.register_passed_attempt(
+        demand=demand, template={"template_id": str(artifact["artifact_id"]), "inputs": inputs},
+        artifact=artifact, receipt=receipt)
+
+
 def evaluate_template_candidate(*, gate, artifact, dataset, demand, family_id, source_ref, timestamp):
     """Submit a compiled template to the existing §10 content-admission gate.
 
@@ -241,4 +382,5 @@ def evaluate_template_candidate(*, gate, artifact, dataset, demand, family_id, s
     return gate.evaluate_candidate(request)
 
 
-__all__ = ["ReplicationAdmissionStore", "evaluate_template_candidate"]
+__all__ = ["CardAdmissionError", "CardSpecAdmissionOwner", "ReplicationAdmissionStore",
+           "evaluate_template_candidate", "register_card_pass"]
