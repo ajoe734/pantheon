@@ -763,6 +763,24 @@ def _latest_eligible_session(connector_id: str, now: datetime | None) -> Any:
     return cursor
 
 
+def scoped_unresolved_dlq_by_connector(
+    actual: Mapping[str, Any], connector_ids: Sequence[str]
+) -> dict[str, int]:
+    """Unresolved (pending+replay_failed+schema_rejected) DLQ counts for selected connectors."""
+    wanted = {str(c).strip() for c in connector_ids if str(c).strip()}
+    by_connector = actual.get("dlq_status_counts_by_connector")
+    result: dict[str, int] = {connector_id: 0 for connector_id in sorted(wanted)}
+    if not isinstance(by_connector, Mapping):
+        return result
+    for connector_id, counts in by_connector.items():
+        if connector_id not in wanted or not isinstance(counts, Mapping):
+            continue
+        result[connector_id] = sum(
+            int(counts.get(status) or 0) for status in ("pending", "replay_failed", "schema_rejected")
+        )
+    return result
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -776,6 +794,7 @@ def _validate_terminal_readback(
     now: datetime | None = None,
     frontier_items: Sequence[Mapping[str, Any]] = (),
     session_selected_at: datetime | None = None,
+    pre_unresolved_dlq_by_connector: Mapping[str, int] | None = None,
 ) -> int:
     collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
@@ -935,10 +954,20 @@ def _validate_terminal_readback(
             if connector_id in exclusive_connector_ids
             for status in ("pending", "replay_failed", "schema_rejected")
         )
-    if validated_unresolved_dlq_count:
+    new_unresolved_dlq_count = validated_unresolved_dlq_count
+    if exclusive_connector_ids and pre_unresolved_dlq_by_connector is not None:
+        # Steady pull: only entries this tick added fail it; older backlog is reported, not fatal.
+        post_by_connector = scoped_unresolved_dlq_by_connector(actual, exclusive_connector_ids)
+        new_unresolved_dlq_count = sum(
+            max(0, count - int(pre_unresolved_dlq_by_connector.get(connector_id, 0)))
+            for connector_id, count in post_by_connector.items()
+        )
+    if new_unresolved_dlq_count:
         raise ControllerTickError(
             "actual_readback",
-            f"authoritative source readback has {validated_unresolved_dlq_count} unresolved dead-letter entrie(s)"
+            f"authoritative source readback has {new_unresolved_dlq_count} "
+            + ("new " if pre_unresolved_dlq_by_connector is not None else "")
+            + "unresolved dead-letter entrie(s)"
             + (" in selected connector scope" if exclusive_connector_ids else ""),
             reconcile=reconcile,
             schedule=schedule,
@@ -2161,6 +2190,8 @@ def run_controller_tick(
         else:
             steady = config.mode == COLLECTOR_STEADY_PULL_MODE
             exclusive_connector_ids = steady_pull_ids if steady else sorted(set(config.exclusive_connector_ids))
+            pre_steady_dlq = scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
+            pre_steady_dlq_trusted = isinstance(pre_actual.get("dlq_status_counts_by_connector"), Mapping)
             frontier_recovery = recover_explicit_frontier(
                 api_url=config.api_url,
                 recovery_connector_ids=config.frontier_recovery_connector_ids,
@@ -2198,6 +2229,9 @@ def run_controller_tick(
                 expected_exclusive_connector_ids=exclusive_connector_ids,
                 collector_connector_ids=steady_pull_ids if steady else (),
                 session_selected_at=None if steady else config.session_selected_at,
+                pre_unresolved_dlq_by_connector=(
+                    pre_steady_dlq if steady and pre_steady_dlq_trusted else None
+                ),
                 frontier_items=(
                     read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
                     if exclusive_connector_ids
@@ -2221,6 +2255,11 @@ def run_controller_tick(
         accepted_actual = summarize_actual_readback(actual)
         accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         accepted_actual["validated_frontier_backlog"] = validated_frontier_backlog
+        if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
+            accepted_actual["pre_existing_unresolved_dlq_by_connector"] = {
+                k: v for k, v in pre_steady_dlq.items() if v
+            }
+            accepted_actual["pre_existing_unresolved_dlq_count"] = sum(pre_steady_dlq.values())
         accepted_actual["validated_frontier_connector_ids"] = sorted(
             set(config.exclusive_connector_ids) | set(steady_pull_ids)
         )
