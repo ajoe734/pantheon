@@ -127,6 +127,42 @@
     ],
     "existing_test_edits": "test_paper_runtime.py now sets explicit fixture defaults (starting cash 100000, permissive active policy) because production no longer has either; expected cash and cost numbers for cash-share fills now include commission and tax",
     "ci_return_repair": "PR #7399 Service suites (postgres/misc) failed because test_canonical_paper_lifecycle_integration, test_current_artifact_signal (2 tests), test_devloop_wire and test_paper_fleet_reconciler built PaperRuntimeService without a capital pool reader, so the fail-closed ledger placed no order. Each now injects a pool record (budget 100000, active policy); production code unchanged. Local rerun: services/execution services/trade_journey services/broker services/paper_fleet_reconciler services/research/tests/test_portfolio_envelope_parity.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py all pass (1404 passed after fleet fix). test_p0_paper_operating_loop_smoke fails locally with KeyError engine_bridge_repo identically without these edits and is not in the CI failure list.",
-    "combined_pytest_run": "225 passed, 1 skipped across all in-scope modules (pytest, 2026-11-15)"
+    "combined_pytest_run": "225 passed, 1 skipped across all in-scope modules (pytest, 2026-11-15)",
+    "consumer_tests_rerun_2026_11_15": "rv-venv pytest: test_current_artifact_signal, test_devloop_wire, test_paper_fleet_reconciler, test_canonical_paper_lifecycle_integration: 115 passed, 2 skipped, 2 failed; the 2 failures (TestPaperFleetStaleSessionAdmissionAndResume resume test, TestLoop9ControllerWriter idle cycle) need asyncpg/flask absent from this local venv, unrelated to the ledger; topology contract 9 passed"
+  },
+  "production_construction_sites": {
+    "checked": "2026-11-15 via grep of PaperRuntimeService( / get_service( / build_paper_runtime_service( over services and scripts, non-test",
+    "sites": [
+      {
+        "site": "services/execution/lean_runtime/paper_runtime.py:6875 (get_service singleton)",
+        "supplies_reader": "yes, from main(); the HTTP handler calls get_service() at lines 6896/6932/6940/6953 only after main() at line 6984 created the singleton with the reader",
+        "note": "main() resolves capital_pool_reader_from_env() at line 6977 when none is passed"
+      },
+      {
+        "site": "services/execution/lean_runtime/paper_runtime.py:6984 main() and run() at ~line 258 of runtime_bootstrap.py",
+        "supplies_reader": "yes, capital_pool_reader_from_env()"
+      },
+      {
+        "site": "services/execution/lean_runtime/runtime_bootstrap.py:222 build_paper_runtime_service",
+        "supplies_reader": "yes, line 216 capital_pool_reader_from_env()"
+      },
+      {
+        "site": "services/persona/remaining_gap_validation.py:214",
+        "supplies_reader": "no",
+        "production": "no, offline persona validation harness with in-memory store and fake runtime manager; not a deployed service; not in this task scope and not edited"
+      },
+      {
+        "site": "services/persona/agent_usability_validation.py:10141",
+        "supplies_reader": "no",
+        "production": "no, same offline validation harness; not deployed; not edited"
+      }
+    ],
+    "deployed_dev_stack_reader_availability": {
+      "worker_launch_path": "paper-fleet-reconciler launches services/execution/lean_runtime/paper_runtime.py as a subprocess (WORKER_SCRIPT_PATH, docker-compose.yml:2747) and _build_worker_env copies os.environ (paper_fleet_reconciler.py:1299-1300)",
+      "env_supplied": "docker-compose.yml:2736-2739 sets PANTHEON_CAPITAL_API_URL=http://capital:8092 and DEPLOYMENT_CAPITAL_SERVICE_TOKEN(_FILE); the token file comes from the dev-paper-capital-reader-tokens volume mounted at /run/pantheon-principals (docker-compose.yml:2750, issuer 47)",
+      "contract_test": "scripts/test_paper_runtime_topology_contract.py 9 passed (rv-venv pytest)",
+      "residual_risk": "the repo guarantees the wiring; whether the deployed host actually has the token file populated is a deploy-time fact not verifiable from the worktree. If the token is empty, capital_pool_reader_from_env returns None and the ledger places no order (fail closed with a recorded reason)",
+      "other_stacks": "deploy/production and deploy/staging compose paper-fleet-reconciler do not set PANTHEON_CAPITAL_API_URL or the capital token (prod-control.yml:660-682); not the dev stack, so not blocking here, flagged for the reviewer"
+    }
   }
 }
