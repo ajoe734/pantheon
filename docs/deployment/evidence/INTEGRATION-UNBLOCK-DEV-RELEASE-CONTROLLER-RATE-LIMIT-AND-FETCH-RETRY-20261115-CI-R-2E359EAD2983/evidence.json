@@ -1,0 +1,10 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-DEV-RELEASE-CONTROLLER-RATE-LIMIT-AND-FETCH-RETRY-20261115-CI-R-2E359EAD2983",
+  "source_task": "DEV-RELEASE-CONTROLLER-RATE-LIMIT-AND-FETCH-RETRY-20261115",
+  "source_pr": 7365,
+  "checked_at": "2026-11-15",
+  "finding": "At re-check time PR #7365 had zero failing/cancelled checks; all completed checks SUCCESS or SKIPPED. Pending: Smoke acceptance, Run baseline stage-0 gate, Import smoke deploy-hindsight-Dockerfile (IN_PROGRESS). mergeStateStatus=BLOCKED only because required checks were still running.",
+  "root_cause": "auto_integrator.integration_status_rollup flagged ci-red from a transient failing check on an earlier poll; the failure was not present on re-check (no failed jobs in runs 43655317711 / 43655317763). Exact transient check name could not be recovered from available data.",
+  "code_change": "none; scripts/git/auto_integrator.py unchanged",
+  "follow_up": "Re-run auto-integrator on PR #7365 after in-progress checks complete."
+}

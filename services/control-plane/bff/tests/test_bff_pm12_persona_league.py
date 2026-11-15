@@ -404,6 +404,9 @@ class _CountingPm12LeagueTestStore(_Pm12LeagueTestStore):
         }
 
     def reset_counts(self) -> None:
+        # A count reset marks a new measured read; drop the short league-rows memo.
+        from services.control_plane.bff.personas import service as _ps
+        _ps._pm12_league_rows_cache_clear()
         for k in self.calls:
             self.calls[k] = 0
 
