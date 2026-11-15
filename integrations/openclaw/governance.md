@@ -259,3 +259,12 @@ gates.
 | `OC-003` | canonical `StrategySpec` and `WorkflowHandoff` boundary |
 | `REG-002` | promotion gate for any OpenClaw-originating artifact |
 | `PAPER_CANARY_LIVE_POLICY.md` | OpenClaw has no authority to mutate deployment stage directly |
+
+## Memory-index LLM bridge
+
+The adapter's `POST /internal/memory-llm/v1/chat/completions` is not a new
+privileged route: it is disabled by default, authenticated by its own internal
+token (not the gateway token, which never reaches Hindsight), runs only the
+deny-all `memory-index` agent, rejects tools and streaming, re-verifies the
+agent's native-tool policy on every call, and logs usage without content.
+Hindsight stays a rebuildable index reachable only by the memory service.

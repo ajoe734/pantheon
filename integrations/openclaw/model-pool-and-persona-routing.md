@@ -221,3 +221,14 @@ repo config to simulate an extra account.
 - `integrations/openclaw/governance.md §9` — provider auth setup (Codex
   device-code OAuth, Claude CLI reuse) and the derived gateway image.
 - `integrations/openclaw/integration.md` — pin and adapter boundary.
+
+## `memory-index` agent (Hindsight background model calls)
+
+`scripts/openclaw-configure-shared-model-pool.sh` and the isolated bootstrap add
+a second deny-all agent, `memory-index` (tools deny `*`, exec security deny/ask
+always), under the same adapter policy assertions as `structured-extraction`.
+Its model is `agents.list[].model`: primary `openai/gpt-5.5` and fallback
+`anthropic/claude-sonnet-4-6`, set by `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` and
+`OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS`. Only existing pool slots are valid; no
+model or credential is added. Reached only through the adapter's internal
+memory LLM bridge (see `deploy/hindsight/README.md`).
