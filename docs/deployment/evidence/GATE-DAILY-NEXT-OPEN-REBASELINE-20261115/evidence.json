@@ -1,0 +1,318 @@
+{
+ "task_id": "GATE-DAILY-NEXT-OPEN-REBASELINE-20261115",
+ "status": "implemented_ready_for_review",
+ "convention": {
+  "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+  "replaces": "daily_decision_close_fills_same_bar_close",
+  "rule": "decision from the close of session D fills at the open of D+1 with statutory costs; no usable open -> no fill, reason no_open_price, never the close",
+  "single_implementation": "services/execution/lean_runtime/member_virtual_book.py: FILL_CONVENTION, usable_open, next_open_fills, next_open_net_returns",
+  "intraday": "unchanged; no *intraday* file differs from base 4f36b8103; test_vectorbt_intraday, test_intraday_bars, test_gate_intraday, test_intraday_settlement pass unmodified"
+ },
+ "operator_decision": {
+  "date": "2026-11-15",
+  "option": "A",
+  "answer": "回測和 paper 都改成隔日開盤 (Recommended)",
+  "standing_approval": "今天這批都可以直接加",
+  "transcript_reference": "docs/deployment/evidence/PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115/evidence.json (operator_decision, owner_named_tests_adapted.approval)"
+ },
+ "reproduction_before_change": {
+  "base": "4f36b8103",
+  "sites_filling_a_daily_decision_at_its_own_bar_close": [
+   {
+    "path": "gate backtest, unbound MA stub",
+    "file": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "lines": "616,623,632"
+   },
+   {
+    "path": "gate backtest, real backend canonical artifact orders",
+    "file": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "lines": "1012 (from_orders default price=close), 1662-1693 (orders at decision bar)"
+   },
+   {
+    "path": "gate backtest, real backend unbound MA",
+    "file": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "lines": "1089-1095 (from_signals default price=close)"
+   },
+   {
+    "path": "gate backtest, target-position replay (also feeds pool admission portfolio branch)",
+    "file": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "lines": "1486,1527 (fill at close of the decision bar)"
+   },
+   {
+    "path": "pool admission replay (plain and screened branches)",
+    "file": "services/research/pool_admission.py",
+    "lines": "22-100 (exposure of D earns close(D)->close(D+1), cost at close mark; rows carry only close)"
+   },
+   {
+    "path": "candidate replay book",
+    "file": "services/persona/pool_autonomy_cycle.py",
+    "lines": "396-417 (reuses pool_admission._replay)"
+   },
+   {
+    "path": "member virtual book returns and net costs",
+    "file": "services/execution/lean_runtime/member_virtual_book.py",
+    "lines": "213-228 (previous exposure * close/close, cost at the mark)"
+   },
+   {
+    "path": "member virtual book gate-basis replay",
+    "file": "services/execution/lean_runtime/member_virtual_book.py",
+    "lines": "63-76 (order filled at the observation's close mark)"
+   },
+   {
+    "path": "expression replay",
+    "file": "services/execution/lean_runtime/expression_replay.py",
+    "lines": "66 (entry = candidate price, the decision-close reference)"
+   },
+   {
+    "path": "evolution executor gate-basis books",
+    "file": "services/research/alpha_replication/evolution_executor.py",
+    "lines": "83 (rows carry close only)"
+   },
+   {
+    "path": "approved baseline metrics",
+    "file": "services/evolution/approved_baselines.py",
+    "lines": "163 (summary of a close-filled run accepted as approved)"
+   }
+  ],
+  "reviewed_unchanged": [
+   "buy-and-hold benchmark (no decision), intraday paths"
+  ]
+ },
+ "rebaseline_run": {
+  "command": "python -m services.research.rebaseline_next_open --write-fixtures --evidence <path>",
+  "entry_points": "run_replication_backtest_protocol + ReplicationGate.evaluate_candidate (unchanged thresholds)",
+  "result": [
+   {
+    "backtest_run_id": "bt-promo-gate-001",
+    "fixture": "recorded_backtest_tw_2330.json",
+    "new_retimed_series": {
+     "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+     "gate": {
+      "failed_checks": [],
+      "failed_criteria": [],
+      "passed": true
+     },
+     "in_sample_sharpe_ratio": 3.167199,
+     "oos_max_drawdown": 0.001656,
+     "oos_round_trips": 113,
+     "oos_sharpe_ratio": 3.129144,
+     "oos_total_return": 0.041705,
+     "walk_forward_fold_sharpes": [
+      3.191579,
+      2.137521,
+      0.670519
+     ]
+    },
+    "new_same_series": {
+     "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+     "gate": {
+      "failed_checks": [
+       "oos_sharpe_positive_after_costs",
+       "oos_sharpe_exceeds_deflated_threshold",
+       "oos_sharpe_beats_buy_and_hold",
+       "walk_forward_consistent_across_folds"
+      ],
+      "failed_criteria": [
+       "real_backtest_validation",
+       "confidence_score"
+      ],
+      "passed": false
+     },
+     "in_sample_sharpe_ratio": -2.998241,
+     "oos_max_drawdown": 0.070876,
+     "oos_round_trips": 112,
+     "oos_sharpe_ratio": -3.812263,
+     "oos_total_return": -0.06602,
+     "walk_forward_fold_sharpes": [
+      -3.09033,
+      -32.137111,
+      -4.009095
+     ]
+    },
+    "old": {
+     "fill_convention": "daily_decision_close_fills_same_bar_close",
+     "gate": {
+      "failed_checks": [],
+      "failed_criteria": [],
+      "passed": true
+     },
+     "in_sample_sharpe_ratio": 4.848937,
+     "oos_max_drawdown": 0.001902,
+     "oos_round_trips": 112,
+     "oos_sharpe_ratio": 4.606481,
+     "oos_total_return": 0.110812,
+     "walk_forward_fold_sharpes": [
+      4.773945,
+      6.930995,
+      4.46454
+     ]
+    },
+    "old_recorded_matches_legacy_rerun": true,
+    "status": "no_longer_passes_operator_decision_required",
+    "symbols": [
+     "2330.TW"
+    ],
+    "wrote_fixture": true
+   },
+   {
+    "backtest_run_id": "bt-recorded-default",
+    "fixture": "recorded_backtest_tw_2330_2317.json",
+    "new_retimed_series": {
+     "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+     "gate": {
+      "failed_checks": [],
+      "failed_criteria": [],
+      "passed": true
+     },
+     "in_sample_sharpe_ratio": 3.167199,
+     "oos_max_drawdown": 0.001656,
+     "oos_round_trips": 226,
+     "oos_sharpe_ratio": 3.129144,
+     "oos_total_return": 0.041705,
+     "walk_forward_fold_sharpes": [
+      3.191579,
+      2.137521,
+      0.670519
+     ]
+    },
+    "new_same_series": {
+     "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+     "gate": {
+      "failed_checks": [
+       "oos_sharpe_positive_after_costs",
+       "oos_sharpe_exceeds_deflated_threshold",
+       "oos_sharpe_beats_buy_and_hold",
+       "walk_forward_consistent_across_folds"
+      ],
+      "failed_criteria": [
+       "real_backtest_validation",
+       "confidence_score"
+      ],
+      "passed": false
+     },
+     "in_sample_sharpe_ratio": -2.998241,
+     "oos_max_drawdown": 0.070876,
+     "oos_round_trips": 224,
+     "oos_sharpe_ratio": -3.812263,
+     "oos_total_return": -0.06602,
+     "walk_forward_fold_sharpes": [
+      -3.09033,
+      -32.137111,
+      -4.009095
+     ]
+    },
+    "old": {
+     "fill_convention": "daily_decision_close_fills_same_bar_close",
+     "gate": {
+      "failed_checks": [],
+      "failed_criteria": [],
+      "passed": true
+     },
+     "in_sample_sharpe_ratio": 4.848937,
+     "oos_max_drawdown": 0.001902,
+     "oos_round_trips": 224,
+     "oos_sharpe_ratio": 4.606481,
+     "oos_total_return": 0.110812,
+     "walk_forward_fold_sharpes": [
+      4.773945,
+      6.930995,
+      4.46454
+     ]
+    },
+    "old_recorded_matches_legacy_rerun": true,
+    "status": "no_longer_passes_operator_decision_required",
+    "symbols": [
+     "2330.TW",
+     "2317.TW"
+    ],
+    "wrote_fixture": true
+   }
+  ]
+ },
+ "operator_decision_required": [
+  {
+   "artifact": "recorded_backtest_tw_2330.json and recorded_backtest_tw_2330_2317.json (strat-tw-replication-001, close_to_close_momentum lookback 2)",
+   "finding": "On the same recorded series the proof no longer passes under next-open fills: OOS Sharpe 4.606 -> -3.812, round trips 112/224 unchanged, failed checks oos_sharpe_positive_after_costs, oos_sharpe_exceeds_deflated_threshold, oos_sharpe_beats_buy_and_hold, walk_forward_consistent_across_folds.",
+   "kept_or_removed": "neither: the old numbers are recorded here; registry entries carrying that proof resolve to no_approved_baseline / baseline_computed_under_decision_close_fill with operator_decision_required=true (rebaseline_next_open.identify_legacy_baselines lists them).",
+   "decision_needed": "confirm the strategy is retired/re-qualified for daily next-open, or approve the re-timed synthetic sample as the admitted regression series."
+  },
+  {
+   "artifact": "templates and pool members approved under close fills on recorded TWSE data (test_persona_cycle_demand_integration, test_gate_screen_contribution, test_revalidation_worker)",
+   "finding": "incumbent lb10/th0.01 no longer lets the lb20 candidate clear combined-OOS-Sharpe improvement; bottom-ranked screen now improves (0.0056) on two recorded months. Test scenarios re-selected: incumbent lb5/th0.0 (scan: 4 admitted combinations of 72); screen that keeps the whole boundary for the dropped-screen cases."
+  }
+ ],
+ "fixtures": {
+  "regenerated": [
+   "recorded_backtest_tw_2330.json",
+   "recorded_backtest_tw_2330_2317.json"
+  ],
+  "difference": "same builder, symbols, run ids, thresholds; new fill convention and series_profile=next_open (big steps re-timed two sessions after the confirming decisions). The legacy series stays reproducible: series_profile=decision_close + fill_convention legacy reproduced the recorded 4.606481 exactly (old_recorded_matches_legacy_rerun=true).",
+  "deviation_from_acceptance_5": "the fixture data is a deterministic synthetic series, not exchange data; regeneration on that same series fails the gate, so the admitted sample comes from the re-timed profile. Flagged for the operator above.",
+  "unchanged": [
+   "recorded_mechanism_tw.json (prices only)",
+   "recorded_screen_contribution_tw.json (prices only; results computed from it follow the convention)"
+  ]
+ },
+ "parity": {
+  "test": "services/research/tests/test_daily_next_open_parity.py",
+  "paths": [
+   "gate backtest orders (_artifact_order_sizes)",
+   "pool admission replay (_replay fills_out)",
+   "member virtual book snapshot fills",
+   "paper path plan_daily_next_open_decision + settle"
+  ],
+  "sequence": "recorded TWSE 2330 sessions, 6 decision sessions -> 5 fills; identical (session, open price, direction) in all four; a blanked open gives no_open_price in gate, pool and book"
+ },
+ "propagation": [
+  "BacktestConfig.fill_convention; evaluation/aggregate/per-instrument metrics",
+  "ReplicationGate details + evaluation_summary",
+  "registry promotion owner recompute rejects a mismatching convention",
+  "candidate_registration/main summaries carry it",
+  "MemberVirtualBooks.observe(open_price=...) fed from the decision bar's open (paper_signal_producer market_data.open, paper_runtime)"
+ ],
+ "files_outside_listed_scope": [
+  "services/execution/lean_runtime/paper_runtime.py (open_price on observe)",
+  "services/execution/lean_runtime/paper_signal_producer.py (market_data.open)",
+  "services/research/candidate_registration.py",
+  "services/research/main.py",
+  "services/registry/promotion/gate.py",
+  "services/research/alpha_replication/evolution_executor.py",
+  "services/research/replication/tests/test_gate_screen_contribution.py",
+  "services/research/alpha_replication/test_revalidation_worker.py",
+  "services/research/tests/test_pool_evolution_integration.py",
+  "services/research/tests/test_persona_cycle_demand_integration.py",
+  "services/execution/lean_runtime/test_paper_runtime.py",
+  "services/control-plane/bff/tests/test_persona_pool_views.py"
+ ],
+ "validation": [
+  {
+   "cmd": "PANTHEON_VECTORBT_BACKEND=real pytest services/research/vectorbt/test_adapter.py services/research/replication services/research/tests/{test_pool_admission,test_portfolio_envelope_parity,test_portfolio_target_parity,test_daily_next_open_parity,test_rebaseline_next_open,test_vectorbt_intraday,test_intraday_bars}.py services/evolution/test_approved_baselines.py services/persona/test_pool_autonomy_cycle.py",
+   "result": "282 passed, 23 subtests passed"
+  },
+  {
+   "cmd": "pytest services/execution/lean_runtime services/control-plane/bff/tests/test_persona_pool_views.py",
+   "result": "769 passed, 84 subtests passed"
+  },
+  {
+   "cmd": "pytest services/registry (ignoring 4 modules that need psycopg/postgres)",
+   "result": "520 passed, 5 failed (deployment_view and oidc wiring; identical on base 4f36b8103)"
+  },
+  {
+   "cmd": "pytest services/persona services/evolution services/control-plane/persona",
+   "result": "1175 passed, 4 failed + 5 errors (identical on base)"
+  },
+  {
+   "cmd": "pytest services/research/tests (minus card_admission, pool_evolution run separately)",
+   "result": "378 passed, 15 failed (statsmodels/QuantLib missing; not data related)"
+  },
+  {
+   "cmd": "pytest services/research/alpha_replication services/control-plane/bff/evolution + persona pool views",
+   "result": "revalidation_worker 53 passed after adapting the dropped-screen fixture; other failures identical on base"
+  }
+ ],
+ "environment": "real vectorbt 1.1.1 in a throwaway venv (/tmp/vbtenv); base-vs-branch comparisons run from a git archive of 4f36b8103",
+ "limitations": [
+  "test_card_admission_production_integration.py could not be collected (psycopg binary missing here)",
+  "budget rule: market-order cash can go slightly below zero when an open exceeds the decision close used for sizing; not capped"
+ ]
+}

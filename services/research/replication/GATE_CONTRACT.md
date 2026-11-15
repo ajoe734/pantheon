@@ -447,3 +447,49 @@ else:
 - **Implementation**: `gate.py`
 - **Tests**: `test_gate.py`, `smoke_test.py`
 - **Related Tasks**: RS-001, RS-002, REG-001, REG-002
+
+---
+
+## 13. Daily fill convention (GATE-DAILY-NEXT-OPEN-REBASELINE-20261115)
+
+**Convention** (`fill_convention = "daily_decision_close_d_fills_open_d_plus_1"`): a daily decision computed
+from the close of session D takes effect at the **open of session D+1** with the statutory costs
+(commission on every fill, transaction tax on sells). A session without a usable open price for the instrument
+gives **no fill** with the recorded reason `no_open_price` (`unfilled_decisions` / `fill_gaps`); the decision
+close is never a fallback. The decision of the last session of a window has no fill. The intraday convention
+(next-bar open, flat by 13:25) is unchanged.
+
+**Operator decision** (2026-11-15, option A): 「回測和 paper 都改成隔日開盤 (Recommended)」, with the standing
+approval 「今天這批都可以直接加」. Recorded with its transcript reference in
+`docs/deployment/evidence/PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115/evidence.json` (`operator_decision`,
+`owner_named_tests_adapted.approval`) and in this task's `docs/deployment/evidence/GATE-DAILY-NEXT-OPEN-REBASELINE-20261115/evidence.json`.
+
+**One implementation for every path** (`services/execution/lean_runtime/member_virtual_book.py`:
+`FILL_CONVENTION`, `next_open_fills`, `next_open_net_returns`, `usable_open`): the gate backtest
+(`vectorbt_adapter._shift_daily_orders_to_next_open`, real backend `price=opens`, target-position replay and the
+unbound MA crossover), the pool admission replay (`pool_admission._replay`), the member virtual book and its
+gate-basis replay, the expression replay (`record["fill_convention"]` + `record["fills"]`), and the paper path
+(`plan_daily_next_open_decision` + `settle`). `test_daily_next_open_parity.py` asserts identical fills (session
+and price) across the four paths on a recorded sequence of sessions.
+
+**Gate thresholds are unchanged** (70/30 split, 3 folds, costs, deflation, 20 round trips, mandate drawdown).
+`evaluation["fill_convention"]`, the `real_backtest_validation` details and the registry `evaluation_summary` carry the
+convention; the registry owner's recompute rejects a proof whose convention differs from the evaluation.
+
+**Approved baselines.** `resolve_member_baseline` refuses a proof whose summary does not carry the new convention:
+`status="no_approved_baseline"`, `reason="baseline_computed_under_decision_close_fill"`,
+`operator_decision_required=true`. Such an entry is reported (`rebaseline_next_open.identify_legacy_baselines`), never
+silently kept as approved and never deleted. `python -m services.research.rebaseline_next_open [--write-fixtures]
+[--evidence PATH]` re-runs each recorded proof through `run_replication_backtest_protocol` and
+`ReplicationGate.evaluate_candidate` under both conventions and records old and new metrics side by side.
+
+**Recorded fixtures.** `recorded_backtest_tw_2330.json` / `recorded_backtest_tw_2330_2317.json` were produced by the
+deterministic governed series `build_governed_tw_replication_dataset(series_profile="decision_close")`, whose large
+steps coincide with the decision bar: an edge that exists only when a decision fills at the close of its own bar.
+Re-run on the **same series** under the new convention the proof no longer passes (OOS Sharpe 4.606 -> -3.812,
+all four primary checks fail); this is reported for an operator decision (see the task evidence), not hidden.
+The fixtures other suites need as an *admitted* sample are regenerated from the re-timed default series
+(`series_profile="next_open"`, big steps two sessions after the confirming decisions) through the same unchanged gate
+(OOS Sharpe 3.129, 113 round trips, passes). Fixtures built from recorded exchange data
+(`recorded_mechanism_tw.json`, `recorded_screen_contribution_tw.json`) hold prices only and are unchanged; the
+results computed from them follow the convention.
