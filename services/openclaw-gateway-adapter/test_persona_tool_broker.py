@@ -213,6 +213,7 @@ def test_panel_interpretation_sees_only_committee_entries_and_facts(env):
     assert own.status_code == 200
     assert [h["source_id"] for h in own.body["result"]["hits"]] == ["pm-committee"]
     assert memory.requests[-1][1]["actor_roles"] == ["consultation_session"]
+    assert memory.requests[-1][1]["session_persona_id"] == ALPHA
     assert call(broker, "persona_memory_recall", {"query": "q", "bank": "facts"}).status_code == 200
     for tool, params in (("persona_mental_model_read", {}), ("persona_proposal_submit", PROPOSAL)):
         resp = call(broker, tool, params)

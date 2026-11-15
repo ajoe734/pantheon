@@ -446,8 +446,12 @@ class PersonaToolBroker:
         return self._proposal(params, persona_id, run)
 
     def _actor(self, run: Dict[str, Any]) -> Dict[str, Any]:
-        roles = _PANEL_ACTOR_ROLES if run["purpose"] == PURPOSE_PANEL_INTERPRETATION else self.config.memory_actor_roles
-        return {"actor_id": self.config.memory_actor_id, "actor_roles": list(roles), "session_id": run["run_ref"]}
+        actor = {"actor_id": self.config.memory_actor_id, "session_id": run["run_ref"]}
+        if run["purpose"] == PURPOSE_PANEL_INTERPRETATION:
+            # A consultation-session read is bound to the one persona the run belongs to; memory-svc
+            # then returns only that persona's committee-scoped entries.
+            return {**actor, "actor_roles": list(_PANEL_ACTOR_ROLES), "session_persona_id": run["persona_id"]}
+        return {**actor, "actor_roles": list(self.config.memory_actor_roles)}
 
     def _recall(self, params: Dict[str, Any], persona_id: str, run: Dict[str, Any]):
         try:
