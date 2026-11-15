@@ -644,6 +644,15 @@ class WorkerEntry:
 # Reconciler
 # ---------------------------------------------------------------------------
 
+class SourceSnapshotUnavailable(Exception):
+    """Source snapshot read failed in transport (not 'no snapshot')."""
+
+    def __init__(self, symbol: str, cause: BaseException) -> None:
+        super().__init__(f"{symbol}: {type(cause).__name__}: {cause}")
+        self.symbol = symbol
+        self.cause = cause
+
+
 class PaperFleetReconciler:
     """Maintain one worker subprocess per active paper RuntimeBinding."""
 
@@ -795,6 +804,12 @@ class PaperFleetReconciler:
         self._cycle_count = 0
         self._last_reconcile_at: Optional[str] = None
         self._last_error: Optional[str] = None
+        # Last successfully read Source snapshot per symbol, and consecutive
+        # transport-failure counts (read unavailable != no snapshot).
+        self._source_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._source_unavailable_counts: Dict[str, int] = {}
+        self._source_unavailable_errors: Dict[str, str] = {}
+        self._last_resolve_unavailable = False
         self._monitoring_last_error: Optional[str] = None
         self._load_monitoring_sessions()
 
@@ -1127,7 +1142,11 @@ class PaperFleetReconciler:
                                 continue
                             paused_snap_id = session_adm.get("source_snapshot_id")
                             paused_time_str = session_adm.get("source_event_time")
+                            self._last_resolve_unavailable = False
                             resume_snapshot = self._resolve_market_snapshot(eb)
+                            if self._last_resolve_unavailable:
+                                # Never resume on an unavailable read.
+                                continue
                             decision = self._check_market_admission(eb, snapshot=resume_snapshot)
                             if decision is not None and decision.admitted:
                                 paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
@@ -1855,6 +1874,10 @@ class PaperFleetReconciler:
     def _fetch_source_snapshot(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch latest stored normalized snapshot from Source Ingest.
 
+        Returns None only for a successful response without a snapshot.
+        Raises SourceSnapshotUnavailable on transport failure (timeout,
+        connection error, HTTP 5xx, invalid JSON).
+
         Zero recurring pull: only reads from the local Source Ingest read-only
         snapshot endpoint; never pulls from an external provider.
         """
@@ -1878,20 +1901,51 @@ class PaperFleetReconciler:
             return payload if isinstance(payload, dict) else None
         except Exception as exc:  # noqa: BLE001
             log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
-            return None
+            raise SourceSnapshotUnavailable(symbol, exc) from exc
 
     def _resolve_market_snapshot(self, binding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Resolve the latest market snapshot for a binding."""
+        """Resolve the latest market snapshot, falling back to the last
+        successfully read snapshot for the symbol when the read is unavailable."""
+        snapshot, unavailable = self._resolve_market_snapshot_ex(binding)
+        self._last_resolve_unavailable = unavailable
+        if unavailable:
+            symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
+            return self._source_snapshot_cache.get(symbol)
+        return snapshot
+
+    def _resolve_market_snapshot_ex(
+        self, binding: Dict[str, Any]
+    ) -> "tuple[Optional[Dict[str, Any]], bool]":
+        """Resolve the latest snapshot; returns (snapshot, unavailable)."""
         raw = binding.get("market_input")
         if not isinstance(raw, dict):
             metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
             raw = metadata.get("market_input")
         if isinstance(raw, dict):
-            return raw
+            return raw, False
         symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
         if self._source_ingest_url and symbol:
-            return self._fetch_source_snapshot(symbol)
-        return None
+            try:
+                snap = self._fetch_source_snapshot(symbol)
+            except SourceSnapshotUnavailable as exc:
+                count = self._source_unavailable_counts.get(symbol, 0) + 1
+                self._source_unavailable_counts[symbol] = count
+                has_cache = symbol in self._source_snapshot_cache
+                log.warning(
+                    "market input unavailable for %s (%s, consecutive=%d, cached_snapshot=%s)",
+                    symbol,
+                    type(exc.cause).__name__,
+                    count,
+                    has_cache,
+                )
+                self._source_unavailable_errors[symbol] = type(exc.cause).__name__
+                return None, True
+            self._source_unavailable_counts.pop(symbol, None)
+            self._source_unavailable_errors.pop(symbol, None)
+            if isinstance(snap, dict):
+                self._source_snapshot_cache[symbol] = snap
+            return snap, False
+        return None, False
 
     def _check_market_admission(
         self,
@@ -2005,6 +2059,14 @@ class PaperFleetReconciler:
                 include_ended_monitoring_sessions=include_ended_monitoring_sessions
             )
 
+    def _unavailable_summary(self) -> Optional[str]:
+        if not self._source_unavailable_counts:
+            return None
+        return "market input unavailable: " + ", ".join(
+            f"{sym} error={self._source_unavailable_errors.get(sym, 'unknown')} consecutive={n}"
+            for sym, n in sorted(self._source_unavailable_counts.items())
+        )
+
     def _snapshot(self, *, include_ended_monitoring_sessions: bool = True) -> Dict[str, Any]:
         workers = []
         for entry in self._workers.values():
@@ -2050,7 +2112,8 @@ class PaperFleetReconciler:
             "started_at": self._started_at,
             "last_reconcile_at": self._last_reconcile_at,
             "cycle_count": self._cycle_count,
-            "last_error": self._last_error,
+            "last_error": self._last_error or self._unavailable_summary(),
+            "market_input_unavailable_counts": dict(self._source_unavailable_counts),
             "monitoring_last_error": self._monitoring_last_error,
             "poll_interval_seconds": self._poll_interval,
             "runtime_manager_url": self._url or None,
