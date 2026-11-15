@@ -164,3 +164,30 @@ def test_records_from_events_dedupes_and_attaches_marks():
     records, params = er.records_from_events(events, {"d-0050": rec["marks"]})
     assert len(records) == 1 and params == {"lever_min_strength": 0.5}
     assert er.replay(records, params)["decisions"][0]["pnl"] == 24900.0
+
+
+def test_flat_and_weaker_views_replay_to_the_same_positions_as_the_policy():
+    """Recorded view sequence with weaker and flat views: replay == per-bar policy with a carried book."""
+    from services.execution.lean_runtime import expression_policy as ep
+
+    cand = {"instrument_id": "eq:2330", "kind": "cash_share", "side_capability": ["long"], "unit": 1,
+            "multiplier": 1, "price": 100.0, "max_units_by_risk": 1000,
+            "fee_per_unit_per_side": 0.0, "tax_rate_per_side": 0.0}
+    budget = {"available_cash": 100000.0, "gross_limit": 100000.0, "gross_used": 0.0}
+    views = [("LONG", 0.5), ("LONG", 0.5), ("LONG", 0.2), ("FLAT", None)]
+    records = [{"decision_id": f"d{i}",
+                "view": {"decision_id": f"d{i}", "underlying": "2330", "direction": d, "strength": s},
+                "candidates": [cand], "book_before": {}, "budget": budget, "marks": {"eq:2330": [100.0]}}
+               for i, (d, s) in enumerate(views)]
+    out = er.replay(records, None, carry_book=True)["decisions"]
+    book: list[dict] = []
+    for record, entry in zip(records, out):
+        expected = ep.decide_for_policy(ep.POLICY_KIND, record["view"], [cand], {"positions": book},
+                                        dict(budget), ep.resolved_parameters(None))
+        assert entry["record"] == expected
+        book = entry["positions_after"]
+    assert [d["record"].get("reason_code") for d in out] == ["long_cash", "already_at_target", "close_leg", "close_leg"]
+    assert out[2]["record"]["units"] < out[0]["record"]["units"]
+    assert out[3]["positions_after"] == []
+    # Additive only: the same record keys the replay always had, plus the existing optional band.
+    assert {"decision_id", "outcome", "record", "pnl_path", "pnl", "positions_after"} <= set(out[2])
