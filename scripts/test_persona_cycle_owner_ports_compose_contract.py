@@ -212,6 +212,22 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GOVERNANCE_URL"),
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_PROPOSER_TOKEN"),
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GATE_TOKEN"),
+    # 9. Hypothesis card admission path of the alpha replication worker (CARD-ADMISSION-PRODUCTION-WIRING-20261115)
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PANTHEON_REGISTRY_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PANTHEON_GOVERNANCE_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_API_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PERSONA_API_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_PROPOSER_ID"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_GATE_ID"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_REGISTRY_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
 )
 
 
@@ -303,7 +319,7 @@ def test_code_read_owner_env_vars_are_wired_and_missing_var_fails_contract() -> 
         area: (service, rel_file, env_var)
         for service, area, rel_file, env_var in CODE_READ_OWNER_ENV_SPECS
     }
-    assert len(representative_by_area) == 8
+    assert len(representative_by_area) == 9
     for area, (service, rel_file, env_var) in representative_by_area.items():
         mutated = copy.deepcopy(SERVICES)
         del mutated[service]["environment"][env_var]

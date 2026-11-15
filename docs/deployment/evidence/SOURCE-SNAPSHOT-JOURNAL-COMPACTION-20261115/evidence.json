@@ -1,0 +1,46 @@
+{
+  "task": "SOURCE-SNAPSHOT-JOURNAL-COMPACTION-20261115",
+  "reproduction_synthetic_hosted_shape": {
+    "note": "one growing journal, 200 symbols, full state line per update, up to 60 closes; append_ms_reparse_previous_behaviour = whole-file parse under exclusive lock (what every append did before)",
+    "no_compaction_10000": {
+      "lines": 9999,
+      "bytes": 59568154,
+      "append_ms_reparse_previous_behaviour": 7656.83,
+      "append_ms_in_memory": 0.43
+    },
+    "no_compaction_50000": {
+      "lines": 50000,
+      "bytes": 608390360,
+      "append_ms_reparse_previous_behaviour": 69950.91,
+      "append_ms_in_memory": 0.51
+    },
+    "compaction_10000": {
+      "lines": 485,
+      "bytes": 5397044
+    },
+    "compaction_50000": {
+      "lines": 424,
+      "bytes": 5887664
+    }
+  },
+  "design": {
+    "append": "in-memory latest state, re-parse only when (inode,size,mtime_ns) differs from last read/write signature",
+    "compaction": "trigger size > max(8MiB, 3x live-line bytes); same inode under existing LOCK_EX; append compacted block, blank old lines at line boundaries, copy block to front, ftruncate; each fsynced step leaves a reader-accepted journal with identical projection (test injects failure at every fsync)",
+    "reader_unchanged": "_market_snapshots_from_lines source identical to 32fc7da61 (asserted)",
+    "release_probe_and_256MiB_bound": "scripts/dev_release_artifacts.py untouched"
+  },
+  "validation": [
+    {
+      "cmd": "pytest services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_latest_market_snapshot_state.py -k 'not repro'",
+      "result": "37 passed, 1 deselected"
+    },
+    {
+      "cmd": "pytest test_latest_market_snapshot_compaction.py -k repro",
+      "result": "1 passed (numbers above)"
+    }
+  ],
+  "limitations": [
+    "Other services/source_ingestion tests could not be collected here: fastapi not installed in the available venv (pre-existing, unrelated).",
+    "A torn pwrite from power loss inside one 4MiB batch is not covered; process-level interruption is."
+  ]
+}
