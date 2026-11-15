@@ -502,57 +502,57 @@
     ],
     "7_template_demand_search": [
       {
-        "file_line": "services/research/main.py:2774",
+        "file_line": "services/research/main.py:2862",
         "variable": "PERSONA_API_URL",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:2777",
+        "file_line": "services/research/main.py:2865",
         "variable": "RESEARCH_PERSONA_SERVICE_TOKEN_FILE",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:1930",
+        "file_line": "services/research/main.py:1972",
         "variable": "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:1930",
+        "file_line": "services/research/main.py:1972",
         "variable": "TRAINING_SESSION_CANONICAL_DATASET_PATH",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:1931",
+        "file_line": "services/research/main.py:1973",
         "variable": "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:1931",
+        "file_line": "services/research/main.py:1973",
         "variable": "TRAINING_SESSION_THRESHOLD_POLICY_PATH",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:2104",
+        "file_line": "services/research/main.py:2146",
         "variable": "TRAINING_SESSION_URL",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:2105",
+        "file_line": "services/research/main.py:2147",
         "variable": "REGISTRY_URL",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:2788",
+        "file_line": "services/research/main.py:2874",
         "variable": "PANTHEON_REGISTRY_URL",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:1908",
+        "file_line": "services/research/main.py:1950",
         "variable": "RESEARCH_REGISTRY_SERVICE_TOKEN_FILE",
         "compose_service": "research-orchestrator-svc"
       },
       {
-        "file_line": "services/research/main.py:2210",
+        "file_line": "services/research/main.py:2252",
         "variable": "RESEARCH_TRAINING_SERVICE_TOKEN_FILE",
         "compose_service": "research-orchestrator-svc"
       }
