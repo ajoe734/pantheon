@@ -504,3 +504,30 @@ def test_refresh_reread_row_without_calendar_evidence_publishes_governed_evidenc
     assert updated_snap.calendar_evidence["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
     assert "2026-10-09" in updated_snap.calendar_evidence["holidays"]
     assert "2026-10-08" in updated_snap.calendar_evidence["trading_days"]
+
+
+def test_official_open_is_published_per_session_and_never_invented(tmp_path: Path) -> None:
+    """PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115: the next-session open comes from the official row only."""
+
+    def official(day: str, close: float, open_: float | None) -> Any:
+        record = _tw_official_record(
+            source_id=f"tw-official:tw_price_daily:TWSE:2330:{day}",
+            event_time=f"{day}T05:30:00Z",
+            close=close,
+            calendar_evidence=None,
+        )
+        if open_ is not None:
+            record.metadata["normalized_row"]["open"] = open_
+        return record
+
+    path = tmp_path / "market-snapshots.jsonl"
+    store = LatestMarketSnapshotStore(path)
+    store.append_normalized_records(
+        [official("2026-11-13", 110.0, 101.0), official("2026-11-16", 112.0, None)],
+        ingest_run_id="ingest-opens",
+        observed_at="2026-11-16T09:00:00Z",
+    )
+    snapshot = LatestMarketSnapshotStore(path).get("2330.TW")  # round-trips through the durable log
+    public = snapshot.to_public_dict()
+    assert public["opens"] == [{"event_time": "2026-11-13T05:30:00Z", "open": 101.0}]  # no open -> no entry
+    assert public["closes"] == [110.0, 112.0]
