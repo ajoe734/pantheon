@@ -5,6 +5,7 @@ import json
 import math
 import statistics
 from datetime import date
+from typing import Any, Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -32,11 +33,23 @@ class PoolPolicy(BaseModel):
     minimum_oos_days: int = Field(ge=2)
     in_sample_fraction: float = Field(gt=0, lt=1)
     budget_full: float = Field(gt=0, le=1)
+    # COORDINATOR PROPOSAL (2026-11-15), reviewer to confirm: the design names the
+    # trial cap and trial_history_days but not the promotion condition. A trial
+    # becomes active at the first re-weight when its own virtual book has at least
+    # trial_promotion_min_days and its own drawdown is below trial_promotion_max_drawdown
+    # and its approved baseline still resolves.
+    trial_promotion_min_days: int = Field(ge=2)
+    trial_promotion_max_drawdown: float = Field(gt=0, lt=1)
+    # COORDINATOR PROPOSAL: a published weight must move by more than this to republish.
+    publish_weight_tolerance: float = Field(ge=0, lt=1)
+    coordinator_proposals: list[str]
 
     @model_validator(mode="after")
     def consistent(self):
         if self.schema_version != "persona_pool_policy.v1" or self.halve_drawdown >= self.remove_drawdown:
             raise ValueError("invalid pool policy schema or drawdown ordering")
+        if self.trial_promotion_min_days < self.trial_history_days or self.trial_promotion_max_drawdown > self.halve_drawdown:
+            raise ValueError("trial promotion must not be looser than the trial history and halving rules")
         return self
 
 
@@ -154,6 +167,64 @@ def member_statistics(member, book, policy):
         peak = max(peak, equity)
     return {"days": len(values), "volatility": statistics.stdev(values),
             "sharpe": sharpe(values, policy.periods_per_year), "drawdown": max(0, 1 - equity / peak)}
+
+
+def trial_publication(member: Mapping[str, Any], trial_risk_cap: float) -> tuple[float, bool]:
+    """(risk_weight, virtual_only) a pool member is published with.
+
+    Reading of design sections 4.2 / 5.3 implemented here: a trial that has no weight yet is
+    virtual only (observed on paper, no risk budget); a trial that has been given weight by a
+    re-weight trades with at most the trial cap of the risk budget until it is promoted to
+    active. Active members publish their own weight unchanged.
+    """
+    if member["stage"] != "trial":
+        return member["risk_weight"], False
+    weight = min(float(member["risk_weight"]), trial_risk_cap)
+    return (weight, False) if weight > 0 else (0, True)
+
+
+def last_published(history: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The newest publish record that confirmed the runtime binding moved."""
+    done = [e for e in ((history or {}).get("published") or {}).values() if e.get("status") == "published"]
+    return max(done, key=lambda e: e["pool_version"]) if done else None
+
+
+def publication_change(published: Mapping[str, Any] | None, pool: Mapping[str, Any], policy) -> dict[str, Any]:
+    """Would publishing ``pool`` change what runs? A re-weight inside tolerance changes nothing.
+
+    Changed means: a different set of live members (membership), a member whose stage differs,
+    or an effective published weight that moved by more than ``publish_weight_tolerance``.
+    No publish record at all counts as a membership change (nothing proves what runs).
+    """
+    now = {m["artifact_ref"]: (m["stage"], *trial_publication(m, policy.trial_risk_cap))
+           for m in pool.get("members", []) if m["stage"] != "removed"}
+    if published is None:
+        return {"changed": True, "membership_changed": True, "reasons": ["no_publication_record"]}
+    before = {p["artifact_ref"]: p for p in published.get("members") or []}
+    reasons = []
+    if set(now) != set(before):
+        reasons.append("live_membership_changed")
+    for ref, (stage, weight, virtual) in sorted(now.items()):
+        pin = before.get(ref)
+        if pin is None:
+            continue
+        if pin.get("stage") != stage:
+            reasons.append(f"stage_changed:{ref}")
+        if bool(pin.get("virtual_only")) != virtual or abs(float(pin["risk_weight"]) - float(weight)) > policy.publish_weight_tolerance + 1e-12:
+            reasons.append(f"weight_changed:{ref}")
+    return {"changed": bool(reasons), "membership_changed": "live_membership_changed" in reasons,
+            "reasons": reasons, "published_pool_version": published.get("pool_version")}
+
+
+def promotion_verdict(member, stat, policy):
+    """Pure promotion condition (baseline resolution is checked by the owner that can read the registry)."""
+    if member["stage"] != "trial":
+        return {"eligible": False, "reason": "not_a_trial"}
+    if stat["days"] < policy.trial_promotion_min_days:
+        return {"eligible": False, "reason": f"trial_history_{stat['days']}_of_{policy.trial_promotion_min_days}_days"}
+    if stat["drawdown"] >= policy.trial_promotion_max_drawdown - 1e-12:
+        return {"eligible": False, "reason": "trial_drawdown_not_below_promotion_threshold"}
+    return {"eligible": True, "reason": "trial_history_and_drawdown_met"}
 
 
 def reweight(members, books, policy, now, previous_statistics=None):
