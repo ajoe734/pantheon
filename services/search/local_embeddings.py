@@ -21,6 +21,7 @@ from typing import Any, Sequence
 from services.search.filters import SearchCapabilityUnavailableError
 
 MANIFEST_PATH = Path(__file__).parent / "model-manifest.json"
+EMBEDDING_THREADS = 2
 
 
 class LocalEmbeddingEngine:
@@ -38,6 +39,7 @@ class LocalEmbeddingEngine:
         self.dimension = int(self.manifest.get("dimension", 1024))
         self.query_prefix = str(self.manifest.get("preprocessing", {}).get("query_prefix", "query: "))
         self.passage_prefix = str(self.manifest.get("preprocessing", {}).get("passage_prefix", "passage: "))
+        self.threads = EMBEDDING_THREADS
 
         explicit_cache = cache_dir or os.getenv("SEARCH_EMBEDDING_CACHE_DIR", "/tmp/fastembed_cache")
         self.cache_dir = Path(explicit_cache)
@@ -157,6 +159,7 @@ class LocalEmbeddingEngine:
                 cache_dir=str(self.cache_dir),
                 local_files_only=self.local_files_only,
                 specific_model_path=str(self._find_snapshot_dir()),
+                threads=self.threads,
             )
             return self._embedder
         except Exception as exc:

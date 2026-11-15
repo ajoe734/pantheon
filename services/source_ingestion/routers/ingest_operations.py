@@ -187,6 +187,31 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             )
         return snapshot.to_public_dict(requested_symbol=symbol)
 
+    @router.post("/api/source-ingest/candidate-pool-market")
+    def build_candidate_pool_market_input(body: dict[str, Any]) -> dict[str, Any]:
+        """Read-only ``candidate_pool_market.v1`` (all_governed_tw) from stored normalized datasets.
+
+        ``body.inputs`` is the screen rule's declared catalogue inputs. No connector
+        or provider is invoked. A missing dataset/field is 404 ``needs_data`` naming it.
+        """
+        from ..candidate_pool_market_feed import CandidatePoolMarketNeedsData, build_candidate_pool_market
+
+        inputs = body.get("inputs") if isinstance(body, dict) else None
+        if not isinstance(inputs, list) or not all(
+            isinstance(i, dict) and all(isinstance(i.get(k), str) and i[k] for k in ("name", "dataset", "field"))
+            for i in inputs
+        ):
+            raise HTTPException(status_code=422, detail={"code": "invalid_inputs"})
+        try:
+            day = body.get("decision_day")
+            return build_candidate_pool_market(
+                runtime.MARKET_DATA_STORAGE_ROOT, inputs, decision_day=day if isinstance(day, str) else None)
+        except CandidatePoolMarketNeedsData as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "needs_data", "dataset": exc.dataset, "detail": exc.detail},
+            ) from exc
+
     @router.post("/api/source-ingest/connectors", status_code=201)
     def configure_connector(
         request: ConfigureConnectorRequest,
@@ -424,7 +449,15 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
 
     @router.get("/api/source-ingest/source-records/{source_id}")
     def get_source_record(source_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
-        source = _owned_evidence_read(runtime.evidence_repository, "get_source_record", _source_read_tenant(authorization, tenant_id), source_id, "source record not found")
+        tenant = _source_read_tenant(authorization, tenant_id)
+        source = _owned_evidence_read(runtime.evidence_repository, "get_source_record", tenant, source_id)
+        if source is None:
+            try:
+                source = runtime.collector_market_record_from_partition(source_id, tenant)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Source normalized partition unavailable") from exc
+        if source is None:
+            raise HTTPException(status_code=404, detail="source record not found")
         return {"source_record": source.to_dict()}
 
     @router.get("/api/source-ingest/evidence/items")

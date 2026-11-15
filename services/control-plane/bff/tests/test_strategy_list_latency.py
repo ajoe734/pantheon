@@ -1128,21 +1128,24 @@ def test_strategies_service_equivalent_named_wrapper_and_lambda_both_use_bounded
 
     monkeypatch.setattr(adapter_base, "http_request_json", _http_stub)
 
-    rks_port = DefaultResearchKnowledgeSourcePort()
-    read_ports = create_read_surface_ports(
-        research_knowledge_source=rks_port,
-        ranking_store=_CountingRankingStore([]),
-    )
+    for label in ("lambda", "named_wrapper", "bound_rks_method", "none"):
+        # Each callable must prove it uses the bounded owner page from cold;
+        # sharing a port would let an earlier case warm the short page memo.
+        rks_port = DefaultResearchKnowledgeSourcePort()
+        read_ports = create_read_surface_ports(
+            research_knowledge_source=rks_port,
+            ranking_store=_CountingRankingStore([]),
+        )
 
-    def named_wrapper() -> List[Dict[str, Any]]:
-        return list_strategy_summaries(read_ports)
+        def named_wrapper() -> List[Dict[str, Any]]:
+            return list_strategy_summaries(read_ports)
 
-    for label, summary_callable in (
-        ("lambda", lambda: list_strategy_summaries(read_ports)),
-        ("named_wrapper", named_wrapper),
-        ("bound_rks_method", rks_port.list_strategy_specs),
-        ("none", None),
-    ):
+        summary_callable = {
+            "lambda": lambda: list_strategy_summaries(read_ports),
+            "named_wrapper": named_wrapper,
+            "bound_rks_method": rks_port.list_strategy_specs,
+            "none": None,
+        }[label]
         owner_http_paths.clear()
         app = FastAPI()
         app.include_router(

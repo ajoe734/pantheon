@@ -91,7 +91,8 @@ def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
         "parameters": parameters,
         "mutation_surface": {"controls": controls,
                              "immutable_parameters": [k for k in parameters if k not in params]},
-        "lineage": {"source_run_ids": [demand["demand_id"]],
+        "lineage": {"source_strategy_spec_id": "template-demand-" + identity,
+                    "source_run_ids": [demand["demand_id"]],
                     "source_dataset_refs": list(dataset["source_dataset_refs"])},
         "provenance_refs": [source_ref, "research-demand:" + demand["demand_id"]],
     }
@@ -124,10 +125,11 @@ class TemplateDemandSearch:
     """One bounded search, using the same durable gate counters as replication."""
 
     def __init__(self, *, store, gate, context_loader, lock_path: Path,
-                 family_budget=FAMILY_TRIAL_BUDGET, run_budget=RUN_BUDGET):
+                 registrar=None, family_budget=FAMILY_TRIAL_BUDGET, run_budget=RUN_BUDGET):
         if not 0 < family_budget <= FAMILY_TRIAL_BUDGET or not 0 < run_budget <= RUN_BUDGET:
             raise ValueError("invalid_template_search_budget")
         self.store, self.gate, self.context_loader = store, gate, context_loader
+        self.registrar = registrar
         self.lock_path = Path(lock_path)
         self.family_budget, self.run_budget = family_budget, run_budget
 
@@ -145,11 +147,14 @@ class TemplateDemandSearch:
 
     def _run(self, demand):
         from services.research.alpha_replication.admission import evaluate_template_candidate
+        from services.research.candidate_registration import TemplateProofCapturingGate
 
         timestamp = self.store._now().isoformat()
         previous = ((demand.get("discovery") or {}).get("template_search") or {}).get("attempts") or {}
         record = {"run_at": timestamp, "attempts": {}, "excluded": [], "paper_only": True}
         tried = set(demand["tried_families"])
+        capturing_gate = TemplateProofCapturingGate(self.gate)
+        new_attempts = 0
         try:
             context = self.context_loader(demand)
             dataset, universe = context["dataset"], _symbols(context["universe"])
@@ -158,6 +163,29 @@ class TemplateDemandSearch:
             if dataset.get("data_frequency") not in ("daily", "1d"):
                 raise ValueError("template_search_requires_daily_bars")
             entries = context["templates"]
+            if self.registrar is not None:
+                for prev_aid, prev_receipt in previous.items():
+                    if (isinstance(prev_receipt, Mapping)
+                            and prev_receipt.get("status") == "admitted"
+                            and (prev_receipt.get("registration") or {}).get("status") != "approved"
+                            and isinstance(prev_receipt.get("artifact"), Mapping)):
+                        tid = prev_receipt.get("template_id")
+                        tpl_entry = next(
+                            (v["entry"] for v in entries
+                             if isinstance(v.get("entry"), Mapping)
+                             and ((v["entry"].get("metadata") or {}).get("alpha_template") or {}).get("template_id") == tid),
+                            None)
+                        tpl = (validate_alpha_template(tpl_entry["metadata"]["alpha_template"])
+                               if tpl_entry is not None
+                               else {"template_id": tid, "inputs": prev_receipt["artifact"]["strategy_logic"]["inputs"]})
+                        updated = copy.deepcopy(dict(prev_receipt))
+                        reg = self.registrar.register_passed_attempt(
+                            demand=demand, template=tpl, artifact=updated["artifact"], receipt=updated)
+                        updated.update(registration=reg, registry_id=reg["registry_id"],
+                                       baseline_ref=reg["approval_decision_id"])
+                        record["attempts"][prev_aid] = updated
+                        self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
+                                                          tried_families=tried)
             for view in sorted(entries, key=lambda v: v["entry"]["registry_id"]):
                 entry = view["entry"]
                 if entry.get("artifact_type") != "alpha_template":
@@ -186,12 +214,13 @@ class TemplateDemandSearch:
                 aid = artifact["artifact_id"]
                 if aid in previous:
                     continue
-                if len(record["attempts"]) >= self.run_budget:
+                if new_attempts >= self.run_budget:
                     record["reason"] = "run_budget_exhausted"
                     break
+                new_attempts += 1
                 before = self.gate.get_family_total_trial_count(family)
                 response = evaluate_template_candidate(
-                    gate=self.gate, artifact=artifact, dataset=dict(dataset), demand=demand,
+                    gate=capturing_gate, artifact=artifact, dataset=dict(dataset), demand=demand,
                     family_id=family, source_ref="registry:" + entry["registry_id"], timestamp=timestamp)
                 # Incomplete histories / invalid backtests return before the gate's
                 # numeric trial check. They still consumed one compiled-template trial.
@@ -207,11 +236,19 @@ class TemplateDemandSearch:
                     receipt.update(artifact=artifact, mechanism_status="mechanism_untested",
                                    mechanism_support=None)
                 record["attempts"][aid] = receipt
-                # Commit each terminal receipt before starting the next backtest.
+                # Commit each terminal receipt before starting registration or the next backtest.
                 if total >= self.family_budget:
                     tried.add(family)
                 self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
                                                   tried_families=tried)
+                if response.passed and self.registrar is not None:
+                    reg = self.registrar.register_passed_attempt(
+                        demand=demand, template=template, artifact=artifact, receipt=receipt,
+                        backtest_evaluation=capturing_gate.last_evaluation)
+                    receipt.update(registration=reg, registry_id=reg["registry_id"],
+                                   baseline_ref=reg["approval_decision_id"])
+                    self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
+                                                      tried_families=tried)
             record.setdefault("reason", "search_completed")
         except Exception as exc:
             record["reason"] = f"template_search_unavailable:{type(exc).__name__}:{str(exc)[:160]}"

@@ -305,12 +305,90 @@
             "no_live_capital"
           ],
           "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-official-twse-margin-balances"
+          ],
+          "dataset": "tw_margin_short_balance",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-official-tpex-institutional-flow"
+          ],
+          "dataset": "tw_institutional_flow",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-taifex-institutional-positions"
+          ],
+          "dataset": "taifex_futures_chip",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-taifex-put-call"
+          ],
+          "dataset": "taifex_options_chip",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-official-tpex-margin-balances"
+          ],
+          "dataset": "tw_margin_short_balance",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
         }
       ]
     }
   ],
   "schema_version": "source_ingest_desired_state.v1",
   "collector_ingestion_exclusions": {
+    "collector-tw-taifex-vix": "Temporary collector-only source emitting tw_vix_daily and tw_vix_intraday bundles from official TAIFEX VIX downloads. Hosted reader and connector admission are deferred to the regime engine intake task; remove this exclusion when that task supplies the matching readers and definitions. Do not admit these rows through the stock-price reader. Collector fetch policy and timers remain unchanged.",
+    "collector-tw-twse-index-breadth": "Temporary collector-only source emitting tw_index_daily and tw_market_breadth_daily bundles. Hosted readers and connector admission are deferred to REGIME-DATA-INDEX-BREADTH-INTAKE-20261114; remove this exclusion when that task supplies the matching readers and definitions. Do not admit these rows through the stock-price reader. Collector fetch policy and timers remain unchanged.",
+    "collector-tw-twse-taiex-history": "Temporary collector-only source emitting tw_index_ohlc_daily bundles from monthly MI_5MINS_HIST pages. Hosted reader and connector admission are deferred to REGIME-DATA-INDEX-BREADTH-INTAKE-20261114; remove this exclusion when that task supplies the matching reader and definition. Do not admit index OHLC through the stock-price reader. Collector fetch policy and backfill remain unchanged.",
     "collector-youtube-gemini-notes": "Native GeminiVideoNotesPoller emits model-generated video summaries with hashed_author=null, not authored social posts. Hosted ingestion is deferred until a generated-note evidence/attribution contract is defined; do not synthesize an author or route these into community social features. Host policy and timers remain unchanged."
   }
 }

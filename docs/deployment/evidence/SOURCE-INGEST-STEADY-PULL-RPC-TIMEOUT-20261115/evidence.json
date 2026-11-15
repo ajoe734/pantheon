@@ -1,0 +1,21 @@
+{
+  "task": "SOURCE-INGEST-STEADY-PULL-RPC-TIMEOUT-20261115",
+  "hosted_before": {
+    "deployed_sha": "04613fa66",
+    "ticks_since_deploy": {"total": 32, "ok": 3, "failed": 29, "timeout_error": 28},
+    "run_scheduled_server_seconds": "29-31",
+    "reconcile_server_seconds": "16-30",
+    "config_timeout_seconds": 30
+  },
+  "change": {
+    "file": "services/source_ingestion/controller_worker.py",
+    "steady_pull_rpc_timeout_seconds": "2 x (COLLECTOR_REQUEST_READ_BUDGET_SECONDS 15 + 256 rows x 0.05 + 5 notify) = 65.6",
+    "steady_reconcile_rpc_timeout_seconds": 60.0,
+    "applies_to": "collector_steady_pull mode only; max(config.timeout_seconds, floor); other RPCs and bounded refresh unchanged"
+  },
+  "local_tests": {
+    "venv": "/tmp/regime-index-breadth-venv/bin/python",
+    "targeted": "python -m pytest services/source_ingestion/tests/test_controller_worker.py -k steady -> 19 passed",
+    "full_suite": "pytest services/source_ingestion split into 6 file batches: 353+411+377+202+362+296 passed, 21 skipped, 0 failed, all exit 0"
+  }
+}

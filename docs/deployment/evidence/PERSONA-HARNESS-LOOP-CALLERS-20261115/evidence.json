@@ -1,0 +1,30 @@
+{
+  "task_id": "PERSONA-HARNESS-LOOP-CALLERS-20261115",
+  "base_head": "40f024389",
+  "paper_only": true,
+  "reproduction_before_change": {
+    "no_production_caller_opens_harness_patch_consultation": "open_persona_panel callers were only services/persona/pool_autonomy_cycle.py:663 and the evaluator; none for harness_patch",
+    "nothing_writes_observe_bundle_harness_observation": "readers at services/persona/harness_adoption.py:152,177; no writer anywhere in services/ or integrations/",
+    "evidence_verifier_accepts_only_trade_reflection_and_lesson": "services/persona/harness.py:214-227 (_reflection_evidence) and lesson_rule_proposals.py:223-231; evaluator cites kind=packet refs (persona_evaluator_agent.py:327-348)",
+    "shadow_provider_unset": "services/persona/harness.py:463-478 returns None without PANTHEON_SHADOW_REPLAY_AGENT_ID/POLICY_URL, so every comparison was provider_unavailable (harness_shadow_eval.py:~273)",
+    "cycle_proposals_stay_gated": "persona_cycle_controller.py:286-296 stages harness_patch and consult_request as requires_owner_gate with no consumer"
+  },
+  "changes": {
+    "services/persona/harness_cycle.py": "new: HarnessLoop (stage/precheck/shadow/consult/adopt/observe), production_evidence_verifier (packet, virtual_book, ranking refs), attach_harness_observation, ControllerHarnessLoop",
+    "services/persona/harness.py": "default evidence verifier is the production composition",
+    "services/persona/persona_cycle_controller.py": "calls the loop and the observation writer; cycle_health reports harness_loop status/reasons",
+    "services/openclaw-gateway-adapter/shadow_replay_provisioning.py": "new: deny-all replay agent ensure and live policy probe",
+    "services/openclaw-gateway-adapter/main.py": "POST /api/openclaw-adapter/shadow-replay/agent/ensure, GET /api/openclaw-adapter/shadow-replay/policy/{agent_id}"
+  },
+  "fail_closed": [
+    "replay env unset or probe failing -> comparison incomplete, cycle record status=degraded reason shadow_provider_unavailable / shadow_deny_all_provider_unverified, base stays active",
+    "ranking BFF unconfigured -> ranking evidence ref unresolved -> precheck refused trajectory_evidence_unresolved",
+    "memo unpublished or operator-required -> not adopted; operator-required goes to the existing evolution queue (harness_adoption.queue_governance)"
+  ],
+  "open_dependencies": "PANTHEON_SHADOW_REPLAY_AGENT_ID, PANTHEON_SHADOW_REPLAY_POLICY_URL, PANTHEON_RANKING_BFF_URL/TOKEN pass-through belongs to PERSONA-CYCLE-OWNER-PORTS-WIRING-20261115; harness v1 to PERSONA-PAPER-ENROLLMENT-20261115. Observation base is the newest pre-adoption terminal packet measure; membership change or missing measure is recorded as a confounder (coordinator proposal, reviewer to confirm).",
+  "validation": [
+    {"cmd": "pytest services/persona -q", "result": "365 passed, 1 skipped"},
+    {"cmd": "pytest services/persona/test_harness_cycle.py -q", "result": "6 passed (real persona owner, shadow evaluator, adoption, Consultation/Memory/Governance/Evolution apps, adapter provisioning served over HTTP)"},
+    {"cmd": "pytest services/persona-evaluator-agent services/openclaw-gateway-adapter/test_shadow_replay_provisioning.py services/openclaw-gateway-adapter/test_consult_agent_provisioning.py services/control-plane/persona -q", "result": "286 passed, 1 skipped, 1 failed: test_persona_strategy_discovery::test_gate_to_registry_to_persona_ranks_supported_above_untested_without_injection, which also fails on the unchanged base"}
+  ]
+}

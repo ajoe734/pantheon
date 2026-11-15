@@ -1,0 +1,11 @@
+{
+  "task_id": "OPS-DEP-CONTRACT-UNSCHEDULABLE-IN-PROGRESS-20261115",
+  "hosted_behavior_claimed": false,
+  "commands": [
+    {"command": "cd scripts && python3 -m unittest test_ai_status.DependencyContractBatchTests", "result": "Ran 27 tests, OK", "passed": 27, "failed": 0}
+  ],
+  "new_tests": [
+    "test_unschedulable_in_progress_allows_dependency_revision",
+    "test_schedulable_in_progress_with_satisfied_dependencies_is_busy"
+  ]
+}

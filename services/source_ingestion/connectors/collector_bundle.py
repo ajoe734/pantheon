@@ -19,6 +19,8 @@ Fail-closed rules:
 * any hash / source id / schema mismatch rejects the whole pull; nothing is
   returned and nothing is written (raw copy happens only after every bundle
   verified and every record passed the external source contract);
+* verified daily-price bundles with typed session-time failures are quarantined
+  during the ordered sweep; no rows from that bundle are admitted;
 * every record is research-only, ``redistribution_allowed = false``.
 """
 
@@ -33,12 +35,14 @@ import shutil
 import tempfile
 import time
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
+from threading import RLock
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
 from services.external_egress import open_external_url
@@ -72,6 +76,15 @@ MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
 
+
+class MarketTimeEvidenceError(SourceEvidenceError):
+    """A verified price bundle cannot represent a completed Taiwan session."""
+
+    def __init__(self, reason: str, item_id: str, detail: str) -> None:
+        self.reason = reason
+        self.item_id = item_id
+        super().__init__(f"{reason}: collector item {item_id} {detail}")
+
 # Configured ingestion owns persistence; tuple adapter callers retain their
 # existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
 _DEFER_ACK = ContextVar("collector_defer_ack", default=False)
@@ -87,6 +100,13 @@ LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+# Process-local, shared across the short-lived adapters built by configured pulls.
+# No serialized trust marker survives a restart. Bounds apply to both population
+# and encoded metadata size; raw bodies are never cached here.
+VERIFIED_METADATA_CACHE_ENTRIES = 16
+VERIFIED_METADATA_CACHE_BYTES = 64 * 1024 * 1024
+_METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
+_METADATA_CACHE_LOCK = RLock()
 
 
 class _DeadlineBody:
@@ -471,6 +491,8 @@ def verify_bundle(
         manifest.get("bundle_sha256") or ""
     ).lower():
         raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+    if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
+        raise SourceEvidenceError("collector index bundle_sha256 mismatch")
 
     items_text = transport.read(f"{base}/items.jsonl", max_bytes=MAX_JSON_BYTES).decode("utf-8")
     items: list[Mapping[str, Any]] = []
@@ -880,6 +902,55 @@ class CollectorBundleAdapter:
     def _priority_key_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
 
+    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
+        """Reuse only fully verified immutable metadata bound to the live index.
+
+        Entries without a digest retain the full-read contract. HTTP authorization
+        and local roots isolate cache populations; injected transports are held by
+        reference so object-id reuse cannot alias an earlier reader.
+        """
+        digest = str(entry.get("bundle_sha256") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        if isinstance(transport, HttpBundleTransport):
+            namespace = (transport.host, transport.token_env,
+                         _sha256(os.environ.get(transport.token_env, "").encode()))
+        elif isinstance(transport, LocalDirectoryBundleTransport):
+            namespace = (str(Path(transport.root_dir).resolve()),)
+        else:
+            namespace = (id(transport),)
+        scope = (str(self._raw_root().resolve()), self.source_id, namespace)
+        key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
+        with _METADATA_CACHE_LOCK:
+            cached = _METADATA_CACHE.get(key)
+            if cached is not None:
+                _METADATA_CACHE.move_to_end(key)
+                return cached[1]
+        bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        size = len(json.dumps(bundle.manifest).encode()) + sum(len(json.dumps(row).encode()) for row in bundle.items)
+        if size <= VERIFIED_METADATA_CACHE_BYTES:
+            with _METADATA_CACHE_LOCK:
+                # A changed digest/identity for this run supersedes its old entry.
+                for old_key, (_, old, _) in list(_METADATA_CACHE.items()):
+                    if old_key[:3] == scope and (old.date, old.run_id) == (bundle.date, bundle.run_id):
+                        del _METADATA_CACHE[old_key]
+                _METADATA_CACHE[key] = (transport, bundle, size)
+                while (len(_METADATA_CACHE) > VERIFIED_METADATA_CACHE_ENTRIES
+                       or sum(value[2] for value in _METADATA_CACHE.values()) > VERIFIED_METADATA_CACHE_BYTES):
+                    _METADATA_CACHE.popitem(last=False)
+        return bundle
+
+    def _verify_ordered_bundle(self, transport: BundleTransport, *, expected_source_id: str,
+                               entry: Mapping[str, Any], item_window: tuple[int, int],
+                               deadline: float | None = None, raw_read_concurrency: int = 1) -> VerifiedBundle:
+        if not self._priority_latest_enabled():
+            return verify_bundle(transport, expected_source_id=expected_source_id, entry=entry,
+                                 item_window=item_window, deadline=deadline, raw_read_concurrency=raw_read_concurrency)
+        bundle = self._verified_metadata(transport, entry)
+        return _verify_raw_window(transport, bundle, item_window=item_window,
+                                  deadline=deadline if deadline is not None else _OP_DEADLINE.get(),
+                                  raw_read_concurrency=raw_read_concurrency)
+
     def _load_priority_state(self) -> tuple[str | None, int, bool, tuple[str, ...]]:
         path = self._priority_key_path()
         try:
@@ -936,8 +1007,7 @@ class CollectorBundleAdapter:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
-            bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0),
-                                   priority_codes=held)
+            bundle = self._verified_metadata(transport, entry)
             if not bundle.items:
                 continue
             trade_date = _bundle_trade_date(entry, bundle.items)
@@ -964,7 +1034,7 @@ class CollectorBundleAdapter:
             old_entry = next((e for e in mine if _cursor_key(_utc(e.get("finished_at"), "index finished_at"),
                                                            str(e.get("run_id") or "")) == state_key), None)
             if old_entry:
-                old = bundle if state_key == key and state_held == held else verify_bundle(
+                old = verify_bundle(
                     transport, expected_source_id=self.source_id, entry=old_entry, item_window=(0, 0),
                     priority_codes=state_held)
                 if _bundle_trade_date(old_entry, old.items) == trade_date:
@@ -978,6 +1048,11 @@ class CollectorBundleAdapter:
             if day == trade_date:
                 for row in candidate.items:
                     session_items.setdefault(str(row["id"]), (candidate, row))
+        with _METADATA_CACHE_LOCK:
+            for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
+                if (cache_key[:2] == (str(self._raw_root().resolve()), self.source_id)
+                        and cached.items and _bundle_trade_date({}, cached.items) < trade_date):
+                    del _METADATA_CACHE[cache_key]
         pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
                    if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
         pending.sort(key=lambda pair: not (
@@ -1051,6 +1126,8 @@ class CollectorBundleAdapter:
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
         acknowledged_only_keys: set[str] = set()
+        rejected: list[Mapping[str, Any]] = []
+        rejected_keys: set[str] = set()
         window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
@@ -1068,8 +1145,28 @@ class CollectorBundleAdapter:
             skip = partial_skip if key == base_cursor else 0
             try:
                 metadata_bundle = None
+                if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
+                    metadata_bundle = self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "complete":
+                        try:
+                            # Validate the entire bundle before any capped prefix is emitted.
+                            # An invalid tail must not leave a partly admitted price bundle.
+                            for row in metadata_bundle.items:
+                                fetched = _utc(row.get("fetched_at"), "fetched_at")
+                                stated = row.get("published_at")
+                                published = _utc(stated, "published_at", allow_rfc2822=True) if stated else fetched
+                                self._market_event_time(str(row["id"]), row, stated, published, fetched)
+                        except MarketTimeEvidenceError as exc:
+                            rejection = self._record_market_rejection(metadata_bundle, exc)
+                            rejected.append(rejection)
+                            rejected_keys.add(key)
+                            # Empty traversal entry advances only the sweep, never a data ack.
+                            verified.append(replace(metadata_bundle, items=()))
+                            window_stops[key] = 0
+                            continue
                 if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
-                    metadata_bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+                    metadata_bundle = metadata_bundle or self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
                     if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
                             and all(str(row["id"]) in priority_state["items"] for row in metadata_bundle.items)):
                         # Every identity of this session was persisted by the newer priority run.
@@ -1078,11 +1175,16 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
-                bundle = verify_bundle(
-                    transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
-                    deadline=deadline,
-                    raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
-                )
+                if metadata_bundle is not None:
+                    bundle = _verify_raw_window(
+                        transport, metadata_bundle, item_window=(skip, skip + remaining), deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency)
+                else:
+                    bundle = self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                        deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
+                    )
             except TimeoutError:
                 # A later bundle cut by the shared deadline before any of its rows verified
                 # keeps the already verified prefix; that bundle stays pending (no skip, no
@@ -1159,22 +1261,26 @@ class CollectorBundleAdapter:
             feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
         # Cache the verified window even for a feature-only capped delivery.
         # Its provenance must already resolve; this cache is not a cursor ack.
-        self._write_raw([(b, {}) for b in verified if b.status != "paused"], records)
+        self._write_raw([(b, {}) for b in verified if b.status != "paused" and b.cursor not in rejected_keys], records)
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
         complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
         latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0]) if source_entries else (None, None)
-        boundary = verified[-1] if verified and verified[-1].cursor == latest_key else None
+        boundary = (verified[-1] if verified and verified[-1].cursor == latest_key
+                    and latest_key not in rejected_keys else None)
         if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
             # The cache alone cannot acknowledge a configured delivery; the
             # persistence owner must also have committed this exact boundary.
-            boundary = verify_bundle(transport, expected_source_id=self.source_id,
+            boundary = self._verify_ordered_bundle(transport, expected_source_id=self.source_id,
                                      entry=latest_entry, item_window=(0, 0))
         observed = observed_from_collector_status(
             self.read_status(), source_id=self.source_id, cursor=next_cursor,
             cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
             delivery_complete=complete and not feature_rejected,
         )
-        no_new_data = bool(verified and all(b.cursor in acknowledged_only_keys for b in verified) and complete
+        if rejected:
+            observed = {**observed, "rejected_bundles": rejected}
+        no_new_data = bool(verified and boundary is not None
+                           and all(b.cursor in acknowledged_only_keys | rejected_keys for b in verified) and complete
                            and not records and not feature_records and not feature_rejected
                            and observed["health_state"] == "healthy")
         if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
@@ -1285,7 +1391,7 @@ class CollectorBundleAdapter:
         published_raw = row.get("published_at")
         published_at = _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True) if published_raw else fetched_at
         if self.source_type == "market" and row.get("trade_date"):
-            published_at = self._market_event_time(item_id, row, published_raw, published_at)
+            published_at = self._market_event_time(item_id, row, published_raw, published_at, fetched_at)
         text = row.get("text")
         title = str(row.get("title") or (str(text).strip()[:80] if text else "") or item_id)
         raw_ref = f"raw/{_slug(self.connector_id)}/{_slug(self.dataset)}/date={bundle.date}/bundle-{bundle.run_id}/{PurePosixPath(manifest_item['raw_path']).name}"
@@ -1442,27 +1548,64 @@ class CollectorBundleAdapter:
         return validate_external_source_record(record, connector=self.connector(), force=True)
 
     def _market_event_time(
-        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime
+        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime,
+        fetched_at: datetime,
     ) -> datetime:
         """Point-in-time history: a market row's event time is its own trade date.
 
         A backfilled bundle is fetched long after the trade date, so falling back to the fetch
         time would stamp two years of history with today. The row's trade date (Taipei) is the
         event date; a stated publish time on another date is rejected, never trusted.
+        Daily prices cannot be fetched before the 13:30 Taipei session close.
+        A later conventional publish label is bounded by the verified observation.
         """
 
         try:
             trade_date = date.fromisoformat(str(row["trade_date"]).strip())
         except ValueError as exc:
             raise SourceEvidenceError(f"collector item {item_id} has an invalid trade_date") from exc
+        is_price = self.dataset in PRIORITY_LATEST_DATASETS
+        session_close = datetime(trade_date.year, trade_date.month, trade_date.day, 5, 30, tzinfo=timezone.utc)
+        if is_price and fetched_at < session_close:
+            raise MarketTimeEvidenceError("market_price_fetched_before_session_close", item_id,
+                                          f"was fetched before {_iso(session_close)}")
         if published_raw:
             if published_at.astimezone(_TAIPEI_TZ).date() != trade_date:
                 raise SourceEvidenceError(
                     f"collector item {item_id} published_at is not on its trade_date {trade_date.isoformat()}"
                 )
-            return published_at
-        close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
-        return datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
+            event_time = published_at
+        else:
+            close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
+            event_time = datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
+        if is_price:
+            if event_time < session_close:
+                raise MarketTimeEvidenceError("market_price_published_before_session_close", item_id,
+                                              "has a publish time before the session close")
+            if event_time > fetched_at and fetched_at.astimezone(_TAIPEI_TZ).date() == trade_date:
+                # The collector uses a conventional 14:30 publication label even when
+                # the exchange supplied the close earlier. Observation is the conservative
+                # event bound; availability remains the original fetch timestamp.
+                return fetched_at
+        return event_time
+
+    def _record_market_rejection(self, bundle: VerifiedBundle, error: MarketTimeEvidenceError) -> Mapping[str, Any]:
+        """Durable quarantine evidence, separate from legacy cursor/priority state.
+
+        This records a rejection, never proves raw verification or persistence. A
+        later pull still verifies the host metadata and reevaluates the bundle.
+        """
+        evidence = {"source_id": self.source_id, "run_id": bundle.run_id, "date": bundle.date,
+                    "cursor": bundle.cursor, "bundle_sha256": bundle.manifest["bundle_sha256"],
+                    "reason": error.reason, "item_id": error.item_id, "detail": str(error)}
+        root = self._raw_root() / "state" / _slug(self.connector_id) / "rejected_bundles"
+        root.mkdir(parents=True, exist_ok=True)
+        identity = _sha256(f"{bundle.cursor}:{bundle.manifest['bundle_sha256']}".encode())
+        path = root / f"{identity}.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        return evidence
 
     def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
         authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}

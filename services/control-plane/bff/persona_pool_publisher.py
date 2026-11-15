@@ -17,6 +17,7 @@ import copy
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Protocol
 
+from services.control_plane.persona.pool_policy import trial_publication
 from services.control_plane.persona.persona_strategy_pool import (
     PoolError,
     PoolNotFound,
@@ -35,6 +36,12 @@ from .persona_provisioning_coordinator import (
     deterministic_provisioning_ids,
 )
 from .persona_provisioning import ProvisioningRecord
+
+
+def _trial_cap() -> float:
+    from services.control_plane.persona.pool_policy import load_policy
+
+    return float(load_policy().trial_risk_cap)
 
 
 class PoolPublishRefused(RuntimeError):
@@ -94,6 +101,29 @@ class InMemoryPublishRecords:
             return False, copy.deepcopy(self._data.get(key))
         self._data[key] = copy.deepcopy(new)
         return True, None
+
+
+def build_publish_records(env: Mapping[str, str] | None = None) -> PublishRecordStore:
+    """Durable publish records (survive a BFF restart); same CAS contract as the in-memory store.
+
+    Follows the provisioning ledger's backend (postgres with its DSN) unless overridden; the
+    in-memory provisioning backend maps to an atomic JSON file, never to process memory.
+    """
+    import os
+
+    from services.foundation.reliable_delivery import build_record_store
+
+    values = os.environ if env is None else env
+    backend = (values.get("PANTHEON_PERSONA_POOL_PUBLISH_STORE_BACKEND")
+               or values.get("PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND") or "json").strip().lower()
+    return build_record_store(
+        backend="json" if backend == "memory" else backend,
+        dsn=values.get("PANTHEON_PERSONA_POOL_PUBLISH_STORE_DSN")
+        or values.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN") or values.get("DATABASE_URL"),
+        table_name=values.get("PANTHEON_PERSONA_POOL_PUBLISH_STORE_TABLE", "bff.persona_pool_publish_records"),
+        json_path=values.get("PANTHEON_PERSONA_POOL_PUBLISH_STORE_PATH", "/tmp/pantheon/bff/pool_publish_records.json"),
+        owner_service="bff",
+    )
 
 
 def _utc_now() -> str:
@@ -552,12 +582,12 @@ class PersonaPoolPublisher:
 
     def _build_envelope(self, tenant_id, ids, pool, artifact_id, version, number, digest, previous):
         members, pins = [], []
+        cap = _trial_cap()
         for member in pool["members"]:
             if member["stage"] == "removed":
                 continue
             entry = self._member_entry(tenant_id, member["artifact_ref"], member["checksum"])
-            virtual = member["stage"] == "trial"
-            weight = 0 if virtual else member["risk_weight"]
+            weight, virtual = trial_publication(member, cap)
             members.append(
                 {
                     "member_id": member["artifact_ref"],
@@ -568,7 +598,8 @@ class PersonaPoolPublisher:
             )
             pins.append(
                 {"artifact_ref": member["artifact_ref"], "version": entry["version"],
-                 "checksum": member["checksum"], "risk_weight": weight, "virtual_only": virtual}
+                 "checksum": member["checksum"], "risk_weight": weight, "virtual_only": virtual,
+                 "stage": member["stage"]}
             )
         empty_template = None
         if not members:

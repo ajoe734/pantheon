@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -849,6 +850,16 @@ class TwseT86DailySpider:
         return items
 
 
+def _price_published_at(trade_date: str, fetched_iso: str) -> str:
+    """Bound the conventional 14:30 Taipei label by the actual observation."""
+    conventional = f"{trade_date}T06:30:00Z"
+    fetched = datetime.fromisoformat(fetched_iso.replace("Z", "+00:00"))
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=timezone.utc)
+    published = datetime.fromisoformat(conventional.replace("Z", "+00:00"))
+    return conventional if published <= fetched else fetched_iso
+
+
 class TwseDailyPriceHistorySpider:
     """Scrapling HTTP spider for TWSE daily price history using per-date all-stock MI_INDEX pages (SD §5.1, O-1)."""
 
@@ -1074,7 +1085,7 @@ class TwseDailyPriceHistorySpider:
                             item_id=item_id,
                             url=target_url,
                             fetched_at=fetched_iso,
-                            published_at=f"{trade_date}T06:30:00Z",
+                            published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TWSE MI_INDEX {symbol} {security_name} ({trade_date}): "
                                 f"close={close_price}, volume_shares={volume_shares}"
@@ -1101,6 +1112,190 @@ class TwseDailyPriceHistorySpider:
                         )
                     )
         self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
+        return items
+
+
+class TwseRegimeParseError(ValueError):
+    """A regime page cannot be published atomically with the expected schema."""
+
+
+def _regime_rows(table: Mapping[str, Any], fields: list[str], label: str) -> list[list[str]]:
+    if table.get("fields") != fields:
+        raise TwseRegimeParseError(f"{label}: changed fields {table.get('fields')!r}")
+    rows = table.get("data")
+    if not isinstance(rows, list) or not rows:
+        raise TwseRegimeParseError(f"{label}: missing data rows")
+    if any(not isinstance(row, list) or len(row) != len(fields)
+           or any(not isinstance(cell, str) for cell in row) for row in rows):
+        raise TwseRegimeParseError(f"{label}: malformed row")
+    return rows
+
+
+def _regime_number(raw: str) -> float:
+    if not re.fullmatch(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", raw):
+        raise TwseRegimeParseError(f"invalid numeric value {raw!r}")
+    value = float(raw.replace(",", ""))
+    if not math.isfinite(value):
+        raise TwseRegimeParseError(f"non-finite numeric value {raw!r}")
+    return value
+
+
+class TwseIndexBreadthSpider(TwseDailyPriceHistorySpider):
+    """Separate MI_INDEX source: TWSE price indices and market/stock breadth.
+
+    Build the entire result before returning it so one malformed table/row
+    invalidates the run, including any earlier successfully parsed pages.
+    """
+
+    source_id = "collector-tw-twse-index-breadth"
+    INDEX_FIELDS = ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)", "特殊處理註記"]
+    BREADTH_FIELDS = ["類型", "整體市場", "股票"]
+    BREADTH_LABELS = ["上漲(漲停)", "下跌(跌停)", "持平", "未成交", "無比價"]
+
+    def __init__(self, policy: SourceFetchPolicy, **kwargs: Any) -> None:
+        # These new sources enforce website spacing before issuing any request.
+        if policy.max_connections != 1 or policy.min_interval_seconds < 5.0:
+            raise CollectorConfigError(f"{policy.source_id}: requires max_connections=1 and min_interval_seconds >= 5.0")
+        super().__init__(policy, **kwargs)
+
+    def _item(self, *, record: dict[str, Any], raw: dict[str, Any], item_id: str,
+              url: str, fetched_iso: str, http_status: int) -> CollectedItem:
+        return CollectedItem(
+            item_id=item_id, url=url, fetched_at=fetched_iso,
+            published_at=f"{record['trade_date']}T06:30:00Z",
+            text=f"TWSE {record['source_dataset']} {record.get('index_name', 'market breadth')} {record['trade_date']}",
+            lang="zh-TW", hashed_author=None,
+            raw_bytes=json.dumps(raw, ensure_ascii=False).encode("utf-8"), raw_extension="json",
+            http_status=http_status, extra_fields={**record, "raw_values": raw},
+        )
+
+    def collect(self, *, dates: Sequence[str] | None = None,
+                fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        targets = dates if dates is not None else [latest_published_trading_date(fetched_iso)]
+        items: list[CollectedItem] = []
+        self.no_data_confirmed = False
+        for target in dict.fromkeys(targets):
+            trade_date = _normalize_iso_date(target)
+            url = self.build_date_url(trade_date)
+            response = self.fetcher.fetch(url)
+            payload = json.loads(response.text)
+            if not isinstance(payload, dict) or payload.get("stat") != "OK":
+                raise TwseRegimeParseError("MI_INDEX: expected stat=OK")
+            if payload.get("date") != trade_date.replace("-", ""):
+                raise TwseRegimeParseError("MI_INDEX: response date does not match request")
+            tables = payload.get("tables")
+            if not isinstance(tables, list):
+                raise TwseRegimeParseError("MI_INDEX: missing tables")
+            indices = [t for t in tables if isinstance(t, dict)
+                       and str(t.get("title", "")).endswith("價格指數(臺灣證券交易所)")]
+            breadth = [t for t in tables if isinstance(t, dict) and t.get("title") == "漲跌證券數合計"]
+            if len(indices) != 1 or len(breadth) != 1:
+                raise TwseRegimeParseError("MI_INDEX: expected one TWSE price index table and one breadth table")
+            index_rows = _regime_rows(indices[0], self.INDEX_FIELDS, "MI_INDEX price indices")
+            names = [r[0] for r in index_rows]
+            if ("發行量加權股價指數" not in names or not any("類指數" in n for n in names)
+                    or len(set(names)) != len(names) or any(not n for n in names)):
+                raise TwseRegimeParseError("MI_INDEX: missing TAIEX/sector indices or duplicate index names")
+            base = {"exchange": "TWSE", "source_dataset": "MI_INDEX", "trade_date": trade_date}
+            for row in index_rows:
+                name, close, sign_raw, points, percent, _ = row
+                sign = re.sub(r"<[^>]*>", "", sign_raw).strip()
+                if sign not in {"+", "-", ""}:
+                    raise TwseRegimeParseError(f"MI_INDEX: unexpected change sign {sign_raw!r}")
+                points_value = _regime_number(points)
+                percent_value = _regime_number(percent)
+                if points_value < 0 or (sign == "" and (points_value != 0 or percent_value != 0)):
+                    raise TwseRegimeParseError("MI_INDEX: inconsistent change sign/points")
+                change = -points_value if sign == "-" else points_value
+                if (change < 0 < percent_value) or (percent_value < 0 < change):
+                    raise TwseRegimeParseError("MI_INDEX: inconsistent change percent")
+                record = {**base, "dataset": "tw_index_daily", "index_name": name,
+                          "close": _regime_number(close), "change_points": change,
+                          "change_percent": percent_value}
+                raw = {"fields": self.INDEX_FIELDS, "data": [row], "title": indices[0]["title"]}
+                items.append(self._item(record=record, raw=raw, item_id=f"twse-index-{trade_date}-{name}",
+                                        url=url, fetched_iso=fetched_iso, http_status=response.http_status))
+            breadth_rows = _regime_rows(breadth[0], self.BREADTH_FIELDS, "MI_INDEX breadth")
+            by_label = {row[0]: row for row in breadth_rows}
+            if set(by_label) != set(self.BREADTH_LABELS) or len(breadth_rows) != 5:
+                raise TwseRegimeParseError("MI_INDEX: changed breadth row labels")
+            counts: dict[str, Any] = {}
+            for col, group in ((1, "whole_market"), (2, "stocks")):
+                group_counts: dict[str, int] = {}
+                for label, total_key, limit_key in (("上漲(漲停)", "advancers", "limit_up"),
+                                                    ("下跌(跌停)", "decliners", "limit_down")):
+                    match = re.fullmatch(r"([\d,]+)\(([\d,]+)\)", by_label[label][col])
+                    if not match:
+                        raise TwseRegimeParseError(f"MI_INDEX: malformed breadth count {by_label[label][col]!r}")
+                    total, limit = (self._count(v) for v in match.groups())
+                    if limit > total:
+                        raise TwseRegimeParseError("MI_INDEX: limit count exceeds total")
+                    group_counts.update({total_key: total, limit_key: limit})
+                for label, key in (("持平", "unchanged"), ("未成交", "untraded"), ("無比價", "no_comparison")):
+                    group_counts[key] = self._count(by_label[label][col])
+                counts[group] = group_counts
+            items.append(self._item(
+                record={**base, "dataset": "tw_market_breadth_daily", **counts},
+                raw={"fields": self.BREADTH_FIELDS, "data": breadth_rows, "title": breadth[0]["title"]},
+                item_id=f"twse-breadth-{trade_date}", url=url, fetched_iso=fetched_iso,
+                http_status=response.http_status,
+            ))
+        return items
+
+    @staticmethod
+    def _count(raw: str) -> int:
+        if not re.fullmatch(r"(?:\d{1,3}(?:,\d{3})+|\d+)", raw):
+            raise TwseRegimeParseError(f"MI_INDEX: invalid integer count {raw!r}")
+        return int(raw.replace(",", ""))
+
+
+class TwseTaiexHistorySpider(TwseIndexBreadthSpider):
+    """One MI_5MINS_HIST request per calendar month; never fills absent sessions."""
+
+    source_id = "collector-tw-twse-taiex-history"
+    MONTH_FIELDS = ["日期", "開盤指數", "最高指數", "最低指數", "收盤指數"]
+    URL_TEMPLATE = "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date={yyyymmdd}&response=json"
+
+    @staticmethod
+    def build_date_url(trade_date: str) -> str:
+        month = trade_date[:7]
+        datetime.strptime(month + "-01", "%Y-%m-%d")
+        return TwseTaiexHistorySpider.URL_TEMPLATE.format(yyyymmdd=month.replace("-", "") + "01")
+
+    def collect(self, *, dates: Sequence[str] | None = None,
+                fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        targets = dates if dates is not None else [latest_published_trading_date(fetched_iso)[:7]]
+        items: list[CollectedItem] = []
+        for month in dict.fromkeys(d[:7] for d in targets):
+            url = self.build_date_url(month)
+            response = self.fetcher.fetch(url)
+            payload = json.loads(response.text)
+            if not isinstance(payload, dict) or payload.get("stat") != "OK":
+                raise TwseRegimeParseError("MI_5MINS_HIST: expected stat=OK")
+            if payload.get("date") != month.replace("-", "") + "01":
+                raise TwseRegimeParseError("MI_5MINS_HIST: response month does not match request")
+            rows = _regime_rows(payload, self.MONTH_FIELDS, "MI_5MINS_HIST")
+            seen: set[str] = set()
+            for row in rows:
+                trade_date = _normalize_iso_date(row[0])
+                datetime.strptime(trade_date, "%Y-%m-%d")
+                if trade_date[:7] != month or trade_date in seen:
+                    raise TwseRegimeParseError("MI_5MINS_HIST: duplicate or out-of-month session")
+                seen.add(trade_date)
+                ohlc = dict(zip(("open", "high", "low", "close"), map(_regime_number, row[1:])))
+                if not (0 < ohlc["low"] <= min(ohlc["open"], ohlc["close"])
+                        <= max(ohlc["open"], ohlc["close"]) <= ohlc["high"]):
+                    raise TwseRegimeParseError("MI_5MINS_HIST: inconsistent OHLC")
+                items.append(self._item(
+                    record={"dataset": "tw_index_ohlc_daily", "exchange": "TWSE",
+                            "source_dataset": "MI_5MINS_HIST", "index_name": "發行量加權股價指數",
+                            "trade_date": trade_date, **ohlc},
+                    raw={"fields": self.MONTH_FIELDS, "data": [row], "title": payload.get("title")},
+                    item_id=f"twse-taiex-{trade_date}", url=url, fetched_iso=fetched_iso,
+                    http_status=response.http_status,
+                ))
         return items
 
 
@@ -1338,7 +1533,7 @@ class TpexDailyPriceHistorySpider:
                             item_id=item_id,
                             url=target_url,
                             fetched_at=fetched_iso,
-                            published_at=f"{trade_date}T06:30:00Z",
+                            published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TPEx dailyQuotes {symbol} {security_name} ({trade_date}): "
                                 f"close={close_price}, volume_shares={volume_shares}"
@@ -1365,4 +1560,268 @@ class TpexDailyPriceHistorySpider:
                         )
                     )
         self.no_data_confirmed = bool(target_urls) and empty_pages == len(target_urls) and not items
+        return items
+
+
+class TaifexVixParseError(ValueError):
+    """A TAIFEX VIX page or file changed shape; the whole run is rejected."""
+
+
+class TaifexVixSpider:
+    """TAIFEX Taiwan VIX archive: daily close files plus per-day intraday files.
+
+    Confirmed against the live site (2026-11-14), no browser needed:
+    - /cht/7/vixDaily3MNew lists ``Dailydownload/vix/log2data/YYYYMMnew.txt`` (daily, current + 3 months)
+    - /cht/7/vixMinNew lists ``getVixData?filesname=YYYYMMDD`` (intraday, current month, one file per day)
+    - /cht/7/vixMin3MNew lists ``Dailydownload/vix/logdata/YYYYMM...zip`` (intraday, prior 3 months)
+    Files are Big5 text. Everything is parsed before returning, so any change raises and emits nothing.
+    A ledger (only advanced by ``acknowledge_bundle`` after the bundle is published) skips finished files.
+    """
+
+    source_id = "collector-tw-taifex-vix"
+    PAGE_BASE = "https://www.taifex.com.tw/cht/7/"
+    DAILY_PAGE = PAGE_BASE + "vixDaily3MNew"
+    INTRADAY_PAGE = PAGE_BASE + "vixMinNew"
+    INTRADAY_3M_PAGE = PAGE_BASE + "vixMin3MNew"
+    DAY_URL = PAGE_BASE + "getVixData?filesname={yyyymmdd}"
+    FILE_BASE = "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/"
+    DAILY_URL = FILE_BASE + "log2data/{yyyymm}new.txt"
+    DAILY_HEADER = ["交易日期", "時間(時/分/秒/毫秒)", "臺指選擇權波動率指數", "收盤前1分鐘平均指數"]
+    INTRADAY_HEADER = ["交易日期", "時間(時/分/秒/毫秒)", "臺指選擇權波動率指數"]
+    LAST_AVG_LABEL = "Last 1 min AVG"
+
+    def __init__(self, policy: SourceFetchPolicy, *, transport: FetchTransport,
+                 contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
+                 sleep_fn: Callable[[float], None] | None = None,
+                 state_path: Path | str | None = None) -> None:
+        if policy.max_connections != 1 or policy.min_interval_seconds < 5.0:
+            raise CollectorConfigError(f"{policy.source_id}: requires max_connections=1 and min_interval_seconds >= 5.0")
+        self.policy = policy
+        self.fetcher = ScraplingHttpFetcher(policy, transport=transport,
+                                            contact_user_agent=contact_user_agent, sleep_fn=sleep_fn)
+        self.state_path = Path(state_path) if state_path is not None else None
+        self._pending: set[str] = set()
+        self.skipped_count = 0  # malformed items skipped; always 0 here (a bad file fails the run)
+        self.ledger_skipped = 0  # files already archived, not requested again
+
+    # -- ledger -----------------------------------------------------------------
+    def _ledger(self) -> set[str]:
+        if self.state_path is None or not self.state_path.exists():
+            return set()
+        data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        return set(data.get("done", []))
+
+    def acknowledge_bundle(self) -> None:
+        """Called only after the bundle was published; marks finished files as archived."""
+        if self.state_path is None or not self._pending:
+            return
+        done = sorted(self._ledger() | self._pending)
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"done": done}, indent=0), encoding="utf-8")
+        tmp.replace(self.state_path)
+        self._pending = set()
+
+    # -- parsing ----------------------------------------------------------------
+    @staticmethod
+    def _decode(body: bytes, label: str) -> list[str]:
+        if body.lstrip()[:1] == b"<":
+            raise TaifexVixParseError(f"{label}: got HTML instead of a data file")
+        try:
+            text = body.decode("cp950")
+        except UnicodeDecodeError as exc:
+            raise TaifexVixParseError(f"{label}: not Big5 text") from exc
+        return [line for line in text.replace("\r", "").split("\n") if line.strip()]
+
+    @staticmethod
+    def _time(raw: str, label: str) -> str:
+        """``H[H]MMSSff``: observed 7/8 digits, e.g. 9001500 = 09:00:15.00, 13450000 = 13:45:00.00."""
+        if not re.fullmatch(r"\d{7,8}", raw):
+            raise TaifexVixParseError(f"{label}: bad time {raw!r}")
+        padded = raw.rjust(8, "0")
+        hh, mm, ss, frac = int(padded[:2]), int(padded[2:4]), int(padded[4:6]), padded[6:]
+        if hh > 23 or mm > 59 or ss > 59:
+            raise TaifexVixParseError(f"{label}: bad time {raw!r}")
+        return f"{hh:02d}:{mm:02d}:{ss:02d}.{frac}"
+
+    @staticmethod
+    def _value(raw: str, label: str) -> float:
+        if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
+            raise TaifexVixParseError(f"{label}: bad VIX value {raw!r}")
+        value = float(raw)
+        if not 0 < value < 500:
+            raise TaifexVixParseError(f"{label}: implausible VIX value {raw!r}")
+        return value
+
+    @staticmethod
+    def _date(raw: str, label: str) -> str:
+        try:
+            return datetime.strptime(raw, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError as exc:
+            raise TaifexVixParseError(f"{label}: bad date {raw!r}") from exc
+
+    def _table(self, lines: list[str], header: list[str], label: str) -> list[list[str]]:
+        if len(lines) < 3 or [p.strip() for p in lines[0].split("\t") if p.strip()] != header:
+            raise TaifexVixParseError(f"{label}: changed header")
+        if not re.fullmatch(r"[-\t ]+", lines[1]):
+            raise TaifexVixParseError(f"{label}: missing header rule")
+        return [[p.strip() for p in line.split("\t") if p.strip()] for line in lines[2:]]
+
+    def parse_daily(self, body: bytes, month: str) -> list[dict[str, Any]]:
+        label = f"daily {month}"
+        rows, seen = [], set()
+        for parts in self._table(self._decode(body, label), self.DAILY_HEADER, label):
+            if len(parts) != 4:
+                raise TaifexVixParseError(f"{label}: malformed row {parts!r}")
+            trade_date = self._date(parts[0], label)
+            if trade_date[:7].replace("-", "") != month or trade_date in seen:
+                raise TaifexVixParseError(f"{label}: out-of-month or duplicate session {parts[0]}")
+            seen.add(trade_date)
+            rows.append({"trade_date": trade_date, "time": self._time(parts[1], label), "time_raw": parts[1],
+                         "close": self._value(parts[2], label),
+                         "last_1min_avg": self._value(parts[3], label)})
+        if not rows or [r["trade_date"] for r in rows] != sorted(seen):
+            raise TaifexVixParseError(f"{label}: no rows or unordered sessions")
+        return rows
+
+    def parse_intraday(self, body: bytes, yyyymmdd: str) -> dict[str, Any]:
+        label = f"intraday {yyyymmdd}"
+        trade_date = self._date(yyyymmdd, label)
+        rows: list[dict[str, Any]] = []
+        last_avg: float | None = None
+        for parts in self._table(self._decode(body, label), self.INTRADAY_HEADER, label):
+            if len(parts) != 3 or parts[0] != yyyymmdd or last_avg is not None:
+                raise TaifexVixParseError(f"{label}: malformed row {parts!r}")
+            if parts[1] == self.LAST_AVG_LABEL:
+                last_avg = self._value(parts[2], label)
+                continue
+            clock = self._time(parts[1], label)
+            if rows and clock <= rows[-1]["time"]:
+                raise TaifexVixParseError(f"{label}: times not increasing at {clock}")
+            rows.append({"trade_date": trade_date, "time": clock, "time_raw": parts[1], "value": self._value(parts[2], label)})
+        if not rows:
+            raise TaifexVixParseError(f"{label}: no rows")
+        return {"trade_date": trade_date, "rows": rows, "last_1min_avg": last_avg,
+                "complete": last_avg is not None}
+
+    # -- items ------------------------------------------------------------------
+    @staticmethod
+    def _sha(body: bytes) -> str:
+        import hashlib
+        return hashlib.sha256(body).hexdigest()
+
+    def _item(self, *, item_id: str, url: str, fetched_iso: str, published: str, text: str,
+              body: bytes, ext: str, record: dict[str, Any], status: int) -> CollectedItem:
+        return CollectedItem(
+            item_id=item_id, url=url, fetched_at=fetched_iso, published_at=f"{published}T06:30:00Z",
+            text=text, lang="zh-TW", hashed_author=None, raw_bytes=body, raw_extension=ext,
+            http_status=status,
+            extra_fields={"exchange": "TAIFEX", "raw_sha256": self._sha(body), **record},
+        )
+
+    def _intraday_item(self, parsed: dict[str, Any], body: bytes, url: str, fetched_iso: str,
+                       status: int, via: str) -> CollectedItem:
+        day = parsed["trade_date"]
+        return self._item(
+            item_id=f"taifex-vix-intraday-{day}-{self._sha(body)[:12]}", url=url, fetched_iso=fetched_iso,
+            published=day, text=f"TAIFEX Taiwan VIX intraday {day}", body=body, ext="txt", status=status,
+            record={"dataset": "tw_vix_intraday", "trade_date": day, "delivery": via,
+                    "row_count": len(parsed["rows"]), "complete_session": parsed["complete"],
+                    "last_1min_avg": parsed["last_1min_avg"], "rows": parsed["rows"]},
+        )
+
+    def _links(self, html_text: str, pattern: str, page: str) -> list[str]:
+        found = list(dict.fromkeys(re.findall(pattern, html_text)))
+        if not found:
+            raise TaifexVixParseError(f"{page}: no download links found (page changed?)")
+        return found
+
+    def collect(self, *, fetched_at: datetime | str | None = None) -> list[CollectedItem]:
+        import io
+        import zipfile
+        fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        taipei = datetime.fromisoformat(fetched_iso.replace("Z", "+00:00")) + timedelta(hours=8)
+        current_month = taipei.strftime("%Y%m")
+        done = self._ledger()
+        pending: set[str] = set()
+        items: list[CollectedItem] = []
+        seen_days: set[str] = set()
+        self.ledger_skipped = 0
+
+        page = self.fetcher.fetch(self.DAILY_PAGE)
+        for month in self._links(page.text, r"log2data/(\d{6})new\.txt", "vixDaily3MNew"):
+            key = f"daily:{month}"
+            if key in done:
+                self.ledger_skipped += 1
+                continue
+            url = self.DAILY_URL.format(yyyymm=month)
+            response = self.fetcher.fetch(url)
+            rows = self.parse_daily(response.body, month)
+            items.append(self._item(
+                item_id=f"taifex-vix-daily-{month}-{self._sha(response.body)[:12]}", url=url,
+                fetched_iso=fetched_iso, published=rows[-1]["trade_date"], body=response.body, ext="txt",
+                text=f"TAIFEX Taiwan VIX daily close {month}", status=response.http_status,
+                record={"dataset": "tw_vix_daily", "month": month, "row_count": len(rows),
+                        "first_date": rows[0]["trade_date"], "last_date": rows[-1]["trade_date"],
+                        "rows": rows}))
+            if month < current_month:
+                pending.add(key)
+
+        page = self.fetcher.fetch(self.INTRADAY_PAGE)
+        for day in self._links(page.text, r"getVixData\?filesname=(\d{8})", "vixMinNew"):
+            seen_days.add(day)
+            key = f"intraday:{day}"
+            if key in done:
+                self.ledger_skipped += 1
+                continue
+            url = self.DAY_URL.format(yyyymmdd=day)
+            response = self.fetcher.fetch(url)
+            parsed = self.parse_intraday(response.body, day)
+            items.append(self._intraday_item(parsed, response.body, url, fetched_iso,
+                                             response.http_status, "daily_file"))
+            if parsed["complete"]:
+                pending.add(key)
+
+        page = self.fetcher.fetch(self.INTRADAY_3M_PAGE)
+        zips = self._links(page.text, r"logdata/(\d{6}[^'\"/]*\.zip)", "vixMin3MNew")
+        for name in zips:
+            month = name[:6]
+            key = f"zip:{month}"
+            if key in done:
+                self.ledger_skipped += 1
+                continue
+            url = self.FILE_BASE + "logdata/" + quote(name)
+            response = self.fetcher.fetch(url)
+            try:
+                archive = zipfile.ZipFile(io.BytesIO(response.body))
+                members = [(i.filename, archive.read(i)) for i in archive.infolist() if not i.is_dir()]
+            except zipfile.BadZipFile as exc:
+                raise TaifexVixParseError(f"zip {month}: not a zip archive") from exc
+            if not members:
+                raise TaifexVixParseError(f"zip {month}: empty archive")
+            day_items, member_days = [], []
+            for member, body in members:
+                match = re.fullmatch(r"tvix_(\d{8})", member)
+                if not match or not match.group(1).startswith(month):
+                    raise TaifexVixParseError(f"zip {month}: unexpected member {member!r}")
+                day = match.group(1)
+                if day in member_days:
+                    raise TaifexVixParseError(f"zip {month}: duplicate member {member!r}")
+                member_days.append(day)
+                parsed = self.parse_intraday(body, day)
+                if not parsed["complete"]:
+                    raise TaifexVixParseError(f"zip {month}: incomplete session {day}")
+                if day not in seen_days and f"intraday:{day}" not in done:
+                    day_items.append(self._intraday_item(parsed, body, url + "#" + member, fetched_iso,
+                                                         response.http_status, "monthly_zip"))
+                pending.add(f"intraday:{day}")
+            items.append(self._item(
+                item_id=f"taifex-vix-intraday-zip-{month}-{self._sha(response.body)[:12]}", url=url,
+                fetched_iso=fetched_iso, published=f"{month[:4]}-{month[4:]}-01", body=response.body,
+                ext="zip", text=f"TAIFEX Taiwan VIX intraday monthly archive {month}",
+                status=response.http_status,
+                record={"dataset": "tw_vix_intraday_archive", "month": month, "member_days": sorted(member_days)}))
+            items.extend(day_items)
+            pending.add(key)
+        self._pending = pending
         return items

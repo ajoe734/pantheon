@@ -1,0 +1,62 @@
+{
+  "task_id": "TRADE-LESSON-LOOP-CALLERS-20261115",
+  "base_head": "a68d30e49",
+  "paper_only": true,
+  "reproduction_before_change": {
+    "memory_routes_have_no_production_caller": "services/memory/main.py:1052 (risk-review), :1072 (paper-endorse), :1090 (merge) are defined; `git grep` at base finds no non-test Python caller of any of the three, so a paper lesson never reached persona memory",
+    "lesson_rule_proposals_route_has_no_caller": "services/persona/lesson_rule_proposals.py:356 (POST) and :365 (GET) are the only references outside tests",
+    "memory_candidates_never_consumed": "integrations/openclaw/persona_ooda_runtime.py:43 declares the field; services/persona/persona_cycle_controller.py:311 only writes a telemetry ref string; integrations/openclaw/persona_memory_bridge.py:316 stage_openclaw_memory_writeback_candidate has no caller",
+    "further_breaks_found_while_wiring": [
+      "paper-endorse took `episodes` from the HTTP caller (services/memory/main.py PaperEndorsePayload) - the gates could be satisfied by caller-supplied regimes",
+      "paper-endorse and the list route required operator governance roles, so the persona service principal could not call them",
+      "MemoryLessonReader forwarded the persona service's opaque credential to Memory, which verifies only JWTs, so every lesson-rule conversion by the service credential was lesson_source_unavailable",
+      "merged lesson memory was tagged only strategy_lesson/scope/persona, so the cycle case-file query (family:/underlying: tags and terms) could not retrieve it"
+    ]
+  },
+  "changes": {
+    "services/persona/lesson_cycle.py": "new: LessonCycle.govern (risk persona turn -> Memory risk-review -> paper-endorse), .stage (memory_candidates -> registrar as proposed paper candidates), .convert (cited lessons -> POST lesson-rule-proposals with the persona service credential), lesson_summary",
+    "services/persona/persona_cycle_controller.py": "consume_run calls stage + convert after the decisions and govern for ok runs of trading personas; lazily builds LessonCycle on the cycle's turn runner; cycle_health reports lessons; prompt states the memory_candidates / lesson_rule shape",
+    "services/memory/main.py": "paper-endorse reads supporting episodes from the trade journal owner (telemetry) and rejects an `episodes` field; persona-svc role may list/read candidates and paper-endorse; a risk persona `reject` review is the terminal paper decision; merged lesson carries family:/underlying: tags from the journal episodes",
+    "services/persona/lesson_governance.py": "mint_memory_service_authorization (tenant-bound 120s JWT), supporting_episode_minimum, episode_context_tags, merge_to_memory(context_tags)",
+    "services/persona/lesson_rule_proposals.py": "MemoryLessonReader mints a tenant-bound persona-svc read identity for an opaque service credential"
+  },
+  "fail_closed": [
+    "memory owner unconfigured/unreachable -> cycle record lesson_governance.status=unavailable with reason; nothing changes",
+    "trade journal unconfigured/unreachable -> paper-endorse 503 supporting_episodes_unavailable; candidate stays proposed",
+    "journal has no such episode or it belongs to another persona/tenant -> 422; never counted",
+    "risk persona turn failed or answered outside {approve,reject} -> risk_review_unavailable, no record, no state change",
+    "sensitive scope/wording, non-paper target, expired, foreign or under-supported candidates -> skipped without a risk turn; human endorsement path unchanged",
+    "lesson rule request without a spec, without a cited lesson, unendorsed lesson, or no persona service credential -> not_converted with the reason",
+    "memory_candidates without scope/proposed_change/confidence -> not_staged; staged ones are proposed paper candidates, never canonical memory"
+  ],
+  "bounds": {
+    "risk_reviews_per_cycle": 5,
+    "candidate_ttl_days": "PERSONA_LESSON_CANDIDATE_TTL_DAYS default 90 (coordinator starting value)"
+  },
+  "integration_test": {
+    "file": "services/persona/tests/test_trade_lesson_loop_integration.py",
+    "real": "persona owner app (pattern-review route, reflection pipeline, registrar, lesson-rule route, harness owner and converter), Memory app (candidate store, risk review, paper endorse, persona memory, retrieve), case-file composer, LessonCycle; all over real HTTP",
+    "scripted": "reflection provider and risk persona answer (the models); trade journal owner as a telemetry-shaped HTTP fixture",
+    "path": "two closed episodes -> pattern review -> registered candidate -> risk review -> merge -> case-file lessons group cites pmem-lesson-<id> -> harness_patch lesson rule recorded via the owner route"
+  },
+  "validation": [
+    {
+      "command": "pytest -q -W ignore services/memory/test_lesson_governance_api.py services/persona/test_lesson_governance.py services/persona/test_lesson_rule_proposals.py services/persona/test_lesson_cycle.py services/persona/tests services/persona/test_persona_cycle_controller.py",
+      "result": "125 passed"
+    },
+    {
+      "command": "pytest -q -W ignore services/persona services/control-plane/persona",
+      "result": "609 passed, 1 skipped"
+    },
+    {
+      "command": "pytest -q services/memory services/knowledge",
+      "result": "178 passed, 9 skipped"
+    }
+  ],
+  "open_dependencies": [
+    "Memory service needs PANTHEON_TELEMETRY_API_URL and PANTHEON_TELEMETRY_SERVICE_TOKEN in docker-compose.yml (memory block has neither) - outside this task's artifact list; without them paper-endorse fails closed with supporting_episodes_unavailable",
+    "Memory strict-mode role map must admit the case-file retrieve identity (PERSONA_MEMORY_SERVICE_TOKEN is issued with role persona_session only, which is not in memory _MEMORY_READ_ROLES) - not verified on hosted; belongs to the owner-ports wiring task",
+    "The persona process needs PERSONA_JWT_SECRET equal to the Memory JWT secret to mint the service identities (already required by the lesson registrar)",
+    "Hosted acceptance is a separate step; this is local evidence, not hosted-performance evidence"
+  ]
+}

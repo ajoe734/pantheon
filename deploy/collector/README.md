@@ -150,6 +150,9 @@ for src in \
   collector-tw-macro-ndc \
   collector-tw-twse-t86 \
   collector-tw-twse-price-history \
+  collector-tw-twse-index-breadth \
+  collector-tw-twse-taiex-history \
+  collector-tw-taifex-vix \
   collector-tw-tpex-price-history \
   collector-macro-dbnomics \
   collector-papers \
@@ -280,3 +283,95 @@ and the producing ingest receipt completed. New and changed rows still use the
 normal writer. Receipt storage summaries add `new_normalized_row_count` and
 `reused_record_count`; the existing reference counts describe all referenced
 objects, including reused objects. A raw cache or cursor alone cannot suppress a write.
+
+## Regime inputs: TWSE price indices, breadth and TAIEX history
+
+Two independent sources use the six-hour timer template listed in Step 2.5.
+Each timer run makes one request, with one connection and a minimum five-second
+request interval. They do not change `collector-tw-twse-price-history`, its
+`tw_price_daily` rows, or the latest stock-close projection.
+
+- `collector-tw-twse-index-breadth` requests the latest published session's
+  MI_INDEX `type=ALLBUT0999` page. It emits `tw_index_daily` for **all rows in
+  價格指數(臺灣證券交易所)**, including 發行量加權股價指數 and every 類指數,
+  with `index_name`, `close`, signed `change_points` and `change_percent`.
+  Cross-market, Taiwan Index Company and total-return tables are separate
+  upstream tables and are outside this source's output. It also emits one
+  `tw_market_breadth_daily` row with `whole_market` and `stocks`, each containing
+  `advancers`, `limit_up`, `decliners`, `limit_down`, `unchanged`, `untraded`,
+  and `no_comparison`. Limit counts are included in their advancing/declining
+  totals, not additional securities.
+- `collector-tw-twse-taiex-history` requests one MI_5MINS_HIST calendar-month
+  page per run and emits `tw_index_ohlc_daily`: `index_name`, `trade_date`,
+  `open`, `high`, `low`, `close`. The default month is that of the latest
+  published session. ROC dates are converted to Gregorian dates; only dates
+  returned by TWSE are emitted. There is no holiday synthesis or price filling.
+
+All rows include `exchange=TWSE`, `source_dataset`, `trade_date`, request `url`
+and `fetched_at`. `published_at` uses the existing collector session-close
+convention (06:30 UTC), not a claim about the upstream publication timestamp.
+Original field names, row strings (including commas and HTML change signs),
+and table title are retained both in `raw_values` and the raw JSON file.
+Signed change points apply TWSE's explicit +/- sign; percent keeps its source
+sign. A missing table, changed fields, malformed value, mismatched date or
+inconsistent row invalidates the **entire run**: the bundle is partial, contains
+zero rows, and records `parse_failed: <specific reason>`. No failed month is
+marked completed.
+
+For the initial 2012-01 to present TAIEX backfill, run from the collector install
+with the existing compose configuration (see the price-history section above):
+
+```bash
+docker compose run --rm collector-worker \
+  --root-dir /data backfill --source collector-tw-twse-taiex-history \
+  --start-month 2012-01 --dry-run
+docker compose run --rm collector-worker \
+  --root-dir /data backfill --source collector-tw-twse-taiex-history \
+  --start-month 2012-01
+# Pin an inclusive end month for a bounded batch:
+docker compose run --rm collector-worker \
+  --root-dir /data backfill --source collector-tw-twse-taiex-history \
+  --start-month 2012-01 --end-month 2012-03
+```
+
+`--end-month` defaults to the current UTC month. At 2026-11 this range is 179
+requests, one per month, sequentially at least five seconds apart. There is one
+bundle per month (`backfill-YYYY-MM`), while every row retains its own session
+date. The existing `/data/state/backfill/<source>.json` ledger skips completed
+months on rerun. The current month stays refreshable until a later invocation
+fetches it after month-end. Month options cannot be combined with daily range,
+trading-day-count or `--two-years` options. MI_INDEX index/breadth backfills use
+the existing daily `--start-date` / `--end-date` options and a separate ledger.
+
+Recorded development-host endpoint checks, fixture hashes and row counts are in
+`docs/deployment/evidence/REGIME-DATA-COLLECTOR-INDEX-BREADTH-20261114/evidence.json`.
+These checks do not claim collector-host deployment or Pantheon intake behavior;
+those are owned by the separate deployment and intake tasks.
+
+## Taiwan VIX (TAIFEX)
+
+`collector-tw-taifex-vix` archives the 臺指選擇權波動率指數 from the official
+TAIFEX pages (no browser needed; confirmed live 2026-11-14). TAIFEX only serves the
+current month plus the prior three, so the first run takes all of it and later
+runs are incremental:
+
+| series | listing page | file |
+| --- | --- | --- |
+| daily close (+ 收盤前1分鐘平均) | `/cht/7/vixDaily3MNew` | `/file/taifex/Dailydownload/vix/log2data/YYYYMMnew.txt` |
+| intraday, current month | `/cht/7/vixMinNew` | `/cht/7/getVixData?filesname=YYYYMMDD` (one file per day) |
+| intraday, prior 3 months | `/cht/7/vixMin3MNew` | `/file/taifex/Dailydownload/vix/logdata/YYYYMM歷史紀錄波動率指數_新VIX.zip` (members `tvix_YYYYMMDD`) |
+
+Files are Big5 tab-separated text; the raw file (or zip) is archived byte-for-byte
+and the items carry parsed `rows` (`trade_date`, `time` HH:MM:SS.ff plus `time_raw`, value).
+Datasets: `tw_vix_daily` (one item per month file), `tw_vix_intraday` (one per
+session day) and `tw_vix_intraday_archive` (the monthly zip). Intraday sessions
+end with a `Last 1 min AVG` line, kept as `last_1min_avg`, not as a time row.
+`getVixData` answers 200 with an HTML page for an unknown date, so only dates listed
+on the pages are requested and HTML is treated as a format change. A changed header,
+bad row, missing link, bad zip or unexpected member invalidates the **whole run**
+(partial bundle, zero rows, `parse_failed: <reason>`). Finished files (past-month
+daily files, complete sessions, zips) are recorded in
+`/data/state/taifex-vix/ledger.json` only after the bundle is published, so reruns
+are idempotent and request just the new/changing files. A first run is about 30
+requests at least five seconds apart. Run once with
+`python -m collector_stack.cli --root-dir /data run --source collector-tw-taifex-vix`.

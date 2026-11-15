@@ -9,8 +9,8 @@
 set -euo pipefail
 umask 077
 
-PINNED_LEASE_CONTROLLER_SHA="3fd9536ca9f5e0cfb275429a05fefa36bc7ec870"
-LEASE_CLI_SHA256="89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4"
+PINNED_LEASE_CONTROLLER_SHA="081075781d28a6563c731909667b98b7b5c153f9"
+LEASE_CLI_SHA256="c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa"
 LEASE_WRAPPER_SHA256="6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"
 
 die() {
@@ -80,6 +80,37 @@ printf '%s  %s\n' \
   "${LEASE_CLI_SHA256}" "${lease_cli}" \
   "${LEASE_WRAPPER_SHA256}" "${lease_wrapper}" \
   | sha256sum --check --strict
+
+# Bounded GitHub rate-limit wait shared by the FE run lookup and the cleanup
+# lease verify/release. Hard ceiling 65 minutes; same semantics as the lease
+# CLI's --rate-limit-wait-seconds and the release controller.
+rate_limit_wait_max="${PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS:-3900}"
+[[ "${rate_limit_wait_max}" =~ ^[0-9]+$ ]] && (( rate_limit_wait_max <= 3900 )) \
+  || die "PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS must be an integer within 0..3900"
+export PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS="${rate_limit_wait_max}"
+
+# Run a lease CLI command, retrying only while its stderr reports a GitHub
+# rate limit, within the bounded wait. Any other failure returns immediately.
+lease_cmd_with_rate_limit_wait() {
+  local budget="${rate_limit_wait_max}" waited=0 step err rc
+  err="$(mktemp "${RUNNER_TEMP%/}/lease-cmd-err-XXXXXX")"
+  while true; do
+    rc=0
+    "$@" 2>"${err}" || rc=$?
+    cat "${err}" >&2
+    if (( rc == 0 )); then rm -f "${err}"; return 0; fi
+    if grep -qi 'rate[ _-]limit' "${err}" && (( waited < budget )); then
+      step="${PANTHEON_RELEASE_RATE_LIMIT_POLL_SECONDS:-30}"
+      (( waited + step > budget )) && step=$((budget - waited))
+      (( step > 0 )) || { rm -f "${err}"; return "${rc}"; }
+      sleep "${step}"
+      waited=$((waited + step))
+      continue
+    fi
+    rm -f "${err}"
+    return "${rc}"
+  done
+}
 
 lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
 unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
@@ -158,17 +189,20 @@ cleanup() {
           --path .pantheon/environment-leases/pantheon-dev-environment.json \
           --resource pantheon-dev-environment \
           --state-file "${state_file}" \
-          --max-heartbeat-age-seconds 120 >/dev/null || status=75
+          --max-heartbeat-age-seconds 120 \
+          --rate-limit-wait-seconds "${rate_limit_wait_max}" >/dev/null || status=75
     fi
     if [[ "${status}" -eq 0 ]]; then
       PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-        python3 "${lease_cli}" release \
+        lease_cmd_with_rate_limit_wait python3 "${lease_cli}" release \
           --repository ajoe734/execute-plans \
           --branch environment-coordination \
           --path .pantheon/environment-leases/pantheon-dev-environment.json \
           --resource pantheon-dev-environment \
           --state-file "${state_file}" >/dev/null || status=75
     fi
+  elif [[ "${status}" -eq 79 ]]; then
+    echo "[cross-repo-release-compensation] rate_limited_rollback_pending; no restore authorized" >&2
   else
     echo "[cross-repo-release-compensation] rollback incomplete; lease remains quarantined until TTL" >&2
   fi
@@ -177,6 +211,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+rollback_lease_deadline=$((SECONDS + 3900))
 PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
   python3 "${lease_cli}" acquire \
     --repository ajoe734/execute-plans \
@@ -186,12 +221,26 @@ PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
     --mode deployment \
     --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${PANTHEON_DEV_ARTIFACT_OPERATION:-rollback}" \
     --ttl-seconds 300 \
-    --wait-seconds 7200 \
+    --wait-seconds 3900 \
     --poll-seconds 5 \
     --state-file "${state_file}" \
     --expected-backend-sha "${target_backend_sha}" \
     --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
     --json-out "${acquisition_file}"
+
+rollback_rate_wait=$((rollback_lease_deadline - SECONDS))
+if (( rollback_rate_wait <= 0 )); then
+  echo "rate_limited_rollback_pending: rollback lease budget exhausted before verification" >&2
+  exit 79
+fi
+PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+  python3 "${lease_cli}" verify \
+    --repository ajoe734/execute-plans --branch environment-coordination \
+    --path .pantheon/environment-leases/pantheon-dev-environment.json \
+    --resource pantheon-dev-environment --state-file "${state_file}" \
+    --max-heartbeat-age-seconds 120 --initial-visibility-wait-seconds 15 \
+    --initial-visibility-poll-seconds 1 \
+    --rate-limit-wait-seconds "${rollback_rate_wait}" >/dev/null
 
 exec {token_fd}<<<"${lease_token}"
 env -i \
@@ -223,13 +272,7 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 [[ -s "${identity_file}" ]] || die "lease heartbeat identity was not recorded"
-PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-  python3 "${lease_cli}" verify \
-    --repository ajoe734/execute-plans --branch environment-coordination \
-    --path .pantheon/environment-leases/pantheon-dev-environment.json \
-    --resource pantheon-dev-environment --state-file "${state_file}" \
-    --max-heartbeat-age-seconds 120 --initial-visibility-wait-seconds 15 \
-    --initial-visibility-poll-seconds 1 >/dev/null
+
 
 export TARGET_ENV=dev
 export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${state_file}"
@@ -265,6 +308,9 @@ try:
         api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
         token=os.environ["CROSS_REPO_RELEASE_TOKEN"],
         repository=controller.FRONTEND_REPOSITORY,
+        max_rate_limit_wait_seconds=float(
+            os.environ.get("PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS", "3900")
+        ),
     )
     run = client.get_run(run_id)
     path = str(run.get("path") or "").split("@", 1)[0]
