@@ -1,0 +1,12 @@
+{
+  "task_id": "SOURCE-RECEIPT-TIE-ORDER-20261115",
+  "change": "services/source_ingestion/scheduler.py: list_receipts/read_freshness_snapshot tie-break equal timestamps by durable run insertion order (then receipt insertion order for run-less receipts, then ingest_run_id); list_runs_page orders equal started_at newest-inserted first. Journal format, IngestReceipt/IngestRun, callers untouched.",
+  "new_tests": "services/source_ingestion/tests/test_receipt_tie_order.py (8 tests, all pass): same-second opposite-sorting ids (ffff00000001/256 then 000000000002/60), with/without connector_id, run-less fallback, runs page, reopen, incremental reload after a separate-process append, different-timestamp order unchanged, journal format + replay of dev-written journal.",
+  "existing_tests_changed": "none; none weakened or deleted",
+  "smoke_acceptance": {
+    "command": "SOURCE_INGEST_DATA_DIR=$(mktemp -d) .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py",
+    "result": "All 96 test files pass (including test_receipt_tie_order.py 8 passed, test_finmind_broker_backfill.py 17 passed with pyarrow>=15,<30 installed in .venv-pantheon, and test_latest_market_snapshot_compaction.py 9 passed, 1 skipped in 15.41s after merging origin/dev c714497da PR #7425 SOURCE-SNAPSHOT-COMPACTION-REPRO-BENCHMARK-OPT-IN-20261115, which makes the ~10-minute test_repro_unbounded_growth_and_append_latency benchmark opt-in so CI Smoke acceptance 'Run source ingestion tests' stays under its 15-minute step timeout).",
+    "environment": "python 3.12 (.venv-pantheon provisioned via scripts/dev/provision_python_distribution.py + pyarrow>=15,<30)"
+  },
+  "hosted_verification": "not performed (operator acceptance task)"
+}
