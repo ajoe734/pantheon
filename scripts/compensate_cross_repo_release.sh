@@ -81,6 +81,37 @@ printf '%s  %s\n' \
   "${LEASE_WRAPPER_SHA256}" "${lease_wrapper}" \
   | sha256sum --check --strict
 
+# Bounded GitHub rate-limit wait shared by the FE run lookup and the cleanup
+# lease verify/release. Hard ceiling 65 minutes; same semantics as the lease
+# CLI's --rate-limit-wait-seconds and the release controller.
+rate_limit_wait_max="${PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS:-3900}"
+[[ "${rate_limit_wait_max}" =~ ^[0-9]+$ ]] && (( rate_limit_wait_max <= 3900 )) \
+  || die "PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS must be an integer within 0..3900"
+export PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS="${rate_limit_wait_max}"
+
+# Run a lease CLI command, retrying only while its stderr reports a GitHub
+# rate limit, within the bounded wait. Any other failure returns immediately.
+lease_cmd_with_rate_limit_wait() {
+  local budget="${rate_limit_wait_max}" waited=0 step err rc
+  err="$(mktemp "${RUNNER_TEMP%/}/lease-cmd-err-XXXXXX")"
+  while true; do
+    rc=0
+    "$@" 2>"${err}" || rc=$?
+    cat "${err}" >&2
+    if (( rc == 0 )); then rm -f "${err}"; return 0; fi
+    if grep -qi 'rate[ _-]limit' "${err}" && (( waited < budget )); then
+      step="${PANTHEON_RELEASE_RATE_LIMIT_POLL_SECONDS:-30}"
+      (( waited + step > budget )) && step=$((budget - waited))
+      (( step > 0 )) || { rm -f "${err}"; return "${rc}"; }
+      sleep "${step}"
+      waited=$((waited + step))
+      continue
+    fi
+    rm -f "${err}"
+    return "${rc}"
+  done
+}
+
 lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
 unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
 export -n lease_token 2>/dev/null || true
@@ -158,11 +189,12 @@ cleanup() {
           --path .pantheon/environment-leases/pantheon-dev-environment.json \
           --resource pantheon-dev-environment \
           --state-file "${state_file}" \
-          --max-heartbeat-age-seconds 120 >/dev/null || status=75
+          --max-heartbeat-age-seconds 120 \
+          --rate-limit-wait-seconds "${rate_limit_wait_max}" >/dev/null || status=75
     fi
     if [[ "${status}" -eq 0 ]]; then
       PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-        python3 "${lease_cli}" release \
+        lease_cmd_with_rate_limit_wait python3 "${lease_cli}" release \
           --repository ajoe734/execute-plans \
           --branch environment-coordination \
           --path .pantheon/environment-leases/pantheon-dev-environment.json \
@@ -276,6 +308,9 @@ try:
         api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
         token=os.environ["CROSS_REPO_RELEASE_TOKEN"],
         repository=controller.FRONTEND_REPOSITORY,
+        max_rate_limit_wait_seconds=float(
+            os.environ.get("PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS", "3900")
+        ),
     )
     run = client.get_run(run_id)
     path = str(run.get("path") or "").split("@", 1)[0]

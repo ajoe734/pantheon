@@ -1,0 +1,14 @@
+{
+  "task": "DEV-RELEASE-CONTROLLER-RATE-LIMIT-AND-FETCH-RETRY-20261115",
+  "tests": {
+    "scripts/test_cross_repo_release_controller.py + scripts/test_compensate_cross_repo_release_rate_limit.py": "106 passed",
+    "lease contract tests (test_dev_environment_lease*.py)": "47 failures identical before and after this change (pre-existing, same FAILED set); dev_environment_lease.py untouched"
+  },
+  "behavior": {
+    "rate_limit": "403/429 with x-ratelimit-remaining 0, retry-after, or rate-limit message waits until reset (+1s), bounded by max_rate_limit_wait_seconds (<=3900, env PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS / --max-rate-limit-wait-seconds); exhaustion raises RateLimitError reason=rate_limit",
+    "plain_403_404": "fail immediately",
+    "fetch_url_json": "3 attempts, 1s/2s backoff on timeout/connection/5xx; exhaustion raises TransientFetchError reason=transient_fetch; 404 and mismatches fail at once",
+    "failure_evidence": "<evidence-out>.failure.json written with reason for rate_limit/transient_fetch",
+    "compensation_script": "FE run lookup uses bounded GitHubClient wait; cleanup verify uses --rate-limit-wait-seconds; cleanup release retried via bounded lease_cmd_with_rate_limit_wait"
+  }
+}
