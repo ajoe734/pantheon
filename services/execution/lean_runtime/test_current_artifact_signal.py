@@ -424,6 +424,17 @@ class CurrentArtifactSignalTest(unittest.TestCase):
                 runtime_manager_client=_RuntimeManager(runtime_binding),
                 telemetry_emitter=telemetry,
                 poll_interval_seconds=3600,
+                capital_pool_reader=lambda pool_id: {
+                    "pool_id": pool_id,
+                    "budget": 100_000.0,
+                    "risk_policy": {
+                        "risk_policy_id": "rp-test",
+                        "status": "active",
+                        "gross_limit": 10.0,
+                        "net_limit": 10.0,
+                        "max_leverage": 10.0,
+                    },
+                },
             )
             # A decision run_id uses the canonical three-bar rebalance buffer.
             # Drain through that boundary before asserting execution evidence.
@@ -533,6 +544,17 @@ class CurrentArtifactSignalTest(unittest.TestCase):
                 runtime_manager_client=_RuntimeManager(runtime_binding),
                 telemetry_emitter=telemetry,
                 poll_interval_seconds=3600,
+                capital_pool_reader=lambda pool_id: {
+                    "pool_id": pool_id,
+                    "budget": 100_000.0,
+                    "risk_policy": {
+                        "risk_policy_id": "rp-test",
+                        "status": "active",
+                        "gross_limit": 10.0,
+                        "net_limit": 10.0,
+                        "max_leverage": 10.0,
+                    },
+                },
             )
             for _ in range(3):
                 snapshot = service.drain_once()

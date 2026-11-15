@@ -1,0 +1,15 @@
+{
+  "task_id": "SD-PERSONA-MEETINGS-20261115",
+  "artifact": "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md",
+  "base": "137ebeb20",
+  "coordinator_draft": "d668c636a",
+  "hosted_behavior_claimed": false,
+  "design_only": true,
+  "verification": {
+    "operator_quote": "line 9354 uuid ebb575da-43ce-483e-9c1f-f1fcf6ae684e 2026-11-15T11:20:10.508Z verified; line 9543 is a tool_result and was removed",
+    "earlier_operator_rules": "lines 2535 and 2662 of cb4f6795 transcript verified by uuid",
+    "code_citations": "re-resolved on base; corrected in place (consult_triggers, workflow_executor, memory, lesson_rule_proposals, governance, evolution_controller)",
+    "unverified": ["section 4 licences and activity (GitHub API not queried)", "SD-05 request-type list and :294-319", "reconnect design :251-260"]
+  },
+  "open_operator_decisions": "section 9 items 1-4 left undecided"
+}

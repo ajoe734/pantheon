@@ -1948,3 +1948,29 @@ def test_real_gate_records_mechanism_status_on_the_run(tmp_path) -> None:
     assert run.metadata["mechanism_status"] == "mechanism_untested"
     assert run.metadata["mechanism_support"] is None
     assert run.metadata["replication_gate"]["metadata"]["mechanism"]["prediction_count"] == 0
+
+
+# --- HYPOTHESIS-CARD-GATE-CANDIDATE-20261115 ---------------------------------
+
+
+def test_card_inputs_in_spec_metadata_are_lifted_and_dataset_reference_fails_closed(tmp_path) -> None:
+    meta = {"strategy_artifact": {"strategy_id": "s"}, "backtest_dataset": {"dataset_id": "dataset:x"},
+            "hypothesis_predictions": [{"statement": "p"}], "card_wiring": {"status": "gate_ready"}}
+    spec = {**_strategy_spec(), "metadata": meta}
+    _, worker = _worker(tmp_path, FakeAuthority())
+    lifted = worker._lift_card_inputs(spec)
+    assert lifted["strategy_artifact"] == {"strategy_id": "s"}
+    assert lifted["hypothesis_predictions"] == [{"statement": "p"}]
+    assert "backtest_dataset" not in lifted  # no resolver: reference is never replaced by invented data
+
+    ok = {"dataset_id": "dataset:x", "records": [{"instrument": "2330.TW"}]}
+    worker._dataset_resolver = lambda binding: ok
+    assert worker._lift_card_inputs(spec)["backtest_dataset"] == ok
+    worker._dataset_resolver = lambda binding: {**ok, "dataset_id": "dataset:other"}
+    assert "backtest_dataset" not in worker._lift_card_inputs(spec)
+
+    def boom(binding):
+        raise RuntimeError("governed data unavailable")
+
+    worker._dataset_resolver = boom
+    assert "backtest_dataset" not in worker._lift_card_inputs(spec)
