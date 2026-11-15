@@ -7,6 +7,13 @@ import json
 
 import pytest
 
+# The fitted-model stack (numpy/pandas/statsmodels) is a registry-image dependency, not part of
+# every CI job's install set; skip rather than fail collection where it is absent.
+pytest.importorskip("numpy")
+pytest.importorskip("pandas")
+pytest.importorskip("scipy")
+pytest.importorskip("statsmodels")
+
 from services.registry.regime import evaluator as E
 from services.registry.regime.profiles import RegimeProfile
 from services.registry.regime.store import RegimeStore
