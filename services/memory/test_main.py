@@ -972,6 +972,7 @@ class FakeMentalModelHindsight:
     def __init__(self):
         self.banks = {}
         self.config = {}
+        self.units = {}
 
     def configure_bank(self, bank, updates):
         self.config.setdefault(bank, {}).update(updates)
@@ -988,11 +989,20 @@ class FakeMentalModelHindsight:
     def delete_mental_model(self, bank, model_id):
         self.banks.get(bank, {}).pop(model_id, None)
 
+    def memory_unit(self, bank, unit_id):
+        return self.units.get(unit_id)
+
     def answer(self, bank, key, text, documents, refreshed="2026-11-15T00:00:00Z"):
+        """Refresh result in Hindsight's real shape: ``based_on`` by fact type carrying unit ids only."""
+        based_on = {"world": []}
+        for doc in documents:
+            unit_id = f"unit-{len(self.units)}"
+            self.units[unit_id] = {"id": unit_id, "document_id": doc}
+            based_on["world"].append({"id": unit_id, "text": "x", "type": "world"})
         for model in self.banks[bank].values():
             if model["name"] == key:
                 model.update(content=text, last_refreshed_at=refreshed, reflect_response={
-                    "based_on": {"memories": [{"document_id": d, "text": "x"} for d in documents]}})
+                    "text": text, "outcome": "content_written", "based_on": based_on, "mental_models": []})
 
 
 def _questions_env(memory_client, monkeypatch, enabled=True):

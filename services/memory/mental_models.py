@@ -149,6 +149,38 @@ def _verify(citations: Sequence[str], store: Any, tenant_id: Optional[str], pers
     return None
 
 
+_NON_CANONICAL_SOURCES = ("mental_models", "mental-models", "directives")
+
+
+def _source_documents(client: Any, bank: str, based_on: Mapping[str, Any]) -> "tuple[List[str], Optional[str]]":
+    """Canonical ids behind a refreshed answer, resolved through the cited memory units.
+
+    A refresh reports ``based_on`` keyed by fact type with unit ids only; each unit is read back from
+    the index and mapped through its ``document_id`` (one level of ``source_memory_ids`` for
+    observations).  Any unit that cannot be mapped fails the whole answer closed.
+    """
+    if any(based_on.get(k) for k in _NON_CANONICAL_SOURCES):
+        return [], "non_canonical_source"
+    unit_ids = [str(f.get("id")) for kind, facts in based_on.items() if kind not in _NON_CANONICAL_SOURCES
+                for f in (facts or []) if isinstance(f, dict) and f.get("id")]
+    if not unit_ids:
+        return [], "citation_unmapped"
+    documents: Dict[str, None] = {}
+    for unit_id in unit_ids:
+        unit = client.memory_unit(bank, unit_id) or {}
+        mapped = [unit["document_id"]] if unit.get("document_id") else []
+        for source_id in (unit.get("source_memory_ids") or unit.get("source_fact_ids") or []) if not mapped else []:
+            source = client.memory_unit(bank, str(source_id)) or {}
+            if source.get("document_id"):
+                mapped.append(source["document_id"])
+            else:
+                return [], "citation_unmapped"
+        if not mapped:
+            return [], "citation_unmapped"
+        documents.update(dict.fromkeys(mapped))
+    return list(documents), None
+
+
 def read_answers(client: Any, tenant_id: Optional[str], persona_id: str, persona_store: Any) -> List[Dict[str, Any]]:
     """Current answers of one persona with canonical citations; fails closed per answer."""
     bank = hs.persona_bank(tenant_id, persona_id)
@@ -156,21 +188,20 @@ def read_answers(client: Any, tenant_id: Optional[str], persona_id: str, persona
     for model in client.list_mental_models(bank, detail="full"):
         if not str(model.get("id") or "").startswith(MODEL_PREFIX):
             continue
-        based_on = ((model.get("reflect_response") or {}).get("based_on") or {})
-        memories = [m for m in (based_on.get("memories") or []) if isinstance(m, dict)]
-        citations = hs.reflect_citations({"based_on": {"memories": memories}})
+        reflected = model.get("reflect_response") or {}
         answer: Dict[str, Any] = {"key": model.get("name"), "question": model.get("source_query"),
                                   "refreshed_at": model.get("last_refreshed_at"), "stale": bool(model.get("is_stale")),
-                                  "status": "answered", "text": model.get("content") or "", "citations": citations}
+                                  "status": "answered", "text": model.get("content") or "", "citations": []}
         reason: Optional[str] = None
-        if not model.get("last_refreshed_at") or not answer["text"].strip():
+        if reflected.get("reflect_skipped"):
+            reason = str(reflected["reflect_skipped"])
+        elif not reflected or not model.get("last_refreshed_at") or not answer["text"].strip():
             reason = "not_refreshed"
-        elif based_on.get("mental_models") or based_on.get("directives"):
-            reason = "non_canonical_source"
-        elif not memories or not citations or any(not m.get("document_id") for m in memories):
-            reason = "citation_unmapped"
         else:
-            reason = _verify(citations, persona_store, tenant_id, persona_id)
+            citations, reason = _source_documents(client, bank, reflected.get("based_on") or {})
+            if reason is None:
+                reason = _verify(citations, persona_store, tenant_id, persona_id)
+                answer["citations"] = citations
         if reason:
             answer.update(status="unavailable", reason=reason, text="", citations=[])
         answers.append(answer)

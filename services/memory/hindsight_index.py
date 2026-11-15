@@ -285,6 +285,9 @@ class HindsightClient:
     def recall(self, bank: str, body: dict) -> dict:
         return self._call("POST", self._bank(bank) + "/memories/recall", body) or {}
 
+    def memory_unit(self, bank: str, unit_id: str) -> Optional[dict]:
+        return self._call("GET", f"{self._bank(bank)}/memories/{urllib.parse.quote(unit_id, safe='')}", ok_missing=True)
+
     def configure_bank(self, bank: str, updates: dict) -> None:
         self._call("PATCH", self._bank(bank) + "/config", {"updates": updates})
 
