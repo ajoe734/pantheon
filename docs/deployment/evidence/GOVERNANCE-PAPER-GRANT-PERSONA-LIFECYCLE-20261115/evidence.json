@@ -1,0 +1,11 @@
+{
+  "task_id": "GOVERNANCE-PAPER-GRANT-PERSONA-LIFECYCLE-20261115",
+  "recorded_at": "2026-11-15",
+  "owner_change": "services/persona/write_owner.py: lifecycle verifier passes explicit ApprovalUsageContext(environment=current_environment(), target_stage='paper', capital_scale_pct=0) to ApprovalReader.verify; all other verifier paths unchanged",
+  "validation": [
+    {"command": "pytest -q services/governance/test_paper_approval_scope.py", "result": "234 passed"},
+    {"command": "pytest -q services/governance/tests/test_paper_grant_persona_lifecycle_integration.py", "result": "7 passed"},
+    {"command": "pytest -q services/persona/test_lifecycle_approval_verifier.py", "result": "17 passed"},
+    {"command": "pytest -q services/governance/test_paper_approval_postgres.py", "result": "not run to pass: 39 errors, fixture asserts empty Postgres DSN env (test_approval_authority_postgres.py:44); environment limitation, file unmodified by this task"}
+  ]
+}

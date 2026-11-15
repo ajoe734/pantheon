@@ -259,3 +259,18 @@ def test_rendered_compose_gives_persona_the_bff_jwt_verifier_config():
     assert (persona["PERSONA_JWT_SECRET"], persona["PERSONA_JWT_ISSUER"],
             persona["PERSONA_JWT_AUDIENCE"], persona["PERSONA_AUTH_MODE"]) == (
         "s3", "iss", "aud", "strict")
+
+
+def test_lifecycle_verifier_passes_explicit_paper_usage_context(monkeypatch):
+    seen = {}
+
+    def _verify(self, decision_id, *, expected, now=None, usage_context=None):
+        seen["usage_context"] = usage_context
+        return _evidence()
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setattr(ApprovalReader, "verify", _verify)
+    verifier = HttpGovernanceApprovalVerifier(base_url="http://gov", service_token="x")
+    assert verifier.verify_persona_lifecycle_decision(**ARGS) is True
+    ctx = seen["usage_context"]
+    assert (ctx.environment, ctx.target_stage, ctx.capital_scale_pct) == ("dev", "paper", 0)

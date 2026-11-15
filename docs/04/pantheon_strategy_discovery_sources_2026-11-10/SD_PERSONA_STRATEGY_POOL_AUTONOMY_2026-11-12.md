@@ -245,6 +245,16 @@ budget until 20 trading days of virtual-book history exist.
   one is removed. This replaces "retire the parent persona".
 * The automatic consumer's retire action changes target from the persona lifecycle to "remove pool member".
   The persona lifecycle is only changed by the operator.
+  The sentence above was written about automatic retirement; freeze and retire remain operator decisions.
+* **Amendment, operator decision 2026-11-15** (transcript
+  `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/b1134a03-3943-4f96-86d7-19e3d4aab6a5.jsonl`
+  line 11873, 10:25:40.843Z, uuid `6a795cd3-bb88-461f-9d9b-441be81526a7`; answer 「paper 自動核准」): the paper
+  automated gate may decide exactly two persona lifecycle steps, `research_only → consultable` and
+  `consultable → paper_owner`, and only for a persona with an active paper capital binding and an active paper
+  runtime binding (both read from their owners), proposed by the named enrolment proposer principal, in the paper
+  environment. The widening is explicit in the dev paper grant content and the decision record carries the grant
+  id and the verified bindings. **Limit: the paper ladder only.** Everything beyond paper (`live_owner`, canary,
+  live), `frozen`, `retired` and every other transition stays with the operator.
 
 ### 5.5 Persona cycle
 

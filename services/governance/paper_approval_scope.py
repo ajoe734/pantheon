@@ -41,6 +41,15 @@ DEV_PAPER_AUTHORIZATION_SCOPE: dict[str, Any] = {
     "allowed_target_stages": ["paper"],
     "max_capital_scale_pct": 0,
 }
+PERSONA_LIFECYCLE_TARGET = "persona_lifecycle_transition"
+# Operator decision 2026-11-15: the paper automated gate may decide exactly the
+# two paper-ladder persona lifecycle steps.  Everything else (freeze, retire,
+# live_owner, canary, live) stays with the operator.
+PAPER_LADDER_TRANSITIONS = frozenset({("research_only", "consultable"), ("consultable", "paper_owner")})
+PERSONA_LIFECYCLE_GRANT_PREFIX = "enabled;persona_lifecycle=paper_ladder;proposer="
+PERSONA_LIFECYCLE_GRANT_ID_PREFIX = "dev-paper-grant:persona-lifecycle-paper-ladder:"
+_PROPOSER_SUBJECT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:@-")
+_ACTIVE_RUNTIME_STATES = frozenset({"active", "running", "ok"})
 PAPER_SIGNAL_INTERFACE = "services.execution.lean_runtime.paper_signal_producer:Strategy"
 PAPER_APPROVAL_MAX_TTL = timedelta(hours=24)
 
@@ -256,13 +265,47 @@ def require_dedicated_subject_scope(*, actor_id: Any, owner_user_id: Any, author
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class PersonaLifecycleGrant:
+    """Explicit widening: the gate may decide the paper-ladder lifecycle steps."""
+
+    proposer_subject: str
+    grant_id: str
+
+
+@dataclass(frozen=True)
 class DevPaperGrant:
     subject: str
     tenant_id: str
+    persona_lifecycle: PersonaLifecycleGrant | None = None
 
     @property
     def authorization_scope(self) -> dict[str, Any]:
         return normalize_authorization_scope(DEV_PAPER_AUTHORIZATION_SCOPE)
+
+
+def configured_persona_lifecycle_grant(env: Mapping[str, str] | None = None) -> PersonaLifecycleGrant | None:
+    """The explicit lifecycle widening carried by the mounted grant file, else None.
+
+    Only a mounted grant file whose whole content is
+    ``enabled;persona_lifecycle=paper_ladder;proposer=<subject>`` widens the
+    grant; the plain ``enabled`` content and an unmounted grant behave exactly
+    as before.  A malformed or unreadable widening is never a widening.
+    """
+    from services.service_token_file import configured_service_token
+    source = env if env is not None else os.environ
+    if not str(source.get("GOVERNANCE_DEV_PAPER_GRANT_FILE", "") or "").strip():
+        return None
+    try:
+        content = configured_service_token("GOVERNANCE_DEV_PAPER_GRANT", source)
+    except RuntimeError:
+        return None
+    if not content.startswith(PERSONA_LIFECYCLE_GRANT_PREFIX):
+        return None
+    proposer = content[len(PERSONA_LIFECYCLE_GRANT_PREFIX):]
+    if not proposer or proposer == DEV_PAPER_PROVISIONER_SUBJECT or not set(proposer) <= _PROPOSER_SUBJECT_CHARS:
+        return None
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    return PersonaLifecycleGrant(proposer_subject=proposer, grant_id=PERSONA_LIFECYCLE_GRANT_ID_PREFIX + digest)
 
 
 def dev_paper_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -270,7 +313,8 @@ def dev_paper_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     enabled = str(source.get("GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED", "") or "").strip().lower()
     return (enabled == "true" and current_environment(source) == DEV_PAPER_ENVIRONMENT
-            and configured_dev_paper_grant_enabled(source))
+            and (configured_dev_paper_grant_enabled(source)
+                 or configured_persona_lifecycle_grant(source) is not None))
 
 
 def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -> DevPaperGrant | None:
@@ -300,7 +344,8 @@ def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -
     roles = getattr(ctx, "roles", None)
     if not isinstance(roles, (set, frozenset)) or frozenset(roles) != DEV_PAPER_ROLES:
         raise PaperApprovalDenied("Dev paper approval principal roles must be exactly automated_gate")
-    return DevPaperGrant(subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=DEV_PAPER_TENANT_ID)
+    return DevPaperGrant(subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=DEV_PAPER_TENANT_ID,
+                         persona_lifecycle=configured_persona_lifecycle_grant(env))
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +425,157 @@ def validate_paper_decide_body(body: Mapping[str, Any], *, decision: Mapping[str
             raise PaperApprovalDenied(str(exc), 422) from exc
         if supplied != proposed:
             raise PaperApprovalDenied("Dev paper decide expires_at must equal the proposal expires_at")
+
+
+# ---------------------------------------------------------------------------
+# Paper-ladder persona lifecycle decisions (operator decision 2026-11-15)
+# ---------------------------------------------------------------------------
+
+def _owner_json_get(base_url: str, token_provider: Callable[[], str], timeout_seconds: float,
+                    path: str, label: str) -> Any:
+    """Exact owner GET with no redirect; any failure is unavailable, never a pass."""
+    try:
+        token = token_provider()
+        if not token:
+            raise RuntimeError("missing credential")
+    except RuntimeError as exc:
+        raise PaperCandidateUnavailable(f"{label} read principal unavailable") from exc
+    request = Request(base_url.rstrip("/") + path,
+                      headers={"Accept": "application/json", "Authorization": "Bearer " + token}, method="GET")
+    try:
+        with build_opener(_NoRedirect()).open(request, timeout=timeout_seconds) as response:
+            if response.status != 200:
+                raise PaperCandidateUnavailable(f"{label} did not return 200")
+            return json.loads(response.read().decode("utf-8"))
+    except PaperCandidateUnavailable:
+        raise
+    except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
+        raise PaperCandidateUnavailable(f"{label} read unavailable or malformed") from exc
+
+
+class PersonaPaperBindingVerifier:
+    """Verify, from their owners, the persona's paper capital and runtime bindings.
+
+    ``read_capital(query)`` and ``read_runtime(query)`` return the parsed JSON
+    of the Capital ``GET /api/bindings`` and Runtime Manager
+    ``GET /api/runtime-bindings`` owner endpoints.  Nothing the proposer sent
+    is trusted: the bindings are found from the persona id alone.
+    """
+
+    def __init__(self, *, read_capital: Callable[[str], Any], read_runtime: Callable[[str], Any]) -> None:
+        self._read_capital = read_capital
+        self._read_runtime = read_runtime
+
+    def verify(self, *, tenant_id: str, persona_id: str) -> dict[str, Any]:
+        capital = self._read_capital("/api/bindings?persona_id=" + quote(persona_id, safe="")
+                                     + "&status=active&role=paper_owner")
+        rows = capital if isinstance(capital, list) else []
+        capital_bindings = [
+            row for row in rows if isinstance(row, Mapping)
+            and _text(row, "persona_id") == persona_id
+            and _text(row, "status") == "active"
+            and _text(row, "role") == "paper_owner"
+            and _text(row, "allowed_deployment_scope") == "paper"
+            and _text(row, "tenant_id") in ("", tenant_id)
+        ]
+        if len(capital_bindings) != 1:
+            raise PaperApprovalDenied(
+                "Persona has no single active paper capital binding verified from the Capital owner"
+                if not capital_bindings else "Persona has more than one active paper capital binding")
+        binding = capital_bindings[0]
+        binding_id, pool_id = _text(binding, "binding_id"), _text(binding, "capital_pool_id")
+        if not binding_id or not pool_id:
+            raise PaperApprovalDenied("Paper capital binding is missing its binding or pool identity")
+        runtime = self._read_runtime("/api/runtime-bindings?pool_id=" + quote(pool_id, safe=""))
+        rows = runtime.get("bindings") if isinstance(runtime, Mapping) else None
+        active: list[Mapping[str, Any]] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, Mapping):
+                continue
+            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+            state = (_text(row, "state") or _text(row, "status")).lower()
+            stage = _text(row, "deployment_mode") or _text(row, "deployment_stage")
+            if (state in _ACTIVE_RUNTIME_STATES and stage == "paper"
+                    and _text(row, "capital_pool_id") == pool_id
+                    and _text(row, "persona_capital_binding_id") == binding_id
+                    and _text(meta, "persona_id") == persona_id and _text(meta, "tenant_id") == tenant_id):
+                active.append(row)
+        if len(active) != 1:
+            raise PaperApprovalDenied(
+                "Persona has no single active paper runtime binding verified from the Runtime Manager owner")
+        runtime_binding = active[0]
+        return {
+            "capital_binding_id": binding_id,
+            "capital_pool_id": pool_id,
+            "runtime_binding_id": _text(runtime_binding, "binding_id") or _text(runtime_binding, "id"),
+            "deployment_plan_id": _text(runtime_binding, "plan_id"),
+        }
+
+
+def configured_persona_paper_binding_verifier(env: Mapping[str, str] | None = None) -> PersonaPaperBindingVerifier:
+    from services.service_token_file import configured_service_token
+    source = env if env is not None else os.environ
+    try:
+        timeout = float(source.get("GOVERNANCE_BINDING_READ_TIMEOUT_SECONDS", "5") or "5")
+    except ValueError as exc:
+        raise PaperCandidateUnavailable("Binding reader timeout is malformed") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise PaperCandidateUnavailable("Binding reader timeout is malformed")
+
+    def reader(url_key: str, token_key: str, label: str) -> Callable[[str], Any]:
+        base = str(source.get(url_key, "") or "")
+        parsed = urlsplit(base)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise PaperCandidateUnavailable(f"{label} owner URL is not configured")
+        return lambda path: _owner_json_get(
+            base, lambda: configured_service_token(token_key, source), timeout, path, label)
+
+    return PersonaPaperBindingVerifier(
+        read_capital=reader("GOVERNANCE_CAPITAL_BASE_URL", "GOVERNANCE_CAPITAL_SERVICE_TOKEN", "Capital"),
+        read_runtime=reader("GOVERNANCE_RUNTIME_MANAGER_BASE_URL", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN",
+                            "Runtime Manager"),
+    )
+
+
+def is_persona_lifecycle_decision(decision: Mapping[str, Any]) -> bool:
+    return _enum_text(decision.get("target_type")) == PERSONA_LIFECYCLE_TARGET
+
+
+def require_paper_lifecycle_decision(
+    decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime,
+    binding_verifier: PersonaPaperBindingVerifier, env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Admit the gate on one paper-ladder lifecycle decision or raise.
+
+    Returns the evidence (grant id + verified bindings) the decision must carry.
+    """
+    widening = grant.persona_lifecycle
+    if widening is None:
+        raise PaperApprovalDenied("Dev paper grant does not authorise persona lifecycle decisions")
+    if current_environment(env) != DEV_PAPER_ENVIRONMENT:
+        raise PaperApprovalDenied("Persona lifecycle paper grant is limited to the paper environment")
+    if decision.get("tenant_id") != grant.tenant_id:
+        raise PaperApprovalDenied("Dev paper decision tenant is outside authority")
+    owner = decision.get("owner_user_id")
+    if owner != widening.proposer_subject or owner == grant.subject:
+        raise PaperApprovalDenied("Persona lifecycle proposal must come from the named enrolment proposer principal")
+    if _enum_text(decision.get("risk_level")) != "low":
+        raise PaperApprovalDenied("Dev paper principal may only act on low-risk decisions")
+    metadata = decision.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    subject = subject if isinstance(subject, Mapping) else {}
+    persona_id = _text(subject, "persona_id")
+    transition = (_text(subject, "from_state"), _text(subject, "to_state"))
+    if not persona_id or persona_id != decision.get("target_id") or persona_id != decision.get("persona_id"):
+        raise PaperApprovalDenied("Persona lifecycle decision persona identity is inconsistent")
+    if transition not in PAPER_LADDER_TRANSITIONS:
+        raise PaperApprovalDenied(
+            f"Dev paper grant covers only research_only->consultable and consultable->paper_owner, "
+            f"not {transition[0]!r}->{transition[1]!r}")
+    validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+    bindings = binding_verifier.verify(tenant_id=grant.tenant_id, persona_id=persona_id)
+    return {"grant_id": widening.grant_id, "persona_id": persona_id,
+            "from_state": transition[0], "to_state": transition[1], **bindings}
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +904,14 @@ def paper_candidate_usage_context(
 
 
 __all__ = [
+    "PERSONA_LIFECYCLE_TARGET",
+    "PAPER_LADDER_TRANSITIONS",
+    "PersonaLifecycleGrant",
+    "PersonaPaperBindingVerifier",
+    "configured_persona_lifecycle_grant",
+    "configured_persona_paper_binding_verifier",
+    "is_persona_lifecycle_decision",
+    "require_paper_lifecycle_decision",
     "DEV_PAPER_PROVISIONER_SUBJECT",
     "DEV_PAPER_APPROVAL_SCOPE",
     "DEV_PAPER_TENANT_ID",
