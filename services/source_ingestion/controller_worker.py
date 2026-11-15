@@ -27,6 +27,10 @@ from .controller_state import (
     utc_now,
 )
 from .controller_auth import load_controller_token
+from .connectors.collector_bundle import (
+    COLLECTOR_REQUEST_READ_BUDGET_SECONDS,
+    LATEST_CLOSE_PERSISTED_ROWS_PER_PULL,
+)
 
 
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
@@ -40,6 +44,21 @@ CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
 # (run_controller_once / scheduler_once) must never accept it.
 COLLECTOR_STEADY_PULL_MODE = "collector_steady_pull"
 STEADY_PULLS_PER_REQUEST = 1
+# Server-side bound of one steady run-scheduled request: the Collector read budget, the
+# persistence of at most LATEST_CLOSE_PERSISTED_ROWS_PER_PULL rows (hosted: ~9s for 256 rows),
+# and the search notify (<=5s). Hosted observed 29-31s, so the RPC timeout carries 2x headroom.
+STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW = 0.05
+STEADY_PULL_SEARCH_NOTIFY_SECONDS = 5.0
+STEADY_PULL_HEADROOM_FACTOR = 2.0
+STEADY_PULL_SERVER_BOUND_SECONDS = (
+    COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    + LATEST_CLOSE_PERSISTED_ROWS_PER_PULL * STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW
+    + STEADY_PULL_SEARCH_NOTIFY_SECONDS
+)
+STEADY_PULL_RPC_TIMEOUT_SECONDS = STEADY_PULL_SERVER_BOUND_SECONDS * STEADY_PULL_HEADROOM_FACTOR
+# Reconcile hosted observed 16-30s; 2x headroom over the slowest observation.
+STEADY_RECONCILE_OBSERVED_MAX_SECONDS = 30.0
+STEADY_RECONCILE_RPC_TIMEOUT_SECONDS = STEADY_RECONCILE_OBSERVED_MAX_SECONDS * STEADY_PULL_HEADROOM_FACTOR
 CONFIGURABLE_CONTROLLER_MODES = CONTROLLER_MODES | {COLLECTOR_STEADY_PULL_MODE}
 UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
 MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
@@ -2090,7 +2109,11 @@ def run_controller_tick(
             desired_state_sha256=str(desired_meta["sha256"]),
             source_authority=str(desired_meta["authority"]),
             controller_token=config.controller_token,
-            timeout_seconds=config.timeout_seconds,
+            timeout_seconds=(
+                max(config.timeout_seconds, STEADY_RECONCILE_RPC_TIMEOUT_SECONDS)
+                if config.mode == COLLECTOR_STEADY_PULL_MODE
+                else config.timeout_seconds
+            ),
         )
         steady_pull_ids: list[str] = []
         if config.mode == COLLECTOR_STEADY_PULL_MODE:
@@ -2155,7 +2178,11 @@ def run_controller_tick(
             schedule = run_schedule_tick(
                 api_url=config.api_url,
                 max_concurrency=STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency,
-                timeout_seconds=config.timeout_seconds,
+                timeout_seconds=(
+                    max(config.timeout_seconds, STEADY_PULL_RPC_TIMEOUT_SECONDS)
+                    if steady
+                    else config.timeout_seconds
+                ),
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,
                 controller_token=config.controller_token,
