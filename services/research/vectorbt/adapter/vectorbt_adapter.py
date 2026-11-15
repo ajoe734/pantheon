@@ -2998,8 +2998,17 @@ def build_governed_tw_replication_dataset(
     down_drop: float = -0.046,
     oos_invert: bool = False,
     negative_oos: bool = False,
+    series_profile: str = "next_open",
 ) -> dict[str, Any]:
-    """Build a deterministic governed Taiwan OHLCV dataset (with 0050 benchmark) for replication backtests."""
+    """Build a deterministic governed Taiwan OHLCV dataset (with 0050 benchmark) for replication backtests.
+
+    ``series_profile`` fixes WHEN the big steps of the synthetic cycle occur relative to the momentum
+    decisions.  ``"decision_close"`` is the original series whose jumps coincide with the decision bar
+    (an edge that exists only when a decision is filled at the close of its own bar); it is kept so the
+    re-baseline run can reproduce the old recorded proofs.  ``"next_open"`` (default) times the jumps two
+    sessions after the confirming decisions, so an edge survives the D-close decision / D+1-open fill
+    convention.  The gate verdict on either series is computed by the unchanged gate.
+    """
     from datetime import date as _date, timedelta as _timedelta
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
@@ -3009,12 +3018,22 @@ def build_governed_tw_replication_dataset(
     split_idx = int(effective_bars * 0.70)
     # 8-bar balanced cycle: 4 BUY steps (+0.2%, +0.2%, +0.2%, +up_jump) and
     # 4 SELL steps (-0.1%, -0.1%, -0.1%, down_drop) so net position resets to 0 every 8 bars.
-    is_cycle = [0.002, 0.002, 0.002, float(up_jump), -0.001, -0.001, -0.001, float(down_drop)]
-    oos_cycle = (
-        [0.002, 0.002, 0.002, -abs(float(up_jump)), -0.001, -0.001, -0.001, abs(float(down_drop))]
-        if invert_oos
-        else is_cycle
-    )
+    if series_profile not in ("next_open", "decision_close"):
+        raise VectorbtWorkflowError(f"unknown series_profile {series_profile!r}")
+    if series_profile == "decision_close":
+        is_cycle = [0.002, 0.002, 0.002, float(up_jump), -0.001, -0.001, -0.001, float(down_drop)]
+        oos_cycle = (
+            [0.002, 0.002, 0.002, -abs(float(up_jump)), -0.001, -0.001, -0.001, abs(float(down_drop))]
+            if invert_oos
+            else is_cycle
+        )
+    else:
+        is_cycle = [0.002, 0.002, 0.002, 0.0, -0.001, float(up_jump), float(down_drop), 0.0]
+        oos_cycle = (
+            [0.002, 0.002, 0.002, 0.0, -0.001, -abs(float(up_jump)), abs(float(down_drop)), 0.0]
+            if invert_oos
+            else is_cycle
+        )
 
     inst_list: list[str] = []
     for s in symbols:
