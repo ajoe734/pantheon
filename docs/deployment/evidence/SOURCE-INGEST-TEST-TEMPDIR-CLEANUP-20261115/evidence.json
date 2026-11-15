@@ -1,0 +1,23 @@
+{
+  "task_id": "SOURCE-INGEST-TEST-TEMPDIR-CLEANUP-20261115",
+  "fix": "client fixture in test_scheduled_connector.py removes its mkdtemp directory with shutil.rmtree in the finally block (covers pass, failure, interrupt); admission_stack reuses client so importing modules are covered",
+  "python": "/tmp/mhv/bin/python (pytest, TMPDIR pointed at a fresh directory per run)",
+  "before": {
+    "test_scheduled_connector.py": {"result": "73 passed", "leftover_source_ingest_scheduled_dirs": 62, "size": "204M"},
+    "test_collector_market_provenance_bound.py": {"result": "9 passed, 3 skipped", "leftover_source_ingest_scheduled_dirs": 3, "size": "86M"}
+  },
+  "after": {
+    "test_scheduled_connector.py": {"result": "73 passed", "leftover_source_ingest_scheduled_dirs": 0},
+    "test_collector_market_provenance_bound.py": {"result": "9 passed, 3 skipped", "leftover_source_ingest_scheduled_dirs": 0},
+    "test_collector_market_early_fetch_pit.py": {"result": "10 passed", "leftover_source_ingest_scheduled_dirs": 0},
+    "test_collector_newest_session_progress.py": {"result": "14 passed", "leftover_source_ingest_scheduled_dirs": 0},
+    "test_collector_newest_session_hosted_throughput.py": {"result": "14 passed", "leftover_source_ingest_scheduled_dirs": 0}
+  },
+  "guard_test": {
+    "file": "services/source_ingestion/tests/test_scheduled_connector_tempdir_cleanup.py",
+    "with_fix": "2 passed",
+    "without_fix": "2 failed (pass and fail inner cases both detect leftover directory)"
+  },
+  "not_run": "test_controller_worker.py imports the fixtures too but was not run in this batch",
+  "host_cleanup_of_existing_dirs": "operator action, out of scope"
+}
