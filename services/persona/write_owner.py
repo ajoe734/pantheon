@@ -292,6 +292,15 @@ class HttpGovernanceApprovalVerifier:
             ApprovalReader,
             ApprovalUnavailable,
         )
+        from services.governance.paper_approval_scope import (
+            ApprovalUsageContext,
+            current_environment,
+        )
+        # Explicit paper usage context: a scoped (paper-grant) decision is only
+        # admitted for the paper ladder in this runtime's environment; unscoped
+        # decisions ignore it.
+        usage_context = ApprovalUsageContext(
+            environment=current_environment(), target_stage='paper', capital_scale_pct=0)
         try:
             ApprovalReader(base_url=self._base_url, service_token=self._service_token,
                            token_provider=self._token_provider,
@@ -302,7 +311,7 @@ class HttpGovernanceApprovalVerifier:
                     'subject.persona_id': persona_id,
                     'subject.from_state': source_state,
                     'subject.to_state': target_state,
-                })
+                }, usage_context=usage_context)
         except ApprovalUnavailable:
             raise
         except ApprovalInvalid:
