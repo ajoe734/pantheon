@@ -116,7 +116,9 @@ def rebaseline_fixture(name: str, *, fixture_dir: Path = FIXTURE_DIR, write: boo
     params = recorded["registry_entry"]["metadata"]["strategy_artifact"]["parameters"]
     symbols, run_id = list(params["symbols"]), recorded["backtest_run_id"]
     old = run_backtest(symbols, run_id, LEGACY_FILL_CONVENTION)
-    reproduced = _headline(old)["oos_sharpe_ratio"] == _headline(recorded)["oos_sharpe_ratio"]
+    # ``None`` once the fixture has already been regenerated: the old recording is then only in the evidence.
+    reproduced = (None if recorded.get("fill_convention") == FILL_CONVENTION
+                  else _headline(old)["oos_sharpe_ratio"] == _headline(recorded)["oos_sharpe_ratio"])
     same = run_backtest(symbols, run_id, FILL_CONVENTION, series_profile="decision_close")
     retimed = run_backtest(symbols, run_id, FILL_CONVENTION)
     verdicts = {key: gate_verdict(ev, symbols) for key, ev in (("old", old), ("same", same), ("retimed", retimed))}
@@ -124,7 +126,7 @@ def rebaseline_fixture(name: str, *, fixture_dir: Path = FIXTURE_DIR, write: boo
         path.write_text(json.dumps(retimed, indent=1, sort_keys=True, default=str), encoding="utf-8")
     return {
         "fixture": name, "symbols": symbols, "backtest_run_id": run_id,
-        "old_recorded_matches_legacy_rerun": bool(reproduced),
+        "old_recorded_matches_legacy_rerun": reproduced,
         "old": {**_headline(old), "gate": verdicts["old"]},
         "new_same_series": {**_headline(same), "gate": verdicts["same"]},
         "new_retimed_series": {**_headline(retimed), "gate": verdicts["retimed"]},
