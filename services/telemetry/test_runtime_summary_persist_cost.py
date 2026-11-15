@@ -1176,6 +1176,28 @@ class TestRuntimeSummaryPersistCost(unittest.TestCase):
         self.assertGreaterEqual(results["before"][0], ingest_calls)
         self.assertEqual(results["before"][1], 0)
 
+    def test_ac5_deterministic_full_call_mix_full_rewrites_before_and_after(self) -> None:
+        """AC 5 (default CI path): drive the full AC5 call mix (ingest +
+        infrastructure-health + runtime-summaries GET + readyz GET) through the
+        Flask routes with time.sleep patched out, and assert on rewrite
+        counters only (no process_time or /proc io)."""
+        with patch(
+            "services.telemetry.test_runtime_summary_persist_cost.time.sleep",
+            lambda _seconds: None,
+        ):
+            metrics = run_local_persist_cost_benchmark()
+        before, after = metrics["before"], metrics["after"]
+        for item in (before, after):
+            self.assertGreaterEqual(item["store_initial_bytes"], 4_000_000)
+            self.assertGreater(item["requests"]["ingest"], 0)
+            self.assertGreater(item["requests"]["infrastructure_health"], 0)
+            self.assertGreater(item["requests"]["runtime_summaries_get"], 0)
+            self.assertGreater(item["requests"]["readyz_get"], 0)
+        self.assertLessEqual(after["full_rewrites_during_window"], 1)
+        self.assertGreaterEqual(
+            before["full_rewrites_during_window"], before["requests"]["ingest"]
+        )
+
     @unittest.skipUnless(
         os.environ.get("PANTHEON_RUN_PERSIST_COST_BENCHMARK") == "1",
         "wall-clock CPU/write-rate benchmark is opt-in; set "

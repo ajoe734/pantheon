@@ -1,10 +1,10 @@
 {
   "task_id": "TELEMETRY-PERSIST-COST-BENCHMARK-CI-FLAKY-20261115",
   "change": "test-only: services/telemetry/test_runtime_summary_persist_cost.py",
-  "summary": "Wall-clock test_ac5 benchmark is opt-in via PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 (skipped with a reason otherwise). New deterministic test_ac5_deterministic_4mb_store_full_rewrites_before_and_after asserts after<=1 full rewrite and legacy full rewrite on every ingest using _full_persist_count/_delta_persist_count. Benchmark function and thresholds unchanged.",
+  "summary": "Wall-clock test_ac5 benchmark is opt-in via PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 (skipped with a reason otherwise); benchmark function and thresholds unchanged. Default CI path has two deterministic AC5 tests using _full_persist_count/_delta_persist_count only: (a) test_ac5_deterministic_4mb_store_full_rewrites_before_and_after (store.project_event heartbeats) and (b) test_ac5_deterministic_full_call_mix_full_rewrites_before_and_after, which runs run_local_persist_cost_benchmark() with time.sleep patched out so the full AC5 call mix (ingest + infrastructure-health + runtime-summaries GET + readyz GET) is exercised; asserts after<=1 full rewrite and legacy full rewrites >= number of ingests.",
   "commands": [
-    {"cmd": "for i in 1..30: .venv/bin/python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py", "result": "30/30 passed (5 passed, 1 skipped each)"},
-    {"cmd": "PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py -k local_measurement", "result": "1 passed in 25.53s"},
-    {"cmd": "python -m pytest -q services/telemetry", "result": "561 passed, 2 skipped"}
+    {"cmd": "for i in 1..30: /tmp/tele-venv/bin/python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py", "result": "30/30 passed (6 passed, 1 skipped each, ~15s)"},
+    {"cmd": "PANTHEON_RUN_PERSIST_COST_BENCHMARK=1 python -m pytest -q services/telemetry/test_runtime_summary_persist_cost.py -k local_measurement", "result": "1 passed in 25.46s"},
+    {"cmd": "python -m pytest -q services/telemetry", "result": "562 passed, 2 skipped"}
   ]
 }
