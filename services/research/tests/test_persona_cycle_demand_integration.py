@@ -399,3 +399,311 @@ def test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed(tm
     failed = out.day(5)["pool_autonomy"]["act"]["receipts"][0]
     assert failed["status"] == "not_attempted" and failed["reason"].startswith("consultation_unavailable:ConnectionError")
     assert not any(m["artifact_ref"] == "candidate" for m in out.pool.current(PID, TENANT)["members"])
+
+
+def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial(
+    tmp_path, monkeypatch
+):
+    """End-to-end integration: open demand -> reconcile -> template search -> gate -> registration -> pool admit_trial."""
+    import threading
+    import time
+    from services.research.alpha_replication.shared_stores import SharedReplicationGate
+    from services.research.tests.test_candidate_registration import (
+        AUDIENCE,
+        ISSUER,
+        SECRET,
+        OwnerEnvironment,
+        _governed_passing_evaluation_for_artifact,
+        _template_entries,
+    )
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        build_canonical_tw_strategy_artifact,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    monkeypatch.syspath_prepend(
+        str(Path(__file__).parents[2] / "control-plane" / "persona")
+    )
+    from services.control_plane.persona.persona_strategy_pool import (
+        AppendPoolVersionRequest,
+        PersonaStrategyPoolStore,
+        PoolMember,
+    )
+    from services.control_plane.persona.pool_policy import load_policy
+    from services.persona.pool_autonomy_cycle import candidate_virtual_book
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    env = OwnerEnvironment(tmp_path, monkeypatch)
+    for token_var in (
+        "RESEARCH_PERSONA_SERVICE_TOKEN",
+        "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "RESEARCH_GOVERNANCE_PROPOSER_TOKEN",
+        "RESEARCH_GOVERNANCE_REVIEWER_TOKEN",
+        "RESEARCH_GOVERNANCE_APPROVER_TOKEN",
+    ):
+        monkeypatch.setenv(token_var, "configured-test-token")
+
+    research_tok = encode_jwt_hs256(
+        {
+            "sub": "persona-pool-cycle",
+            "roles": ["viewer"],
+            "tenant_id": TENANT,
+            "iss": ISSUER,
+            "aud": AUDIENCE,
+            "exp": int(time.time()) + 900,
+        },
+        secret=SECRET,
+    )
+    research_headers = {
+        "Authorization": "Bearer " + research_tok,
+        "X-Tenant-Id": TENANT,
+    }
+
+    dataset = twse_recorded_dataset()
+    entries, one, _ = entries_and_members()
+    shell = copy.deepcopy(entries[one["artifact_ref"]])
+    base = build_canonical_tw_strategy_artifact(
+        strategy_id="strat-tw-2330-2883-lb10",
+        symbols=["2330.TW", "2883.TW"],
+        lookback_bars=10,
+        momentum_threshold=0.01,
+    )
+    base["parameters"]["data_source"] = str(dataset["dataset_id"])
+    current_cs = strategy_artifact_checksum(base)
+    current = {
+        **shell,
+        "registry_id": "current",
+        "owner_tenant": TENANT,
+        "checksum": current_cs,
+        "approval_decision_id": "dec-fixture-current",
+        "artifact_type": "execution_bundle",
+        "metadata": {"strategy_artifact": base},
+    }
+    current["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = current_cs
+
+    tpl_views = _template_entries("qlib_alpha158:KLEN")
+
+    def retrain_owner_call(**kw):
+        if kw.get("service") == "persona":
+            return {
+                "tenant_id": TENANT,
+                "persona_id": PID,
+                "metadata": {"market_scope": {"symbols": ["2883"]}},
+            }
+        if kw.get("service") == "registry" and "/api/registry/alpha-templates" in str(kw.get("url", "")):
+            return tpl_views
+        return env.owner_call(**kw)
+
+    monkeypatch.setattr(env.research, "_retrain_call", retrain_owner_call)
+    monkeypatch.setattr(env.research, "_RETRAIN_DATASET_LOADER", lambda *a, **k: dataset)
+
+    orig_eval_cand = SharedReplicationGate.evaluate_candidate
+
+    def evaluate_with_recorded_backtest(self, request):
+        artifact = request.research_handoff["strategy_artifact"]
+        passing_eval = _governed_passing_evaluation_for_artifact(
+            artifact, dataset, run_id="bt-" + artifact["artifact_id"][-12:]
+        )
+        self.backtest_run_store.record(passing_eval)
+        request.backtest_evaluation = copy.deepcopy(passing_eval)
+        return orig_eval_cand(self, request)
+
+    monkeypatch.setattr(
+        SharedReplicationGate, "evaluate_candidate", evaluate_with_recorded_backtest
+    )
+
+    def registry_reader(rid: str, tenant: str):
+        if rid == "current":
+            return current
+        resp = env.registry_client.get(
+            f"/api/registry/entries/{rid}", headers=env.registry_headers(tenant)
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["entry"]
+
+    pool = PersonaStrategyPoolStore(
+        AtomicJsonRecordStore(tmp_path / "pools.json"),
+        registry_reader=registry_reader,
+        owner_lister=lambda pid, tenant: [],
+    )
+    pool.append(
+        PID,
+        TENANT,
+        AppendPoolVersionRequest(
+            expected_version=0,
+            change_reason="seed",
+            members=[
+                PoolMember(
+                    artifact_ref="current",
+                    checksum=current["checksum"],
+                    stage="active",
+                    risk_weight=0.1,
+                    baseline_ref=current["approval_decision_id"],
+                    joined_at=JOINED,
+                )
+            ],
+        ),
+        actor_id="fixture",
+    )
+
+    policy = load_policy()
+    cur_book = candidate_virtual_book(
+        dataset=dataset,
+        artifact=current["metadata"]["strategy_artifact"],
+        checksum=current["checksum"],
+        policy=policy,
+    )
+    keep = [i for i, d in enumerate(cur_book["dates"]) if d >= JOINED[:10]]
+    books = {
+        "current": {
+            **cur_book,
+            "dates": [cur_book["dates"][i] for i in keep],
+            "returns": [cur_book["returns"][i] for i in keep],
+        }
+    }
+    dates = books["current"]["dates"]
+    observations = [
+        {
+            "date": d,
+            "source_ref": "test:risk-owner",
+            "gross_notional": 20,
+            "gross_limit": 100,
+            "drawdown": 0.01,
+            "drawdown_limit": 0.1,
+        }
+        for d in dates[-20:]
+    ]
+
+    memory, http = [], []
+
+    def transport(method, service, path, tenant, body=None):
+        http.append((method, service, path))
+        assert tenant == TENANT
+        if service == "research":
+            resp = env.research_client.request(
+                method,
+                path,
+                json=body,
+                headers=research_headers,
+            )
+            assert resp.status_code in (200, 201), resp.text
+            if path.endswith("/persona-demands/reconcile"):
+                for t in list(threading.enumerate()):
+                    if t.name.startswith("retrain-executor-"):
+                        t.join(60)
+                        assert not t.is_alive()
+            return resp.json()
+        if service == "registry":
+            if path == "/api/registry/entries/current":
+                return {"entry": current}
+            resp = env.registry_client.request(
+                method, path, json=body, headers=env.registry_headers(tenant)
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()
+        if service == "memory" and method == "POST":
+            memory.append(body)
+            return {"created": True}
+        if service == "memory":
+            return {"entries": [{"content": {"tags": m["tags"]}} for m in memory]}
+        raise AssertionError((method, service, path))
+
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[2] / "training-session"))
+    authority = importlib.import_module("evaluation_authority")
+    monkeypatch.setattr(
+        authority,
+        "load_evaluation_authority",
+        lambda *a, **k: SimpleNamespace(vectorbt_dataset=dataset),
+    )
+    gov_env = {
+        "PERSONA_POOL_CANONICAL_DATASET_PATH": "/governed/dataset.json",
+        "PERSONA_POOL_THRESHOLD_POLICY_PATH": "/governed/policy.json",
+    }
+    consult = FakeConsultationOwner()
+    import services.consultation.client as consultation_client
+
+    monkeypatch.setattr(
+        consultation_client, "ConsultationServiceClient", consult.factory
+    )
+    ports = HttpPoolCyclePorts(
+        transport,
+        pool_store=pool,
+        dataset_loader=governed_dataset_loader(gov_env),
+        env=gov_env,
+    )
+    controller = PersonaCycleController(
+        None,
+        StubOwners(pool, books, observations),
+        store_path=tmp_path / "packets.jsonl",
+        turn_runner=lambda *a: SimpleNamespace(
+            status="error", persona_id=PID, decision="", to_dict=lambda: {}
+        ),
+        pool_cycle=PoolAutonomyCycle(ports),
+    )
+    persona = {
+        "persona_id": PID,
+        "tenant_id": TENANT,
+        "lifecycle_state": "paper_owner",
+        "name": "Pool",
+        "mandate": "Taiwan momentum",
+        "required_data_sources": ["tw-margin-balance"],
+    }
+
+    def day(number: int):
+        return controller.consume_run(
+            persona,
+            "job-1",
+            {
+                "runId": f"run-{number}",
+                "runAtMs": 1794477600000 + number * 86400000,
+                "jobId": "job-1",
+                "status": "ok",
+            },
+        )
+
+    # Day 1: opens the persona research demand.
+    cycle1 = day(1)["pool_autonomy"]
+    assert cycle1["status"] == "completed" and cycle1["decide"]["kind"] == "open_demand", cycle1
+    open_demands = env.research.research_demand_store.list(TENANT, PID, "open")
+    assert len(open_demands) == 1
+    demand_id = open_demands[0]["demand_id"]
+
+    # Day 2: reconcile triggers template search -> gate pass -> registration -> pool cycle sees candidate & decides admit_trial.
+    cycle2 = day(2)["pool_autonomy"]
+    demand_row = env.research.research_demand_store.list(TENANT, PID)[0]
+    attempts = demand_row["discovery"]["template_search"]["attempts"]
+    assert len(attempts) == 1
+    artifact_id, attempt_receipt = next(iter(attempts.items()))
+    assert attempt_receipt["status"] == "admitted"
+    assert attempt_receipt["registration"]["status"] == "approved"
+    assert attempt_receipt["registration"]["demand_ref"] == demand_id
+    assert attempt_receipt["family_trial_count"] == 1
+
+    assert cycle2["decide"]["kind"] == "admit_trial", (cycle2["decide"], cycle2["orient"])
+    assert cycle2["decide"]["candidate_ref"] == artifact_id
+    assert cycle2["act"]["receipts"][0]["status"] == "consultation_opened"
+
+    # Risk officer publishes approving consultation memo; Day 3 admits the registered template candidate as a trial member.
+    persona_ids = [
+        p["persona_id"]
+        for p in next(iter(consult.requests.values()))["metadata"]["panel"]["participants"]
+    ]
+    consult.publish({pid_: "approve" for pid_ in persona_ids})
+    cycle3 = day(3)["pool_autonomy"]
+    receipt3 = cycle3["act"]["receipts"][0]
+    assert receipt3["status"] == "applied", receipt3
+
+    current_pool = pool.current(PID, TENANT)
+    members = {m["artifact_ref"]: m for m in current_pool["members"]}
+    assert artifact_id in members
+    assert members[artifact_id]["stage"] == "trial"
+    assert members[artifact_id]["demand_ref"] == demand_id
+    assert members[artifact_id]["baseline_ref"] == attempt_receipt["baseline_ref"]
+    assert current_pool["decision"]["persona_trial_count"] == 1
+
+    # Day 4: reconcile sees the admitted trial member carrying demand_ref and marks the demand satisfied.
+    day(4)
+    final_demand = env.research.research_demand_store.list(TENANT, PID)[0]
+    assert final_demand["status"] == "satisfied"
+    assert final_demand["satisfied_by"] == artifact_id
+

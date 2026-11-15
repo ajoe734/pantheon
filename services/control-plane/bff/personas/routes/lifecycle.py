@@ -66,9 +66,9 @@ def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
 
     global _POOL_PUBLISH_RECORDS
     if _POOL_PUBLISH_RECORDS is None:
-        from ...persona_pool_publisher import InMemoryPublishRecords
+        from ...persona_pool_publisher import build_publish_records
 
-        _POOL_PUBLISH_RECORDS = InMemoryPublishRecords()
+        _POOL_PUBLISH_RECORDS = build_publish_records()
 
     def fetch(path: str, tenant_id: str) -> Any:
         base = (
@@ -505,6 +505,21 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 exc.reason,
             ) from exc
         return {"data": result, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
+
+    @router.get("/bff/personas/{persona_id}/strategy-pool/publish-history")
+    @request_read_scope()
+    async def bff_get_persona_strategy_pool_publish_history(
+        persona_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """What was published for this persona (durable record); the pool cycle diffs against it."""
+
+        identity = _extract_identity(authorization)
+        tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        _require_read_role(identity)
+        await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
+        history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
+        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
 
     @router.get("/api/v1/personas/{persona_id}/strategy-matches")
     @router.get("/bff/personas/{persona_id}/strategy-matches")

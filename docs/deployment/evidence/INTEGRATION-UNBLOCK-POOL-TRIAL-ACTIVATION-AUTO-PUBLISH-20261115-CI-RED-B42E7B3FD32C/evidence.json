@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-POOL-TRIAL-ACTIVATION-AUTO-PUBLISH-20261115-CI-RED-B42E7B3FD32C",
+  "source_pr": 7385,
+  "root_cause": "Check 'Import smoke deploy-hindsight-Dockerfile' failed at Dockerfile step 6/6 (python /opt/hindsight/models.py package) with urllib URLError [Errno 104] Connection reset by peer while downloading models: a transient network failure, not a code defect.",
+  "fix": "No code change needed. Re-ran failed job via gh run rerun 43689065817 --failed; job 132737218625 passed (3m6s).",
+  "source_pr_status": "Hindsight import smoke green; remaining checks (Smoke acceptance, Research suite) were pending at time of writing and unrelated to the failure."
+}

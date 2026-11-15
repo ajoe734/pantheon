@@ -190,6 +190,8 @@ def test_management_fleet_has_controller_health(cycle_stack):
     assert row["persona_cycle_health"]["last_packet_id"] == "cycle-test"
     assert row["persona_cycle_health"]["status"] == "failed"
     path.unlink()
+    from services.control_plane.bff.personas import service as _ps
+    _ps._persona_fleet_shared_cache_clear()
     response = client.get("/bff/management/persona-fleet", headers=headers())
     row = next(r for r in response.json()["data"]["items"] if r["persona_id"] == PID)
     assert row["persona_cycle_health"]["status"] == "unavailable"
