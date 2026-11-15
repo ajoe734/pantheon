@@ -1,0 +1,22 @@
+{
+  "task_id": "COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114",
+  "change": "deploy/collector/collector_stack/spiders.py: _price_published_at keeps trade_date T06:30:00Z only when <= fetched_at, else uses fetched_at (TWSE and TPEx price spiders)",
+  "recorded_defect": "TWSE bundle 2026-11-11/run-20261111T061605Z: 1376 of 2751 rows had published_at 06:30:00Z after fetched_at 06:16:05Z",
+  "tests": "deploy/collector/tests/test_price_published_not_after_fetch.py covers the early-fetch shape and a normal 14:40 capture, plus admission by hosted readers",
+  "validation": [
+    {
+      "command": "cd deploy/collector && python -m pytest tests/test_price_published_not_after_fetch.py -q",
+      "result": "32 passed"
+    },
+    {
+      "command": "cd deploy/collector && python -m pytest tests -q",
+      "result": "251 passed, 2 skipped"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev",
+      "result": "ran ok: production +12/-2, test +131, evidence +11"
+    }
+  ],
+  "operator_followup": "Deploying this change to the third-site collector host is an operator action and was not performed by the author.",
+  "rebase_reverification": "Merged origin/dev (incl. #7369 PIT flake fix) at a7b00d848; re-ran collector tests on the merged head."
+}

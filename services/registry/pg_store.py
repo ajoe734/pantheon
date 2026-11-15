@@ -22,7 +22,7 @@ import json
 import os
 from typing import Any, Callable, Optional, Sequence
 
-from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore, quote_pg_identifier
 
 from .models import (
     DeploymentStage,
@@ -56,6 +56,9 @@ from .storage import (
     STRATEGY_SUMMARY_ROW_KEYS,
     STRATEGY_SUMMARY_SPEC_KEYS,
     RegistryConcurrentUpdateError,
+    encode_strategy_artifact_page_token,
+    page_strategy_artifact_rows,
+    strategy_artifact_sort_key,
 )
 
 
@@ -108,6 +111,15 @@ def _new_entry(
     )
 
 
+# Ordered execution-bundle catalog page (ARTIFACT-CATALOG-INDEXED-PAGING-20261115). The predicate is
+# literal so the partial index below is provably applicable; ``"C"`` collation matches Python code-point order.
+_ARTIFACT_CATALOG_PRED_SQL = (
+    "jsonb_typeof(payload) = 'object' AND payload ->> 'artifact_type' = 'execution_bundle'"
+)
+_ARTIFACT_CATALOG_CREATED_SQL = "(COALESCE(payload ->> 'created_at', '') COLLATE \"C\")"
+_ARTIFACT_CATALOG_ID_SQL = "(COALESCE(payload ->> 'registry_id', '') COLLATE \"C\")"
+
+
 class PostgresRegistryStore:
     """Durable RegistryEntry owner store with the same call surface as the
     in-memory ``RegistryStore`` test double, so ``RegistryService`` (split_api.py)
@@ -131,6 +143,8 @@ class PostgresRegistryStore:
         self._receipts = PostgresJsonOwnerStore(
             dsn=dsn, table=receipts_table, owner_service="registry-svc", bootstrap=bootstrap,
         )
+        if bootstrap:
+            self._ensure_artifact_catalog_indexes()
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: list[str] = []
 
@@ -884,6 +898,102 @@ class PostgresRegistryStore:
                 strategy_artifact_select_sql(), visible_sql=visible_sql, keep_params=params,
             )
         )
+
+    def _ensure_artifact_catalog_indexes(self) -> None:
+        """Forward-only, additive indexes for the ordered catalog page.
+
+        ``CREATE INDEX IF NOT EXISTS`` changes no row, column or constraint, so
+        the previous release keeps reading and writing the same table unchanged.
+        """
+        table = self._entries.table
+        base = self._entries.table_name.split(".")[-1][:40]
+        stmts = (
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_artifact_catalog_idx')} "
+            f"ON {table} ({_ARTIFACT_CATALOG_CREATED_SQL} DESC, {_ARTIFACT_CATALOG_ID_SQL} DESC) "
+            f"WHERE {_ARTIFACT_CATALOG_PRED_SQL}",
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_legacy_str_payload_idx')} "
+            f"ON {table} ((jsonb_typeof(payload))) WHERE jsonb_typeof(payload) = 'string'",
+        )
+        with self._entries._connect() as conn:
+            for stmt in stmts:
+                try:
+                    conn.execute(stmt)
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                        raise
+                    if hasattr(conn, "rollback"):
+                        conn.rollback()
+
+    def list_strategy_artifact_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_state: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        limit: int,
+        cursor: Optional[tuple[str, tuple]] = None,
+    ) -> tuple[list[dict], int, Optional[str]]:
+        """One bounded ordered catalog page read in Postgres: ``(items, exact_total, next_page_token)``.
+
+        Rows come back as ``(created_at, registry_id)`` descending and are cut at
+        ``limit + 1`` in SQL; the total is a separate ``count(*)`` over the same
+        predicate, so rows fetched per page do not depend on the population.
+        Legacy JSON-string payload rows (not indexable) route to the unbounded
+        path so the item set is unchanged.
+        """
+        entries = self._entries
+        if not hasattr(entries, "_use_conn") or self._has_legacy_string_payloads():
+            return page_strategy_artifact_rows(
+                self.list_strategy_artifact_rows(visible_tenants=visible_tenants),
+                artifact_state=artifact_state, strategy_id=strategy_id, limit=limit, cursor=cursor,
+            )
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, None)
+        where = [_ARTIFACT_CATALOG_PRED_SQL, f"({visible_sql})"]
+        args: list[Any] = list(params)
+        if artifact_state is not None:
+            where.append("payload ->> 'artifact_state' = %s")
+            args.append(artifact_state)
+        if strategy_id is not None:
+            where.append("payload ->> 'strategy_id' = %s")
+            args.append(strategy_id)
+        base_where = " AND ".join(where)
+        page_where, page_args = base_where, list(args)
+        offset_sql = ""
+        if cursor is not None:
+            kind, value = cursor
+            if kind == "after":
+                page_where += f" AND ({_ARTIFACT_CATALOG_CREATED_SQL}, {_ARTIFACT_CATALOG_ID_SQL}) < (%s::text, %s::text)"
+                page_args += [value[0], value[1]]
+            else:
+                offset_sql = " OFFSET %s"
+                page_args.append(int(value[0]))
+        page_sql = (
+            f"SELECT {strategy_artifact_select_sql()} FROM {entries.table} WHERE {page_where} "
+            f"ORDER BY {_ARTIFACT_CATALOG_CREATED_SQL} DESC, {_ARTIFACT_CATALOG_ID_SQL} DESC "
+            f"LIMIT {int(limit) + 1}{offset_sql}"
+        )
+        count_sql = f"SELECT count(*) FROM {entries.table} WHERE {base_where}"
+        with entries._use_conn(None) as conn:
+            cur = conn.execute(page_sql, tuple(page_args))
+            raw = [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+            cur = conn.execute(count_sql, tuple(args))
+            first = cur.fetchone()
+        total = int((first[0] if not isinstance(first, dict) else next(iter(first.values()))) if first else 0)
+        rows = strategy_artifact_rows_from_columns(raw)
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        token = (
+            encode_strategy_artifact_page_token(strategy_artifact_sort_key(items[-1]))
+            if has_more and items else None
+        )
+        return items, total, token
+
+    def _has_legacy_string_payloads(self) -> bool:
+        with self._entries._use_conn(None) as conn:
+            cur = conn.execute(
+                f"SELECT 1 FROM {self._entries.table} WHERE jsonb_typeof(payload) = 'string' LIMIT 1"
+            )
+            return cur.fetchone() is not None
 
     def list_strategy_spec_summary_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",

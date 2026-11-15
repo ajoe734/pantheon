@@ -850,6 +850,16 @@ class TwseT86DailySpider:
         return items
 
 
+def _price_published_at(trade_date: str, fetched_iso: str) -> str:
+    """Bound the conventional 14:30 Taipei label by the actual observation."""
+    conventional = f"{trade_date}T06:30:00Z"
+    fetched = datetime.fromisoformat(fetched_iso.replace("Z", "+00:00"))
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=timezone.utc)
+    published = datetime.fromisoformat(conventional.replace("Z", "+00:00"))
+    return conventional if published <= fetched else fetched_iso
+
+
 class TwseDailyPriceHistorySpider:
     """Scrapling HTTP spider for TWSE daily price history using per-date all-stock MI_INDEX pages (SD §5.1, O-1)."""
 
@@ -1075,7 +1085,7 @@ class TwseDailyPriceHistorySpider:
                             item_id=item_id,
                             url=target_url,
                             fetched_at=fetched_iso,
-                            published_at=f"{trade_date}T06:30:00Z",
+                            published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TWSE MI_INDEX {symbol} {security_name} ({trade_date}): "
                                 f"close={close_price}, volume_shares={volume_shares}"
@@ -1523,7 +1533,7 @@ class TpexDailyPriceHistorySpider:
                             item_id=item_id,
                             url=target_url,
                             fetched_at=fetched_iso,
-                            published_at=f"{trade_date}T06:30:00Z",
+                            published_at=_price_published_at(trade_date, fetched_iso),
                             text=(
                                 f"TPEx dailyQuotes {symbol} {security_name} ({trade_date}): "
                                 f"close={close_price}, volume_shares={volume_shares}"

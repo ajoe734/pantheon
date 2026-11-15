@@ -52,9 +52,9 @@ def test_fixed_product_profiles_are_tenant_scoped_short_lived_and_separate():
         assert claims["allowed_tenants"] == ["tenant-dev"]
         assert claims["exp"] - claims["iat"] == TTL_SECONDS
         assert claims["scope"] == scope
-        # RESEARCH_BFF_SERVICE_TOKEN is the operator-approved (2026-11-11) operator-role principal.
+        # RESEARCH_BFF_SERVICE_TOKEN and PERSONA_ALLOCATION_TOKEN are the operator-role paper BFF principals.
         blocked = {"admin", "risk_owner", "operator", "approval_reader", "automated_gate", "runtime", "capital"}
-        if variable == "RESEARCH_BFF_SERVICE_TOKEN":
+        if variable in {"RESEARCH_BFF_SERVICE_TOKEN", "PERSONA_ALLOCATION_TOKEN"}:
             blocked.discard("operator")
         assert not blocked.intersection(claims["roles"])
         ids.add(claims["jti"])
@@ -102,12 +102,12 @@ def test_readers_do_not_have_product_write_roles(variable):
     assert context.actor_id == READERS[variable][0]
     with pytest.raises(AuthError) as rejected:
         validate_request_auth(authorization="Bearer " + token, mfa_header=None,
-                              required_roles=("automated_gate", "admin", "operator"),
+                              required_roles=("automated_gate", "admin", "operator", "registry-writer", "approval_decider"),
                               mfa_required=False, env=env)
     assert rejected.value.status_code == 403
 
 
-@pytest.mark.parametrize("variable", [v for v in WRITERS if v != "RESEARCH_BFF_SERVICE_TOKEN"])
+@pytest.mark.parametrize("variable", [v for v in WRITERS if v not in {"RESEARCH_BFF_SERVICE_TOKEN", "PERSONA_ALLOCATION_TOKEN"}])
 def test_writers_do_not_have_admin_operator_or_approval_roles(variable):
     token = issue_environment(configured())[variable]
     env = {
@@ -358,14 +358,22 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
 
 
 def test_persona_evaluator_bff_reader_has_viewer_and_registry_read_only():
-    variable = "PERSONA_EVALUATOR_BFF_TOKEN"
-    claims = verify(issue_environment(configured(), now=NOW)[variable])
-    assert claims["sub"] == claims["service"] == "pantheon-dev-persona-evaluator-bff-reader"
-    assert claims["roles"] == ["viewer", "registry-reader"]
-    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
-    assert claims["scope"] == "pantheon:dev-owner-read"
-    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
-    assert not {"admin", "operator", "registry-writer", "capital", "runtime", "automated_gate"}.intersection(claims["roles"])
+    values = issue_environment(configured(), now=NOW)
+    for variable in ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_RANKING_TOKEN"):
+        claims = verify(values[variable])
+        assert claims["sub"] == claims["service"] == "pantheon-dev-persona-evaluator-bff-reader"
+        assert claims["roles"] == ["viewer", "registry-reader"]
+        assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+        assert claims["scope"] == "pantheon:dev-owner-read"
+        assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+        assert not {"admin", "operator", "registry-writer", "capital", "runtime", "automated_gate", "approval_decider"}.intersection(claims["roles"])
+    alloc_claims = verify(values["PERSONA_ALLOCATION_TOKEN"])
+    assert alloc_claims["sub"] == alloc_claims["service"] == "pantheon-dev-persona-evaluator-allocation"
+    assert alloc_claims["azp"] == "control-plane-bff"
+    assert alloc_claims["roles"] == ["operator"]
+    assert alloc_claims["scope"] == "pantheon:dev-owner-write"
+    assert alloc_claims["tenant_id"] == "tenant-dev" and alloc_claims["allowed_tenants"] == ["tenant-dev"]
+    assert not {"admin", "registry-writer", "capital", "runtime", "automated_gate", "approval_decider"}.intersection(alloc_claims["roles"])
 
 
 def test_evolution_owner_read_principals_are_reader_only_and_file_delivered():
@@ -454,3 +462,46 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     assert "dev-paper-research-tokens" in compose["volumes"]
     training_env = compose["services"]["training-session-svc"]["environment"]
     assert "research-orchestrator" in training_env["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"].split(":-", 1)[1].rstrip("}").split(",")
+
+
+def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_mounted():
+    values = issue_environment(configured(), now=NOW)
+    expected_persona_files = {
+        "PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_SOURCE_READ_TOKEN",
+        "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_SERVICE_TOKEN",
+        "LESSON_RULE_PROPOSER_TOKEN",
+        "PERSONA_SEARCH_SERVICE_TOKEN",
+    }
+    assert set(CONSUMER_FILES["persona"]) == expected_persona_files
+    jti_by_var = {}
+    for var in expected_persona_files:
+        claims = verify(values[var])
+        assert claims["tenant_id"] == "tenant-dev"
+        assert claims["allowed_tenants"] == ["tenant-dev"]
+        assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+        assert values[var + "_FILE"] == f"/run/pantheon-principals/{var}"
+        jti_by_var[var] = claims["jti"]
+    # No credential is shared across owners (5 JWT owner principals + static evolution & consultation service tokens).
+    assert len(set(jti_by_var.values())) == len(expected_persona_files)
+    assert values["EVOLUTION_AUTH_TOKEN"] == "pantheon-local-evolution-service"
+    assert values["CONSULTATION_SERVICE_TOKEN"] == "pantheon-local-consultation-service"
+    assert values["EVOLUTION_AUTH_TOKEN"] != values["CONSULTATION_SERVICE_TOKEN"]
+
+    search_claims = verify(values["PERSONA_SEARCH_SERVICE_TOKEN"])
+    assert search_claims["sub"] == "persona_cycle_controller"
+    assert search_claims["roles"] == ["researcher", "persona_session"]
+    assert search_claims["access_scopes"] == ["operator", "research", "public"]
+
+    memory_claims = verify(values["PERSONA_MEMORY_SERVICE_TOKEN"])
+    assert memory_claims["sub"] == "persona_cycle_controller"
+    assert memory_claims["roles"] == ["persona_session"]
+    assert memory_claims["scope"] == "pantheon:dev-owner-write"
+
+    proposer_claims = verify(values["LESSON_RULE_PROPOSER_TOKEN"])
+    assert proposer_claims["sub"] == "persona-svc"
+    assert proposer_claims["roles"] == ["approval_proposer"]
+    assert proposer_claims["scope"] == "pantheon:dev-owner-write"
+
