@@ -8,8 +8,11 @@ rebuildable index that only this module talks to:
 * mirror failures are retried, recorded with a reason and never raise into the
   canonical write path;
 * ``rebuild`` drops each bank and re-retains every active canonical entry;
-* recall / reflect return canonical ids only; the route hydrates and authorises
-  every id from the canonical stores before anything is returned.
+* recall returns canonical ids only; the route hydrates and authorises every id
+  from the canonical stores before anything is returned;
+* with the LLM layers enabled (the OpenClaw bridge is configured) each bank is
+  switched to verbatim retain and background consolidation before its first retain.
+  Standing questions (mental models) live in ``mental_models.py``.
 
 No agent holds the Hindsight key and there is no write path other than the
 mirror.  No synthetic data is created here.
@@ -33,7 +36,7 @@ _LOG = logging.getLogger(__name__)
 
 URL_ENV = "PANTHEON_MEMORY_HINDSIGHT_URL"
 KEY_ENV = "PANTHEON_MEMORY_HINDSIGHT_API_KEY"
-REFLECT_ENV = "PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED"
+LLM_LAYERS_ENV = "PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED"
 
 MIRROR_ATTEMPTS = 3
 MIRROR_BACKOFF_SECONDS = 0.5
@@ -277,12 +280,37 @@ class HindsightClient:
 
     def delete_bank(self, bank: str) -> None:
         self._call("DELETE", self._bank(bank), ok_missing=True)
+        forget_layers(bank)
 
     def recall(self, bank: str, body: dict) -> dict:
         return self._call("POST", self._bank(bank) + "/memories/recall", body) or {}
 
-    def reflect(self, bank: str, body: dict) -> dict:
-        return self._call("POST", self._bank(bank) + "/reflect", body) or {}
+    def memory_unit(self, bank: str, unit_id: str) -> Optional[dict]:
+        return self._call("GET", f"{self._bank(bank)}/memories/{urllib.parse.quote(unit_id, safe='')}", ok_missing=True)
+
+    def configure_bank(self, bank: str, updates: dict) -> None:
+        self._call("PATCH", self._bank(bank) + "/config", {"updates": updates})
+
+    def list_mental_models(self, bank: str, *, detail: str = "full") -> List[dict]:
+        found: List[dict] = []
+        offset = 0
+        while True:
+            query = urllib.parse.urlencode({"detail": detail, "limit": 100, "offset": offset})
+            page = self._call("GET", self._bank(bank) + "/mental-models?" + query, ok_missing=True) or {}
+            items = page.get("items") or []
+            found.extend(items)
+            if len(items) < 100:
+                return found
+            offset += len(items)
+
+    def create_mental_model(self, bank: str, body: dict) -> Any:
+        return self._call("POST", self._bank(bank) + "/mental-models", body)
+
+    def update_mental_model(self, bank: str, model_id: str, body: dict) -> Any:
+        return self._call("PATCH", f"{self._bank(bank)}/mental-models/{urllib.parse.quote(model_id, safe='')}", body)
+
+    def delete_mental_model(self, bank: str, model_id: str) -> None:
+        self._call("DELETE", f"{self._bank(bank)}/mental-models/{urllib.parse.quote(model_id, safe='')}", ok_missing=True)
 
 
 def hindsight_client_from_env() -> Optional[HindsightClient]:
@@ -311,13 +339,41 @@ def get_hindsight_client() -> Optional[HindsightClient]:
     return hindsight_client_from_env()
 
 
-def reflect_configured() -> bool:
-    return os.getenv(REFLECT_ENV, "").strip().lower() in {"1", "true", "yes"}
+def llm_layers_enabled() -> bool:
+    return os.getenv(LLM_LAYERS_ENV, "").strip().lower() in {"1", "true", "yes"}
 
 
 def llm_layers() -> str:
-    """H5: ``disabled`` until the operator enables the LLM layers (reflect flag)."""
-    return "enabled" if reflect_configured() else "disabled"
+    """H5: ``disabled`` until the OpenClaw bridge is configured (deploy sets the flag with it)."""
+    return "enabled" if llm_layers_enabled() else "disabled"
+
+
+# Per-bank switches applied before the first retain when the LLM layers are enabled.
+# Unset, nothing is sent and Hindsight keeps its deployed chunks mode.
+LAYER_BANK_CONFIG = {"retain_extraction_mode": "verbatim", "enable_auto_consolidation": True}
+_LAYERED_BANKS: set = set()
+_LAYER_LOCK = threading.Lock()
+
+
+def ensure_layers(client: Any, bank: str) -> None:
+    """Apply verbatim retain + background consolidation to ``bank`` once per process.
+
+    Raises ``HindsightError`` on failure so the caller's retry/record path handles it;
+    a bridge refusal never reaches here (it only defers Hindsight's own background work).
+    """
+    if not llm_layers_enabled():
+        return
+    with _LAYER_LOCK:
+        if (id(client), bank) in _LAYERED_BANKS:
+            return
+        client.configure_bank(bank, dict(LAYER_BANK_CONFIG))
+        _LAYERED_BANKS.add((id(client), bank))
+
+
+def forget_layers(bank: str) -> None:
+    with _LAYER_LOCK:
+        for key in [k for k in _LAYERED_BANKS if k[1] == bank]:
+            _LAYERED_BANKS.discard(key)
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +441,7 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
             try:
                 if action == "retain":
                     item = retain_item(entry)
+                    ensure_layers(client, bank)
                     client.retain(bank, [item])
                     DIAGNOSTICS.record("retained")
                     if item["tags"][0] == ANCHOR_NONE_TAG:
@@ -618,6 +675,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
             for bank, entries in sorted(by_bank.items()):
                 try:
                     resolved_client.delete_bank(bank)
+                    forget_layers(bank)
                 except HindsightError as exc:
                     report["failures"].append({"bank": bank, "reason": exc.reason})
                     continue
@@ -629,6 +687,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
                 for entry in entries:
                     item = retain_item(entry)
                     try:
+                        ensure_layers(resolved_client, bank)
                         resolved_client.retain(bank, [item])
                     except HindsightError as exc:
                         report["failures"].append({"bank": bank, "entry_id": canonical_id(entry), "reason": exc.reason})
@@ -657,7 +716,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
 
 
 # ---------------------------------------------------------------------------
-# Recall / reflect helpers (H6, H9)
+# Recall helpers (H6)
 # ---------------------------------------------------------------------------
 
 def tag_groups(*, subject_anchors: Iterable[str] = (), scope_tags: Iterable[str] = (),
@@ -707,7 +766,7 @@ def recall_canonical_ids(client: Any, bank: str, *, query: str, groups: List[dic
 
 
 def reflect_citations(response: dict) -> List[str]:
-    """Canonical ids cited by a reflect response (``based_on`` memories)."""
+    """Canonical ids cited by a reflect-shaped payload (``based_on`` memories)."""
     based_on = response.get("based_on") or {}
     ids: Dict[str, None] = {}
     for fact in based_on.get("memories") or []:
