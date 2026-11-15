@@ -1,0 +1,16 @@
+{
+  "task_id": "L2-EXTRACTION-DEPLOY-SWITCH-20261115",
+  "changes": [
+    ".github/workflows/nonprod-deploy.yml: DEV_L2_EXTRACTION_ENABLED (default 'false'), DEV_L2_EXTRACTION_DAILY_CALL_CAP (default '400')",
+    "scripts/deploy_nonprod_vm.sh: defaults, PANTHEON_DEV_* remote pass-through, compose env PANTHEON_L2_EXTRACTION_ENABLED/DAILY_CALL_CAP, pre-change validation (true|false; ^[1-9][0-9]*$)",
+    "docker-compose.yml unchanged (defaults 0 / 400 preserved)"
+  ],
+  "note": "The compose service reading the variables is strategy-distillation-worker (services/source_ingestion package); it is the only service that declares them.",
+  "commands": [
+    {"cmd": "bash -n scripts/deploy_nonprod_vm.sh", "result": "ok"},
+    {"cmd": "python -c yaml.safe_load nonprod-deploy.yml", "result": "ok"},
+    {"cmd": "pytest -q scripts/test_l2_extraction_deploy_switch_contract.py", "result": "5 passed"},
+    {"cmd": "pytest -q scripts/test_persona_cycle_owner_ports_compose_contract.py", "result": "6 passed"}
+  ],
+  "credentials_included": false
+}

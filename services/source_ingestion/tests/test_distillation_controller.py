@@ -1308,3 +1308,15 @@ def test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row
 
 
 
+
+
+def test_card_dataset_binding_from_env_is_reference_only_and_fail_closed() -> None:
+    from services.source_ingestion.distillation_controller import card_dataset_binding_from_env
+
+    assert card_dataset_binding_from_env({}) is None
+    assert card_dataset_binding_from_env({"PANTHEON_L2_CARD_DATASET_ID": "dataset:x"}) is None  # no symbols
+    binding = card_dataset_binding_from_env(
+        {"PERSONA_POOL_SOURCE_DATASET_ID": "dataset:x", "PANTHEON_L2_CARD_SYMBOLS": "2330.TW, 2317.TW"})
+    assert binding == {"dataset_id": "dataset:x", "source_dataset_refs": ["dataset:x"],
+                       "symbols": ["2330.TW", "2317.TW"], "bar_frequency": "1d"}
+    assert "records" not in binding

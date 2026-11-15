@@ -1827,3 +1827,142 @@ def test_capped_history_maps_only_verified_window_and_retains_partial_cursor(tmp
     second = adapter.pull(cursor=first.next_cursor)
     assert len(mapped) == 2*cap and second.next_cursor.endswith("|items=2000")
     assert {r.source_id for r in first.records}.isdisjoint(r.source_id for r in second.records)
+
+
+# REGIME-DATA-INDEX-BREADTH-INTAKE-20261114: real collector bundles -> production pull -> governed datasets ----------
+_REGIME_SOURCES = ("collector-tw-twse-index-breadth", "collector-tw-twse-taiex-history")
+
+
+def regime_collector_files(tmp_path: Path) -> dict[str, bytes]:
+    """Run the real collector spiders over the recorded official TWSE responses; return the bundle tree."""
+    import sys
+
+    repo = Path(__file__).resolve().parents[3]
+    fixtures = repo / "deploy/collector/tests/fixtures"
+    sys.path.insert(0, str(repo / "deploy/collector"))
+    try:
+        from collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
+        from collector_stack.fetchers import FixtureTransport
+        from collector_stack.privacy import AuthorHasher
+        from collector_stack.runner import CollectorRunner
+        from collector_stack.spiders import TwseIndexBreadthSpider, TwseTaiexHistorySpider
+    finally:
+        sys.path.remove(str(repo / "deploy/collector"))
+    transport = FixtureTransport()
+    transport.register(TwseIndexBreadthSpider.build_date_url("2026-11-10"),
+                       (fixtures / "twse_mi_index_full_20261110.json").read_bytes())
+    transport.register(TwseTaiexHistorySpider.build_date_url("2012-01"),
+                       (fixtures / "twse_mi_5mins_hist_201201.json").read_bytes())
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    salt = tmp_path / "salt"
+    salt.write_bytes(b"regime-intake-test-salt-0123456789abcdef-0123456789")
+    root = tmp_path / "collector_root"
+    runner = CollectorRunner(load_collector_config(DEFAULT_POLICY_PATH, env={}), root_dir=root,
+                             hasher=AuthorHasher.from_file(salt), transport=transport)
+    assert runner.run_source("collector-tw-twse-index-breadth", run_id="close-2026-11-10",
+                             collect_kwargs={"dates": ["2026-11-10"]}).status == "complete"
+    assert runner.run_source("collector-tw-twse-taiex-history", run_id="backfill-2012-01",
+                             collect_kwargs={"dates": ["2012-01"]}).status == "complete"
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def pull_regime_records(files: dict[str, bytes], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_id: str):
+    """Production pull entry point (execute_provider_owned_adapter) over a collector bundle tree."""
+    from services.source_ingestion.connector_definitions import collector_host
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    class _Transport(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _Transport())
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    definition = get_connector_definition(source_id)
+    config = {"source_id": source_id, "source_type": "market", "dataset": definition.datasets[0],
+              "attribution_required": True, "max_records": 200}
+    adapter = CollectorBundleAdapter(connector_id=source_id, **config)
+    return adapter, execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={"adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN, "adapter_config": {**config, "host": collector_host()},
+               "request": {}, "max_records": 200},
+        trace_id="regime-intake",
+    )
+
+
+def test_regime_sources_are_registered_definitions_and_admitted():
+    desired = json.loads((Path(__file__).resolve().parents[1] / "default_desired_state.json").read_text())
+    admitted = {(r["dataset"], c) for p in desired["personas"] for r in p["required_data_sources"]
+                for c in r["connector_candidates"]}
+    for source_id in _REGIME_SOURCES:
+        definition = get_connector_definition(source_id)
+        assert definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+        assert definition.datasets[0] == "tw_index_daily"
+        assert definition.metadata["collector"]["source_id"] == source_id
+        assert ("tw_index_daily", source_id) in admitted
+    # One connector can prove one persona requirement; the breadth dataset rides the index-breadth connector.
+    assert "tw_market_breadth_daily" in get_connector_definition(_REGIME_SOURCES[0]).datasets
+    assert not set(_REGIME_SOURCES) & set(desired["collector_ingestion_exclusions"])
+
+
+def test_production_pull_of_real_collector_bundles_stores_index_and_breadth_datasets(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter, measure_stored_history_depth
+
+    files = regime_collector_files(tmp_path / "real")
+    _, index_records = pull_regime_records(files, tmp_path, monkeypatch, "collector-tw-twse-index-breadth")
+    _, history_records = pull_regime_records(files, tmp_path, monkeypatch, "collector-tw-twse-taiex-history")
+
+    by_dataset: dict[str, list] = {}
+    for record in (*index_records, *history_records):
+        by_dataset.setdefault(record.metadata["dataset"], []).append(record)
+    assert {k: len(v) for k, v in by_dataset.items()} == {"tw_index_daily": 56 + 15, "tw_market_breadth_daily": 1}
+
+    taiex = next(r for r in index_records if r.metadata["normalized_row"]["series_id"] == "發行量加權股價指數")
+    row = taiex.metadata["normalized_row"]
+    assert (row["close"], row["date"], row["change_points"], row["change_percent"]) == (42711.92, "2026-11-10", 1050.22, 2.52)
+    assert "open" not in row  # not in the MI_INDEX table; never filled in
+    assert all(r.metadata["normalized_row"]["close"] > 0 and r.metadata["normalized_row"]["series_id"]
+               for r in by_dataset["tw_index_daily"])
+
+    # The 2012 monthly history is in the same dataset, with open/high/low, and keeps the source's own values.
+    history = {r.metadata["normalized_row"]["date"]: r.metadata["normalized_row"] for r in history_records}
+    assert min(history) == "2012-01-02" and len(history) == 15
+    first = history["2012-01-02"]
+    assert (first["open"], first["high"], first["low"], first["close"]) == (7071.35, 7073.48, 6948.67, 6952.21)
+    assert first["dataset"] == "tw_index_daily" and first["source_collector_dataset"] == "tw_index_ohlc_daily"
+    assert first["source_dataset"] == "MI_5MINS_HIST"
+
+    breadth = by_dataset["tw_market_breadth_daily"][0].metadata["normalized_row"]
+    for group in ("whole_market", "stocks"):
+        for key, value in breadth[group].items():
+            assert breadth[f"{group}_{key}"] == value  # flat catalogue field equals the source count
+    assert breadth["whole_market_advancers"] >= breadth["whole_market_limit_up"]
+
+    store = tmp_path / "store"
+    for source_id, records in (("collector-tw-twse-index-breadth", index_records),
+                               ("collector-tw-twse-taiex-history", history_records)):
+        adapter, _ = pull_regime_records(files, tmp_path, monkeypatch, source_id)
+        MarketDataStorageWriter(store).write_run(
+            result=SimpleNamespace(records=list(records), run=SimpleNamespace(ingest_run_id=f"run-{source_id}")),
+            connector=adapter.connector())
+    assert not (store / "normalized" / "tw_price_daily").exists()
+    depth = measure_stored_history_depth(store)["datasets"]
+    assert depth["tw_index_daily"]["first_event_date"] == "2012-01-02"
+    assert depth["tw_index_daily"]["last_event_date"] == "2026-11-10"
+    assert depth["tw_index_daily"]["entity_count"] >= 56
+    assert depth["tw_market_breadth_daily"]["row_count"] == 1
+    assert depth["tw_price_daily"]["row_count"] == 0
+
+
+def test_regime_rows_fail_closed_on_missing_key_close_or_breadth_counts():
+    mapper = CollectorBundleAdapter._regime_market_row
+    good = {"dataset": "tw_index_daily", "trade_date": "2026-11-10", "index_name": "X", "close": 1.0}
+    assert mapper("i", good, {})["series_id"] == "X"
+    for bad in ({**good, "index_name": ""}, {**good, "close": None}, {**good, "close": 0}, {**good, "trade_date": ""}):
+        with pytest.raises(SourceEvidenceError):
+            mapper("i", bad, {})
+    breadth = {"dataset": "tw_market_breadth_daily", "trade_date": "2026-11-10",
+               "whole_market": {"advancers": 1}, "stocks": {}}
+    with pytest.raises(SourceEvidenceError):
+        mapper("i", breadth, {})

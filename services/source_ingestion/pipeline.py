@@ -553,7 +553,8 @@ def persist_latest_market_snapshots(
     # SD_INTRADAY_MINUTE_BARS §4/§6: tw_price_1m never enters the daily latest-close
     # projection (a minute close would masquerade as the day's close). Permanent
     # exclusion; K4's reconciled-only projection is a separate frequency-keyed writer.
-    records = [record for record in result.records if not is_minute_bar_record(record)]
+    records = [record for record in result.records
+               if not is_minute_bar_record(record) and not is_index_breadth_record(record)]
     excluded = len(result.records) - len(records)
     if connector is not None and _connector_declares_minute_dataset(connector):
         records, excluded = [], len(result.records)
@@ -566,6 +567,27 @@ def persist_latest_market_snapshots(
     if excluded:
         projected = {**projected, "excluded_minute_record_count": excluded}
     return projected
+
+
+# REGIME-DATA-INDEX-BREADTH-INTAKE: index closes and market breadth are not per-symbol
+# stock closes, so they never enter the latest-close snapshot projection.
+INDEX_BREADTH_DATASETS = frozenset({"tw_index_daily", "tw_index_ohlc_daily", "tw_market_breadth_daily"})
+INDEX_BREADTH_CONNECTOR_IDS = frozenset({"collector-tw-twse-index-breadth", "collector-tw-twse-taiex-history"})
+
+
+def is_index_breadth_record(record: Any) -> bool:
+    """True for any record that belongs to the index or market breadth datasets."""
+    if getattr(record, "connector_id", None) in INDEX_BREADTH_CONNECTOR_IDS:
+        return True
+    metadata = getattr(record, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    normalized = metadata.get("normalized_row")
+    candidates = [metadata.get("dataset"), metadata.get("normalized_target"), metadata.get("normalized_dataset"),
+                  metadata.get("storage_dataset")]
+    if isinstance(normalized, Mapping):
+        candidates.append(normalized.get("dataset"))
+    return bool(INDEX_BREADTH_DATASETS & {str(c) for c in candidates if c})
 
 
 MINUTE_BAR_DATASET = "tw_price_1m"
