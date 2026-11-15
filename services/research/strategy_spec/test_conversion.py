@@ -359,3 +359,69 @@ def test_caller_metadata_cannot_rewrite_the_seed_recipe(override) -> None:
 def test_hold_hold_zero_quantity_recipe_is_rejected() -> None:
     with pytest.raises(StrategySpecConversionError, match="order_quantity must be positive"):
         _convert_with_recipe(_recipe(positive_action="HOLD", non_positive_action="HOLD", order_quantity=0))
+
+
+# --- HYPOTHESIS-CARD-GATE-CANDIDATE-20261115 ---------------------------------
+
+
+def _card_seed(card: dict):
+    from services.source_ingestion.strategy_seed_builder import StrategySpecSeedBuilder
+
+    seed = StrategySpecSeedBuilder().build_seed(
+        _bundle(), source_records=[_paper_source()], evidence_items=[_paper_item()], created_by="test"
+    )
+    return seed.__class__.from_dict({**seed.to_dict(), "metadata": {**seed.metadata, "hypothesis_card": card}})
+
+
+def _rule() -> dict:
+    return {
+        "strategy_logic": {
+            "kind": "factor_rule_v1",
+            "inputs": [{"name": "x", "dataset": "tw_price_daily", "field": "close", "availability_lag_days": 0}],
+            "signal": {"op": "ts_zscore", "args": [{"ref": "x"}, {"const_param": "w"}]},
+            "entry": {"long_when": {"op": "gt", "args": [{"ref": "signal"}, {"const_param": "z"}]}, "short_when": None},
+            "exit": {"max_holding_bars": {"const_param": "h"}, "flat_when": None},
+            "strength": {"op": "clip01", "args": [{"op": "abs", "args": [{"ref": "signal"}]}]},
+        },
+        "parameters": {"w": 4, "z": 0.8, "h": 3},
+        "mutation_surface": {"controls": [
+            {"parameter_key": k, "value_type": t, "current_value": v,
+             "allowed_range": {"min": lo, "max": hi}, "step": 0.1 if k == "z" else 1}
+            for k, t, v, lo, hi in (("w", "integer", 4, 2, 24), ("z", "number", 0.8, 0.2, 3.0), ("h", "integer", 3, 1, 20))
+        ], "immutable_parameters": []},
+    }
+
+
+_BINDING = {"dataset_id": "dataset:tw-governed-daily-v1", "symbols": ["2330.TW"],
+            "source_dataset_refs": ["dataset:twse-daily-ohlcv-v1"], "bar_frequency": "1d"}
+_CARD = {"claim": "c", "predictions": [{"statement": "s", "observable": {"dataset": "d", "field": "f"}}]}
+
+
+def test_card_with_compiled_rule_binds_artifact_dataset_and_predictions() -> None:
+    from services.research.strategy_spec.conversion import StrategySpecConversionService
+
+    seed = _card_seed({**_CARD, "factor_rule_v1": _rule()})
+    result = StrategySpecConversionService(dataset_binding=_BINDING).convert_seed(seed, source_records=[_paper_source()],
+                                                                                  evidence_items=[_paper_item()])
+    spec = result.strategy_spec.to_dict()
+    meta = spec["metadata"]
+    assert meta["card_wiring"] == {"status": "gate_ready", "reason": "compiled_rule_bound"}
+    assert meta["hypothesis_predictions"] == _CARD["predictions"]
+    assert meta["strategy_artifact"]["strategy_id"] == spec["strategy_id"]
+    assert spec["data_dependencies"][0] == {"ref": _BINDING["dataset_id"], "kind": "dataset"}
+    assert result.registry_payload["strategy_spec"]["metadata"]["strategy_artifact_checksum"].startswith("sha256:")
+
+
+@pytest.mark.parametrize("card,binding,reason", [
+    (_CARD, _BINDING, "no_compiled_rule"),
+    ({**_CARD, "factor_rule_v1": _rule()}, None, "governed_dataset_binding_unavailable"),
+])
+def test_card_without_rule_or_binding_stays_research_only_draft_with_reason(card, binding, reason) -> None:
+    from services.research.strategy_spec.conversion import StrategySpecConversionService
+
+    result = StrategySpecConversionService(dataset_binding=binding).convert_seed(
+        _card_seed(card), source_records=[_paper_source()], evidence_items=[_paper_item()])
+    meta = result.strategy_spec.to_dict()["metadata"]
+    assert meta["card_wiring"] == {"status": "research_only_draft", "reason": reason}
+    assert "strategy_artifact" not in meta and "backtest_dataset" not in meta
+    assert meta["hypothesis_card"]["claim"] == "c"

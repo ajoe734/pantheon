@@ -184,3 +184,26 @@ def test_reviewed_admission_executes_and_creates_terminal_run(tmp_path: Path) ->
     assert result["reconcile"]["enqueued_new"] == 1
     assert result["reconcile"]["processed"] == 1
     assert len(authority.runs) == 1
+
+
+# --- HYPOTHESIS-CARD-GATE-CANDIDATE-20261115 ---------------------------------
+
+
+def test_card_admission_owner_refuses_unwired_spec_and_same_principals(tmp_path) -> None:
+    from services.research.alpha_replication.admission import CardAdmissionError, CardSpecAdmissionOwner
+    from services.research.candidate_registration import TemplateCandidateRegistrar
+
+    store = ReplicationAdmissionStore(tmp_path)
+    calls: list = []
+    reg = TemplateCandidateRegistrar(data_dir=tmp_path, owner_call=lambda **kw: calls.append(kw),
+                                     proposer_id="proposer", gate_id="gate")
+    owner = CardSpecAdmissionOwner(registrar=reg, store=store, matcher=lambda e, d: True)
+    draft = {"registry_id": "r1", "artifact_type": "strategy_spec", "metadata": {"tenant_id": "t", "strategy_spec": {
+        "metadata": {"card_wiring": {"status": "research_only_draft", "reason": "no_compiled_rule"}}}}}
+    assert owner.admit(draft, [{"demand_id": "d", "tenant_id": "t", "persona_id": "p"}]) == {
+        "status": "draft", "reason": "no_compiled_rule", "registry_id": "r1"}
+    assert calls == [] and store.list_admissions() == []
+    same = TemplateCandidateRegistrar(data_dir=tmp_path, owner_call=lambda **kw: None,
+                                      proposer_id="x", gate_id="x")
+    with pytest.raises(CardAdmissionError):
+        CardSpecAdmissionOwner(registrar=same, store=store, matcher=lambda e, d: True)
