@@ -13,7 +13,7 @@
     "admission_owner": "services/research/alpha_replication/admission.py: CardSpecAdmissionOwner (criterion 3), register_card_pass (criterion 4, calls TemplateCandidateRegistrar.register_passed_attempt)",
     "controller": "services/research/alpha_replication/replication_controller.py: _admit_card_specs before enqueue, _register_card_passes after the worker; inert unless card_registrar, card_matcher and demands_provider are configured"
   },
-  "criterion_3_authority": "Standing operator decision P-4 (2026-11-12) and coordinator note 2026-11-15T09:40Z: Research creates the admission only for a gate_ready card-derived spec matched by the discovery scorer (injected matcher) to an open persona demand; approval is a real Governance decision proposed by the research proposer principal and decided by the distinct automated paper gate principal; unmatched specs stay drafts; no human item is created. The design section of SD-RESEARCH-ADMISSION-AUTHORITY-20261115 was NOT merged into dev at implementation time (not in origin/dev); it must be cited and the branch rebased before handoff.",
+  "criterion_3_authority": "Per design section 6A (amendment 2026-11-15) and open question O-21 (answered (b), named paper-only authority) in docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md, merged to dev via SD-RESEARCH-ADMISSION-AUTHORITY-20261115 (PR 7389, 5ec067086); standing decision P-4. Research creates the admission only for a gate_ready card-derived spec matched by the discovery scorer (injected matcher) to an open persona demand; approval is a real Governance decision proposed by the research proposer principal and decided by the distinct automated paper gate principal; unmatched specs stay drafts; no human item is created. Branch rebased onto dev containing the section.",
   "findings_for_followup": [
     "Every compiled rule carries a screen, so the gate needs candidate_pool_market.v1 with includes_delisted and includes_suspended attested, otherwise real_backtest_validation returns survivorship_limited. The governed dataset resolver wired in production must supply that; the integration test sets the attestation flags on a recorded market to exercise the pass path.",
     "Production wiring of card_registrar, card_matcher (discovery scorer), demands_provider and dataset_resolver into ReplicationControllerConfig/main is not done here (not in the artifact list); the card binding env vars are not in any deploy config file."
@@ -21,8 +21,14 @@
   "validation": {
     "venv": "/tmp/hc-venv (python 3.12, requirements of /tmp/rv-venv plus vectorbt, asyncpg)",
     "commands": [
-      {"cmd": "pytest -q services/research/strategy_spec services/research/alpha_replication services/research/tests/test_hypothesis_card_gate_candidate.py services/research/tests/test_candidate_registration.py", "result": "238 passed"},
-      {"cmd": "pytest -q services/source_ingestion/tests/test_distillation_controller.py test_hypothesis_compiler_wiring.py test_hypothesis_extraction.py test_hypothesis_compiler.py", "result": "117 passed"}
+      {
+        "cmd": "pytest -q services/research/strategy_spec services/research/alpha_replication services/research/tests/test_hypothesis_card_gate_candidate.py services/research/tests/test_candidate_registration.py",
+        "result": "238 passed"
+      },
+      {
+        "cmd": "pytest -q services/source_ingestion/tests/test_distillation_controller.py test_hypothesis_compiler_wiring.py test_hypothesis_extraction.py test_hypothesis_compiler.py",
+        "result": "117 passed"
+      }
     ],
     "not_run": "full services/source_ingestion/tests directory exceeded the 10 minute bounded batch and was not completed",
     "fixture_provenance": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json and hypothesis_predictions_recorded.json are hand-authored model-shaped responses (their provenance field says so), not live provider captures; no live model call in CI"
