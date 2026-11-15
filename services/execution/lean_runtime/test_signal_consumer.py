@@ -712,6 +712,53 @@ class TestPersistentDedup(unittest.TestCase):
         self.assertFalse(c._is_duplicate(_make_signal("sig-fresh")))
 
 
+class TestDeclaredBatchSizeFlush(unittest.TestCase):
+    """A producer-declared batch executes in the drain that completes it (no 3-tick wait)."""
+
+    @staticmethod
+    def _sig(signal_id, size, run_id, symbol="2330.TW"):
+        sig = _make_signal(signal_id)
+        sig["run_id"] = run_id
+        sig["symbol"] = symbol
+        sig["timestamp"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        if size is not None:
+            sig.setdefault("metadata", {})["rebalance_batch_size"] = size
+        return sig
+
+    def _run(self, drains):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+
+        store = InMemoryPendingSignalStore()
+        consumer = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(datetime.now(timezone.utc).replace(tzinfo=None))
+        executed: list[list[str]] = []
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            for batch in drains:
+                for sig in batch:
+                    store.enqueue(sig)
+                consumer.drain(algo=algo)
+                executed.append([c[0][0]["signal_id"] for c in mock_exec.call_args_list])
+        return executed
+
+    def test_single_decision_batch_executes_in_the_same_drain(self):
+        self.assertEqual(self._run([[self._sig("s-1", 1, "run-a")]]), [["s-1"]])
+
+    def test_legacy_signal_without_declared_size_still_waits_for_the_timeout(self):
+        executed = self._run([[self._sig("s-legacy", None, "run-b")]])
+        self.assertEqual(executed, [[]])
+
+    def test_multi_leg_batch_keeps_atomic_grouping(self):
+        legs = [self._sig("leg-1", 2, "run-c", "2330.TW"), self._sig("leg-2", 2, "run-c", "2317.TW")]
+        # Leg 1 alone is incomplete: nothing executes until the second leg is buffered.
+        executed = self._run([[legs[0]], [legs[1]]])
+        self.assertEqual(executed[0], [])
+        self.assertEqual(sorted(executed[1]), ["leg-1", "leg-2"])
+
+    def test_complete_multi_leg_batch_in_one_drain_executes_together(self):
+        legs = [self._sig("leg-1", 2, "run-d", "2330.TW"), self._sig("leg-2", 2, "run-d", "2317.TW")]
+        self.assertEqual(sorted(self._run([legs])[0]), ["leg-1", "leg-2"])
+
+
 class TestSameIdRedeliveryBatch(unittest.TestCase):
     """Same signal_id copies in one rebalance run are one decision, not conflict losers."""
 
