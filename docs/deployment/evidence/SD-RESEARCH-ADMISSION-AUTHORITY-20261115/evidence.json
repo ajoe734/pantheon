@@ -1,0 +1,7 @@
+{
+  "task_id": "SD-RESEARCH-ADMISSION-AUTHORITY-20261115",
+  "change": "Added section 6A (dated 2026-11-15) and open-question row O-21 to SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md naming the paper-stage authority for replication admission of hypothesis-card StrategySpecs.",
+  "authority": "Operator decision P-4 of 2026-11-12 (SD_PERSONA_STRATEGY_POOL_AUTONOMY section 1); coordinator application reported to the operator 2026-11-15",
+  "implementing_task": "HYPOTHESIS-CARD-GATE-CANDIDATE-20261115",
+  "scope": "documentation only; no code; no other design decision changed"
+}
