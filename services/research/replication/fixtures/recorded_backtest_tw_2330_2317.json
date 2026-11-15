@@ -64,7 +64,7 @@
    "transaction_tax_rate": 0.003,
    "version": "1.0.0"
   },
-  "created_at": "2026-11-15T16:58:43Z",
+  "created_at": "2026-11-15T18:44:57Z",
   "created_by": "Claude",
   "dataset_summary": {
    "bars_per_instrument": {
@@ -339,7 +339,7 @@
    }
   },
   "round_trips": 528,
-  "run_id": "vbt-real-c1c677df9795",
+  "run_id": "vbt-real-57ef81eac606",
   "sharpe_ratio": 3.167199,
   "start_date": "2023-01-01",
   "total_commission_paid": 8944.4962,
@@ -397,7 +397,7 @@
    }
   },
   "round_trips": 226,
-  "run_id": "vbt-real-25b02117c96c",
+  "run_id": "vbt-real-09af7db1a1a5",
   "sharpe_ratio": 3.129144,
   "start_date": "2024-06-16",
   "total_commission_paid": 4770.945948,
@@ -435,8 +435,8 @@
   "approver": null,
   "artifact_state": "draft",
   "artifact_type": "backtest_result",
-  "checksum": "sha256:9cd6a83bef99b81415329cd2767a390af933adb82f68ac41ceccf8c119c02b27",
-  "created_at": "2026-11-15T16:58:43Z",
+  "checksum": "sha256:078cf571a36492a5ad27a5bf05c3336354719b0030d1b1bc405118fc2a584ba2",
+  "created_at": "2026-11-15T18:44:57Z",
   "deployment_summary": {
    "current_stage": "none"
   },
@@ -445,7 +445,7 @@
     "dataset:twse-daily-ohlcv-v1"
    ],
    "source_run_ids": [
-    "vbt-real-a4462235ec9e"
+    "vbt-real-40fe310c3ac0"
    ]
   },
   "metadata": {
@@ -2022,7 +2022,7 @@
     ]
    }
   },
-  "producer_run_id": "vbt-real-a4462235ec9e",
+  "producer_run_id": "vbt-real-40fe310c3ac0",
   "registry_id": "vbt-backtest-strat-tw-replication-001-1.0.0",
   "rollback_target": null,
   "storage_ref": {
@@ -2060,6 +2060,9 @@
   "strategy_kind": "close_to_close_momentum",
   "version": "1.0.0"
  },
+ "synthetic_data": true,
+ "synthetic_notice": "Proves gate mechanics only. Qualifies no strategy and is not evidence that the momentum strategy passes. Legacy profile (series_profile='decision_close') stays reproducible.",
+ "synthetic_series_profile": "build_governed_tw_replication_dataset(series_profile='next_open'): deterministic synthetic daily series, not exchange data; big steps re-timed two sessions after the confirming decisions",
  "transaction_costs": {
   "applied_on_every_fill": true,
   "citations": {
@@ -2138,7 +2141,7 @@
      }
     },
     "round_trips": 174,
-    "run_id": "vbt-real-154e5a6dd54f",
+    "run_id": "vbt-real-f94db96651ae",
     "sharpe_ratio": 3.191579,
     "start_date": "2023-01-01",
     "total_commission_paid": 2646.11006,
@@ -2196,7 +2199,7 @@
      }
     },
     "round_trips": 174,
-    "run_id": "vbt-real-0b3ad98553e3",
+    "run_id": "vbt-real-dab0a360b336",
     "sharpe_ratio": 2.137521,
     "start_date": "2023-06-27",
     "total_commission_paid": 2941.614572,
@@ -2254,7 +2257,7 @@
      }
     },
     "round_trips": 176,
-    "run_id": "vbt-real-6f1a454cc238",
+    "run_id": "vbt-real-4446b883be4e",
     "sharpe_ratio": 0.670519,
     "start_date": "2023-12-21",
     "total_commission_paid": 3289.759064,
@@ -2317,7 +2320,7 @@
     }
    },
    "round_trips": 174,
-   "run_id": "vbt-real-154e5a6dd54f",
+   "run_id": "vbt-real-f94db96651ae",
    "sharpe_ratio": 3.191579,
    "start_date": "2023-01-01",
    "total_commission_paid": 2646.11006,
@@ -2375,7 +2378,7 @@
     }
    },
    "round_trips": 174,
-   "run_id": "vbt-real-0b3ad98553e3",
+   "run_id": "vbt-real-dab0a360b336",
    "sharpe_ratio": 2.137521,
    "start_date": "2023-06-27",
    "total_commission_paid": 2941.614572,
@@ -2433,7 +2436,7 @@
     }
    },
    "round_trips": 176,
-   "run_id": "vbt-real-6f1a454cc238",
+   "run_id": "vbt-real-4446b883be4e",
    "sharpe_ratio": 0.670519,
    "start_date": "2023-12-21",
    "total_commission_paid": 3289.759064,

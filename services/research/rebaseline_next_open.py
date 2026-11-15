@@ -103,6 +103,15 @@ def gate_verdict(evaluation: Mapping[str, Any], symbols: Sequence[str]) -> dict[
             "failed_checks": list(details.get("failed_checks") or [])}
 
 
+SYNTHETIC_MARKER: dict[str, Any] = {
+    "synthetic_data": True,
+    "synthetic_series_profile": "build_governed_tw_replication_dataset(series_profile='next_open'): deterministic "
+    "synthetic daily series, not exchange data; big steps re-timed two sessions after the confirming decisions",
+    "synthetic_notice": "Proves gate mechanics only. Qualifies no strategy and is not evidence that the momentum "
+    "strategy passes. Legacy profile (series_profile='decision_close') stays reproducible.",
+}
+
+
 def rebaseline_fixture(name: str, *, fixture_dir: Path = FIXTURE_DIR, write: bool = False) -> dict[str, Any]:
     """Old and new metrics side by side for one recorded backtest fixture.
 
@@ -123,6 +132,7 @@ def rebaseline_fixture(name: str, *, fixture_dir: Path = FIXTURE_DIR, write: boo
     retimed = run_backtest(symbols, run_id, FILL_CONVENTION)
     verdicts = {key: gate_verdict(ev, symbols) for key, ev in (("old", old), ("same", same), ("retimed", retimed))}
     if write:
+        retimed = {**retimed, **SYNTHETIC_MARKER}
         path.write_text(json.dumps(retimed, indent=1, sort_keys=True, default=str), encoding="utf-8")
     return {
         "fixture": name, "symbols": symbols, "backtest_run_id": run_id,

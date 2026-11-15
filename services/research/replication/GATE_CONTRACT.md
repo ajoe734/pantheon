@@ -488,7 +488,10 @@ deterministic governed series `build_governed_tw_replication_dataset(series_prof
 steps coincide with the decision bar: an edge that exists only when a decision fills at the close of its own bar.
 Re-run on the **same series** under the new convention the proof no longer passes (OOS Sharpe 4.606 -> -3.812,
 all four primary checks fail); this is reported for an operator decision (see the task evidence), not hidden.
-The fixtures other suites need as an *admitted* sample are regenerated from the re-timed default series
+**Synthetic, not exchange data:** both backtest fixtures carry `synthetic_data: true`, a `synthetic_series_profile` and a
+`synthetic_notice`. They are a deterministic synthetic series that proves gate mechanics only; they qualify no strategy and
+are not evidence that the momentum strategy passes (it fails on the legacy series under next-open fills). The legacy profile
+stays reproducible. The fixtures other suites need as a mechanics sample are regenerated from the re-timed default series
 (`series_profile="next_open"`, big steps two sessions after the confirming decisions) through the same unchanged gate
 (OOS Sharpe 3.129, 113 round trips, passes). Fixtures built from recorded exchange data
 (`recorded_mechanism_tw.json`, `recorded_screen_contribution_tw.json`) hold prices only and are unchanged; the
