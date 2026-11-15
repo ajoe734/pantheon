@@ -6,11 +6,12 @@ import uuid
 import json
 from pathlib import Path
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -66,7 +67,9 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
 
 _MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
 # Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
-_MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin",)
+_MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin", "persona-svc")
+# The persona service lists its own tenant's candidates for the paper endorsement step (persona.admin stays get-only).
+_MEMORY_LESSON_LIST_ROLES = _MEMORY_READ_ROLES + ("persona-svc",)
 _MEMORY_WRITE_ROLES = (
     "operator",
     "admin",
@@ -883,7 +886,7 @@ async def list_trade_lessons(
     scope: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    _ctx, tenant_id = _lesson_identity(authorization)
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=_MEMORY_LESSON_LIST_ROLES)
     candidates = _candidate_store().list(
         persona_id=persona_id,
         review_state=review_state,
@@ -1061,27 +1064,87 @@ async def record_trade_lesson_risk_review(candidate_id: str, payload: RiskReview
     verdict = payload.verdict.strip().lower()
     if verdict not in {"approve", "reject"}:
         raise HTTPException(status_code=422, detail="verdict must be approve or reject")
-    return _risk_review_store().record(review_id=str(uuid.uuid4()), candidate=candidate, reviewer_persona_id=ctx.actor_id, verdict=verdict)
+    review = _risk_review_store().record(review_id=str(uuid.uuid4()), candidate=candidate, reviewer_persona_id=ctx.actor_id, verdict=verdict)
+    if verdict == "reject" and candidate.get("review_state") in {"proposed", "pending_review"} and candidate.get("target_env", "paper") == "paper":
+        # D5: the risk persona's rejection is the paper-stage terminal decision (never a merge, never a promotion).
+        try:
+            _governance_service().decide(
+                candidate_id, action="reject", operator_id=ctx.actor_id,
+                reason=f"paper-scope rejection; risk persona review {review['review_id']} by {ctx.actor_id}: reject",
+                audit_receipt_id=review["review_id"],
+            )
+        except TradeLessonCandidateError as exc:
+            raise HTTPException(status_code=422, detail={"error": "paper_reject_failed", "message": str(exc)}) from exc
+    return review
 
 
 class PaperEndorsePayload(BaseModel):
+    """Only the review id is accepted. Supporting episodes are never caller-supplied (D5): memory reads them
+    from the trade journal owner, so an ``episodes`` field is rejected."""
+    model_config = ConfigDict(extra="forbid")
     risk_review: Dict[str, Any]
+
+
+def _journal_config() -> tuple[str, str]:
+    base = (os.getenv("PANTHEON_TELEMETRY_API_URL") or os.getenv("PANTHEON_TELEMETRY_SERVICE_URL") or "").strip().rstrip("/")
+    token = os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "").strip()
+    return base, token
+
+
+def _read_journal_episode(episode_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """One episode projection from the trade journal owner (telemetry) with the service credential."""
+    base, token = _journal_config()
+    if not base or not token:
+        raise RuntimeError("trade journal owner is not configured (PANTHEON_TELEMETRY_API_URL / PANTHEON_TELEMETRY_SERVICE_TOKEN)")
+    request = urllib.request.Request(
+        f"{base}/api/telemetry/trade-episodes/{urllib.parse.quote(episode_id, safe='')}",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant_id}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=float(os.getenv("PANTHEON_MEMORY_JOURNAL_TIMEOUT", "5"))) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise RuntimeError(f"trade journal owner returned HTTP {exc.code}") from exc
+
+
+def _supporting_episodes(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The candidate's supporting episodes as recorded by the journal owner; fails closed when any is unreadable."""
+    ids = list(dict.fromkeys(str(i) for i in candidate.get("trade_episode_ids") or []))
+    if not ids:
+        raise HTTPException(status_code=422, detail={"error": "supporting_episodes_missing", "message": "Candidate cites no supporting episodes."})
     episodes: List[Dict[str, Any]] = []
+    for episode_id in ids:
+        try:
+            episode = _read_journal_episode(episode_id, candidate["tenant_id"])
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={"error": "supporting_episodes_unavailable", "message": str(exc)[:200]}) from exc
+        if not episode or str(episode.get("trade_episode_id") or "") != episode_id:
+            raise HTTPException(status_code=422, detail={"error": "supporting_episode_not_found", "message": f"Journal has no episode {episode_id}."})
+        if episode.get("tenant_id") != candidate["tenant_id"] or episode.get("persona_id") != candidate["persona_id"]:
+            raise HTTPException(status_code=422, detail={"error": "supporting_episode_foreign", "message": f"Episode {episode_id} is not this persona's."})
+        episodes.append(episode)
+    return episodes
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/paper-endorse")
 async def paper_endorse_trade_lesson(candidate_id: str, payload: PaperEndorsePayload, authorization: Optional[str] = Header(None, alias="Authorization")):
-    """Paper-scope endorsement: gates + recorded risk persona review, then merge. Sensitive lessons are refused."""
+    """Paper-scope endorsement: gates over journal-read episodes + recorded risk persona review, then merge.
+
+    The persona service principal (role ``persona-svc``) acts on the recorded risk review; every other caller
+    needs the governance lesson roles. Sensitive lessons are refused either way."""
     ctx, tenant_id = _lesson_identity(authorization, write=True)
-    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.decide")
-    _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.merge")
-    _owned_lesson(candidate_id, tenant_id)
+    if "persona-svc" not in {str(r).lower() for r in ctx.roles}:
+        _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.decide")
+        _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.merge")
+    candidate = _owned_lesson(candidate_id, tenant_id)
     # Only the review_id is trusted from the caller; the review itself is resolved from the durable store.
     recorded = _risk_review_store().get(str(payload.risk_review.get("review_id") or "")) or {}
+    episodes = _supporting_episodes(candidate)
     try:
         return _governance_service().paper_endorse_and_merge(
             candidate_id, operator_id=ctx.actor_id, risk_review=recorded,
-            episodes=payload.episodes, memory_store=_persona_store(),
+            episodes=episodes, memory_store=_persona_store(),
         )
     except TradeLessonCandidateError as exc:
         raise HTTPException(status_code=422, detail={"error": "paper_endorse_failed", "message": str(exc)}) from exc

@@ -830,6 +830,22 @@ from services.persona.lesson_governance import MemoryLessonRegistrar
 
 EP_A, EP_B, EP_C = (str(uuid.uuid4()) for _ in range(3))
 
+# The trade journal owner as seen by memory: only this table is ever consulted, never the caller's payload.
+JOURNAL: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def _journal(monkeypatch):
+    JOURNAL.clear()
+
+    def read(episode_id: str, tenant_id: str):
+        row = JOURNAL.get(episode_id)
+        return dict(row) if row and row.get("tenant_id") == tenant_id else None
+
+    monkeypatch.setattr(main, "_read_journal_episode", read)
+    yield
+    JOURNAL.clear()
+
 
 class _LessonProvider:
     name = "mock-openclaw"
@@ -860,6 +876,7 @@ def _bridge(memory_client: TestClient):
 def _run_reflection(monkeypatch, tmp_path, client: TestClient, lessons: list[dict], episode_id: str = EP_A):
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", _reflection_tests.JWT_SECRET)
     telemetry = {episode_id: {"trade_episode_id": episode_id, "persona_id": "p-alpha", "tenant_id": "tenant-1", "status": "closed", "realized_pnl": 1.0}}
+    JOURNAL.update(telemetry)
     _unused, _owner, _ = _reflection_tests._setup_app(str(tmp_path), monkeypatch, provider=_LessonProvider(lessons), telemetry_data=telemetry)
     # rebuild the persona app with the real registrar wired to the memory app
     from services.persona.write_owner import create_app
@@ -902,9 +919,10 @@ def test_reflection_to_registered_candidate_to_endorsement_to_merged_memory(clie
     # self review, non-risk reviewer refused at record time; fabricated / rejecting reviews refused at endorse time
     assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(actor="p-alpha")).status_code == 403
     assert client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers=_risk_auth(roles=("operator",))).status_code == 403
-    rejected = _record_review(client, cid, verdict="reject")
-    for bad in ({"review_id": str(uuid.uuid4())}, {"review_id": rejected["review_id"]}):
+    for bad in ({"review_id": str(uuid.uuid4())}, {"review_id": ""}):
         assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": bad}, headers=auth).status_code == 422
+    # supporting episodes are never accepted from the caller
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": {"review_id": "x"}, "episodes": []}, headers=auth).status_code == 422
     review = _record_review(client, cid)
     done = client.post(f"/api/memory/trade-lessons/{cand['lesson_candidate_id']}/paper-endorse", json={"risk_review": review}, headers=auth)
     assert done.status_code == 200, done.text
@@ -964,10 +982,14 @@ def test_pattern_gate_ignores_unrelated_episodes(client):
     token = encode_jwt_hs256({"sub": "p-risk", "roles": ["operator", "risk"], "tenant_id": "tenant-alpha", "exp": 4102444800}, secret=JWT_SECRET)
     review = client.post(f"/api/memory/trade-lessons/{cid}/risk-review", json={"verdict": "approve"}, headers={"Authorization": f"Bearer {token}"}).json()
     ep = lambda i, tenant, persona, regime: {"trade_episode_id": i, "tenant_id": tenant, "persona_id": persona, "regime": regime}
-    unrelated = [ep("x1", "tenant-alpha", payload["persona_id"], "bull"), ep(ids[0], "foreign", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", "other", "bear"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bear")]
-    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": unrelated}).status_code == 422
-    good = [ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")]
-    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": good})
+    JOURNAL.update({i: e for i, e in zip(ids, (ep(ids[0], "tenant-alpha", payload["persona_id"], "bull"), ep(ids[1], "tenant-alpha", "other", "bear"), ep(ids[2], "tenant-alpha", payload["persona_id"], "bull")))})
+    # a journal episode of another persona is refused outright (never counted)
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}).status_code == 422
+    # all one regime: the cross-regime gate refuses
+    JOURNAL[ids[1]] = ep(ids[1], "tenant-alpha", payload["persona_id"], "bull")
+    assert client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}).status_code == 422
+    JOURNAL[ids[1]] = ep(ids[1], "tenant-alpha", payload["persona_id"], "bear")
+    done = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review})
     assert done.status_code == 200 and done.json()["review_state"] == "merged"
 
 
@@ -979,7 +1001,7 @@ def test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates(client, tmp_
     for cand in client.get("/api/memory/trade-lessons", headers=auth).json()["candidates"]:
         cid = cand["lesson_candidate_id"]
         review = _record_review(client, cid)
-        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review, "episodes": []}, headers=auth)
+        resp = client.post(f"/api/memory/trade-lessons/{cid}/paper-endorse", json={"risk_review": review}, headers=auth)
         assert resp.status_code == 422, resp.text
         assert client.get(f"/api/memory/trade-lessons/{cid}", headers=auth).json()["review_state"] != "merged"
         assert main._persona_store().get(f"pmem-lesson-{cid}") is None
