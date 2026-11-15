@@ -1,0 +1,75 @@
+{
+  "task": "CI-SOURCE-INGESTION-TESTS-TIMEOUT-20261115",
+  "baseline": {
+    "command": "python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py",
+    "ci_runs": {
+      "43732108493": "timed out at 15m step timeout (16:01:30Z-16:19:11Z)",
+      "43724757273": "timed out at 15m",
+      "dev c714497da": "12m53s green after PR 7425 made one ~10min benchmark opt-in (about 2 min margin)"
+    },
+    "local_serial": "did not finish in 580s (reached ~76% in 9m40s) on a 12 core machine"
+  },
+  "collected_tests_before_and_after": {
+    "before": 2076,
+    "after": 2076,
+    "files": 95,
+    "note": "collected by the runner with the same targets; runner fails if ran != collected"
+  },
+  "slowest_tests_seconds_under_4_shard_contention": {
+    "test_collector_newest_session_progress::test_hosted_size_sessions_through_controller_and_real_persistence": 136.5,
+    "test_collector_newest_session_hosted_throughput::test_full_hosted_size_sessions_use_real_controller_ticks": 88.3,
+    "test_scheduled_connector::test_full_size_close_through_controller_main_with_persistence": 75.2,
+    "test_collector_bundle_connector::test_real_size_two_day_sweep_continues_and_preserves_newest_priority": 40.2,
+    "test_scheduled_connector::test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source": 23.6
+  },
+  "per_file_seconds_top": {
+    "test_scheduled_connector.py": 163,
+    "test_collector_newest_session_progress.py": 140,
+    "test_collector_newest_session_hosted_throughput.py": 92,
+    "test_collector_bundle_connector.py": 58,
+    "test_collector_market_early_fetch_pit.py": 29,
+    "test_controller_worker.py": 28
+  },
+  "change": "scripts/ci_source_ingestion_test_shards.py runs whole files in 4 deterministic LPT shards (weights checked in), one SOURCE_INGEST_DATA_DIR per shard; no test deleted/skipped/deselected; per-test guard --max-test-seconds 300 fails with test name; count guard.",
+  "isolation": "Shards use separate data dirs; Postgres tests already use uuid-named schemas, so they do not collide. No conftest change needed.",
+  "five_local_parallel_runs": [
+    {
+      "exit": 0,
+      "total_seconds": 191.2,
+      "ran": 2076,
+      "skipped": 22,
+      "collected": 2076
+    },
+    {
+      "exit": 0,
+      "total_seconds": 191.5,
+      "ran": 2076,
+      "skipped": 22,
+      "collected": 2076
+    },
+    {
+      "exit": 0,
+      "total_seconds": 190.2,
+      "ran": 2076,
+      "skipped": 22,
+      "collected": 2076
+    },
+    {
+      "exit": 0,
+      "total_seconds": 191.7,
+      "ran": 2076,
+      "skipped": 22,
+      "collected": 2076
+    },
+    {
+      "exit": 0,
+      "total_seconds": 194.4,
+      "ran": 2076,
+      "skipped": 22,
+      "collected": 2076
+    }
+  ],
+  "local_skips_note": "22 tests skip locally because no PostgreSQL; CI has postgres service so they run there.",
+  "unit_tests": "python3 -m unittest scripts.test_ci_source_ingestion_test_shards scripts.test_branch_ci_gate_selection: 18 tests OK",
+  "ci_green_runs_on_pr_head": "PENDING: record after PR CI runs (criterion 6)"
+}

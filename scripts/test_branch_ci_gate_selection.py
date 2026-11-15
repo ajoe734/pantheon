@@ -150,15 +150,20 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         self.assertFalse(step.get("continue-on-error", False))
         self.assertGreater(names.index(SOURCE_INGESTION_STEP_NAME), names.index("Install test dependencies"))
         run = step.get("run", "")
-        self.assertIn('SOURCE_INGEST_DATA_DIR="$(mktemp -d)"', run)
-        self.assertIn("python3 -m pytest -q services/source_ingestion/tests", run)
-        self.assertIn("services/source_ingestion/test_*.py", run)
+        # Sharded runner: same targets (defined in the script), per-shard data dirs.
+        self.assertIn("python3 scripts/ci_source_ingestion_test_shards.py", run)
+        self.assertIn("--max-test-seconds", run)
+        runner = (Path(__file__).resolve().parent / "ci_source_ingestion_test_shards.py").read_text()
+        self.assertIn("services/source_ingestion/tests", runner)
+        self.assertIn("services/source_ingestion/test_*.py", runner)
+        self.assertIn("SOURCE_INGEST_DATA_DIR", runner)
         dsn = step.get("env", {}).get("SOURCE_INGEST_TEST_POSTGRES_DSN", "")
         self.assertTrue(dsn.startswith("postgresql://"))
         self.assertIn("localhost:5432", dsn)
-        pytest_args = run.split("python3 -m pytest", 1)[1]
         for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
-            self.assertNotIn(flag, pytest_args)
+            self.assertNotIn(flag, run)
+        for flag in ("--deselect", "--ignore", "--lf", "-k", "--co "):
+            self.assertNotIn(f'"{flag}"', runner)
 
     def test_compose_contract_step_pinned(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]
