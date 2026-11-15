@@ -52,6 +52,75 @@ PROOF_STATES = (
 class ControllerError(RuntimeError):
     """Raised when the exact cross-repository transaction cannot continue."""
 
+    reason: str | None = None
+
+
+class RateLimitError(ControllerError):
+    """GitHub rate-limit wait budget exhausted (fail closed)."""
+
+    reason = "rate_limit"
+
+
+class TransientFetchError(ControllerError):
+    """Transient served-identity fetch retry budget exhausted (fail closed)."""
+
+    reason = "transient_fetch"
+
+
+MAX_RATE_LIMIT_WAIT_SECONDS = 3900  # 65 minutes hard ceiling
+DEFAULT_RATE_LIMIT_WAIT_SECONDS = 3900
+RATE_LIMIT_FALLBACK_WAIT_SECONDS = 60.0
+RATE_LIMIT_RESET_SLACK_SECONDS = 1.0
+FETCH_MAX_ATTEMPTS = 3
+FETCH_BACKOFF_SECONDS = 1.0
+
+
+def rate_limit_wait_seconds(
+    status: int,
+    headers: Any,
+    body: str = "",
+    *,
+    now: float | None = None,
+) -> float | None:
+    """Return seconds to wait if the response is a rate-limit exhaustion, else None.
+
+    Mirrors dev_environment_lease.classify_github_http_error: 429, or 403 with
+    x-ratelimit-remaining 0, a retry-after header, or a rate-limit message.
+    A plain 403/404 is not a rate limit and returns None.
+    """
+    if status not in (403, 429):
+        return None
+    hdrs = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
+    remaining: int | None = None
+    try:
+        remaining = int(hdrs.get("x-ratelimit-remaining", "").strip())
+    except ValueError:
+        remaining = None
+    retry_after: float | None = None
+    raw_retry = hdrs.get("retry-after", "").strip()
+    if raw_retry:
+        try:
+            retry_after = max(0.0, float(raw_retry))
+        except ValueError:
+            retry_after = None
+    has_message = "rate limit" in (body or "").lower()
+    exhausted = (
+        status == 429
+        or (remaining is not None and remaining <= 0)
+        or retry_after is not None
+        or has_message
+    )
+    if not exhausted:
+        return None
+    if retry_after is not None:
+        return retry_after + RATE_LIMIT_RESET_SLACK_SECONDS
+    try:
+        reset_epoch = float(hdrs.get("x-ratelimit-reset", "").strip())
+    except ValueError:
+        return RATE_LIMIT_FALLBACK_WAIT_SECONDS
+    current = time.time() if now is None else now
+    return max(0.0, reset_epoch - current) + RATE_LIMIT_RESET_SLACK_SECONDS
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -219,14 +288,49 @@ def validate_candidate_override(
             )
 
 
-def fetch_url_json(url: str, timeout_seconds: int = 30) -> dict[str, Any]:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "pantheon-cross-repo-release-controller"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def fetch_url_json(
+    url: str,
+    timeout_seconds: int = 30,
+    *,
+    max_attempts: int = FETCH_MAX_ATTEMPTS,
+    backoff_seconds: float = FETCH_BACKOFF_SECONDS,
+    sleep: Callable[[float], None] | None = None,
+) -> dict[str, Any]:
+    """GET JSON, retrying timeouts, connection errors and 5xx with backoff.
+
+    Non-5xx HTTP errors (e.g. 404) and malformed bodies are raised at once.
+    Exhausted retries raise TransientFetchError.
+    """
+    sleep_fn = sleep if sleep is not None else time.sleep
+    last: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "pantheon-cross-repo-release-controller"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500:
+                raise
+            last = exc
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ) as exc:
+            last = exc
+        else:
+            return json.loads(raw.decode("utf-8"))
+        if attempt < max_attempts:
+            sleep_fn(backoff_seconds * (2 ** (attempt - 1)))
+    raise TransientFetchError(
+        f"transient_fetch: {url} failed after {max_attempts} attempts: "
+        f"{type(last).__name__}: {last}"
+    ) from last
 
 
 def verify_served_identity(
@@ -247,7 +351,9 @@ def verify_served_identity(
     try:
         bff_data = fetcher(bff_version_url)
     except Exception as exc:
-        raise ControllerError(f"served identity verification failed reaching BFF: {exc}") from exc
+        raise (TransientFetchError if isinstance(exc, TransientFetchError) else ControllerError)(
+            f"served identity verification failed reaching BFF: {exc}"
+        ) from exc
 
     observed_bff_sha = exact_sha(
         bff_data.get("source_commit_sha") or bff_data.get("commit") or "",
@@ -268,7 +374,9 @@ def verify_served_identity(
         try:
             fe_data = fetcher(fe_deployment_url)
         except Exception as exc:
-            raise ControllerError(f"served identity verification failed reaching frontend: {exc}") from exc
+            raise (TransientFetchError if isinstance(exc, TransientFetchError) else ControllerError)(
+                f"served identity verification failed reaching frontend: {exc}"
+            ) from exc
 
         served_manifest = fe_data
         observed_fe_sha = exact_sha(
@@ -637,7 +745,13 @@ class GitHubClient:
         max_get_attempts: int = GET_RETRY_MAX_ATTEMPTS,
         retry_backoff_seconds: float = GET_RETRY_BASE_DELAY_SECONDS,
         sleep: Callable[[float], None] | None = None,
+        max_rate_limit_wait_seconds: float = DEFAULT_RATE_LIMIT_WAIT_SECONDS,
+        clock: Callable[[], float] | None = None,
     ) -> None:
+        if not 0 <= max_rate_limit_wait_seconds <= MAX_RATE_LIMIT_WAIT_SECONDS:
+            raise ControllerError(
+                f"max_rate_limit_wait_seconds must be within 0..{MAX_RATE_LIMIT_WAIT_SECONDS}"
+            )
         if max_get_attempts < 1:
             raise ControllerError("max_get_attempts must be at least 1")
         if retry_backoff_seconds < 0:
@@ -648,6 +762,8 @@ class GitHubClient:
         self.max_get_attempts = max_get_attempts
         self.retry_backoff_seconds = retry_backoff_seconds
         self.sleep = sleep
+        self.max_rate_limit_wait_seconds = float(max_rate_limit_wait_seconds)
+        self.clock = clock
 
     def request(
         self,
@@ -669,7 +785,10 @@ class GitHubClient:
         max_attempts = self.max_get_attempts if is_read_only else 1
         sleep_fn = self.sleep if self.sleep is not None else time.sleep
         raw = b""
-        for attempt in range(1, max_attempts + 1):
+        rate_waited = 0.0
+        attempt = 0
+        while True:
+            attempt += 1
             request = urllib.request.Request(
                 f"{self.api_url}{path}",
                 data=data,
@@ -686,6 +805,23 @@ class GitHubClient:
                     raw_detail.decode("utf-8", errors="replace").strip()
                     or str(getattr(exc, "reason", "") or "").strip()
                 )
+                wait = rate_limit_wait_seconds(
+                    exc.code,
+                    exc.headers,
+                    detail,
+                    now=self.clock() if self.clock is not None else None,
+                )
+                if wait is not None:
+                    if rate_waited + wait > self.max_rate_limit_wait_seconds:
+                        raise RateLimitError(
+                            f"rate_limit: GitHub API {method} {path} HTTP {exc.code}; "
+                            f"wait {wait:.0f}s exceeds remaining budget "
+                            f"{self.max_rate_limit_wait_seconds - rate_waited:.0f}s: {detail}"
+                        ) from exc
+                    sleep_fn(wait)
+                    rate_waited += wait
+                    attempt -= 1  # rate-limit waits do not consume transient attempts
+                    continue
                 if (
                     is_read_only
                     and exc.code in TRANSIENT_HTTP_STATUS_CODES
@@ -1034,13 +1170,21 @@ def coordinate_release(
         # Restore read-only profile across success, failure, cancellation, expiry, probe error
         # Refetch the served manifest for restoration verification
         refetched_manifest = None
+        refetch_transient: TransientFetchError | None = None
         if fe_base_url:
             try:
                 refetched_manifest = (fetch_fn or fetch_url_json)(f"{fe_base_url.rstrip('/')}/deployment.json")
+            except TransientFetchError as exc:
+                refetch_transient = exc
+                refetched_manifest = None
             except Exception:
                 refetched_manifest = None
 
         if candidate_profile == "operator-live":
+            if sys.exc_info()[0] is None and refetched_manifest is None and refetch_transient is not None:
+                raise TransientFetchError(
+                    f"transient_fetch: operator-live profile refetch failed: {refetch_transient}"
+                ) from refetch_transient
             if sys.exc_info()[0] is None and (refetched_manifest or {}).get("profile") != "operator-live":
                 raise ControllerError("accepted frontend did not preserve operator-live profile")
         elif sys.exc_info()[0] is None and post_switch_verification is not None and refetched_manifest is not None:
@@ -1118,6 +1262,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate-timeout-seconds", type=int, default=10_800)
     parser.add_argument("--deploy-timeout-seconds", type=int, default=5_400)
     parser.add_argument("--poll-seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--max-rate-limit-wait-seconds",
+        type=float,
+        default=float(
+            os.environ.get("PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS")
+            or DEFAULT_RATE_LIMIT_WAIT_SECONDS
+        ),
+    )
     return parser
 
 
@@ -1139,6 +1291,7 @@ def main(argv: list[str] | None = None) -> int:
                 api_url=args.api_url,
                 token=token,
                 repository=FRONTEND_REPOSITORY,
+                max_rate_limit_wait_seconds=args.max_rate_limit_wait_seconds,
             ),
             frontend_sha=args.frontend_sha,
             frontend_ref=args.frontend_ref,
@@ -1159,6 +1312,24 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ControllerError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        if exc.reason:
+            failure = Path(f"{args.evidence_out}.failure.json")
+            failure.parent.mkdir(parents=True, exist_ok=True)
+            failure.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "pantheon.cross-repo-release-controller-failure.v1",
+                        "release_candidate_id": args.release_candidate_id,
+                        "outcome": "rejected",
+                        "reason": exc.reason,
+                        "detail": str(exc),
+                        "failed_at": utc_now(),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         return 1
     output = Path(args.evidence_out)
     output.parent.mkdir(parents=True, exist_ok=True)

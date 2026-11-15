@@ -3482,6 +3482,158 @@ def test_steady_request_carries_one_collector_pull_so_serial_pulls_fit_one_http_
     assert "limit=STEADY_PULLS_PER_REQUEST" in src
     assert "STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency" in src
 
+
+# --- steady RPC timeouts -----------------------------------------------------------------
+
+
+def test_steady_rpc_timeouts_derive_from_collector_read_budget_with_headroom() -> None:
+    from services.source_ingestion.connectors.collector_bundle import (
+        COLLECTOR_REQUEST_READ_BUDGET_SECONDS,
+        LATEST_CLOSE_PERSISTED_ROWS_PER_PULL,
+    )
+
+    cw = controller_worker
+    assert cw.STEADY_PULL_SERVER_BOUND_SECONDS >= (
+        COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+        + LATEST_CLOSE_PERSISTED_ROWS_PER_PULL * cw.STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW
+        + cw.STEADY_PULL_SEARCH_NOTIFY_SECONDS
+    )
+    assert cw.STEADY_PULL_RPC_TIMEOUT_SECONDS >= 2 * 31
+    assert cw.STEADY_RECONCILE_RPC_TIMEOUT_SECONDS >= 2 * 30
+
+
+def _serve_steady(paths_delay: dict[str, float]):
+    import http.server
+    import threading
+    import time
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length") or 0)
+            self.rfile.read(length)
+            delay = paths_delay[self.path]
+            if delay < 0:
+                time.sleep(3)  # effectively never responds within the test bound
+                return
+            time.sleep(delay)
+            if self.path.endswith("/run-scheduled"):
+                body = {
+                    "summary": {
+                        "total_ran": 1,
+                        "total_failed": 0,
+                        "total_skipped": 0,
+                        "exclusive_connector_count": 1,
+                    }
+                }
+            else:
+                body = _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+                sha = _desired_meta()["sha256"]
+                body["desired_state_sha256"] = sha
+                body["pre_readback"] = {}
+                body["post_readback"] = {"requirement_snapshot": {"sequence": 1, "desired_state_sha256": sha}}
+                body["accepted_requirement_snapshot"] = {
+                    "sequence": 1,
+                    "desired_state_sha256": sha,
+                    "authoritative": True,
+                }
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args: Any) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _steady_server_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, schedule_delay: float, reconcile_delay: float
+) -> dict[str, Any]:
+    monkeypatch.setattr(controller_worker, "STEADY_PULL_RPC_TIMEOUT_SECONDS", 1.5)
+    monkeypatch.setattr(controller_worker, "STEADY_RECONCILE_RPC_TIMEOUT_SECONDS", 1.5)
+    server = _serve_steady(
+        {
+            "/api/source-ingest/run-scheduled": schedule_delay,
+            "/api/source-ingest/persona-source-provisioning/reconcile": reconcile_delay,
+        }
+    )
+    try:
+        config = replace(
+            _config(tmp_path, truth_level="scheduled_tick", mode=STEADY),
+            api_url=f"http://127.0.0.1:{server.server_address[1]}",
+            timeout_seconds=0.5,
+        )
+        state = _state()
+        store = RecordingStateStore(config.state_path, [])
+        monkeypatch.setattr(
+            controller_worker, "load_desired_state", lambda **kw: (_personas(), _desired_meta())
+        )
+        for reader in ("read_actual_state", "read_actual_state_with_fetch_bindings"):
+            monkeypatch.setattr(
+                controller_worker,
+                reader,
+                lambda **kw: _collector_actual(sequence_no=state.sequence_no),
+            )
+        return run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_steady_run_scheduled_slower_than_config_timeout_but_inside_bound_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _steady_server_tick(tmp_path, monkeypatch, schedule_delay=1.0, reconcile_delay=0.0)
+    assert result["status"] == "ok"
+
+
+def test_steady_run_scheduled_that_never_responds_fails_within_dedicated_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(Exception):
+        _steady_server_tick(tmp_path, monkeypatch, schedule_delay=-1, reconcile_delay=0.0)
+    assert time.monotonic() - start < 2.9
+
+
+def test_steady_reconcile_slower_than_config_timeout_but_inside_bound_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _steady_server_tick(tmp_path, monkeypatch, schedule_delay=0.0, reconcile_delay=1.0)
+    assert result["status"] == "ok"
+
+
+def test_steady_reconcile_that_never_responds_fails_within_dedicated_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(Exception):
+        _steady_server_tick(tmp_path, monkeypatch, schedule_delay=0.0, reconcile_delay=-1)
+    assert time.monotonic() - start < 2.9
+
+
+def test_steady_timeout_env_may_raise_but_never_lower_below_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(_config(tmp_path, truth_level="scheduled_tick", mode=STEADY), timeout_seconds=1.0)
+    state = _state()
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {}, calls)
+    run_controller_tick(
+        config=config, state=state, store=RecordingStateStore(config.state_path, []), writer=RecordingWriter([])
+    )
+    assert [c["timeout_seconds"] for c in calls] == [controller_worker.STEADY_PULL_RPC_TIMEOUT_SECONDS]
+
+
 from services.source_ingestion.tests.test_scheduled_connector import (  # noqa: E402,F401
     _configure_with_records,
     _read_headers,

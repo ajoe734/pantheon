@@ -877,6 +877,64 @@ def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
     assert error.value.services == ("svc-20",)
 
 
+def _recapture_with_unhealthy(stack_case, service):
+    _, docker, lease, _, _, _, _ = stack_case
+    docker.containers[service]["health"] = "unhealthy"
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lease)
+    return docker, stack
+
+
+def test_service_unhealthy_at_capture_restored_unhealthy_passes_and_is_reported(stack_case):
+    docker, stack = _recapture_with_unhealthy(stack_case, "svc-20")
+    assert stack["services"]["svc-20"]["healthy_at_capture"] is False
+    assert stack["services"]["svc-21"]["healthy_at_capture"] is True
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    result, _ = restore_stack(stack_case, stack=stack, readback_seconds=60)
+    assert result["unhealthy_at_capture"] == {"svc-20": "unhealthy"}
+
+
+def test_service_healthy_at_capture_restored_unhealthy_still_fails_after_budget(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    assert stack["services"]["svc-20"]["healthy_at_capture"] is True
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_unhealthy_at_capture_does_not_excuse_image_mismatch(stack_case):
+    docker, stack = _recapture_with_unhealthy(stack_case, "svc-20")
+    docker.mutate_to_candidate()
+    docker.stuck.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case, stack=stack, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_baseline_without_capture_health_field_still_requires_healthy(stack_case):
+    _, docker, _, bundle, stack, _, _ = stack_case
+    legacy = copy.deepcopy(stack)
+    for row in legacy["services"].values():
+        del row["healthy_at_capture"]
+    assert artifacts.validate_stack(legacy, bundle=bundle) == legacy      # new reader reads old baseline
+    assert artifacts.validate_stack(stack, bundle=bundle) == stack        # and the new baseline
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case, stack=legacy, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_previous_version_baseline_shape_is_the_new_shape_minus_one_optional_key(stack_case):
+    # A reader at the previous script version validates exactly the old key set; the
+    # new field is the only difference, and it is optional for the current reader.
+    _, _, _, _, stack, _, _ = stack_case
+    for row in stack["services"].values():
+        assert set(row) - {"healthy_at_capture"} <= {"image_id", "state", "has_healthcheck", "env", "control", "source_snapshot"}
+
+
 def test_slow_service_that_becomes_healthy_within_budget_passes(stack_case):
     _, docker, _, _, stack, _, _ = stack_case
     docker.mutate_to_candidate()

@@ -1,0 +1,17 @@
+{
+  "task": "DEV-RESTORE-READBACK-BASELINE-HEALTH-20261115",
+  "incident": {
+    "run": "43676967789",
+    "summary": "Restore compensation exited 75 (DEV_ARTIFACT_OPERATION_FAILED, StackMixedError at dev_release_artifacts.py:851) although all 61 image_ids matched baseline 04613fa66; source-ingest-scheduler was already unhealthy at baseline capture 2026-11-15T04:36Z (baseline artifact pantheon-cross-repo-release-43676967789-1)."
+  },
+  "change": {
+    "capture": "stack_baseline.services[svc].healthy_at_capture (optional bool, additive)",
+    "readback": "healthy required only when healthy_at_capture is true or the field is absent (legacy baselines); otherwise health is reported as unhealthy_at_capture beside the stack proof in the restore result",
+    "unchanged": "image identity, running-state, missing container, candidate-only rules",
+    "compat_note": "Current reader accepts baselines with and without the field. A reader at the previous script version validates an exact key set and would reject a baseline carrying the new key; capture and restore of one deploy run the same script version, so this is not exercised in practice."
+  },
+  "local_tests": [
+    {"command": "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_artifact_compensation_evidence.py -q", "result": "251 passed, 2 skipped"},
+    {"command": "python -m pytest scripts/test_dev_release_artifacts.py -q -k 'capture or unhealthy or legacy or previous_version'", "result": "21 passed"}
+  ]
+}

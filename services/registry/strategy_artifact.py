@@ -232,6 +232,31 @@ def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
     return _mapping_checksum(artifact, "StrategyArtifact")
 
 
+def strategy_artifact_minimum_closes(artifact: Mapping[str, Any]) -> int:
+    """Return the minimum stored closes needed to evaluate ``artifact``.
+
+    Single owner of this rule for every strategy kind; an envelope needs the
+    maximum over its pinned members. An unknown kind fails closed.
+    """
+    logic = artifact.get("strategy_logic") if isinstance(artifact, Mapping) else None
+    kind = logic.get("kind") if isinstance(logic, Mapping) else None
+    parameters = artifact.get("parameters") or {}
+    if kind == "close_to_close_momentum":
+        return int(parameters[logic["lookback_parameter"]])
+    if kind == "factor_rule_v1":
+        from .factor_rule import required_history_bars
+
+        return max(1, int(required_history_bars(logic, parameters)))
+    if kind == "persona_portfolio_v1":
+        return max(
+            (strategy_artifact_minimum_closes(m["artifact"]) for m in logic["members"]),
+            default=1,
+        )
+    raise StrategyArtifactValidationError(
+        f"minimum_closes is undefined for strategy_logic kind {kind!r}"
+    )
+
+
 @lru_cache(maxsize=1)
 def _strategy_artifact_schema() -> dict[str, Any]:
     schema = json.loads(STRATEGY_ARTIFACT_SCHEMA_PATH.read_text(encoding="utf-8"))
