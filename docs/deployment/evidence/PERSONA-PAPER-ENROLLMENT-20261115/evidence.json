@@ -1,0 +1,73 @@
+{
+ "task_id": "PERSONA-PAPER-ENROLLMENT-20261115",
+ "base_commit": "40f024389",
+ "status": "implemented",
+ "reproduction": {
+  "paper_owner_consumers": [
+   "services/persona/case_file_outcomes.py:48",
+   "services/persona/case_file_outcomes.py:251",
+   "services/persona/harness.py:256",
+   "services/persona/harness.py:318",
+   "services/evolution/auto_consumer_runtime.py:102",
+   "services/evolution/auto_consumer_runtime.py:128"
+  ],
+  "eligible_state_sets_that_read_owner_lifecycle": [
+   "services/persona/persona_cycle_controller.py:39",
+   "services/control-plane/cron/persona_cron_registrar.py:1423"
+  ],
+  "base_callers": {
+   "strategy-pool/seed": "route definition only (services/control-plane/persona/main.py:677); no production caller at 40f024389",
+   "harness initialise POST": "none in services/ or integrations/ at 40f024389 (harness callers there are GET/patch/deliver)",
+   "lifecycle advance to consultable/paper_owner": "none; update_persona maps paper states to research_only"
+  },
+  "regression_tests": [
+   "test_reproduce_unenrolled_paper_persona_is_invisible_to_the_daily_cycle",
+   "test_production_callers_of_pool_seed_and_harness_initialise_exist_only_in_the_port"
+  ]
+ },
+ "design_facts_found": [
+  "Governance refuses a persona_lifecycle_transition whose decider is its proposer (approval_targets.py:107), so the proposal needs a principal distinct from the paper automated gate identity; the gate identity (existing governance principal) reviews and decides.",
+  "The Persona owner admits a decision-backed lifecycle step only for a JWT with a tenant claim (write_owner.py _require_lifecycle_authority); a static service token has no tenant claim.",
+  "harness initialise requires paper_owner (harness.py:256), so order is pool seed, lifecycle, harness."
+ ],
+ "changes": {
+  "services/control-plane/bff/persona_paper_enrollment.py": "new: eligibility (active paper capital binding + exactly one active paper runtime, active trading persona), governed lifecycle via Governance decisions, pool seed, harness v1 render+initialise, proposer transport",
+  "services/control-plane/bff/persona_provisioning_coordinator.py": "enrol after coordinate completion (outside the saga, readback in references.paper_enrollment); reconcile_paper_enrollment(record) lease-guarded reconcile step",
+  "services/control-plane/bff/ports/persona_write_owner.py": "advance_lifecycle_governed, get/seed_strategy_pool, get/initialize_harness over existing owner routes",
+  "services/control-plane/bff/personas/service.py": "forward coordinator gets runtime_binding_reader; _reconcile_paper_enrollment_once added to the periodic provisioning reconcile pass (AC4 production wiring)"
+ },
+ "validation": {
+  "python": "repo .venv python 3.12, pytest, foreground, bounded",
+  "command": "pytest services/control-plane/bff/tests/test_persona_paper_enrollment.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/persona/test_harness.py services/persona/test_lifecycle_approval_verifier.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/test_persona_provisioning_readback.py",
+  "result": "486 passed, 0 failed (/tmp/rv-venv python 3.12, foreground)",
+  "new_integration_tests": 21,
+  "coordinator_suite": "71 passed (2 added)",
+  "integration_real_components": [
+   "BFF coordinator coordinate() and reconcile_paper_enrollment()",
+   "Persona owner app (lifecycle, pool seed, harness routes) reached through the BFF HTTP port",
+   "Governance approval app with real decision store",
+   "shared ApprovalEvidence.require_valid verification inside the Persona owner",
+   "PersonaStrategyPoolStore seed_from_owner_records",
+   "PersonaCronRegistrar.reconcile_daily_cycles and CycleOwners.observe"
+  ],
+  "stand_ins": "Capital/Registry/Deployment saga owners (existing coordinator test transport), registry artifact lister, cron gateway transport"
+ },
+ "open_items": [
+  {
+   "id": "proposer-principal",
+   "detail": "Deployment needs a second Governance principal for proposals: PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID and PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN (distinct from the paper gate subject). Until configured, enrolment fails closed with reason governance_proposer_identity_unconfigured on references.paper_enrollment."
+  },
+  {
+   "id": "persona-jwt-secret",
+   "detail": "The governed lifecycle call mints a short-lived tenant JWT from PERSONA_JWT_SECRET / PANTHEON_BFF_JWT_SECRET; unset fails closed with a readable reason."
+  },
+  {
+   "id": "harness-starting-values",
+   "detail": "Harness v1 cadence 86400s, steps observe/orient/decide/act/learn, minimum_evidence_count 3, minimum_confidence 0.6, retrieval scopes own_private+institutional, max_items 10 are coordinator starting values (design gives no numbers); reviewer to confirm. Guardrails and consult policy are taken from the existing tool profile and consult_triggers.GATED_DECISION_TYPES, nothing invented."
+  },
+  {
+   "id": "reconcile-loop-test-gap",
+   "detail": "_reconcile_paper_enrollment_once is thin glue over the tested reconcile_paper_enrollment; no dedicated unit test for the loop wrapper."
+  }
+ ]
+}
