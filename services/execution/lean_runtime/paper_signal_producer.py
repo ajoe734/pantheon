@@ -60,7 +60,9 @@ from services.execution.lean_runtime.intraday_settlement import (
     STATUS_PENDING,
     is_intraday_frequency,
     pending_record,
+    plan_daily_next_open_decision,
     plan_next_session_decision,
+    DAILY_FREQUENCY,
 )
 from services.registry.strategy_artifact import BAR_FREQUENCY_DATASETS
 from services.execution.lean_runtime.instrument_candidates import TAIPEI_TZ
@@ -1141,6 +1143,35 @@ class CurrentArtifactStrategy:
             out["intraday_settlement"] = pending_record(
                 ExecutionPlan(**intraday_plan), decision_id=decision_id, symbol=symbol, direction=direction
             )
+        elif action in ("BUY", "SELL") and is_taiwan_venue_symbol(symbol) and (
+            _declared_bar_frequency(strategy_artifact) in (None, DAILY_FREQUENCY)
+        ):
+            # Operator decision 2026-11-15 (option A): a daily decision computed from the close of
+            # session D is parked and settled at the official open of D+1 like the intraday path.
+            # It is never filled at D's close.  The gate backtest still fills daily at the close
+            # until GATE-DAILY-NEXT-OPEN-REBASELINE-20261115 merges (known temporary difference).
+            if not market_input.get("event_time") or not market_input.get("observed_at"):
+                raise SignalDecisionUnavailable(
+                    "daily_availability_missing",
+                    f"binding {binding_id} daily decision needs the bar event_time and observed_at "
+                    "to schedule the next-session open fill; no close fill is substituted",
+                )
+            try:
+                daily_plan = plan_daily_next_open_decision(
+                    event_time=market_input["event_time"],
+                    bar_availability_ts=market_input["observed_at"],
+                    decision_time=now_iso,
+                )
+            except IntradayWindowError as exc:
+                raise SignalDecisionUnavailable(exc.reason, exc.detail) from exc
+            out["metadata"]["bar_availability_ts"] = market_input.get("observed_at")
+            out["metadata"]["decision_time"] = daily_plan.decision_time
+            out["metadata"]["execution_target_bar_start"] = daily_plan.execution_target_bar_start
+            out["metadata"]["settlement_status"] = STATUS_PENDING
+            out["metadata"]["settlement_mode"] = "delayed_simulated"
+            out["intraday_settlement"] = pending_record(
+                daily_plan, decision_id=decision_id, symbol=symbol, direction=direction
+            )
         if portfolio_result is not None:
             out["metadata"]["portfolio_member_views"] = {
                 member["member_id"]: {
@@ -1219,6 +1250,19 @@ class CurrentArtifactStrategy:
                     f"binding {binding_id} expected {field}={expected_value!r}, got {actual or None!r}",
                 )
 
+
+
+def _decision_leg_count(decision: Mapping[str, Any]) -> int:
+    """Signals one decision expands to (mirrors ``signal_producer._decision_targets``)."""
+    for key in ("signals", "signal_targets", "targets"):
+        explicit = decision.get(key)
+        if isinstance(explicit, Sequence) and not isinstance(explicit, (str, bytes)):
+            return max(1, len(explicit))
+    for key in ("target_weights", "targetWeights"):
+        weights = decision.get(key)
+        if isinstance(weights, Mapping):
+            return max(1, len(weights))
+    return 1
 
 
 def _bar_identity(market_input: Mapping[str, Any], closes: Sequence[float], bar_frequency: Any) -> str:
@@ -2254,6 +2298,56 @@ def reconciled_intraday_bar_reader(
     return [{**bar.to_dict(), "symbol": symbol} for bar in bars]
 
 
+def official_daily_open_reader(symbol: str, session_date: str, now: datetime) -> Sequence[Any]:
+    """The official daily bar (with its open) of one session from Source's stored snapshot.
+
+    Only an official point that states its open is returned; a missing session, a missing open
+    or a provisional collector close yields ``[]`` (the decision stays pending, then expires).
+    A transport fault raises so the decision stays pending instead of expiring.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from services.execution.lean_runtime.instrument_candidates import session_bounds
+
+    base = (
+        os.getenv("PANTHEON_SOURCE_INGEST_URL") or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or ""
+    ).rstrip("/")
+    if not base:
+        raise RuntimeError("PANTHEON_SOURCE_INGEST_URL is required to read the next-session open")
+    url = f"{base}/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(symbol, safe='')}"
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET"), timeout=5
+        ) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        raise
+    if not isinstance(payload, Mapping):
+        return []
+    opens = payload.get("opens")
+    if not isinstance(opens, Sequence) or isinstance(opens, (str, bytes)):
+        return []
+    for entry in opens:
+        if not isinstance(entry, Mapping):
+            continue
+        stamp = parse_ts(entry.get("event_time"), field="event_time")
+        if stamp.astimezone(TAIPEI_TZ).date().isoformat() != session_date:
+            continue
+        opened, _ = session_bounds(date.fromisoformat(session_date))
+        return [{
+            "symbol": symbol,
+            "bar_start": opened.isoformat(),
+            "bar_frequency": DAILY_FREQUENCY,
+            "bar_availability_ts": payload.get("observed_at"),
+            "open": entry.get("open"),
+        }]
+    return []
+
+
 class PaperSignalProducer:
     """Generate signals for paper bindings and enqueue them onto their queues.
 
@@ -2266,12 +2360,15 @@ class PaperSignalProducer:
         store_for: Callable[[Any], Any],
         strategy: Any,
         intraday_bar_reader: Callable[[str, str, str, datetime], Sequence[Any]] | None = None,
+        daily_bar_reader: Callable[[str, str, datetime], Sequence[Any]] | None = None,
     ) -> None:
         self._store_for = store_for
         self._strategy = strategy
         self._degraded_by_binding: dict[str, str] = {}
         # (symbol, session_date, bar_frequency, now) -> reconciled-only bars of that session.
         self._intraday_bar_reader = intraday_bar_reader or reconciled_intraday_bar_reader
+        # (symbol, session_date, now) -> the official daily bar of that session (with its open).
+        self._daily_bar_reader = daily_bar_reader or official_daily_open_reader
 
     @property
     def degraded_bindings(self) -> dict[str, str]:
@@ -2280,7 +2377,13 @@ class PaperSignalProducer:
         return dict(self._degraded_by_binding)
 
     def _park_pending_intraday(
-        self, store: Any, binding_id: str, decision_id: str, pending: Mapping[str, Any], out: Mapping[str, Any]
+        self,
+        store: Any,
+        binding_id: str,
+        decision_id: str,
+        pending: Mapping[str, Any],
+        out: Mapping[str, Any],
+        grading_marks: Sequence[tuple[str, Mapping[str, Any]]] = (),
     ) -> int:
         putter = getattr(store, "put_decision_record", None)
         getter = getattr(store, "get_decision_record", None)
@@ -2292,6 +2395,10 @@ class PaperSignalProducer:
             return 0
         try:
             record = {**dict(pending), "binding_id": binding_id, "decision_out": json.loads(json.dumps(out))}
+            if grading_marks:
+                # Counterfactual rows ride in decision_out; they are marked graded only once the
+                # carrying order is really released, exactly as the immediate path marks on enqueue.
+                record["grading_marks"] = json.loads(json.dumps([[gid, dict(state)] for gid, state in grading_marks]))
         except (TypeError, ValueError):
             self._degraded_by_binding[binding_id] = "intraday_decision_not_serialisable"
             return 0
@@ -2335,6 +2442,8 @@ class PaperSignalProducer:
         released = 0
 
         def reader(symbol: str, session_date: str, frequency: str) -> Sequence[Any]:
+            if frequency == DAILY_FREQUENCY:
+                return self._daily_bar_reader(symbol, session_date, now)
             return self._intraday_bar_reader(symbol, session_date, frequency, now)
 
         # Discover every outstanding decision over the whole record-retention window (not a
@@ -2368,6 +2477,12 @@ class PaperSignalProducer:
                 count = self._enqueue_output(
                     binding, now_iso, json.loads(json.dumps(decision_out)), settled_fill=settled["fill"]
                 )
+                if count:
+                    for graded_id, graded_state in pending.get("grading_marks") or ():
+                        store.put_decision_record(
+                            _grading_record_id(graded_id),
+                            {**graded_state, "carried_by_signal_id": decision_out.get("signal_id")},
+                        )
                 # Marked even when dedup skipped the enqueue: the order is already admitted.
                 store.put_decision_record(
                     decision_id + ENQUEUED_RECORD_SUFFIX, {"decision_id": decision_id, "enqueued": count}
@@ -2498,6 +2613,15 @@ class PaperSignalProducer:
                 return 0
 
             intraday_pending = out.pop("intraday_settlement", None)
+            daily_pending = None
+            if (
+                isinstance(intraday_pending, Mapping)
+                and settled_fill is None
+                and intraday_pending["plan"]["bar_frequency"] == DAILY_FREQUENCY
+            ):
+                # Daily: park only after the expression and grading inputs are resolved so the
+                # parked decision carries them and is released unchanged at the next open.
+                daily_pending, intraday_pending = intraday_pending, None
             if isinstance(intraday_pending, Mapping) and settled_fill is None:
                 # Step 4: the decision is only a durable pending_settlement record.  It is
                 # NOT enqueued: no order may reach the consumer before the D+1 first bar
@@ -2613,6 +2737,17 @@ class PaperSignalProducer:
                     out["metadata"][COUNTERFACTUAL_ROWS_KEY] = grading_rows
                 if grading_diagnostics:
                     out["metadata"][COUNTERFACTUAL_GRADING_KEY] = grading_diagnostics
+
+            if daily_pending is not None:
+                return self._park_pending_intraday(
+                    store, binding_id, str(out.get("decision_id") or ""), daily_pending, out,
+                    grading_marks=grading_to_mark,
+                )
+
+            if isinstance(out.get("metadata"), dict):
+                # Declared leg count: the consumer executes a complete batch in the same drain
+                # instead of waiting for the legacy three-tick rebalance timeout.
+                out["metadata"].setdefault("rebalance_batch_size", _decision_leg_count(out))
 
             batch = dsp.produce(
                 out,
