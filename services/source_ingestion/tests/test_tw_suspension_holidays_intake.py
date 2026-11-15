@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,11 +84,15 @@ def collector_files(tmp_path: Path, *, holidays=True, suspension=True, twse_page
         runs.append((TWSE_PRICE, "close-2026-11-10", {"dates": ["2026-11-10"]}, False))
     if tpex_page:
         runs.append((TPEX_PRICE, "backfill-2026-06-18", {"dates": ["2026-06-18"]}, False))
-    for source_id, run_id, kwargs, disabled in runs:  # the two new sources are disabled by default
-        outcome = runner.run_source(source_id, run_id=run_id, started_at="2026-11-15T09:00:00Z",
-                                    finished_at="2026-11-15T09:05:00Z", collect_kwargs=kwargs or None,
-                                    allow_disabled=disabled)
-        assert outcome.status == "complete", (source_id, outcome.status)
+    real_sleep, time.sleep = time.sleep, lambda _s: None  # politeness delay is real in production only
+    try:
+        for source_id, run_id, kwargs, disabled in runs:  # the two new sources are disabled by default
+            outcome = runner.run_source(source_id, run_id=run_id, started_at="2026-11-15T09:00:00Z",
+                                        finished_at="2026-11-15T09:05:00Z", collect_kwargs=kwargs or None,
+                                        allow_disabled=disabled)
+            assert outcome.status == "complete", (source_id, outcome.status)
+    finally:
+        time.sleep = real_sleep
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
