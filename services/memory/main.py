@@ -23,6 +23,7 @@ from .institutional_memory_store import (
     build_institutional_memory_store,
 )
 from . import hindsight_index as hs
+from . import mental_models
 from .usefulness import apply_usefulness
 
 from .learn_feedback_writeback import (
@@ -605,7 +606,7 @@ def _authorize_memory_read(
     authorization: Optional[str], *, actor_id: str, actor_roles: List[str], session_id: str,
     scope: str, persona_id: Optional[str], session_persona_id: Optional[str],
 ):
-    """Shared identity, tenant and governance check for retrieve and reflect."""
+    """Shared identity, tenant and governance check for retrieve and standing-question reads."""
     ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
     roles = _split_csv_values(actor_roles)
     effective_actor_id = actor_id
@@ -757,94 +758,71 @@ async def retrieve_memory(
     }
 
 
-class ReflectPayload(BaseModel):
-    query: str
-    bank: str  # "institutional" (facts bank) or "persona" (caller's own bank): one bank per call
-    actor_id: str
-    actor_roles: List[str]
-    session_id: str
-    persona_id: Optional[str] = None
-    session_persona_id: Optional[str] = None
-    subject_anchors: List[str] = []
-    memory_type: Optional[str] = None
-    knowledge_type: Optional[str] = None
+class StandingQuestionsPayload(BaseModel):
+    persona_id: str
+    questions: List[Dict[str, Any]]
 
 
-@app.post("/api/memory/reflect")
-async def reflect_memory(payload: ReflectPayload, authorization: Optional[str] = Header(default=None)):
-    """Read-only reflect over one Hindsight bank, scoped exactly like retrieve (H9)."""
-    if payload.bank not in {"institutional", "persona"} or not payload.query.strip():
-        raise HTTPException(status_code=422, detail={"error": "invalid_reflect_request",
-                                                     "message": "bank must be institutional|persona and query non-empty"})
-    _ctx, _roles, tenant_id, relevance_scope, decision = _authorize_memory_read(
-        authorization, actor_id=payload.actor_id, actor_roles=payload.actor_roles, session_id=payload.session_id,
-        scope=payload.bank, persona_id=payload.persona_id, session_persona_id=payload.session_persona_id)
-    if payload.bank == "persona" and not payload.persona_id:
-        raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve",
-                                                     "message": "persona_id is required for persona memory reflect"})
-    anchors = _split_csv_values(payload.subject_anchors)
-    if any(hs.parse_subject_anchor(a) is None for a in anchors):
-        raise HTTPException(status_code=422, detail={"error": "invalid_subject_anchor", "allowed_kinds": list(hs.ANCHOR_KINDS)})
+@app.put("/api/memory/persona-standing-questions")
+async def declare_standing_questions(payload: StandingQuestionsPayload, authorization: Optional[str] = Header(default=None)):
+    """Persona-service owner route: declare one persona's standing questions as an idempotent set by key (H13).
 
-    def unavailable(reason: str, status: int = 503, error: str = "reflect_unavailable"):
-        return HTTPException(status_code=status, detail={"error": error, "reason": reason, "llm_layers": hs.llm_layers()})
-
-    if not hs.reflect_configured():
-        raise unavailable("reflect_not_configured")
+    Keys missing from the set are retired. Only a verified ``persona-svc`` identity bound to one tenant may call it;
+    agents hold no path to it and the memory service is the only caller of Hindsight's mental-model API.
+    """
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=("persona-svc",))
+    persona_id = payload.persona_id.strip()
+    if not persona_id:
+        raise HTTPException(status_code=422, detail={"error": "invalid_standing_questions", "reason": "persona_id_required"})
+    if not hs.llm_layers_enabled():
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "llm_layers_disabled", "llm_layers": hs.llm_layers()})
     client = hs.get_hindsight_client()
     if client is None:
-        raise unavailable("hindsight_unconfigured")
-    if payload.bank == "persona":
-        bank = hs.persona_bank(tenant_id, payload.persona_id)
-        groups = hs.tag_groups(subject_anchors=anchors, type_tag=f"type:{payload.memory_type}" if payload.memory_type else None,
-                               scope_tags=["scope:committee"] if relevance_scope == "persona_and_committee" else ())
-    else:
-        bank = hs.facts_bank(tenant_id)
-        groups = hs.tag_groups(subject_anchors=anchors, type_tag=f"type:{payload.knowledge_type}" if payload.knowledge_type else None)
-    body = {"query": payload.query, "budget": "low", "max_tokens": 2048, "include": {"facts": {}}}
-    if groups:
-        body["tag_groups"] = groups
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "hindsight_unconfigured", "llm_layers": hs.llm_layers()})
     try:
-        result = client.reflect(bank, body)
+        report = mental_models.declare(client, tenant_id, persona_id, payload.questions)
+    except mental_models.StandingQuestionError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_standing_questions", "reason": exc.reason}) from exc
     except hs.HindsightError as exc:
-        raise unavailable(exc.reason) from exc
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable", "reason": exc.reason,
+                                                     "llm_layers": hs.llm_layers()}) from exc
+    return {**report, "llm_layers": hs.llm_layers()}
 
-    # Contributing sources must re-authorise and validate against the canonical owner store; fail closed.
-    based_on = (result.get("based_on") if isinstance(result, dict) else None) or {}
-    memories = based_on.get("memories") if isinstance(based_on, dict) else None
-    citations = hs.reflect_citations(result) if isinstance(result, dict) else []
-    if (not isinstance(memories, list) or not memories or not citations
-            or any(not isinstance(m, dict) or not str(m.get("document_id") or "").strip() for m in memories)
-            or any(based_on.get(k) for k in ("mental_models", "directives"))):
-        raise unavailable("canonical_source_unverified")
-    store = _persona_store() if payload.bank == "persona" else _store()
-    wanted_anchors = {hs.parse_subject_anchor(a) for a in anchors} - {None}
-    req_type = payload.memory_type if payload.bank == "persona" else payload.knowledge_type
-    for cid in citations:
-        entry = store.get(cid)
-        if entry is None:
-            raise unavailable("canonical_source_missing")
-        if (entry.tenant_id or "default") != (tenant_id or "default"):
-            raise unavailable("tenant_scope_mismatch", status=403, error="memory_reflect_unauthorized")
-        if payload.bank == "persona" and entry.persona_id != payload.persona_id:
-            raise unavailable("persona_scope_mismatch", status=403, error="memory_reflect_unauthorized")
-        if payload.bank == "persona" and relevance_scope and entry.relevance_scope != relevance_scope:
-            raise unavailable("committee_scope_mismatch", status=403, error="memory_reflect_unauthorized")
-        if entry.is_expired():
-            raise unavailable("canonical_source_expired")
-        if not entry.is_active:
-            raise unavailable("canonical_source_inactive")
-        entry_type = entry.memory_type if payload.bank == "persona" else entry.knowledge_type
-        if (req_type and entry_type != req_type) or (wanted_anchors and wanted_anchors.isdisjoint(hs.anchors_for(entry))):
-            raise unavailable("canonical_source_filtered")
-    return {
-        "text": result.get("text", ""),
-        "citations": citations,
-        "bank": payload.bank,
-        "llm_layers": hs.llm_layers(),
-        "authz": {"allowed": True, "reason": str(decision.get("reason") or "authorized"),
-                  "policy_version": "governance-authz.v1"},
-    }
+
+@app.get("/api/memory/persona-standing-questions")
+async def read_standing_questions(
+    persona_id: str = Query(..., min_length=1),
+    actor_id: str = Query(..., min_length=1),
+    actor_roles: List[str] = Query(...),
+    session_id: str = Query(..., min_length=1),
+    session_persona_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    """One persona's current standing-question answers; derived, never canonical, never another persona's (H13)."""
+    _ctx, roles, tenant_id, relevance_scope, decision = _authorize_memory_read(
+        authorization, actor_id=actor_id, actor_roles=actor_roles, session_id=session_id,
+        scope="persona", persona_id=persona_id, session_persona_id=session_persona_id)
+    if relevance_scope is not None:  # committee sessions see only committee-scoped canonical memory, never derived answers
+        raise HTTPException(status_code=403, detail={"error": "standing_questions_private",
+                                                     "reason": "committee_scope_has_no_derived_answers"})
+    if not hs.llm_layers_enabled():
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "llm_layers_disabled", "llm_layers": hs.llm_layers()})
+    client = hs.get_hindsight_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "hindsight_unconfigured", "llm_layers": hs.llm_layers()})
+    try:
+        answers = mental_models.read_answers(client, tenant_id, persona_id.strip(), _persona_store())
+    except hs.HindsightError as exc:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable", "reason": exc.reason,
+                                                     "llm_layers": hs.llm_layers()}) from exc
+    return {"persona_id": persona_id, "answers": answers, "count": len(answers), "derived": True,
+            "llm_layers": hs.llm_layers(),
+            "authz": {"allowed": True, "reason": str(decision.get("reason") or "authorized"),
+                      "policy_version": "governance-authz.v1"}}
 
 
 def _lesson_identity(

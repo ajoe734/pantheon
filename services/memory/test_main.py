@@ -966,179 +966,259 @@ def test_persona_retrieve_recalls_verified_tenant_bank(memory_client, monkeypatc
     assert body["retrieval_mode"] == "hindsight" and body["llm_layers"] == "disabled"
 
 
-def test_reflect_route_unavailable_reasons_and_scoped_citation_hydration(memory_client, monkeypatch):
-    from services.memory import hindsight_index as hs
-    from services.memory.search_retrieval import retrieve_institutional
+class FakeMentalModelHindsight:
+    """In-memory stand-in for the Hindsight mental-model + bank-config API (the unit tests' double)."""
 
+    def __init__(self):
+        self.banks = {}
+        self.config = {}
+
+    def configure_bank(self, bank, updates):
+        self.config.setdefault(bank, {}).update(updates)
+
+    def list_mental_models(self, bank, detail="full"):
+        return [dict(m) for m in self.banks.get(bank, {}).values()]
+
+    def create_mental_model(self, bank, body):
+        self.banks.setdefault(bank, {})[body["id"]] = {**body, "content": None, "last_refreshed_at": None}
+
+    def update_mental_model(self, bank, model_id, body):
+        self.banks[bank][model_id].update(body)
+
+    def delete_mental_model(self, bank, model_id):
+        self.banks.get(bank, {}).pop(model_id, None)
+
+    def answer(self, bank, key, text, documents, refreshed="2026-11-15T00:00:00Z"):
+        for model in self.banks[bank].values():
+            if model["name"] == key:
+                model.update(content=text, last_refreshed_at=refreshed, reflect_response={
+                    "based_on": {"memories": [{"document_id": d, "text": "x"} for d in documents]}})
+
+
+def _questions_env(memory_client, monkeypatch, enabled=True):
+    from services.memory import hindsight_index as hs
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
-    alpha_op = _make_jwt(tenant_id="tenant-alpha", roles=["operator"])
-    beta_op = _make_jwt(tenant_id="tenant-beta", roles=["operator"])
-    consult_tok = _make_jwt(tenant_id="tenant-alpha", sub="consult-actor-1", roles=["consultation_session"])
+    if enabled:
+        monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+    else:
+        monkeypatch.delenv(hs.LLM_LAYERS_ENV, raising=False)
+    monkeypatch.setattr(hs, "_LAYERED_BANKS", set())
+    fake = FakeMentalModelHindsight()
+    hs.set_hindsight_client(fake)
+    return hs, fake
 
-    inst_ok = _institutional_auth_payload(
-        tenant_id="tenant-alpha",
-        content={"headline": "Auth test finding", "body": "Auth test body content", "tags": ["auth", "underlying:TW"]},
-    )
-    inst_other_tenant = _institutional_auth_payload(tenant_id="tenant-beta", source_event_id="rt-auth-beta")
-    inst_stale = _institutional_auth_payload(
-        tenant_id="tenant-alpha",
-        source_event_id="rt-auth-stale",
-        content={"headline": "Archived policy", "body": "ARCHIVED_CANONICAL_BODY_DO_NOT_RETURN", "tags": ["underlying:TW"]},
-    )
-    inst_expired = _institutional_auth_payload(
-        tenant_id="tenant-alpha",
-        source_event_id="rt-auth-expired",
-        expires_at="2020-01-01T00:00:00Z",
-        content={"headline": "Expired policy", "body": "EXPIRED_CANONICAL_BODY_DO_NOT_RETURN", "tags": ["underlying:TW"]},
-    )
-    p_committee = _persona_auth_payload(
-        tenant_id="tenant-alpha", persona_id="persona-alpha", relevance_scope="persona_and_committee",
-    )
-    p_private = _persona_auth_payload(
-        tenant_id="tenant-alpha", persona_id="persona-alpha", relevance_scope="persona_private", source_event_id="PM-AUTH-002",
-    )
-    p_other_persona = _persona_auth_payload(
-        tenant_id="tenant-alpha", persona_id="persona-beta", relevance_scope="persona_and_committee", source_event_id="PM-AUTH-003",
-    )
-    p_other_tenant = _persona_auth_payload(
-        tenant_id="tenant-beta", persona_id="persona-alpha", relevance_scope="persona_and_committee", source_event_id="PM-AUTH-004",
-    )
 
-    for entry in (inst_ok, inst_stale, inst_expired):
-        assert memory_client.post("/api/memory/entries", json=entry, headers={"Authorization": f"Bearer {alpha_op}"}).status_code == 201
-    assert memory_client.post("/api/memory/entries", json=inst_other_tenant, headers={"Authorization": f"Bearer {beta_op}"}).status_code == 201
-    for p_entry in (p_committee, p_private, p_other_persona):
-        assert memory_client.post("/api/memory/persona-entries", json=p_entry, headers={"Authorization": f"Bearer {alpha_op}"}).status_code == 201
-    assert memory_client.post("/api/memory/persona-entries", json=p_other_tenant, headers={"Authorization": f"Bearer {beta_op}"}).status_code == 201
-    assert hs.flush_mirrors()
+def _declare(memory_client, tenant="tenant-alpha", roles=("persona-svc",), persona="persona-alpha", questions=None):
+    questions = [{"key": "risk_lessons", "text": "What have my risk lessons been?", "memory_types": ["risk_observation"]},
+                 {"key": "family:momentum", "text": "How has momentum worked?", "anchors": ["family:momentum"]}] \
+        if questions is None else questions
+    return memory_client.put("/api/memory/persona-standing-questions",
+                             json={"persona_id": persona, "questions": questions},
+                             headers={"Authorization": f"Bearer {_make_jwt(tenant_id=tenant, roles=list(roles))}"})
 
-    # Simulate stale index entry: canonical archive persists while Hindsight invalidation fails with hindsight_unreachable.
-    class OutageInvalidateClient:
-        def invalidate_document(self, *_args):
-            raise hs.HindsightError("hindsight_unreachable")
 
-        def recall(self, _bank, _body):
-            return {"results": [{"document_id": inst_stale["entry_id"], "scores": {"final": 1.0}}]}
+def _read(memory_client, tenant="tenant-alpha", persona="persona-alpha", roles=("operator",), **params):
+    query = {"persona_id": persona, "actor_id": "memory-operator-1", "actor_roles": list(roles), "session_id": "s-1", **params}
+    return memory_client.get("/api/memory/persona-standing-questions", params=query,
+                             headers={"Authorization": f"Bearer {_make_jwt(tenant_id=tenant, roles=list(roles))}"})
 
-    hs.set_hindsight_client(OutageInvalidateClient())
-    monkeypatch.setattr(hs, "MIRROR_BACKOFF_SECONDS", 0)
-    monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
-    main._store().archive(inst_stale["entry_id"], reason="withdrawn")
-    assert hs.flush_mirrors()
-    assert not main._store().require(inst_stale["entry_id"]).is_active
-    assert hs.DIAGNOSTICS.snapshot()["counts"]["failed"] >= 1
-    assert retrieve_institutional(main._store(), client=OutageInvalidateClient(), query="Archived policy", tenant_id="tenant-alpha") == []
 
-    # 1. reflect_not_configured when PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED is unset
-    monkeypatch.delenv("PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED", raising=False)
-    r_disabled = memory_client.post(
-        "/api/memory/reflect",
-        json={"query": "regime lesson", "bank": "institutional", "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1"},
-        headers={"Authorization": f"Bearer {alpha_op}"},
-    )
-    assert r_disabled.status_code == 503
-    assert r_disabled.json()["detail"] == {"error": "reflect_unavailable", "reason": "reflect_not_configured", "llm_layers": "disabled"}
+def test_reflect_route_is_removed(memory_client, monkeypatch):
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    response = memory_client.post("/api/memory/reflect", json={}, headers={
+        "Authorization": f"Bearer {_make_jwt(roles=['operator'])}"})
+    assert response.status_code in {404, 405}
+    from services.memory import hindsight_index as hs
+    assert not hasattr(hs, "reflect_configured") and not hasattr(hs.HindsightClient, "reflect")
 
-    # 2. hindsight_unconfigured when enabled without a Hindsight client
-    monkeypatch.setenv("PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED", "true")
-    monkeypatch.delenv("PANTHEON_MEMORY_HINDSIGHT_URL", raising=False)
-    monkeypatch.delenv("PANTHEON_MEMORY_HINDSIGHT_API_KEY", raising=False)
-    hs.set_hindsight_client(None)
-    r_unconf = memory_client.post(
-        "/api/memory/reflect",
-        json={"query": "regime lesson", "bank": "institutional", "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1"},
-        headers={"Authorization": f"Bearer {alpha_op}"},
-    )
-    assert r_unconf.status_code == 503
-    assert r_unconf.json()["detail"] == {"error": "reflect_unavailable", "reason": "hindsight_unconfigured", "llm_layers": "enabled"}
 
-    # 3. Scoped single-bank reflect: happy path + fail-closed source validation & authorization regressions
-    calls = []
-    scripted_memories = [{"document_id": inst_ok["entry_id"]}]
-    SECRET = "ARCHIVED_CANONICAL_BODY_DO_NOT_RETURN"
-
-    class ReflectClient:
-        def reflect(self, bank, body):
-            calls.append((bank, body))
-            if body["query"] == "provider_none_error":
-                raise hs.HindsightError("hindsight_http_400", "LLM provider is none")
-            return {"text": SECRET if body["query"].startswith("reject:") else f"Synthesized reflection for {bank}",
-                    "based_on": {"memories": list(scripted_memories)}}
-
-    hs.set_hindsight_client(ReflectClient())
+def test_standing_questions_disabled_without_bridge_and_unconfigured_fail_closed(memory_client, monkeypatch):
+    hs, fake = _questions_env(memory_client, monkeypatch, enabled=False)
     try:
-        r_err = memory_client.post(
-            "/api/memory/reflect",
-            json={"query": "provider_none_error", "bank": "institutional", "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1"},
-            headers={"Authorization": f"Bearer {alpha_op}"},
-        )
-        assert r_err.status_code == 503 and r_err.json()["detail"]["reason"] == "hindsight_http_400"
-
-        r_inst = memory_client.post(
-            "/api/memory/reflect",
-            json={
-                "query": "regime lesson", "bank": "institutional", "knowledge_type": "research_finding",
-                "subject_anchors": ["underlying:TW"], "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1",
-            },
-            headers={"Authorization": f"Bearer {alpha_op}"},
-        )
-        assert r_inst.status_code == 200, r_inst.text
-        inst_body = r_inst.json()
-        assert inst_body["bank"] == "institutional" and inst_body["llm_layers"] == "enabled"
-        assert inst_body["citations"] == [inst_ok["entry_id"]]
-        assert calls[-1][0] == hs.facts_bank("tenant-alpha") and calls[-1][1]["budget"] == "low"
-        assert calls[-1][1]["tag_groups"] == [
-            {"tags": ["anchor:underlying:tw"], "match": "any_strict"},
-            {"tags": ["type:research_finding"], "match": "any_strict"},
-        ]
-
-        scripted_memories[:] = [{"document_id": p_committee["memory_id"]}]
-        r_consult = memory_client.post(
-            "/api/memory/reflect",
-            json={
-                "query": "committee lesson", "bank": "persona", "persona_id": "persona-alpha",
-                "session_persona_id": "persona-alpha", "memory_type": "strategy_lesson",
-                "actor_id": "consult-actor-1", "actor_roles": ["consultation_session"], "session_id": "s-consult",
-            },
-            headers={"Authorization": f"Bearer {consult_tok}"},
-        )
-        assert r_consult.status_code == 200, r_consult.text
-        consult_body = r_consult.json()
-        assert consult_body["bank"] == "persona" and consult_body["citations"] == [p_committee["memory_id"]]
-        assert calls[-1][0] == hs.persona_bank("tenant-alpha", "persona-alpha")
-        assert calls[-1][1]["tag_groups"] == [
-            {"tags": ["scope:committee"], "match": "any_strict"},
-            {"tags": ["type:strategy_lesson"], "match": "any_strict"},
-        ]
-
-        # Fail-closed regressions: stale archived, expired, missing, unmapped, and unauthorized tenant/persona/committee sources
-        inst_req = {"query": "reject:inst", "bank": "institutional", "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1"}
-        persona_req = {"query": "reject:persona", "bank": "persona", "persona_id": "persona-alpha", "actor_id": "memory-operator-1", "actor_roles": ["operator"], "session_id": "s-1"}
-        consult_req = {"query": "reject:consult", "bank": "persona", "persona_id": "persona-alpha", "session_persona_id": "persona-alpha", "actor_id": "consult-actor-1", "actor_roles": ["consultation_session"], "session_id": "s-consult"}
-        for memories, req, tok, expected_status, expected_reason in [
-            ([{"document_id": inst_stale["entry_id"]}], inst_req, alpha_op, 503, "canonical_source_inactive"),
-            ([{"document_id": inst_ok["entry_id"]}, {"document_id": inst_stale["entry_id"]}], inst_req, alpha_op, 503, "canonical_source_inactive"),
-            ([{"document_id": inst_expired["entry_id"]}], inst_req, alpha_op, 503, "canonical_source_expired"),
-            ([{"document_id": "missing-id"}], inst_req, alpha_op, 503, "canonical_source_missing"),
-            ([], inst_req, alpha_op, 503, "canonical_source_unverified"),
-            ([{"id": "unmapped-unit"}], inst_req, alpha_op, 503, "canonical_source_unverified"),
-            ([{"document_id": inst_other_tenant["entry_id"]}], inst_req, alpha_op, 403, "tenant_scope_mismatch"),
-            ([{"document_id": inst_ok["entry_id"]}, {"document_id": inst_other_tenant["entry_id"]}], inst_req, alpha_op, 403, "tenant_scope_mismatch"),
-            ([{"document_id": p_other_tenant["memory_id"]}], persona_req, alpha_op, 403, "tenant_scope_mismatch"),
-            ([{"document_id": p_other_persona["memory_id"]}], persona_req, alpha_op, 403, "persona_scope_mismatch"),
-            ([{"document_id": p_committee["memory_id"]}, {"document_id": p_other_persona["memory_id"]}], persona_req, alpha_op, 403, "persona_scope_mismatch"),
-            ([{"document_id": p_private["memory_id"]}], consult_req, consult_tok, 403, "committee_scope_mismatch"),
-            ([{"document_id": p_committee["memory_id"]}, {"document_id": p_private["memory_id"]}], consult_req, consult_tok, 403, "committee_scope_mismatch"),
-        ]:
-            scripted_memories[:] = memories
-            resp = memory_client.post("/api/memory/reflect", json=req, headers={"Authorization": f"Bearer {tok}"})
-            assert resp.status_code == expected_status, (memories, resp.status_code, resp.text)
-            assert resp.json()["detail"]["reason"] == expected_reason
-            assert SECRET not in resp.text
-
-        # Reflect is read-only: reuse_count must remain 0
-        assert main._store().require(inst_ok["entry_id"]).reuse_count == 0
-        assert main._persona_store().require(p_committee["memory_id"]).reuse_count == 0
+        declared = _declare(memory_client)
+        assert declared.status_code == 503 and declared.json()["detail"]["reason"] == "llm_layers_disabled"
+        assert _read(memory_client).json()["detail"]["reason"] == "llm_layers_disabled"
+        assert fake.banks == {} and fake.config == {}
+        monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+        hs.set_hindsight_client(None)
+        monkeypatch.delenv(hs.URL_ENV, raising=False)
+        monkeypatch.delenv(hs.KEY_ENV, raising=False)
+        assert _declare(memory_client).json()["detail"]["reason"] == "hindsight_unconfigured"
     finally:
         hs.set_hindsight_client(None)
+
+
+def test_declare_is_owner_only_idempotent_and_retires_removed_keys(memory_client, monkeypatch):
+    hs, fake = _questions_env(memory_client, monkeypatch)
+    try:
+        for roles in (("operator",), ("researcher",), ("consultation_session",)):
+            assert _declare(memory_client, roles=roles).status_code == 403
+        monkeypatch.setenv("PANTHEON_MEMORY_MENTAL_MODEL_MIN_REFRESH_SECONDS", "")
+        first = _declare(memory_client)
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assert sorted(body["created"]) == ["family:momentum", "risk_lessons"] and body["llm_layers"] == "enabled"
+        assert body["min_refresh_interval_seconds"] == 86400
+        bank = hs.persona_bank("tenant-alpha", "persona-alpha")
+        assert fake.config[bank] == {"retain_extraction_mode": "verbatim", "enable_auto_consolidation": True}
+        models = {m["name"]: m for m in fake.banks[bank].values()}
+        assert models["family:momentum"]["tags"] == ["anchor:family:momentum"]
+        assert models["risk_lessons"]["tags"] == ["type:risk_observation"]
+        for model in models.values():
+            assert model["trigger"]["refresh_after_consolidation"] is True
+            assert model["trigger"]["min_refresh_interval_seconds"] == 86400
+        again = _declare(memory_client).json()
+        assert again["created"] == [] and again["updated"] == [] and sorted(again["unchanged"]) == sorted(models)
+        changed = _declare(memory_client, questions=[
+            {"key": "risk_lessons", "text": "What risk lessons changed my sizing?", "memory_types": ["risk_observation"]}]).json()
+        assert changed["updated"] == ["risk_lessons"] and changed["retired"] == ["family:momentum"]
+        assert [m["name"] for m in fake.banks[bank].values()] == ["risk_lessons"]
+        assert _declare(memory_client, questions=[]).json()["retired"] == ["risk_lessons"]
+        assert fake.banks[bank] == {}
+    finally:
+        hs.set_hindsight_client(None)
+
+
+@pytest.mark.parametrize("questions,reason", [
+    ([{"key": "Bad Key", "text": "q"}], "invalid_question"),
+    ([{"key": "a", "text": " "}], "invalid_question"),
+    ([{"key": "a", "text": "q"}, {"key": "a", "text": "r"}], "duplicate_question_key"),
+    ([{"key": "a", "text": "q", "anchors": ["nokind"]}], "invalid_anchor"),
+    ([{"key": "a", "text": "q", "memory_types": ["made_up"]}], "invalid_memory_type"),
+])
+def test_declare_rejects_invalid_questions(memory_client, monkeypatch, questions, reason):
+    hs, fake = _questions_env(memory_client, monkeypatch)
+    try:
+        response = _declare(memory_client, questions=questions)
+        assert response.status_code == 422 and response.json()["detail"]["reason"] == reason
+        assert fake.banks == {}
+    finally:
+        hs.set_hindsight_client(None)
+
+
+def test_read_returns_only_own_persona_answers_with_canonical_citations(memory_client, monkeypatch):
+    hs, fake = _questions_env(memory_client, monkeypatch)
+    try:
+        operator = {"Authorization": f"Bearer {_make_jwt(tenant_id='tenant-alpha', roles=['operator'])}"}
+        mine = _persona_auth_payload(persona_id="persona-alpha", relevance_scope="persona_private")
+        theirs = _persona_auth_payload(persona_id="persona-beta", source_event_id="PM-B", relevance_scope="persona_private")
+        foreign = _persona_auth_payload(persona_id="persona-alpha", source_event_id="PM-T", relevance_scope="persona_private")
+        for payload, tenant in ((mine, "tenant-alpha"), (theirs, "tenant-alpha"), (foreign, "tenant-beta")):
+            token = _make_jwt(tenant_id=tenant, roles=["operator"])
+            payload["tenant_id"] = tenant
+            assert memory_client.post("/api/memory/persona-entries", json=payload,
+                                      headers={"Authorization": f"Bearer {token}"}).status_code == 201
+        hs.flush_mirrors()
+        hs.set_hindsight_client(fake)
+        for persona, tenant in (("persona-alpha", "tenant-alpha"), ("persona-beta", "tenant-alpha"), ("persona-alpha", "tenant-beta")):
+            assert _declare(memory_client, tenant=tenant, persona=persona, questions=[
+                {"key": "risk_lessons", "text": f"{persona}/{tenant} lessons?"}]).status_code == 200
+        bank = hs.persona_bank("tenant-alpha", "persona-alpha")
+        pending = _read(memory_client).json()
+        assert pending["count"] == 1 and pending["answers"][0]["status"] == "unavailable"
+        assert pending["answers"][0]["reason"] == "not_refreshed" and pending["answers"][0]["text"] == ""
+        fake.answer(bank, "risk_lessons", "ALPHA answer", [mine["memory_id"]])
+        fake.answer(hs.persona_bank("tenant-alpha", "persona-beta"), "risk_lessons", "BETA SECRET", [theirs["memory_id"]])
+        fake.answer(hs.persona_bank("tenant-beta", "persona-alpha"), "risk_lessons", "TENANT-B SECRET", [foreign["memory_id"]])
+        response = _read(memory_client)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["derived"] is True and body["answers"] == [{
+            "key": "risk_lessons", "question": "persona-alpha/tenant-alpha lessons?", "refreshed_at": "2026-11-15T00:00:00Z",
+            "stale": False, "status": "answered", "text": "ALPHA answer", "citations": [mine["memory_id"]]}]
+        assert "SECRET" not in response.text
+        # Another persona or tenant gets only its own bank, never alpha's.
+        assert "ALPHA" not in _read(memory_client, persona="persona-beta").text
+        assert "ALPHA" not in _read(memory_client, tenant="tenant-beta").text
+        # Answers never reach the canonical stores.
+        assert main._persona_store().get("risk_lessons") is None
+        assert all("ALPHA answer" not in json.dumps(e.to_dict()) for e in main._persona_store().list(active_only=False))
+        # Committee sessions see only committee-scoped canonical memory, never derived answers.
+        committee = _read(memory_client, roles=("consultation_session",), session_persona_id="persona-alpha")
+        assert committee.status_code == 403 and "ALPHA" not in committee.text
+    finally:
+        hs.set_hindsight_client(None)
+
+
+@pytest.mark.parametrize("cited,reason", [
+    (["pmem-does-not-exist"], "canonical_source_missing"),
+    (["other-tenant"], "canonical_source_out_of_scope"),
+    (["other-persona"], "canonical_source_out_of_scope"),
+    (["archived"], "canonical_source_inactive"),
+    ([], "citation_unmapped"),
+])
+def test_read_withholds_answers_whose_citations_do_not_verify(memory_client, monkeypatch, cited, reason):
+    hs, fake = _questions_env(memory_client, monkeypatch)
+    try:
+        entries = {
+            "other-tenant": _persona_auth_payload(persona_id="persona-alpha", source_event_id="PM-1"),
+            "other-persona": _persona_auth_payload(persona_id="persona-beta", source_event_id="PM-2"),
+            "archived": _persona_auth_payload(persona_id="persona-alpha", source_event_id="PM-3"),
+        }
+        entries["other-tenant"]["tenant_id"] = "tenant-beta"
+        entries["other-persona"]["tenant_id"] = entries["archived"]["tenant_id"] = "tenant-alpha"
+        for payload in entries.values():
+            token = _make_jwt(tenant_id=payload["tenant_id"], roles=["operator"])
+            assert memory_client.post("/api/memory/persona-entries", json=payload,
+                                      headers={"Authorization": f"Bearer {token}"}).status_code == 201
+        main._persona_store().archive(entries["archived"]["memory_id"], reason="withdrawn")
+        hs.flush_mirrors()
+        hs.set_hindsight_client(fake)
+        assert _declare(memory_client, questions=[{"key": "risk_lessons", "text": "lessons?"}]).status_code == 200
+        docs = [entries[c]["memory_id"] if c in entries else c for c in cited]
+        fake.answer(hs.persona_bank("tenant-alpha", "persona-alpha"), "risk_lessons", "UNVERIFIED TEXT", docs)
+        answer = _read(memory_client).json()["answers"][0]
+        assert answer["status"] == "unavailable" and answer["reason"] == reason
+        assert answer["text"] == "" and answer["citations"] == []
+    finally:
+        hs.set_hindsight_client(None)
+
+
+def test_enabled_layers_switch_bank_to_verbatim_consolidation_before_first_retain_only(monkeypatch):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import institution
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def configure_bank(self, bank, updates):
+            self.calls.append(("config", bank, updates))
+
+        def retain(self, bank, items):
+            self.calls.append(("retain", bank))
+
+    monkeypatch.setattr(hs, "_LAYERED_BANKS", set())
+    entry = institution(tenant_id="tenant-alpha")
+    off = Recorder()
+    monkeypatch.delenv(hs.LLM_LAYERS_ENV, raising=False)
+    assert hs.llm_layers() == "disabled" and hs.mirror_entry(entry, client=off)["status"] == "mirrored"
+    assert off.calls == [("retain", hs.facts_bank("tenant-alpha"))]  # unchanged behaviour: no config sent
+    on = Recorder()
+    monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+    assert hs.llm_layers() == "enabled"
+    hs.mirror_entry(entry, client=on)
+    hs.mirror_entry(entry, client=on)
+    assert on.calls[0] == ("config", hs.facts_bank("tenant-alpha"),
+                           {"retain_extraction_mode": "verbatim", "enable_auto_consolidation": True})
+    assert [c[0] for c in on.calls] == ["config", "retain", "retain"]
+
+
+def test_bridge_refusal_on_layer_config_never_fails_a_canonical_write(monkeypatch):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import institution
+
+    class Refusing:
+        def configure_bank(self, bank, updates):
+            raise hs.HindsightError("hindsight_http_429", "bridge deferred")
+
+        def retain(self, bank, items):
+            raise AssertionError("retain must wait for the layer switch")
+
+    monkeypatch.setattr(hs, "_LAYERED_BANKS", set())
+    monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
+    monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+    result = hs.mirror_entry(institution(tenant_id="tenant-alpha"), client=Refusing())
+    assert result["status"] == "failed" and result["reason"] == "hindsight_http_429"

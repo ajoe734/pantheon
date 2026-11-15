@@ -143,8 +143,9 @@ services:
       HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_RETAIN_EXTRACTION_MODE: chunks
       HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "false"
-      # No background refresh or async retain until the LLM layers are enabled.
-      HINDSIGHT_API_WORKER_ENABLED: "false"
+      # Chunks mode and no consolidation stay the deployed defaults. With the bridge configured the memory service
+      # switches each bank to verbatim retain + auto-consolidation, so the background worker runs only then.
+      HINDSIGHT_API_WORKER_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       HINDSIGHT_API_RETAIN_LLM_PROVIDER: ${HINDSIGHT_RETAIN_LLM_PROVIDER:-none}
       HINDSIGHT_API_RETAIN_LLM_MODEL: ${HINDSIGHT_RETAIN_LLM_MODEL:-}
       # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
@@ -2208,8 +2209,8 @@ services:
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
       PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
-      # Reflect needs an operator-chosen Hindsight LLM provider; off until then.
-      PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED: ${PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED:-false}
+      # LLM layers (verbatim retain, consolidation, standing questions) follow the OpenClaw memory-index bridge switch.
+      PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
       # Without this, retrieve denies with governance_authz_unconfigured.
