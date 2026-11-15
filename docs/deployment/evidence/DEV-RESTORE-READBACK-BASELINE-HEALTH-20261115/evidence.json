@@ -6,12 +6,12 @@
   },
   "change": {
     "capture": "stack_baseline.services[svc].healthy_at_capture (optional bool, additive)",
-    "readback": "healthy required only when healthy_at_capture is true or the field is absent (legacy baselines); otherwise health is reported under stack.unhealthy_at_capture",
+    "readback": "healthy required only when healthy_at_capture is true or the field is absent (legacy baselines); otherwise health is reported as unhealthy_at_capture beside the stack proof in the restore result",
     "unchanged": "image identity, running-state, missing container, candidate-only rules",
     "compat_note": "Current reader accepts baselines with and without the field. A reader at the previous script version validates an exact key set and would reject a baseline carrying the new key; capture and restore of one deploy run the same script version, so this is not exercised in practice."
   },
   "local_tests": [
-    {"command": "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_artifact_compensation_evidence.py -q", "result": "250 passed, 2 skipped, 1 failed (new test asserted on wrong result key; fixed)"},
+    {"command": "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_artifact_compensation_evidence.py -q", "result": "251 passed, 2 skipped"},
     {"command": "python -m pytest scripts/test_dev_release_artifacts.py -q -k 'capture or unhealthy or legacy or previous_version'", "result": "21 passed"}
   ]
 }

@@ -1050,9 +1050,14 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             raise StackError(f"{service}: failed to re-point the Compose image name", [service]) from error
     result = {"image_readback_verified": True, "services": observed}
     if stack is not None:
-        result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
+        proof = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
                                          budget_seconds=readback_seconds, compose_refs=refs)
+        # Reported beside (not inside) the strict stack proof: health is not a restore requirement here.
+        unhealthy = proof.pop("unhealthy_at_capture", None)
+        result["stack"] = proof
+        if unhealthy:
+            result["unhealthy_at_capture"] = unhealthy
         result["recreated_services"] = sorted(recreated)
         result["started_services"] = sorted(started)
     check_lease()

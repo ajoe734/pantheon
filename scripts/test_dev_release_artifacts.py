@@ -891,7 +891,7 @@ def test_service_unhealthy_at_capture_restored_unhealthy_passes_and_is_reported(
     docker.mutate_to_candidate()
     docker.unhealthy.add("svc-20")
     result, _ = restore_stack(stack_case, stack=stack, readback_seconds=60)
-    assert result["stack"]["unhealthy_at_capture"] == {"svc-20": "unhealthy"}
+    assert result["unhealthy_at_capture"] == {"svc-20": "unhealthy"}
 
 
 def test_service_healthy_at_capture_restored_unhealthy_still_fails_after_budget(stack_case):

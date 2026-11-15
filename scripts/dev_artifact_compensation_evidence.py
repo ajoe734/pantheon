@@ -380,8 +380,7 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
 
 def validate_stack_readback(stack: dict, baseline: dict) -> None:
     """Every recorded service must list its baseline and observed image, equal."""
-    capture.exact_keys(stack, ("scope", "services", "candidate_only_stopped") +
-                       (("unhealthy_at_capture",) if "unhealthy_at_capture" in stack else ()))
+    capture.exact_keys(stack, ("scope", "services", "candidate_only_stopped"))
     expected = baseline["stack_baseline"]["services"]
     if stack["scope"] != "stack" or not isinstance(stack["services"], dict) or set(stack["services"]) != set(expected):
         raise capture.CaptureError("stack readback does not cover every recorded service")
