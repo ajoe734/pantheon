@@ -2482,4 +2482,3 @@ def get_alpha_template_entry(registry_id: str, authorization: Optional[str] = He
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "pantheon-registry"}
-
