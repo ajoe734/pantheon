@@ -1474,3 +1474,92 @@ def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_c
     del stack["services"][ISSUER]["control"]
     with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(stack)
+
+
+# --- Source journal streaming qualification (DEV-SOURCE-JOURNAL-QUALIFY-STREAMING-R2) ---
+
+def _run_probe(path):
+    import resource
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", artifacts.SOURCE_PROBE, "journal", str(path)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=900)
+    peak_kib = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return json.loads(done.stdout.strip().splitlines()[-1]), peak_kib
+
+
+def _legacy_identity(raw: bytes):
+    """The previous probe's whole-file algorithm, kept as the compatibility oracle."""
+    from services.source_ingestion import requirement_state as m
+    values = m._market_snapshots_from_lines(raw.decode("utf-8").splitlines(), path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return (hashlib.sha256(raw).hexdigest(), len(raw),
+            hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest())
+
+
+def test_source_probe_streaming_matches_legacy_identity(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    samples = market_snapshot_writer_samples()
+    raw = "".join(samples.values()).encode()
+    journal = tmp_path / "j.jsonl"
+    journal.write_bytes(raw)
+    result, _ = _run_probe(journal)
+    assert result["ok"] is True
+    assert (result["journal_sha256"], result["journal_size"], result["projection_sha256"]) == _legacy_identity(raw)
+
+
+def test_source_probe_qualifies_journal_over_old_bound_with_bounded_memory(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    line = market_snapshot_writer_samples()["official_daily"].encode()
+    journal = tmp_path / "big.jsonl"
+    target = 256 * 1024 * 1024 + 1
+    with journal.open("wb") as handle:
+        chunk = line * 4096
+        written = 0
+        while written < target:
+            handle.write(chunk)
+            written += len(chunk)
+    assert journal.stat().st_size > 256 * 1024 * 1024
+    result, peak_kib = _run_probe(journal)
+    assert result["ok"] is True, result
+    assert result["journal_size"] == journal.stat().st_size
+    assert peak_kib < 200 * 1024  # whole-file read would exceed the journal size alone
+    h = hashlib.sha256()
+    with journal.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            h.update(block)
+    assert result["journal_sha256"] == h.hexdigest()
+
+
+def test_source_probe_journal_over_new_bound_has_named_reason(tmp_path):
+    journal = tmp_path / "huge.jsonl"
+    with journal.open("wb") as handle:
+        handle.truncate(artifacts.SOURCE_JOURNAL_MAX_BYTES + 1)  # sparse
+    result, _ = _run_probe(journal)
+    assert result["ok"] is False and result["reason"] == "journal_too_large"
+    assert artifacts.SourceCompatibilityError(result["reason"]).reason == "journal_too_large"
+
+
+def test_source_journal_bound_is_documented_and_consistent():
+    assert artifacts.SOURCE_JOURNAL_MAX_BYTES >= 2 * 1024 ** 3
+    assert str(artifacts.SOURCE_JOURNAL_MAX_BYTES) in artifacts.SOURCE_PROBE
+    assert "256 * 1024 * 1024" not in artifacts.SOURCE_PROBE
+
+
+def _proof_stack(stack_case, size):
+    stack = copy.deepcopy(stack_case[4])
+    row = stack["services"][artifacts.API_SERVICE]
+    row["source_snapshot"] = {"codec_sha256": "1" * 64, "journal_sha256": "2" * 64,
+                              "journal_size": size, "projection_sha256": "3" * 64}
+    return stack
+
+
+@pytest.mark.parametrize("size", [0, 256 * 1024 * 1024, 390702732, 2 * 1024 ** 3])
+def test_baseline_proof_sizes_old_and_new_validate_unchanged(stack_case, size):
+    # Shape is unchanged; sizes <= 256 MiB are what the previous script accepts too.
+    artifacts.validate_stack(_proof_stack(stack_case, size))
+
+
+def test_baseline_proof_over_new_bound_rejected(stack_case):
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(_proof_stack(stack_case, artifacts.SOURCE_JOURNAL_MAX_BYTES + 1))

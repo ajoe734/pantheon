@@ -1,0 +1,20 @@
+{
+  "task_id": "PERSONA-ENROLLMENT-SEED-LISTER-FIX-20261115",
+  "root_cause": "http_owner_artifact_lister parsed the registry page token with int() (fails on k1: keyset tokens) and read every approved artifact one by one (670 on hosted, 5s timeout each).",
+  "fix": {
+    "lister": "one /api/registry/lineage?root_id=<persona>&depth=1 read returns the artifacts bound to the persona, then one owner-record read per bound artifact; truncated lineage fails closed; verification against the owner record unchanged; zero or several candidates still refuse in seed_from_owner_records",
+    "probe_exclusion": "is_probe_or_test_persona mirrors persona_evaluator_agent._probe_persona (parity test); skipped as not_eligible release_probe_or_test_persona_not_enrolled before any owner write",
+    "backoff": "refused/unavailable enrolments retry at most every PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS (default 600 = 6 per hour per persona); readback keeps latest reason and attempted_at; success still happens without operator action"
+  },
+  "measured": {
+    "catalogue_size": 1000,
+    "registry_calls_old_lister_before_failure": ">=200 entry reads then ValueError",
+    "registry_calls_new_lister": 3,
+    "integration_registry_calls_600_artifacts": "<=6"
+  },
+  "validation": [
+    {"command": "pytest services/control-plane/persona/tests/test_pool_artifact_lister_real_registry.py", "result": "6 passed"},
+    {"command": "pytest bff/tests/test_persona_enrollment_seed_integration.py bff/tests/test_persona_paper_enrollment.py persona/test_persona_strategy_pool.py persona/tests persona/test_persona_cycle_controller.py persona/test_pool_dataset_authority.py bff/test_persona_provisioning_coordinator.py", "result": "183 passed"}
+  ],
+  "not_verified": "hosted deployment; hosted probe personas are assumed to match the evaluator probe rule (name/metadata), unverifiable from the worktree"
+}

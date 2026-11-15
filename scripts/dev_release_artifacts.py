@@ -133,7 +133,8 @@ class StackMixedError(StackError):
 
 
 SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
-                                    "schema", "journal_changed", "reader_rejected", "unavailable"})
+                                    "schema", "journal_changed", "journal_too_large", "reader_rejected",
+                                    "unavailable"})
 
 
 class SourceCompatibilityError(StackError):
@@ -519,6 +520,11 @@ SOURCE_PATH_FORMAT = _env_format(SOURCE_PATH_KEYS)
 SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_reconciliation", *(
     name + suffix for name in ("tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m")
     for suffix in ("", "_withdrawal"))})
+# Journal size bound, enforced identically by the probe, qualify_source_reader and
+# baseline proof validation. 4 GiB: the probe streams, so memory does not scale with it.
+# Baselines whose journal is under 256 MiB stay readable by the previous script.
+SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024
+SOURCE_JOURNAL_MAX_LINE_BYTES = 16 * 1024 * 1024
 SOURCE_PROBE = r'''
 import base64, fcntl, hashlib, json, os, re, sys
 from pathlib import Path
@@ -545,14 +551,26 @@ try:
         with path.open("rb") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(f.fileno())
-            if before.st_size > 256 * 1024 * 1024:
+            if before.st_size > __MAX_BYTES__:
                 raise ValueError("journal exceeds bounded qualification")
-            raw = f.read()
-            digest = projection(raw.decode("utf-8").splitlines())
+            digest_obj, size = hashlib.sha256(), [0]
+            def stream_lines():
+                while True:
+                    line = f.readline(__MAX_LINE__ + 1)
+                    if not line:
+                        return
+                    if len(line) > __MAX_LINE__:
+                        raise ValueError("journal exceeds bounded qualification")
+                    digest_obj.update(line)
+                    size[0] += len(line)
+                    # Same line boundaries as bytes.decode().splitlines(): a split
+                    # never falls inside a UTF-8 sequence, so decode per segment.
+                    yield from line.decode("utf-8").splitlines()
+            digest = projection(stream_lines())
             after = os.fstat(f.fileno())
-            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns):
+            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns) or size[0] != after.st_size:
                 raise ValueError("journal changed")
-        result = {"journal_sha256": hashlib.sha256(raw).hexdigest(), "journal_size": len(raw), "projection_sha256": digest}
+        result = {"journal_sha256": digest_obj.hexdigest(), "journal_size": size[0], "projection_sha256": digest}
     else:
         raise ValueError("unknown probe mode")
     print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
@@ -561,11 +579,11 @@ except Exception as error:
     reason = next((code for text,code in (
         ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
         ("id does not match", "snapshot_identity"), ("schema", "schema"),
-        ("journal changed", "journal_changed")) if text in message), "reader_rejected")
+        ("journal exceeds", "journal_too_large"), ("journal changed", "journal_changed")) if text in message), "reader_rejected")
     line = re.search(r"journal:(\d+)", message)
     print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
                       "line": int(line[1]) if line else None}))
-'''
+'''.replace("__MAX_BYTES__", str(SOURCE_JOURNAL_MAX_BYTES)).replace("__MAX_LINE__", str(SOURCE_JOURNAL_MAX_LINE_BYTES))
 
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
@@ -589,7 +607,7 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
         raise SourceCompatibilityError("unavailable") from None
     if not isinstance(result, dict) or result.get("ok") is not True:
         reason = result.get("reason") if isinstance(result, dict) else None
-        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed"):
+        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed", "journal_too_large"):
             reason = "reader_rejected"
         line = result.get("line") if isinstance(result, dict) else None
         raise SourceCompatibilityError(reason, line)
@@ -612,8 +630,8 @@ def qualify_source_reader(*, docker, image_id, check_lease):
                           container_id=owner["container_id"], check_lease=check_lease)
     for key in ("journal_sha256", "projection_sha256"):
         _match(result.get(key), DIGEST, "Source " + key)
-    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= 256 * 1024 * 1024:
-        raise ArtifactError("invalid Source journal size")
+    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
+        raise SourceCompatibilityError("journal_too_large")
     if _stack_rows(docker).get(API_SERVICE) != rows:
         raise StackError("Source owner changed during qualification", [API_SERVICE])
     return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
@@ -738,7 +756,7 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
             _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"), "Source snapshot proof")
             for key in ("codec_sha256", "journal_sha256", "projection_sha256"):
                 _match(proof[key], DIGEST, "Source snapshot digest")
-            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= 256 * 1024 * 1024:
+            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
                 raise ArtifactError("invalid Source snapshot proof size")
         if controlled:
             control = row["control"]

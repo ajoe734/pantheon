@@ -53,6 +53,35 @@ RETRIEVAL_MAX_ITEMS = 10
 NON_TRADING_CLASSES = frozenset({"consult_panel", "probe"})
 
 
+def is_probe_or_test_persona(persona: Mapping[str, Any]) -> bool:
+    """Release probe, test and acceptance personas are never enrolled.
+
+    Same classification the persona evaluator uses to exclude them from
+    promotion (``persona_evaluator_agent._probe_persona``).  The evaluator
+    ships as its own container so the rule is mirrored here and a parity test
+    pins both to the same answers.
+    """
+
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+    text = json.dumps({k: persona.get(k) for k in ("persona_id", "id", "name", "mandate")}).lower()
+    text += " ".join(str(v).lower() for v in metadata.values() if isinstance(v, str))
+    if any(
+        str(source.get(k) or "").lower() in {"test", "acceptance", "fixture", "synthetic"}
+        for source in (persona, metadata)
+        for k in ("data_scope", "dataScope")
+    ):
+        return True
+    if any(
+        str(source.get(k) or "").lower() in {"true", "1", "yes"}
+        for source in (persona, metadata)
+        for k in ("is_test", "test_data", "acceptance_run", "is_acceptance")
+    ):
+        return True
+    return ("probe" in text and any(word in text for word in ("release", "acceptance"))) or any(
+        metadata.get(k) is True for k in ("is_probe", "release_probe", "acceptance_probe", "is_test")
+    )
+
+
 class EnrollmentRefused(Exception):
     """Enrolment cannot proceed; ``reason`` is the readable readback reason."""
 
@@ -77,6 +106,7 @@ class EnrollmentOutcome:
     reason: str | None = None
     lifecycle_state: str | None = None
     steps: dict[str, Any] = field(default_factory=dict)
+    attempted_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +115,7 @@ class EnrollmentOutcome:
             "reason": self.reason,
             "lifecycle_state": self.lifecycle_state,
             "steps": dict(self.steps),
+            "attempted_at": self.attempted_at,
         }
 
 
@@ -226,6 +257,28 @@ def render_harness_surface_v1(persona: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def retry_due(existing: Any, now: datetime, min_interval_seconds: int) -> bool:
+    """Whether a refused/unavailable enrolment may be attempted again.
+
+    ``min_interval_seconds`` between attempts bounds the attempts per hour per
+    persona (3600 / interval).  Enrolled and never-attempted records are not
+    throttled here; an unparsable timestamp is treated as due.
+    """
+
+    if not isinstance(existing, Mapping) or existing.get("status") not in {"refused", "unavailable"}:
+        return True
+    raw = _text(existing.get("attempted_at"))
+    if not raw:
+        return True
+    try:
+        last = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return now - last >= timedelta(seconds=max(0, min_interval_seconds))
+
+
 class PersonaPaperEnrollment:
     """GET-first, idempotent enrolment of one paper-provisioned persona."""
 
@@ -260,7 +313,9 @@ class PersonaPaperEnrollment:
 
     # -- entry --------------------------------------------------------------
     def enroll(self) -> EnrollmentOutcome:
-        outcome = EnrollmentOutcome(persona_id=self.persona_id, status="refused")
+        outcome = EnrollmentOutcome(
+            persona_id=self.persona_id, status="refused", attempted_at=_utc(self._now())
+        )
         try:
             persona = self._eligible_persona(outcome)
             if persona is None:
@@ -296,6 +351,8 @@ class PersonaPaperEnrollment:
             or metadata.get("probe")
         ):
             return self._not_eligible(outcome, "persona_not_a_paper_trading_persona")
+        if is_probe_or_test_persona(persona):
+            return self._not_eligible(outcome, "release_probe_or_test_persona_not_enrolled")
         if outcome.lifecycle_state not in LIFECYCLE_PATH:
             return self._not_eligible(outcome, f"owner_lifecycle_not_enrollable:{outcome.lifecycle_state}")
         reason = self._paper_binding_gap()
