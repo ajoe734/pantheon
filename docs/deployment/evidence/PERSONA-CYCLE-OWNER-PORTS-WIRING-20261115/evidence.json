@@ -3,6 +3,733 @@
   "title": "Persona daily cycle and pool publish and quarterly paper allocation reach their owner services on the deployed dev stack: fix unresolved and unset owner addresses and credentials and show every missing port on health",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
+  "hosted_readback_reproduction": {
+    "observed_failures_before_fix": [
+      {
+        "flow": "persona_daily_cycle_and_pool_cycle",
+        "symptom": "persona container in docker-compose.yml was missing owner URLs and credentials for research, memory, registry, evolution, consultation, governance, and search, or pointed RESEARCH_API_URL at unresolvable http://research-orchestrator:8100 instead of http://research-orchestrator-svc:8101",
+        "fix": "Wired all 7 owner ports and their least-privilege token files / service tokens on persona in docker-compose.yml and scripts/issue_dev_paper_principals.py"
+      },
+      {
+        "flow": "evolution_and_consultation_owner_authentication",
+        "symptom": "evolution (services/evolution/main.py:303) and consultation-svc (services/consultation/auth.py:79) verify static bearer tokens via hmac.compare_digest against EVOLUTION_AUTH_TOKEN and CONSULTATION_SERVICE_TOKEN rather than JWT signatures; pointing persona at rotating JWT files rejected persona cycle requests with 401/403",
+        "fix": "Wired persona EVOLUTION_AUTH_TOKEN and CONSULTATION_SERVICE_TOKEN / CONSULTATION_API_TOKEN to match evolution and consultation-svc service tokens while keeping JWT principal files for research, memory, registry, governance, and search"
+      },
+      {
+        "flow": "pool_publish_and_canonical_dataset_authority",
+        "symptom": "operator-bff lacked PANTHEON_PERSONA_API_URL / PANTHEON_PERSONA_SERVICE_URL, _sync_canonical_dataset_pointer wrapped a 2-argument governed_dataset_loader(persona, candidate) in a 0-argument callable, and research-orchestrator-svc lacked RESEARCH_RETRAIN_CANONICAL_DATASET_PATH and RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH",
+        "fix": "Wired PANTHEON_PERSONA_API_URL and PANTHEON_PERSONA_SERVICE_URL on operator-bff, updated _sync_canonical_dataset_pointer(*args, **kwargs) to accept (persona, candidate) and sync dataset-version-*.json to /data/bff/persona-pool-dataset-authority/canonical-dataset-version.json, and wired RESEARCH_RETRAIN_CANONICAL_DATASET_PATH and RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH on research-orchestrator-svc"
+      },
+      {
+        "flow": "paper_quarterly_allocation",
+        "symptom": "capital defaulted PANTHEON_ENV to local and lacked RANKING_STORE_DSN/RANKING_STORE_TABLE; persona-evaluator-agent lacked PERSONA_EVALUATOR_PAPER_POOL_ID and PERSONA_EVALUATOR_ACTOR_ID, and PERSONA_EVALUATOR_BFF_TOKEN lacked operator role and azp=control-plane-bff required by POST /bff/management/allocation-policy/evaluate -> capital POST /api/allocation-evaluations",
+        "fix": "Wired PANTHEON_ENV=${PANTHEON_ENV:-dev}, RANKING_STORE_DSN, and RANKING_STORE_TABLE on capital; wired PERSONA_EVALUATOR_PAPER_POOL_ID and PERSONA_EVALUATOR_ACTOR_ID on persona-evaluator-agent; granted viewer, registry-reader, operator and azp=control-plane-bff to PERSONA_EVALUATOR_BFF_TOKEN"
+      },
+      {
+        "flow": "persona_health_and_per_persona_ooda_heartbeat",
+        "symptom": "GET /health returned ok without checking owner ports, and run_controller filtered report['failures'] by f.get('persona_id') in owned, dropping owner-port failures without persona_id and recording downstream_actual_state={'status': 'ready'} on per_persona_ooda",
+        "fix": "Added services/persona/owner_port_health.py with OwnerPortEnvView (no os.environ mutation) and attached owned persona_id entries to owner_port failure records so both /health and per_persona_ooda / persona_daily_cycle heartbeats report degraded and name every missing or unreachable owner port"
+      }
+    ]
+  },
+  "environment_variable_inventory": {
+    "1_persona_daily_cycle": [
+      {
+        "file_line": "services/control-plane/persona/main.py:237",
+        "variable": "PERSONA_DAILY_CYCLE_ENABLED",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/control-plane/persona/main.py:194",
+        "variable": "PERSONA_DEFAULT_TENANT_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/control-plane/persona/main.py:194",
+        "variable": "PANTHEON_TENANT_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:611",
+        "variable": "DATABASE_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:453",
+        "variable": "AGORA_DATASET_STORE_SCHEMA",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:482",
+        "variable": "PANTHEON_TELEMETRY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:485",
+        "variable": "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:497",
+        "variable": "PANTHEON_INCIDENTS_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:554",
+        "variable": "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:559",
+        "variable": "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:581",
+        "variable": "PANTHEON_CYCLE_ACTOR_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/persona_cycle_controller.py:574",
+        "variable": "PANTHEON_CYCLE_MEMORY_ACTOR_ROLES",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:44",
+        "variable": "RESEARCH_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:44",
+        "variable": "PANTHEON_RESEARCH_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:45",
+        "variable": "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:45",
+        "variable": "PANTHEON_RESEARCH_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:49",
+        "variable": "MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:49",
+        "variable": "PANTHEON_MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:52",
+        "variable": "PANTHEON_MEMORY_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:53",
+        "variable": "PANTHEON_MEMORY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:51",
+        "variable": "PERSONA_MEMORY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:59",
+        "variable": "REGISTRY_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:61",
+        "variable": "PANTHEON_REGISTRY_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:62",
+        "variable": "PANTHEON_REGISTRY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:64",
+        "variable": "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:64",
+        "variable": "PANTHEON_REGISTRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:68",
+        "variable": "EVOLUTION_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:68",
+        "variable": "PANTHEON_EVOLUTION_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/owner_port_health.py:69",
+        "variable": "EVOLUTION_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:35",
+        "variable": "PANTHEON_CONSULTATION_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:35",
+        "variable": "PANTHEON_CONSULTATION_SERVICE_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:52",
+        "variable": "CONSULTATION_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:52",
+        "variable": "CONSULTATION_API_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:53",
+        "variable": "CONSULTATION_SERVICE_ACTOR",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/consultation/client.py:53",
+        "variable": "PANTHEON_SERVICE_ACTOR",
+        "compose_service": "persona"
+      }
+    ],
+    "2_pool_cycle_ports": [
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:414",
+        "variable": "PERSONA_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:415",
+        "variable": "RESEARCH_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:416",
+        "variable": "MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:417",
+        "variable": "EVOLUTION_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:418",
+        "variable": "REGISTRY_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:422",
+        "variable": "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:422",
+        "variable": "PANTHEON_MEMORY_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:423",
+        "variable": "EVOLUTION_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:423",
+        "variable": "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:379",
+        "variable": "PERSONA_POOL_CANONICAL_DATASET_PATH",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_autonomy_cycle.py:380",
+        "variable": "PERSONA_POOL_THRESHOLD_POLICY_PATH",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:35",
+        "variable": "SOURCE_INGEST_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:36",
+        "variable": "PERSONA_POOL_SOURCE_CONNECTOR_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:37",
+        "variable": "PERSONA_POOL_SOURCE_DATASET_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:38",
+        "variable": "PERSONA_POOL_SOURCE_VOLUME_ROOT",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:39",
+        "variable": "PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:44",
+        "variable": "PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:46",
+        "variable": "PERSONA_POOL_SOURCE_READ_TOKEN_FILE",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/control-plane/persona/main.py:254",
+        "variable": "PERSONA_SOURCE_INGEST_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/pool_dataset_authority.py:47",
+        "variable": "PERSONA_POOL_SOURCE_READ_TENANT_ID",
+        "compose_service": "persona"
+      }
+    ],
+    "3_case_file_composer": [
+      {
+        "file_line": "services/knowledge/case_file.py:105",
+        "variable": "PANTHEON_REGISTRY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:105",
+        "variable": "PANTHEON_REGISTRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:106",
+        "variable": "PANTHEON_RESEARCH_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:106",
+        "variable": "PANTHEON_RESEARCH_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:107",
+        "variable": "PANTHEON_PERSONA_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:107",
+        "variable": "PANTHEON_PERSONA_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:108",
+        "variable": "PANTHEON_TELEMETRY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:108",
+        "variable": "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:109",
+        "variable": "PANTHEON_MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:109",
+        "variable": "PANTHEON_MEMORY_SERVICE_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:110",
+        "variable": "PANTHEON_SEARCH_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/knowledge/case_file.py:110",
+        "variable": "PANTHEON_SEARCH_SERVICE_TOKEN",
+        "compose_service": "persona"
+      }
+    ],
+    "4_harness_adoption": [
+      {
+        "file_line": "services/persona/harness_adoption.py:284",
+        "variable": "MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:284",
+        "variable": "PANTHEON_MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:287",
+        "variable": "PANTHEON_MEMORY_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:288",
+        "variable": "PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:284",
+        "variable": "PANTHEON_EVOLUTION_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:287",
+        "variable": "EVOLUTION_AUTH_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness_adoption.py:288",
+        "variable": "EVOLUTION_AUTH_TOKEN_FILE",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness.py:466",
+        "variable": "PANTHEON_SHADOW_REPLAY_AGENT_ID",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/harness.py:467",
+        "variable": "PANTHEON_SHADOW_REPLAY_POLICY_URL",
+        "compose_service": "persona"
+      }
+    ],
+    "5_lesson_rule_proposals": [
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:102",
+        "variable": "PANTHEON_MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:102",
+        "variable": "MEMORY_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:325",
+        "variable": "PERSONA_LESSON_RULE_STORE_BACKEND",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:326",
+        "variable": "PERSONA_STORE_DSN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:327",
+        "variable": "PERSONA_LESSON_RULE_STORE_TABLE",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:185",
+        "variable": "PANTHEON_GOVERNANCE_SERVICE_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:185",
+        "variable": "PANTHEON_GOVERNANCE_API_URL",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:187",
+        "variable": "LESSON_RULE_PROPOSER_TOKEN",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:187",
+        "variable": "LESSON_RULE_PROPOSER_TOKEN_FILE",
+        "compose_service": "persona"
+      },
+      {
+        "file_line": "services/persona/lesson_rule_proposals.py:218",
+        "variable": "PANTHEON_LESSON_RULE_PROPOSER_ID",
+        "compose_service": "persona"
+      }
+    ],
+    "6_bff_pool_publish_route": [
+      {
+        "file_line": "services/control-plane/bff/ports/persona_write_owner.py:24",
+        "variable": "PERSONA_URL",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/personas/routes/lifecycle.py:75",
+        "variable": "PANTHEON_PERSONA_API_URL",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/personas/routes/lifecycle.py:76",
+        "variable": "PANTHEON_PERSONA_SERVICE_URL",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/ports/persona_write_owner.py:29",
+        "variable": "PANTHEON_PERSONA_SERVICE_TOKEN",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/ports/persona_write_owner.py:116",
+        "variable": "PANTHEON_PERSONA_SERVICE_ACTOR_ID",
+        "compose_service": "operator-bff"
+      }
+    ],
+    "7_template_demand_search": [
+      {
+        "file_line": "services/research/main.py:2774",
+        "variable": "PERSONA_API_URL",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:2777",
+        "variable": "RESEARCH_PERSONA_SERVICE_TOKEN_FILE",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:1930",
+        "variable": "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:1930",
+        "variable": "TRAINING_SESSION_CANONICAL_DATASET_PATH",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:1931",
+        "variable": "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:1931",
+        "variable": "TRAINING_SESSION_THRESHOLD_POLICY_PATH",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:2104",
+        "variable": "TRAINING_SESSION_URL",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:2105",
+        "variable": "REGISTRY_URL",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:2788",
+        "variable": "PANTHEON_REGISTRY_URL",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:1908",
+        "variable": "RESEARCH_REGISTRY_SERVICE_TOKEN_FILE",
+        "compose_service": "research-orchestrator-svc"
+      },
+      {
+        "file_line": "services/research/main.py:2210",
+        "variable": "RESEARCH_TRAINING_SERVICE_TOKEN_FILE",
+        "compose_service": "research-orchestrator-svc"
+      }
+    ],
+    "8_paper_quarterly_allocation": [
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1151",
+        "variable": "PERSONA_EVALUATOR_PAPER_POOL_ID",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1134",
+        "variable": "PERSONA_EVALUATOR_BFF_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1119",
+        "variable": "PERSONA_EVALUATOR_BFF_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1141",
+        "variable": "PERSONA_EVALUATOR_ACTOR_ID",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1142",
+        "variable": "PERSONA_EVALUATOR_PERSONA_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1129",
+        "variable": "PERSONA_EVALUATOR_PERSONA_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:1119",
+        "variable": "PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_CAPITAL_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_TELEMETRY_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_TELEMETRY_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_REGISTRY_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:353",
+        "variable": "AUTO_CONSUMER_REGISTRY_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:413",
+        "variable": "AUTO_CONSUMER_EVOLUTION_URL",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/persona-evaluator-agent/persona_evaluator_agent.py:413",
+        "variable": "AUTO_CONSUMER_EVOLUTION_TOKEN",
+        "compose_service": "persona-evaluator-agent"
+      },
+      {
+        "file_line": "services/capital/allocation_lineage.py:70",
+        "variable": "RANKING_STORE_DSN",
+        "compose_service": "capital"
+      },
+      {
+        "file_line": "services/capital/allocation_lineage.py:71",
+        "variable": "RANKING_STORE_TABLE",
+        "compose_service": "capital"
+      },
+      {
+        "file_line": "services/control-plane/bff/ports/rankings.py:72",
+        "variable": "RANKING_STORE_DSN",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/ports/rankings.py:73",
+        "variable": "RANKING_STORE_TABLE",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/control-plane/bff/command_executor.py:74",
+        "variable": "PANTHEON_CAPITAL_API_URL",
+        "compose_service": "operator-bff"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:64",
+        "variable": "EVOLUTION_AUTO_CONSUMER_ENABLED",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:76",
+        "variable": "AUTO_CONSUMER_PERSONA_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:77",
+        "variable": "AUTO_CONSUMER_PERSONA_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:76",
+        "variable": "AUTO_CONSUMER_REGISTRY_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:77",
+        "variable": "AUTO_CONSUMER_REGISTRY_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:76",
+        "variable": "AUTO_CONSUMER_CAPITAL_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:77",
+        "variable": "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:76",
+        "variable": "AUTO_CONSUMER_RESEARCH_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:77",
+        "variable": "AUTO_CONSUMER_RESEARCH_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:76",
+        "variable": "AUTO_CONSUMER_BFF_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:77",
+        "variable": "AUTO_CONSUMER_BFF_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:280",
+        "variable": "AUTO_CONSUMER_GOVERNANCE_URL",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:80",
+        "variable": "AUTO_CONSUMER_PROPOSER_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      },
+      {
+        "file_line": "services/evolution/auto_consumer_runtime.py:80",
+        "variable": "AUTO_CONSUMER_GATE_TOKEN",
+        "compose_service": "evolution-daily-sweep-scheduler"
+      }
+    ]
+  },
   "acceptance_criteria": {
     "persona_daily_cycle_owner_ports_wired": {
       "status": "verified",
@@ -45,13 +772,18 @@
       "committed_secrets": 0,
       "least_privilege_principals": true,
       "governance_authz_preserved": true
+    },
+    "required_ci_workflow_coverage": {
+      "status": "verified",
+      "workflow": ".github/workflows/branch-ci.yml",
+      "job": "Service suites (misc) -> Service suites",
+      "command": "python3 -m pytest -q services/persona"
     }
   },
   "verification_suites": [
     "services/persona/test_owner_port_health.py",
     "scripts/test_issue_dev_paper_principals.py",
     "scripts/test_dev_paper_principal_renewal.py",
-    "scripts/test_paper_runtime_topology_contract.py",
     "scripts/test_persona_provisioning_compose_contract.py",
     "scripts/test_current_l12_compose_wiring.py",
     "scripts/test_persona_cycle_owner_ports_compose_contract.py"

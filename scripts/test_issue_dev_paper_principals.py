@@ -100,9 +100,12 @@ def test_readers_do_not_have_product_write_roles(variable):
     context = validate_request_auth(authorization="Bearer " + token,
                                     required_roles=tuple(claims_roles(READERS[variable][1])), env=env)
     assert context.actor_id == READERS[variable][0]
+    forbidden = ("automated_gate", "admin", "registry-writer", "approval_decider")
+    if variable != "PERSONA_EVALUATOR_BFF_TOKEN":
+        forbidden = (*forbidden, "operator")
     with pytest.raises(AuthError) as rejected:
         validate_request_auth(authorization="Bearer " + token, mfa_header=None,
-                              required_roles=("automated_gate", "admin", "operator"),
+                              required_roles=forbidden,
                               mfa_required=False, env=env)
     assert rejected.value.status_code == 403
 
@@ -361,11 +364,12 @@ def test_persona_evaluator_bff_reader_has_viewer_and_registry_read_only():
     variable = "PERSONA_EVALUATOR_BFF_TOKEN"
     claims = verify(issue_environment(configured(), now=NOW)[variable])
     assert claims["sub"] == claims["service"] == "pantheon-dev-persona-evaluator-bff-reader"
-    assert claims["roles"] == ["viewer", "registry-reader"]
+    assert claims["azp"] == "control-plane-bff"
+    assert claims["roles"] == ["viewer", "registry-reader", "operator"]
     assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
     assert claims["scope"] == "pantheon:dev-owner-read"
     assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
-    assert not {"admin", "operator", "registry-writer", "capital", "runtime", "automated_gate"}.intersection(claims["roles"])
+    assert not {"admin", "registry-writer", "capital", "runtime", "automated_gate", "approval_decider"}.intersection(claims["roles"])
 
 
 def test_evolution_owner_read_principals_are_reader_only_and_file_delivered():
@@ -464,8 +468,6 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
         "PERSONA_POOL_SOURCE_READ_TOKEN",
         "PERSONA_REGISTRY_SERVICE_TOKEN",
         "PERSONA_MEMORY_SERVICE_TOKEN",
-        "PERSONA_EVOLUTION_SERVICE_TOKEN",
-        "PERSONA_CONSULTATION_SERVICE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
     }
@@ -478,8 +480,11 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
         assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
         assert values[var + "_FILE"] == f"/run/pantheon-principals/{var}"
         jti_by_var[var] = claims["jti"]
-    # No credential is shared across owners.
+    # No credential is shared across owners (5 JWT owner principals + static evolution & consultation service tokens).
     assert len(set(jti_by_var.values())) == len(expected_persona_files)
+    assert values["EVOLUTION_AUTH_TOKEN"] == "pantheon-local-evolution-service"
+    assert values["CONSULTATION_SERVICE_TOKEN"] == "pantheon-local-consultation-service"
+    assert values["EVOLUTION_AUTH_TOKEN"] != values["CONSULTATION_SERVICE_TOKEN"]
 
     search_claims = verify(values["PERSONA_SEARCH_SERVICE_TOKEN"])
     assert search_claims["sub"] == "persona_cycle_controller"

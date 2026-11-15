@@ -56,7 +56,10 @@ READERS = {
     "DISTILLATION_RESEARCH_SERVICE_TOKEN": ("strategy-distillation-worker", "viewer"),
     "RESEARCH_CAPITAL_SERVICE_TOKEN": ("research-orchestrator", "capital-reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
-    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
+    "PERSONA_EVALUATOR_BFF_TOKEN": (
+        "pantheon-dev-persona-evaluator-bff-reader",
+        ("viewer", "registry-reader", "operator"),
+    ),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
@@ -111,18 +114,6 @@ WRITERS = {
         "persona_session",
         "pantheon:dev-owner-write",
     ),
-    # Persona daily cycle & harness adoption -> evolution owner (decision record writeback).
-    "PERSONA_EVOLUTION_SERVICE_TOKEN": (
-        "persona-svc",
-        "evolution_controller",
-        "pantheon:dev-owner-write",
-    ),
-    # Persona daily cycle -> consultation owner (panel request + published memo readback).
-    "PERSONA_CONSULTATION_SERVICE_TOKEN": (
-        "persona-svc",
-        "service",
-        "pantheon:dev-owner-write",
-    ),
     # Persona lesson-rule proposal publisher -> governance owner (propose-only, no decide).
     "LESSON_RULE_PROPOSER_TOKEN": (
         "persona-svc",
@@ -159,8 +150,6 @@ CONSUMER_FILES = {
         "PERSONA_POOL_SOURCE_READ_TOKEN",
         "PERSONA_REGISTRY_SERVICE_TOKEN",
         "PERSONA_MEMORY_SERVICE_TOKEN",
-        "PERSONA_EVOLUTION_SERVICE_TOKEN",
-        "PERSONA_CONSULTATION_SERVICE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
     ),
@@ -231,6 +220,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         scope: str,
         producers: list[str] | None = None,
         access_scopes: list[str] | None = None,
+        azp: str | None = None,
     ) -> str:
         claims = {
             "sub": subject, "service": subject, "tenant_id": "tenant-dev",
@@ -242,6 +232,8 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
             claims["allowed_producers"] = list(producers)
         if access_scopes:
             claims["access_scopes"] = list(access_scopes)
+        if azp:
+            claims["azp"] = azp
         encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
         encoded = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(
             json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
@@ -249,12 +241,25 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         signature = hmac.new(secret.encode(), encoded, hashlib.sha256).digest()
         return (encoded + b"." + encode(signature)).decode("ascii")
 
+    evolution_service_token = (
+        env.get("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service").strip()
+        or "pantheon-local-evolution-service"
+    )
+    consultation_service_token = (
+        env.get("CONSULTATION_SERVICE_TOKEN", "pantheon-local-consultation-service").strip()
+        or "pantheon-local-consultation-service"
+    )
+    consultation_api_token = (
+        (env.get("CONSULTATION_API_TOKEN") or consultation_service_token).strip()
+        or consultation_service_token
+    )
     values = {
         variable: token(
             subject,
             role,
             "pantheon:dev-owner-read",
             access_scopes=SEARCH_ACCESS_SCOPES if variable == "PERSONA_SEARCH_SERVICE_TOKEN" else None,
+            azp="control-plane-bff" if variable == "PERSONA_EVALUATOR_BFF_TOKEN" else None,
         )
         for variable, (subject, role) in READERS.items()
     }
@@ -281,9 +286,9 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],
         "PANTHEON_SEARCH_SERVICE_TOKEN": values["PERSONA_SEARCH_SERVICE_TOKEN"],
         "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": values["PERSONA_POOL_SOURCE_READ_TOKEN"],
-        "EVOLUTION_AUTH_TOKEN": values["PERSONA_EVOLUTION_SERVICE_TOKEN"],
-        "CONSULTATION_SERVICE_TOKEN": values["PERSONA_CONSULTATION_SERVICE_TOKEN"],
-        "CONSULTATION_API_TOKEN": values["PERSONA_CONSULTATION_SERVICE_TOKEN"],
+        "EVOLUTION_AUTH_TOKEN": evolution_service_token,
+        "CONSULTATION_SERVICE_TOKEN": consultation_service_token,
+        "CONSULTATION_API_TOKEN": consultation_api_token,
     })
     for variables in CONSUMER_FILES.values():
         for variable in variables:
@@ -397,6 +402,8 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                 expected["allowed_producers"] = producers
             if variable == "PERSONA_SEARCH_SERVICE_TOKEN":
                 expected["access_scopes"] = SEARCH_ACCESS_SCOPES
+            if variable == "PERSONA_EVALUATOR_BFF_TOKEN":
+                expected["azp"] = "control-plane-bff"
             if any(claims.get(key) != value for key, value in expected.items()):
                 return False
             if not (claims["nbf"] <= issued < claims["exp"] - REFRESH_SECONDS * 2
