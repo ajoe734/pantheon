@@ -40,6 +40,7 @@ from .spiders import (
     TpexDailyPriceHistorySpider,
     TwseDailyPriceHistorySpider,
     TwseIndexBreadthSpider,
+    TaifexVixSpider,
     TwseTaiexHistorySpider,
     TwseT86DailySpider,
     TW_EXCHANGE_HOLIDAYS,
@@ -147,6 +148,9 @@ class CollectorRunner:
         if sid in {TwseIndexBreadthSpider.source_id, TwseTaiexHistorySpider.source_id}:
             cls = TwseTaiexHistorySpider if sid == TwseTaiexHistorySpider.source_id else TwseIndexBreadthSpider
             return cls(policy, transport=self.transport, contact_user_agent=ua)
+        if sid == TaifexVixSpider.source_id:
+            return TaifexVixSpider(policy, transport=self.transport, contact_user_agent=ua,
+                                   state_path=self.root_dir / "state" / "taifex-vix" / "ledger.json")
         if sid == "collector-gdelt":
             return GdeltRawFeedPoller(
                 policy, transport=self.transport, contact_user_agent=ua,
@@ -297,7 +301,7 @@ class CollectorRunner:
             written = self.bundle_writer.write_bundle(
                 policy=policy, run_id=run_id, items=(), status="partial", paused_reason=None,
                 started_at=started_iso, finished_at=finished_iso,
-                reason=(f"parse_failed: {parse_exc}" if isinstance(collector, TwseIndexBreadthSpider)
+                reason=(f"parse_failed: {parse_exc}" if isinstance(collector, (TwseIndexBreadthSpider, TaifexVixSpider))
                         else "parse_failed"), source_url=source_url,
             )
             return RunOutcome(source_id=source_id, run_id=run_id, status="partial", bundle=written, state=current_state)
@@ -329,6 +333,8 @@ class CollectorRunner:
             reason=reason,
         )
         if isinstance(collector, GdeltRawFeedPoller):
+            collector.acknowledge_bundle()
+        if isinstance(collector, TaifexVixSpider) and bundle_status == "complete":
             collector.acknowledge_bundle()
         return RunOutcome(
             source_id=source_id,

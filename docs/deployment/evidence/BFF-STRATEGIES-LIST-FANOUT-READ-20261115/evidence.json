@@ -1,0 +1,273 @@
+{
+  "task_id": "BFF-STRATEGIES-LIST-FANOUT-READ-20261115",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "recorded_at": "2026-11-15T00:05:01.245967+00:00",
+  "source_base_commit": "e2f185058632ea4873ff047d46342c2a02851a0a",
+  "anchor_commit": "baa4be903e2dc0946e769faecf9db8448a990e11",
+  "scope": {
+    "runtime": [
+      "services/control-plane/bff/ports/research_knowledge_source.py"
+    ],
+    "tests": [
+      "services/control-plane/bff/tests/test_strategies_list_fanout_read.py",
+      "services/control-plane/bff/tests/test_strategy_list_latency.py",
+      "services/control-plane/bff/tests/test_strategy_operational_status.py",
+      "services/control-plane/bff/tests/test_strategy_metrics_truth.py"
+    ],
+    "existing_test_adjustment": "Callable cases and operational count cases now each start with a fresh port/app so existing exact cold-owner-read assertions remain intact. The metrics test file is validated only; no edits.",
+    "unchanged": [
+      "strategy route signatures",
+      "tenant/RBAC route admission",
+      "owner response validation and ordering",
+      "page tokens",
+      "personas/service.py",
+      "artifact paging",
+      "execute-plans",
+      "FE gate budgets and crawler",
+      "BFF timeouts"
+    ]
+  },
+  "design": {
+    "approach": "Single-flight plus a short process-local memo of validated bounded Registry summary pages; no memo of BFF responses, persona/ranking projection or full catalog.",
+    "ttl_seconds": 5,
+    "max_completed_keys_per_port": 64,
+    "max_in_flight_keys_per_port": 64,
+    "key": [
+      "verified caller tenant",
+      "SHA256 of caller authorization",
+      "Registry URL",
+      "state",
+      "exclude_state",
+      "persona_id",
+      "page_token",
+      "page_size"
+    ],
+    "failure_policy": "Exceptions and malformed/forbidden owner payloads are never inserted into the cross-request memo. Concurrent waiters receive their in-flight outcome; the next independent request retries. Existing request-scoped owner-read semantics remain unchanged.",
+    "isolation": "Each port owns its memo. Hits and joined results are deep-copied; leader results are detached from the saved value. Unrelated keys do not wait under an I/O lock.",
+    "deadline": "A waiter uses remaining_management_read_budget; at capacity an unrelated key reads directly without growing the in-flight map. No timeout or budget changes.",
+    "freshness": "Successful Registry summary pages may be up to 5 seconds old. Hits do not extend TTL. Persona and ranking reads still use the existing request-scoped flow.",
+    "composition": "Follows sibling PR #7362 single-flight/memo pattern at the strategy owner-page layer; preserves existing strategy route parallel prefetch and leaves personas and artifact paging untouched."
+  },
+  "hosted_before_reference": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7364",
+    "commit": "d392c106525d293fc968be1eedff863d00a04df2",
+    "evidence": "docs/deployment/evidence/BFF-RISK-CENTER-FANOUT-AND-ARTIFACT-PAGING-20261115/evidence.json",
+    "strategies": {
+      "p50_seconds": 2.0678912219955237,
+      "p95_seconds": 3.2318405890036956,
+      "max_seconds": 3.598078668997914,
+      "rounds": 20
+    },
+    "profile_summary": "The existing hosted pre-change cProfile measured strategy owner page 0.5394 seconds, with http_request_json 0.5371 seconds (urlopen 0.4683 seconds). This supports deduplicating repeated validated owner reads. It is a single-owner profile; hosted fan-out p95 was 3.2318 seconds.",
+    "attribution_limit": "The hosted concurrent regression indicates contention beyond the isolated owner wait; no new hosted after-change claim is made by this fixture benchmark."
+  },
+  "benchmark_method": {
+    "paths": [
+      "/bff/strategies?exclude_state=draft&page_size=200",
+      "/bff/personas?page_size=200",
+      "/bff/capital-pools?page_size=200",
+      "/bff/runtimes?page_size=200",
+      "/bff/tools",
+      "/bff/mcp-servers",
+      "/bff/skills",
+      "/bff/alerts",
+      "/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200"
+    ],
+    "rounds_per_mode": 20,
+    "statistics": "Nearest-rank p50/p95 and max. Every round awaits and consumes all nine response bodies. First cold round is included, with a fresh app/port in each mode; no warmup round is discarded.",
+    "fixture": {
+      "non_draft": 166,
+      "non_retired": 3648,
+      "other_tenant": 23,
+      "injected_registry_latency_seconds": 0.54
+    },
+    "transport": "httpx ASGITransport, real production routers mounted by build_consolidated_cross_cutting_app, real RegistryService/RegistryStore summary-page projection. Owner HTTP boundary is replaced by the real Registry fixture plus time.sleep(0.54).",
+    "baseline": "The benchmark compiles the immutable original port from git show at source_base_commit; all other route, fixture, latency, auth and concurrency code is identical between modes.",
+    "profile": "cProfile covers the isolated owner read and each actual uncached read inside the strategy worker during nine-read fan-out, with both before and after profiles recorded below. Before change, wait plus Registry summary/index projection dominate; memo avoids repeating that work on subsequent page loads.",
+    "limitations": "The eight sibling routes use in-memory empty owner datasets. Strategy fixture matches requested hosted counts, but the fixture does not reproduce all hosted owner workloads, network hops, or single-process uvicorn contention. The baseline is already under 2 seconds here; these numbers establish fixture acceptance and repeated-read savings, not hosted after-change latency. No deploy was performed.",
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      "timeout 120 .venv-pantheon/bin/python services/control-plane/bff/tests/test_strategies_list_fanout_read.py --benchmark before --output /tmp/strategies-fanout-before.json",
+      "timeout 120 .venv-pantheon/bin/python services/control-plane/bff/tests/test_strategies_list_fanout_read.py --benchmark after --output /tmp/strategies-fanout-after.json"
+    ],
+    "execution": "Final before and after benchmarks ran sequentially in one bounded timeout 180 batch, with no concurrent local test batch. Both exited 0; the batch exited 0 and all terminal output was collected."
+  },
+  "before": {
+    "strategies": {
+      "p50_seconds": 0.6663318689970765,
+      "p95_seconds": 0.8636560480008484,
+      "max_seconds": 1.547312126000179,
+      "rounds": 20,
+      "samples_seconds": [
+        1.547312126000179,
+        0.66106103999482,
+        0.662654690000636,
+        0.6709960989974206,
+        0.6620799000011175,
+        0.6609990700017079,
+        0.6646007999952417,
+        0.8477718080030172,
+        0.6630739999964135,
+        0.67685231899668,
+        0.6645037299967953,
+        0.6661701789998915,
+        0.6710217189975083,
+        0.6817043089977233,
+        0.8636560480008484,
+        0.6663318689970765,
+        0.6652579900037381,
+        0.6694833600049606,
+        0.6896550279998337,
+        0.6851853389962343
+      ]
+    },
+    "owner_calls": 20,
+    "isolated_owner_seconds": 0.629670242,
+    "concurrent_first_owner_seconds": 0.844582809,
+    "raw_output": {
+      "path": "/tmp/strategies-fanout-before.json",
+      "sha256": "9b8f9645b5fb647429ef9ff966c2c824a857c6c3ad75569a649159e7e78e5bf9",
+      "contains": "All nine route samples and full isolated/concurrent owner profiles. Local raw output retained; rerun commands regenerate equivalent measurements."
+    },
+    "concurrent_first_owner_profile_summary": [
+      {
+        "name": "_fetch_canonical_strategy_specs_page_uncached",
+        "calls": 1,
+        "cumulative_seconds": 0.844582809
+      },
+      {
+        "name": "http",
+        "calls": 1,
+        "cumulative_seconds": 0.8436390490000001
+      },
+      {
+        "name": "<built-in method time.sleep>",
+        "calls": 1,
+        "cumulative_seconds": 0.529351808
+      },
+      {
+        "name": "strategy_spec_summary_page",
+        "calls": 1,
+        "cumulative_seconds": 0.31260704100000003
+      },
+      {
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "cumulative_seconds": 0.266210913
+      },
+      {
+        "name": "list_strategy_spec_summary_index_rows",
+        "calls": 1,
+        "cumulative_seconds": 0.26616954400000004
+      },
+      {
+        "name": "strategy_spec_summary_index_row",
+        "calls": 3648,
+        "cumulative_seconds": 0.258779896
+      },
+      {
+        "name": "project_strategy_spec_summary_page",
+        "calls": 1,
+        "cumulative_seconds": 0.046048217
+      }
+    ]
+  },
+  "after": {
+    "strategies": {
+      "p50_seconds": 0.0402003679992049,
+      "p95_seconds": 0.04803666700172471,
+      "max_seconds": 1.5536809750046814,
+      "rounds": 20,
+      "samples_seconds": [
+        1.5536809750046814,
+        0.04059458799747517,
+        0.04079106800054433,
+        0.0402003679992049,
+        0.04803666700172471,
+        0.042099216996575706,
+        0.04041964699717937,
+        0.039839857003244106,
+        0.03927552799723344,
+        0.03880903800018132,
+        0.04028999699949054,
+        0.038031707001209725,
+        0.038093088005553,
+        0.04163647700625006,
+        0.03972802800126374,
+        0.040336477002711035,
+        0.04046403800020926,
+        0.038847196999995504,
+        0.03971782699954929,
+        0.03787684699636884
+      ]
+    },
+    "owner_calls": 1,
+    "isolated_owner_seconds": 0.6444130210000001,
+    "concurrent_first_owner_seconds": 0.8477661390000001,
+    "raw_output": {
+      "path": "/tmp/strategies-fanout-after.json",
+      "sha256": "55705bee344e54ae805971c4e1444985f8d4e8834c758a3c1e6f676949108a8b",
+      "contains": "All nine route samples and full isolated/concurrent owner profiles. Local raw output retained; rerun commands regenerate equivalent measurements."
+    }
+  },
+  "acceptance": {
+    "1": {
+      "result": "PASS_FIXTURE",
+      "p95_seconds": 0.04803666700172471,
+      "rounds": 20,
+      "threshold_seconds": 2
+    },
+    "2": {
+      "result": "PASS",
+      "location": "before/after.strategies contain p50, p95, max and all 20 samples; benchmark_method.commands rerun both. Bulky all-route/profile output is referenced by SHA256."
+    },
+    "3": {
+      "result": "PASS",
+      "location": "hosted_before_reference, before.isolated_owner_seconds and before.concurrent_first_owner_profile_summary; full profiles in raw output by SHA256"
+    },
+    "4": {
+      "result": "PASS",
+      "test": "test_response_order_tokens_and_tenant_rbac_match_baseline compares complete JSON recursively, excluding snapshot_at/snapshotAt, against the immutable pre-change port"
+    },
+    "5": {
+      "result": "PASS",
+      "tests": [
+        "test_response_order_tokens_and_tenant_rbac_match_baseline",
+        "test_same_credential_concurrent_tenants_do_not_share_rows_or_flights",
+        "test_memo_single_flight_isolation_expiry_and_detached_results"
+      ]
+    },
+    "6": {
+      "result": "PASS",
+      "tests": [
+        "test_memo_single_flight_isolation_expiry_and_detached_results",
+        "test_failed_reads_are_never_reused (503, 403, malformed payload, foreign row)",
+        "test_memo_capacity_and_waiter_deadline"
+      ]
+    },
+    "7": {
+      "result": "PASS",
+      "evidence": "Runtime diff touches only the strategy summary memo in the RKS port; no route, timeout, FE gate or crawler files changed."
+    }
+  },
+  "validation": {
+    "command": "timeout 150 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_strategies_list_fanout_read.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_strategy_operational_status.py --tb=short",
+    "result": "PASS",
+    "passed": 120,
+    "skipped": 1,
+    "exit_code": 0,
+    "duration_seconds": 42.13,
+    "terminal_output": "120 passed, 1 skipped, 3 warnings in 42.13s",
+    "diff_check": "git diff --check exited 0"
+  },
+  "delivery": {
+    "independent_review": "pending Claude",
+    "merge": "pending canonical supervisor integration; owner has not claimed done"
+  },
+  "delivery_base_commit": "256a668e4af7eb778d614130bcaff53677efa9eb",
+  "review_notes": [
+    "Initial CI diff budget rejected the 1253-line raw evidence. This manifest retains metric samples and profile summaries; bulky raw all-route/profile output is retained locally and referenced by digest."
+  ]
+}
