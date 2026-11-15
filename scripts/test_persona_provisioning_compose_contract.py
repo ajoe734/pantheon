@@ -82,6 +82,20 @@ def test_operator_bff_uses_canonical_registry_owner_url(compose_path: str) -> No
     assert service["depends_on"]["registry"] == {"condition": "service_healthy"}
 
 
+def test_operator_bff_wires_persona_owner_urls_for_pool_publish() -> None:
+    service = _compose_service("docker-compose.yml")
+    environment = service["environment"]
+
+    assert environment["PERSONA_URL"] == "${PERSONA_URL:-http://persona:8002}"
+    assert environment["PANTHEON_PERSONA_API_URL"] == (
+        "${PANTHEON_PERSONA_API_URL:-${PERSONA_URL:-http://persona:8002}}"
+    )
+    assert environment["PANTHEON_PERSONA_SERVICE_URL"] == (
+        "${PANTHEON_PERSONA_SERVICE_URL:-${PERSONA_URL:-http://persona:8002}}"
+    )
+    assert service["depends_on"]["persona"] == {"condition": "service_healthy"}
+
+
 @pytest.mark.parametrize(
     ("compose_path", "expected"),
     [

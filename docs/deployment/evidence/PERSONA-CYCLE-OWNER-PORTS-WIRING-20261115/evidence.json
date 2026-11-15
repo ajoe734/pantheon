@@ -1,0 +1,59 @@
+{
+  "task_id": "PERSONA-CYCLE-OWNER-PORTS-WIRING-20261115",
+  "title": "Persona daily cycle and pool publish and quarterly paper allocation reach their owner services on the deployed dev stack: fix unresolved and unset owner addresses and credentials and show every missing port on health",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "acceptance_criteria": {
+    "persona_daily_cycle_owner_ports_wired": {
+      "status": "verified",
+      "required_owner_ports": [
+        "research",
+        "memory",
+        "registry",
+        "evolution",
+        "consultation",
+        "governance",
+        "search"
+      ],
+      "compose_service": "persona",
+      "principal_issuer_script": "scripts/issue_dev_paper_principals.py"
+    },
+    "pool_publish_and_research_canonical_dataset_authority": {
+      "status": "verified",
+      "operator_bff_persona_urls": [
+        "PERSONA_URL",
+        "PANTHEON_PERSONA_API_URL",
+        "PANTHEON_PERSONA_SERVICE_URL"
+      ],
+      "canonical_dataset_pointer_path": "/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json",
+      "threshold_policy_path": "/workspace/services/training-session/threshold_policy.json"
+    },
+    "quarterly_paper_allocation_and_auto_consumer_wiring": {
+      "status": "verified",
+      "capital_env_default": "dev",
+      "persona_evaluator_paper_pool_id_default": "pool-paper-default",
+      "intraday_store_root": "/data/source-ingest",
+      "evolution_auto_consumer_default": "false"
+    },
+    "health_and_heartbeat_truth": {
+      "status": "verified",
+      "health_module": "services/persona/owner_port_health.py",
+      "control_plane_persona_entrypoint": "services/control-plane/persona/main.py"
+    },
+    "security_and_authority_guardrails": {
+      "status": "verified",
+      "committed_secrets": 0,
+      "least_privilege_principals": true,
+      "governance_authz_preserved": true
+    }
+  },
+  "verification_suites": [
+    "services/persona/test_owner_port_health.py",
+    "scripts/test_issue_dev_paper_principals.py",
+    "scripts/test_dev_paper_principal_renewal.py",
+    "scripts/test_paper_runtime_topology_contract.py",
+    "scripts/test_persona_provisioning_compose_contract.py",
+    "scripts/test_current_l12_compose_wiring.py",
+    "scripts/test_persona_cycle_owner_ports_compose_contract.py"
+  ]
+}

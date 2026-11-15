@@ -43,6 +43,16 @@ READERS = {
     "RESEARCH_PERSONA_SERVICE_TOKEN": ("research-orchestrator", "viewer"),
     # Persona daily pool cycle -> research owner (persona demands, candidate supply).
     "PERSONA_RESEARCH_SERVICE_TOKEN": ("persona-pool-cycle", "viewer"),
+    # Persona daily cycle & strategy pool -> registry owner (candidate specs, champions).
+    "PERSONA_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-persona-registry-reader", "registry-reader"),
+    # Persona daily cycle case-file assembly -> search owner (hybrid retrieval query).
+    "PERSONA_SEARCH_SERVICE_TOKEN": ("persona_cycle_controller", ("researcher", "persona_session")),
+    # Evolution automatic consumer -> owner read ports.
+    "AUTO_CONSUMER_PERSONA_TOKEN": ("pantheon-dev-auto-consumer-persona-reader", "viewer"),
+    "AUTO_CONSUMER_REGISTRY_TOKEN": ("pantheon-dev-auto-consumer-registry-reader", "registry-reader"),
+    "AUTO_CONSUMER_CAPITAL_TOKEN": ("runtime-manager", "capital-reader"),
+    "AUTO_CONSUMER_RESEARCH_TOKEN": ("pantheon-dev-auto-consumer-research-reader", "viewer"),
+    "AUTO_CONSUMER_BFF_TOKEN": ("pantheon-dev-auto-consumer-bff-reader", ("viewer", "registry-reader")),
     "DISTILLATION_RESEARCH_SERVICE_TOKEN": ("strategy-distillation-worker", "viewer"),
     "RESEARCH_CAPITAL_SERVICE_TOKEN": ("research-orchestrator", "capital-reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
@@ -95,6 +105,36 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Persona daily cycle & harness adoption -> memory owner (bundle recall + outcome writeback).
+    "PERSONA_MEMORY_SERVICE_TOKEN": (
+        "persona_cycle_controller",
+        "persona_session",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona daily cycle & harness adoption -> evolution owner (decision record writeback).
+    "PERSONA_EVOLUTION_SERVICE_TOKEN": (
+        "persona-svc",
+        "evolution_controller",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona daily cycle -> consultation owner (panel request + published memo readback).
+    "PERSONA_CONSULTATION_SERVICE_TOKEN": (
+        "persona-svc",
+        "service",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona lesson-rule proposal publisher -> governance owner (propose-only, no decide).
+    "LESSON_RULE_PROPOSER_TOKEN": (
+        "persona-svc",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
+    # Evolution automatic consumer -> governance owner (propose-only, no decide).
+    "AUTO_CONSUMER_PROPOSER_TOKEN": (
+        "evolution-auto-consumer-proposer",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
 }
 # Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
 # verifier needs the service role plus a producer scope inside its own allowlist.
@@ -103,6 +143,7 @@ TELEMETRY_PRODUCERS = {
     "PANTHEON_BFF_HEALTH_TELEMETRY_JWT": (
         "control-plane-bff-health-monitor", "service", ["control-plane-bff"]),
 }
+SEARCH_ACCESS_SCOPES = ["operator", "research", "public"]
 CONSUMER_FILES = {
     "deployment": (
         "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
@@ -112,13 +153,32 @@ CONSUMER_FILES = {
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
-    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN", "PERSONA_RESEARCH_SERVICE_TOKEN", "PERSONA_POOL_SOURCE_READ_TOKEN"),
+    "persona": (
+        "PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_SOURCE_READ_TOKEN",
+        "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_EVOLUTION_SERVICE_TOKEN",
+        "PERSONA_CONSULTATION_SERVICE_TOKEN",
+        "LESSON_RULE_PROPOSER_TOKEN",
+        "PERSONA_SEARCH_SERVICE_TOKEN",
+    ),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": (
         "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",
         "EVOLUTION_REGISTRY_SERVICE_TOKEN",
         "EVOLUTION_PERSONA_SERVICE_TOKEN",
         "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
+    ),
+    "evolution-daily-sweep-scheduler": (
+        "AUTO_CONSUMER_PERSONA_TOKEN",
+        "AUTO_CONSUMER_REGISTRY_TOKEN",
+        "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "AUTO_CONSUMER_RESEARCH_TOKEN",
+        "AUTO_CONSUMER_BFF_TOKEN",
+        "AUTO_CONSUMER_PROPOSER_TOKEN",
+        "AUTO_CONSUMER_GATE_TOKEN",
     ),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN", "DISTILLATION_RESEARCH_SERVICE_TOKEN"),
@@ -133,7 +193,12 @@ CONSUMER_FILES = {
         "RESEARCH_PERSONA_SERVICE_TOKEN",
         "RESEARCH_CAPITAL_SERVICE_TOKEN",
     ),
-    "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "persona-evaluator-agent": (
+        "PERSONA_EVALUATOR_BFF_TOKEN",
+        "PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
+        "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "AUTO_CONSUMER_REGISTRY_TOKEN",
+    ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
@@ -160,7 +225,13 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         raise ValueError("Configured dev verifier secret, issuer and audience required")
     issued = int(time.time()) if now is None else now
 
-    def token(subject: str, role: str, scope: str, producers: list[str] | None = None) -> str:
+    def token(
+        subject: str,
+        role: str | tuple[str, ...],
+        scope: str,
+        producers: list[str] | None = None,
+        access_scopes: list[str] | None = None,
+    ) -> str:
         claims = {
             "sub": subject, "service": subject, "tenant_id": "tenant-dev",
             "allowed_tenants": ["tenant-dev"], "roles": _roles(role), "scope": scope,
@@ -169,6 +240,8 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         }
         if producers:
             claims["allowed_producers"] = list(producers)
+        if access_scopes:
+            claims["access_scopes"] = list(access_scopes)
         encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
         encoded = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(
             json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
@@ -177,7 +250,12 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         return (encoded + b"." + encode(signature)).decode("ascii")
 
     values = {
-        variable: token(subject, role, "pantheon:dev-owner-read")
+        variable: token(
+            subject,
+            role,
+            "pantheon:dev-owner-read",
+            access_scopes=SEARCH_ACCESS_SCOPES if variable == "PERSONA_SEARCH_SERVICE_TOKEN" else None,
+        )
         for variable, (subject, role) in READERS.items()
     }
     values.update({
@@ -190,12 +268,22 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
     })
     values.update({
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
+        "AUTO_CONSUMER_GATE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": PAPER_SUBJECT,
         "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "true",
         "GOVERNANCE_REGISTRY_BASE_URL": "http://registry:8087",
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
         "PANTHEON_REGISTRY_JWT_AUDIENCE": audience,
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
+        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
+        "PANTHEON_MEMORY_SERVICE_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
+        "PANTHEON_RESEARCH_SERVICE_TOKEN": values["PERSONA_RESEARCH_SERVICE_TOKEN"],
+        "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],
+        "PANTHEON_SEARCH_SERVICE_TOKEN": values["PERSONA_SEARCH_SERVICE_TOKEN"],
+        "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": values["PERSONA_POOL_SOURCE_READ_TOKEN"],
+        "EVOLUTION_AUTH_TOKEN": values["PERSONA_EVOLUTION_SERVICE_TOKEN"],
+        "CONSULTATION_SERVICE_TOKEN": values["PERSONA_CONSULTATION_SERVICE_TOKEN"],
+        "CONSULTATION_API_TOKEN": values["PERSONA_CONSULTATION_SERVICE_TOKEN"],
     })
     for variables in CONSUMER_FILES.values():
         for variable in variables:
@@ -207,8 +295,19 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
     if (env.get("PANTHEON_ENV") != "dev" or env.get("PANTHEON_DEV_BFF_TENANT_ID") != "tenant-dev"
             or env.get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") != "false"):
         raise ValueError("Explicit tenant-dev withdrawal required")
-    values = {"GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "false",
-              "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant"}
+    values = {
+        "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "false",
+        "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
+        "PANTHEON_MEMORY_AUTH_TOKEN": "",
+        "PANTHEON_MEMORY_SERVICE_TOKEN": "",
+        "PANTHEON_RESEARCH_SERVICE_TOKEN": "",
+        "PANTHEON_REGISTRY_SERVICE_TOKEN": "",
+        "PANTHEON_SEARCH_SERVICE_TOKEN": "",
+        "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": "",
+        "EVOLUTION_AUTH_TOKEN": "",
+        "CONSULTATION_SERVICE_TOKEN": "",
+        "CONSULTATION_API_TOKEN": "",
+    }
     for variables in CONSUMER_FILES.values():
         for variable in variables:
             values[variable] = ""
@@ -296,6 +395,8 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                         "aud": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"].strip()}
             if variable in TELEMETRY_PRODUCERS:
                 expected["allowed_producers"] = producers
+            if variable == "PERSONA_SEARCH_SERVICE_TOKEN":
+                expected["access_scopes"] = SEARCH_ACCESS_SCOPES
             if any(claims.get(key) != value for key, value in expected.items()):
                 return False
             if not (claims["nbf"] <= issued < claims["exp"] - REFRESH_SECONDS * 2
