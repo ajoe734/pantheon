@@ -1931,3 +1931,6 @@ def reset_store() -> None:
     global _default_store
     with _store_lock:
         _default_store = None
+    from .regime.store import reset_regime_store
+
+    reset_regime_store()

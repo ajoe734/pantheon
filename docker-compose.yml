@@ -2268,6 +2268,7 @@ services:
       REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE: ${REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       REGISTRY_GOVERNANCE_TIMEOUT_SECONDS: ${REGISTRY_GOVERNANCE_TIMEOUT_SECONDS:-5}
       PORT: "8087"
+      REGISTRY_REGIME_STORE_ROOT: /data/source-ingest
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       # Hard-enforce Postgres in staging/prod; override to memory only for local
       # dev rollback. Memory is a test double injected directly by unit tests,
@@ -2288,6 +2289,8 @@ services:
       RESEARCH_ORCHESTRATOR_API_URL: ${RESEARCH_ORCHESTRATOR_API_URL:-http://research-orchestrator-svc:8101}
     volumes:
       - dev-paper-registry-tokens:/run/pantheon-principals:ro
+      # Governed datasets the regime evaluator reads point-in-time (read-only; REGIME-REGISTRY-EVALUATOR-20261115).
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       postgres:
         condition: service_healthy

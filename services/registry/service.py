@@ -2482,3 +2482,10 @@ def get_alpha_template_entry(registry_id: str, authorization: Optional[str] = He
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "pantheon-registry"}
+
+
+# -- Regime evaluator (SD-REGIME-STATE-ENGINE-20261114) ---------------------
+# Imported last: the routes resolve this module's auth helpers lazily, so there is no cycle.
+from .regime.routes import router as _regime_router  # noqa: E402
+
+app.include_router(_regime_router)
