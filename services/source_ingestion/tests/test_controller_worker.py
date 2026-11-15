@@ -3779,3 +3779,57 @@ def test_host_not_offered_is_excluded_even_if_due_or_continuing():
     assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == []
     actual["connectors"][0]["collector_offering"] = {"offered": True, "reason": None}
     assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == [COLLECTOR_CONNECTOR_ID]
+
+
+def _dlq_scoped_actual(pending: int) -> dict[str, Any]:
+    actual = _actual_readback()
+    actual["dlq_count"] = pending
+    actual["pending_dlq_count"] = pending
+    actual["unresolved_dlq_count"] = pending
+    actual["dlq_status_counts"]["pending"] = pending
+    if pending:
+        actual["dlq_status_counts_by_connector"] = {
+            CONNECTOR_ID: {**actual["dlq_status_counts"], "pending": pending}
+        }
+    return actual
+
+
+def _validate_dlq_delta(actual: dict[str, Any], pre: dict[str, int] | None) -> int:
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    return _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        pre_unresolved_dlq_by_connector=pre,
+    )
+
+
+def test_steady_dlq_gate_accepts_preexisting_entries_and_reports_them() -> None:
+    from services.source_ingestion.controller_worker import scoped_unresolved_dlq_by_connector
+
+    pre_actual = _dlq_scoped_actual(14)
+    pre = scoped_unresolved_dlq_by_connector(pre_actual, (CONNECTOR_ID,))
+    assert pre == {CONNECTOR_ID: 14}
+    _validate_dlq_delta(_dlq_scoped_actual(14), pre)
+
+
+def test_steady_dlq_gate_rejects_new_entry_over_backlog() -> None:
+    with pytest.raises(ControllerTickError, match=r"1 new unresolved dead-letter"):
+        _validate_dlq_delta(_dlq_scoped_actual(15), {CONNECTOR_ID: 14})
+
+
+def test_bounded_mode_still_rejects_preexisting_entries() -> None:
+    with pytest.raises(ControllerTickError, match="14 unresolved dead-letter"):
+        _validate_dlq_delta(_dlq_scoped_actual(14), None)
+
+
+def test_steady_dlq_gate_still_rejects_contradictory_scoped_counts() -> None:
+    actual = _dlq_scoped_actual(14)
+    actual["dlq_status_counts_by_connector"][CONNECTOR_ID]["pending"] = 3
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_dlq_delta(actual, {CONNECTOR_ID: 14})
