@@ -81,3 +81,19 @@ def test_existing_execution_policy_and_other_store_entries_are_preserved(client)
     assert metadata["market_data_policy"] == policy
     assert metadata["symbol"] == "2330.TW"
     assert metadata["object_store"]["unrelated/config"] == "keep"
+
+
+def test_momentum_plan_market_data_policy_is_byte_identical_to_legacy_derivation(client):
+    """The shared helper must reproduce the pre-change momentum policy exactly."""
+    test_client, governance_dir = client
+    artifact, _ = _inline_registry(test_client, governance_dir)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-byte-identical"))
+    assert response.status_code == 201, response.text
+    legacy = {
+        "owner": "source-ingest",
+        "contract": "latest_stored_normalized",
+        "minimum_closes": artifact["parameters"][artifact["strategy_logic"]["lookback_parameter"]],
+        "max_age_seconds": 86400,
+    }
+    actual = response.json()["metadata"]["market_data_policy"]
+    assert json.dumps(actual, sort_keys=True) == json.dumps(legacy, sort_keys=True)
