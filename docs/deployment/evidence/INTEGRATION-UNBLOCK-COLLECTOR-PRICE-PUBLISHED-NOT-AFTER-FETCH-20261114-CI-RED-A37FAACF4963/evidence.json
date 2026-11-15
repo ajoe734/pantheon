@@ -1,0 +1,14 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114-CI-RED-A37FAACF4963",
+  "source_pr": 7370,
+  "root_cause": {
+    "classification": "pre-existing flaky test, unrelated to the source PR diff",
+    "summary": "Smoke acceptance failed only on test_collector_market_early_fetch_pit.py::test_real_pipeline_persists_newest_and_advances_sweep_after_restart[preclose-quarantined] with 'assert 256 == 60' (1 failed, 2012 passed). The test selected receipts[-1], which is arbitrary when two pulls finish in the same second. The source PR touches only deploy/collector spiders + its own test + evidence, not this test or source_ingestion.",
+    "fixed_in_dev_by": "PR #7369 (COLLECTOR-EARLY-FETCH-PIT-FLAKY-SMOKE-20261115, commit a8eea4b2a)"
+  },
+  "resolution": {
+    "action": "Source branch was created before #7369 landed; it needs a merge of current dev and a CI rerun. No product code change is needed from this repair task, and the source branch must not be pushed to from here.",
+    "files_changed_by_this_task": ["docs/deployment/evidence/INTEGRATION-UNBLOCK-COLLECTOR-PRICE-PUBLISHED-NOT-AFTER-FETCH-20261114-CI-RED-A37FAACF4963/evidence.json"],
+    "scripts/git/auto_integrator.py": "unchanged"
+  }
+}
