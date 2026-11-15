@@ -66,15 +66,15 @@ OWNER_PORT_SPECS: dict[str, OwnerPortSpec] = {
     "evolution": OwnerPortSpec(
         name="evolution",
         url_vars=("EVOLUTION_API_URL", "PANTHEON_EVOLUTION_API_URL"),
-        token_vars=("PERSONA_EVOLUTION_SERVICE_TOKEN", "EVOLUTION_AUTH_TOKEN"),
+        token_vars=("EVOLUTION_AUTH_TOKEN", "PERSONA_EVOLUTION_SERVICE_TOKEN"),
     ),
     "consultation": OwnerPortSpec(
         name="consultation",
         url_vars=("PANTHEON_CONSULTATION_API_URL", "PANTHEON_CONSULTATION_SERVICE_URL"),
         token_vars=(
-            "PERSONA_CONSULTATION_SERVICE_TOKEN",
             "CONSULTATION_SERVICE_TOKEN",
             "CONSULTATION_API_TOKEN",
+            "PERSONA_CONSULTATION_SERVICE_TOKEN",
         ),
     ),
     "governance": OwnerPortSpec(
@@ -278,31 +278,67 @@ def apply_owner_port_health_to_cycle_report(
     missing = non_healthy_owner_ports(owner_ports)
     out["owner_ports"] = owner_ports
     failures = [dict(item) for item in (out.get("failures") or []) if isinstance(item, Mapping)]
-    existing_ports = {
-        str(item.get("owner_port") or "")
+
+    persona_ids: list[str] = []
+    seen_pids: set[str] = set()
+    tenant_scopes = out.get("tenant_scopes")
+    if isinstance(tenant_scopes, Mapping):
+        for pids in tenant_scopes.values():
+            if isinstance(pids, (list, tuple, set)):
+                for pid in pids:
+                    pid_str = str(pid or "").strip()
+                    if pid_str and pid_str not in seen_pids:
+                        seen_pids.add(pid_str)
+                        persona_ids.append(pid_str)
+    elif isinstance(tenant_scopes, (list, tuple)):
+        for scope in tenant_scopes:
+            if isinstance(scope, Mapping):
+                pids = scope.get("personas") or scope.get("persona_ids") or ()
+                if isinstance(pids, (list, tuple, set)):
+                    for pid in pids:
+                        pid_str = str(pid or "").strip()
+                        if pid_str and pid_str not in seen_pids:
+                            seen_pids.add(pid_str)
+                            persona_ids.append(pid_str)
+    for key in ("personas", "jobs"):
+        mapping = out.get(key)
+        if isinstance(mapping, Mapping):
+            for pid in mapping.keys():
+                pid_str = str(pid or "").strip()
+                if pid_str and pid_str not in seen_pids:
+                    seen_pids.add(pid_str)
+                    persona_ids.append(pid_str)
+
+    existing_keys = {
+        (str(item.get("persona_id") or "") or None, str(item.get("owner_port") or ""))
         for item in failures
         if item.get("owner_port")
     }
+    target_pids: list[str | None] = persona_ids if persona_ids else [None]
     for port_name, details in missing.items():
-        if port_name in existing_ports:
-            continue
         status = str(details.get("status") or "unconfigured")
         reason = str(details.get("reason") or status)
-        failures.append(
-            {
+        for pid in target_pids:
+            if (pid, port_name) in existing_keys or (None, port_name) in existing_keys:
+                continue
+            entry: dict[str, Any] = {
                 "owner_port": port_name,
                 "status": status,
                 "reason": f"owner_port_{status}:{port_name}:{reason}",
             }
-        )
+            if pid is not None:
+                entry["persona_id"] = pid
+            failures.append(entry)
+            existing_keys.add((pid, port_name))
+
     out["failures"] = failures
     out["status"] = "degraded" if failures else str(out.get("status") or "ok")
     return out
 
 
-def sync_owner_port_env(target_env: MutableMapping[str, str] | None = None) -> None:
-    """Propagate resolved owner URLs and file-backed credentials to alias env vars in-process."""
-    env = os.environ if target_env is None else target_env
+def sync_owner_port_env(target_env: MutableMapping[str, str] | None = None) -> dict[str, str]:
+    """Propagate resolved owner URLs and file-backed credentials into a mapping without mutating os.environ."""
+    env: MutableMapping[str, str] = dict(os.environ) if target_env is None else target_env
     for spec in OWNER_PORT_SPECS.values():
         url, _ = _resolve_url(spec.url_vars, env)
         if url:
@@ -320,3 +356,31 @@ def sync_owner_port_env(target_env: MutableMapping[str, str] | None = None) -> N
     )
     if source_token:
         env["PERSONA_SOURCE_INGEST_SERVICE_TOKEN"] = source_token
+    return dict(env)
+
+
+class OwnerPortEnvView(Mapping[str, str]):
+    """Read-through view over an environment mapping that resolves owner port aliases and _FILE tokens without mutating os.environ."""
+
+    def __init__(self, base_env: Mapping[str, str] | None = None) -> None:
+        self._base = os.environ if base_env is None else base_env
+
+    def _snapshot(self) -> dict[str, str]:
+        data = dict(self._base)
+        sync_owner_port_env(data)
+        return data
+
+    def __getitem__(self, key: str) -> str:
+        snap = self._snapshot()
+        if key in snap:
+            return snap[key]
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._snapshot().get(key, default)
+
+    def __iter__(self):
+        return iter(self._snapshot())
+
+    def __len__(self) -> int:
+        return len(self._snapshot())

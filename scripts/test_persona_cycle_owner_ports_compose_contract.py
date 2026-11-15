@@ -1,32 +1,52 @@
 """End-to-end contract tests for PERSONA-CYCLE-OWNER-PORTS-WIRING-20261115.
 
 Verifies that:
-1. Persona daily cycle owner ports (research, memory, registry, evolution,
-   consultation, governance, search) and their principal token file mounts are
-   wired on `persona` in `docker-compose.yml` with zero committed secrets and
-   distinct least-privilege principal definitions in
-   `scripts/issue_dev_paper_principals.py`.
-2. Pool publish (`operator-bff` -> `persona`) and canonical dataset authority
+1. Every owner URL, token, dataset pointer, store, and actor environment
+   variable read by the persona daily cycle, pool cycle ports, case-file
+   composer, harness adoption, lesson-rule proposal publisher, BFF pool publish
+   route, template demand search, and paper quarterly allocation code paths is
+   present on its owning service in `docker-compose.yml` (verified via AST
+   inspection of the production modules), and removing any required variable
+   fails the contract check.
+2. Persona daily cycle owner ports (research, memory, registry, evolution,
+   consultation, governance, search) and their principal token files/tokens
+   resolve as `configured` when `docker-compose.yml` and
+   `scripts/issue_dev_paper_principals.py` are applied, with zero committed
+   secrets and distinct credentials per owner.
+3. Issued credentials verify against each real target owner's inbound auth
+   verifier (`validate_request_auth`, `evaluate_authz_request`,
+   `services.evolution.main.authenticate_tenant`,
+   `services.consultation.auth.authenticate`, and
+   `services.capital.inbound_authority.authenticate_capital_request`).
+4. Pool publish (`operator-bff` -> `persona`) and canonical dataset authority
    (`research-orchestrator-svc` reading the dataset pointer published by
-   `persona` on `/data/bff/persona-pool-dataset-authority`) are wired.
-3. Quarterly paper allocation (`persona-evaluator-agent`, `capital`,
+   `persona` on `/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json`)
+   are wired.
+5. Quarterly paper allocation (`persona-evaluator-agent`, `capital`,
    `paper-signal-producer`, `paper-fleet-reconciler`, and
    `evolution-daily-sweep-scheduler`) have explicit compose wiring and deploy
    script/workflow pass-throughs, with `EVOLUTION_AUTO_CONSUMER_ENABLED`
    defaulting to `false`.
-4. Persona `/health` and cycle heartbeat surface `owner_ports` and name every
-   missing or unconfigured owner port instead of returning healthy when a port
-   is missing.
+6. Persona `/health` and cycle heartbeat (`persona_daily_cycle` and
+   `per_persona_ooda`) surface `owner_ports` and degrade when any required
+   owner port is unconfigured or unreachable.
 """
 
 from __future__ import annotations
 
+import ast
+import asyncio
+import copy
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+import pytest
 import yaml
 
 from scripts import issue_dev_paper_principals as issuer
+from services.capital.inbound_authority import authenticate_capital_request
+from services.consultation import auth as consultation_auth
+from services.evolution import main as evolution_main
 from services.governance.authz import evaluate_authz_request
 from services.persona.owner_port_health import (
     REQUIRED_OWNER_PORTS,
@@ -42,6 +62,159 @@ COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8
 SERVICES = COMPOSE["services"]
 
 
+# Canonical code-read owner environment specs across all 8 required areas.
+# Each entry maps (service, area, relative_file, env_var) -> fallback_group
+# where the AST scanner verifies both:
+#   (a) the variable name is literally read as an env var in `relative_file`, and
+#   (b) `docker-compose.yml` wires `env_var` on `service`.
+CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    # 1. Persona daily cycle (services/control-plane/persona/main.py, services/persona/persona_cycle_controller.py, services/persona/owner_port_health.py, services/consultation/client.py)
+    ("persona", "persona_daily_cycle", "services/control-plane/persona/main.py", "PERSONA_DAILY_CYCLE_ENABLED"),
+    ("persona", "persona_daily_cycle", "services/control-plane/persona/main.py", "PERSONA_DEFAULT_TENANT_ID"),
+    ("persona", "persona_daily_cycle", "services/control-plane/persona/main.py", "PANTHEON_TENANT_ID"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "DATABASE_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "AGORA_DATASET_STORE_SCHEMA"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_TELEMETRY_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_TELEMETRY_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_INCIDENTS_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_CYCLE_ACTOR_ID"),
+    ("persona", "persona_daily_cycle", "services/persona/persona_cycle_controller.py", "PANTHEON_CYCLE_MEMORY_ACTOR_ROLES"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "RESEARCH_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_RESEARCH_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PERSONA_RESEARCH_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_RESEARCH_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "MEMORY_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_MEMORY_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_MEMORY_AUTH_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_MEMORY_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PERSONA_MEMORY_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "REGISTRY_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_REGISTRY_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_REGISTRY_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PERSONA_REGISTRY_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_REGISTRY_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "EVOLUTION_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "PANTHEON_EVOLUTION_API_URL"),
+    ("persona", "persona_daily_cycle", "services/persona/owner_port_health.py", "EVOLUTION_AUTH_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "PANTHEON_CONSULTATION_API_URL"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "PANTHEON_CONSULTATION_SERVICE_URL"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "CONSULTATION_SERVICE_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "CONSULTATION_API_TOKEN"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "CONSULTATION_SERVICE_ACTOR"),
+    ("persona", "persona_daily_cycle", "services/consultation/client.py", "PANTHEON_SERVICE_ACTOR"),
+    # 2. Pool cycle ports & dataset authority (services/persona/pool_autonomy_cycle.py, services/persona/pool_dataset_authority.py, services/control-plane/persona/main.py)
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_API_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "RESEARCH_API_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "MEMORY_API_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "EVOLUTION_API_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "REGISTRY_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_RESEARCH_SERVICE_TOKEN"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PANTHEON_MEMORY_AUTH_TOKEN"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "EVOLUTION_AUTH_TOKEN"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_REGISTRY_SERVICE_TOKEN"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_POOL_CANONICAL_DATASET_PATH"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_POOL_THRESHOLD_POLICY_PATH"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "SOURCE_INGEST_API_URL"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_CONNECTOR_ID"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_DATASET_ID"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_VOLUME_ROOT"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_READ_TOKEN_FILE"),
+    ("persona", "pool_cycle_ports", "services/control-plane/persona/main.py", "PERSONA_SOURCE_INGEST_SERVICE_TOKEN"),
+    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_READ_TENANT_ID"),
+    # 3. Case-file composer (services/knowledge/case_file.py)
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_REGISTRY_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_REGISTRY_SERVICE_TOKEN"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_RESEARCH_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_RESEARCH_SERVICE_TOKEN"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_PERSONA_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_PERSONA_SERVICE_TOKEN"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_TELEMETRY_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_TELEMETRY_SERVICE_TOKEN"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_MEMORY_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_MEMORY_SERVICE_TOKEN"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_SEARCH_API_URL"),
+    ("persona", "case_file_composer", "services/knowledge/case_file.py", "PANTHEON_SEARCH_SERVICE_TOKEN"),
+    # 4. Harness adoption (services/persona/harness_adoption.py & services/persona/harness.py)
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "MEMORY_API_URL"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "PANTHEON_MEMORY_API_URL"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "PANTHEON_MEMORY_AUTH_TOKEN"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "PANTHEON_MEMORY_AUTH_TOKEN_FILE"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "PANTHEON_EVOLUTION_API_URL"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "EVOLUTION_AUTH_TOKEN"),
+    ("persona", "harness_adoption", "services/persona/harness_adoption.py", "EVOLUTION_AUTH_TOKEN_FILE"),
+    ("persona", "harness_adoption", "services/persona/harness.py", "PANTHEON_SHADOW_REPLAY_AGENT_ID"),
+    ("persona", "harness_adoption", "services/persona/harness.py", "PANTHEON_SHADOW_REPLAY_POLICY_URL"),
+    # 5. Lesson-rule proposals (services/persona/lesson_rule_proposals.py)
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PANTHEON_MEMORY_API_URL"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "MEMORY_API_URL"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PERSONA_LESSON_RULE_STORE_BACKEND"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PERSONA_STORE_DSN"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PERSONA_LESSON_RULE_STORE_TABLE"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PANTHEON_GOVERNANCE_SERVICE_URL"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PANTHEON_GOVERNANCE_API_URL"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "LESSON_RULE_PROPOSER_TOKEN"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "LESSON_RULE_PROPOSER_TOKEN_FILE"),
+    ("persona", "lesson_rule_proposals", "services/persona/lesson_rule_proposals.py", "PANTHEON_LESSON_RULE_PROPOSER_ID"),
+    # 6. BFF pool publish route (services/control-plane/bff/personas/routes/lifecycle.py & services/control-plane/bff/ports/persona_write_owner.py)
+    ("operator-bff", "bff_pool_publish_route", "services/control-plane/bff/ports/persona_write_owner.py", "PERSONA_URL"),
+    ("operator-bff", "bff_pool_publish_route", "services/control-plane/bff/personas/routes/lifecycle.py", "PANTHEON_PERSONA_API_URL"),
+    ("operator-bff", "bff_pool_publish_route", "services/control-plane/bff/personas/routes/lifecycle.py", "PANTHEON_PERSONA_SERVICE_URL"),
+    ("operator-bff", "bff_pool_publish_route", "services/control-plane/bff/ports/persona_write_owner.py", "PANTHEON_PERSONA_SERVICE_TOKEN"),
+    ("operator-bff", "bff_pool_publish_route", "services/control-plane/bff/ports/persona_write_owner.py", "PANTHEON_PERSONA_SERVICE_ACTOR_ID"),
+    # 7. Template demand search & retrain executor (services/research/main.py)
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "PERSONA_API_URL"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_PERSONA_SERVICE_TOKEN_FILE"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_CANONICAL_DATASET_PATH"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_THRESHOLD_POLICY_PATH"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_URL"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "REGISTRY_URL"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "PANTHEON_REGISTRY_URL"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_REGISTRY_SERVICE_TOKEN_FILE"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_TRAINING_SERVICE_TOKEN_FILE"),
+    # 8. Paper quarterly allocation (persona-evaluator-agent, capital, operator-bff, evolution-daily-sweep-scheduler)
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_PAPER_POOL_ID"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_BFF_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_BFF_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_ACTOR_ID"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_PERSONA_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_PERSONA_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_CAPITAL_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_CAPITAL_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_TELEMETRY_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_TELEMETRY_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_REGISTRY_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_REGISTRY_TOKEN"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_EVOLUTION_URL"),
+    ("persona-evaluator-agent", "paper_quarterly_allocation", "services/persona-evaluator-agent/persona_evaluator_agent.py", "AUTO_CONSUMER_EVOLUTION_TOKEN"),
+    ("capital", "paper_quarterly_allocation", "services/capital/allocation_lineage.py", "RANKING_STORE_DSN"),
+    ("capital", "paper_quarterly_allocation", "services/capital/allocation_lineage.py", "RANKING_STORE_TABLE"),
+    ("operator-bff", "paper_quarterly_allocation", "services/control-plane/bff/ports/rankings.py", "RANKING_STORE_DSN"),
+    ("operator-bff", "paper_quarterly_allocation", "services/control-plane/bff/ports/rankings.py", "RANKING_STORE_TABLE"),
+    ("operator-bff", "paper_quarterly_allocation", "services/control-plane/bff/command_executor.py", "PANTHEON_CAPITAL_API_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "EVOLUTION_AUTO_CONSUMER_ENABLED"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_PERSONA_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_PERSONA_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_REGISTRY_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_REGISTRY_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_CAPITAL_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_CAPITAL_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_RESEARCH_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_RESEARCH_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_BFF_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_BFF_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GOVERNANCE_URL"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_PROPOSER_TOKEN"),
+    ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GATE_TOKEN"),
+)
+
+
 def _default(interpolation: str) -> str:
     assert interpolation.startswith("${") and interpolation.endswith("}")
     _name, separator, value = interpolation[2:-1].partition(":-")
@@ -55,6 +228,91 @@ def _env(service: str) -> dict[str, str]:
     environment = SERVICES[service].get("environment") or {}
     assert isinstance(environment, dict)
     return environment
+
+
+def _extract_ast_string_literals_with_lines(relative_path: str) -> dict[str, list[int]]:
+    """Parse `relative_path` with `ast` and map every uppercase env-like string literal to its line numbers."""
+    source_path = ROOT / relative_path
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=relative_path)
+    found: dict[str, list[int]] = {}
+    upper_tokens: set[str] = set()
+    fstring_prefixes: list[tuple[str, str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            val = node.value
+            if val.isupper() and "_" in val:
+                found.setdefault(val, []).append(getattr(node, "lineno", 0))
+            elif val.isupper() and val.isalpha():
+                upper_tokens.add(val)
+        elif isinstance(node, ast.JoinedStr) and len(node.values) == 3:
+            left, mid, right = node.values
+            if (
+                isinstance(left, ast.Constant)
+                and isinstance(left.value, str)
+                and isinstance(mid, ast.FormattedValue)
+                and isinstance(right, ast.Constant)
+                and isinstance(right.value, str)
+            ):
+                fstring_prefixes.append(
+                    (left.value, right.value, getattr(node, "lineno", 0))
+                )
+    for prefix, suffix, lineno in fstring_prefixes:
+        if prefix.isupper() and suffix.isupper():
+            for token in upper_tokens:
+                expanded = f"{prefix}{token}{suffix}"
+                found.setdefault(expanded, []).append(lineno)
+    return found
+
+
+def scan_code_read_owner_env_contract(
+    compose_services: Mapping[str, Any],
+) -> list[str]:
+    """Scan code-read owner env vars via AST and verify `compose_services` wires every one of them."""
+    ast_cache: dict[str, dict[str, list[int]]] = {}
+    failures: list[str] = []
+
+    for service, area, rel_file, env_var in CODE_READ_OWNER_ENV_SPECS:
+        if rel_file not in ast_cache:
+            ast_cache[rel_file] = _extract_ast_string_literals_with_lines(rel_file)
+        literals = ast_cache[rel_file]
+        # Token `_FILE` vars may be read directly or via `configured_service_token(<BASE_VAR>)`.
+        base_var = env_var[:-5] if env_var.endswith("_FILE") else env_var
+        lines = literals.get(env_var) or literals.get(base_var) or []
+        if not lines:
+            failures.append(
+                f"code AST missing expected env var {env_var} in {rel_file} ({area})"
+            )
+            continue
+
+        svc_def = compose_services.get(service) or {}
+        svc_env = svc_def.get("environment") or {}
+        if env_var not in svc_env:
+            line_ref = f"{rel_file}:{lines[0]}"
+            failures.append(
+                f"docker-compose.yml service '{service}' missing {env_var} (read at {line_ref} for {area})"
+            )
+    return failures
+
+
+def test_code_read_owner_env_vars_are_wired_and_missing_var_fails_contract() -> None:
+    # 1. All 8 areas must pass with zero missing variables on the real docker-compose.yml.
+    assert scan_code_read_owner_env_contract(SERVICES) == []
+
+    # 2. Removing a code-read variable in each of the 8 areas must fail the contract check.
+    representative_by_area = {
+        area: (service, rel_file, env_var)
+        for service, area, rel_file, env_var in CODE_READ_OWNER_ENV_SPECS
+    }
+    assert len(representative_by_area) == 8
+    for area, (service, rel_file, env_var) in representative_by_area.items():
+        mutated = copy.deepcopy(SERVICES)
+        del mutated[service]["environment"][env_var]
+        failures = scan_code_read_owner_env_contract(mutated)
+        assert failures, f"Expected contract failure when removing {env_var} from {service} ({area})"
+        assert any(
+            service in item and env_var in item and rel_file in item and area in item
+            for item in failures
+        ), failures
 
 
 def test_persona_owner_ports_resolve_configured_when_compose_and_issuer_are_applied(
@@ -100,7 +358,9 @@ def test_persona_owner_ports_resolve_configured_when_compose_and_issuer_are_appl
         assert detail["credential_configured"] is True, (port_name, detail)
 
 
-def test_persona_owner_tokens_verify_against_each_target_owner_contract() -> None:
+def test_persona_owner_tokens_verify_against_each_target_owner_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     secret = "persona-owner-ports-contract-secret-0123456789abcdef"
     issued = issuer.issue_environment(
         {
@@ -152,23 +412,61 @@ def test_persona_owner_tokens_verify_against_each_target_owner_contract() -> Non
     )
     assert list(registry_ctx.roles) == ["registry-reader"]
 
-    # 4. Evolution owner token: evolution_controller role
-    evolution_ctx = validate_request_auth(
-        authorization=f"Bearer {issued['PERSONA_EVOLUTION_SERVICE_TOKEN']}",
-        required_roles=("evolution_controller",),
+    # 4. Evolution owner token: verified against evolution's real authenticate_tenant middleware
+    from types import SimpleNamespace
+
+    evolution_compose_token = _default(_env("evolution")["EVOLUTION_AUTH_TOKEN"])
+    persona_evolution_token = _default(_env("persona")["EVOLUTION_AUTH_TOKEN"])
+    assert persona_evolution_token == evolution_compose_token
+    assert issued["EVOLUTION_AUTH_TOKEN"] == evolution_compose_token
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", evolution_compose_token)
+    monkeypatch.setenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "tenant-dev")
+    fake_request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/evolution/proposals"),
+        headers={
+            "authorization": f"Bearer {issued['EVOLUTION_AUTH_TOKEN']}",
+            "x-tenant-id": "tenant-dev",
+        },
+        state=SimpleNamespace(),
+    )
+
+    async def _call_next(req: Any) -> Any:
+        return SimpleNamespace(status_code=200, headers={}, tenant_id=req.headers["x-tenant-id"])
+
+    evo_response = asyncio.run(
+        evolution_main.authenticate_tenant(fake_request, _call_next)  # type: ignore[arg-type]
+    )
+    assert evo_response.status_code == 200
+    assert evo_response.tenant_id == "tenant-dev"
+
+    # 5. Consultation owner token: verified against consultation-svc's real authenticate
+    consultation_compose_token = _default(_env("consultation-svc")["CONSULTATION_SERVICE_TOKEN"])
+    persona_consultation_token = _default(_env("persona")["CONSULTATION_SERVICE_TOKEN"])
+    persona_consultation_actor = _default(_env("persona")["CONSULTATION_SERVICE_ACTOR"])
+    assert persona_consultation_token == consultation_compose_token
+    assert issued["CONSULTATION_SERVICE_TOKEN"] == consultation_compose_token
+    monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", consultation_compose_token)
+    consultation_principal = consultation_auth.authenticate(
+        {
+            "authorization": f"Bearer {issued['CONSULTATION_SERVICE_TOKEN']}",
+            "x-pantheon-service-actor": persona_consultation_actor,
+            "x-pantheon-tenant-id": "tenant-dev",
+        }
+    )
+    assert consultation_principal.actor_type == "service"
+    assert consultation_principal.actor_id == "persona-svc"
+    assert consultation_principal.tenant_id == "tenant-dev"
+
+    # 6. Governance approval reader + lesson-rule proposer tokens
+    gov_reader_ctx = validate_request_auth(
+        authorization=f"Bearer {issued['PERSONA_GOVERNANCE_SERVICE_TOKEN']}",
+        required_roles=("approval_reader",),
         env=verifier_env,
     )
-    assert evolution_ctx.actor_id == "persona-svc"
+    assert list(gov_reader_ctx.roles) == ["approval_reader"]
 
-    # 5. Consultation owner token: service role
-    consultation_ctx = validate_request_auth(
-        authorization=f"Bearer {issued['PERSONA_CONSULTATION_SERVICE_TOKEN']}",
-        required_roles=("service",),
-        env=verifier_env,
-    )
-    assert consultation_ctx.actor_id == "persona-svc"
-
-    # 6. Governance lesson-rule proposer token: approval_proposer role
     proposer_ctx = validate_request_auth(
         authorization=f"Bearer {issued['LESSON_RULE_PROPOSER_TOKEN']}",
         required_roles=("approval_proposer",),
@@ -183,6 +481,22 @@ def test_persona_owner_tokens_verify_against_each_target_owner_contract() -> Non
         env=verifier_env,
     )
     assert search_ctx.claims["access_scopes"] == ["operator", "research", "public"]
+
+    # 8. Paper quarterly allocation BFF + Capital inbound verifier:
+    # PERSONA_EVALUATOR_BFF_TOKEN carries viewer, registry-reader, operator and azp=control-plane-bff.
+    monkeypatch.setenv("CAPITAL_AUTH_MODE", "strict")
+    monkeypatch.setenv("CAPITAL_JWT_SECRET", secret)
+    monkeypatch.setenv("CAPITAL_JWT_ISSUER", "pantheon-dev")
+    monkeypatch.setenv("CAPITAL_JWT_AUDIENCE", "bff-operators")
+    cap_authority = authenticate_capital_request(
+        method="POST",
+        authorization=f"Bearer {issued['PERSONA_EVALUATOR_BFF_TOKEN']}",
+        tenant_id="tenant-dev",
+        actor_service="control-plane-bff",
+        persistence_enforced=True,
+    )
+    assert "operator" in cap_authority.roles
+    assert cap_authority.tenant_id == "tenant-dev"
 
 
 def test_pool_publish_and_research_canonical_dataset_authority_wiring() -> None:
@@ -210,10 +524,17 @@ def test_pool_publish_and_research_canonical_dataset_authority_wiring() -> None:
 def test_quarterly_paper_allocation_and_deploy_passthrough_wiring() -> None:
     capital_env = _env("capital")
     assert capital_env["PANTHEON_ENV"] == "${PANTHEON_ENV:-dev}"
+    assert capital_env["RANKING_STORE_DSN"] == (
+        "${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}"
+    )
+    assert capital_env["RANKING_STORE_TABLE"] == "${RANKING_STORE_TABLE:-rankings.rankings}"
 
     evaluator_env = _env("persona-evaluator-agent")
     assert evaluator_env["PERSONA_EVALUATOR_PAPER_POOL_ID"] == (
         "${PERSONA_EVALUATOR_PAPER_POOL_ID:-${PANTHEON_PAPER_POOL_ID:-pool-paper-default}}"
+    )
+    assert evaluator_env["PERSONA_EVALUATOR_ACTOR_ID"] == (
+        "${PERSONA_EVALUATOR_ACTOR_ID:-persona-evaluator-agent}"
     )
     assert _default(evaluator_env["PERSONA_EVALUATOR_BFF_TOKEN_FILE"]) == (
         "/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN"
@@ -249,6 +570,7 @@ def test_degraded_cycle_report_names_every_missing_owner_port() -> None:
     report: dict[str, Any] = {
         "cycle_id": "cycle-check",
         "status": "succeeded",
+        "tenant_scopes": [{"tenant_id": "tenant-dev", "personas": ["persona-alpha"]}],
         "failures": [],
     }
     updated = apply_owner_port_health_to_cycle_report(report, env={})
@@ -256,5 +578,6 @@ def test_degraded_cycle_report_names_every_missing_owner_port() -> None:
     assert set(updated["owner_ports"].keys()) == set(REQUIRED_OWNER_PORTS)
     for port_name in REQUIRED_OWNER_PORTS:
         assert any(
-            item["owner_port"] == port_name for item in updated["failures"]
+            item["owner_port"] == port_name and item.get("persona_id") == "persona-alpha"
+            for item in updated["failures"]
         )

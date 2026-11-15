@@ -401,11 +401,11 @@ def test_persona_cycle_and_quarterly_paper_allocation_owner_ports_are_wired() ->
     assert _default(persona_env["PERSONA_REGISTRY_SERVICE_TOKEN_FILE"]) == (
         "/run/pantheon-principals/PERSONA_REGISTRY_SERVICE_TOKEN"
     )
-    assert _default(persona_env["PERSONA_EVOLUTION_SERVICE_TOKEN_FILE"]) == (
-        "/run/pantheon-principals/PERSONA_EVOLUTION_SERVICE_TOKEN"
+    assert persona_env["EVOLUTION_AUTH_TOKEN"] == (
+        "${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}"
     )
-    assert _default(persona_env["PERSONA_CONSULTATION_SERVICE_TOKEN_FILE"]) == (
-        "/run/pantheon-principals/PERSONA_CONSULTATION_SERVICE_TOKEN"
+    assert persona_env["CONSULTATION_SERVICE_TOKEN"] == (
+        "${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}"
     )
     assert _default(persona_env["LESSON_RULE_PROPOSER_TOKEN_FILE"]) == (
         "/run/pantheon-principals/LESSON_RULE_PROPOSER_TOKEN"
