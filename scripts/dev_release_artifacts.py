@@ -134,7 +134,8 @@ class StackMixedError(StackError):
 
 SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
                                     "schema", "journal_changed", "journal_too_large", "reader_rejected",
-                                    "unavailable"})
+                                    "unavailable", "lock_wait_timeout", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"})
 
 
 class SourceCompatibilityError(StackError):
@@ -525,8 +526,11 @@ SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_rec
 # Baselines whose journal is under 256 MiB stay readable by the previous script.
 SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024
 SOURCE_JOURNAL_MAX_LINE_BYTES = 16 * 1024 * 1024
+# The Source appends under an exclusive lock and re-reads the file each time, so a
+# shared lock is briefly unavailable. Wait this long (inside the 300 s docker bound).
+SOURCE_JOURNAL_LOCK_WAIT_SECONDS = 120
 SOURCE_PROBE = r'''
-import base64, fcntl, hashlib, json, os, re, sys
+import base64, fcntl, hashlib, json, os, re, sys, time
 from pathlib import Path
 from services.source_ingestion import requirement_state as m
 mode, arg = sys.argv[1:3]
@@ -549,7 +553,15 @@ try:
         # Missing state is not an empty journal proof. The owner must identify
         # an existing file; do not create directories, lock files or projections.
         with path.open("rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            deadline = time.monotonic() + __LOCK_WAIT__
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("journal lock wait timed out") from None
+                    time.sleep(0.05)
             before = os.fstat(f.fileno())
             if before.st_size > __MAX_BYTES__:
                 raise ValueError("journal exceeds bounded qualification")
@@ -560,7 +572,7 @@ try:
                     if not line:
                         return
                     if len(line) > __MAX_LINE__:
-                        raise ValueError("journal exceeds bounded qualification")
+                        raise ValueError("journal line too long")
                     digest_obj.update(line)
                     size[0] += len(line)
                     # Same line boundaries as bytes.decode().splitlines(): a split
@@ -576,14 +588,16 @@ try:
     print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
 except Exception as error:
     message = str(error)
-    reason = next((code for text,code in (
+    reason = "probe_killed" if isinstance(error, MemoryError) else next((code for text,code in (
         ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
         ("id does not match", "snapshot_identity"), ("schema", "schema"),
+        ("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),
         ("journal exceeds", "journal_too_large"), ("journal changed", "journal_changed")) if text in message), "reader_rejected")
     line = re.search(r"journal:(\d+)", message)
     print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
                       "line": int(line[1]) if line else None}))
-'''.replace("__MAX_BYTES__", str(SOURCE_JOURNAL_MAX_BYTES)).replace("__MAX_LINE__", str(SOURCE_JOURNAL_MAX_LINE_BYTES))
+'''.replace("__MAX_BYTES__", str(SOURCE_JOURNAL_MAX_BYTES)).replace("__MAX_LINE__", str(SOURCE_JOURNAL_MAX_LINE_BYTES)).replace(
+    "__LOCK_WAIT__", str(SOURCE_JOURNAL_LOCK_WAIT_SECONDS))
 
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
@@ -602,12 +616,21 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
         raw = docker.call(*command, "--entrypoint", "python3", image_id, "-c", SOURCE_PROBE, mode, argument)
         if len(raw) > 120000:
             raise ArtifactError("Source probe output exceeds bound")
-        result = _json(raw.encode())
-    except ArtifactError:
+        result = _json(raw.encode()) if raw.strip() else None
+    except ArtifactError as error:
+        cause = error.__cause__
+        if isinstance(cause, subprocess.TimeoutExpired):
+            raise SourceCompatibilityError("probe_timeout") from None
+        if isinstance(cause, subprocess.CalledProcessError):
+            # Container killed (e.g. out of memory, 137) or crashed without a result line.
+            raise SourceCompatibilityError("probe_killed" if cause.returncode in (137, -9, 139, -11) else "unavailable") from None
         raise SourceCompatibilityError("unavailable") from None
+    if result is None:
+        raise SourceCompatibilityError("probe_no_output")
     if not isinstance(result, dict) or result.get("ok") is not True:
         reason = result.get("reason") if isinstance(result, dict) else None
-        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed", "journal_too_large"):
+        if reason not in SOURCE_FAILURE_REASONS - {"reader_rejected", "unavailable", "probe_timeout",
+                                                   "probe_no_output"}:
             reason = "reader_rejected"
         line = result.get("line") if isinstance(result, dict) else None
         raise SourceCompatibilityError(reason, line)

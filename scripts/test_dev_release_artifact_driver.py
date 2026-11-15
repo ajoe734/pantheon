@@ -2045,3 +2045,21 @@ def test_bff_only_candidate_does_not_rebind_unchanged_source_to_bff_sha(case, tm
     assert case.args.candidate_image_manifest.exists()
     assert case.docker.source_journal.read_bytes() == before
     assert captured["manifest"]["stack_baseline"]["services"]["source-ingest"]["source_snapshot"]["journal_sha256"] == hashlib.sha256(before).hexdigest()
+
+
+@pytest.mark.parametrize("reason", ["lock_wait_timeout", "line_too_long", "probe_timeout", "probe_killed", "probe_no_output"])
+def test_driver_forwards_distinct_source_probe_reason_without_text(case, monkeypatch, capsys, reason):
+    def refused(*_args, **_kwargs):
+        raise d.a.SourceCompatibilityError(reason, None)
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+    monkeypatch.setattr(d, "run", refused)
+    case.args.command = "restore"
+    d.main([])
+    record = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert record["source_compatibility"] == {"reason": reason, "line": None}
+    assert primitive.remote_failure_record(json.dumps(record).encode()) == record
