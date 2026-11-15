@@ -73,10 +73,14 @@ baseline:
      factor datasets before they reach statsmodels, including numeric-only
      observations, equal-length alignment, non-finite-value rejection, and
      `metadata.governed=True`
-   - `StubStatsmodelsBackend` — deterministic CI-safe backend with no external
-     data dependency
+   - `StubStatsmodelsBackend` — deterministic unit-test backend with no external
+     data dependency; test-only, refused by every production entry point
+     (REGIME-RESEARCH-CLASSIFIER-20261115)
    - `StatsmodelsBackend` — real backend wrapping the first approved model set
-     (`coint`, `VECM`, `VAR`, or `MarkovRegression`)
+     (`coint`, `VECM`, `VAR`, or `MarkovRegression`); the `MarkovRegression` path
+     reports filtered marginal probabilities only, with the state, probability
+     vector, transition matrix, expected durations and sessions in state per
+     session. Smoothed probabilities use later observations and are never emitted
    - `run_statsmodels_workflow()` — governed entry point that wires input
      adapter → backend → normalized artifact emission
 
@@ -126,8 +130,12 @@ baseline:
   pandas frames are not a governed interface.
 - The first implementation lane must emit non-executable research artifacts at
   `artifact_state = "draft"` and `deployment_summary.current_stage = "none"`.
-- CI and default local verification must use `StubStatsmodelsBackend`; the real
-  backend must be gated behind `PANTHEON_STATSMODELS_BACKEND=real`.
+- Unit tests may use `StubStatsmodelsBackend` only under the test-only switch
+  `PANTHEON_STATSMODELS_TEST_STUB=1` (set by the root `conftest.py`). Production
+  entry points (`run_statsmodels_workflow` with no backend, the container worker,
+  experiment dispatch, the persona OSS harness) never reach it: without
+  `PANTHEON_STATSMODELS_BACKEND=real` and governed data they fail closed with no
+  placeholder result. This supersedes the earlier "stub is the default" rule.
 
 ---
 
@@ -162,6 +170,8 @@ This document covers the materialization gate (use-case binding, source
 selection, version pin, adapter design, smoke-test plan). It does not cover:
 
 - production approval criteria for any regime-driven artifact consumer
-- real-time econometric execution or online state estimation
+- real-time econometric execution or online state estimation (regime classifier
+  fitting and walk-forward validation live in `services/research/regime/`;
+  decision-date evaluation is the registry evaluator's job, not research's)
 - OpenClaw orchestration for statsmodels jobs before a dedicated runtime
   contract is added

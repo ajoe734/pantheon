@@ -3,8 +3,11 @@ Governed statsmodels adapter for Pantheon Research Plane.
 
 Governance invariants:
 - All inputs must pass GovernedStatsmodelsInputAdapter before reaching a backend.
-- Only StubStatsmodelsBackend is used in CI / default local runs.
-- Real backend requires PANTHEON_STATSMODELS_BACKEND=real env var.
+- The stub backend exists for unit tests only. No production entry point can reach it: with no
+  explicit backend the workflow uses the real backend when PANTHEON_STATSMODELS_BACKEND=real and
+  otherwise fails closed; an explicit stub is refused unless the test-only switch
+  PANTHEON_STATSMODELS_TEST_STUB=1 is set.
+- The real Markov-switching path reports filtered marginal probabilities only (never smoothed).
 - Outputs are always non-executable research artifacts at artifact_state=draft.
 """
 
@@ -187,7 +190,7 @@ class StubStatsmodelsBackend:
             "model": "MarkovRegression",
             "n_regimes": 2,
             "regime_labels": [0 if i % 2 == 0 else 1 for i in range(n)],
-            "smoothed_marginal_probabilities": [[0.9, 0.1] if i % 2 == 0 else [0.1, 0.9] for i in range(n)],
+            "filtered_marginal_probabilities": [[0.9, 0.1] if i % 2 == 0 else [0.1, 0.9] for i in range(n)],
             "stub": True,
         }
 
@@ -234,20 +237,59 @@ class StatsmodelsBackend:
         }
 
     def run_markov_switching(self, dataset: GovernedDataset) -> dict[str, Any]:
-        import numpy as np
-        from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+        """Two-state switching-variance model reported from filtered probabilities only.
+
+        Per session: state, probability vector, transition matrix, expected durations and
+        sessions in the current state. Smoothed probabilities use later observations and are
+        never read, so they cannot label a decision date.
+        """
+        import pandas as pd
+
+        from services.research.regime.models import RegimeModelError, fit_volatility
 
         series_name = next(iter(dataset.factor_series))
-        y = np.array(dataset.factor_series[series_name])
-        model = MarkovRegression(y, k_regimes=2, trend="c", switching_variance=True)
-        results = model.fit(disp=False)
-        regime_labels = results.smoothed_marginal_probabilities.argmax(axis=1).tolist()
+        values = list(dataset.factor_series[series_name])
+        dates = dataset.metadata.get("session_dates")
+        index = pd.Index(pd.to_datetime(dates)) if dates and len(dates) == len(values) else pd.date_range(
+            "2000-01-03", periods=len(values), freq="B")
+        frame = pd.DataFrame({"return_pct": [float(v) for v in values]}, index=index)
+        try:
+            model = fit_volatility(frame, horizon="short")
+            sessions = model.infer(frame)
+        except RegimeModelError as exc:
+            raise StatsmodelsWorkflowError(f"markov_switching_unavailable:{exc}") from exc
+        labels = list(model.labels)
         return {
             "model": "MarkovRegression",
             "n_regimes": 2,
-            "regime_labels": [int(r) for r in regime_labels],
-            "aic": float(results.aic),
+            "inference": "filtered_only",
+            "state_labels": labels,
+            "regime_labels": [labels.index(s.state) for s in sessions],
+            "filtered_marginal_probabilities": [[s.probabilities[label] for label in labels] for s in sessions],
+            "transition_matrix": model.transition_matrix,
+            "expected_durations": model.expected_durations(),
+            "sessions": [s.to_dict() for s in sessions],
         }
+
+
+def resolve_backend(
+    backend: "StubStatsmodelsBackend | StatsmodelsBackend | None",
+) -> "StubStatsmodelsBackend | StatsmodelsBackend":
+    """Pick the backend for a workflow call; the stub is never a production default.
+
+    No backend given: the real one when ``PANTHEON_STATSMODELS_BACKEND=real``, otherwise fail
+    closed (there is no governed data without it). An explicit stub is accepted only under the
+    test-only switch ``PANTHEON_STATSMODELS_TEST_STUB=1``.
+    """
+    if backend is None:
+        if os.environ.get("PANTHEON_STATSMODELS_BACKEND", "").lower() == "real":
+            return StatsmodelsBackend()
+        raise StatsmodelsWorkflowError(
+            "statsmodels_backend_not_enabled: set PANTHEON_STATSMODELS_BACKEND=real; "
+            "no placeholder result is produced")
+    if isinstance(backend, StubStatsmodelsBackend) and os.environ.get("PANTHEON_STATSMODELS_TEST_STUB") != "1":
+        raise StatsmodelsWorkflowError("stub_backend_not_allowed_outside_tests")
+    return backend
 
 
 # ---------------------------------------------------------------------------
@@ -263,12 +305,9 @@ def run_statsmodels_workflow(
 ) -> dict[str, Any]:
     """Governed entry point: input adapter → backend → normalized artifact.
 
-    Defaults to StubStatsmodelsBackend unless PANTHEON_STATSMODELS_BACKEND=real.
+    Fails closed unless a real backend is enabled (PANTHEON_STATSMODELS_BACKEND=real).
     """
-    use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
-
-    if backend is None:
-        backend = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
+    backend = resolve_backend(backend)
 
     adapter = GovernedStatsmodelsInputAdapter()
     validated = adapter.validate(dataset)

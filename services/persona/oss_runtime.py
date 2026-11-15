@@ -60,6 +60,7 @@ from services.research.rllib.adapter import (
 )
 from services.research.statsmodels.adapter.statsmodels_adapter import (
     GovernedDataset,
+    StubStatsmodelsBackend,
     run_statsmodels_workflow,
 )
 from services.research.vectorbt.adapter import BacktestConfig, VectorbtBackend, run_vectorbt_workflow
@@ -791,7 +792,9 @@ def _run_statsmodels(request: PersonaOSSRequest) -> PersonaOSSResult:
         factor_series=_scale_named_series(raw["factor_series"], suffix=series_suffix, multiplier=factor_multiplier),
         metadata=metadata,
     )
-    artifact = run_statsmodels_workflow(dataset)
+    # Fixture-backed demo harness: the stub is accepted only under the test-only switch, so
+    # this path fails closed in production instead of returning placeholder regimes.
+    artifact = run_statsmodels_workflow(dataset, backend=StubStatsmodelsBackend())
     primary_output = copy.deepcopy(artifact["results_summary"])
     primary_output["dataset_metadata"] = copy.deepcopy(metadata)
     primary_output["price_series_names"] = list(dataset.price_series)

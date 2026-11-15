@@ -10,7 +10,7 @@ SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
-from adapter import GovernedDataset, StubStatsmodelsBackend, StatsmodelsBackend, run_statsmodels_workflow
+from adapter import GovernedDataset, StatsmodelsBackend, run_statsmodels_workflow
 
 
 def _load_dataset(dataset_path: str) -> GovernedDataset:
@@ -25,20 +25,18 @@ def _load_dataset(dataset_path: str) -> GovernedDataset:
 def main() -> int:
     dataset_path = os.environ.get("STATSMODELS_DATASET_PATH")
     if not dataset_path:
-        print(
-            "STATSMODELS_DATASET_PATH not set; using sample dataset for governed smoke mode",
-            file=sys.stderr,
-        )
-        dataset_path = str(SERVICE_DIR / "examples" / "regime_dataset_sample.json")
+        # Fail closed: no sample or placeholder dataset stands in for governed data.
+        print("STATSMODELS_DATASET_PATH not set; refusing to run without governed data", file=sys.stderr)
+        return 2
 
     dataset = _load_dataset(dataset_path)
     analysis_paths_env = os.environ.get("STATSMODELS_ANALYSIS_PATHS", "")
     analysis_paths = [p.strip() for p in analysis_paths_env.split(",") if p.strip()] or None
 
-    use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
-    backend = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
-    if use_real:
-        print("PANTHEON_STATSMODELS_BACKEND=real: using StatsmodelsBackend", file=sys.stderr)
+    if os.environ.get("PANTHEON_STATSMODELS_BACKEND", "").lower() != "real":
+        print("PANTHEON_STATSMODELS_BACKEND=real is required; the stub backend is test-only", file=sys.stderr)
+        return 2
+    backend = StatsmodelsBackend()
 
     result = run_statsmodels_workflow(
         dataset,
