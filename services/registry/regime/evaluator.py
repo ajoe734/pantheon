@@ -266,7 +266,7 @@ def derive_record(strategy: Mapping[str, Any], profile: RegimeProfile, market_st
         "market_scope": {"asset_classes": ["equities"], "markets": [market_state["market"]]},
         "state": "proposed" if market_state["model_status"] == "candidate" else "validated",
         "metadata": {"market_state_id": f"{market_state['market']}:{session}:{market_state['model_set_version']}:r{revision}",
-                     "model_set_version": market_state["model_set_version"], "lifecycle": [{"state": "created", "at": now}]},
+                     "model_set_version": market_state["model_set_version"], "lifecycle": [{"state": "proposed" if market_state["model_status"] == "candidate" else "validated", "at": now}]},
     }
     errors = sorted(_schema_validator().iter_errors(record), key=lambda e: list(e.path))
     if errors:

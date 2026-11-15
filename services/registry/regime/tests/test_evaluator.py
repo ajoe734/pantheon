@@ -110,7 +110,7 @@ def test_approved_record_moves_validated_active_then_superseded():
     _run(store, prev)
     first = store.list_regimes()[0]["record"]
     assert first["state"] == "active"
-    assert [h["state"] for h in first["metadata"]["lifecycle"]] == ["created", "active"]
+    assert [h["state"] for h in first["metadata"]["lifecycle"]] == ["validated", "active"]
     _run(store, last)
     rows = {r["session"]: r["record"] for r in store.list_regimes()}
     assert rows[last]["state"] == "active"

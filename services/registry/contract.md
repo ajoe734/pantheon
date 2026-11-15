@@ -445,3 +445,28 @@ checksum-bound evidence through the single Governance ApprovalReader. The
 verified actor and typed `approval_evidence` are retained in the same atomic
 transition/receipt. Original command replay returns original evidence; consumers
 must re-read current Governance validity before any new execution.
+
+## Regime evaluator (SD-REGIME-STATE-ENGINE-20261114, wave 1)
+
+The registry hosts the regime evaluator module (`services/registry/regime/`). It owns two tables in the
+`registry` schema, `market_state` and `regime_states`; only `regime/evaluator.py` writes them (through the
+store's `evaluator_commit` / `evaluator_invalidate`). Paper scope only; no placeholder or synthetic value is stored.
+
+| Route | Auth | Behavior |
+|---|---|---|
+| `POST /api/registry/regime/evaluate` `{session, market="TW", verify_inputs=false}` | existing registry write roles; `X-Tenant-Id` as for strategy specs | Idempotent per market, session and model set version. The first call after the session's governed index close is visible reads the governed rows, stores the shared measurement and one RegimeState per visible strategy spec; later calls return the stored result without reading data. `verify_inputs=true` re-reads the inputs; changed inputs mark the stored rows `invalidated` and store revision N+1. 409 `session_data_incomplete` / `no_regime_model` / `governed_store_unavailable`: nothing is stored. |
+| `GET /api/registry/regime/market-state/{market}/{session}` | registry read roles | Stored measurement from approved models; never computes. |
+| `GET /api/registry/regime/states?strategy_id&session&market` | registry read roles, tenant-scoped | Stored records from approved models; never computes. |
+| `GET /api/registry/regime/strategies/{strategy_id}/active` | registry read roles, tenant-scoped | The strategy's active record, 404 if none. |
+
+- Models: the latest `model_artifact` per (axis, horizon) with `metadata.regime_classifier`, separately for `approved`
+  (paper scope) and `candidate`. Records from candidate models are stored `proposed` and never served.
+- Record lifecycle: approved-model records are stored `validated`, then `active`; the previous active record of the
+  strategy becomes `superseded` with `superseded_by` (a late backfill never displaces a later active record); revised
+  inputs make the stored record `invalidated`. Each transition is appended to `metadata.lifecycle`.
+- Profile (design R8): primary axis and horizon from the spec's regime section (`metadata.regime` or the spec's own
+  `metadata.regime`), else the alpha template's applicable regimes, else a family default. Macro is never primary.
+- Governed data: read from the source-ingestion normalized store mounted read-only at `REGISTRY_REGIME_STORE_ROOT`
+  (default `/data/source-ingest`) through `services.research.regime.features.load_governed_observations`, which reads
+  every input through the feature catalogue (point in time).
+- Statistical dependencies (numpy, pandas, scipy, scikit-learn, statsmodels) run in the registry image (design K5).
