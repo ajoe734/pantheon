@@ -20,6 +20,13 @@ from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
+from services.execution.lean_runtime.member_virtual_book import (
+    FILL_CONVENTION,
+    LEGACY_FILL_CONVENTION,
+    NO_OPEN_PRICE,
+    usable_open,
+)
+
 VECTORBT_VERSION_PIN = "1.1.1"
 PRIMARY_BACKEND = "vectorbt_portfolio"
 STUB_BACKEND = "stub_backtest"
@@ -297,6 +304,9 @@ class BacktestConfig:
     transaction_tax_rate: float = TAIWAN_EQUITY_TRANSACTION_TAX_RATE
     etf_transaction_tax_rate: float = TAIWAN_ETF_TRANSACTION_TAX_RATE
     apply_taiwan_fill_costs: bool = True
+    # Daily decisions fill at the next session's open (shared convention).  The legacy same-bar
+    # close fill exists only so the re-baseline run can record old metrics beside the new ones.
+    fill_convention: str = FILL_CONVENTION
     storage_backend: str = "object_store"
     storage_path_template: str = "research/vectorbt/{strategy_id}/{version}/artifact.json"
 
@@ -595,7 +605,14 @@ def _compute_instrument_metrics(
     short_window: int,
     long_window: int,
 ) -> dict[str, Any]:
-    """MA-crossover backtest on a single instrument's OHLCV bars."""
+    """MA-crossover backtest on a single instrument's OHLCV bars.
+
+    Under the shared daily convention the crossover decided from the close of bar ``i`` fills at the
+    open of bar ``i+1``; a bar without a usable open takes no fill (recorded, never a close fill).
+    ``config.fill_convention == LEGACY_FILL_CONVENTION`` keeps the old same-bar close fill for the
+    re-baseline comparison only.
+    """
+    legacy = config.fill_convention == LEGACY_FILL_CONVENTION
     closes = [b[3] for b in bars]
     short_ma = _sma(closes, short_window)
     long_ma = _sma(closes, long_window)
@@ -605,22 +622,42 @@ def _compute_instrument_metrics(
     entry_price = 0.0
     portfolio_values: list[float] = []
     trade_count = 0
+    pending_long: bool | None = None
+    unfilled: list[dict[str, Any]] = []
 
     for i, (o, h, l, c, v) in enumerate(bars):
         s = short_ma[i]
         lg = long_ma[i]
+        if not legacy and pending_long is not None:
+            fill_price = usable_open(o)
+            in_position = shares > 0
+            if fill_price is None:
+                unfilled.append({"decision_index": i - 1, "fill_index": i, "reason": NO_OPEN_PRICE})
+            elif pending_long and not in_position:
+                buy_cost = cash * (1.0 - config.fees)
+                shares = buy_cost / fill_price
+                cash -= buy_cost
+                entry_price = fill_price
+                trade_count += 1
+            elif not pending_long and in_position:
+                cash += shares * fill_price * (1.0 - config.fees)
+                shares = 0.0
+                trade_count += 1
+            pending_long = None
         if s is not None and lg is not None:
             in_position = shares > 0
             signal_long = s > lg
-            if signal_long and not in_position:
-                # Enter long at close
+            if not legacy:
+                pending_long = signal_long
+            elif signal_long and not in_position:
+                # Legacy: enter long at the decision bar's own close
                 buy_cost = cash * (1.0 - config.fees)
                 shares = buy_cost / c
                 cash -= buy_cost
                 entry_price = c
                 trade_count += 1
             elif not signal_long and in_position:
-                # Exit at close
+                # Legacy: exit at the decision bar's own close
                 proceeds = shares * c * (1.0 - config.fees)
                 cash += proceeds
                 shares = 0.0
@@ -668,6 +705,8 @@ def _compute_instrument_metrics(
         "final_portfolio_value": round(final_value, 4),
         "trade_count": trade_count,
         "num_bars": len(bars),
+        "fill_convention": config.fill_convention,
+        "unfilled_decisions": unfilled,
     }
 
 
@@ -798,6 +837,8 @@ class StubVectorbtBackend:
             "mean_max_drawdown": round(mean_drawdown, 6),
             "total_trades": total_trades,
         }
+        if not _is_intraday(dataset):
+            aggregate["fill_convention"] = config.fill_convention
         if _is_intraday(dataset):
             aggregate.update(_intraday_aggregate(dataset, per_instrument))
         return BacktestRunResult(
@@ -949,8 +990,13 @@ class VectorbtBackend:
             _require_artifact_frequency(dataset, config.strategy_artifact)
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
+        if config.fill_convention not in (FILL_CONVENTION, LEGACY_FILL_CONVENTION):
+            raise VectorbtWorkflowError(f"unsupported fill_convention {config.fill_convention!r}")
+        daily_next_open = not _is_intraday(dataset) and config.fill_convention == FILL_CONVENTION
+        fill_gaps: dict[str, list[dict[str, Any]]] = {}
         artifact_orders = (
-            _artifact_order_sizes(dataset, config.strategy_artifact, gross_budget=config.init_cash)
+            _artifact_order_sizes(dataset, config.strategy_artifact, gross_budget=config.init_cash,
+                                  fill_convention=config.fill_convention, gaps=fill_gaps)
             if config.strategy_artifact is not None
             else None
         )
@@ -1008,6 +1054,13 @@ class VectorbtBackend:
                     opens = pd.Series([b[0] for b in bars], dtype="float64")
                     order_freq = f"{INTRADAY_FREQUENCY_MINUTES[dataset.data_frequency]}min"
                     order_kwargs = dict(price=opens, freq=order_freq)
+                elif daily_next_open:
+                    # Orders are already shifted to the fill session; fill at that session's OPEN.
+                    # A session without a usable open carries no order (size NaN), so the placeholder
+                    # price there is never traded.
+                    opens = pd.Series(
+                        [usable_open(b[0]) or b[3] for b in bars], dtype="float64")
+                    order_kwargs = dict(price=opens, freq="1D")
                 else:
                     order_kwargs = dict(freq="1D")
 
@@ -1070,12 +1123,35 @@ class VectorbtBackend:
                         bars_per_year=bars_per_year(dataset.data_frequency),
                         fill_rule="next_bar_open",
                     )
+                if not _is_intraday(dataset):
+                    per_instrument[inst].update(
+                        fill_convention=config.fill_convention,
+                        fill_rule="next_open" if daily_next_open else "decision_close",
+                        unfilled_decisions=list(fill_gaps.get(inst, [])),
+                    )
                 _annotate_sharpe_reason(per_instrument[inst])
                 continue
             short_ma = closes.rolling(short_window).mean()
             long_ma = closes.rolling(long_window).mean()
             entries = (short_ma > long_ma) & (short_ma.shift(1) <= long_ma.shift(1))
             exits = (short_ma < long_ma) & (short_ma.shift(1) >= long_ma.shift(1))
+            signal_price = {}
+            ma_gaps: list[dict[str, Any]] = []
+            if daily_next_open:
+                # Signals computed from the close of session D fill at the open of D+1; a session
+                # without a usable open drops the signal with a recorded reason.
+                dates = dataset.dates_by_instrument[inst]
+                usable = [usable_open(b[0]) is not None for b in bars]
+                for i in range(len(bars) - 1):
+                    if (bool(entries.iloc[i]) or bool(exits.iloc[i])) and not usable[i + 1]:
+                        ma_gaps.append({"decision_date": dates[i], "fill_date": dates[i + 1],
+                                        "reason": NO_OPEN_PRICE})
+                shifted_entries = entries.shift(1, fill_value=False).astype(bool)
+                shifted_exits = exits.shift(1, fill_value=False).astype(bool)
+                no_open = pd.Series([not u for u in usable])
+                entries, exits = shifted_entries & ~no_open, shifted_exits & ~no_open
+                signal_price = dict(price=pd.Series(
+                    [usable_open(b[0]) or b[3] for b in bars], dtype="float64"))
             if config.apply_taiwan_fill_costs:
                 signal_fees = pd.Series(
                     [
@@ -1093,6 +1169,7 @@ class VectorbtBackend:
                 init_cash=config.init_cash,
                 fees=signal_fees,
                 freq="1D",
+                **signal_price,
             )
             cost_summary = _extract_fill_cost_summary(
                 pf,
@@ -1106,6 +1183,9 @@ class VectorbtBackend:
                 "final_portfolio_value": round(float(pf.final_value()), 4),
                 "trade_count": int(pf.trades.count()),
                 "num_bars": len(bars),
+                "fill_convention": config.fill_convention,
+                "fill_rule": "next_open" if daily_next_open else "decision_close",
+                "unfilled_decisions": ma_gaps,
                 **cost_summary,
             }
             _annotate_sharpe_reason(per_instrument[inst])
@@ -1133,6 +1213,8 @@ class VectorbtBackend:
             ),
             **_aggregate_sharpe_reason(per_instrument),
         }
+        if not _is_intraday(dataset):
+            aggregate["fill_convention"] = config.fill_convention
         if _is_intraday(dataset):
             aggregate.update(_intraday_aggregate(dataset, per_instrument))
         return BacktestRunResult(
@@ -1453,8 +1535,11 @@ def _screened_artifact_view_sequence(
         raise VectorbtWorkflowError(f"screen evaluation failed: {exc}") from exc
 
 
-def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0):
+def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0, fill_convention=FILL_CONVENTION):
     """Paper's bar netting, allocation and expression functions on observed bars.
+
+    Decisions computed from the close of session D fill at the open of D+1 (no usable open: no fill,
+    ``no_open_price`` recorded in ``gaps``); the legacy convention fills at the decision close.
 
     This daily cash-share replay has no invented derivatives. Futures remain
     unavailable unless the recorded candidate input provides them.
@@ -1476,10 +1561,33 @@ def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0):
         raise VectorbtWorkflowError("portfolio target bars contain duplicate aliases or dates")
     if any(not math.isfinite(b[3]) or b[3] <= 0 for bars in dataset.ohlcv_by_instrument.values() for b in bars):
         raise VectorbtWorkflowError("portfolio target marks must be positive and finite")
+    from services.execution.lean_runtime.member_virtual_book import _COMMISSION_RATE, _EQUITY_TAX_RATE, _ETF_TAX_RATE
     orders = {inst: [float("nan")] * len(dates) for inst in dataset.instruments}
+    gaps = {inst: [] for inst in dataset.instruments}
     bars, positions, cash, returns, previous_equity = [], {}, float(gross_budget), [], float(gross_budget)
     params = artifact["expression_policy"]["parameters"]
+    legacy = fill_convention == LEGACY_FILL_CONVENTION
+    pending: dict[str, tuple[float, str]] = {}
+
+    def fill(symbol, delta, price, index, decided_on):
+        nonlocal cash
+        code = symbol.split(".")[0]
+        # Taiwan statutory costs at the fill price, same as the cash fill path.
+        tax = _ETF_TAX_RATE if code.startswith("00") else _EQUITY_TAX_RATE
+        costs = abs(delta) * price * (_COMMISSION_RATE + (tax if delta < 0 else 0))
+        positions[symbol] = positions.get(symbol, 0) + delta
+        cash -= delta * price + costs
+        orders[keys[symbol]][index] = float(delta)
+
     for index, day in enumerate(dates):
+        for symbol, (delta, decided_on) in pending.items():
+            open_price = usable_open(dataset.ohlcv_by_instrument[keys[symbol]][index][0])
+            if open_price is None:
+                gaps[keys[symbol]].append({"decision_date": decided_on, "fill_date": day,
+                                           "reason": NO_OPEN_PRICE})
+            else:
+                fill(symbol, delta, open_price, index, decided_on)
+        pending = {}
         snapshots, prices = {}, {}
         for symbol, inst in keys.items():
             features, at = _bar_features_for_index(dataset, inst, index)
@@ -1519,19 +1627,17 @@ def _portfolio_target_sequence(dataset, artifact, gross_budget=100_000.0):
             delta = outcome["units"] * (1 if outcome["side"] == "buy" else -1)
             if positions.get(symbol, 0) + delta < 0:
                 raise VectorbtWorkflowError("target replay would sell without holdings")
-            positions[symbol] = positions.get(symbol, 0) + delta
-            # Taiwan statutory costs on observed marks, same as the cash fill path.
-            from services.execution.lean_runtime.member_virtual_book import _COMMISSION_RATE, _EQUITY_TAX_RATE, _ETF_TAX_RATE
-            tax = _ETF_TAX_RATE if code.startswith("00") else _EQUITY_TAX_RATE
-            costs = abs(delta) * prices[symbol] * (_COMMISSION_RATE + (tax if delta < 0 else 0))
-            cash -= delta * prices[symbol] + costs
-            orders[keys[symbol]][index] = float(delta)
+            if legacy:
+                fill(symbol, delta, prices[symbol], index, day)
+            else:
+                pending[symbol] = (delta, day)
         equity = cash + sum(q * prices[s] for s, q in positions.items())
         returns.append(equity / previous_equity - 1)
         previous_equity = equity
         bars.append({"allocation": allocation, "results": results, "decisions": decisions,
                      "equity": equity, "book_before": book, "budget": budget})
-    return {"bars": bars, "orders": orders, "returns": returns}
+    return {"bars": bars, "orders": orders, "returns": returns, "gaps": gaps,
+            "fill_convention": fill_convention}
 
 
 def _artifact_action_sequence(
@@ -1659,13 +1765,42 @@ def _artifact_action_sequence(
     return actions_by_inst
 
 
+def _shift_daily_orders_to_next_open(
+    decided: Sequence[float], bars: Sequence[Sequence[float]], dates: Sequence[str],
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Orders decided from the close of session D, placed at the open of D+1.
+
+    A session without a usable open takes no fill: the order is dropped and the reason is
+    recorded (``no_open_price``); the decision close is never substituted.  A decision on the
+    last session has no next session and is left unfilled.
+    """
+    filled = [float("nan")] * len(decided)
+    gaps: list[dict[str, Any]] = []
+    for index, size in enumerate(decided):
+        if math.isnan(size):
+            continue
+        fill_index = index + 1
+        if fill_index >= len(decided):
+            continue
+        if usable_open(bars[fill_index][0]) is None:
+            gaps.append({"decision_date": dates[index], "fill_date": dates[fill_index],
+                         "reason": NO_OPEN_PRICE})
+            continue
+        filled[fill_index] = size
+    return filled, gaps
+
+
 def _artifact_order_sizes(
-    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any], *, gross_budget=100_000.0
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any], *, gross_budget=100_000.0,
+    fill_convention: str = FILL_CONVENTION, gaps: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, list[float]]:
     """Amount orders; intraday zero denotes a target-zero close, never a zero-size fill."""
     from services.registry.portfolio_envelope import uses_target_positions
     if uses_target_positions(artifact):
-        return _portfolio_target_sequence(dataset, artifact, gross_budget)["orders"]
+        replay = _portfolio_target_sequence(dataset, artifact, gross_budget, fill_convention=fill_convention)
+        if gaps is not None:
+            gaps.update(replay["gaps"])
+        return replay["orders"]
     close_actions: dict[str, set[int]] = {}
     actions_by_inst = _artifact_action_sequence(dataset, artifact, close_actions=close_actions)
     quantity = float(artifact["parameters"]["order_quantity"])
@@ -1689,7 +1824,13 @@ def _artifact_order_sizes(
                 orders[index] = quantity
             elif action == "SELL":
                 orders[index] = -quantity
-        sizes[instrument] = orders
+        if fill_convention == LEGACY_FILL_CONVENTION:
+            sizes[instrument] = orders
+            continue
+        sizes[instrument], found = _shift_daily_orders_to_next_open(
+            orders, dataset.ohlcv_by_instrument[instrument], dataset.dates_by_instrument[instrument])
+        if gaps is not None:
+            gaps[instrument] = found
     return sizes
 
 
@@ -2588,6 +2729,7 @@ def run_replication_backtest_protocol(
         transaction_tax_rate=base_cfg.transaction_tax_rate,
         etf_transaction_tax_rate=base_cfg.etf_transaction_tax_rate,
         apply_taiwan_fill_costs=True,
+        fill_convention=base_cfg.fill_convention,
         storage_backend=base_cfg.storage_backend,
         storage_path_template=base_cfg.storage_path_template,
     )
@@ -2701,6 +2843,7 @@ def run_replication_backtest_protocol(
         "framework_version": VECTORBT_VERSION_PIN,
         "market": "TW",
         "governed_data": True,
+        "fill_convention": bt_config.fill_convention,
         "dataset_id": prepared.dataset_id,
         "source_dataset_refs": list(prepared.source_dataset_refs),
         "strategy_artifact": _artifact_identity(strategy_artifact),

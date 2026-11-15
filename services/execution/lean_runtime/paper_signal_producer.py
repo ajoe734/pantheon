@@ -1125,6 +1125,9 @@ class CurrentArtifactStrategy:
                 ),
                 "market_data": {
                     "close": closes[-1],
+                    # The decision session's own open: the fill price of the previous session's
+                    # decision for the member virtual books (shared next-open convention).
+                    "open": (features.get("open") if isinstance(features, Mapping) else None),
                     "event_time": market_input.get("event_time"),
                     "source_ref": market_input.get("source_ref"),
                 },
