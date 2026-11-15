@@ -126,6 +126,7 @@
       }
     ],
     "existing_test_edits": "test_paper_runtime.py now sets explicit fixture defaults (starting cash 100000, permissive active policy) because production no longer has either; expected cash and cost numbers for cash-share fills now include commission and tax",
+    "ci_return_repair": "PR #7399 Service suites (postgres/misc) failed because test_canonical_paper_lifecycle_integration, test_current_artifact_signal (2 tests), test_devloop_wire and test_paper_fleet_reconciler built PaperRuntimeService without a capital pool reader, so the fail-closed ledger placed no order. Each now injects a pool record (budget 100000, active policy); production code unchanged. Local rerun: services/execution services/trade_journey services/broker services/paper_fleet_reconciler services/research/tests/test_portfolio_envelope_parity.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py all pass (1404 passed after fleet fix). test_p0_paper_operating_loop_smoke fails locally with KeyError engine_bridge_repo identically without these edits and is not in the CI failure list.",
     "combined_pytest_run": "225 passed, 1 skipped across all in-scope modules (pytest, 2026-11-15)"
   }
 }
