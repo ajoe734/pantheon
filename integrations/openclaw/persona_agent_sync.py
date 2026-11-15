@@ -148,12 +148,22 @@ def _trait_value(persona: Mapping[str, Any], key: str) -> str:
 # Active harness (read from the Persona owner record; never synthesized)
 # ----------------------------------------------------------------------------
 
-# Tool profile of a trading persona agent: read-only plus proposal submission.
-# Order / broker / capital / lifecycle / runtime tools are never granted; the
-# deterministic gates of the owning services keep authority over every action.
+# Tool profile of a trading persona agent: read-only plus three brokered Pantheon
+# tools (memory recall, standing-question read, proposal submission). The tools are
+# registered by the pantheon-persona-tools gateway plugin and forwarded to the adapter
+# broker, which enforces per-persona scope; there is no reflect tool (the persona
+# reasons itself). Order / broker / capital / lifecycle / runtime tools are never
+# granted; the deterministic gates of the owning services keep authority over every action.
 PERSONA_PROPOSAL_TOOL = "persona_proposal_submit"
+PERSONA_MEMORY_RECALL_TOOL = "persona_memory_recall"
+PERSONA_MENTAL_MODEL_READ_TOOL = "persona_mental_model_read"
+PERSONA_BROKERED_TOOLS = (
+    PERSONA_MEMORY_RECALL_TOOL,
+    PERSONA_MENTAL_MODEL_READ_TOOL,
+    PERSONA_PROPOSAL_TOOL,
+)
 PERSONA_AGENT_TOOL_PROFILE: Dict[str, Any] = {
-    "allow": ["read", PERSONA_PROPOSAL_TOOL],
+    "allow": ["read", PERSONA_PROPOSAL_TOOL, PERSONA_MEMORY_RECALL_TOOL, PERSONA_MENTAL_MODEL_READ_TOOL],
     "deny": ["exec", "process", "write", "edit", "apply_patch", "browser", "web_fetch", "web_search"],
     "exec": {"security": "deny", "ask": "always"},
 }
@@ -161,17 +171,30 @@ _FORBIDDEN_TOOL_MARKERS = (
     "order", "broker", "capital", "lifecycle", "runtime", "bind", "promote",
     "trade", "exec", "write", "edit", "patch", "process", "cron", "deploy",
 )
+_PERSONA_ALLOWED_TOOLS = frozenset(("read", *PERSONA_BROKERED_TOOLS))
+_PERSONA_REQUIRED_DENY = frozenset(PERSONA_AGENT_TOOL_PROFILE["deny"])
 
 
 def assert_persona_agent_tool_profile(profile: Mapping[str, Any]) -> None:
-    """Fail closed unless the profile is read-only plus proposal submission."""
+    """Fail closed unless the profile allows exactly `read` plus the three brokered
+    Pantheon tools and keeps every deny and the exec lock."""
     allow = [str(item) for item in profile.get("allow") or []]
-    if PERSONA_PROPOSAL_TOOL not in allow:
-        raise ValueError("persona_agent_tool_profile_missing_proposal_tool")
+    if len(set(allow)) != len(allow):
+        raise ValueError("persona_agent_tool_profile_duplicate_tool")
     for tool in allow:
-        if tool in ("read", PERSONA_PROPOSAL_TOOL):
-            continue
-        raise ValueError(f"persona_agent_tool_profile_forbidden_tool:{tool}")
+        if tool not in _PERSONA_ALLOWED_TOOLS:
+            raise ValueError(f"persona_agent_tool_profile_forbidden_tool:{tool}")
+    for tool in PERSONA_BROKERED_TOOLS:
+        if tool not in allow:
+            raise ValueError(
+                "persona_agent_tool_profile_missing_proposal_tool"
+                if tool == PERSONA_PROPOSAL_TOOL
+                else f"persona_agent_tool_profile_missing_tool:{tool}"
+            )
+    deny = {str(item) for item in profile.get("deny") or []}
+    missing_deny = sorted(_PERSONA_REQUIRED_DENY - deny)
+    if missing_deny:
+        raise ValueError(f"persona_agent_tool_profile_missing_deny:{','.join(missing_deny)}")
     exec_policy = profile.get("exec") if isinstance(profile.get("exec"), Mapping) else {}
     if exec_policy.get("security") != "deny":
         raise ValueError("persona_agent_tool_profile_exec_not_denied")
@@ -313,7 +336,7 @@ When asked to assess or decide, answer **as this persona**, concretely:
 - **Paper unless a live capital binding is explicitly active** (`is_real_capital=false` by default). You never place real orders or move capital on your own.
 - Stay inside your mandate; don't answer other personas' domains.
 - Be direct and quantitative — no filler, no bare 「在，老闆」 / `NO_REPLY`. Reply in 繁體中文 by default.
-- Your tools are read-only plus `{PERSONA_PROPOSAL_TOOL}`. You have no order, broker, capital, lifecycle or runtime tool; you only propose, deterministic gates decide.
+- Your tools are read-only plus `{PERSONA_MEMORY_RECALL_TOOL}` (your own memory and the shared facts), `{PERSONA_MENTAL_MODEL_READ_TOOL}` (your own standing-question answers) and `{PERSONA_PROPOSAL_TOOL}`. You reason yourself; there is no reflect tool. You have no order, broker, capital, lifecycle or runtime tool; you only propose, deterministic gates decide.
 
 {memory_section}"""
 
