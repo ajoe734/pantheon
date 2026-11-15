@@ -77,7 +77,9 @@ def _default_http(method: str, url: str, headers: Mapping[str, str], body: "dict
 def _detail(payload: Any) -> str:
     detail = payload.get("detail") if isinstance(payload, dict) else payload
     if isinstance(detail, dict):
-        return str(detail.get("message") or detail.get("reason") or detail.get("error") or detail)[:300]
+        code = detail.get("error") or detail.get("reason")
+        text = detail.get("message") or code or detail
+        return (f"{code}: {text}" if code and text != code else str(text))[:300]
     return str(detail)[:300]
 
 
