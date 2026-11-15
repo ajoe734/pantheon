@@ -2035,7 +2035,11 @@ def _admission_bundle_files(source_ids, *, item_counts=None):
                                    "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
             row = {"id": item_id, "url": f"https://example.test/{cid}/{item_id}", "fetched_at": "2026-11-10T02:00:00Z",
                    "text": f"text {cid} {item_id}", "lang": "zh-TW", "title": f"t {item_id}", "metrics": {"likes": 1}}
-            if stype == "market":
+            if stype == "market" and collector["dataset"] == "tw_index_daily":
+                # Index rows are keyed by index name (no symbol); the TAIEX history source emits its own row dataset.
+                row.update(index_name=f"index {n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n,
+                           dataset="tw_index_ohlc_daily" if cid.endswith("taiex-history") else "tw_index_daily")
+            elif stype == "market":
                 row.update(symbol=f"23{30 + n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n, dataset=collector["dataset"])
             else:
                 row["published_at"] = "2026-11-10T01:00:00Z"

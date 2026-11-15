@@ -774,3 +774,12 @@ def test_repeated_mutation_decisions_register_unique_family_revisions_in_the_rea
             assert post(stale).status_code == 409
     finally:
         reset_store()
+
+
+def test_regime_index_and_breadth_features_are_governed_inputs() -> None:
+    for dataset, field in (("tw_index_daily", "close"), ("tw_index_daily", "open"),
+                           ("tw_market_breadth_daily", "whole_market_advancers"),
+                           ("tw_market_breadth_daily", "stocks_limit_down")):
+        definition = get_feature_definition(dataset, field)
+        assert definition is not None and definition.min_availability_lag_days == 0
+    assert get_feature_definition("tw_index_daily", "volume") is None

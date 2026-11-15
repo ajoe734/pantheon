@@ -114,6 +114,14 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         "TX/MTX institutional net open interest by investor type"),
     _ds("taifex_market_put_call", "taifex_options_chip", "market", "daily", "date", 0,
         ("taifex:PutCallRatio",), "Official TXO put/call volume and open-interest percentages"),
+    _ds("tw_index_daily", "tw_index_daily", "series", "daily", "date", 0,
+        ("twse:MI_INDEX price indices via collector bundle", "twse:TAIEX/MI_5MINS_HIST via collector bundle"),
+        "TWSE price index daily close (open/high/low where the source gives them), keyed by index name; "
+        "availability is first acquisition, never earlier"),
+    _ds("tw_market_breadth_daily", "tw_market_breadth_daily", "market", "daily", "date", 0,
+        ("twse:MI_INDEX breadth table via collector bundle",),
+        "TWSE advancers, decliners, limit and unchanged counts for the whole market and for stocks; "
+        "availability is first acquisition, never earlier"),
     _ds("tw_industry_classification", "tw_industry_classification", "symbol", "daily", "event_time", 0,
         ("twse:opendata/t187ap03_L", "tpex:mopsfin_t187ap03_O"),
         "Official industry code observed prospectively; available only from acquisition, never backfilled"),
@@ -231,6 +239,23 @@ _FIELDS += [
                    "engagement_weighted_sentiment", "score",
                    "Engagement-weighted bull(+1)/bear(-1) sentiment; single-author bursts down-weighted"),
 ]
+
+# Index series (key kind series, entity = index name) and market breadth (entity TW) carry
+# several fields per row, unlike the one-value-per-row macro series.
+REGIME_DATASETS = ("tw_index_daily", "tw_market_breadth_daily")
+for _f, _u, _d in (
+    ("close", "index_points", "Index daily close"),
+    ("open", "index_points", "Index daily open; present only where the source states it"),
+    ("high", "index_points", "Index daily high; present only where the source states it"),
+    ("low", "index_points", "Index daily low; present only where the source states it"),
+    ("change_points", "index_points", "Index change in points, signed from the source sign column"),
+    ("change_percent", "percent", "Index change percent as published"),
+):
+    _FIELDS.append(CatalogueField("tw_index_daily", _f, _f, _u, _d))
+for _group in ("whole_market", "stocks"):
+    for _key in ("advancers", "decliners", "limit_up", "limit_down", "unchanged", "untraded", "no_comparison"):
+        _FIELDS.append(CatalogueField("tw_market_breadth_daily", f"{_group}_{_key}", f"{_group}_{_key}",
+                                      "securities", f"TWSE {_group.replace('_', ' ')} {_key.replace('_', ' ')} count"))
 
 _SPEC_BY_NAME: dict[str, DatasetSpec] = {spec.name: spec for spec in DATASET_SPECS}
 _FIELD_BY_KEY: dict[tuple[str, str], CatalogueField] = {(f.dataset, f.field): f for f in _FIELDS}
@@ -444,10 +469,10 @@ def observations_from_row(
     for f in catalogue_fields():
         if f.dataset != dataset:
             continue
-        if spec.key_kind == "series" and row.get("field") not in (None, f.field):
+        if spec.key_kind == "series" and dataset not in REGIME_DATASETS and row.get("field") not in (None, f.field):
             continue
         lag = lag_days_for(dataset, f.field)
-        value = _row_value(spec, f, row) if spec.key_kind != "series" else _number(row.get("value"))
+        value = _row_value(spec, f, row) if spec.key_kind != "series" or dataset in REGIME_DATASETS else _number(row.get("value"))
         if value is None:
             continue
         avail_raw = row.get("available_time")
