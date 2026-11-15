@@ -157,14 +157,16 @@ def cycle_health(packet: dict[str, Any] | None) -> dict[str, Any]:
             "last_packet_id": packet["packet_id"], "stage": packet["status"],
             "failure_reason": cycle.get("failure_reason"), "updated_at": packet["updated_at"],
             "harness_version": cycle.get("harness_version"),
-            "risk_status": (cycle.get("risk_result") or {}).get("status", "unobserved")}
+            "risk_status": (cycle.get("risk_result") or {}).get("status", "unobserved"),
+            "harness_loop": {k: (cycle.get("harness_loop") or {}).get(k) for k in ("status", "reasons")}}
 
 
 class PersonaCycleController:
     def __init__(self, registrar: PersonaCronRegistrar, owners: Any, *,
                  store_path: Path | str | None = None, turn_runner: Callable = run_persona_ooda_turn,
-                 pool_cycle: Any = None):
+                 pool_cycle: Any = None, harness_loop: Any = None):
         self.registrar, self.owners, self.turn_runner = registrar, owners, turn_runner
+        self.harness_loop = harness_loop  # None: built lazily from the owner (services.persona.harness_cycle)
         self.pool_cycle = pool_cycle  # PoolAutonomyCycle: the persona's own daily pool OODA
         self.path = Path(store_path) if store_path else resolve_ooda_packet_store_path()
 
@@ -214,6 +216,7 @@ class PersonaCycleController:
                 cursors = [c for c in prior if c]
                 since = max(cursors, key=lambda c: (c["at"], c["id"])) if cursors else None
                 observe = self.owners.observe(persona, since=since)
+                self._harness_loop().observation(persona, observe, snapshots, packet_id)
                 cycle["observe_bundle"] = observe
                 for key in ("telemetry_refs", "incident_refs", "human_feedback_refs"):
                     packet["observe"][key].extend(observe.get(key, []))
@@ -324,6 +327,7 @@ class PersonaCycleController:
                     failure = "pool_cycle_failed:" + str(pool_result.get("reason", ""))[:120]
                 elif pool_result["status"] == "completed" and not failure:
                     packet["status"], packet["closed_at"] = "closed", _utc_now()
+            cycle["harness_loop"] = self._harness_loop().run(persona, packet)
             cycle.update(phase="terminal", failure_reason=failure)
             if failure:
                 packet["status"] = "observing"
@@ -334,6 +338,12 @@ class PersonaCycleController:
                 raise ValueError(f"daily-cycle packet failed schema invariants: {errors}")
             append_ooda_packet(self.path, packet)
             return packet
+
+    def _harness_loop(self) -> Any:
+        from services.persona.harness_cycle import ControllerHarnessLoop
+        if not isinstance(self.harness_loop, ControllerHarnessLoop):
+            self.harness_loop = ControllerHarnessLoop(self.harness_loop, self.owners)
+        return self.harness_loop
 
     @staticmethod
     def _cycle_decision(observe: Mapping[str, Any]) -> tuple[str, list[str]]:
