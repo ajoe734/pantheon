@@ -49,6 +49,13 @@ STRUCTURED_AGENT = {
     "id": "structured-extraction",
     "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
 }
+# Hindsight background-model agent (adapter memory LLM bridge): deny-all, model
+# slots are existing pool entries only.
+MEMORY_INDEX_AGENT = {
+    "id": "memory-index",
+    "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
+    "model": {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]},
+}
 MAIN_AGENT = {"id": "main"}  # existing ordinary consumer identity; native policy
 
 
@@ -105,8 +112,8 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
     if str(env.get(TOKEN_SOURCE_ENV) or "").strip():
         batch += _script_batch(source, "CLAUDE_TOKEN_BATCH")
     # A fresh isolated volume has no agents; register the existing main identity
-    # (no tools override) plus the deny-all structured agent, each exactly once.
-    batch.append({"path": "agents.list", "value": [MAIN_AGENT, STRUCTURED_AGENT]})
+    # (no tools override) plus the deny-all structured and memory-index agents, each exactly once.
+    batch.append({"path": "agents.list", "value": [MAIN_AGENT, STRUCTURED_AGENT, MEMORY_INDEX_AGENT]})
     return batch
 
 
