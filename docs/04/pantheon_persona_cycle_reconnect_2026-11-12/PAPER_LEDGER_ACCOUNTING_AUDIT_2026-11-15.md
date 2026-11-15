@@ -5,7 +5,7 @@ Traced tree: dev head 40f024389 (descendant of the claimed 04613fa66; the cited 
 Reproduction: `PYTHONPATH=. python3 <script>` using the repro in the evidence file (commands recorded in `docs/deployment/evidence/PAPER-LEDGER-ACCOUNTING-AUDIT-20261115/evidence.json`).
 
 ## Limit of this report
-Workers have no hosted shell. Acceptance 3 (per-persona quarter-return / ranking effect from hosted read-only data) is **not done**: only the analytic size of each effect is given below. The coordinator must supply hosted readback (see "Hosted readback needed"). No number below is a hosted measurement.
+Workers have no hosted shell. Acceptance 3 uses the coordinator's read-only readback captured 2026-11-15T09:23Z from hosted dev 94b73806a (`pantheon-acceptance-evidence/PAPER-LEDGER-AUDIT-20261115/hosted-readback-raw.txt`; first 6000 bytes of each ledger state file). It covers only what is in section "Hosted per-persona quantification"; effects needing fields absent from it are listed as still open there. Figures elsewhere in this report marked "analytic" are not hosted measurements.
 
 ## How the ledger feeds ranking
 `PaperExecutionAlgorithm` (`services/execution/lean_runtime/paper_runtime.py`) is constructed in production at `paper_runtime.py:5177` with no `initial_cash`, no `risk_policy`, no `risk_policy_loader`. Ranking reads `initial_cash` and `pnl` from the telemetry snapshot (`services/control-plane/bff/personas/service.py:13891`, return = pnl / initial_cash).
@@ -68,7 +68,34 @@ Workers have no hosted shell. Acceptance 3 (per-persona quarter-return / ranking
 - Effect: every order executes up to three drain ticks after its decision; with claim 5 the price is still the decision-bar price, so this adds latency but not price drift on the daily path. Quantify the tick duration from hosted data.
 - Owner: `signal_consumer.py` / producer service. Smallest fix: producer batches of one signal flush immediately (call flush after enqueue). Changes timing of recorded fills: operator decision.
 
-## Hosted readback needed from the coordinator
+## Hosted per-persona quantification (acceptance 3)
+Source: hosted readback above (dev 94b73806a). The ledger window is 2026-11-08 to 2026-11-14, i.e. about one week, not a full quarter; the "return" below is ledger return since start = (cash + holdings value - initial_cash) / initial_cash, the same pnl / initial_cash form that ranking reads (`personas/service.py:13891`).
+
+| Persona | initial_cash | cash | open position | equity | return | fills | costs booked |
+|---|---|---|---|---|---|---|---|
+| 青禾 2330 (persona-2448c7053e33ea48da47) | 100000 | 100015.00 | 1 share 2330 @ mark 2350 | 102365 | +2.365% | 3 | 0.0 |
+| 衡岳 0050 (persona-ee7112a829d38b9135ac) | 100000 | 112839.93 | 2 SSF SRF:202611 @ 101.1, x1000 | 112839.93 | +12.840% | 3 | 60.07 |
+| 澄川 2317 (persona-6507750312870d03a241) | 100000 | 99138.00 | 1 share 2317 @ mark 241 | 99379 | -0.621% | 3 | 0.0 |
+
+Claim by claim, from these readbacks:
+- **1 Starting cash**: confirmed on hosted. All three runtimes read `initial_cash` 100000.0 and `injected_equity_capital` 0.0. The readback does not include the pool budget (pool ids pool-persona-paper-06d4775a9b6a8f63b311 / -a81b4fd15944698341aa / -039ad01f8bcd2b4aa466), so the divergence size is **open**; return denominators are 100000 regardless of the pool.
+- **2 Costs**: confirmed for 青禾 and 澄川: cash-share instrument positions carry `costs` 0.0 after 3 fills each. 衡岳 trades a stock future, whose path does charge costs (60.07 booked), so claim 2 does not bias 衡岳; its 0050 cash-share leg is flat. Cash-share fill quantities and prices are not in the 6000-byte readback, so the exact cost bias is **open**; the bound is per round trip 0.585% of traded notional. At the one-share position size observed (2350 and 241 NTD notional = 2.35% and 0.24% of capital), the whole bias is below 0.02 pp of return in magnitude if the fills are one share each (assumption, not measured), i.e. small against the 2.365% and -0.621% shown.
+- **3 Risk policy fallback**: effect on hosted personas **open**: the resolved policy per pool was not read. Observable consequence: 衡岳 holds 2 SSF contracts, notional 2 x 101.1 x 1000 = 202200, about 1.79x its 112840 equity (2.02x initial_cash), with initial margin 17400 reserved. No `margin_call_active`. Whether a limit would have blocked this is unknown until the policy is read.
+- **4 Cash sufficiency**: no hosted breach: lowest cash is 99138 (澄川), all positive; rolling portfolio values for 衡岳 never below 100000. Claim stays confirmed in source (repro cash -900000) but has not affected the three personas' reported returns so far.
+- **5 Fill timing**: open; `market_input_bar_frequency` not read. All three have `mark_as_of` 2026-11-13 daily marks and fills on 2026-11-14T07:45Z (青禾, 澄川), consistent with daily-bar decisions, but this is inference.
+- **6 No reduce/exit**: open; view history not read.
+- **7 Flush latency**: open; fill timestamps for 青禾 and 澄川 cluster at 07:01:47-48Z on 2026-11-10 and 07:45:09-10Z on 2026-11-14, consistent with batch drain, but decision times are not in the readback.
+
+Ranking effect: ranking return for 衡岳 (+12.84%) is on 2x notional exposure with no risk-limit evidence, so it is the persona most distorted by claims 3/4; 青禾 and 澄川 rankings are affected by claim 2 only to the sub-0.02 pp level under the stated assumption, which does not change their order (+2.365% vs -0.621%). Ordering 衡岳 > 青禾 > 澄川 is robust to claim 2; it is not shown robust to claims 1 and 3.
+
+## Still-needed hosted fields (exact)
+1. Capital pool budget for the three pools (`pool-persona-paper-*`), claim 1.
+2. Resolved capital risk policy limits for the three `pcb-persona-paper-*` budgets, claim 3.
+3. Per-fill `quantity`, `fill_price`, `side`, `filled_at` for the 3 fills of each ledger (claim 2 exact bias), plus the fill list beyond the 6000-byte cut.
+4. `market_input_bar_frequency` of the three bindings (claim 5).
+5. Decision `created_at` for the producer signals behind each fill (claim 7); signal/view history with FLAT or reduced views (claim 6).
+
+## Hosted readback originally requested
 For each of persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241:
 1. runtime `initial_cash` and capital pool budget; resolved risk policy id/limits (claims 1, 3).
 2. fill count, round trips, traded notional in the quarter (claim 2; cost bias = traded notional x rates above / initial_cash).
