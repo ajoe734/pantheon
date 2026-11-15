@@ -1,0 +1,106 @@
+{
+  "schema_version": "source_latest_snapshot_journal_compaction_evidence.v1",
+  "task_id": "SOURCE-LATEST-SNAPSHOT-JOURNAL-COMPACTION-R2-20261115",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-15T13:45:10Z",
+  "tested_source_commit": "8272eaa080d8ebdf073dbaac132fe44729e249d8",
+  "hosted_before": {
+    "observed_at": "2026-11-15T12:59:00Z",
+    "steady_pull_started_at": "2026-11-15T02:10:00Z",
+    "journal_bytes": 390702732,
+    "journal_lines": 50976,
+    "average_bytes_per_line": 7664.44,
+    "steady_pull_growth_rate_bytes_per_hour_approx": 26214400,
+    "steady_pull_growth_rate": "about 25 MB per hour since steady pull started at 02:10Z"
+  },
+  "change": {
+    "file": "services/source_ingestion/requirement_state.py",
+    "test_file": "services/source_ingestion/tests/test_latest_market_snapshot_compaction.py",
+    "untouched_file": "services/source_ingestion/tests/test_latest_market_snapshot.py",
+    "compact_ratio_threshold": 4,
+    "compact_max_bytes": 33554432,
+    "summary": "LatestMarketSnapshotStore compacts the append-only market snapshot journal when the file grows past 4x the byte length of one canonical line per live (symbol, dataset) key or past 32 MiB while containing superseded records. Compaction writes only the latest canonical line per (symbol, dataset) key (including any withdrawal tombstone that is the latest record for its key) in the identical line format to a sibling temporary file under exclusive flock on both the existing and replacement descriptors, fsyncs the temporary file, atomically replaces the journal via os.replace, and fsyncs the parent directory. Concurrent writers verify inode identity after acquiring flock and reopen if replaced."
+  },
+  "local_compacted_size_measurements": {
+    "same_key_count_2107_hosted_snapshot_population": {
+      "key_count": 2107,
+      "compacted_lines": 2107,
+      "compacted_bytes_single_point_per_key": 2665438,
+      "compacted_bytes_27_points_per_key_hosted_line_shape": 16672691,
+      "reduction_vs_hosted_before_390702732_bytes": "95.73% reduction (16,672,691 bytes vs 390,702,732 bytes at 27 points/key; 99.32% reduction at 1 point/key)"
+    },
+    "same_key_count_2124_exact_24_cycle_divisor_of_50976": {
+      "key_count": 2124,
+      "compacted_lines": 2124,
+      "compacted_bytes_single_point_per_key": 2686977,
+      "compacted_bytes_27_points_per_key_hosted_line_shape": 16807212,
+      "reduction_vs_hosted_before_390702732_bytes": "95.70% reduction (16,807,212 bytes vs 390,702,732 bytes at 27 points/key)"
+    },
+    "full_tw_collector_universe_7467_keys": {
+      "key_count": 7467,
+      "compacted_lines": 7467,
+      "compacted_bytes_single_point_per_key": 9456558,
+      "compacted_bytes_27_points_per_key_hosted_line_shape": 59086371
+    }
+  },
+  "validation": {
+    "focused_compaction_suite": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py",
+      "exit_code": 0,
+      "terminal_output": "7 passed in 7.27s"
+    },
+    "full_source_ingestion_suite": {
+      "total_files": 94,
+      "summary": {
+        "passed": 2034,
+        "skipped": 21,
+        "failed": 0
+      },
+      "batches": [
+        {
+          "batch": 1,
+          "files": 16,
+          "range": "services/source_ingestion/test_compose_activation.py .. services/source_ingestion/tests/test_collector_outcome_truth.py",
+          "exit_code": 0,
+          "terminal_output": "364 passed, 13 skipped, 1 warning in 499.67s (0:08:19)"
+        },
+        {
+          "batch": 2,
+          "files": 16,
+          "range": "services/source_ingestion/tests/test_collector_source_alignment_contract.py .. services/source_ingestion/tests/test_finmind_broker_backfill.py",
+          "exit_code": 0,
+          "terminal_output": "419 passed, 3 skipped, 13 warnings in 81.39s (0:01:21)"
+        },
+        {
+          "batch": 3,
+          "files": 16,
+          "range": "services/source_ingestion/tests/test_finmind_broker_readback_provenance.py .. services/source_ingestion/tests/test_intraday_snapshot_projection.py",
+          "exit_code": 0,
+          "terminal_output": "386 passed, 3 warnings in 87.40s (0:01:27)"
+        },
+        {
+          "batch": 4,
+          "files": 16,
+          "range": "services/source_ingestion/tests/test_intraday_store.py .. services/source_ingestion/tests/test_product_v2_source_distillation_r3.py",
+          "exit_code": 0,
+          "terminal_output": "203 passed, 3 skipped, 5 warnings in 82.75s (0:01:22)"
+        },
+        {
+          "batch": 5,
+          "files": 16,
+          "range": "services/source_ingestion/tests/test_proposal_governance.py .. services/source_ingestion/tests/test_source_readiness_bounded.py",
+          "exit_code": 0,
+          "terminal_output": "366 passed, 1 skipped, 3 warnings in 272.94s (0:04:32)"
+        },
+        {
+          "batch": 6,
+          "files": 14,
+          "range": "services/source_ingestion/tests/test_srcm_p1_contracts.py .. services/source_ingestion/tests/test_yahoo_taiwan_connectors.py",
+          "exit_code": 0,
+          "terminal_output": "296 passed, 1 skipped, 1 warning in 45.30s"
+        }
+      ]
+    }
+  }
+}
