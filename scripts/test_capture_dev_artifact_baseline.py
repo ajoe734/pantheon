@@ -342,7 +342,7 @@ def test_main_actual_fake_transport_seals_only_nonsecret_evidence(fake_transport
     sent = json.loads(marker.read_text())
     assert sent["mode"] == 0o600
     assert not Path(sent["script_path"]).exists()
-    assert sent["args"][sent["args"].index("--deadline-seconds") + 1] == "1200"
+    assert sent["args"][sent["args"].index("--deadline-seconds") + 1] == "1800"
     assert (evidence / "artifact-baseline.json").read_bytes() == c.encoded(emitted["manifest"])
     assert (evidence / "SHA256SUMS").read_text() == emitted["manifest_sha256"] + "  artifact-baseline.json\n"
     assert set(path.name for path in evidence.iterdir()) == {"artifact-baseline.json", "SHA256SUMS"}

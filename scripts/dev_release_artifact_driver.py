@@ -134,7 +134,7 @@ class GuardedDocker(a.Docker):
         command = [self.executable, "--host", "unix:///var/run/docker.sock", *args]
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, env=environment) as process:
-            deadline = time.monotonic() + 300
+            deadline = time.monotonic() + a.docker_timeout(args)
             try:
                 while True:
                     self.barrier.check()

@@ -132,16 +132,39 @@ class StackMixedError(StackError):
     pass
 
 
+SOURCE_BOUND_REASONS = frozenset({"journal_too_large", "journal_line_too_long", "journal_probe_timeout"})
 SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
-                                    "schema", "journal_changed", "reader_rejected", "unavailable"})
+                                    "schema", "journal_changed", "reader_rejected", "unavailable"}) | SOURCE_BOUND_REASONS
+# The Source journal is append-only and grows with the collector history. The
+# probe streams it in bounded memory; these are the qualification bounds.
+JOURNAL_MAX_BYTES = 6 * 1024 ** 3
+JOURNAL_MAX_LINE_BYTES = 64 * 1024 ** 2
+JOURNAL_MAX_SECONDS = 900
+JOURNAL_DOCKER_TIMEOUT = 1000  # strictly above the probe's own deadline
+
+
+def docker_timeout(args) -> int:
+    """Only the journal probe (the sole --volumes-from run) may outlive the 300s default."""
+    return JOURNAL_DOCKER_TIMEOUT if "--volumes-from" in args else 300
+
+
+def _bound_value(value):
+    return value if type(value) is int and 0 <= value <= 2 ** 50 else None
 
 
 class SourceCompatibilityError(StackError):
-    def __init__(self, reason, line=None):
+    """size/bound: bytes for journal_too_large; size bytes and bound seconds for journal_probe_timeout;
+    size bytes and bound bytes-per-line for journal_line_too_long."""
+
+    def __init__(self, reason, line=None, size=None, bound=None):
         self.reason = reason if reason in SOURCE_FAILURE_REASONS else "reader_rejected"
         self.line = line if type(line) is int and 0 < line < 100000000 else None
+        self.size, self.bound = (_bound_value(size), _bound_value(bound)) if reason in SOURCE_BOUND_REASONS else (None, None)
         super().__init__("Source codec incompatible: " + self.reason + (
-            f" at journal line {self.line}" if self.line else ""), [API_SERVICE])
+            f" at journal line {self.line}" if self.line else "") + (
+            f" (journal size {self.size} bytes, bound {self.bound} "
+            f"{'seconds' if self.reason == 'journal_probe_timeout' else 'bytes'})"
+            if self.size is not None and self.bound is not None else ""), [API_SERVICE])
 
 
 FAILURE_CODE = "DEV_ARTIFACT_OPERATION_FAILED"
@@ -193,6 +216,8 @@ def failure_record(error: Exception, stage: str) -> dict:
             "failure_kind": kind, "failure_location": location, "exit_code": code}
     if isinstance(error, SourceCompatibilityError):
         record["source_compatibility"] = {"reason": error.reason, "line": error.line}
+        if error.size is not None and error.bound is not None:
+            record["source_compatibility"].update(size=error.size, bound=error.bound)
     return record
 
 
@@ -211,7 +236,9 @@ def remote_failure_record(raw: bytes) -> dict | None:
             continue
         if "source_compatibility" in value:
             detail = value["source_compatibility"]
-            if not isinstance(detail, dict) or set(detail) != {"reason", "line"} or \
+            if not isinstance(detail, dict) or set(detail) not in ({"reason", "line"}, {"reason", "line", "size", "bound"}) or \
+                    ("size" in detail and (_bound_value(detail["size"]) is None or _bound_value(detail["bound"]) is None or
+                                           detail["reason"] not in SOURCE_BOUND_REASONS)) or \
                     not isinstance(detail["reason"], str) or detail["reason"] not in SOURCE_FAILURE_REASONS or \
                     (detail["line"] is not None and (type(detail["line"]) is not int or not 0 < detail["line"] < 100000000)):
                 continue
@@ -234,7 +261,7 @@ class Docker:
         try:
             result = subprocess.run(
                 ["docker", "--host", "unix:///var/run/docker.sock", *args],
-                capture_output=True, text=True, timeout=300, check=True,
+                capture_output=True, text=True, timeout=docker_timeout(args), check=True,
                 env=environment,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -519,11 +546,16 @@ SOURCE_PATH_FORMAT = _env_format(SOURCE_PATH_KEYS)
 SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_reconciliation", *(
     name + suffix for name in ("tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m")
     for suffix in ("", "_withdrawal"))})
-SOURCE_PROBE = r'''
-import base64, fcntl, hashlib, json, os, re, sys
+SOURCE_PROBE_TEMPLATE = r'''
+import base64, fcntl, hashlib, json, os, re, sys, time
 from pathlib import Path
 from services.source_ingestion import requirement_state as m
 mode, arg = sys.argv[1:3]
+MAX_BYTES, MAX_LINE, MAX_SECONDS = __MAX_BYTES__, __MAX_LINE__, __MAX_SECONDS__
+class Bounded(Exception):
+    def __init__(self, reason, size, bound):
+        super().__init__(reason)
+        self.reason, self.size, self.bound = reason, size, bound
 codec = hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
 def projection(lines):
     values = m._market_snapshots_from_lines(lines, path=Path("journal"))
@@ -540,22 +572,40 @@ try:
         result = {"projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
     elif mode == "journal":
         path = Path(arg)
+        started = time.monotonic()
         # Missing state is not an empty journal proof. The owner must identify
         # an existing file; do not create directories, lock files or projections.
         with path.open("rb") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
             before = os.fstat(f.fileno())
-            if before.st_size > 256 * 1024 * 1024:
-                raise ValueError("journal exceeds bounded qualification")
-            raw = f.read()
-            digest = projection(raw.decode("utf-8").splitlines())
+            if before.st_size > MAX_BYTES:
+                raise Bounded("journal_too_large", before.st_size, MAX_BYTES)
+            digest, state = hashlib.sha256(), {"size": 0, "lines": 0}
+            def journal_lines():
+                # Same pieces as raw.decode("utf-8").splitlines(): every b"\n" ends one
+                # physical line and no multibyte character contains it. Memory stays
+                # bounded by one line plus the latest-per-(symbol,dataset) projection.
+                for raw in iter(lambda: f.readline(MAX_LINE + 1), b""):
+                    if len(raw) > MAX_LINE:
+                        raise Bounded("journal_line_too_long", before.st_size, MAX_LINE)
+                    if time.monotonic() - started > MAX_SECONDS:
+                        raise Bounded("journal_probe_timeout", before.st_size, MAX_SECONDS)
+                    digest.update(raw)
+                    state["size"] += len(raw)
+                    state["lines"] += 1
+                    yield from raw.decode("utf-8").splitlines()
+            projected = projection(journal_lines())
             after = os.fstat(f.fileno())
             if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns):
                 raise ValueError("journal changed")
-        result = {"journal_sha256": hashlib.sha256(raw).hexdigest(), "journal_size": len(raw), "projection_sha256": digest}
+        result = {"journal_sha256": digest.hexdigest(), "journal_size": state["size"], "journal_lines": state["lines"],
+                  "probe_seconds": round(time.monotonic() - started, 3), "projection_sha256": projected}
     else:
         raise ValueError("unknown probe mode")
     print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
+except Bounded as error:
+    print(json.dumps({"ok": False, "codec_sha256": codec, "reason": error.reason, "line": None,
+                      "size": error.size, "bound": error.bound}))
 except Exception as error:
     message = str(error)
     reason = next((code for text,code in (
@@ -566,6 +616,14 @@ except Exception as error:
     print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
                       "line": int(line[1]) if line else None}))
 '''
+
+
+def build_source_probe(max_bytes=JOURNAL_MAX_BYTES, max_line=JOURNAL_MAX_LINE_BYTES, max_seconds=JOURNAL_MAX_SECONDS):
+    return (SOURCE_PROBE_TEMPLATE.replace("__MAX_BYTES__", str(int(max_bytes)))
+            .replace("__MAX_LINE__", str(int(max_line))).replace("__MAX_SECONDS__", str(int(max_seconds))))
+
+
+SOURCE_PROBE = build_source_probe()
 
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
@@ -589,10 +647,11 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
         raise SourceCompatibilityError("unavailable") from None
     if not isinstance(result, dict) or result.get("ok") is not True:
         reason = result.get("reason") if isinstance(result, dict) else None
-        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed"):
+        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed",
+                          *SOURCE_BOUND_REASONS):
             reason = "reader_rejected"
         line = result.get("line") if isinstance(result, dict) else None
-        raise SourceCompatibilityError(reason, line)
+        raise SourceCompatibilityError(reason, line, result.get("size"), result.get("bound"))
     _match(result.get("codec_sha256"), DIGEST, "Source codec digest")
     check_lease()
     return result
@@ -612,11 +671,15 @@ def qualify_source_reader(*, docker, image_id, check_lease):
                           container_id=owner["container_id"], check_lease=check_lease)
     for key in ("journal_sha256", "projection_sha256"):
         _match(result.get(key), DIGEST, "Source " + key)
-    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= 256 * 1024 * 1024:
+    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= JOURNAL_MAX_BYTES:
         raise ArtifactError("invalid Source journal size")
+    if type(result.get("journal_lines")) is not int or not 0 <= result["journal_lines"] <= result["journal_size"] \
+            or type(result.get("probe_seconds")) not in (int, float) or not 0 <= result["probe_seconds"] <= JOURNAL_MAX_SECONDS + 1:
+        raise ArtifactError("invalid Source journal evidence")
     if _stack_rows(docker).get(API_SERVICE) != rows:
         raise StackError("Source owner changed during qualification", [API_SERVICE])
-    return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+    return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "journal_lines",
+                                   "probe_seconds", "projection_sha256")}
 
 
 def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
@@ -735,10 +798,15 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
               "stack service")
         if source_snapshot:
             proof = row["source_snapshot"]
-            _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"), "Source snapshot proof")
+            # journal_lines/probe_seconds are additive: earlier baselines omit them.
+            _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")
+                  + (("journal_lines", "probe_seconds") if "journal_lines" in proof else ()), "Source snapshot proof")
+            if "journal_lines" in proof and (type(proof["journal_lines"]) is not int or proof["journal_lines"] < 0
+                                             or type(proof["probe_seconds"]) not in (int, float) or proof["probe_seconds"] < 0):
+                raise ArtifactError("invalid Source snapshot proof evidence")
             for key in ("codec_sha256", "journal_sha256", "projection_sha256"):
                 _match(proof[key], DIGEST, "Source snapshot digest")
-            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= 256 * 1024 * 1024:
+            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= JOURNAL_MAX_BYTES:
                 raise ArtifactError("invalid Source snapshot proof size")
         if controlled:
             control = row["control"]

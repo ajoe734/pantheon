@@ -344,8 +344,8 @@ def main() -> int:
             stage = "transport"
             result = subprocess.run([sys.executable, str(ROOT / "scripts/dev_remote_guarded_exec.py"),
                                      "--ssh-helper", str(ROOT / "scripts/dev_vm_ssh.sh"),
-                                     "--script-file", str(script), "--deadline-seconds", "1200"],
-                                    capture_output=True, timeout=1230)
+                                     "--script-file", str(script), "--deadline-seconds", "1800"],
+                                    capture_output=True, timeout=1830)
             if result.returncode:
                 # Neither the private script nor remote raw diagnostics are evidence.
                 record = artifacts.remote_failure_record(result.stderr)

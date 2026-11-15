@@ -1474,3 +1474,147 @@ def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_c
     del stack["services"][ISSUER]["control"]
     with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(stack)
+
+
+# Frozen copy of the pre-streaming journal probe (whole-file read), used as the byte-identity oracle.
+PREVIOUS_JOURNAL_PROBE = r'''
+import base64, fcntl, hashlib, json, os, re, sys
+from pathlib import Path
+from services.source_ingestion import requirement_state as m
+mode, arg = sys.argv[1:3]
+codec = hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
+def projection(lines):
+    values = m._market_snapshots_from_lines(lines, path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest()
+try:
+    if mode == "codec":
+        result = {}
+    elif mode == "writer":
+        samples = m.market_snapshot_writer_samples()
+        result = {"samples": samples, "projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "samples":
+        samples = json.loads(base64.b64decode(arg, validate=True))
+        result = {"projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "journal":
+        path = Path(arg)
+        # Missing state is not an empty journal proof. The owner must identify
+        # an existing file; do not create directories, lock files or projections.
+        with path.open("rb") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            before = os.fstat(f.fileno())
+            if before.st_size > 256 * 1024 * 1024:
+                raise ValueError("journal exceeds bounded qualification")
+            raw = f.read()
+            digest = projection(raw.decode("utf-8").splitlines())
+            after = os.fstat(f.fileno())
+            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns):
+                raise ValueError("journal changed")
+        result = {"journal_sha256": hashlib.sha256(raw).hexdigest(), "journal_size": len(raw), "projection_sha256": digest}
+    else:
+        raise ValueError("unknown probe mode")
+    print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
+except Exception as error:
+    message = str(error)
+    reason = next((code for text,code in (
+        ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
+        ("id does not match", "snapshot_identity"), ("schema", "schema"),
+        ("journal changed", "journal_changed")) if text in message), "reader_rejected")
+    line = re.search(r"journal:(\d+)", message)
+    print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
+                      "line": int(line[1]) if line else None}))
+'''
+
+
+def _run_probe(code, docker, path):
+    return json.loads(run_local_source_probe(docker, ["--entrypoint", "python3", "image", "-c", code, "journal", str(path)]))
+
+
+def _journal_samples():
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    return market_snapshot_writer_samples()
+
+
+@pytest.mark.parametrize("shape", ["samples", "crlf_blank", "no_final_newline", "bad_line"])
+def test_streaming_journal_probe_is_byte_identical_to_previous_probe(stack_case, tmp_path, shape):
+    docker = stack_case[1]
+    lines = [v.rstrip("\n") for v in _journal_samples().values()]
+    text = {"samples": "".join(line + "\n" for line in lines),
+            "crlf_blank": "".join(line + "\r\n\n  \n" for line in lines),
+            "no_final_newline": "\n".join(lines),
+            "bad_line": "\n".join(lines[:3] + ["{not json}"] + lines[3:])}[shape]
+    path = tmp_path / "journal.jsonl"
+    path.write_bytes(text.encode())
+    previous = _run_probe(PREVIOUS_JOURNAL_PROBE, docker, path)
+    current = _run_probe(artifacts.SOURCE_PROBE, docker, path)
+    if shape == "bad_line":
+        assert previous["ok"] is False and previous == current and type(current["line"]) is int
+        return
+    assert current["ok"] is True and previous["ok"] is True
+    for key in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"):
+        assert current[key] == previous[key]
+    assert current["journal_lines"] == len(path.read_bytes().split(b"\n")) - (1 if text.endswith("\n") else 0)
+    assert current["probe_seconds"] >= 0
+
+
+def test_journal_probe_streams_past_the_previous_size_bound(stack_case, tmp_path):
+    docker = stack_case[1]
+    sample = _journal_samples()["official_daily"]
+    path = tmp_path / "journal.jsonl"
+    # Whitespace-only lines are skipped by the real codec; they push the real file past the old 256 MiB bound
+    # without a large projection, and every line is still read through the stream.
+    pad = b" " * (1024 * 1024 - 1) + b"\n"
+    with path.open("wb") as f:
+        f.write(sample.encode())
+        for _ in range(257):
+            f.write(pad)
+    assert path.stat().st_size > 256 * 1024 * 1024
+    result = _run_probe(artifacts.SOURCE_PROBE, docker, path)
+    assert result["ok"] is True and result["journal_size"] == path.stat().st_size
+    assert result["journal_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert result["journal_lines"] == 258
+    assert _run_probe(PREVIOUS_JOURNAL_PROBE, docker, path)["reason"] == "reader_rejected"
+
+
+@pytest.mark.parametrize("reason,limits,bound", [
+    ("journal_too_large", {"max_bytes": 100}, 100),
+    ("journal_line_too_long", {"max_line": 10}, 10),
+    ("journal_probe_timeout", {"max_seconds": 0}, 0)])
+def test_journal_bounds_fail_closed_with_size_and_bound(stack_case, monkeypatch, reason, limits, bound):
+    _, docker, _, _, stack, _, _ = stack_case
+    monkeypatch.setattr(artifacts, "SOURCE_PROBE", artifacts.build_source_probe(**limits))
+    size = docker.source_journal.stat().st_size
+    with pytest.raises(artifacts.SourceCompatibilityError) as caught:
+        artifacts.qualify_source_reader(docker=docker, image_id=stack["services"][artifacts.API_SERVICE]["image_id"],
+                                        check_lease=lambda: None)
+    error = caught.value
+    assert (error.reason, error.size, error.bound) == (reason, size, bound)
+    assert reason in str(error) and f"journal size {size} bytes" in str(error)
+    record = artifacts.failure_record(error, "capture")
+    assert record["source_compatibility"] == {"reason": reason, "line": None, "size": size, "bound": bound}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_bound_detail_is_only_accepted_for_bound_reasons():
+    base = {"status": "error", "error_code": artifacts.FAILURE_CODE, "failure_stage": "capture",
+            "failure_kind": "contract", "failure_location": "dev_release_artifacts.py:1", "exit_code": 75}
+    good = {**base, "source_compatibility": {"reason": "journal_too_large", "line": None, "size": 7, "bound": 5}}
+    assert artifacts.remote_failure_record(json.dumps(good).encode()) == good
+    for detail in ({"reason": "checksum", "line": None, "size": 7, "bound": 5},
+                   {"reason": "journal_too_large", "line": None, "size": -1, "bound": 5},
+                   {"reason": "journal_too_large", "line": None, "size": 7}):
+        assert artifacts.remote_failure_record(json.dumps({**base, "source_compatibility": detail}).encode()) is None
+    assert artifacts.SourceCompatibilityError("checksum", None, 7, 5).size is None
+
+
+def test_capture_records_journal_size_lines_and_duration(stack_case):
+    proof = stack_case[4]["services"][artifacts.API_SERVICE]["source_snapshot"]
+    assert proof["journal_size"] == stack_case[1].source_journal.stat().st_size
+    assert proof["journal_lines"] == 1 and proof["probe_seconds"] >= 0
+    artifacts.validate_stack(stack_case[4])
+
+
+def test_only_the_journal_probe_gets_the_long_docker_timeout():
+    assert artifacts.docker_timeout(["run", "--volumes-from", "abc:ro"]) == artifacts.JOURNAL_DOCKER_TIMEOUT
+    assert artifacts.docker_timeout(["run", "--rm"]) == 300
+    assert artifacts.JOURNAL_DOCKER_TIMEOUT > artifacts.JOURNAL_MAX_SECONDS

@@ -1,0 +1,33 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-RELEASE-CAPTURE-JOURNAL-STREAM-20261115",
+  "owner": "Claude2",
+  "reviewer": "Claude",
+  "implementation": {
+    "files_modified": [
+      "scripts/dev_release_artifacts.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/capture_dev_artifact_baseline.py",
+      "scripts/test_capture_dev_artifact_baseline.py",
+      "docs/deployment/evidence/DEV-RELEASE-CAPTURE-JOURNAL-STREAM-20261115/evidence.json"
+    ],
+    "summary": "Journal probe now streams the Source journal line by line (readline, incremental sha256, generator fed to the real _market_snapshots_from_lines) instead of f.read(). Bounds: 6 GiB size, 64 MiB per line, 900 s probe deadline; each fails closed with a distinct reason (journal_too_large, journal_line_too_long, journal_probe_timeout) whose failure record carries size and bound. Capture proof records journal_lines and probe_seconds (additive, optional on validation). Journal-probe docker call timeout raised 300 -> 1000 s in both Docker.call and GuardedDocker.call; wrapper deadline 1200 -> 1800 s. The new reasons and size/bound travel through failure_record / remote_failure_record, which both the driver and the wrapper use for the workflow failure summary; no separate whitelist exists in those two files."
+  },
+  "reproduction_before_fix": {
+    "command": "journal of 268500136 bytes built from market_snapshot_writer_samples()['official_daily'], previous SOURCE_PROBE run with python -c",
+    "result": "{ok: false, reason: reader_rejected, line: null} - no size in output"
+  },
+  "measurements": {
+    "identity_vs_previous_probe_200MiB": "209715627 bytes, 297867 lines: journal_sha256, journal_size, projection_sha256, codec_sha256 byte identical; 29.9 s; peak RSS 42 MB",
+    "1GiB_journal_stream_only": "1073742558 bytes (whitespace lines skipped by the codec): 3.7 s, peak RSS 45 MB",
+    "codec_bound_throughput": "about 7 MB/s of real snapshot rows on 1 cpu, so 4 GiB of real rows is about 600 s, inside the 900 s bound",
+    "not_executed": "A real 4 GiB journal was NOT built: the shared /tmp had 4.7 GB free and the write hit ENOSPC at 99 percent. The 4 GiB time claim is an extrapolation from the 200 MiB and 1 GiB runs, not a measurement."
+  },
+  "validation": {
+    "command": "python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_capture_dev_artifact_baseline.py -q",
+    "result": "630 passed, 2 skipped (final full run, 271 s). An earlier run had one failure, a wrong line-number expectation in my own new test, since fixed."
+  },
+  "unchanged_contract": "point_schema, checksum, lineage, snapshot_identity, schema and journal_changed reasons and their line numbers are produced by the same codec calls; the bad_line test shows identical output from the previous and the streaming probe.",
+  "residual_risk": "Hosted probe duration is unmeasured; if hosted throughput is below ~7 MB/s a journal near 6 GiB would hit journal_probe_timeout (distinct reason, fail closed). nonprod-deploy.yml step timeout was not inspected or changed (outside artifact list)."
+}
