@@ -15,9 +15,11 @@ GROSS_BASIS = "underlying_gross_virtual"
 # Exposure-fraction returns with Taiwan statutory costs on every exposure change.
 # Not the gate's share-sized/cash-fill basis, so never labelled as it.
 NET_BASIS = "underlying_exposure_fraction_net_taiwan_costs_equal_notional"
-_COMMISSION_RATE = 0.001425
-_EQUITY_TAX_RATE = 0.003
-_ETF_TAX_RATE = 0.001
+from services.execution.lean_runtime.taiwan_cash_costs import (
+    COMMISSION_RATE as _COMMISSION_RATE,
+    EQUITY_TAX_RATE as _EQUITY_TAX_RATE,
+    ETF_TAX_RATE as _ETF_TAX_RATE,
+)
 
 
 def _net_interval_costs(symbol, rows):

@@ -960,6 +960,15 @@ class RollingDrawdownTrackerTest(unittest.TestCase):
         self.assertEqual(obs_new_quote["window_observations"], 4)
 
 
+_TEST_RISK_POLICY = {
+    "risk_policy_id": "rp-test",
+    "status": "active",
+    "gross_limit": 10.0,
+    "net_limit": 10.0,
+    "max_leverage": 10.0,
+}
+
+
 class PaperPerformanceLedgerTest(unittest.TestCase):
     def test_partial_close_combines_realized_cash_with_remaining_mark_to_market(self):
         algorithm = PaperExecutionAlgorithm(initial_cash=100_000.0)
@@ -1147,7 +1156,9 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
 
     def test_taiwan_sell_fill_is_signed_and_credits_cash(self):
         events = []
-        algorithm = PaperExecutionAlgorithm(initial_cash=1_000.0, event_sink=events.append)
+        algorithm = PaperExecutionAlgorithm(
+            initial_cash=1_000.0, event_sink=events.append, risk_policy=_TEST_RISK_POLICY
+        )
         broker_buy_fill = {
             "order_id": "tw-order-buy-001",
             "fill_qty": 5,
@@ -1183,7 +1194,8 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
                 quantity_type="SHARES",
                 action="BUY",
             )
-            self.assertEqual(algorithm.performance_ledger()["cash"], 750.0)
+            # 250 notional + 0.1425% buy commission
+            self.assertAlmostEqual(algorithm.performance_ledger()["cash"], 750.0 - 0.35625)
             algorithm.SubmitTaiwanBrokerOrder(
                 "2330.TW",
                 signal_id="signal-tw-sell-001",
@@ -1195,13 +1207,16 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
 
         ledger = algorithm.performance_ledger()
         self.assertEqual(ledger["positions"][0]["quantity"], 2.0)
-        self.assertEqual(ledger["cash"], 900.0)
+        # + 150 proceeds - 0.1425% commission - 0.3% transaction tax on the sell
+        self.assertAlmostEqual(ledger["cash"], 750.0 - 0.35625 + 150.0 - 0.21375 - 0.45)
         self.assertEqual(ledger["fill_count"], 2)
         self.assertEqual(events[1].quantity, -3.0)
         self.assertEqual(events[1].fill_price, 50.0)
 
     def test_e2e_paper_execution_algorithm_ledger_provider_valuator(self):
-        algorithm = PaperExecutionAlgorithm(initial_cash=100_000.0)
+        algorithm = PaperExecutionAlgorithm(
+            initial_cash=100_000.0, risk_policy=_TEST_RISK_POLICY
+        )
 
         # Committed fills with governed daily-close shape and realistic sequence
         broker_fill_tw = {
@@ -1256,7 +1271,8 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
 
         ledger = algorithm.performance_ledger()
         self.assertEqual(ledger["initial_cash"], 100_000.0)
-        self.assertEqual(ledger["cash"], 89_000.0)
+        # 11_000 notional + 0.1425% buy commission (15.675)
+        self.assertAlmostEqual(ledger["cash"], 89_000.0 - 15.675)
         self.assertEqual(ledger["fill_count"], 2)
         self.assertEqual(ledger["last_fill_at"], "2026-07-14T06:15:00Z")
 
@@ -1297,9 +1313,10 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(result.status, "valued")
         self.assertIsNotNone(result.sample)
         # Cash: 89,000 + 10 * 1000 (10,000) + 5 * 210 (1,050) = 100,050 (PnL: +50.0)
-        self.assertAlmostEqual(result.sample.cash, 89_000.0)
-        self.assertAlmostEqual(result.sample.portfolio_value, 100_050.0)
-        self.assertAlmostEqual(result.sample.pnl, 50.0)
+        # The buy commission (15.675) is debited from cash and so lowers PnL by the same amount.
+        self.assertAlmostEqual(result.sample.cash, 89_000.0 - 15.675)
+        self.assertAlmostEqual(result.sample.portfolio_value, 100_050.0 - 15.675)
+        self.assertAlmostEqual(result.sample.pnl, 50.0 - 15.675)
 
         # Sample date is at least the latest fill and every used mark
         last_fill_dt = datetime.fromisoformat(ledger["last_fill_at"].replace("Z", "+00:00"))

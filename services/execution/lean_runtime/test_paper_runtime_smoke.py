@@ -81,6 +81,21 @@ def _deployment_plan(**overrides):
     return plan
 
 
+# Production has no default starting cash and no policy-free mode: the ledger starts from the
+# capital pool budget and trades only under an active bound risk policy.
+_SMOKE_POOL_RECORD = {
+    "pool_id": "pool-smoke-001",
+    "budget": 100_000.0,
+    "risk_policy": {
+        "risk_policy_id": "rp-smoke",
+        "status": "active",
+        "gross_limit": 10.0,
+        "net_limit": 10.0,
+        "max_leverage": 10.0,
+    },
+}
+
+
 def _runtime_binding(**overrides):
     binding = {
         "binding_id": "rtb-smoke-001",
@@ -323,6 +338,7 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
             poll_interval_seconds=3600,
             max_batch_size=50,
             lifecycle_outbox_path=f"{outbox_dir.name}/lifecycle-outbox.json",
+            capital_pool_reader=lambda _pool_id: dict(_SMOKE_POOL_RECORD),
         )
         return service, telemetry, context, request
 
