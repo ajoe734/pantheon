@@ -974,7 +974,7 @@ def test_default_chip_requirements_provision_independent_idempotent_daily_instan
     assert counts == (_line_count(tmp_path / 'connector_config.jsonl'), _line_count(tmp_path / 'connector_schedule.jsonl'))
 
 
-@pytest.mark.parametrize('cid', ['tw-official-tpex-institutional-flow', 'tw-taifex-institutional-positions', 'tw-taifex-put-call'])
+@pytest.mark.parametrize('cid', ['tw-official-tpex-institutional-flow', 'tw-taifex-institutional-positions', 'tw-taifex-put-call', 'tw-taifex-tx-daily'])
 def test_chip_profile_cannot_provision_an_unrelated_dataset(tmp_path, cid):
     reconciler, connectors, schedules = _reconciler(tmp_path)
     result = reconciler.reconcile_persona(_persona(connector_candidates=[cid], dataset='tw_price_daily'))

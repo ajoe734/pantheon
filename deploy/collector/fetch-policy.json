@@ -636,6 +636,66 @@
       "attribution": "臺灣期貨交易所（單一連線、每次間隔 >= 5 秒擷取）",
       "logged_in": false,
       "enabled": true
+    },
+    "collector-tw-trading-holidays": {
+      "source_id": "collector-tw-trading-holidays",
+      "section_ref": "5.1",
+      "description": "TWSE and TPEx official trading holiday and market opening/closing schedules covering 2024 through 2026; disabled by default until operator deployment",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule",
+        "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate"
+      ],
+      "twse_endpoint_template": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date={yyyy}0101&response=json",
+      "tpex_endpoint_template": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date={yyyy}&response=json",
+      "publication_refs": {
+        "TWSE": "https://www.twse.com.tw/zh/trading/holiday.html",
+        "TPEx": "https://www.tpex.org.tw/zh-tw/announce/market/holiday.html"
+      },
+      "covered_years": [2024, 2025, 2026],
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 6,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html and https://www.tpex.org.tw/zh-tw/privacy/declaration.html (read 2026-11-15)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所 / 證券櫃檯買賣中心（單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": false,
+      "disabled_reason": "Disabled by default until operator deploys collector-tw-trading-holidays timer (COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115)"
+    },
+    "collector-tw-trading-suspension": {
+      "source_id": "collector-tw-trading-suspension",
+      "section_ref": "5.1",
+      "description": "TWSE (TWTAWU) and TPEx (sprcHis) official trading suspension and resumption records covering 2024 through 2026; disabled by default until operator deployment",
+      "base_urls": [
+        "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU",
+        "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis"
+      ],
+      "twse_endpoint_template": "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU?startDate={start_yyyymmdd}&endDate={end_yyyymmdd}&response=json",
+      "tpex_endpoint_template": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date={yyyy}&cate=1&response=json",
+      "publication_refs": {
+        "TWSE": "https://www.twse.com.tw/zh/trading/historical/twtawu.html",
+        "TPEx": "https://www.tpex.org.tw/zh-tw/announce/market/halt/historical.html"
+      },
+      "covered_years": [2024, 2025, 2026],
+      "max_connections": 1,
+      "cadence": "daily",
+      "cadence_seconds": 86400,
+      "max_requests_per_run": 4,
+      "min_interval_seconds": 5.0,
+      "fetcher": "http",
+      "respect_robots": true,
+      "robots_decision": "allowed",
+      "terms_ref": "https://www.twse.com.tw/zh/usage.html and https://www.tpex.org.tw/zh-tw/privacy/declaration.html (read 2026-11-15)",
+      "attribution_required": true,
+      "attribution": "臺灣證券交易所 / 證券櫃檯買賣中心（單一連線、每次間隔 >= 5 秒擷取）",
+      "logged_in": false,
+      "enabled": false,
+      "disabled_reason": "Disabled by default until operator deploys collector-tw-trading-suspension timer (COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115)"
     }
   }
 }

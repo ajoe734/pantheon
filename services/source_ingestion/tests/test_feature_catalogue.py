@@ -1014,3 +1014,44 @@ def test_read_feature_series_returns_point_in_time_index_and_breadth_values_from
     breadth = fc.read_feature_series(obs, "tw_market_breadth_daily", "whole_market_advancers", decision_time=acquired)
     assert [(o["entity"], o["event_time"]) for o in breadth] == [("TW", "2026-11-10")]
     assert isinstance(breadth[0]["value"], float) and breadth[0]["value"] > 0
+
+
+TX_FIXTURE = Path(__file__).parent / 'fixtures' / 'taifex_daily_market_report_fut_tx_20261113.json'
+
+
+def _tx_daily_rows():
+    from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
+    payload = json.loads(TX_FIXTURE.read_text())['payload']
+    rows = TaifexDerivativesChipAdapter(dataset='taifex_tx_daily', contracts=['TX', 'MTX']).normalized_rows_from_payload(payload)
+    return [{**r, 'ingest_time': '2026-11-14T02:00:00Z'} for r in rows]
+
+
+def test_tx_daily_front_month_settlement_and_total_open_interest_from_recorded_payload():
+    result = fc.market_chip_observations('taifex_market_tx_daily', _tx_daily_rows())
+    assert result['status'] == 'complete', result
+    values = {o['field']: o['value'] for o in result['observations']}
+    # 202611 settlement; OI is the TX regular-session sum over 202611..202709, never MTX or after-hours.
+    assert values == {'tx_front_month_settlement_price': 43839.0,
+                      'tx_total_open_interest': 105228 + 21470 + 217 + 138 + 118 + 70}
+    assert all(o['event_time'] == '2026-11-13' and o['availability_lag_days'] == 0 for o in result['observations'])
+    assert all(fc.parse_time(o['available_time']) >= fc.parse_time(o['ingest_time']) for o in result['observations'])
+    spec = fc.get_dataset_spec('taifex_market_tx_daily')
+    assert (spec.normalized_dataset, spec.event_time_key, spec.availability_lag_days) == ('taifex_tx_daily', 'date', 0)
+
+
+def test_tx_daily_withholds_unpriced_front_month_and_partial_open_interest():
+    rows = _tx_daily_rows()
+    unpriced = [{**r, 'settlement_price': None, 'raw_row': {**r['raw_row'], 'SettlementPrice': 'NULL'}}
+                if (r['contract'], r['contract_month'], r['trading_session']) == ('TX', '202611', 'regular') else r
+                for r in rows]
+    out = fc.market_chip_observations('taifex_market_tx_daily', unpriced)
+    assert (out['status'], out['reason'], out['observations']) == ('withheld', 'front_month_settlement_missing', [])
+    no_oi = [{**r, 'open_interest': None, 'raw_row': {**r['raw_row'], 'OpenInterest': '-'}}
+             if (r['contract'], r['contract_month'], r['trading_session']) == ('TX', '202612', 'regular') else r
+             for r in rows]
+    assert fc.market_chip_observations('taifex_market_tx_daily', no_oi)['reason'] == 'missing_or_invalid_constituent_value'
+    only_after_hours = [r for r in rows if r['trading_session'] == 'after_hours']
+    assert fc.market_chip_observations('taifex_market_tx_daily', only_after_hours)['reason'] == 'missing_tx_regular_monthly_rows'
+    assert fc.market_chip_observations('taifex_market_tx_daily', rows, truncated=True)['reason'] == 'record_cap_prevents_complete_market'
+    mixed = [rows[0], {**rows[1], 'date': '2026-11-12'}]
+    assert fc.market_chip_observations('taifex_market_tx_daily', mixed)['reason'] == 'mixed_session_rows'

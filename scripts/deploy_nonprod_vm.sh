@@ -2816,7 +2816,7 @@ RECOVER_DLQ_PY
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
   case "${connector_id}:${dataset}" in
-    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
       return 0 ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then

@@ -1,0 +1,82 @@
+{
+  "task_id": "REGIME-DATA-TAIFEX-TX-DAILY-20261114",
+  "hosted_behavior_claimed": false,
+  "delivery_scope": "Source-only: new taifex_tx_daily dataset, dev refresh request, bounded deploy admission, feature catalogue and factor-rule mirror. No hosted deployment, no live capital.",
+  "dataset": {
+    "name": "taifex_tx_daily",
+    "schema_hash": "tw_taifex_tx_daily.v1",
+    "connector_id": "tw-taifex-tx-daily",
+    "endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+    "contracts": [
+      "TX",
+      "MTX"
+    ],
+    "sessions": "regular and after_hours kept as separate rows (trading_session); raw TradingSession kept",
+    "null_handling": "'-', 'NULL' and blank values become null; never zero, never interpolated. After-hours rows have no settlement or open interest in the source.",
+    "spread_months": "calendar-spread months (containing '/') are skipped; weekly months (e.g. 202611W4) are kept with contract_month_kind=weekly"
+  },
+  "unchanged": [
+    "_SSF_CONTRACT_CODE (^[A-Z]{2}F$)",
+    "regular-session filter of taifex_ssf_normalized_rows",
+    "taifex_ssf_contracts dataset and Lean consumers"
+  ],
+  "record_cap_policy": "TX/MTX rows are selected before any cap in fetch_payload and the normalizer; exceeding max_records after selection fails closed instead of truncating.",
+  "history_source": {
+    "official_history_exists": true,
+    "used": false,
+    "statement": "The OpenAPI DailyMarketReportFut serves only the latest session (2305 rows, all dated 20261113 at recording). TAIFEX publishes per-day history downloads on its website (futures daily market report downloads), but this task does not ingest them and no history is fabricated or backfilled. The dataset accumulates forward only from the first scheduled refresh; any backfill needs a separate task that verifies that source."
+  },
+  "recorded_response": {
+    "url": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+    "recorded_on": "2026-11-14",
+    "source_date": "20261113",
+    "full_response_sha256": "56180e8f8261669aa09f2e68535e33bb9c0bafd4e3f419d114b419e7830144b2",
+    "full_response_row_count": 2305,
+    "fixture": "services/source_ingestion/tests/fixtures/taifex_daily_market_report_fut_tx_20261113.json",
+    "fixture_row_count": 49,
+    "fixture_note": "All TX and MTX rows of the real response verbatim, plus a few real non-TX rows; the full 2305-row response was not stored."
+  },
+  "catalogue": {
+    "dataset": "taifex_market_tx_daily",
+    "fields": [
+      "tx_front_month_settlement_price",
+      "tx_total_open_interest"
+    ],
+    "event_time": "date (source session date)",
+    "availability_lag_days": 0,
+    "definition": "Front month = earliest TX regular-session monthly contract; total OI = sum of TX regular-session OI over monthly contracts. Withheld (never imputed or fallen through to a later month) when the front-month settlement or any monthly OI is missing, rows are duplicated, sessions are mixed, or a cap is saturated.",
+    "mirror": "services/registry/factor_rule.py seeds every MARKET_CHIP_DATASETS catalogue field as a FeatureDefinition"
+  },
+  "schedule_and_gates": {
+    "workflow": ".github/workflows/dev-tw-market-refresh.yml chip_refresh profile line + outcome artifact",
+    "deploy": "scripts/deploy_nonprod_vm.sh prepare_bounded_source_refresh_dataset admits tw-taifex-tx-daily:taifex_tx_daily; validate/readback gates are driven by TW_CHIP_REFRESH_PROFILES (exact hosts, dataset, schema hash, session date, source-id prefix)",
+    "not_admitted": "no other dataset or connector pair is admitted"
+  },
+  "validation": [
+    {
+      "command": "pytest services/source_ingestion/tests/test_taiwan_official_connectors.py test_active_universe.py test_persona_source_reconciler.py test_financial_source_catalog.py test_feature_catalogue.py services/registry/test_factor_rule.py",
+      "result": "passed"
+    },
+    {
+      "command": "pytest services/source_ingestion/tests/test_scheduled_connector.py test_financial_source_catalog.py scripts/test_source_ingest_deploy_diagnostics_contract.py plus connector-definition suites",
+      "result": "641 passed, 1 skipped"
+    },
+    {
+      "command": "pytest scripts/test_deploy_nonprod_vm.py",
+      "result": "143 passed, 2 skipped"
+    },
+    {
+      "command": "pytest scripts/test_dev_tw_market_refresh_workflow.py scripts/test_dev_tw_market_refresh.py",
+      "result": "146 passed after updating the profile count 5->6"
+    },
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "result": "exit 0"
+    }
+  ],
+  "known_unrelated_failure": "services/source_ingestion/tests/test_finmind_broker_backfill.py fails in this sandbox because pyarrow is not installed (dependency_unavailable); not touched by this task.",
+  "limitations": [
+    "Forward-only accumulation: no history before the first refresh.",
+    "Fixture holds the TX/MTX rows plus 9 real non-TX rows, not the whole 2305-row response; hash binds the full response."
+  ]
+}
