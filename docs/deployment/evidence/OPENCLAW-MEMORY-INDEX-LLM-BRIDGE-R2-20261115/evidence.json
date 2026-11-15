@@ -6,6 +6,10 @@
     {
       "cmd": "pytest services/openclaw-gateway-adapter/test_memory_llm_bridge.py services/openclaw-gateway-adapter/test_compose_activation.py deploy/hindsight/tests scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_memory_llm_bridge_deploy_switch_contract.py",
       "result": "see test_result"
+    },
+    {
+      "cmd": "MEMORY_LLM_BRIDGE_STATE_PATH=/tmp/nonexistent-import-smoke-dir/memory-llm-bridge.sqlite3 PYTHONPATH=.:services/openclaw-gateway-adapter .venv-pantheon/bin/python3 -c 'import consultation_provider; assert consultation_provider.app is not None'",
+      "result": "passed (_DailyBudget creates missing parent directory for MEMORY_LLM_BRIDGE_STATE_PATH when /root/.openclaw volume is not mounted during Stage 0 import-smoke)"
     }
   ],
   "test_result": "53 passed, 2 skipped (opt-in probes); compose contract updated for global LLM vars",

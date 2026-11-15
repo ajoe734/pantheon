@@ -92,7 +92,7 @@ def test_daily_budget_returns_rate_limit_with_retry_after():
 
 
 def test_budget_persists_in_state_file(tmp_path):
-    path = str(tmp_path / "budget.sqlite3")
+    path = str(tmp_path / "nested" / "budget.sqlite3")
     assert _call(_bridge(daily_budget=1, state_path=path))[0].status_code == 200
     assert _call(_bridge(daily_budget=1, state_path=path))[0].status_code == 429
 

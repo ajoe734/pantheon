@@ -85,6 +85,7 @@ class _DailyBudget:
         self._memory: Dict[str, int] = {}
         self._path = path
         if path:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with sqlite3.connect(path) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
 
