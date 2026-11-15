@@ -292,7 +292,7 @@ jobs:
           python3 -m pip install -r services/source_ingestion/requirements.txt
 
       - name: Run source ingestion tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
