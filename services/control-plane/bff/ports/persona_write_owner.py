@@ -358,6 +358,45 @@ class PersonaRegistryHttpWritePort:
             )
         return value
 
+    @staticmethod
+    def _decision_executor_authorization(actor_id: str, tenant_id: str) -> str:
+        """Short-lived tenant-bound executor JWT for one governed lifecycle step.
+
+        The Persona owner admits a decision-backed transition only for a JWT
+        whose verified tenant matches the persona (a static service token has
+        no tenant claim), and binds the body actor to the JWT subject.  The
+        role is the plain decision-executor role: the transition authority is
+        the Governance decision the owner re-verifies, never this token.
+        """
+
+        secret = _first_env(
+            ("PERSONA_JWT_SECRET", "PANTHEON_PERSONA_JWT_SECRET", "PANTHEON_BFF_JWT_SECRET")
+        )
+        if not secret:
+            raise PersonaWriteOwnerUnavailable(
+                "persona_lifecycle_owner", "Persona lifecycle JWT secret is not configured"
+            )
+        import time
+
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        now = int(time.time())
+        claims: Dict[str, Any] = {
+            "sub": actor_id,
+            "tenant_id": tenant_id,
+            "allowed_tenants": [tenant_id],
+            "roles": ["operator"],
+            "iat": now,
+            "exp": now + 120,
+        }
+        issuer = _first_env(("PERSONA_JWT_ISSUER", "PANTHEON_BFF_JWT_ISSUER"))
+        audience = _first_env(("PERSONA_JWT_AUDIENCE", "PANTHEON_BFF_JWT_AUDIENCE"))
+        if issuer:
+            claims["iss"] = issuer
+        if audience:
+            claims["aud"] = audience
+        return "Bearer " + encode_jwt_hs256(claims, secret=secret)
+
     # -- paper enrolment owner routes --------------------------------------
     # Background enrolment has no inbound caller, so these calls carry the
     # configured service credential and an explicit tenant. They only reach
@@ -386,6 +425,7 @@ class PersonaRegistryHttpWritePort:
                     "governance_decision_id": governance_decision_id,
                 },
                 write=True,
+                authorization=self._decision_executor_authorization(actor_id, tenant_id),
                 tenant_id=tenant_id,
             )
         except _PersonaHttpResponseError as exc:

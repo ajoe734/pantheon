@@ -283,6 +283,8 @@ class PersonaProvisioningCoordinator:
         persona_archiver: PersonaArchiver | None = None,
         agent_provisioner: AgentProvisioner | None = None,
         persona_owner_provider: Callable[[], Any] | None = None,
+        governance_proposer: OwnerTransport | None = None,
+        governance_proposer_actor_id: str | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -310,6 +312,8 @@ class PersonaProvisioningCoordinator:
         self.persona_archiver = persona_archiver
         self.agent_provisioner = agent_provisioner or default_agent_provisioner
         self.persona_owner_provider = persona_owner_provider or default_persona_owner
+        self.governance_proposer = governance_proposer
+        self.governance_proposer_actor_id = governance_proposer_actor_id
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -584,7 +588,13 @@ class PersonaProvisioningCoordinator:
     def _paper_enrollment(self, record: ProvisioningRecord) -> Any:
         from .persona_paper_enrollment import PersonaPaperEnrollment
 
+        from .persona_paper_enrollment import HttpGovernanceProposer
+
         ids = deterministic_provisioning_ids(record)
+        proposer = self.governance_proposer or HttpGovernanceProposer(
+            tenant_id=record.tenant_id
+        )
+        proposer_id = self.governance_proposer_actor_id or HttpGovernanceProposer.actor_id()
         owner = self.persona_owner_provider()
         if owner is None or not all(
             callable(getattr(owner, name, None))
@@ -610,6 +620,8 @@ class PersonaProvisioningCoordinator:
             transport=self.transport,
             runtime_binding_reader=self.runtime_binding_reader,
             governance_actor_id=self.governance_actor_id,
+            proposer=proposer,
+            proposer_actor_id=proposer_id,
         )
 
     def _enroll_in_place(self, record: ProvisioningRecord) -> ProvisioningRecord:

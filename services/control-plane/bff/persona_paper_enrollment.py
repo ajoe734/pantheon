@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol
@@ -83,6 +86,72 @@ class EnrollmentOutcome:
             "lifecycle_state": self.lifecycle_state,
             "steps": dict(self.steps),
         }
+
+
+class HttpGovernanceProposer:
+    """Proposer-side Governance transport under its own verified principal.
+
+    Governance refuses an action-target decision (``persona_lifecycle_transition``)
+    whose decider is its proposer, so the proposal cannot be made by the paper
+    automated gate identity.  This transport presents a separate service
+    principal (``PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN`` with subject
+    ``PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID``); with either missing the
+    enrolment fails closed with a readable reason.  It only ever POSTs a
+    proposal; it never reviews or decides.
+    """
+
+    URL_ENVS = ("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
+
+    def __init__(self, *, tenant_id: str, opener: Any = None, timeout_seconds: float = 30.0) -> None:
+        self.tenant_id = tenant_id
+        self._opener = opener or urllib.request.urlopen
+        self._timeout = timeout_seconds
+
+    @staticmethod
+    def actor_id() -> str:
+        return _text(os.getenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID"))
+
+    def _base(self) -> str:
+        for name in self.URL_ENVS:
+            value = _text(os.getenv(name)).rstrip("/")
+            if value:
+                return value
+        raise EnrollmentRefused("governance_url_unconfigured")
+
+    def _token(self) -> str:
+        from services.service_token_file import configured_service_token
+
+        token = configured_service_token("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN")
+        if not token or not self.actor_id():
+            raise EnrollmentRefused("governance_proposer_identity_unconfigured")
+        return token
+
+    def get(self, owner: str, path: str) -> Mapping[str, Any] | None:
+        raise EnrollmentRefused("governance_proposer_is_write_only")
+
+    def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        if owner != "governance" or path != "/api/governance/approvals":
+            raise EnrollmentRefused("governance_proposer_may_only_propose")
+        request = urllib.request.Request(
+            self._base() + path,
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            method="POST",
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token()}",
+                "X-Tenant-Id": self.tenant_id,
+                "Idempotency-Key": "persona-enroll-" + _digest(
+                    self.tenant_id, json.dumps(dict(payload), sort_keys=True)
+                ),
+            },
+        )
+        try:
+            with self._opener(request, timeout=self._timeout) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise EnrollmentRefused(f"governance_proposal_http_{exc.code}", retryable=exc.code >= 500) from exc
+        return value if isinstance(value, dict) else {}
 
 
 def _digest(*parts: str) -> str:
@@ -172,6 +241,8 @@ class PersonaPaperEnrollment:
         transport: OwnerTransport,
         runtime_binding_reader: Callable[[str, str], "list[Mapping[str, Any]]"],
         governance_actor_id: str,
+        proposer: OwnerTransport | None = None,
+        proposer_actor_id: str | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self.tenant_id = tenant_id
@@ -183,6 +254,8 @@ class PersonaPaperEnrollment:
         self.transport = transport
         self.runtime_binding_reader = runtime_binding_reader
         self.governance_actor_id = governance_actor_id
+        self.proposer = proposer
+        self.proposer_actor_id = _text(proposer_actor_id)
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     # -- entry --------------------------------------------------------------
@@ -347,16 +420,20 @@ class PersonaPaperEnrollment:
         key = _digest(self.tenant_id, self.persona_id, source, target)
         record = self.transport.get("governance", path)
         if record is None:
+            if self.proposer is None or not self.proposer_actor_id:
+                raise EnrollmentRefused("governance_proposer_identity_unconfigured")
+            if self.proposer_actor_id == self.governance_actor_id:
+                raise EnrollmentRefused("governance_proposer_must_differ_from_gate")
             expires = _utc(self._now() + APPROVAL_TTL)
             try:
-                self.transport.post(
+                self.proposer.post(
                     "governance",
                     "/api/governance/approvals",
                     {
                         "decision_id": decision_id,
                         "expected_version": 0,
                         "tenant_id": self.tenant_id,
-                        "owner_user_id": self.governance_actor_id,
+                        "owner_user_id": self.proposer_actor_id,
                         "target_type": TARGET_TYPE,
                         "target_id": self.persona_id,
                         "target_version": key,
@@ -411,6 +488,12 @@ class PersonaPaperEnrollment:
         except Exception:  # noqa: BLE001 - the authoritative readback decides
             pass
 
+    def _proposed_by_independent_principal(self, record: Mapping[str, Any]) -> bool:
+        owner = _text(record.get("owner_user_id"))
+        if not owner or owner == self.governance_actor_id:
+            return False
+        return not self.proposer_actor_id or owner == self.proposer_actor_id
+
     def _require_own_decision(
         self, record: Mapping[str, Any], decision_id: str, source: str, target: str
     ) -> None:
@@ -420,7 +503,7 @@ class PersonaPaperEnrollment:
             and record.get("target_type") == TARGET_TYPE
             and record.get("target_id") == self.persona_id
             and record.get("tenant_id") == self.tenant_id
-            and record.get("owner_user_id") == self.governance_actor_id
+            and self._proposed_by_independent_principal(record)
             and subject.get("persona_id") == self.persona_id
             and subject.get("from_state") == source
             and subject.get("to_state") == target
