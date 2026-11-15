@@ -51,6 +51,14 @@ DEFAULT_PARAMETERS: Mapping[str, Any] = {
     "close_before_reverse": True,
 }
 
+# COORDINATOR PROPOSAL (2026-11-13, PERSONA-POOL-TARGET-POSITIONS-20261113),
+# pending reviewer confirmation: the rebalance band used to trim a same-direction
+# holding under notional_target_v1, the same value target_position_v1 uses.
+# Deliberately NOT merged into DEFAULT_PARAMETERS so policy_parameters_digest of
+# existing decisions and the multi-member envelope parameters stay byte identical.
+# An explicit ``rebalance_band_fraction`` parameter overrides it.
+NOTIONAL_REBALANCE_BAND_FRACTION = 0.2
+
 _CHOSEN_KEYS = frozenset(
     {
         "decision_id",
@@ -255,6 +263,94 @@ def resolved_parameters(parameters: Mapping[str, Any] | None) -> dict[str, Any]:
     return _resolved_parameters(parameters)
 
 
+def _close_held(view, candidates, params, book, underlying, direction):
+    """Close the first held leg of ``underlying`` because the view turned flat."""
+    by_id = {str(c.get("instrument_id")): c for c in candidates}
+    position = sorted(
+        _open_positions(book, underlying), key=lambda p: str(p.get("instrument_id"))
+    )[0]
+    instrument_id = str(position.get("instrument_id"))
+    held_direction = str(position.get("direction") or "").upper()
+    held_units = int(position["units"])
+    candidate = by_id.get(instrument_id)
+    if candidate is None or _unit_notional(candidate) <= 0:
+        return _no_trade(
+            view, candidates, "no_feasible_instrument", "close_instrument_not_in_candidates"
+        )
+    return _chosen(
+        view,
+        candidates,
+        params,
+        instrument_id=instrument_id,
+        side="sell" if held_direction == "LONG" else "buy",
+        units=held_units,
+        reason_code="close_leg",
+        reason_text=f"close open {held_direction.lower()} {instrument_id} on a flat view",
+        target_notional=_unit_notional(candidate) * held_units,
+    )
+
+
+def _trim_same_direction(view, candidates, params, budget, book, underlying, direction, position):
+    """Trim a same-direction holding when the view's target fell below it.
+
+    Same rule as target_position_v1: reduce only when ``exposure - target``
+    exceeds the band ``max(largest held unit notional, target * fraction)``,
+    flooring the proportional reduction and never closing more than held.
+    The target is anchored on the absolute gross limit so a held position does
+    not shrink its own target.  Returns None when no trim applies.
+    """
+    strength = view.get("strength")
+    if strength is None:
+        return None
+    limit = budget.get("gross_limit")
+    if limit is None:
+        explicit = budget.get("max_gross_notional_remaining")
+        if explicit is None:
+            return None
+        limit = _dec(explicit) + _dec(budget.get("gross_used") or 0)
+    by_id = {str(c.get("instrument_id")): c for c in candidates}
+    exposure = Decimal(0)
+    band = Decimal(0)
+    held_total = 0
+    for p in _open_positions(book, underlying):
+        if str(p.get("direction") or "").upper() != direction:
+            continue
+        candidate = by_id.get(str(p.get("instrument_id")))
+        if candidate is None or _unit_notional(candidate) <= 0:
+            return None
+        exposure += _unit_notional(candidate) * int(p["units"])
+        band = max(band, _unit_notional(candidate))
+        held_total += int(p["units"])
+    fraction = _dec(params.get("rebalance_band_fraction", NOTIONAL_REBALANCE_BAND_FRACTION))
+    target = _dec(strength) * _dec(params["notional_fraction_at_full_strength"]) * _dec(limit)
+    if not (target.is_finite() and fraction.is_finite()) or target < 0 or not 0 <= fraction <= 1:
+        return None
+    band = max(band, target * fraction)
+    if exposure <= 0 or exposure - target <= band:
+        return None
+    instrument_id = str(position.get("instrument_id"))
+    held = int(position["units"])
+    units = min(held, int(Decimal(held_total) * (exposure - target) / exposure))
+    if units < 1:
+        return None
+    record = _chosen(
+        view,
+        candidates,
+        params,
+        instrument_id=instrument_id,
+        side="sell" if direction == "LONG" else "buy",
+        units=units,
+        reason_code="close_leg",
+        reason_text=(
+            f"trim {direction.lower()} {instrument_id} to weaker view strength={strength} "
+            f"target_notional={float(target):.2f}"
+        ),
+        target_notional=target,
+    )
+    record["rebalance_band"] = float(band)
+    return record
+
+
 def decide(
     view: Mapping[str, Any],
     candidates: Sequence[Mapping[str, Any]],
@@ -270,7 +366,11 @@ def decide(
 
     # Step 1
     if direction not in ("LONG", "SHORT"):
-        return _no_trade(view, candidates, "flat_view", "view direction is FLAT")
+        if not _open_positions(book, underlying):
+            return _no_trade(view, candidates, "flat_view", "view direction is FLAT")
+        # A flat view closes whatever is held on this underlying (one leg per
+        # call, the same as the opposite-view close; the next bar continues).
+        return _close_held(view, candidates, params, book, underlying, direction)
     if not candidates:
         return _no_trade(
             view, candidates, "candidates_unavailable", "no candidate record supplied"
@@ -313,6 +413,11 @@ def decide(
                 ),
                 target_notional=_unit_notional(candidate) * held_units,
             )
+        trim = _trim_same_direction(
+            view, candidates, params, budget, book, underlying, direction, position
+        )
+        if trim is not None:
+            return trim
         if not params["allow_pyramiding"]:
             return _no_trade(
                 view,

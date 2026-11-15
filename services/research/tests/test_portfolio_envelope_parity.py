@@ -147,3 +147,24 @@ class PortfolioParityTests(unittest.TestCase):
         self.assertEqual(producer.produce(binding, "2026-11-12T05:30:00Z"), 0)
         self.assertEqual(store.queue_depth(), 0)
 
+
+
+def test_multi_member_target_position_policy_is_byte_identical_after_notional_exit_change():
+    """Multi-member envelopes stay on target_position_v1; the notional trim must not touch them."""
+    from services.execution.lean_runtime import expression_policy as ep
+    params = {**ep.DEFAULT_PARAMETERS, "rebalance_band_fraction": .2}
+    # Frozen before PAPER-FLAT-VIEW-CLOSE-AND-TRIM-20261115: neither value may move.
+    assert ep.policy_parameters_digest(params) == "1124d9c76fdca98ddda3d10f"
+    assert ep.policy_parameters_digest(ep.DEFAULT_PARAMETERS) == "21506025fd1f63344919806d"
+    cand = {"instrument_id": "eq:2330", "price": 100, "unit": 1, "multiplier": 1, "kind": "cash_share",
+            "side_capability": ["long"], "max_units_by_risk": 1000,
+            "fee_per_unit_per_side": 0, "tax_rate_per_side": 0}
+    budget = {"gross_limit": 100000, "gross_used": 10000, "available_cash": 90000}
+    book = {"positions": [{"underlying": "2330", "instrument_id": "eq:2330",
+                           "direction": "LONG", "units": 100, "notional": 10000}]}
+    def out(direction, target):
+        return ep.decide_for_policy(ep.TARGET_POLICY_KIND, {"decision_id": "d", "underlying": "2330",
+            "direction": direction, "strength": .5, "target_notional": target}, [cand], book, budget, params)
+    assert [(r["reason_code"], r.get("units"), r["rebalance_band"]) for r in
+            (out("FLAT", 0), out("LONG", 5000), out("LONG", 10050))] == [
+        ("close_leg", 100, 100.0), ("close_leg", 50, 1000.0), ("already_at_target", None, 2010.0)]

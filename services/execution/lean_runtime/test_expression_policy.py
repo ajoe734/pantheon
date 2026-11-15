@@ -230,3 +230,78 @@ class TestBudgetUnavailableNoTrade:
         assert expression_policy.enforce(record, [], view) == record
         bare = expression_policy.budget_unavailable_no_trade(view, "ledger")
         assert bare["detail"] == "budget_unavailable: ledger"
+
+
+# --- notional_target_v1: a flat view closes and a weaker view trims -----------------
+def _cash_cand(price: float = 100.0, maximum: int = 1000) -> dict[str, Any]:
+    return {"instrument_id": "eq:2330", "kind": "cash_share", "side_capability": ["long"],
+            "unit": 1, "multiplier": 1, "price": price, "max_units_by_risk": maximum,
+            "fee_per_unit_per_side": 0.0, "tax_rate_per_side": 0.0}
+
+
+def _held_book(units: int, direction: str = "LONG") -> dict[str, Any]:
+    return {"positions": [{"underlying": "2330", "instrument_id": "eq:2330",
+                           "direction": direction, "units": units}]}
+
+
+_TRIM_BUDGET = {"gross_limit": 100_000.0, "gross_used": 50_000.0, "available_cash": 50_000.0}
+
+
+def test_flat_view_with_open_position_closes_it_fully() -> None:
+    out = ep.decide_validated(_view("2330", "FLAT", None), [_cash_cand()], _held_book(500), _TRIM_BUDGET, PARAMS)
+    assert (out["reason_code"], out["side"], out["units"], out["instrument_id"]) == ("close_leg", "sell", 500, "eq:2330")
+
+
+def test_flat_view_closes_a_short_with_a_buy() -> None:
+    cand = {**_cash_cand(), "side_capability": ["long", "short"]}
+    out = ep.decide_validated(_view("2330", "FLAT", None), [cand], _held_book(3, "SHORT"), _TRIM_BUDGET, PARAMS)
+    assert (out["reason_code"], out["side"], out["units"]) == ("close_leg", "buy", 3)
+
+
+def test_flat_view_without_position_is_still_flat_view_and_unknown_leg_fails_closed() -> None:
+    assert ep.decide(_view("2330", "FLAT", None), [_cash_cand()], {}, _TRIM_BUDGET, PARAMS)["reason_code"] == "flat_view"
+    out = ep.decide(_view("2330", "FLAT", None), [], _held_book(5), _TRIM_BUDGET, PARAMS)
+    assert out["reason_code"] == "no_feasible_instrument"
+    assert out["detail"] == "close_instrument_not_in_candidates"
+
+
+def test_opposite_view_still_closes_before_reversing() -> None:
+    cand = {**_cash_cand(), "side_capability": ["long", "short"]}
+    out = ep.decide(_view("2330", "SHORT", 1.0), [cand], _held_book(500), _TRIM_BUDGET, PARAMS)
+    assert (out["reason_code"], out["side"], out["units"]) == ("close_leg", "sell", 500)
+
+
+def test_weaker_same_direction_view_trims_by_the_band_rule() -> None:
+    # exposure 50,000; strength .2 -> target 20,000; band = max(100, 4,000) = 4,000.
+    out = ep.decide_validated(_view("2330", "LONG", 0.2), [_cash_cand()], _held_book(500), _TRIM_BUDGET, PARAMS)
+    assert (out["reason_code"], out["side"]) == ("close_leg", "sell")
+    assert out["units"] == 300  # floor(500 * (50,000 - 20,000) / 50,000)
+    assert out["target_notional"] == pytest.approx(20_000.0)
+    assert out["rebalance_band"] == pytest.approx(4_000.0)
+    assert out["policy_parameters_digest"] == ep.policy_parameters_digest(PARAMS)
+
+
+def test_view_within_the_band_does_not_trim_and_stronger_view_adds_only_with_pyramiding() -> None:
+    # strength .48 -> target 48,000; exposure - target = 2,000 <= band 9,600.
+    out = ep.decide(_view("2330", "LONG", 0.48), [_cash_cand()], _held_book(500), _TRIM_BUDGET, PARAMS)
+    assert out["reason_code"] == "already_at_target"
+    strong = _view("2330", "LONG", 1.0)
+    assert ep.decide(strong, [_cash_cand()], _held_book(500), _TRIM_BUDGET, PARAMS)["reason_code"] == "already_at_target"
+    added = ep.decide(strong, [_cash_cand()], _held_book(500), _TRIM_BUDGET, {**PARAMS, "allow_pyramiding": True})
+    assert added["reason_code"] == "long_cash" and added["side"] == "buy"
+
+
+def test_trim_band_is_a_parameter_and_trim_is_validated_by_enforce() -> None:
+    args = (_view("2330", "LONG", 0.4), [_cash_cand()], _held_book(500), _TRIM_BUDGET)
+    assert ep.decide(*args, PARAMS)["reason_code"] == "close_leg"  # 10,000 > default band 8,000
+    assert ep.decide(*args, {**PARAMS, "rebalance_band_fraction": 1.0})["reason_code"] == "already_at_target"
+    out = ep.decide_validated(_view("2330", "LONG", 0.2), [_cash_cand()], _held_book(500), _TRIM_BUDGET, PARAMS)
+    over = {**out, "units": 501}
+    assert ep.enforce(over, [_cash_cand()], _view("2330", "LONG", 0.2), _held_book(500))["reason_code"] == \
+        "instrument_not_in_candidates"
+
+
+def test_default_parameters_and_digest_are_unchanged() -> None:
+    assert set(ep.DEFAULT_PARAMETERS) == {"lever_min_strength", "notional_fraction_at_full_strength",
+                                          "allow_pyramiding", "close_before_reverse"}
+    assert ep.NOTIONAL_REBALANCE_BAND_FRACTION == 0.2
