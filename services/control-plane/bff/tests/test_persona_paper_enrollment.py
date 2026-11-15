@@ -606,11 +606,14 @@ _PROBE_CASES = [
 def test_probe_classification_matches_the_persona_evaluator_rule():
     from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
 
-    sys.path.insert(0, str(REPO / "services" / "persona-evaluator-agent"))
-    try:
-        import persona_evaluator_agent as agent
-    finally:
-        sys.path.pop(0)
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "persona_evaluator_agent_for_probe_rule",
+        REPO / "services" / "persona-evaluator-agent" / "persona_evaluator_agent.py",
+    )
+    agent = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(agent)
     answers = [is_probe_or_test_persona(p) for p in _PROBE_CASES]
     assert answers == [agent._probe_persona(dict(p)) for p in _PROBE_CASES]
     assert answers[0] is True and answers[5] is False
