@@ -783,3 +783,12 @@ def test_regime_index_and_breadth_features_are_governed_inputs() -> None:
         definition = get_feature_definition(dataset, field)
         assert definition is not None and definition.min_availability_lag_days == 0
     assert get_feature_definition("tw_index_daily", "volume") is None
+
+
+def test_tx_daily_front_month_series_are_mirrored_with_declared_lag() -> None:
+    from services.source_ingestion.feature_catalogue import lag_days_for
+
+    for name in ("tx_front_month_settlement_price", "tx_total_open_interest"):
+        definition = get_feature_definition("taifex_market_tx_daily", name)
+        assert definition.min_availability_lag_days == lag_days_for("taifex_market_tx_daily", name) == 0
+        assert definition.release_cadence == "daily"

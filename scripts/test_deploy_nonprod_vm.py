@@ -3939,3 +3939,12 @@ def test_untagged_image_removal_wired_after_protection_and_no_forbidden_prunes()
     removal = _prune_shell_function("remove_dev_untagged_unreferenced_images_for_build")
     assert "docker rmi -f" not in removal and "--force" not in removal
     assert "volume prune" not in source
+
+
+def test_tx_daily_admission_is_exact_and_does_not_widen_the_ssf_profile():
+    hosts = 'openapi.taifex.com.tw,www.taifex.com.tw'
+    assert _chip_admission('tw-taifex-tx-daily', 'taifex_tx_daily', hosts).returncode == 0
+    for dataset in ('taifex_ssf_contracts', 'taifex_futures_chip', 'tw_price_daily', ''):
+        assert _chip_admission('tw-taifex-tx-daily', dataset, hosts).returncode != 0
+    assert _chip_admission('tw-taifex-futures-options-chip', 'taifex_tx_daily', hosts).returncode != 0
+    assert 'tw-taifex-tx-daily:taifex_tx_daily' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
