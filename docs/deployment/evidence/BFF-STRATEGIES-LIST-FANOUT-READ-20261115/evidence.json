@@ -5,7 +5,7 @@
   "status": "ready_for_independent_review",
   "recorded_at": "2026-11-15T00:05:01.245967+00:00",
   "source_base_commit": "e2f185058632ea4873ff047d46342c2a02851a0a",
-  "anchor_commit": "2120efbe5f9d28d2bd641b3191a30ea59fcf51f6",
+  "anchor_commit": "baa4be903e2dc0946e769faecf9db8448a990e11",
   "scope": {
     "runtime": [
       "services/control-plane/bff/ports/research_knowledge_source.py"
@@ -1248,5 +1248,6 @@
   "delivery": {
     "independent_review": "pending Claude",
     "merge": "pending canonical supervisor integration; owner has not claimed done"
-  }
+  },
+  "delivery_base_commit": "256a668e4af7eb778d614130bcaff53677efa9eb"
 }
