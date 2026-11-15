@@ -301,6 +301,9 @@ class CountingOwnerServer:
         self.port: int = 0
 
     def reset_counts(self) -> None:
+        # A count reset marks a new measured read; drop the short league-rows memo.
+        from services.control_plane.bff.personas import service as _ps
+        _ps._pm12_league_rows_cache_clear()
         with self._lock:
             self.counts.clear()
             self.raw_paths.clear()
