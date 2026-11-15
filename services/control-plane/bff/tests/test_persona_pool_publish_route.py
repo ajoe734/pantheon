@@ -241,10 +241,9 @@ class PublishOwnerTransport(FakeOwnerTransport):
 # ---------------------------------------------------------------------------
 # World: bootstrapped persona, approved member artifacts, two pool versions.
 # ---------------------------------------------------------------------------
-def _member_entry(name: str, symbol: str) -> dict[str, Any]:
-    artifact = load_strategy_artifact_registration(BUILTIN_STRATEGY_ARTIFACT_PATHS[0])[
-        "strategy_artifact"
-    ]
+def _member_entry(name: str, symbol: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    artifact = copy.deepcopy(base) if base else load_strategy_artifact_registration(
+        BUILTIN_STRATEGY_ARTIFACT_PATHS[0])["strategy_artifact"]
     artifact["artifact_id"] = f"artifact-{name}"
     artifact["strategy_id"] = f"strategy-{name}"
     artifact["parameters"]["symbols"] = [symbol]
@@ -836,3 +835,115 @@ def test_last_member_removal_publishes_empty_flat_envelope_and_keeps_runtime(wor
     envelope = world.transport.objects[('registry', '/api/registry/strategy-artifacts/' + receipt['envelope_artifact_id'])]['entry']['metadata']['strategy_artifact']
     assert envelope['strategy_logic']['members'] == []
     assert evaluate_strategy_view(envelope, [100, 101], symbol='2330.TW')['direction'] == 'FLAT'
+
+
+# ---------------------------------------------------------------------------
+# Trial member -> trading member, published without an operator (real owner code).
+# ---------------------------------------------------------------------------
+def _genuine_trial_entry() -> dict[str, Any]:
+    """A registry entry minted by the real replication gate + registry proof verification.
+
+    Its ref is the artifact id so the real publisher's own member checks pass unchanged.
+    """
+    from services.evolution.test_approved_baselines import genuine_entry
+
+    entry = genuine_entry(tenant=TENANT)
+    body = entry["metadata"]["strategy_artifact"]
+    entry["registry_id"] = body["artifact_id"]
+    entry["version"] = body["version"]
+    return entry
+
+
+def _virtual_book(checksum: str, days: int, wobble: float) -> dict[str, Any]:
+    from datetime import date, timedelta
+
+    return {"checksum": checksum, "source_ref": "test:virtual-book-owner", "since_inception": True,
+            "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional",
+            "dates": [(date(2026, 10, 1) + timedelta(days=i)).isoformat() for i in range(days)],
+            "returns": ([.002 + wobble, -.0005] * days)[:days]}
+
+
+def _envelope_members(world: World, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    entry = world.transport.objects[
+        ("registry", f"/api/registry/strategy-artifacts/{data['envelope_artifact_id']}")]["entry"]
+    return {m["member_id"]: m for m in entry["metadata"]["strategy_artifact"]["strategy_logic"]["members"]}
+
+
+def test_trial_member_becomes_trading_member_after_twenty_days_and_publishes(world, monkeypatch, tmp_path):
+    """Admitted trial -> 20 trading days of its own book -> re-weight -> publish -> Deployment shows it trading.
+
+    Real: policy re-weight and promotion, baseline resolver on the gate-minted proof, the BFF route,
+    publisher, coordinator, StagePlanner and the Deployment dispatch adapter. The admission result
+    is appended through the store's policy-applied path (admission has its own tests in
+    test_persona_strategy_pool.py); the trial member itself is a gate-minted registry entry.
+    """
+    trial_entry = _genuine_trial_entry()
+    trial = trial_entry["registry_id"]
+    world.entries["artifact-a"] = _member_entry("a", "2317.TW", trial_entry["metadata"]["strategy_artifact"])
+    world.transport.objects[("registry", "/api/registry/strategy-artifacts/artifact-a")] = {
+        "entry": copy.deepcopy(world.entries["artifact-a"]), "deployment_stage": "none"}
+    world.entries[trial] = trial_entry
+    world.transport.objects[("registry", f"/api/registry/strategy-artifacts/{trial}")] = {
+        "entry": copy.deepcopy(trial_entry), "deployment_stage": "none"}
+    client = _client(world, monkeypatch, tmp_path)
+
+    world.append([world.member("artifact-a", 1.0)], 0)
+    first = client.post(PATH, json={}, headers=H)
+    assert first.status_code == 200, first.text
+
+    trial_member = PoolMember(artifact_ref=trial, checksum=trial_entry["checksum"], stage="trial", risk_weight=0,
+                              baseline_ref=trial_entry["approval_decision_id"], joined_at="2026-10-01T00:00:00Z")
+    world.append([world.member("artifact-a", 1.0), trial_member], 1, policy=True)
+    published = client.post(PATH, json={}, headers=H)
+    assert published.status_code == 200, published.text
+    admitted = published.json()["data"]
+    pins = _envelope_members(world, admitted)
+    # Reproduction of the gap: a demand-admitted trial publishes with weight zero, virtual only.
+    assert pins[trial]["risk_weight"] == 0 and pins[trial]["virtual_only"] is True
+
+    from services.control_plane.persona.persona_strategy_pool import PoolDecisionRequest
+
+    books = {"artifact-a": _virtual_book(world.entries["artifact-a"]["checksum"], 30, 0.0),
+             trial: _virtual_book(trial_entry["checksum"], 20, 0.001)}
+    decided = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(
+        expected_version=2, execution_context="paper", action="reweight", books=books), actor_id="persona-pool-cycle")
+    assert decided["decision"]["status"] == "applied", decided["decision"]["reasons"]
+    assert decided["decision"]["trial_promotions"][0]["promoted"] is True
+    promoted = next(m for m in decided["members"] if m["artifact_ref"] == trial)
+    assert promoted["stage"] == "active" and promoted["risk_weight"] > 0.1  # weight beyond the trial cap
+
+    final = client.post(PATH, json={}, headers=H)
+    assert final.status_code == 200, final.text
+    data = final.json()["data"]
+    assert data["status"] == "published" and data["pool_version"] == 3
+    pins = _envelope_members(world, data)
+    assert pins[trial]["virtual_only"] is False and pins[trial]["risk_weight"] == pytest.approx(promoted["risk_weight"])
+    live = _live(world)
+    assert len(live) == 1 and live[0]["artifact_id"] == data["envelope_artifact_id"]
+    assert world.runtime.calls == ["deploy", "replace", "replace", "replace"]
+
+
+def test_trial_with_weight_publishes_at_most_the_trial_cap_and_not_virtual(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 0.9)], 0)
+    trial = PoolMember(artifact_ref="artifact-b", checksum=world.entries["artifact-b"]["checksum"], stage="trial",
+                       risk_weight=0.1, baseline_ref="artifact-b", joined_at="2026-10-01T00:00:00Z")
+    world.append([world.member("artifact-a", 0.9), trial], 1, policy=True)
+    pins = _envelope_members(world, client.post(PATH, json={}, headers=H).json()["data"])
+    assert pins["artifact-b"]["risk_weight"] == pytest.approx(0.1) and pins["artifact-b"]["virtual_only"] is False
+
+
+def test_history_route_and_publish_records_survive_a_restart(world, monkeypatch, tmp_path):
+    from services.control_plane.bff.persona_pool_publisher import build_publish_records
+
+    env = {"PANTHEON_PERSONA_POOL_PUBLISH_STORE_BACKEND": "json",
+           "PANTHEON_PERSONA_POOL_PUBLISH_STORE_PATH": str(tmp_path / "records.json")}
+    world.publisher.records = build_publish_records(env)
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 1.0)], 0)
+    assert client.post(PATH, json={}, headers=H).status_code == 200
+    restarted = build_publish_records(env)  # a new process opens the same durable store
+    record = restarted.get(f"{TENANT}:{PERSONA}")
+    assert record["published"]["1"]["status"] == "published" and record["current_envelope"]["pool_version"] == 1
+    history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H)
+    assert history.status_code == 200 and history.json()["data"]["published"]["1"]["members"][0]["stage"] == "active"
