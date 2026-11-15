@@ -28,9 +28,22 @@
       {
         "cmd": "pytest -q services/source_ingestion/tests/test_distillation_controller.py test_hypothesis_compiler_wiring.py test_hypothesis_extraction.py test_hypothesis_compiler.py",
         "result": "117 passed"
+      },
+      {
+        "cmd": "pytest -q services/research/tests/test_hypothesis_card_gate_candidate.py services/research/alpha_replication/test_evolution_executor_case_file.py (combined order, /tmp/hc-venv)",
+        "result": "23 passed (was 16 failed before the isolation fix)"
+      },
+      {
+        "cmd": "pytest -q test_hypothesis_card_gate_candidate.py + test_candidate_registration.py + test_evolution_executor_case_file.py (/tmp/rv-venv)",
+        "result": "26 passed"
+      },
+      {
+        "cmd": "pytest -q <T> + retrain_executor_real_auth/single_owner_routes/retrieval_influence/candidate_registration files vs same without T (/tmp/hc-venv)",
+        "result": "with T: 11 failed, 92 passed; without T: 11 failed, 86 passed. Identical 11 failures with and without T, so T adds 6 passes and no failures"
       }
     ],
-    "not_run": "full services/source_ingestion/tests directory exceeded the 10 minute bounded batch and was not completed",
-    "fixture_provenance": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json and hypothesis_predictions_recorded.json are hand-authored model-shaped responses (their provenance field says so), not live provider captures; no live model call in CI"
+    "not_run": "full services/source_ingestion/tests directory exceeded the 10 minute bounded batch and was not completed; whole services/research/tests directory exceeds the bounded batch with vectorbt installed, and without pandas/vectorbt (/tmp/rv-venv) it showed 24 failed both with and without T (T adds 6 passes, no extra failures)",
+    "fixture_provenance": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json and hypothesis_predictions_recorded.json are hand-authored model-shaped responses (their provenance field says so), not live provider captures; no live model call in CI. Criterion 6 asks for a recorded real-run output: no real provider capture was available to this worker, so this is NOT satisfied literally; a real capture must be supplied by an operator with provider access.",
+    "isolation_fix": "Root cause: OwnerEnvironment patches build_opener while urllib.request.urlopen lazily caches a module-global _opener, so the first urlopen in the e2e test pinned the fake _ResearchOpener process-wide (TypeError open() takes 2-3 args, 4 given). An autouse fixture in test_hypothesis_card_gate_candidate.py restores urllib.request._opener and resets the registry store on teardown. The approval_reader assignment is instance-level on a per-call RegistryService and does not leak."
   }
 }

@@ -47,6 +47,25 @@ from services.source_ingestion.tests.test_hypothesis_compiler import _proposal
 ENABLED = "PANTHEON_L2_EXTRACTION_ENABLED"
 
 
+@pytest.fixture(autouse=True)
+def _restore_process_globals(monkeypatch):
+    """Keep the in-process owner wiring from leaking into other suites.
+
+    ``OwnerEnvironment`` patches ``build_opener`` while ``urllib.request.urlopen`` lazily
+    caches a module-global opener, so the first call would pin the fake opener for the
+    whole process. It also fills the in-memory registry store, which is reset on teardown.
+    """
+    import urllib.request
+
+    from services.registry.storage import reset_store
+
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    opener = urllib.request._opener
+    yield
+    urllib.request._opener = opener
+    reset_store()
+
+
 def _dataset() -> dict[str, Any]:
     return json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"]
 
