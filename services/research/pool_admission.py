@@ -1,5 +1,7 @@
 """Out-of-sample pool admission on governed, observed daily bars.
 
+Daily decisions follow the shared convention: computed from the close of session D, filled at the open of D+1
+(``member_virtual_book.next_open_net_returns``); a session without an open gives no fill, never a close fill.
 Replays the existing registry interpreter and immutable envelope netting, on
 underlying exposure-fraction returns with Taiwan costs. This is the virtual
 book basis, deliberately distinct from the gate's share-sized Sharpe. The
@@ -11,7 +13,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from services.execution.lean_runtime.member_virtual_book import NET_BASIS, _net_interval_costs
+from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, NET_BASIS, next_open_net_returns
 from services.registry.portfolio_envelope import build_portfolio_envelope, required_portfolio_history
 from services.registry.strategy_artifact import evaluate_strategy_view
 from services.research.vectorbt.adapter.vectorbt_adapter import (
@@ -19,7 +21,8 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 )
 
 
-def _replay(prepared, artifact, dates):
+def _replay(prepared, artifact, dates, fills_out=None):
+    """``fills_out`` (optional list) receives every per-session fill of the daily next-open replay."""
     """Same dated inputs/interpreter/netting as paper, previous-bar exposure only."""
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
@@ -52,18 +55,13 @@ def _replay(prepared, artifact, dates):
                     strength = 0.0
                 if calendar[index] in dates:
                     rows.append({"exposure": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction] * strength,
-                                 "price": prepared.ohlcv_by_instrument[symbol][index][3]})
-            costs = _net_interval_costs(symbol, rows)
-            values = []
-            for i, (prior, row) in enumerate(zip(rows, rows[1:]), 1):
-                value = prior["exposure"] * (row["price"] / prior["price"] - 1) - costs[i]
-                if i == 1:
-                    value -= costs[0]
-                if i == len(rows) - 1:
-                    value -= _net_interval_costs(symbol, [rows[-1], {"exposure": 0}])[-1]
-                if not math.isfinite(value) or value <= -1:
-                    raise ValueError("backtest_return_invalid")
-                values.append(value)
+                                 "open": prepared.ohlcv_by_instrument[symbol][index][0],
+                                 "close": prepared.ohlcv_by_instrument[symbol][index][3], "date": calendar[index]})
+            values, fills = next_open_net_returns(symbol, rows, liquidate_final=True)
+            if fills_out is not None:
+                fills_out.extend({"symbol": symbol, **fill} for fill in fills)
+            if any(not math.isfinite(v) or v <= -1 for v in values):
+                raise ValueError("backtest_return_invalid")
             series.append(values)
         return [statistics.mean(values) for values in zip(*series)]
     wanted = {normalize_taiwan_symbol(s) for s in artifact["parameters"]["symbols"]}
@@ -76,6 +74,7 @@ def _replay(prepared, artifact, dates):
         if len(set(all_dates)) != len(all_dates) or not set(dates) <= set(all_dates):
             raise ValueError("backtest_dates_missing_or_duplicate")
         prices = [bar[3] for bar in prepared.ohlcv_by_instrument[symbol]]
+        opens = [bar[0] for bar in prepared.ohlcv_by_instrument[symbol]]
         rows = []
         for day in dates:
             index = all_dates.index(day)
@@ -86,19 +85,14 @@ def _replay(prepared, artifact, dates):
                                           decision_time=decision_time, symbol=symbol)
             strength = 1.0 if view["strength"] is None else view["strength"]
             exposure = {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]] * strength
-            rows.append({"exposure": exposure, "price": prices[index]})
-        costs = _net_interval_costs(symbol, rows)
-        # Include opening and final liquidation costs in the untouched window.
-        returns = []
-        for i, (prior, row) in enumerate(zip(rows, rows[1:]), 1):
-            value = prior["exposure"] * (row["price"] / prior["price"] - 1) - costs[i]
-            if i == 1:
-                value -= costs[0]
-            if i == len(rows) - 1:
-                value -= _net_interval_costs(symbol, [rows[-1], {"exposure": 0}])[-1]
-            if not math.isfinite(value) or value <= -1:
-                raise ValueError("backtest_return_invalid")
-            returns.append(value)
+            rows.append({"exposure": exposure, "open": opens[index], "close": prices[index], "date": day})
+        # A decision from day D's close fills at day D+1's open; the untouched window's final
+        # position is marked out at the last close with its liquidation costs.
+        returns, fills = next_open_net_returns(symbol, rows, liquidate_final=True)
+        if fills_out is not None:
+            fills_out.extend({"symbol": symbol, **fill} for fill in fills)
+        if any(not math.isfinite(v) or v <= -1 for v in returns):
+            raise ValueError("backtest_return_invalid")
         series.append(returns)
     return [statistics.mean(values) for values in zip(*series)]
 
@@ -164,7 +158,7 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
     return {"admitted": not reasons, "reasons": reasons, "correlations": correlations,
             "pool_oos_sharpe": before, "combined_oos_sharpe": after, "candidate_oos_sharpe": candidate_sharpe,
             "persona_trial_count": trial_count, "sharpe_haircut": haircut, "required_candidate_sharpe": threshold,
-            "return_basis": after_basis, "pool_oos_return_basis": before_basis,
+            "fill_convention": FILL_CONVENTION, "return_basis": after_basis, "pool_oos_return_basis": before_basis,
             "combined_oos_return_basis": after_basis, "candidate_oos_return_basis": NET_BASIS,
             "periods_per_year": policy.periods_per_year,
             "oos_start": dates[0], "oos_end": dates[-1], "return_observations": len(dates) - 1,

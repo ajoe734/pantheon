@@ -223,11 +223,28 @@ A candidate joins as `trial` only when all hold:
 
 No qualifying candidate → the risk budget stays unused and the reason is recorded.
 
+#### 5.1a Daily fill convention (decision of 2026-11-15)
+
+Admission replay, the candidate replay book, member virtual books, the expression replay and the gate backtest all
+use one convention for daily strategies: a decision computed from the close of session D is filled at the **open of
+session D+1** with the statutory costs; a session without an open price gives no fill with the reason
+`no_open_price` and never falls back to the close. Operator decision 2026-11-15: 「回測和 paper 都改成隔日開盤」
+(option A; transcript reference in
+`docs/deployment/evidence/PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115/evidence.json`, implementation and parity proof in
+`docs/deployment/evidence/GATE-DAILY-NEXT-OPEN-REBASELINE-20261115/evidence.json`). The intraday convention is unchanged.
+Admission results now report `fill_convention`; thresholds (correlation cut-off, Sharpe improvement, deflation) are
+unchanged, so some candidates that cleared admission under close fills no longer do on the same recorded bars.
+
 ### 5.2 Baseline
 
 The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is its approved baseline;
 `DISCOVERY-GATE-PASS-APPROVED-BASELINE-20261112` is re-scoped to key baselines by pool member and to compare
 them with the member's **virtual book**, not with the persona's combined account.
+
+A baseline whose gate proof was computed with the decision filled at the close of its own bar is not comparable with a
+next-open virtual book. `resolve_member_baseline` reports it as `no_approved_baseline` /
+`baseline_computed_under_decision_close_fill` with `operator_decision_required`; it is neither kept as approved nor
+removed. The re-baseline run is `python -m services.research.rebaseline_next_open`.
 
 ### 5.3 Weights
 

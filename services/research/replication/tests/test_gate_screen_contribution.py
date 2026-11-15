@@ -42,11 +42,25 @@ def dataset(market):
             "records": records, "candidate_pool_market": market}
 
 
-def artifact(side="top"):
+def artifact(side="top", pool_count=None):
     art = screen_artifact()
     art["parameters"]["symbols"] = ["2330.TW"]
     art["strategy_logic"]["screen"]["steps"][1]["side"] = side
+    if pool_count is not None:
+        art["parameters"]["pool_count"] = pool_count
+        for control in art["mutation_surface"]["controls"]:
+            if control["parameter_key"] == "pool_count":
+                control["current_value"] = pool_count
     return art
+
+
+def adds_nothing_artifact():
+    """A rank that keeps the whole governed boundary cannot beat the same rules over that boundary.
+
+    Independent of the daily fill convention: the screened pool equals the control pool, so the
+    contribution is exactly zero whatever the recorded returns are.
+    """
+    return artifact("bottom", pool_count=3)
 
 
 def build_request(art, ds, *, with_dataset=True):
@@ -101,9 +115,8 @@ def test_screen_that_beats_whole_boundary_control_is_measured_and_both_variants_
 
 
 def test_screen_that_adds_nothing_is_dropped_and_reregistered_entry_only():
-    # Bottom-ranked screen concentrates the pool on the worse symbol: it cannot beat
-    # the same rules over the whole boundary.
-    gate, request, response, result = evaluate(artifact("bottom"))
+    # A screen that keeps the whole boundary cannot beat the same rules over the whole boundary.
+    gate, request, response, result = evaluate(adds_nothing_artifact())
     contribution = result.details["screen_contribution"]
     assert contribution["oos_improvement"] <= 0.0
     assert contribution["status"] == "screen_dropped"
@@ -201,7 +214,7 @@ def test_control_keeps_daily_boundary_exclusions_for_suspended_symbols():
 
 
 def test_durable_entry_only_registration_resubmits_without_being_dropped_again():
-    _, _, _, dropped = evaluate(artifact("bottom"))
+    _, _, _, dropped = evaluate(adds_nothing_artifact())
     registration = dropped.details["screen_contribution"]["re_registration"]
     entry_only = registration["strategy_artifact"]
     # round-trip through durable JSON, as a stored registration would be
@@ -221,7 +234,7 @@ def test_durable_entry_only_registration_resubmits_without_being_dropped_again()
 
 
 def test_forged_entry_only_form_with_a_selection_step_is_still_a_screen():
-    art = artifact("bottom")  # real selection step: must not bypass the contribution test
+    art = adds_nothing_artifact()  # real selection step: must not bypass the contribution test
     art["strategy_logic"]["screen"]["entry_only"] = True
     _, _, response, result = evaluate(art)
     # the unvalidated flag never grants entry-only treatment: not admitted
@@ -231,7 +244,7 @@ def test_forged_entry_only_form_with_a_selection_step_is_still_a_screen():
 
 def _colliding_selection_artifact():
     """Schema-valid artifact whose existing `screen_control_close` input is a real selection."""
-    _, _, _, dropped = evaluate(artifact("bottom"))
+    _, _, _, dropped = evaluate(adds_nothing_artifact())
     art = json.loads(json.dumps(dropped.details["screen_contribution"]["re_registration"]["strategy_artifact"]))
     logic = art["strategy_logic"]
     name = logic["screen"]["steps"][0]["expression"]["args"][0]["ref"]
@@ -254,7 +267,7 @@ def test_colliding_non_canonical_control_input_is_not_entry_only_and_is_preserve
 
 
 def test_canonical_entry_only_form_stays_a_fixed_point():
-    _, _, _, dropped = evaluate(artifact("bottom"))
+    _, _, _, dropped = evaluate(adds_nothing_artifact())
     entry_only = json.loads(json.dumps(dropped.details["screen_contribution"]["re_registration"]["strategy_artifact"]))
     assert ReplicationGate._is_registered_entry_only(entry_only)
 

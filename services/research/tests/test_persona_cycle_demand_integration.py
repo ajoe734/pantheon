@@ -261,8 +261,11 @@ def twse_admittable_registry():
     entries, one, _ = entries_and_members()
     shell = entries[one["artifact_ref"]]  # genuine registry response shell (gate-proof fields etc.)
     symbols = ["2330.TW", "2883.TW"]
-    base = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-2330-2883-lb10", symbols=symbols, lookback_bars=10,
-                                                momentum_threshold=0.01)
+    # Re-selected on the recorded prices under the daily next-open fill convention (the earlier lb10/0.01
+    # incumbent was selected under close fills): the candidate improves the combined OOS Sharpe and clears
+    # the persona trial threshold with the unmodified admission policy.
+    base = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-2330-2883-lb5", symbols=symbols, lookback_bars=5,
+                                                momentum_threshold=0.0)
     new = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-2883-lb20", symbols=["2883.TW"], lookback_bars=20,
                                                momentum_threshold=0.01, source_strategy_spec_id="spec-reviewed-001")
     checksum = strategy_artifact_checksum(new)
@@ -463,10 +466,10 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
     entries, one, _ = entries_and_members()
     shell = copy.deepcopy(entries[one["artifact_ref"]])
     base = build_canonical_tw_strategy_artifact(
-        strategy_id="strat-tw-2330-2883-lb10",
+        strategy_id="strat-tw-2330-2883-lb5",
         symbols=["2330.TW", "2883.TW"],
-        lookback_bars=10,
-        momentum_threshold=0.01,
+        lookback_bars=5,
+        momentum_threshold=0.0,
     )
     base["parameters"]["data_source"] = str(dataset["dataset_id"])
     current_cs = strategy_artifact_checksum(base)
