@@ -224,6 +224,7 @@ _DATASET_SCHEMA_HASHES = {
     "tdcc_shareholding_distribution": TDCC_SHAREHOLDING_SCHEMA_HASH,
     "taifex_futures_chip": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
     "taifex_options_chip": TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
+    "taifex_tx_daily": "tw_taifex_tx_daily.v1",
     "tw_monthly_revenue": "tw_monthly_revenue.v1",
     "tw_financial_statement": "tw_financial_statement.v1",
     "tw_valuation_bwibbu": "tw_valuation_bwibbu.v1",
@@ -473,6 +474,8 @@ def _taifex_endpoint(dataset: str) -> str:
         return f"{TAIFEX_OPENAPI_BASE_URL}/PutCallRatio"
     if dataset == "taifex_futures_chip":
         return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    if dataset == "taifex_tx_daily":
+        return f"{TAIFEX_OPENAPI_BASE_URL}/DailyMarketReportFut"
     raise SourceEvidenceError(f"unsupported TAIFEX dataset: {dataset}")
 
 
@@ -2676,6 +2679,133 @@ def taifex_ssf_normalized_rows(
     return tuple(results)
 
 
+TAIFEX_TX_DAILY_DATASET = "taifex_tx_daily"
+TAIFEX_TX_DAILY_SCHEMA_HASH = "tw_taifex_tx_daily.v1"
+TAIFEX_TX_DAILY_CONTRACTS = ("TX", "MTX")
+TAIFEX_TX_DAILY_MAX_RECORDS = 500
+_TX_DAILY_SESSIONS = {"一般": "regular", "盤後": "after_hours"}
+_TX_DAILY_MONTH = re.compile(r"^\d{6}(W\d)?$")
+_TX_DAILY_REQUIRED_COLUMNS = (
+    "Date", "Contract", "ContractMonth(Week)", "TradingSession", "Open", "High", "Low",
+    "Last", "Volume", "SettlementPrice", "OpenInterest",
+)
+
+
+def _tx_daily_source_rows(payload: Any) -> tuple[dict[str, Any], ...]:
+    if isinstance(payload, Mapping) and "DailyMarketReportFut" in payload:
+        payload = payload["DailyMarketReportFut"]
+    return _taifex_text_rows(payload)
+
+
+def taifex_tx_daily_select_rows(
+    payload: Any, contracts: Sequence[str] | None = None
+) -> tuple[dict[str, Any], ...]:
+    """Pick the governed TX/MTX rows from a DailyMarketReportFut response.
+
+    Selection happens before any record cap so the ~2300 other contract rows can
+    never truncate the TX/MTX rows away. The single-stock-futures normalizer is
+    not involved and keeps its own contract-code and regular-session filters.
+    """
+    wanted = {str(c).strip().upper() for c in (contracts or TAIFEX_TX_DAILY_CONTRACTS)}
+    return tuple(
+        row for row in _tx_daily_source_rows(payload)
+        if _text(_first(row, "Contract", "契約代號")).upper() in wanted
+    )
+
+
+def taifex_tx_daily_normalized_rows(
+    payload: Any,
+    *,
+    contracts: Sequence[str] | None = None,
+    api_endpoint: str = "",
+    available_time: str | None = None,
+    max_records: int | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Normalize TX/MTX rows of DailyMarketReportFut, regular and after-hours kept apart.
+
+    Raw source values are kept; ``-``, ``NULL`` and blank values become ``None``
+    and are never replaced by zero or an interpolated value. Calendar-spread
+    months (``202611/202612``) are not outright contract months and are skipped.
+    An empty response, no TX/MTX row, a missing column, an unknown session or an
+    unrecognized contract month fails closed. Exceeding ``max_records`` after the
+    contract filter also fails closed instead of silently truncating.
+    """
+    all_rows = _tx_daily_source_rows(payload)
+    if not all_rows:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: response has no rows")
+    selected = taifex_tx_daily_select_rows(all_rows, contracts)
+    if not selected:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: no TX or MTX row in response")
+    limit = max_records or TAIFEX_TX_DAILY_MAX_RECORDS
+    ingest_time = _utc_now()
+    results: list[dict[str, Any]] = []
+    for row in selected:
+        missing = [c for c in _TX_DAILY_REQUIRED_COLUMNS if c not in row]
+        if missing:
+            raise SourceEvidenceError(f"DailyMarketReportFut format changed: missing columns {missing}")
+        price_date = _roc_date_to_iso(row.get("Date"))
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", price_date or ""):
+            raise SourceEvidenceError(f"DailyMarketReportFut row has no valid Date: {row.get('Date')!r}")
+        month = _text(row.get("ContractMonth(Week)"))
+        if "/" in month:
+            continue
+        if not _TX_DAILY_MONTH.match(month):
+            raise SourceEvidenceError(f"DailyMarketReportFut unrecognized contract month: {month!r}")
+        raw_session = _text(row.get("TradingSession"))
+        session = _TX_DAILY_SESSIONS.get(raw_session)
+        if session is None:
+            raise SourceEvidenceError(f"DailyMarketReportFut unrecognized trading session: {raw_session!r}")
+        code = _text(row.get("Contract")).upper()
+        # Regular-session figures exist after the afternoon close; the after-hours
+        # session of a date runs to 05:00 Taipei the next day (21:00Z that date).
+        earliest = f"{price_date}T16:30:00Z" if session == "regular" else f"{price_date}T21:00:00Z"
+        stamp = _validate_or_convert_rfc3339(available_time, name="available_time") if available_time else earliest
+        if _utc_parse(stamp) < _utc_parse(earliest):
+            stamp = earliest
+
+        def price(key: str) -> float | None:
+            value = _float(row.get(key))
+            return value if value is not None and math.isfinite(value) else None
+
+        results.append({
+            "dataset": TAIFEX_TX_DAILY_DATASET,
+            "date": price_date,
+            "event_time": f"{price_date}T00:00:00Z",
+            "available_time": stamp,
+            "ingest_time": ingest_time,
+            "contract": code,
+            "contract_month": month,
+            "contract_month_kind": "weekly" if "W" in month else "monthly",
+            "contract_id": f"taifex:{code}:{month}:{session}",
+            "trading_session": session,
+            "trading_session_raw": raw_session,
+            "market": "TW",
+            "venue": "TAIFEX",
+            "open_price": price("Open"),
+            "high_price": price("High"),
+            "low_price": price("Low"),
+            "last_price": price("Last"),
+            "settlement_price": price("SettlementPrice"),
+            "volume": _int(row.get("Volume")),
+            "open_interest": _int(row.get("OpenInterest")),
+            "source_dataset": "DailyMarketReportFut",
+            "api_endpoint": api_endpoint or _taifex_endpoint(TAIFEX_TX_DAILY_DATASET),
+            "raw_row": dict(row),
+        })
+    if not results:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: only spread rows for TX or MTX")
+    if len(results) > limit:
+        raise SourceEvidenceError(
+            f"DailyMarketReportFut TX/MTX rows ({len(results)}) exceed max_records {limit}; refusing to truncate"
+        )
+    return tuple(results)
+
+
+def _utc_parse(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 @dataclass(frozen=True)
 class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     """TAIFEX official daily futures and options chip-context adapter (SD-SRCM-05 §7.3)."""
@@ -2722,10 +2852,14 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "source_class": "taiwan_chip",
                 "official_reference_truth": True,
                 "dataset_schema_hash": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
-                "normalized_datasets": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
+                "normalized_datasets": [
+                    "taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET, TAIFEX_TX_DAILY_DATASET,
+                ],
                 "tier_policy": {
-                    "core_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
-                    "candidate_universe": ["taifex_futures_chip", "taifex_options_chip"],
+                    "core_universe": [
+                        "taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET, TAIFEX_TX_DAILY_DATASET,
+                    ],
+                    "candidate_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_TX_DAILY_DATASET],
                 },
                 # Code-reviewed public official reference source (auth none, no secret):
                 # satisfies the persona reconciler's require_connector_approved gate, which
@@ -2770,7 +2904,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
         if resolved_ds == TAIFEX_SSF_DATASET:
             return self._fetch_ssf_payload(timeout_seconds=timeout_seconds)
-        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
+        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip", TAIFEX_TX_DAILY_DATASET):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         url = _taifex_endpoint(resolved_ds)
         request = urllib.request.Request(
@@ -2787,6 +2921,16 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             max_bytes=2097152,
             parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
         )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            # Filter to TX/MTX first: the response lists ~2300 contracts and a cap
+            # applied before filtering would truncate the governed rows away.
+            selected = list(taifex_tx_daily_select_rows(parsed, self.contracts))
+            limit = max_records or self.max_records
+            if limit and len(selected) > limit:
+                raise SourceEvidenceError(
+                    f"DailyMarketReportFut TX/MTX rows ({len(selected)}) exceed max_records {limit}; refusing to truncate"
+                )
+            return selected
         if isinstance(parsed, list) and (max_records or self.max_records):
             limit = max_records or self.max_records
             return parsed[:limit]
@@ -2881,6 +3025,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 max_records=max_records,
                 trace_id=trace_id,
             )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            return self._tx_daily_records_from_payload(
+                payload,
+                source_dataset=source_dataset,
+                api_endpoint=api_endpoint,
+                available_time=available_time,
+                universe_tier=universe_tier,
+                contracts=contracts,
+                max_records=max_records,
+                trace_id=trace_id,
+            )
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         resolved_endpoint = api_endpoint or _taifex_endpoint(resolved_ds)
@@ -2934,6 +3089,70 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                         "access_scope": ["public", "research"],
                         "license_scope": "official_reference",
                         "schema_hash": schema_hash,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def _tx_daily_records_from_payload(
+        self,
+        payload: Any,
+        *,
+        source_dataset: str | None,
+        api_endpoint: str | None,
+        available_time: str | None,
+        universe_tier: str,
+        contracts: Sequence[str] | None,
+        max_records: int | None,
+        trace_id: str,
+    ) -> tuple[SourceRecord, ...]:
+        rows = self.normalized_rows_from_payload(
+            payload,
+            dataset=TAIFEX_TX_DAILY_DATASET,
+            api_endpoint=api_endpoint or "",
+            available_time=available_time,
+            contracts=contracts,
+            max_records=max_records,
+        )
+        records: list[SourceRecord] = []
+        for row in rows:
+            row_hash = _stable_hash({"dataset": TAIFEX_TX_DAILY_DATASET, "row": row})
+            contract = _text(row.get("contract"))
+            month = _text(row.get("contract_month"))
+            session = _text(row.get("trading_session"))
+            as_of_date = _text(row.get("date"), row_hash)
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-taifex:{TAIFEX_TX_DAILY_DATASET}:{contract}:{month}:{session}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"TAIFEX {TAIFEX_TX_DAILY_DATASET} {contract} {month} {session} {as_of_date}",
+                    content_ref=(
+                        f"tw-taifex://{TAIFEX_TX_DAILY_DATASET}/{contract}/{month}/{session}/{as_of_date}/{row_hash}"
+                    ),
+                    metadata={
+                        "source_class": "taiwan_chip",
+                        "provider": "TAIFEX",
+                        "dataset": TAIFEX_TX_DAILY_DATASET,
+                        "source_dataset": source_dataset or row.get("source_dataset"),
+                        "venue": "TAIFEX",
+                        "contract": contract,
+                        "contract_month": month,
+                        "trading_session": session,
+                        "date": row.get("date"),
+                        "event_time": row.get("event_time"),
+                        "available_time": row.get("available_time"),
+                        "ingest_time": row.get("ingest_time"),
+                        "api_endpoint": row.get("api_endpoint"),
+                        "cadence": "daily_after_taifex_publication",
+                        "universe_tier": _tier_name(universe_tier),
+                        "normalized_row": dict(row),
+                        "raw_row": dict(row.get("raw_row") or {}),
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["public", "research"],
+                        "license_scope": "official_reference",
+                        "schema_hash": TAIFEX_TX_DAILY_SCHEMA_HASH,
                     },
                     trace_id=trace_id,
                 )
@@ -3029,6 +3248,14 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 underlying_codes=resolved_codes,
                 api_endpoint=api_endpoint,
                 trade_date=trade_date,
+                available_time=available_time,
+                max_records=max_records,
+            )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            return taifex_tx_daily_normalized_rows(
+                payload,
+                contracts=contracts if contracts is not None else self.contracts,
+                api_endpoint=api_endpoint,
                 available_time=available_time,
                 max_records=max_records,
             )

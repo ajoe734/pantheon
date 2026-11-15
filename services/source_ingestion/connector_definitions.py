@@ -1068,7 +1068,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         source_kinds=("data_source",),
         source_types=("market",),
         source_classes=("taiwan_chip",),
-        datasets=("taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"),
+        datasets=("taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts", "taifex_tx_daily"),
         auth_modes=("none",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
@@ -1200,13 +1200,20 @@ TW_CHIP_REFRESH_PROFILES = {
         "schema_hash": "tw_taifex_options_chip.v1",
         "contracts": ["TXO"],
     },
+    "tw-taifex-tx-daily": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_tx_daily",
+        "schema_hash": "tw_taifex_tx_daily.v1",
+        "contracts": ["TX", "MTX"],
+    },
 }
 _BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
 _CANONICAL_DEFINITIONS += tuple(
     replace(_BASE_DEFINITIONS[profile["base"]], definition_id=connector_id,
             datasets=(profile["dataset"],),
             default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits, "max_records": 500},
-            test_manifest_ref="evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114",
+            test_manifest_ref=(
+                "evidence://REGIME-DATA-TAIFEX-TX-DAILY-20261114" if profile["dataset"] == "taifex_tx_daily"
+                else "evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114"),
             metadata={**_BASE_DEFINITIONS[profile["base"]].metadata,
                       "refresh_profile": profile})
     for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()

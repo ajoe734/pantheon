@@ -864,6 +864,114 @@ def _market_snapshots_from_lines(
     return snapshots
 
 
+MARKET_SNAPSHOT_COMPACT_FACTOR = 3
+MARKET_SNAPSHOT_COMPACT_MIN_BYTES = 8 * 1024 * 1024
+_COMPACT_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+def _journal_lines(fd: int, start: int, end: int) -> Iterable[tuple[int, bytes]]:
+    """Yield (offset, line-with-newline) for [start, end) using pread only."""
+    offset, carry, carry_offset = start, b"", start
+    while offset < end:
+        chunk = os.pread(fd, min(_COMPACT_CHUNK_BYTES, end - offset), offset)
+        if not chunk:
+            break
+        offset += len(chunk)
+        data = carry + chunk
+        position = 0
+        while (newline := data.find(b"\n", position)) != -1:
+            yield carry_offset + position, data[position : newline + 1]
+            position = newline + 1
+        carry, carry_offset = data[position:], carry_offset + position
+    if carry:
+        yield carry_offset, carry + b"\n"
+
+
+def _pwrite_all(fd: int, data: bytes, offset: int) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.pwrite(fd, view, offset)
+        offset += written
+        view = view[written:]
+
+
+def _compact_journal_in_place(fd: int, *, path: Path) -> dict[tuple[str, str], int]:
+    """Rewrite the journal to its newest line per (symbol, dataset) on the same inode.
+
+    The caller holds the exclusive flock on ``fd`` (opened without O_APPEND).
+    Every intermediate file state is a journal the unchanged reader accepts
+    with the identical projection, so an interrupted rewrite is safe:
+
+    1. append the compacted block after the old bytes (newest line wins);
+    2. overwrite the old bytes with blank lines at line boundaries
+       (the reader skips blank lines);
+    3. copy the block to the front over the blank region;
+    4. truncate to the compacted length.
+
+    Returns the byte length of the kept line per key.
+    """
+    size = os.fstat(fd).st_size
+    last: dict[tuple[str, str], tuple[int, int]] = {}
+    boundaries = [0]
+    for offset, raw in _journal_lines(fd, 0, size):
+        if offset - boundaries[-1] >= _COMPACT_CHUNK_BYTES:
+            boundaries.append(offset)
+        text = raw.decode("utf-8")
+        if not text.strip():
+            continue
+        one = _market_snapshots_from_lines([text], path=path)
+        if one:
+            (key,) = one
+            last.pop(key, None)
+            last[key] = (offset, len(raw))
+        else:  # withdrawal tombstone
+            state = json.loads(text)["state"]
+            last.pop((_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None)
+    boundaries.append(size)
+    kept_lengths = {key: length for key, (_offset, length) in last.items()}
+    compacted = sum(kept_lengths.values())
+    if compacted >= size:
+        return kept_lengths
+
+    # 1. compacted block after the old bytes
+    position = size
+    batch: list[bytes] = []
+    pending = 0
+    for offset, length in last.values():
+        batch.append(os.pread(fd, length, offset))
+        pending += length
+        if pending >= _COMPACT_CHUNK_BYTES:
+            _pwrite_all(fd, b"".join(batch), position)
+            position += pending
+            batch, pending = [], 0
+    if batch:
+        _pwrite_all(fd, b"".join(batch), position)
+    os.fsync(fd)
+    # 2. blank the old bytes, whole lines at a time
+    for begin, finish in zip(boundaries, boundaries[1:]):
+        if finish > begin:
+            _pwrite_all(fd, b" " * (finish - begin - 1) + b"\n", begin)
+            os.fsync(fd)
+    # 3. copy the block to the front (compacted <= size, so no overlap)
+    destination = 0
+    batch, pending = [], 0
+    for _offset, raw in _journal_lines(fd, size, size + compacted):
+        batch.append(raw)
+        pending += len(raw)
+        if pending >= _COMPACT_CHUNK_BYTES:
+            _pwrite_all(fd, b"".join(batch), destination)
+            os.fsync(fd)
+            destination += pending
+            batch, pending = [], 0
+    if batch:
+        _pwrite_all(fd, b"".join(batch), destination)
+        os.fsync(fd)
+    # 4. drop the blank region and the tail copy
+    os.ftruncate(fd, compacted)
+    os.fsync(fd)
+    return kept_lengths
+
+
 class LatestMarketSnapshotStore:
     """Append-only, checksummed Source projection for latest normalized closes.
 
@@ -871,36 +979,140 @@ class LatestMarketSnapshotStore:
     opens no connector, does no provider I/O, and has no scheduler dependency.
     """
 
-    def __init__(self, path: str | Path, *, max_closes: int = 60) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        max_closes: int = 60,
+        compact_factor: int = MARKET_SNAPSHOT_COMPACT_FACTOR,
+        compact_min_bytes: int = MARKET_SNAPSHOT_COMPACT_MIN_BYTES,
+    ) -> None:
         if type(max_closes) is not int or max_closes < 2:
             raise ValueError("max_closes must be an integer >= 2")
+        if type(compact_factor) is not int or compact_factor < 2:
+            raise ValueError("compact_factor must be an integer >= 2")
+        if type(compact_min_bytes) is not int or compact_min_bytes < 0:
+            raise ValueError("compact_min_bytes must be a non-negative integer")
         self.path = Path(path)
         self.max_closes = max_closes
+        self.compact_factor = compact_factor
+        self.compact_min_bytes = compact_min_bytes
         self._lock = threading.RLock()
         self._latest_by_symbol: dict[tuple[str, str], LatestMarketSnapshot] = {}
+        # (inode, size, mtime_ns) of the journal exactly as this store last
+        # read or wrote it; None forces a full re-parse under the next lock.
+        self._journal_signature: tuple[int, int, int] | None = None
+        # Bytes of the newest line per live key; None until first needed.
+        self._line_bytes: dict[tuple[str, str], int] | None = None
         self.reload()
+
+    @staticmethod
+    def _signature(fd: int) -> tuple[int, int, int]:
+        status = os.fstat(fd)
+        return (status.st_ino, status.st_size, status.st_mtime_ns)
+
+    def _invalidate(self) -> None:
+        self._journal_signature = None
+        self._line_bytes = None
+
+    @staticmethod
+    def _open_exclusive(path: Path):
+        """Open read/write without O_APPEND so one fd serves append and compaction."""
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            return os.fdopen(fd, "r+", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _current_locked(self, handle: Any) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Latest state under the exclusive lock; re-parse only if another writer changed the file."""
+        signature = self._signature(handle.fileno())
+        if self._journal_signature is not None and signature == self._journal_signature:
+            return dict(self._latest_by_symbol)
+        handle.seek(0)
+        current = _market_snapshots_from_lines(handle, path=self.path)
+        self._line_bytes = None
+        self._journal_signature = signature
+        self._latest_by_symbol = dict(current)
+        return current
+
+    @staticmethod
+    def _envelope_line(state: Mapping[str, Any]) -> str:
+        return _canonical_json(
+            {
+                "state": state,
+                "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
+                "checksum": _checksum(state),
+            }
+        )
+
+    def _note_line(self, key: tuple[str, str], line: str | None) -> None:
+        if self._line_bytes is None:
+            return
+        if line is None:
+            self._line_bytes.pop(key, None)
+        else:
+            self._line_bytes[key] = len(line.encode("utf-8")) + 1
+
+    def _commit_locked(
+        self, handle: Any, current: dict[tuple[str, str], LatestMarketSnapshot]
+    ) -> None:
+        handle.flush()
+        os.fsync(handle.fileno())
+        self._latest_by_symbol = current
+        self._journal_signature = self._signature(handle.fileno())
+        self._maybe_compact_locked(handle.fileno(), current)
+
+    def _maybe_compact_locked(
+        self, fd: int, current: Mapping[tuple[str, str], LatestMarketSnapshot]
+    ) -> None:
+        size = os.fstat(fd).st_size
+        if size <= self.compact_min_bytes:
+            return
+        if self._line_bytes is None:
+            self._line_bytes = {
+                key: len(self._envelope_line(snapshot.to_dict()).encode("utf-8")) + 1
+                for key, snapshot in current.items()
+            }
+        if size <= self.compact_factor * max(sum(self._line_bytes.values()), 1):
+            return
+        try:
+            kept = _compact_journal_in_place(fd, path=self.path)
+        except OSError:
+            # Every intermediate state is a valid journal; just stop and re-read next time.
+            self._invalidate()
+            return
+        self._line_bytes = kept
+        self._journal_signature = self._signature(fd)
 
     def reload(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
         with self._lock:
             if not self.path.exists():
                 self._latest_by_symbol = {}
+                self._invalidate()
                 return {}
             try:
                 with self.path.open("r", encoding="utf-8") as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
                     try:
+                        signature = self._signature(handle.fileno())
                         snapshots = _market_snapshots_from_lines(handle, path=self.path)
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             except MarketSnapshotStateError:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise
             except (OSError, UnicodeError) as exc:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise MarketSnapshotStateError(
                     f"market snapshot log is unreadable: {self.path}"
                 ) from exc
             self._latest_by_symbol = snapshots
+            self._journal_signature = signature
+            self._line_bytes = None
             return dict(snapshots)
 
     def get(self, symbol: str, dataset: str = DAILY_SNAPSHOT_DATASET) -> LatestMarketSnapshot | None:
@@ -942,11 +1154,10 @@ class LatestMarketSnapshotStore:
             try:
                 if not self.path.exists():
                     return False
-                with self.path.open("a+", encoding="utf-8") as handle:
+                with self._open_exclusive(self.path) as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                     try:
-                        handle.seek(0)
-                        current = _market_snapshots_from_lines(handle, path=self.path)
+                        current = self._current_locked(handle)
                         prior = current.get((lookup, dataset))
                         if prior is None or not any(_session(pt) in days for pt in prior.points):
                             self._latest_by_symbol = current
@@ -972,23 +1183,20 @@ class LatestMarketSnapshotStore:
                                 "withdrawn": True,
                             }
                             current.pop((lookup, dataset), None)
-                        envelope = {
-                            "state": state,
-                            "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
-                            "checksum": _checksum(state),
-                        }
+                        line = self._envelope_line(state)
                         handle.seek(0, os.SEEK_END)
-                        handle.write(_canonical_json(envelope) + "\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                        self._latest_by_symbol = current
+                        handle.write(line + "\n")
+                        self._note_line((lookup, dataset), None if state.get("withdrawn") else line)
+                        self._commit_locked(handle, current)
                         return True
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             except MarketSnapshotStateError:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise
             except (OSError, UnicodeError) as exc:
+                self._invalidate()
                 raise MarketSnapshotStateError(
                     f"market snapshot withdrawal failed: {self.path}"
                 ) from exc
@@ -1187,11 +1395,10 @@ class LatestMarketSnapshotStore:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 file_preexisted = self.path.exists()
-                with self.path.open("a+", encoding="utf-8") as handle:
+                with self._open_exclusive(self.path) as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                     try:
-                        handle.seek(0)
-                        current = _market_snapshots_from_lines(handle, path=self.path)
+                        current = self._current_locked(handle)
                         for symbol in sorted(grouped):
                             prior = current.get((symbol, dataset))
                             points_by_event_time = {
@@ -1250,18 +1457,13 @@ class LatestMarketSnapshotStore:
                                 and prior.close_reconciliation == candidate.close_reconciliation
                             ):
                                 continue
-                            state = candidate.to_dict()
-                            envelope = {
-                                "state": state,
-                                "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
-                                "checksum": _checksum(state),
-                            }
+                            line = self._envelope_line(candidate.to_dict())
                             handle.seek(0, os.SEEK_END)
-                            handle.write(_canonical_json(envelope) + "\n")
+                            handle.write(line + "\n")
                             current[(symbol, dataset)] = candidate
+                            self._note_line((symbol, dataset), line)
                             updated.append(candidate)
-                        handle.flush()
-                        os.fsync(handle.fileno())
+                        self._commit_locked(handle, current)
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                 if not file_preexisted:
@@ -1270,11 +1472,12 @@ class LatestMarketSnapshotStore:
                         os.fsync(directory_fd)
                     finally:
                         os.close(directory_fd)
-                self._latest_by_symbol = current
             except MarketSnapshotStateError:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise
             except (OSError, UnicodeError) as exc:
+                self._invalidate()
                 raise MarketSnapshotStateError(
                     f"market snapshot append failed: {self.path}"
                 ) from exc

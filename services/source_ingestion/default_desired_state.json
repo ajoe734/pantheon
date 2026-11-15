@@ -414,6 +414,21 @@
             "no_live_capital"
           ],
           "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-taifex-tx-daily"
+          ],
+          "dataset": "taifex_tx_daily",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
         }
       ]
     }
