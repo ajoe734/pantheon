@@ -46,6 +46,12 @@ from persona_strategy_pool import (
     PoolError,
     build_pool_store,
 )
+from services.persona.owner_port_health import (
+    apply_owner_port_health_to_cycle_report,
+    evaluate_owner_ports,
+    non_healthy_owner_ports,
+    sync_owner_port_env,
+)
 from services.persona.write_owner import (
     _AUTHENTICATED_MUTATION_ROLES,
     PersonaAuthorityError,
@@ -54,6 +60,57 @@ from services.persona.write_owner import (
 )
 
 _OWNER_READ_SURFACE = None
+_CANONICAL_DATASET_POINTER_FILENAME = "canonical-dataset-version.json"
+
+
+def _sync_canonical_dataset_pointer(dataset_loader):
+    """Wrap governed_dataset_loader so canonical-dataset-version.json stays in sync for research."""
+    import json
+    from pathlib import Path
+
+    output_root = Path(
+        os.getenv("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT", "/data/bff/persona-pool-dataset-authority")
+    )
+    pointer_path = output_root / _CANONICAL_DATASET_POINTER_FILENAME
+
+    def _wrapped():
+        record = dataset_loader()
+        if isinstance(record, dict) and record.get("parquet_path"):
+            try:
+                output_root.mkdir(parents=True, exist_ok=True)
+                tmp_path = pointer_path.with_suffix(".json.tmp")
+                tmp_path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+                os.replace(tmp_path, pointer_path)
+            except OSError:
+                pass
+        return record
+
+    return _wrapped
+
+
+class _OwnerPortAwareCycleController:
+    """Wrap OutcomeTrackingController so missing owner ports degrade the cycle heartbeat."""
+
+    def __init__(self, inner, dataset_loader=None):
+        self._inner = inner
+        self._dataset_loader = dataset_loader
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def reconcile_once(self) -> dict[str, Any]:
+        sync_owner_port_env()
+        if self._dataset_loader is not None:
+            try:
+                self._dataset_loader()
+            except Exception:
+                pass
+        raw_report = self._inner.reconcile_once()
+        report = apply_owner_port_health_to_cycle_report(raw_report)
+        registrar = getattr(self._inner, "registrar", None)
+        if registrar is not None and hasattr(registrar, "record_heartbeat"):
+            registrar.record_heartbeat("persona_daily_cycle", report)
+        return report
 
 
 def _bootstrap_panel_personas(app):
@@ -173,12 +230,15 @@ async def persona_lifespan(app):
             return snapshot or {}
 
         # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
+        sync_owner_port_env()
+        dataset_loader = _sync_canonical_dataset_pointer(governed_dataset_loader())
         discovery_loader = governed_discovery_loader(
             seeds=_seed_store_reads, route_policy=_route_policy, capability_snapshot=_capability_snapshot)
-        controller = OutcomeTrackingController(
+        inner_controller = OutcomeTrackingController(
             PersonaCronRegistrar(), CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store()),
             pool_cycle=PoolAutonomyCycle(HttpPoolCyclePorts(
-                pool_store=_pool_store(), dataset_loader=governed_dataset_loader(), discovery_loader=discovery_loader)))
+                pool_store=_pool_store(), dataset_loader=dataset_loader, discovery_loader=discovery_loader)))
+        controller = _OwnerPortAwareCycleController(inner_controller, dataset_loader=dataset_loader)
         worker = asyncio.create_task(run_controller(controller, stop))
     try:
         yield
@@ -205,12 +265,14 @@ OPENCLAW_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OPENCLAW_HEALTH_TIMEOUT_SECON
 
 
 def _standard_health_payload() -> dict[str, Any]:
+    owner_ports = evaluate_owner_ports()
     return {
         "status": "ok",
         "service": "persona-agent",
         "timestamp": utc_now(),
         "live": True,
         "ready": True,
+        "owner_ports": owner_ports,
         "dependencies": {
             "openclaw_gateway": {
                 "status": "ok",
@@ -221,6 +283,7 @@ def _standard_health_payload() -> dict[str, Any]:
         "metrics": {"service_up": 1},
         "details": {
             "panel_personas": getattr(app.state, "panel_personas", {"status": "unobserved"}),
+            "owner_ports": owner_ports,
             "llm_backend": LLM_BACKEND,
             "runtime_backend": "openclaw-gateway",
             "persona_id": DEFAULT_PERSONA_ID,
@@ -501,13 +564,16 @@ def _invoke_openclaw(req: InvokeRequest) -> tuple[str, RuntimeStatus]:
 
 @app.get("/health")
 async def health():
+    owner_ports = evaluate_owner_ports()
+    degraded = bool(non_healthy_owner_ports(owner_ports))
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
         "service": "persona-agent",
         "llm_backend": LLM_BACKEND,
         "runtime_backend": "openclaw-gateway",
         "persona_id": DEFAULT_PERSONA_ID,
         "agent_id": OPENCLAW_AGENT_ID,
+        "owner_ports": owner_ports,
     }
 
 
