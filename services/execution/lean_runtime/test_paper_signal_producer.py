@@ -8,9 +8,10 @@ from datetime import datetime, timezone
 import json
 import io
 
+from services.execution.lean_runtime import paper_signal_producer as _psp
 from services.execution.lean_runtime.paper_signal_producer import (
     BindingRef,
-    PaperSignalProducer,
+    PaperSignalProducer as _RealPaperSignalProducer,
     SmokeStrategy,
     BoundedPaperStrategy,
     build_smoke_signal,
@@ -22,6 +23,48 @@ from services.execution.lean_runtime.paper_signal_producer import (
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 from services.trade_journey.correlation_envelope import validate_envelope
+
+class PaperSignalProducer(_RealPaperSignalProducer):
+    """Real producer that also plays the next session for daily decisions.
+
+    A daily paper decision is parked (PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115) and only released
+    at the official open of D+1.  The tests in this module cover expression, grading and queue
+    behaviour that does not depend on the fill price, so after each produce the helper settles the
+    parked decisions at D+1 with an official open equal to the decision close.  Fill timing itself
+    is covered by test_daily_settlement_integration.py.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._opens: dict[str, float] = {}
+        self._parked_days: list[str] = []
+        self._daily_bar_reader = self._next_open_bar
+
+    def _next_open_bar(self, symbol, session_date, now):
+        if symbol not in self._opens:
+            return []
+        opened = datetime.fromisoformat(f"{session_date}T09:00:00+08:00")
+        return [{
+            "symbol": symbol,
+            "bar_start": opened.isoformat(),
+            "bar_frequency": "1d",
+            "bar_availability_ts": f"{session_date}T16:00:00+08:00",
+            "open": self._opens[symbol],
+        }]
+
+    def _park_pending_intraday(self, store, binding_id, decision_id, pending, out, **kwargs):
+        if pending["plan"]["bar_frequency"] == "1d":
+            self._opens[str(out["symbol"])] = float(out["metadata"]["market_data"]["close"])
+            self._parked_days.append(pending["plan"]["target_day"])
+        return super()._park_pending_intraday(store, binding_id, decision_id, pending, out, **kwargs)
+
+    def produce(self, binding, now_iso):
+        before = len(self._parked_days)
+        count = super().produce(binding, now_iso)
+        if len(self._parked_days) > before:
+            count += self.settle_pending_intraday(binding, f"{self._parked_days[-1]}T16:30:00+08:00")
+        return count
+
 
 _NOW = "2026-06-14T10:30:00Z"
 _BINDING = BindingRef(binding_id="rb-test-001", strategy_id="strategy-test-001", symbol="AAPL.US")
@@ -555,9 +598,12 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(
             signal["metadata"]["market_data"],
             {
-                "close": 955.0,
-                "event_time": "2026-06-12T05:30:00Z",
+                # Daily decisions fill at the D+1 official open, never at the decision close.
+                "price": 955.0,
+                "event_time": "2026-06-15T09:00:00+08:00",
                 "source_ref": "source-ingest://snapshots/mss-official-twse-2330",
+                "price_observed_at": "2026-06-15T16:00:00+08:00",
+                "settlement_mode": "delayed_simulated",
             },
         )
 
@@ -1538,6 +1584,7 @@ class TestExecutableSymbolContract(unittest.TestCase):
             "closes": [100.0, 105.0],
             "source_ref": f"source-ingest://snapshots/{binding_id}",
             "observed_at": _NOW,
+            "event_time": "2026-06-12T00:00:00+08:00",
         }
 
         store = InMemoryPendingSignalStore()
@@ -2148,12 +2195,15 @@ class TestExpressionDecisionStep(unittest.TestCase):
         self.assertEqual(stored["record"]["instrument_id"], "ssf:SRF:202611")
         # The restarted producer would decide differently (futures now infeasible) ...
         restarted = self._producer(store, candidates_builder=_expression_candidates(short_ok=False))
-        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 1)
-        [second] = store.get_pending()
-        # ... but it reuses the persisted instrument and units.
-        self.assertEqual(second["metadata"]["instrument_id"], "ssf:SRF:202611")
-        self.assertEqual(second["metadata"]["units"], first["metadata"]["units"])
-        self.assertEqual(second["signal_id"], first["signal_id"])
+        # ... but the parked daily decision was released exactly once under its decision id (a lost
+        # queue claim is the store's reclaim job), so the restart creates no second order, and the
+        # persisted instrument decision is untouched.
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 0)
+        self.assertEqual(store.get_pending(), [])
+        self.assertEqual(
+            store.get_decision_record(first["metadata"]["decision_id"])["record"]["instrument_id"],
+            "ssf:SRF:202611",
+        )
 
     def test_decision_is_persisted_before_the_signal_is_enqueued(self) -> None:
         order: list[str] = []
@@ -2168,7 +2218,11 @@ class TestExpressionDecisionStep(unittest.TestCase):
                 return super().enqueue(payload)
 
         self._producer(Recording()).produce(self._binding(self._artifact()), self.NOW)
-        self.assertEqual(order, ["persist", "enqueue"])
+        # The daily decision is parked first (more records), but the instrument decision is
+        # always persisted before the order is released into the queue.
+        self.assertEqual(order[0], "persist")
+        self.assertEqual(order.count("enqueue"), 1)
+        self.assertLess(order.index("persist"), order.index("enqueue"))
 
     def test_restart_after_persist_before_enqueue_replays_without_builder_or_decider(self) -> None:
         class CrashOnce(InMemoryPendingSignalStore):
@@ -3143,8 +3197,9 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
             store, bar=self.DECISION_BAR, now=self.GRADING_NOW,
             close=self.CASH_ENTRY, previous=self.CASH_ENTRY / 1.0448,
         )
-        [again] = store.get_pending()
-        self.assertNotIn("instrument_counterfactual_rows", again["metadata"])
+        # The decision of this bar was already parked and released once: it is not re-offered, and
+        # a repeat of the entry bar grades nothing.
+        self.assertEqual(store.get_pending(), [])
         self.assertIsNone(self._terminal(store, first["metadata"]["decision_id"]))
 
     def test_restart_on_a_later_bar_grades_from_the_recorded_metadata(self) -> None:

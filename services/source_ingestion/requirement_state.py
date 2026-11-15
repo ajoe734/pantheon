@@ -514,8 +514,22 @@ class MarketSnapshotPoint:
     market: str | None = None
     # Lineage of a close relayed by the collector from the exchange website (provisional, not official).
     collector_close: Mapping[str, Any] | None = None
+    # Official session open of the same bar, carried only when the official row states it.
+    # The paper daily settlement fills at the next session's open; it never substitutes a close.
+    open: float | None = None
 
     def __post_init__(self) -> None:
+        if self.open is not None:
+            if (
+                isinstance(self.open, bool)
+                or not isinstance(self.open, (int, float))
+                or not math.isfinite(float(self.open))
+                or float(self.open) <= 0
+                or self.collector_close is not None
+            ):
+                object.__setattr__(self, "open", None)
+            else:
+                object.__setattr__(self, "open", float(self.open))
         if self.collector_close is not None:
             if not isinstance(self.collector_close, Mapping) or set(self.collector_close) != {
                 "collector_source_id", "exchange_endpoint", "bundle_sha256", "trade_date"
@@ -564,6 +578,8 @@ class MarketSnapshotPoint:
             data["market"] = self.market
         if self.collector_close is not None:
             data["collector_close"] = dict(self.collector_close)
+        if self.open is not None:
+            data["open"] = self.open
         return data
 
     @property
@@ -582,7 +598,7 @@ class MarketSnapshotPoint:
             "content_ref",
             "ingest_run_id",
         }
-        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close"}):
+        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close", "open"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
         if "collector_close" in value and not isinstance(value["collector_close"], Mapping):
             raise MarketSnapshotStateError("collector close lineage schema is invalid")
@@ -595,6 +611,7 @@ class MarketSnapshotPoint:
             ingest_run_id=value["ingest_run_id"],
             market=value.get("market"),
             collector_close=value.get("collector_close"),
+            open=value.get("open"),
         )
 
 
@@ -760,6 +777,13 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "source_ref": f"source-ingest://snapshots/{self.snapshot_id}",
         }
+        opens = [
+            {"event_time": point.event_time, "open": point.open}
+            for point in self.points
+            if point.open is not None
+        ]
+        if opens:
+            public["opens"] = opens
         if self.calendar_evidence is not None:
             public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
@@ -1273,6 +1297,7 @@ class LatestMarketSnapshotStore:
                 content_ref=getattr(record, "content_ref", None),
                 ingest_run_id=ingest_run_id,
                 market=record_market,
+                open=row.get("open"),
             )
             # Prefer the normalized market row because it is the exact
             # source-selected record.  The metadata fallback preserves the
@@ -1293,6 +1318,7 @@ class LatestMarketSnapshotStore:
                     ingest_run_id=point.ingest_run_id,
                     market=point.market,
                     collector_close=collector_lineage,
+                    open=None,
                 )
             calendar_evidence = _market_snapshot_calendar_evidence(
                 row.get("calendar_evidence")

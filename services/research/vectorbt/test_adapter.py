@@ -712,6 +712,14 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
         self.assertTrue(all(math.isnan(x) for x in vbt_sizes[:3]))
 
         # Replay the exact same bars through the paper signal producer (CurrentArtifactStrategy)
+        # The synthetic fixture uses consecutive calendar days (weekends included); this parity
+        # test compares actions, not the exchange calendar, so every fixture day is a session.
+        calendar_patch = mock.patch(
+            "services.execution.lean_runtime.instrument_candidates._is_trading_day",
+            return_value=True,
+        )
+        calendar_patch.start()
+        self.addCleanup(calendar_patch.stop)
         paper_strategy = CurrentArtifactStrategy(expression_layer=False)
         paper_actions: list[str | None] = [None, None, None]
         paper_sizes: list[float] = [float("nan")] * 3
