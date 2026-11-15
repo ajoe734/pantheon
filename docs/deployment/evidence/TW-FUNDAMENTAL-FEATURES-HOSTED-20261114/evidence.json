@@ -1,0 +1,35 @@
+{
+  "task_id": "TW-FUNDAMENTAL-FEATURES-HOSTED-20261114",
+  "hosted_behavior_claimed": false,
+  "delivery_scope": "Source-only: FinMind monthly revenue / quarterly statement / daily valuation datasets, statutory availability, dev refresh step, bounded deploy admission, and pool admission loading of every referenced governed feature dataset. No hosted deployment, no live FinMind fetch, no live capital.",
+  "datasets": {
+    "tw_monthly_revenue": {"connector": "tw-finmind-monthly-revenue", "history_days": 1096, "available_time": "10th of the following month 18:00 Asia/Taipei"},
+    "tw_financial_statement": {"connector": "tw-finmind-quarterly-statements", "history_days": 730, "available_time": "Q1 May 15, Q2 Aug 14, Q3 Nov 14, annual report (Q4) Mar 31 of next year (explicit date, correct in leap years)"},
+    "tw_valuation_bwibbu": {"connector": "tw-finmind-valuation", "history": "newest days plus one rotating 60-day page per daily run; two years complete within 13 daily runs", "available_time": "same session close"}
+  },
+  "point_in_time": {
+    "derived_fields": "revenue yoy/mom use only comparison months whose own statutory availability is not later; otherwise null",
+    "value_revision": "provider_latest_revision_not_first_release (stated on every row and record metadata)",
+    "catalogue": "feature_catalogue.statutory_available_date/time; observations_from_row and read_feature_series enforce the floor; official taiwan_official Q4 lag replaced by statutory deadline"
+  },
+  "deploy_admission": "scripts/deploy_nonprod_vm.sh and terminal verifier admit exactly the three added datasets; any other still rejected (tests in scripts/test_deploy_nonprod_vm.py)",
+  "pool_admission": {
+    "change": "services/persona/pool_dataset_authority.py loads every governed non-price dataset a candidate factor_rule_v1 references through the real source dataset authority and attaches point-in-time observations as features_by_instrument[instrument][dataset][field]; pool_autonomy_cycle passes the registry strategy_artifact to the loader.",
+    "fail_closed": "unconfigured connector, rejected source authority, canonical-path override, or no observations for a referenced dataset.field raise AuthorityValidationError 'feature dataset coverage missing: ...', recorded in the cycle receipt reason governed_dataset_unavailable:<type>: <message>",
+    "config": "PERSONA_POOL_FEATURE_CONNECTOR_IDS JSON map dataset -> connector id (must be set in the hosted persona env; not set by this task)",
+    "unchanged": ["gate thresholds", "pool admission policy", "evaluate_admission"],
+    "limits": "Exercised with an inputs-based factor_rule_v1 using tw_monthly_revenue.yoy; the market-screen form (candidate_pool_market) is not covered by this loader change. The published fixture has only two revenue months with yoy, so the four-observation z-score window is shown to refuse for insufficient history and a shortened signal completes the replay. evolution/retrain loaders in services/research/main.py were not changed."
+  },
+  "fixtures": {
+    "path": "services/source_ingestion/tests/fixtures/tw_fundamentals_official/tsmc_2330_finmind_shape.json",
+    "note": "Published TSMC (2330) monthly revenue and quarterly amounts transcribed by hand into FinMind response shape; no raw provider response committed. Transcribed from memory of TSMC public reports and NOT re-verified against the TWSE/MOPS source in this session: a reviewer should confirm the amounts. Assertions are on formulas and statutory dates, not on provider-reported ratios."
+  },
+  "commands": [
+    {"cmd": "pytest services/source_ingestion/tests/test_finmind_fundamentals.py", "result": "11 passed"},
+    {"cmd": "pytest services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_active_universe.py scripts/test_dev_tw_market_refresh_workflow.py services/registry/test_factor_rule.py", "result": "102 passed"},
+    {"cmd": "pytest scripts/test_deploy_nonprod_vm.py", "result": "145 passed, 2 skipped"},
+    {"cmd": "pytest services/persona/test_pool_dataset_authority_features.py", "result": "5 passed"},
+    {"cmd": "pytest services/persona/test_pool_dataset_authority.py services/persona/test_pool_autonomy_cycle.py", "result": "46 passed"},
+    {"cmd": "pytest services/training-session/tests/test_source_dataset_authority.py", "result": "76 passed"}
+  ]
+}

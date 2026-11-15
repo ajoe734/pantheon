@@ -316,7 +316,8 @@ class PoolAutonomyCycle:
                 dataset = ports.admission_dataset(persona, cand)
             except Exception as exc:  # noqa: BLE001 - missing data fails closed, never synthetic
                 receipts.append({"route": "persona:strategy-pool/decisions", "action": "admit", "status": "not_attempted",
-                                 "reason": "governed_dataset_unavailable:" + type(exc).__name__})
+                                 "reason": "governed_dataset_unavailable:" + type(exc).__name__
+                                 + (": " + str(exc) if str(exc).startswith("feature dataset coverage missing") else "")})
                 return receipts, learned
             try:
                 cand_book = ports.candidate_book(persona, cand, dataset)
@@ -693,6 +694,10 @@ class HttpPoolCyclePorts(PoolPublishPort):
     def admission_dataset(self, persona, candidate):
         if self.dataset_loader is None:
             raise RuntimeError("governed_dataset_loader_unconfigured")
+        # The loader needs the rule to load every governed dataset it references.
+        artifact = (self._entry(persona, candidate["artifact_ref"]).get("metadata") or {}).get("strategy_artifact")
+        if artifact and "strategy_artifact" not in candidate:
+            candidate = {**candidate, "strategy_artifact": artifact}
         return self.dataset_loader(persona, candidate)
 
     def candidate_book(self, persona, candidate, dataset):
