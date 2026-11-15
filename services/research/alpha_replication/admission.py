@@ -300,7 +300,7 @@ class CardSpecAdmissionOwner:
         advanced = r.owner_call(
             step="advance_card_spec_approved", service="registry", method="POST", url=f"{spec_url}/advance",
             tenant_id=tenant_id, token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-            body={"target_state": "approved", "approval_decision_id": approval_id, "approver": r.gate_id,
+            body={"target_state": "approved", "approval_decision_id": approval_id,
                   "expected_artifact_state": "candidate", "expected_version": entry["version"],
                   "expected_updated_at": entry.get("updated_at"), "command_key": approval_id})
         approved = (advanced or {}).get("entry") or {}
@@ -323,6 +323,36 @@ class CardSpecAdmissionOwner:
                 "demand_ref": demand["demand_id"]}
 
 
+_CARD_EVALUATIONS = "card_backtest_evaluations.json"
+
+
+def persist_card_evaluation(data_dir: str | Path, evaluation: Mapping[str, Any]) -> None:
+    """Keep the full evaluation of a card-derived run (the run store keeps only a digest)."""
+    run_id = str(evaluation.get("backtest_run_id") or "")
+    if not run_id:
+        return
+    path = Path(data_dir) / _CARD_EVALUATIONS
+    lock = path.with_suffix(".lock")
+    with lock.open("w", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            rows[run_id] = json.loads(json.dumps(dict(evaluation), default=str))
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(rows, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def load_card_evaluation(data_dir: str | Path, run_id: str) -> dict[str, Any] | None:
+    path = Path(data_dir) / _CARD_EVALUATIONS
+    if not path.exists():
+        return None
+    row = json.loads(path.read_text(encoding="utf-8")).get(run_id)
+    return dict(row) if isinstance(row, dict) else None
+
+
 def register_card_pass(*, registrar: Any, entry: Mapping[str, Any], demand: Mapping[str, Any],
                        run_metadata: Mapping[str, Any]) -> dict[str, Any]:
     """Register a gate-passed card candidate through the template path's function.
@@ -340,9 +370,19 @@ def register_card_pass(*, registrar: Any, entry: Mapping[str, Any], demand: Mapp
     family = str(gate.get("family_id") or (run_metadata.get("backtest_summary") or {}).get("family_id")
                  or f"card:{entry['strategy_id']}")
     receipt = {"status": "admitted", "gate": dict(gate), "family_id": family}
+    run_id = str(run_metadata.get("backtest_run_id") or "")
+    evaluation = load_card_evaluation(registrar.data_dir, run_id) if run_id else None
+    if evaluation is None:
+        raise CardAdmissionError("card_backtest_evaluation_missing")
+    # The persisted evaluation must be the exact run the gate's own store recorded.
+    from services.research.replication.gate import BacktestRunStore
+
+    stored = registrar.backtest_run_store.get(run_id)
+    if not stored or stored.get("evaluation_digest") != BacktestRunStore.evaluation_digest(evaluation):
+        raise CardAdmissionError("card_backtest_evaluation_digest_mismatch")
     return registrar.register_passed_attempt(
         demand=demand, template={"template_id": str(artifact["artifact_id"]), "inputs": inputs},
-        artifact=artifact, receipt=receipt)
+        artifact=artifact, receipt=receipt, backtest_evaluation=evaluation)
 
 
 def evaluate_template_candidate(*, gate, artifact, dataset, demand, family_id, source_ref, timestamp):

@@ -325,8 +325,12 @@ def build_card_strategy_artifact(
         "order_quantity": 10,
         "quantity_type": "SHARES",
     }
-    for key, value in envelope.items():
-        parameters.setdefault(key, value)
+    # The governed binding owns the market envelope; model-proposed symbols,
+    # frequency and data source are never trusted over it.
+    for key in ("market", "symbols", "bar_frequency"):
+        parameters[key] = envelope[key]
+    for key in ("order_quantity", "quantity_type"):
+        parameters.setdefault(key, envelope[key])
     parameters["data_source"] = dataset_id
     immutable = list(surface.get("immutable_parameters") or [])
     controlled = {c.get("parameter_key") for c in surface.get("controls") or [] if isinstance(c, Mapping)}
@@ -413,8 +417,9 @@ def _apply_hypothesis_card(
 def _merge_dependencies(
     base: list[dict[str, str]], extra: list[dict[str, str]]
 ) -> list[dict[str, str]]:
-    seen = {(d["kind"], d["ref"]) for d in base}
-    return base + [d for d in extra if (d["kind"], d["ref"]) not in seen]
+    """Governed dataset binding first: the worker pins the *first* dataset dependency."""
+    seen = {(d["kind"], d["ref"]) for d in extra}
+    return extra + [d for d in base if (d["kind"], d["ref"]) not in seen]
 
 
 def _build_registry_payload(

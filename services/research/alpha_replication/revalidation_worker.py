@@ -863,6 +863,12 @@ class AlphaRevalidationWorker:
             run_id=f"bt-{run_id}",
         )
         self._backtest_run_store.record(evaluated)
+        if isinstance(raw_spec.get("card_wiring"), Mapping):
+            # Candidate registration needs the full evaluation the gate verdict is
+            # bound to; the run store keeps only its digest.
+            from services.research.alpha_replication.admission import persist_card_evaluation
+
+            persist_card_evaluation(self._data_dir, evaluated)
         return evaluated
 
     def _publish_research_finding(
@@ -999,6 +1005,7 @@ class AlphaRevalidationWorker:
             "hypothesis_predictions",
             "mechanism_inputs",
             "strategy_artifact_checksum",
+            "card_wiring",
         ):
             evaluation_spec.pop(non_schema_key, None)
 
@@ -1285,6 +1292,7 @@ class AlphaRevalidationWorker:
             for key in (
                 "strategy_artifact", "strategy_artifact_checksum", "backtest_dataset",
                 "hypothesis_card", "hypothesis_predictions", "mechanism_inputs", "family_id",
+                "card_wiring",
             ):
                 if key not in raw and key in meta:
                     raw[key] = meta[key]

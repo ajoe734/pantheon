@@ -136,7 +136,7 @@ def _register_card_passes(config: "ReplicationControllerConfig", worker: Any, te
             continue
         for run in worker.list_runs(tenant_id=tenant_id, strategy_spec_id=entry["registry_id"]):
             meta = run.get("metadata") or {}
-            if run.get("status") != "completed" or not (meta.get("replication_gate") or {}).get("passed"):
+            if run.get("status") != "completed" or (meta.get("replication_gate") or {}).get("admission_status") != "admitted":
                 continue
             try:
                 reg = register_card_pass(registrar=config.card_registrar, entry=entry, demand=demand,
