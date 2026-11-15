@@ -1,0 +1,38 @@
+{
+  "task_id": "MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114",
+  "hosted_behavior_claimed": false,
+  "base": "origin/dev 725836718 (carrying MEMORY-HINDSIGHT-INDEX-20261113 and OPENCLAW-MEMORY-INDEX-LLM-BRIDGE-R2-20261115)",
+  "commands": [
+    {
+      "cmd": "PANTHEON_RUN_HINDSIGHT_CONTAINER_PROBE=1 pytest services/memory/test_hindsight_integration.py",
+      "result": "3 passed, 5 skipped (the 5 skipped are the pre-existing URL-mode tests that need PANTHEON_HINDSIGHT_IT_URL/KEY against an external compose hindsight; not run in this task)"
+    },
+    {
+      "cmd": "pytest services/memory deploy/hindsight/tests scripts/test_memory_llm_bridge_deploy_switch_contract.py services/persona/test_persona_cycle_controller.py services/persona/test_lesson_cycle.py",
+      "result": "226 passed, 11 skipped, 1 failed: test_memory_auth_env_forwards_oidc_and_role_map failed only in the venv lacking `cryptography`; it passes (1 passed) in a venv that has it. services/persona/test_persona_cycle_controller.py alone: 40 passed."
+    }
+  ],
+  "ac1_layers_switch": {
+    "mechanism": "PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED (compose: from MEMORY_LLM_BRIDGE_ENABLED, default false) -> memory service PATCHes each bank config to retain_extraction_mode=verbatim and enable_auto_consolidation=true before its first retain (rebuild re-applies); compose also starts the Hindsight worker only with the same switch. Unset: no config sent, chunks, llm_layers disabled.",
+    "real_container": "test_layers_unset_keeps_chunks_and_reports_disabled; test_layers_enabled_use_verbatim_and_consolidation_and_a_refusal_never_fails_canonical_work (bank config read back from the real hindsight: verbatim + consolidation true; with the bridge double refusing every call, canonical create and recall still succeed)",
+    "unit": "test_enabled_layers_switch_bank_to_verbatim_consolidation_before_first_retain_only; test_bridge_refusal_on_layer_config_never_fails_a_canonical_write"
+  },
+  "ac2_routes": {
+    "put": "PUT /api/memory/persona-standing-questions (persona-svc JWT only; idempotent set by key; removed keys retired)",
+    "get": "GET /api/memory/persona-standing-questions (authorised like persona retrieve; committee sessions 403)",
+    "isolation_http_tests": "test_read_returns_only_own_persona_answers_with_canonical_citations (unit double) and the real-container test (another persona and another tenant never see alpha's answers; beta's marker text never appears in alpha's)"
+  },
+  "ac3_persona_declaration": "PersonaCycleController._declare_standing_questions at consume_run start (after observe, before the model turn) from observe.cycle_subject.families: one family:<f> question per pool family + risk_lessons, no regime question, no scheduler; failure or missing families is recorded in cycle.standing_questions and never fails the cycle; tests test_daily_cycle_declares_one_question_per_pool_family_and_risk_lessons_without_regime and siblings",
+  "ac4_refresh": "mental model trigger refresh_after_consolidation=true with min_refresh_interval_seconds from PANTHEON_MEMORY_MENTAL_MODEL_MIN_REFRESH_SECONDS (default 86400, verified on the real hindsight); real-container test shows the model refreshing again after a new retain + consolidation; answers only in Hindsight, canonical persona store unchanged and holds no answer text",
+  "ac5_reflect_removed": "POST /api/memory/reflect, ReflectPayload, HindsightClient.reflect, reflect_configured/REFLECT_ENV and their tests removed; no caller remained (test_reflect_route_is_removed)",
+  "ac6_real_containers": {
+    "status": "run",
+    "what": "real hindsight image pantheon-case-file-hindsight:local + pgroonga/pgvector Postgres (pantheon-hindsight-eval-pg:pgroonga-pgvector), real OpenClaw adapter bridge app via uvicorn, GatewayDouble from services/openclaw-gateway-adapter/test_memory_llm_bridge.py, memory service HTTP routes through TestClient, compose-equivalent Hindsight env (chunks, consolidation off, worker on, bridge providers)"
+  },
+  "findings": [
+    "Hindsight 1.2.1 refresh reports based_on keyed by fact type with unit ids only (no document_id); the memory service reads each unit back and maps it through document_id, withholding any answer it cannot map or verify.",
+    "Hindsight's reflect agent reaches the bridge as JSON-schema 'tool call' requests (no tools field), so the bridge's tools refusal does not block mental-model refresh."
+  ],
+  "caveats": "The gateway double answers schema-shaped requests with minimal schema-valid JSON, so answer quality, real-gateway latency and JSON validity are not claimed (left to MEMORY-HINDSIGHT-HOSTED-ACCEPTANCE-20261113). Observation-derived citations (source_memory_ids) are implemented but were not exercised: the double's consolidation creates no observations. Numeric defaults (one-day refresh floor, 2048 answer tokens, 32 questions) are coordinator proposals.",
+  "credentials_in_evidence": false
+}

@@ -303,22 +303,43 @@ re-authorises every id from the canonical stores (tenant, persona, relevance
 scope, active/expiry, filters, anchors), applies `usefulness_score` as the final
 re-rank, and reports `retrieval_mode` (`hindsight` or `keyword_fallback`),
 `fallback_reason`, per-store `retrieval_details` and `llm_layers`
-(`disabled` until reflect is enabled). Keyword ranking runs only as the explicit
+(`disabled` until the OpenClaw memory-index bridge is configured). Keyword ranking runs only as the explicit
 fallback (empty query, `hindsight_unconfigured`, or a transport/HTTP reason).
 Wildcard tenants narrow to `default`.
 
-**Reflect (H9 route).** `POST /api/memory/reflect` is read-only, authorised like
-retrieve, one bank per call (`bank` = `institutional` or `persona`), low budget,
-and returns text plus citations mapped back to canonical ids only after every
-contributing source in `based_on` re-authorises and validates (active,
-non-expired, matching tenant, persona, relevance scope and request filters)
-against the canonical owner store; any rejected or unverified source fails
-closed before returning generated text. While
-`PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED` is not true, or the index rejects
-reflect, it returns 503 `reflect_unavailable` with a reason. In Hindsight 1.2.1,
-reflect temperature is a static service setting configured on the `hindsight`
-container via `HINDSIGHT_API_LLM_TEMPERATURE_REFLECT` (default `0.1` in
-`docker-compose.yml`), while the per-request payload uses `budget="low"`.
+**LLM layers and standing questions (H5, H13).** `POST /api/memory/reflect` was removed
+(no caller used it) and nothing replaces it as a route. With the bridge configured, the
+deploy sets `PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED` from `MEMORY_LLM_BRIDGE_ENABLED`
+and starts Hindsight's worker. The memory service then switches each bank, before its first
+retain, to `retain_extraction_mode=verbatim` and `enable_auto_consolidation=true` (per-bank
+config; rebuild re-applies it after the bank drop), and responses report `llm_layers:
+enabled`. Unset, nothing is sent: chunks mode, no consolidation, `llm_layers: disabled`.
+A bridge refusal (429) only defers Hindsight's own background work; canonical writes and
+recall never depend on it, and a failed layer switch is retried and recorded like any
+mirror failure.
+
+Persona standing questions are Hindsight mental models in the persona's own bank
+(`pq-<key>`), reachable only through two memory-service routes:
+
+* `PUT /api/memory/persona-standing-questions` (verified `persona-svc` JWT, one tenant):
+  declares a persona's questions as an idempotent set by key (`key`, `text`, optional
+  `anchors`, `memory_types`); keys no longer declared are retired. Each model uses
+  `refresh_after_consolidation` with `min_refresh_interval_seconds` from
+  `PANTHEON_MEMORY_MENTAL_MODEL_MIN_REFRESH_SECONDS` (default 86400, a coordinator proposal)
+  and `exclude_mental_models`, so an answer rests on canonical-derived memories only.
+  The persona controller declares them at the start of each daily cycle: one question per
+  strategy family in the pool, one for risk lessons, no regime question, no new scheduler.
+  Agents hold no route to create or edit them.
+* `GET /api/memory/persona-standing-questions`: authorised exactly like persona retrieve;
+  returns that persona's answers with `refreshed_at` and citations. Hindsight reports the
+  sources of a refresh as unit ids by fact type, so each unit is read back and mapped through
+  its `document_id` to a canonical id (one level through `source_memory_ids` for
+  observations), then re-validated against the canonical persona store (same tenant and
+  persona, active, unexpired). Anything unmapped or unverified is withheld with a reason
+  (`citation_unmapped`, `canonical_source_*`, `no_sources_in_scope`, `not_refreshed`).
+  Committee-scoped sessions get 403: answers are derived from private interpretations.
+
+Answers exist only in Hindsight as derived data; nothing is written to the canonical stores.
 
 ### 5.3 Retrieval Trigger Contexts
 
