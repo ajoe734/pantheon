@@ -479,6 +479,7 @@ class DeploymentPlannerService:
             from services.registry.strategy_artifact import (
                 StrategyArtifactValidationError,
                 strategy_artifact_checksum,
+                strategy_artifact_minimum_closes,
                 validate_strategy_artifact,
             )
 
@@ -507,12 +508,22 @@ class DeploymentPlannerService:
             if not plan.metadata.get("symbol"):
                 symbols = parameters.get("symbols")
                 if not isinstance(symbols, list) or len(symbols) != 1 or not isinstance(symbols[0], str) or not symbols[0].strip():
-                    raise DeploymentPlanError("Inline paper artifact requires an explicit symbol or one approved symbol")
+                    raise DeploymentPlanError(
+                        "multi_symbol_paper_plan_unsupported: inline paper artifact requires an explicit symbol "
+                        "or exactly one approved symbol; the paper runtime path runs one symbol per binding"
+                    )
                 plan.metadata["symbol"] = symbols[0]
+            if "market_data_policy" in plan.metadata:
+                minimum_closes = None
+            else:
+                try:
+                    minimum_closes = strategy_artifact_minimum_closes(artifact)
+                except (StrategyArtifactValidationError, KeyError, TypeError, ValueError) as exc:
+                    raise DeploymentPlanError(f"minimum_closes cannot be derived: {exc}") from exc
             plan.metadata.setdefault("market_data_policy", {
                 "owner": "source-ingest",
                 "contract": "latest_stored_normalized",
-                "minimum_closes": parameters[artifact["strategy_logic"]["lookback_parameter"]],
+                "minimum_closes": minimum_closes,
                 "max_age_seconds": 86400,
             })
         if persist:

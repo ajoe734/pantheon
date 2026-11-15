@@ -1981,3 +1981,133 @@ def test_non_transient_http_401_403_404_422_on_get_are_never_retried(
     assert f"GitHub API GET {run_path} failed with HTTP {status_code}" in str(exc_info.value)
     assert f"http {status_code} rejected" in str(exc_info.value)
 
+
+
+# --- rate limit / transient fetch (DEV-RELEASE-CONTROLLER-RATE-LIMIT-AND-FETCH-RETRY-20261115) ---
+import io as _io
+from email.message import Message as _Message
+
+from scripts import cross_repo_release_controller as _ctl
+
+
+def _herr(code: int, headers: dict[str, str] | None = None, body: str = "") -> urllib.error.HTTPError:
+    msg = _Message()
+    for k, v in (headers or {}).items():
+        msg[k] = v
+    return urllib.error.HTTPError("https://x", code, "e", msg, _io.BytesIO(body.encode()))
+
+
+class _R:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def read(self) -> bytes:
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _urlopen(monkeypatch, outcomes):
+    calls: list[Any] = []
+
+    def fake(req, timeout=0):
+        calls.append(req)
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return _R(out)
+
+    monkeypatch.setattr(_ctl.urllib.request, "urlopen", fake)
+    return calls
+
+
+def _gh(sleeps, **kw):
+    return _ctl.GitHubClient(
+        api_url="https://api.test", token="t", repository="o/r",
+        sleep=sleeps.append, clock=lambda: 1000.0, **kw,
+    )
+
+
+@pytest.mark.parametrize(
+    "hdrs,expected",
+    [
+        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1060"}, 61.0),
+        ({"retry-after": "30"}, 31.0),
+    ],
+)
+def test_rate_limited_403_waits_until_reset_then_retries(monkeypatch, hdrs, expected) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [_herr(403, hdrs), b'{"ok": 1}'])
+    assert _gh(sleeps).request("GET", "/x") == {"ok": 1}
+    assert sleeps == [expected] and len(calls) == 2
+
+
+def test_rate_limited_429_waits_and_retries_post(monkeypatch) -> None:
+    sleeps: list[float] = []
+    _urlopen(monkeypatch, [_herr(429, {"retry-after": "5"}), b""])
+    assert _gh(sleeps).request("POST", "/x", {"a": 1}) is None
+    assert sleeps == [6.0]
+
+
+def test_rate_limit_beyond_budget_fails_closed_with_reason(monkeypatch) -> None:
+    sleeps: list[float] = []
+    _urlopen(monkeypatch, [_herr(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9000"})])
+    with pytest.raises(_ctl.RateLimitError, match="rate_limit") as info:
+        _gh(sleeps, max_rate_limit_wait_seconds=60).request("GET", "/x")
+    assert info.value.reason == "rate_limit" and sleeps == []
+
+
+def test_rate_limit_wait_ceiling_is_65_minutes() -> None:
+    with pytest.raises(ControllerError):
+        _ctl.GitHubClient(api_url="u", token="t", repository="o/r", max_rate_limit_wait_seconds=3901)
+
+
+@pytest.mark.parametrize("code", [403, 404])
+def test_non_rate_limit_403_404_fail_immediately(monkeypatch, code) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [_herr(code, {"x-ratelimit-remaining": "42"}, "Forbidden")])
+    with pytest.raises(ControllerError, match=f"HTTP {code}") as info:
+        _gh(sleeps).request("GET", "/x")
+    assert not isinstance(info.value, _ctl.RateLimitError) and sleeps == [] and len(calls) == 1
+
+
+def test_fetch_url_json_retries_transient_then_succeeds(monkeypatch) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [TimeoutError("t"), _herr(503), b'{"a": 1}'])
+    assert _ctl.fetch_url_json("https://h/x", sleep=sleeps.append) == {"a": 1}
+    assert len(calls) == 3 and sleeps == [1.0, 2.0]
+
+
+def test_fetch_url_json_exhaustion_is_transient_fetch(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [urllib.error.URLError("refused")] * 3)
+    with pytest.raises(_ctl.TransientFetchError, match="transient_fetch"):
+        _ctl.fetch_url_json("https://h/x", sleep=lambda s: None)
+    assert len(calls) == 3
+
+
+def test_fetch_url_json_404_not_retried(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [_herr(404)])
+    with pytest.raises(urllib.error.HTTPError):
+        _ctl.fetch_url_json("https://h/x", sleep=lambda s: None)
+    assert len(calls) == 1
+
+
+def test_fetched_mismatching_identity_still_fails_at_once(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [b'{"commit": "' + b"9" * 40 + b'"}'])
+    cand = {"pantheon_sha": BACKEND_SHA, "execute_plans_sha": FRONTEND_SHA, "pair_id": None}
+    with pytest.raises(ControllerError, match="served identity mismatch") as info:
+        verify_served_identity(bff_base_url="https://b", expected_candidate=cand)
+    assert not isinstance(info.value, _ctl.TransientFetchError) and len(calls) == 1
+
+
+def test_identity_fetch_exhaustion_keeps_transient_fetch_reason() -> None:
+    def boom(url: str) -> dict[str, Any]:
+        raise _ctl.TransientFetchError("transient_fetch: x")
+
+    cand = {"pantheon_sha": BACKEND_SHA, "execute_plans_sha": FRONTEND_SHA, "pair_id": None}
+    with pytest.raises(_ctl.TransientFetchError):
+        verify_served_identity(bff_base_url="https://b", expected_candidate=cand, fetch_fn=boom)

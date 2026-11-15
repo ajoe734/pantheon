@@ -1,0 +1,9 @@
+{"task":"MEMORY-HINDSIGHT-TEST-CROSS-DOC-ORDER-FLAKY-20261115",
+"product_code_changed":false,
+"fixed_assertions":["test_hindsight_index.py::test_store_create_supersede_archive_expiry_are_mirrored_after_persist client.retained and client.invalidated now order-insensitive (sorted)"],
+"audited_multi_document_list_assertions":{
+ "test_hindsight_index.py":["retained (fixed)","invalidated line ~134 (fixed)","test_persona_store_mirrors_into_persona_bank: single doc","test_slow_index...: uses events.index per-document, exact","test_mirror_dispatch...: already set comparison; invalidated has 1 item"],
+ "test_hindsight_integration.py":["all multi-id comparisons already use set(); remaining list comparisons hold a single element; no change needed"]},
+"per_document_order_assertion":"FakeClient.events records retain/invalidate; retain index < invalidate index asserted for each document",
+"stress":{"command":"for i in 1..50: python -m pytest -q services/memory/test_hindsight_index.py -k 'cross_document_reordering or mirrored_after_persist' (new test delays retain of doc a 0.15s with MAX_MIRROR_WORKERS=4)","runs":50,"passed":50},
+"full_suite":"python -m pytest -q services/memory -> 139 passed, 8 skipped"}
