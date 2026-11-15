@@ -88,6 +88,38 @@ def candidates_from_reflection(reflection: Dict[str, Any], tenant_id: str) -> Li
     ]
 
 
+def mint_memory_service_authorization(
+    tenant_id: str, *, roles: Any, service: str, subject: Optional[str] = None
+) -> str:
+    """Short-lived (120s) tenant-bound JWT for the persona service path to the memory owner; never widens tenant."""
+    import time
+
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = (os.getenv("PERSONA_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or "").strip()
+    if not secret:
+        raise RuntimeError("memory lesson access requires PERSONA_JWT_SECRET for the service path")
+    if not str(tenant_id or "").strip():
+        raise RuntimeError("memory lesson access requires exactly one tenant")
+    now = int(time.time())
+    claims: Dict[str, Any] = {
+        "sub": subject or os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "persona-service",
+        "service": service,
+        "tenant_id": tenant_id,
+        "allowed_tenants": [tenant_id],
+        "roles": list(roles),
+        "iat": now,
+        "exp": now + 120,
+    }
+    issuer = (os.getenv("PERSONA_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or "").strip()
+    audience = (os.getenv("PERSONA_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or "").strip()
+    if issuer:
+        claims["iss"] = issuer
+    if audience:
+        claims["aud"] = audience
+    return "Bearer " + encode_jwt_hs256(claims, secret=secret)
+
+
 class MemoryLessonRegistrar:
     """Registers lesson candidates in the memory service lesson review, once per candidate id."""
 
@@ -108,30 +140,7 @@ class MemoryLessonRegistrar:
     @staticmethod
     def _mint_service_authorization(tenant_id: str) -> str:
         """Short-lived tenant-bound memory-writer JWT for the admitted persona service path (never widens tenant)."""
-        import time
-
-        from services.runtime_auth_inbound import encode_jwt_hs256
-
-        secret = (os.getenv("PERSONA_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or "").strip()
-        if not secret:
-            raise RuntimeError("memory lesson registration requires PERSONA_JWT_SECRET for the service path")
-        now = int(time.time())
-        claims: Dict[str, Any] = {
-            "sub": os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "persona-service",
-            "service": "persona-lesson-registrar",
-            "tenant_id": tenant_id,
-            "allowed_tenants": [tenant_id],
-            "roles": ["memory-writer"],
-            "iat": now,
-            "exp": now + 120,
-        }
-        issuer = (os.getenv("PERSONA_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or "").strip()
-        audience = (os.getenv("PERSONA_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or "").strip()
-        if issuer:
-            claims["iss"] = issuer
-        if audience:
-            claims["aud"] = audience
-        return "Bearer " + encode_jwt_hs256(claims, secret=secret)
+        return mint_memory_service_authorization(tenant_id, roles=("memory-writer",), service="persona-lesson-registrar")
 
     def register(self, candidates: List[Dict[str, Any]], authorization: Optional[str]) -> Dict[str, Any]:
         """Returns {"registered": [...], "already_registered": [...]}; raises RuntimeError on failure."""
@@ -193,6 +202,15 @@ def is_paper_only_eligible(candidate: Dict[str, Any]) -> bool:
 def is_sensitive_change(candidate: Dict[str, Any]) -> bool:
     """Fail closed: anything not explicitly paper-only eligible is treated as sensitive."""
     return not is_paper_only_eligible(candidate)
+
+
+PATTERN_SCOPES = frozenset({"strategy", "regime", "pattern"})
+MIN_PATTERN_EPISODES = 3
+
+
+def supporting_episode_minimum(candidate: Dict[str, Any]) -> int:
+    """Supporting episodes a candidate must cite before it may be sent to endorsement (same rule as the gates)."""
+    return MIN_PATTERN_EPISODES if canonical_scope(candidate) in PATTERN_SCOPES else 1
 
 
 def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, Any]]) -> List[str]:
@@ -267,6 +285,26 @@ def check_evaluation_gates(candidate: Dict[str, Any], episodes: List[Dict[str, A
                 errors.append(f"Promotion to {target_env} requires a valid audit_receipt_id in the receipt.")
 
     return errors
+
+
+def episode_context_tags(candidate: Dict[str, Any], episodes: List[Dict[str, Any]]) -> List[str]:
+    """Retrieval tags (family:/underlying:) from the candidate's own journal episodes, so the merged lesson
+    is found by the cycle case-file query (``services.knowledge.case_file.lesson_query``). Nothing is invented."""
+    own = {str(i) for i in candidate.get("trade_episode_ids", [])}
+    tags: List[str] = []
+    for ep in episodes:
+        if (
+            str(ep.get("trade_episode_id") or "") not in own
+            or ep.get("tenant_id") != candidate.get("tenant_id")
+            or ep.get("persona_id") != candidate.get("persona_id")
+        ):
+            continue
+        strategy = str(ep.get("strategy_id") or "").strip().lower()
+        instrument = str(ep.get("instrument_id") or "").strip().split(".")[0].strip().lower()
+        for tag in ((f"family:{strategy}" if strategy else ""), (f"underlying:{instrument}" if instrument else "")):
+            if tag and tag not in tags:
+                tags.append(tag)
+    return tags
 
 
 class TradeLessonCandidateError(ValueError):
@@ -539,7 +577,9 @@ class LessonGovernanceService:
         )
         return (updated, replayed) if return_replayed else updated
 
-    def merge_to_memory(self, lesson_candidate_id: str, memory_store: PersonaMemoryStore) -> Dict[str, Any]:
+    def merge_to_memory(
+        self, lesson_candidate_id: str, memory_store: PersonaMemoryStore, *, context_tags: Any = ()
+    ) -> Dict[str, Any]:
         """Merge an endorsed candidate into the persona memory store.
 
         Moves state to 'merged'.
@@ -577,7 +617,9 @@ class LessonGovernanceService:
                     "target_env": candidate.get("target_env"),
                     "promotion_stage": candidate.get("promotion_stage"),
                 },
-                "tags": ["strategy_lesson", candidate["scope"], candidate["persona_id"]],
+                "tags": list(dict.fromkeys(
+                    ["strategy_lesson", candidate["scope"], candidate["persona_id"], *context_tags]
+                )),
             },
             source_event_type="operator_feedback",
             source_event_id=candidate["reflection_id"],
@@ -644,7 +686,9 @@ class LessonGovernanceService:
             audit_receipt_id=review_id,
             episodes=episodes,
         )
-        return self.merge_to_memory(lesson_candidate_id, memory_store)
+        return self.merge_to_memory(
+            lesson_candidate_id, memory_store, context_tags=episode_context_tags(candidate, episodes)
+        )
 
 
 class RiskReviewStore:

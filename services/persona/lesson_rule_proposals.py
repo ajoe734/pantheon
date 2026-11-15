@@ -25,6 +25,7 @@ import jsonschema
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from services.persona.harness import EvidenceReference, PersonaPatch
+from services.persona.lesson_governance import MemoryLessonRegistrar, mint_memory_service_authorization
 
 ENDORSED_STATES = frozenset({"endorsed", "merged"})
 HARNESS_PATCH_TYPES = ("consult_policy", "threshold")
@@ -105,6 +106,14 @@ class MemoryLessonReader:
     def get(self, lesson_id: str, tenant_id: str, authorization: str | None) -> dict[str, Any] | None:
         if not self.base_url or not authorization:
             raise LessonRuleError("lesson_source_unavailable", 503)
+        if not MemoryLessonRegistrar._is_jwt(authorization):
+            # The persona service credential is opaque to Memory, which verifies only JWTs: mint a short-lived
+            # tenant-bound read identity for exactly this one lesson read (never widens tenant).
+            try:
+                authorization = mint_memory_service_authorization(
+                    tenant_id, roles=("persona-svc",), service="persona-lesson-rules")
+            except RuntimeError as exc:
+                raise LessonRuleError("lesson_source_unavailable", 503) from exc
         request = Request(f"{self.base_url}/api/memory/trade-lessons/{quote(lesson_id, safe='')}",
                           headers={"Authorization": authorization, "X-Tenant-Id": tenant_id})
         try:
