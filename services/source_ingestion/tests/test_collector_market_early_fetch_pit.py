@@ -161,8 +161,16 @@ def test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy(tmp_pat
         expected_source_id=TWSE, entry=early, item_window=(0, 0))).exists()
 
 
-@pytest.mark.parametrize("reject", [False, True], ids=["early-admitted", "preclose-quarantined"])
-def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(admission_stack, monkeypatch, reject):
+@pytest.mark.parametrize("reject,same_second", [(False, False), (True, False), (True, True)],
+                         ids=["early-admitted", "preclose-quarantined", "preclose-same-second-receipts"])
+def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(
+        admission_stack, monkeypatch, reject, same_second):
+    if same_second:
+        # Receipt finished_at has 1s precision; every pull finishing in one second used to make
+        # receipts[-1] an arbitrary pull (random run-id tiebreak). Force that tie deterministically.
+        from datetime import datetime, timezone
+        from services.source_ingestion.connectors import base
+        monkeypatch.setattr(base, "_utc_now", lambda: datetime(2026, 11, 15, tzinfo=timezone.utc))
     http, module, _, _, files, _, tick = admission_stack
     more, newest = price_bundle(fetched="2026-11-14T18:19:33Z", counts=(("2026-11-13", 1377),))
     files.update(more)
@@ -172,6 +180,9 @@ def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(admissio
     tick(cw.RECONCILE_ONLY_MODE)
 
     def pull():
+        # Receipts sort by (finished_at at 1s precision, random run id), so two pulls
+        # finishing in the same second have arbitrary order: pick this pull's own receipt.
+        before = {r.ingest_run_id for r in module.runtime.store.read_freshness_snapshot()["receipts"]}
         response = http.post("/api/source-ingest/run-scheduled", json={
             "force_connector_ids": [TWSE], "exclusive_connector_ids": [TWSE]},
             headers={"Authorization": f"Bearer {module.runtime.controller_token}"})
@@ -179,7 +190,10 @@ def test_real_pipeline_persists_newest_and_advances_sweep_after_restart(admissio
         assert response.json()["summary"]["total_failed"] == 0, response.text
         module.runtime.store.reload()
         module.runtime.latest_market_snapshot_store.reload()
-        return module.runtime.store.read_freshness_snapshot()["receipts"][-1]
+        created = [r for r in module.runtime.store.read_freshness_snapshot()["receipts"]
+                   if r.ingest_run_id not in before]
+        assert len(created) == 1, created
+        return created[0]
 
     for _ in range(5):
         assert pull().normalized_count == 256
