@@ -81,5 +81,10 @@
     "No walk-forward result on Taiwan history exists yet, so no gate value is calibrated; synthetic-series tests prove only the protocol and the fail-closed rules.",
     "Registry-side acceptance of the approved transition (approver / approval_decision_id) was exercised against a fake registry client, not the registry service.",
     "docker compose config / image build not run in this environment."
-  ]
+  ],
+  "ci_repair": {
+    "cause": "CI research venv did not install statsmodels/ruptures (ModuleNotFoundError in regime tests)",
+    "fix": ".github/workflows/branch-ci.yml installs statsmodels==0.15.0 and ruptures==1.1.10 (same pins as runtime-requirements.txt) before pip check",
+    "local_verification": "pytest services/research/regime services/research/statsmodels services/research/tests/test_regime_research_route.py -> 85 passed; pip check clean"
+  }
 }
