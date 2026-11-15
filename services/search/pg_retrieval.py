@@ -257,6 +257,40 @@ class PostgresRetrievalBackend:
 
         return self.upsert_documents(final_records)
 
+    def purge_legacy_memory(self) -> dict[str, Any]:
+        """Remove only the retired memory projection using rebuild maintenance authority.
+
+        The normal retrieval role remains tenant-scoped. Maintenance must see all
+        tenants: row_security=off raises rather than silently counting an RLS
+        subset when the configured schema-admin connection cannot bypass RLS.
+        Counts and deletion share a transaction and exclude concurrent writers.
+        """
+        kinds = ("institutional_memory", "persona_memory")
+        with self._get_connection(schema_admin=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL row_security = off")
+                cur.execute("LOCK TABLE search_retrieval_index IN SHARE ROW EXCLUSIVE MODE")
+
+                def counts() -> dict[str, int]:
+                    cur.execute("SELECT record_kind, count(*) AS n FROM search_retrieval_index GROUP BY record_kind")
+                    return {row["record_kind"]: row["n"] for row in cur.fetchall()}
+
+                before = counts()
+                cur.execute("DELETE FROM search_retrieval_index WHERE record_kind = ANY(%s)", (list(kinds),))
+                deleted = cur.rowcount
+                after = counts()
+                if any(after.get(kind, 0) for kind in kinds) or deleted != sum(before.get(kind, 0) for kind in kinds):
+                    raise RuntimeError("legacy memory cleanup count mismatch")
+                if {k: n for k, n in before.items() if k not in kinds} != after:
+                    raise RuntimeError("legacy memory cleanup changed non-memory rows")
+            conn.commit()
+        return {
+            "before_counts": {kind: before.get(kind, 0) for kind in kinds},
+            "deleted_count": deleted,
+            "after_counts": {kind: after.get(kind, 0) for kind in kinds},
+            "retained_counts": after,
+        }
+
     def upsert_documents(self, records: Sequence[RetrievalIndexRecord]) -> int:
         if not records:
             return 0
@@ -748,9 +782,10 @@ class PostgresRetrievalBackend:
 def rebuild_index(dsn: str | None = None, evidence_path: Path | None = None, pipeline_path: Path | None = None) -> dict[str, Any]:
     """Rebuild the retrieval index from the canonical evidence store (python -m services.search.pg_retrieval rebuild).
 
-    Applies the idempotent schema, then force-fully re-indexes every knowledge object. The index
-    is disposable derived data; the query log and labels are untouched. Fails closed if the model
-    or database is unavailable.
+    Applies the idempotent schema, purges retired memory rows across all tenants,
+    then force-fully re-indexes every knowledge object. The index is disposable
+    derived data; the query log and labels are untouched. Fails closed if the
+    model, database, or all-tenant maintenance authority is unavailable.
     """
     from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
     from .pg_store import build_search_evidence_repository
@@ -760,12 +795,15 @@ def rebuild_index(dsn: str | None = None, evidence_path: Path | None = None, pip
     if health.get("status") != "ok":
         raise RuntimeError(f"retrieval backend unavailable: {health.get('reason')}")
     backend.setup_schema()
+    memory_cleanup = backend.purge_legacy_memory()
     repository = build_search_evidence_repository(
         evidence_path or Path(os.getenv("SEARCH_EVIDENCE_STORE_PATH", "/data/source-ingest/source_evidence.jsonl")))
     store = JsonlIndexPipelineStore(
         pipeline_path or Path(os.getenv("SEARCH_PIPELINE_STORE_PATH", "/data/search/search-pipeline.jsonl")))
-    return IncrementalIndexPipeline(repository, store, retrieval_backend=backend).run(
+    result = IncrementalIndexPipeline(repository, store, retrieval_backend=backend).run(
         triggered_by="rebuild_index", force_full=True).to_dict()
+    result["memory_cleanup"] = memory_cleanup
+    return result
 
 
 if __name__ == "__main__":
