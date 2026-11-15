@@ -1,7 +1,11 @@
 {
   "task_id": "SCREEN-SURVIVORSHIP-ATTESTATION-20261115",
   "reproduction": {
-    "gate_rule": ["services/registry/candidate_pool.py:369", "services/research/vectorbt/adapter/vectorbt_adapter.py:2533-2535", "services/research/replication/GATE_CONTRACT.md:149-150"],
+    "gate_rule": [
+      "services/registry/candidate_pool.py:369",
+      "services/research/vectorbt/adapter/vectorbt_adapter.py:2533-2535",
+      "services/research/replication/GATE_CONTRACT.md:149-150"
+    ],
     "no_production_setter_before": "only values in repo were false in services/research/replication/fixtures/recorded_screen_contribution_tw.json:1538-1539 (and test-only True in test_gate_screen_contribution.py recorded_market)",
     "test": "services/research/tests/test_screen_survivorship_gate_integration.py::test_recorded_history_without_attestation_evidence_is_survivorship_limited (real feed router + real ReplicationGate: details.status == survivorship_limited)"
   },
@@ -28,7 +32,22 @@
     "command": "/tmp/hc-venv/bin/python -m pytest -q services/source_ingestion/tests/test_survivorship_attestation.py services/source_ingestion/tests/test_candidate_pool_market_feed.py services/research/tests/test_screen_survivorship_gate_integration.py services/registry/test_candidate_pool.py services/research/replication/tests/test_gate_screen_contribution.py",
     "passed": 51,
     "failed": 0,
-    "new_tests": {"test_survivorship_attestation.py": 5, "test_candidate_pool_market_feed.py": 1, "test_screen_survivorship_gate_integration.py": 3}
+    "new_tests": {
+      "test_survivorship_attestation.py": 5,
+      "test_candidate_pool_market_feed.py": 1,
+      "test_screen_survivorship_gate_integration.py": 3
+    }
   },
-  "credentials_recorded": false
+  "credentials_recorded": false,
+  "intake_interface": {
+    "note": "Intake tasks wire data only; no change to attest_survivorship() or candidate_pool_market_feed.py interface is needed. Files are read by candidate_pool_market_feed via the holiday_paths / suspension_paths inputs as normalized JSONL rows (metadata.normalized_row).",
+    "includes_delisted": {
+      "price_inputs": "per session AND per venue (TWSE, TPEx): a row with metadata.api_endpoint in {bundle://collector-tw-twse-price-history (venue TWSE), bundle://collector-tw-tpex-price-history (venue TPEx)}, metadata.venue, normalized_row.date (YYYY-MM-DD), metadata.source_dataset; read by _capture()/_read_bars() (candidate_pool_market_feed.py:101-125)",
+      "holiday_inputs": "tw_trading_holidays rows: normalized_row.date=YYYY-MM-DD, normalized_row.closed=true (boolean), metadata.api_endpoint starting with https://www.twse.com.tw/ ; read by _read_closed_days() (:137-148). Every weekday in the window without a session must have such a row"
+    },
+    "includes_suspended": {
+      "inputs": "tw_trading_suspension rows per session and per venue: normalized_row.capture=='all_market', normalized_row.suspended_symbols=list (may be empty when nothing suspended), normalized_row.date, plus metadata.api_endpoint/venue/source_dataset identical to the price bundle endpoints; read by _read_suspension_captures() (:151-163)",
+      "also_requires": "includes_delisted attested for the same window; collector must keep rows with empty close (spiders.py 'if close_price is None: continue') to produce suspended_symbols"
+    }
+  }
 }
