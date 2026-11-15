@@ -124,3 +124,62 @@ def register_regime_model(
         reason = f"insufficient_training_history:{model.train_sessions}<{config.min_training_sessions}"
     return RegisteredModel(axis=getattr(model, "axis", "volatility"), horizon=model.horizon, model_version=version,
                            artifact_id=artifact_id, registry_id=registry_id, artifact_state=state, reason=reason)
+
+
+# ---------------------------------------------------------------------------
+# Production entry point: fit, validate and register on request
+# ---------------------------------------------------------------------------
+
+MODEL_AXES = ("volatility", "trend", "risk_appetite")
+
+
+def run_regime_research(
+    observations: Sequence[Mapping[str, Any]], *, decision_time: Any, client: RegistryClient | None,
+    config: RegimeConfig | None = None, market: str = "TW", source_run_id: str | None = None,
+    axes: Sequence[str] = MODEL_AXES, horizons: Sequence[str] = ("short", "medium"),
+) -> dict[str, Any]:
+    """Fit, walk-forward validate and register the regime models over governed observations.
+
+    Fail-closed by construction: an axis whose inputs are missing is reported ``unavailable``
+    with the reason and fits nothing; with too little history a model may be fitted but is only
+    registered as a candidate; nothing is approved unless validation passed. The macro axis is a
+    rule set (no fitted model) and is reported from the NDC series. No language model is used.
+    """
+    from services.research.regime.features import BUILDERS, PROPOSALS, build_macro_inputs
+    from services.research.regime.validation import fit_and_validate
+
+    config = config or RegimeConfig()
+    results: list[dict[str, Any]] = []
+    for axis in axes:
+        for horizon in horizons:
+            inputs = BUILDERS[axis](observations, decision_time=decision_time, horizon=horizon, config=config)
+            entry: dict[str, Any] = {"axis": axis, "horizon": horizon, "input_refs": list(inputs.input_refs)}
+            if not inputs.available:
+                entry.update(status="unavailable", reason=inputs.reason)
+                results.append(entry)
+                continue
+            model, report = fit_and_validate(inputs, config)
+            entry.update(status=report.status, reason=report.reason, validation=report.to_dict(), sessions=inputs.sessions)
+            if model is None:
+                results.append(entry)
+                continue
+            if client is None:
+                entry.update(registration={"status": "not_requested"})
+            else:
+                registered = register_regime_model(client, model, report, input_refs=inputs.input_refs, config=config,
+                                                   market=market, source_run_id=source_run_id)
+                entry.update(registration={"status": registered.artifact_state, "registry_id": registered.registry_id,
+                                           "model_version": registered.model_version, "reason": registered.reason})
+            results.append(entry)
+    macro_sessions, macro_inputs = build_macro_inputs(observations, decision_time=decision_time, config=config)
+    macro = {"axis": "macro", "method": "rule_based", "input_refs": list(macro_inputs.input_refs)}
+    if macro_inputs.available:
+        macro.update(status="available", sessions=len(macro_sessions), latest=macro_sessions[-1].__dict__)
+    else:
+        macro.update(status="unavailable", reason=macro_inputs.reason)
+    results.append(macro)
+    fitted = [r for r in results if r.get("registration", {}).get("status") in ("candidate", "approved")]
+    return {"market": market, "decision_time": str(decision_time), "paper_only": True, "no_language_model": True,
+            "status": "completed" if fitted else "unavailable", "axes": results,
+            "approved": [r["registration"]["model_version"] for r in fitted if r["registration"]["status"] == "approved"],
+            "config": config.to_dict(), "proposals": list(PROPOSALS)}

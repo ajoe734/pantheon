@@ -316,3 +316,80 @@ def build_macro_inputs(observations: Sequence[Mapping[str, Any]], *, decision_ti
 
 BUILDERS = {"volatility": build_volatility_inputs, "trend": build_trend_inputs,
             "risk_appetite": build_risk_appetite_inputs}
+
+
+# ---------------------------------------------------------------------------
+# Governed observation loading from the source-ingestion normalized store
+# ---------------------------------------------------------------------------
+
+import gzip  # noqa: E402
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from services.source_ingestion.feature_catalogue import (  # noqa: E402
+    MARKET_CHIP_DATASETS, FeatureCatalogueError, market_chip_observations, observations_from_row,
+)
+
+REGIME_INPUT_DATASETS: tuple[str, ...] = (
+    "tw_index_daily", "tw_market_breadth_daily", "tw_market_institutional_flows",
+    "tw_market_margin_balances", "taifex_market_positions", "taifex_market_put_call", "tw_macro_ndc",
+)
+
+
+def _normalized_rows(root: Path, dataset: str) -> Iterable[dict[str, Any]]:
+    base = root / "normalized" / dataset
+    if not base.is_dir():
+        return
+    for path in sorted(base.rglob("*.jsonl*")):
+        opener = gzip.open if path.suffix == ".gz" else Path.open
+        with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+            for line in handle:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+
+
+def load_governed_observations(store_root: str | Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Read governed feature observations from the source-ingestion normalized store.
+
+    Returns ``(observations, notes)``. ``notes`` records, per dataset, the rows read and any
+    reason rows were withheld (incomplete market sessions, unconvertible rows). Nothing is
+    inferred or filled: a withheld session simply has no observation.
+    """
+    root = Path(store_root)
+    observations: list[dict[str, Any]] = []
+    notes: dict[str, Any] = {}
+    for dataset in REGIME_INPUT_DATASETS:
+        rows: list[dict[str, Any]] = []
+        for record in _normalized_rows(root, dataset):
+            meta = record.get("metadata") or {}
+            nrow = meta.get("normalized_row")
+            if not isinstance(nrow, Mapping):
+                continue
+            row = dict(nrow)
+            row.setdefault("available_time", meta.get("available_time"))
+            row.setdefault("ingest_time", meta.get("ingest_time"))
+            row.setdefault("dataset", dataset)
+            rows.append(row)
+        note: dict[str, Any] = {"rows": len(rows), "observations": 0, "withheld": {}}
+        try:
+            if dataset in MARKET_CHIP_DATASETS:
+                by_day: dict[str, list[dict[str, Any]]] = {}
+                for row in rows:
+                    by_day.setdefault(str(row.get("date") or row.get("event_time") or "")[:10], []).append(row)
+                for day, day_rows in sorted(by_day.items()):
+                    result = market_chip_observations(dataset, day_rows)
+                    if result["status"] == "complete":
+                        observations.extend(result["observations"])
+                        note["observations"] += len(result["observations"])
+                    else:
+                        note["withheld"][day] = result["reason"]
+            else:
+                for row in rows:
+                    got = observations_from_row(dataset, row)
+                    observations.extend(got)
+                    note["observations"] += len(got)
+        except (FeatureCatalogueError, ValueError, KeyError) as exc:
+            note["error"] = f"{type(exc).__name__}:{exc}"
+        notes[dataset] = note
+    return observations, notes
