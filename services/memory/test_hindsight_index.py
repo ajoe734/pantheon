@@ -14,6 +14,7 @@ from services.memory.persona_memory_store import PersonaMemoryEntry, PersonaMemo
 class FakeClient:
     def __init__(self, fail: int = 0, reason: str = "hindsight_unreachable"):
         self.retained, self.invalidated, self.deleted = [], [], []
+        self.events = []
         self.fail, self.reason = fail, reason
 
     def _maybe_fail(self):
@@ -24,10 +25,12 @@ class FakeClient:
     def retain(self, bank, items):
         self._maybe_fail()
         self.retained.append((bank, items))
+        self.events.append(("retain", items[0]["document_id"]))
 
     def invalidate_document(self, bank, document_id, reason):
         self._maybe_fail()
         self.invalidated.append((bank, document_id, reason))
+        self.events.append(("invalidate", document_id))
         return 1
 
     def delete_bank(self, bank):
@@ -127,16 +130,48 @@ def test_store_create_supersede_archive_expiry_are_mirrored_after_persist():
     store.create(inst(mid("a")))
     store.create(inst(mid("b")))
     hs.flush_mirrors()
-    assert [i[1][0]["document_id"] for i in client.retained] == [mid("a"), mid("b")]
+    # The mirror only guarantees FIFO per (bank, canonical_id); cross-document order is unspecified.
+    assert sorted(i[1][0]["document_id"] for i in client.retained) == sorted([mid("a"), mid("b")])
     store.supersede(mid("a"), mid("b"))
     store.archive(mid("b"), reason="obsolete")
     hs.flush_mirrors()
-    assert client.invalidated == [(hs.facts_bank("t1"), mid("a"), "superseded"), (hs.facts_bank("t1"), mid("b"), "obsolete")]
+    assert sorted(client.invalidated) == sorted(
+        [(hs.facts_bank("t1"), mid("a"), "superseded"), (hs.facts_bank("t1"), mid("b"), "obsolete")])
+    # Per-document lifecycle order is still exact: retain before invalidate.
+    for doc in (mid("a"), mid("b")):
+        assert client.events.index(("retain", doc)) < client.events.index(("invalidate", doc))
     store.create(inst(mid("e"), expires_at="2099-01-01T00:00:00Z"))
     archived = store.archive_expired(now="2100-01-01T00:00:00Z", reason="ttl")
     hs.flush_mirrors()
     assert [x.entry_id for x in archived] == [mid("e")]
     assert client.invalidated[-1] == (hs.facts_bank("t1"), mid("e"), "ttl")
+
+
+def test_cross_document_reordering_is_tolerated_and_per_document_order_is_exact(monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(hs, "MAX_MIRROR_WORKERS", 4)
+
+    class Delayed(FakeClient):
+        def retain(self, bank, items):
+            if items[0]["document_id"] == mid("a"):
+                time.sleep(0.15)  # force b to overtake a across documents
+            return super().retain(bank, items)
+
+    client = Delayed()
+    hs.set_hindsight_client(client)
+    store = InstitutionalMemoryStore()
+    store.create(inst(mid("a")))
+    store.create(inst(mid("b")))
+    store.supersede(mid("a"), mid("b"))
+    store.archive(mid("b"), reason="obsolete")
+    assert hs.flush_mirrors()
+    assert sorted(i[1][0]["document_id"] for i in client.retained) == sorted([mid("a"), mid("b")])
+    assert sorted(client.invalidated) == sorted(
+        [(hs.facts_bank("t1"), mid("a"), "superseded"), (hs.facts_bank("t1"), mid("b"), "obsolete")])
+    for doc in (mid("a"), mid("b")):
+        assert client.events.index(("retain", doc)) < client.events.index(("invalidate", doc))
 
 
 def test_persona_store_mirrors_into_persona_bank():
