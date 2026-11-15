@@ -68,6 +68,7 @@ from services.governance.paper_approval_scope import (
     configured_persona_paper_binding_verifier,
     is_persona_lifecycle_decision,
     require_paper_lifecycle_decision,
+    require_card_admission_decision,
     require_paper_owned_decision,
     resolve_dev_paper_grant,
     validate_paper_decide_body,
@@ -1589,6 +1590,13 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
                     validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
             else:
                 require_paper_owned_decision(current, grant=grant, now=now)
+                widening = grant.card_admission
+                if (widening is not None and current.get('owner_user_id') == widening.proposer_subject
+                        and current.get('owner_user_id') != grant.subject):
+                    # Card admission widening (design 6A): the research-owned decision is admitted by the
+                    # widened grant content only; stamp the exact grant scope as for the lifecycle target.
+                    decision.authorization_scope = grant.authorization_scope
+                    lifecycle_evidence = require_card_admission_decision(current, grant=grant, now=now)
                 if operation == 'decide':
                     validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
                 verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())

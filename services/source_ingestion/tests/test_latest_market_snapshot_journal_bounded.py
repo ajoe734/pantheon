@@ -79,7 +79,7 @@ def test_unchanged_reingest_appends_nothing_but_new_session_does(tmp_path):
 
 
 def _write_history(path, *, tombstone=False):
-    store = LatestMarketSnapshotStore(path, max_closes=60, compact_threshold_bytes=10**12)
+    store = LatestMarketSnapshotStore(path, max_closes=60, **NOCOMPACT)
     for i in range(12):
         _ingest(store, [_daily("2330", (BASE + timedelta(days=i)).isoformat(), 100 + i),
                         _daily("2317", (BASE + timedelta(days=i)).isoformat(), 50 + i)], f"run-{i}")
@@ -92,21 +92,20 @@ def test_compaction_is_lossless_and_keeps_original_bytes(tmp_path):
     lines = path.read_text().splitlines()
     assert len(lines) == 24  # two symbols, one envelope per run each
     view = _view(store)
-    digest = current._projection_digest(store.reload())
+    digest = _digest(store.reload())
     result = store.compact()
-    assert result["compacted"] and result["lines_before"] == 24 and result["lines_after"] == 2
-    assert result["projection_sha256"] == digest
+    assert result is True and _journal_lines(path) == 2
     assert path.read_text() == "".join(line + "\n" for line in lines[-2:])  # original envelope bytes
-    assert current._projection_digest(LatestMarketSnapshotStore(path).reload()) == digest
+    assert _digest(LatestMarketSnapshotStore(path).reload()) == digest
     assert _view(store) == view and _view(LatestMarketSnapshotStore(path)) == view
-    assert store.compact()["compacted"] is False  # idempotent
+    assert store.compact() is False  # idempotent
     assert not list(tmp_path.glob("*.tmp"))
     assert store.journal_stats()["last_compaction_at"]
 
 
 def test_compaction_keeps_tombstones_in_force(tmp_path):
     path = tmp_path / "snap.jsonl"
-    store = LatestMarketSnapshotStore(path, compact_threshold_bytes=10**12)
+    store = LatestMarketSnapshotStore(path, **NOCOMPACT)
     minute = "tw_price_1m"
     rec = lambda day: SourceRecord(
         source_id="m", connector_id="c", source_type="market", title="t", content_ref=f"ref://m/{day}",
@@ -118,7 +117,7 @@ def test_compaction_keeps_tombstones_in_force(tmp_path):
     before = _view(store)
     assert store.get("2330", minute) is None
     store.compact()
-    assert _journal_lines(path) == 2  # daily envelope + the tombstone in force
+    assert _journal_lines(path) == 1  # #7414 drops a withdrawn key; absence is the same projection
     reread = LatestMarketSnapshotStore(path)
     assert reread.get("2330", minute) is None and _view(reread) == before
 
@@ -127,11 +126,13 @@ def test_startup_compacts_and_threshold_triggers_compaction(tmp_path):
     path = tmp_path / "snap.jsonl"
     _write_history(path)
     size = path.stat().st_size
-    store = LatestMarketSnapshotStore(path)  # startup compaction
-    assert _journal_lines(path) == 2 and path.stat().st_size < size
+    assert LatestMarketSnapshotStore(path).journal_stats()['last_compaction_at'] is None  # below the size trigger
+    assert _journal_lines(path) == 24
+    store = LatestMarketSnapshotStore(path, compact_min_bytes=0, compact_factor=2)  # startup compaction
+    assert _journal_lines(path) == 2 and path.stat().st_size < size and store.journal_stats()['last_compaction_at']
     # threshold path: tiny threshold keeps the journal bounded while sessions keep arriving
     path2 = tmp_path / "snap2.jsonl"
-    bounded = LatestMarketSnapshotStore(path2, max_closes=60, compact_threshold_bytes=4000)
+    bounded = LatestMarketSnapshotStore(path2, max_closes=60, compact_min_bytes=4000, compact_factor=2)
     for i in range(40):
         _ingest(bounded, [_daily("2330", (BASE + timedelta(days=i)).isoformat())], f"r{i}")
         assert _journal_lines(path2) <= 4
@@ -141,8 +142,8 @@ def test_startup_compacts_and_threshold_triggers_compaction(tmp_path):
 
 def test_concurrent_writers_and_compaction_lose_nothing(tmp_path):
     path = tmp_path / "snap.jsonl"
-    a = LatestMarketSnapshotStore(path, compact_threshold_bytes=0)
-    b = LatestMarketSnapshotStore(path, compact_threshold_bytes=0)
+    a = LatestMarketSnapshotStore(path, compact_min_bytes=0, compact_factor=2)
+    b = LatestMarketSnapshotStore(path, compact_min_bytes=0, compact_factor=2)
     errors: list[BaseException] = []
 
     def run(store, symbol, offset):
@@ -161,9 +162,10 @@ def test_concurrent_writers_and_compaction_lose_nothing(tmp_path):
     assert final.get("2317").points[-1].event_time.startswith((BASE + timedelta(days=124)).isoformat())
 
 
-def test_health_stats_report_bytes_lines_compaction_and_warn(tmp_path):
+def test_health_stats_report_bytes_lines_compaction_and_warn(tmp_path, monkeypatch):
+    monkeypatch.setattr(current, "MARKET_SNAPSHOT_WARN_BYTES", 1)
     path = tmp_path / "snap.jsonl"
-    store = LatestMarketSnapshotStore(path, compact_threshold_bytes=10**12, warn_bytes=1)
+    store = LatestMarketSnapshotStore(path, **NOCOMPACT)
     _ingest(store, [_daily("2330", "2026-10-01")], "r1")
     stats = store.journal_stats()
     assert stats["journal_bytes"] == path.stat().st_size and stats["journal_lines"] == 1
@@ -184,7 +186,7 @@ def test_runtime_health_metrics_carry_journal_stats(tmp_path, monkeypatch):
 def test_thirty_day_backfill_two_sources_bound_is_independent_of_sessions(tmp_path):
     def run(days):
         path = tmp_path / f"snap-{days}.jsonl"
-        store = LatestMarketSnapshotStore(path, max_closes=5, compact_threshold_bytes=3000)
+        store = LatestMarketSnapshotStore(path, max_closes=5, compact_min_bytes=3000, compact_factor=2)
         today = BASE + timedelta(days=days)
         for sym, connector in (("2330", "official-a"), ("2317", "official-b")):
             _ingest(store, [_daily(sym, (today - timedelta(days=k)).isoformat(), connector=connector) for k in range(5)], f"live-{sym}")
@@ -200,7 +202,12 @@ def test_thirty_day_backfill_two_sources_bound_is_independent_of_sessions(tmp_pa
     assert view30.keys() == view90.keys()
 
 
-PROBE_NS = {}
+def _digest(snapshots):
+    rows = sorted((v.to_dict() for v in snapshots.values()), key=lambda r: (r["symbol"], r.get("dataset", "tw_price_daily")))
+    return hashlib.sha256(current._canonical_json({"snapshots": rows}).encode("utf-8")).hexdigest()
+
+
+NOCOMPACT = dict(compact_min_bytes=10**12)
 
 
 def _probe(path: Path) -> dict:
@@ -254,7 +261,7 @@ def test_memory_holds_only_latest_projection(tmp_path):
     _write_history(path)
     lines = path.read_text().splitlines()
     path.write_text("\n".join(lines * 20) + "\n")
-    store = LatestMarketSnapshotStore(path)  # startup compaction
+    store = LatestMarketSnapshotStore(path, compact_min_bytes=0)  # startup compaction
     assert len(store._latest_by_symbol) == 2
     assert _journal_lines(path) == 2
     assert hashlib.sha256(path.read_bytes()).hexdigest()

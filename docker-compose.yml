@@ -555,10 +555,30 @@ services:
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
+      # Hypothesis card admission path (design section 6A). Every value below is required: an unset
+      # address or credential disables the card path with a readable reason on the worker health file.
+      PANTHEON_GOVERNANCE_URL: ${PANTHEON_GOVERNANCE_URL:-http://governance:8082}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-http://research-orchestrator-svc:8101}
+      PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
+      RESEARCH_GOVERNANCE_PROPOSER_ID: ${RESEARCH_GOVERNANCE_PROPOSER_ID:-}
+      RESEARCH_GOVERNANCE_GATE_ID: ${RESEARCH_GOVERNANCE_GATE_ID:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_PROPOSER_TOKEN}
+      RESEARCH_GOVERNANCE_GATE_TOKEN: ${RESEARCH_GOVERNANCE_GATE_TOKEN:-}
+      RESEARCH_GOVERNANCE_GATE_TOKEN_FILE: ${RESEARCH_GOVERNANCE_GATE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_GATE_TOKEN}
+      RESEARCH_REGISTRY_SERVICE_TOKEN: ${RESEARCH_REGISTRY_SERVICE_TOKEN:-}
+      RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN}
+      RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
+      RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
+      - bff-data:/data/bff:ro
     depends_on:
       research-orchestrator-svc:
         condition: service_healthy
