@@ -49,9 +49,49 @@ def jump_module() -> ModuleType:
     return importlib.import_module(f"{_PACKAGE}.jump")
 
 
+_RESEARCH_DIR = Path(__file__).resolve().parents[1]
+
+
+def _is_local_statsmodels(module: ModuleType) -> bool:
+    origin = str(getattr(module, "__file__", "") or "")
+    return bool(origin) and Path(origin).resolve().is_relative_to(_RESEARCH_DIR / "statsmodels")
+
+
+def real_statsmodels() -> ModuleType:
+    """The installed statsmodels library, even when ``services/research`` is on ``sys.path``.
+
+    The research service runs with ``services/research`` first on the path (Dockerfile
+    ``--app-dir services/research`` and ``PYTHONPATH``), and that directory holds a package
+    named ``statsmodels`` (the governed adapter). A plain ``import statsmodels`` there loads
+    the adapter package, not the library. This imports the library with that directory
+    removed from the path and leaves it in ``sys.modules``, so later ``statsmodels.tsa...``
+    imports resolve to the library. The adapter stays importable as
+    ``services.research.statsmodels``.
+    """
+    current = sys.modules.get("statsmodels")
+    if current is not None and not _is_local_statsmodels(current):
+        return current
+    saved_path = list(sys.path)
+    local_names = [name for name, mod in sys.modules.items()
+                   if (name == "statsmodels" or name.startswith("statsmodels.")) and _is_local_statsmodels(mod)]
+    stale = {name: sys.modules.pop(name) for name in local_names}
+    sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != _RESEARCH_DIR]
+    try:
+        module = importlib.import_module("statsmodels")
+    except BaseException:
+        sys.modules.update(stale)
+        raise
+    finally:
+        sys.path[:] = saved_path
+    if _is_local_statsmodels(module):  # pragma: no cover - the library is not installed
+        raise ImportError("the statsmodels library is not installed")
+    return module
+
+
 def library_versions() -> dict[str, str]:
     import ruptures
-    import statsmodels
+
+    statsmodels = real_statsmodels()
 
     return {"statsmodels": statsmodels.__version__, "ruptures": ruptures.__version__,
             "jumpmodels": JUMPMODELS_VERSION}

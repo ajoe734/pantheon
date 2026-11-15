@@ -200,11 +200,26 @@ class StubStatsmodelsBackend:
 # ---------------------------------------------------------------------------
 
 
+def _load_real_statsmodels() -> None:
+    """Make ``import statsmodels`` mean the library, not ``services/research/statsmodels``.
+
+    Where the regime package is not importable (the isolated statsmodels image) the plain import
+    is used unchanged.
+    """
+    try:
+        from services.research.regime import real_statsmodels
+    except ImportError:
+        return
+    real_statsmodels()
+
+
 class StatsmodelsBackend:
     """Real backend wrapping statsmodels for governed research use."""
 
     def run_cointegration(self, dataset: GovernedDataset) -> dict[str, Any]:
         import numpy as np
+
+        _load_real_statsmodels()
         from statsmodels.tsa.stattools import coint
 
         series = list(dataset.price_series.values())
@@ -224,6 +239,8 @@ class StatsmodelsBackend:
     def run_var_vecm(self, dataset: GovernedDataset) -> dict[str, Any]:
         import numpy as np
         import pandas as pd
+
+        _load_real_statsmodels()
         from statsmodels.tsa.api import VAR
 
         data = pd.DataFrame(dataset.price_series)

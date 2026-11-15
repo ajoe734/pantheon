@@ -147,8 +147,10 @@ def index_returns(observations: Sequence[Mapping[str, Any]], *, decision_time: A
         return None, "tw_index_daily.close_missing", refs
     if not (close > 0).all():
         return None, "tw_index_daily.close_not_positive", refs
-    if len(close) < config.min_training_sessions:
-        return None, f"tw_index_daily.close_history_short:{len(close)}<{config.min_training_sessions}", refs
+    # Only a floor needed to fit anything at all. The 10-year training minimum (R11) is a validation
+    # and approval gate, so a short history still yields a candidate that is never approved.
+    if len(close) < config.min_input_sessions:
+        return None, f"tw_index_daily.close_history_short:{len(close)}<{config.min_input_sessions}", refs
     returns = np.log(close).diff().dropna()
     return returns, "", refs
 

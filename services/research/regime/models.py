@@ -23,12 +23,15 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from services.research.regime import JUMPMODELS_VERSION, jump_module
+from services.research.regime import JUMPMODELS_VERSION, jump_module, real_statsmodels
 from services.research.regime.features import RegimeConfig
 
 VOLATILITY_LABELS = ("low", "high")
-TREND_LABELS_3 = ("down", "mean_reverting", "up")
-RISK_LABELS_2 = ("off", "on")
+# jumpmodels' sort_by="cumret" orders states by descending cumulative return, so state 0 is the
+# best-returning state. The middle trend state is the one with the least directional return
+# (mapped to mean_reverting); that mapping is a design proposal to be checked by walk-forward results.
+TREND_LABELS_3 = ("up", "mean_reverting", "down")
+RISK_LABELS_2 = ("on", "off")
 
 
 class RegimeModelError(ValueError):
@@ -115,6 +118,7 @@ class VolatilityModel:
 
     def infer(self, frame: pd.DataFrame) -> list[AxisSession]:
         """Filtered probabilities for every row of ``frame`` under the fitted parameters."""
+        real_statsmodels()
         from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
 
         y = frame["return_pct"].astype(float)
@@ -148,7 +152,7 @@ class VolatilityModel:
 
 def fit_volatility(frame: pd.DataFrame, *, horizon: str) -> VolatilityModel:
     """Fit ``MarkovRegression(k_regimes=2, trend='c', switching_variance=True)`` on a return series."""
-    import statsmodels
+    statsmodels = real_statsmodels()
     from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
 
     if "return_pct" not in frame or frame["return_pct"].isna().any():
@@ -256,7 +260,7 @@ class JumpAxisModel:
 
 def fit_jump_axis(frame: pd.DataFrame, returns: pd.Series, *, axis: str, horizon: str, n_states: int,
                   jump_penalty: float, config: RegimeConfig | None = None) -> JumpAxisModel:
-    """Fit the continuous jump model; states are ordered by cumulative return (fixed statistic)."""
+    """Fit the continuous jump model; states are ordered by descending cumulative return (fixed statistic)."""
     config = config or RegimeConfig()
     if n_states == 3:
         labels = TREND_LABELS_3
