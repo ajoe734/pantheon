@@ -1,0 +1,46 @@
+{
+  "task_id": "OPENCLAW-PERSONA-TOOL-BROKER-R2-20261114",
+  "hosted_behavior_claimed": false,
+  "base": "dev 44a919f8f (carrying MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114 and OPENCLAW-MEMORY-INDEX-LLM-BRIDGE-R2-20261115)",
+  "commands": [
+    {"cmd": "cd integrations/openclaw/plugins/pantheon-persona-tools && npm test", "result": "tsc build ok; 15 passed, 0 failed"},
+    {"cmd": "pytest services/openclaw-gateway-adapter/test_persona_tool_broker.py", "result": "26 passed (broker unit + adapter HTTP routes)"},
+    {"cmd": "PANTHEON_RUN_HINDSIGHT_CONTAINER_PROBE=1 pytest services/openclaw-gateway-adapter/test_persona_tool_broker_integration.py", "result": "4 passed (real Hindsight + Postgres containers built from deploy/hindsight and deploy/memory-index-postgres; real memory service app under strict JWT; real adapter app; compiled plugin run by node through its before_tool_call hook then execute)"},
+    {"cmd": "pytest integrations/openclaw/test_persona_agent_sync.py integrations/openclaw/test_trading_persona_agent_adapter.py services/control-plane/bff/tests/test_persona_paper_enrollment.py", "result": "60 passed"},
+    {"cmd": "pytest services/openclaw-gateway-adapter integrations/openclaw services/control-plane/bff/tests/test_persona_paper_enrollment.py", "result": "828 passed, 9 skipped, 2 failed: integrations/openclaw/test_dev_gates.py::test_bff_persona_memory_gate_fails_when_not_returning_canonical_memory and ::test_sync_persona_agents_reconciliation_and_model_drift. The same 2 fail identically on the unmodified base 44a919f8f (801 passed, 5 skipped, 2 failed there), so they are pre-existing and unrelated; run alone, test_dev_gates.py fails at collection with 'Postgres DSN is required' in both trees."},
+    {"cmd": "pytest scripts/test_openclaw_shared_model_pool_contract.py scripts/test_persona_provisioning_compose_contract.py scripts/test_current_l12_compose_wiring.py scripts/test_dev_environment_lease_deploy_contract.py services/openclaw-gateway-adapter/test_compose_activation.py", "result": "318 passed"},
+    {"cmd": "docker build -f integrations/openclaw/gateway/Dockerfile . (FROM ghcr.io/openclaw/openclaw:2026.7.1)", "result": "built; the plugin's 15 tests ran and passed inside the build"},
+    {"cmd": "docker run <gateway image>: openclaw config set --batch-json <PANTHEON_PERSONA_TOOLS_ENABLE_BATCH>; openclaw plugins inspect pantheon-persona-tools --runtime --json; openclaw config validate; openclaw plugins doctor", "result": "status=loaded, enabled, toolNames=[persona_memory_recall, persona_mental_model_read, persona_proposal_submit], hookCount=1, no reflect tool; config valid; 'No plugin issues detected'; the on-disk brokerToken is the unresolved reference ${PERSONA_TOOL_BROKER_TOKEN} and the literal secret is not in openclaw.json"}
+  ],
+  "ac1_plugin": {
+    "location": "integrations/openclaw/plugins/pantheon-persona-tools (plain plugin entry, no runtime SDK import; manifest contracts.tools lists the three tools; built into the gateway image by integrations/openclaw/gateway/Dockerfile and loaded by the compose startup via plugins.load.paths when PERSONA_TOOL_BROKER_TOKEN is set)",
+    "forwarding": "each call POSTs tool, params, host-provided agent_id, run_id and session_key to /internal/persona-tools/v1/call with the plugin-config secret; the run id is captured by the hook (the tool context carries agent and session only in the pinned 2026.7.1 typings) and bound to the toolCallId",
+    "no_credentials": "plugin test asserts the source holds no memory or persona-service credential and no env read; no reflect tool (asserted in the plugin tests and the manifest)"
+  },
+  "ac2_hook": "before_tool_call (priority 100) asks the broker to authorize every Pantheon tool call and blocks on refusal, handler error, timeout, unreachable broker, invalid plugin config or missing host identity; execute() runs only for a call that hook authorized (single-use, bound to agent and session). For an agent already learned as a persona agent, a tool outside the broker-reported profile is blocked locally (defense in depth; the agent's own tools.allow/deny stays primary).",
+  "ac3_broker": {
+    "module": "services/openclaw-gateway-adapter/persona_tool_broker.py; routes /internal/persona-tools/v1/{call,authorize} (own bearer secret, off unless PERSONA_TOOL_BROKER_ENABLED)",
+    "resolution": "agent id -> persona through agents.list; the agent's tool profile must pass assert_persona_agent_tool_profile (so main and the deny-all memory-index agent are refused); deny-first profile check; registry cached PERSONA_TOOL_BROKER_REGISTRY_TTL_SECONDS (default 10s)",
+    "scope": "recall: scope=persona with the resolved persona id (own) or scope=institutional (facts), separate calls; the agent supplies no persona id, scope or roles (extra fields are refused); returned persona entries are re-filtered to the persona; mental-model read returns only the resolved persona's answers and fails closed on a persona mismatch; withheld ids go to telemetry, not to the agent",
+    "proposals": "validated against the daily-cycle CycleProposal schema plus the case-file citation rule; recorded only (applied=false); proposals are listed only from the per-run record",
+    "limits_and_records": "per-run, per-tool call limits (defaults 12 recall / 4 mental model / 20 proposal, env-tunable, coordinator proposals); every call recorded in telemetry and in a sqlite per-run record (persona, run id, parameter digest, canonical ids, outcome) readable at GET /api/openclaw-adapter/agents/persona-tools/runs/{run_ref} (service token)"
+  },
+  "ac4_run_registration": "POST /api/openclaw-adapter/agents/persona-tools/runs (adapter service token) registers persona, purpose (daily_cycle|panel_interpretation) and the gateway session identity before dispatch; a call whose session is not registered is refused (run_not_registered) and a run id is bound to its registration. panel_interpretation: recall as consultation_session bound to session_persona_id (own bank only committee-scoped entries, re-checked in the broker), facts bank allowed, mental-model and proposal tools refused (broker and hook). The integration test found and fixed that memory-svc requires session_persona_id for a consultation-session read.",
+  "ac5_profile": "PERSONA_AGENT_TOOL_PROFILE.allow = [read, persona_proposal_submit, persona_memory_recall, persona_mental_model_read]; every previous deny and the exec lock are kept; assert_persona_agent_tool_profile requires exactly those names, every deny and exec denied; no write/exec/network tool added",
+  "ac6_integration": {
+    "own_bank": "alpha recall returns alpha's private and committee entries and never beta's marker text or id",
+    "another_persona_bank": "persona_id / bank=persona-beta parameters are refused (invalid_parameters, recorded as refused); a persona without a registered run is refused",
+    "unregistered_agent": "agent main is blocked (not_a_persona_agent)",
+    "tool_outside_profile": "exec blocked by the hook for a known persona agent; persona_reflect refused by the broker (tool_outside_profile)",
+    "panel_restrictions": "only the committee-scoped entry and the facts entry are returned; mental-model read and proposal refused; per-run record shows ok, ok, refused, refused and no proposals",
+    "per_run_record": "calls with tool, outcome, 64-char parameter digest, canonical ids; run id and persona; recorded proposal; the 5th recall returns run_call_limit_exceeded",
+    "mental_model": "real standing-question declaration and refresh through the real memory-LLM bridge into the gateway double; read returns only alpha's answers with canonical citations; beta's marker never appears"
+  },
+  "not_verified": [
+    "A live OpenClaw agent turn calling the tools: no model credential is available in this environment, so the gateway-side path is verified by the real gateway image loading the plugin (inspect/doctor) and by driving the plugin's hook and execute against the real adapter, memory service and Hindsight; the real gateway's before_tool_call/toolCallId delivery to execute is taken from the 2026.7.1 documentation and typings.",
+    "That the gateway resolves the ${PERSONA_TOOL_BROKER_TOKEN} reference into api.pluginConfig at runtime (config validates and the secret stays off disk; same mechanism as the existing claude-cli token reference, but not exercised end to end).",
+    "The agent registry (agents.list) in the integration test is a fixture built from persona_agent_runtime_policy(); the production lookup (`openclaw config get agents.list`) reuses the command the existing opinion-agent checks use but is not run against a live gateway here.",
+    "The daily-cycle controller/BFF does not yet call the registration route, send the registered session identity on dispatch, or read proposals from the per-run record (the controller is outside this task's scoped artifacts); until it does, the broker refuses every call (fail closed) and the compose switches stay off.",
+    "Hosted deployment: nothing is deployed; PERSONA_TOOL_BROKER_ENABLED defaults false and the plugin stays disabled without PERSONA_TOOL_BROKER_TOKEN."
+  ]
+}
