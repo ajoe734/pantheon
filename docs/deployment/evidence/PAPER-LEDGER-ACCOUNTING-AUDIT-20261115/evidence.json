@@ -1,0 +1,17 @@
+{
+  "task_id": "PAPER-LEDGER-ACCOUNTING-AUDIT-20261115",
+  "traced_head": "40f024389",
+  "production_code_changed": false,
+  "commands": [
+    {"cmd": "PYTHONPATH=. python3 repro.py (outside repo; builds PaperExecutionAlgorithm, patches _post_broker_paper_order, submits Taiwan MARKET buy 1000@1000 then sell 1000@1000)", "exit": 0,
+     "observed": {"initial_cash_default": 100000.0, "unbound_policy_limits": "all null (gross, net, single_name, leverage)", "oversize_buy_events": 1, "cash_after_oversize_buy": -900000.0, "round_trip_cash_after": 100000.0, "round_trip_pnl": 0.0}},
+    {"cmd": "grep -rn '\\.flush_rebalance(' --include=*.py .", "observed": "only test files; no non-test caller"}
+  ],
+  "claims": {
+    "1_start_cash": "confirmed", "2_costs": "confirmed", "3_risk_policy_unbound": "confirmed",
+    "4_cash_sufficiency": "confirmed", "5_fill_timing": "confirmed_daily_refuted_intraday",
+    "6_no_reduce_exit": "confirmed", "7_flush_rebalance": "confirmed"
+  },
+  "hosted_readback": "not performed; workers have no hosted shell; acceptance 3 pending coordinator data",
+  "counts": {"claims_total": 7, "confirmed": 6, "partly_refuted": 1}
+}
