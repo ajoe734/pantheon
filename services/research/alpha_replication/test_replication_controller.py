@@ -562,3 +562,62 @@ def test_alpha_replication_registry_list_missing_blank_and_file_error(tmp_path, 
         _get_approved_specs_for_strategy("http://registry:8087", "strat-1")
     assert "Configured service credential unavailable" in str(exc_info.value)
     assert "secret-token-value" not in str(exc_info.value)
+
+
+# --- CARD-ADMISSION-PRODUCTION-WIRING-20261115: the production entry point wires the card path ---
+
+CARD_ENV_NAMES = (
+    "PANTHEON_GOVERNANCE_URL", "RESEARCH_API_URL", "PERSONA_API_URL", "RESEARCH_GOVERNANCE_PROPOSER_ID",
+    "RESEARCH_GOVERNANCE_GATE_ID", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN", "RESEARCH_GOVERNANCE_GATE_TOKEN",
+    "RESEARCH_REGISTRY_SERVICE_TOKEN", "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN",
+    "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH",
+    "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH",
+)
+
+
+def test_bare_config_has_no_card_collaborators_and_production_config_builds_them_per_tick(tmp_path, monkeypatch):
+    """Reproduction: ReplicationControllerConfig() alone leaves the four collaborators empty
+    (card_enabled false); the production entry point now fills them from the environment."""
+    from services.research.alpha_replication import replication_controller as rc
+
+    bare = ReplicationControllerConfig(data_dir=tmp_path)
+    assert (bare.card_registrar, bare.card_matcher, bare.demands_provider, bare.dataset_resolver) == (None,) * 4
+    assert bare.card_path_status == {"enabled": False, "reason": "card_path_not_wired"}
+    monkeypatch.setenv("ALPHA_REPLICATION_DATA_DIR", str(tmp_path))
+    for name in CARD_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name + "_FILE", raising=False)
+    config = rc.build_production_config()
+    assert config.card_wiring_builder is not None
+    status = rc.refresh_card_wiring(config)
+    assert status["enabled"] is False and status["reason"].startswith("card_path_disabled:unconfigured:")
+    assert "RESEARCH_GOVERNANCE_GATE_TOKEN" in status["reason"] and "PERSONA_API_URL" in status["missing"]
+    assert config.card_registrar is None and config.dataset_resolver is None
+
+
+def test_tick_publishes_the_card_path_reason_on_the_health_file_and_card_outage_never_stops_the_queue(tmp_path):
+    from services.research.alpha_replication.card_production_wiring import CardWiring
+
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=tmp_path / "none.jsonl", authority=FakeAuthority(),
+                     admission_store=ReplicationAdmissionStore(tmp_path))
+    config.card_wiring_builder = lambda: CardWiring(reason="card_path_disabled:unconfigured:PERSONA_API_URL",
+                                                    missing=["PERSONA_API_URL"])
+    result = run_controller_tick(config=config, state=state, store=state_store, writer=None)
+    assert result["reconcile"]["card_path"] == {
+        "enabled": False, "reason": "card_path_disabled:unconfigured:PERSONA_API_URL",
+        "missing": ["PERSONA_API_URL"], "error": None}
+    assert state_store.load().reconcile["card_path"]["reason"].startswith("card_path_disabled")
+
+    # Enabled wiring whose research owner is down: recorded on the health file, the tick still succeeds.
+    def down(_tenant):
+        raise RuntimeError("research owner unreachable")
+
+    config.card_wiring_builder = lambda: CardWiring(
+        registrar=mock.Mock(proposer_id="a", gate_id="b"), matcher=lambda e, d: True, demands_provider=down,
+        dataset_resolver=lambda b: None)
+    with mock.patch("services.research.alpha_replication.replication_controller._list_registry_strategy_specs",
+                    return_value=[]):
+        result = run_controller_tick(config=config, state=state, store=state_store, writer=None)
+    card = result["reconcile"]["card_path"]
+    assert card["enabled"] is True and card["error"].startswith("card_admission_unavailable:RuntimeError")
