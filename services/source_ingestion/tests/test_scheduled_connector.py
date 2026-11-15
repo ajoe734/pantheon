@@ -2039,6 +2039,14 @@ def _admission_bundle_files(source_ids, *, item_counts=None):
                 # Index rows are keyed by index name (no symbol); the TAIEX history source emits its own row dataset.
                 row.update(index_name=f"index {n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n,
                            dataset="tw_index_ohlc_daily" if cid.endswith("taiex-history") else "tw_index_daily")
+            elif stype == "market" and collector["dataset"] in {"tw_trading_holidays", "tw_trading_suspension"}:
+                # TW-SUSPENSION-HOLIDAYS-INTAKE-20261115: official schedule / suspension rows carry venue + endpoint.
+                row.update(trade_date=f"2024-11-{12 + n}", dataset=collector["dataset"], venue="TWSE",
+                           api_endpoint="https://example.test/official", published_at="2026-11-10T01:00:00Z")
+                if collector["dataset"] == "tw_trading_holidays":
+                    row.update(is_closed=True, holiday_name=f"holiday {n}")
+                else:
+                    row.update(symbol=f"23{30 + n}", suspended_date=f"2024-11-{12 + n}")
             elif stype == "market":
                 row.update(symbol=f"23{30 + n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n, dataset=collector["dataset"])
             else:

@@ -7,19 +7,19 @@ governed stored evidence of the window - never from a default or a configuration
 
 ``includes_delisted`` is true only when every session of the window comes from a dated
 all-market official capture of BOTH venues (TWSE ``MI_INDEX`` all-stock page and the
-TPEx all-stock daily quotes, both relayed as collector bundles) so that a security
+TPEx ``dailyQuotes`` all-stock page, both relayed as collector bundles) so that a security
 delisted later is present for the sessions it traded.  A weekday inside the window that
 has no stored capture is a gap unless the governed dataset ``tw_trading_holidays`` (official
-exchange holiday schedule; not stored today) records that day as closed: otherwise the feed
+TWSE and TPEx holiday schedule) records that day as closed on both venues: otherwise the feed
 cannot tell a holiday from a missing ingest and does not guess.
 
-``includes_suspended`` is true only when each session of the window has a stored
-official per-session suspended-security capture for both venues
-(dataset ``tw_trading_suspension``).  That dataset is not produced today: the collector
-price-history spiders drop every all-market row without a closing price
-(``deploy/collector/collector_stack/spiders.py`` ``if close_price is None: continue``),
-which is exactly the row of a suspended or non-traded security.  Until it exists the
-flag is false with the missing dataset named.
+``includes_suspended`` is true only when each session of the window has, for both venues, its
+suspended / non-traded securities known (``candidate_pool_market_feed._suspension_captures``): the
+session's all-market page was stored with its no-close rows kept (the collector keeps them since
+COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115), and the official dataset ``tw_trading_suspension``
+(TWSE TWTAWU, TPEx sprcHis) was fetched for a range that contains the session.  An unknown
+session is a gap naming the cause (``suspension_unknown``); with no dataset at all the flag is
+false with the missing dataset named.
 
 Every attestation lists the evidence references and the sessions it covers, and is
 false (with readable reasons) for any window with a gap.
@@ -39,9 +39,9 @@ ALL_MARKET_BUNDLES: Mapping[str, str] = {
     "TPEx": "bundle://collector-tw-tpex-price-history",
 }
 MISSING_SUSPENSION_DATASET = (
-    f"{SUSPENSION_DATASET}: official per-session suspended / non-traded security list for each venue "
-    "(TWSE MI_INDEX all-stock page rows without a close, and the TPEx all-stock daily quotes page rows "
-    "without a close), currently dropped by the collector price-history spiders"
+    f"{SUSPENSION_DATASET}: official suspension records for each venue (TWSE TWTAWU, TPEx sprcHis) "
+    "fetched for a range containing the window, with the per-session all-market pages stored together with "
+    "their rows without a close"
 )
 MISSING_CALENDAR = (
     "official TWSE/TPEx holiday schedule (https://www.twse.com.tw/zh/holidaySchedule/holidaySchedule) "
@@ -61,12 +61,15 @@ def _interior_weekdays(first: date, last: date, accounted: set[str]) -> list[str
     return out
 
 
-def _coverage(sessions: Sequence[str], captures: Captures) -> tuple[list[str], list[dict[str, str]], list[str]]:
+def _coverage(
+    sessions: Sequence[str], captures: Captures, causes: Mapping[tuple[str, str], str] | None = None,
+) -> tuple[list[str], list[dict[str, str]], list[str]]:
     covered, gaps, refs = [], [], set()
     for session in sessions:
         missing = [v for v in VENUES if (session, v) not in captures]
         if missing:
-            gaps.append({"session": session, "reason": f"no stored capture for {','.join(missing)}"})
+            why = "; ".join((causes or {}).get((session, v)) or f"no stored capture for {v}" for v in missing)
+            gaps.append({"session": session, "reason": why})
             continue
         covered.append(session)
         refs.update(str(captures[(session, v)]["ref"]) for v in VENUES)
@@ -83,6 +86,7 @@ def _evidence(attested: bool, covered: list[str], gaps: list[Any], refs: list[st
 def attest_survivorship(
     sessions: Iterable[str], price_captures: Captures, suspension_captures: Captures,
     closed_days: Mapping[str, Mapping[str, Any]] | None = None,
+    suspension_unknown: Mapping[tuple[str, str], str] | None = None,
 ) -> dict[str, Any]:
     """Return the attestation; a flag is true only when the evidence is complete."""
     window = sorted(set(sessions))
@@ -107,7 +111,7 @@ def attest_survivorship(
     delisted = not gaps
     delisted_block = _evidence(delisted, covered, gaps, refs, reasons)
 
-    s_covered, s_gaps, s_refs = _coverage(window, suspension_captures)
+    s_covered, s_gaps, s_refs = _coverage(window, suspension_captures, suspension_unknown)
     s_reasons = []
     missing = None
     if not suspension_captures:
