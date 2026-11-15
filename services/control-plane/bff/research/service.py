@@ -1494,18 +1494,22 @@ class ResearchRouterService:
         if cursor is None and str(page_token or "").strip():
             return None
         cursor = cursor or {}
-        owners = (
-            ("registry", "read_registry_strategy_artifacts_page"),
-            ("research", "read_research_artifact_catalog_page"),
-        )
+        owners = ("registry", "research")
         reads: Dict[str, ArtifactOwnerReadResult] = {}
-        for name, method in owners:
+        for name in owners:
             state = cursor.get(name) or {}
             if state.get("done"):
                 reads[name] = ArtifactOwnerPageResult([], "ok", "typed_store", total=state.get("total"))
                 continue
             try:
-                reads[name] = getattr(port, method)(page_size=page_size, page_token=state.get("token"))
+                if name == "registry":
+                    reads[name] = port.read_registry_strategy_artifacts_page(
+                        page_size=page_size, page_token=state.get("token")
+                    )
+                else:
+                    reads[name] = port.read_research_artifact_catalog_page(
+                        page_size=page_size, page_token=state.get("token")
+                    )
             except NotImplementedError:
                 return None
             except AttributeError:
