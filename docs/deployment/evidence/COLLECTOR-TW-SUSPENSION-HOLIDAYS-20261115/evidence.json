@@ -1,0 +1,244 @@
+{
+  "task_id": "COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115",
+  "hosted_behavior_claimed": false,
+  "scope": "Collector spiders, fetch-policy entries (disabled by default), README documentation, recorded official fixtures, and tests. No deployment, backfill re-collection, or change to the pinned 2026 TWSE schedule for market admission.",
+  "captured_at": "2026-11-15T12:50:00Z",
+  "ac1_reproduction": {
+    "summary": "A security that is listed in the dated all-market quote file but has no close price ('--' on TWSE MI_INDEX or ' ---' on TPEx dailyQuotes) was dropped by both price history spiders before bundle serialization.",
+    "twse_price_history_spider": {
+      "file": "deploy/collector/collector_stack/spiders.py",
+      "prior_drop_lines": "987-994",
+      "prior_code_excerpt": "close_price = _clean_num(row_map.get('收盤價') if '收盤價' in row_map else row_map.get('close'), allow_zero=False); if close_price is None: continue",
+      "recorded_official_response": "deploy/collector/tests/fixtures/twse_mi_index_full_20261110.json",
+      "source_url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261110&type=ALLBUT0999&response=json",
+      "table_index": 8,
+      "table_title": "115年11月10日 每日收盤行情(全部(不含權證、牛熊證、可展延牛熊證))",
+      "total_listed_rows_in_table": 1389,
+      "prior_emitted_rows": 1375,
+      "dropped_rows_count": 14,
+      "dropped_symbols": [
+        "00625K",
+        "00666R",
+        "00682U",
+        "020011",
+        "020020",
+        "020028",
+        "020032",
+        "020036",
+        "020037",
+        "1312A",
+        "1538",
+        "2314",
+        "2891B",
+        "6958A"
+      ],
+      "suspended_common_stock_example": {
+        "symbol": "2314",
+        "security_name": "台揚",
+        "trade_date": "2026-11-10",
+        "raw_row": [
+          "2314",
+          "台揚",
+          "0",
+          "0",
+          "0",
+          "--",
+          "--",
+          "--",
+          "--",
+          "<p style= color:white> </p>",
+          "0.00",
+          "--",
+          "--",
+          "--",
+          "--",
+          "0.00"
+        ],
+        "official_twtawu_suspension_record": [
+          2310,
+          "2314",
+          "台揚",
+          "115/11/10",
+          "8:00",
+          "115/11/11",
+          "8:00"
+        ]
+      }
+    },
+    "tpex_price_history_spider": {
+      "file": "deploy/collector/collector_stack/spiders.py",
+      "prior_drop_lines": "1441-1448",
+      "prior_code_excerpt": "close_price = _clean_num(row_map.get('收盤') if '收盤' in row_map else ..., allow_zero=False); if close_price is None: continue",
+      "recorded_official_response": "deploy/collector/tests/fixtures/tw_suspension_holidays/tpex_daily_quotes_20260618_excerpt.json",
+      "source_url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/06/18&response=json",
+      "full_upstream_sha256": "7c1706d972b73673a8af06e80ca18eafe854724d3d553946853ea883f84aff2f",
+      "suspended_common_stock_example": {
+        "symbol": "1788",
+        "security_name": "杏昌",
+        "trade_date": "2026-06-18",
+        "raw_row": [
+          "1788",
+          "杏昌",
+          " ---",
+          "--- ",
+          "---",
+          "---",
+          "---",
+          "130.36",
+          "0",
+          "0",
+          "0",
+          "0.00",
+          "0",
+          "0.00",
+          "0",
+          "44,520,971",
+          "131.00",
+          "144.00",
+          "118.00"
+        ],
+        "official_sprc_his_suspension_records": [
+          [
+            1,
+            "上櫃股票",
+            "1788",
+            "杏昌",
+            "115/06/18",
+            "8:00",
+            "-",
+            "-"
+          ],
+          [
+            2,
+            "上櫃股票",
+            "1788",
+            "杏昌",
+            "-",
+            "-",
+            "115/06/22",
+            "8:00"
+          ]
+        ]
+      }
+    }
+  },
+  "ac2_non_traded_row_contract_and_consumer_compatibility": {
+    "twse_emitted_rows_after_fix": 1389,
+    "twse_not_traded_rows_after_fix": 14,
+    "non_traded_row_fields": {
+      "open": null,
+      "high": null,
+      "low": null,
+      "close": null,
+      "change": null,
+      "not_traded": true,
+      "suspended_or_not_traded": true,
+      "trading_status": "not_traded",
+      "raw_close_preserved": true
+    },
+    "verified_unchanged_consumers": [
+      "services.source_ingestion.candidate_pool_market_feed._bar",
+      "services.source_ingestion.requirement_state.LatestMarketSnapshotStore.append_normalized_records",
+      "services.source_ingestion.feature_catalogue.observations_from_row",
+      "services.source_ingestion.connectors.taiwan_official.TaiwanOfficialMarketDatasetAdapter.records_from_price_history_payload"
+    ]
+  },
+  "ac3_official_holiday_and_suspension_sources": {
+    "collector-tw-trading-holidays": {
+      "dataset": "tw_trading_holidays",
+      "covered_years": [
+        2024,
+        2025,
+        2026
+      ],
+      "twse_endpoint_template": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date={yyyy}0101&response=json",
+      "tpex_endpoint_template": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date={yyyy}&response=json",
+      "official_publication_refs": {
+        "TWSE": "https://www.twse.com.tw/zh/trading/holiday.html",
+        "TPEx": "https://www.tpex.org.tw/zh-tw/announce/market/holiday.html"
+      },
+      "total_bundle_items_2024_2026": 145,
+      "twse_items_2024_2026": 71,
+      "tpex_items_2024_2026": 74,
+      "pinned_2026_admission_schedule_unchanged": "twse-2026-schedule-v1"
+    },
+    "collector-tw-trading-suspension": {
+      "dataset": "tw_trading_suspension",
+      "covered_years": [
+        2024,
+        2025,
+        2026
+      ],
+      "twse_endpoint_template": "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU?startDate={start_yyyymmdd}&endDate={end_yyyymmdd}&response=json",
+      "tpex_endpoint_template": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date={yyyy}&cate=1&response=json",
+      "official_publication_refs": {
+        "TWSE": "https://www.twse.com.tw/zh/trading/historical/twtawu.html",
+        "TPEx": "https://www.tpex.org.tw/zh-tw/announce/market/halt/historical.html"
+      },
+      "total_non_warrant_bundle_items_2024_2026": 179,
+      "twse_non_warrant_items_2024_2026": 62,
+      "tpex_items_2024_2026": 117
+    }
+  },
+  "ac4_two_year_history_recovery_and_bounded_recollection_plan": {
+    "recollected_in_this_task": false,
+    "requests_executed_for_backfill": 0,
+    "retained_raw_capture_recovery": {
+      "per_item_price_bundle_raw_files_recoverable_dates": 0,
+      "reason": "Prior TwseDailyPriceHistorySpider (lines 993-994) and TpexDailyPriceHistorySpider (lines 1447-1448) dropped rows with close_price is None before constructing CollectedItem or writing raw/<item_id>.json, and each raw/<item_id>.json stores only a single security row rather than the full upstream table.",
+      "retained_full_page_captures_rule": "Where full upstream MI_INDEX / dailyQuotes JSON page captures are retained on disk within the 90-day retention window (raw_retention_days=90), those dates can be re-parsed offline with 0 new HTTP requests."
+    },
+    "bounded_recollection_plan": {
+      "published_rate_limit": {
+        "max_connections": 1,
+        "min_interval_seconds": 5.0
+      },
+      "collector-tw-twse-price-history": {
+        "requests": 488,
+        "estimated_wall_seconds": 2440.0
+      },
+      "collector-tw-tpex-price-history": {
+        "requests": 488,
+        "estimated_wall_seconds": 2440.0
+      },
+      "collector-tw-trading-holidays": {
+        "requests": 6,
+        "estimated_wall_seconds": 30.0
+      },
+      "collector-tw-trading-suspension": {
+        "requests": 4,
+        "estimated_wall_seconds": 20.0
+      },
+      "total_requests": 986,
+      "total_estimated_wall_seconds": 4930.0
+    }
+  },
+  "ac5_fetch_policy_and_timers": {
+    "policy_file": "deploy/collector/fetch-policy.json",
+    "readme_file": "deploy/collector/README.md",
+    "default_enabled": false,
+    "sources": [
+      "collector-tw-trading-holidays",
+      "collector-tw-trading-suspension"
+    ],
+    "timer_unit_template": "pantheon-collector@%i.timer",
+    "rollback_documented": true
+  },
+  "validation": [
+    {
+      "command": "/tmp/hc-venv/bin/python -m pytest -q deploy/collector/tests/test_tw_suspension_holidays.py",
+      "exit_status": 0,
+      "result": "10 passed in 1.47s"
+    },
+    {
+      "command": "/tmp/hc-venv/bin/python -m pytest -q deploy/collector",
+      "exit_status": 0,
+      "result": "261 passed, 2 skipped in 12.99s"
+    },
+    {
+      "command": "/tmp/hc-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_feature_catalogue.py",
+      "exit_status": 0,
+      "result": "98 passed, 1 skipped in 6.25s"
+    }
+  ]
+}
