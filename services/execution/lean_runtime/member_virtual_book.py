@@ -355,3 +355,15 @@ class MemberVirtualBooks:
                     member["gate_basis"] = gate_book if gate_book else {"unavailable_reason": reason}
                 member["baseline_comparison"] = compare_member_book(baseline, member)
         return result
+
+
+def idle_pool_observations(dates, *, source_ref, gross_limit, drawdown_limit):
+    """Risk budget observations of a pool envelope with no member: nothing is held.
+
+    Gross notional and drawdown are known and zero against the stated limits, so pool health reads the
+    pool as idle (low utilisation) instead of unknown. Dates must be an ordered trading calendar.
+    """
+    if not source_ref or not (gross_limit > 0 and drawdown_limit > 0):
+        raise ValueError("idle_observation_inputs_invalid")
+    return [{"date": day, "source_ref": source_ref, "gross_notional": 0.0, "gross_limit": gross_limit,
+             "drawdown": 0.0, "drawdown_limit": drawdown_limit} for day in dates]

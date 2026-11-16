@@ -420,6 +420,29 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         service._consumer.flush_rebalance(signal["run_id"], service._algo)
         return {event["event_type"]: event for event in telemetry.events}
 
+    def test_empty_pool_envelope_tick_holds_no_position_and_does_not_raise(self):
+        # A pool with no live member publishes a flat envelope: no member views, no virtual book write,
+        # no order, and the runtime keeps running (POOL-EMPTY-POOL-OPERATION-20261116).
+        binding = self._binding()
+        signal = self._expression_signal(
+            binding, "empty-pool", action="HOLD", direction="FLAT",
+            metadata={"strength": 0.0, "view_direction": "FLAT", "portfolio_member_views": {}},
+        )
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]), telemetry_emitter=telemetry,
+            poll_interval_seconds=3600, max_batch_size=10,
+        )
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+        events = {event["event_type"]: event for event in telemetry.events}
+        generation = events["signal_generation"]["metadata"]
+        self.assertEqual(generation["view_direction"], "FLAT")
+        self.assertNotIn("member_virtual_books", generation)
+        self.assertFalse(service._member_virtual_books.books)
+        self.assertEqual(service._algo.instrument_positions, {})
+
     def test_no_trade_expression_is_a_noop_with_view_and_record_metadata(self):
         binding = self._binding()
         record = {
