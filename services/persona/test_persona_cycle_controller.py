@@ -1270,7 +1270,8 @@ def test_observe_evaluates_then_reads_active_record_and_case_file_carries_regime
     assert f"regime:{record['regime_class']}" in case_file["lesson_query"]["tags"]
     # The persona's interpretation stays in the packet; the registry record is untouched.
     assert cycle["regime_interpretation"]["written_to_regime_state"] is False
-    assert cycle["regime_interpretation"]["text"] == OUTPUT["orient"]
+    # Free-text replies are no longer parsed; the brokered tool record carries no orient narrative.
+    assert cycle["regime_interpretation"]["text"] is None
     assert get_regime_store().list_regimes(strategy_id="momentum", states=("active",))[0]["record"] == record
 
 
