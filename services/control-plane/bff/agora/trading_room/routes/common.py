@@ -263,6 +263,10 @@ class TraderDecisionRequest(BaseModel):
     decision: Literal["approve", "reject", "defer", "modify"]
     rationale: Optional[str] = None
     modifications: Optional[Dict[str, Any]] = None
+    # Shadow mode (A4): optional, kept as recorded in the Agora decision lock.
+    execution_observation_kind: Optional[str] = None
+    account_id: Optional[str] = None
+    broker_ids: Optional[List[str]] = None
 
 
 class TradingIntentSubject(BaseModel):
@@ -1712,6 +1716,7 @@ class TradingRoomRouteContext:
                 workshop_store=workshop_store,
                 utc_now=utc_now,
                 bff_error=bff_error,
+                decision_lock_owner=kwargs.get("decision_lock_owner"),
             )
 
     def _check_write_auth(self, identity: Any) -> None:
