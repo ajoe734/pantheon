@@ -1,0 +1,19 @@
+{
+  "task_id": "PERSONA-CYCLE-TOOL-CALLS-R2-20261114",
+  "hosted_behavior_claimed": false,
+  "base": "dev cbe907ff2 (carrying OPENCLAW-PERSONA-TOOL-BROKER-R2-20261114)",
+  "acceptance": {
+    "1_prompt_and_registration": "build_brokered_cycle_prompt names persona_memory_recall, persona_mental_model_read, persona_proposal_submit; the case file is still attached; PersonaCycleController._brokered_turn registers the run as daily_cycle with the broker before dispatch and sends the session id as the OpenResponses user (test_the_run_is_registered_as_a_daily_cycle_before_dispatch_and_text_proposals_are_ignored)",
+    "2_record_only": "proposals come only from the broker per-run record (output_from_tool_record); the CycleTurnOutput JSON parsing path is removed from the controller and text proposals are ignored",
+    "3_citations": "check_proposal_citations accepts case-file item ids plus canonical ids returned (outcome ok) to that run, rejects others (test_citation_accepts_a_canonical_id_returned_to_this_run_and_rejects_a_stranger)",
+    "4_missing_or_ambiguous": "failure_reason tool_record_unavailable:<tool_record_missing|tool_record_ambiguous|tool_record_no_calls|no_proposal_submitted|tool_record_proposal_invalid>, no proposal, no retry (test_missing_or_ambiguous_tool_record_...)",
+    "5_integration": "test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker: compiled plugin (node) -> real adapter app + PersonaToolBroker (sqlite record) -> real Memory Plane app; controller consume_run; covers own/facts recall, mental model read, proposal submission, returned-id citation accepted, stranger citation rejected"
+  },
+  "commands": [
+    {"cmd": "pytest services/persona/test_persona_cycle_controller.py integrations/openclaw/test_persona_ooda_runtime.py services/persona/test_lesson_cycle.py services/persona/tests/test_trade_lesson_loop_integration.py services/openclaw-gateway-adapter/test_persona_tool_broker.py", "result": "102 passed, 4 skipped (the 4 are the broker's opt-in Hindsight container tests, not part of this task)"}
+  ],
+  "known_limits": [
+    "Memory candidates were a field of the parsed reply text; with that path removed the cycle turn stages none (lesson governance still runs). A write path for them is out of scope and not added.",
+    "The gateway process itself is not started: the fixture server stands in for /v1/responses and executes the agent's scripted tool calls through the real plugin and broker."
+  ]
+}

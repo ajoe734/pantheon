@@ -75,7 +75,7 @@ def build_brokered_cycle_prompt(persona: Mapping[str, Any], observe: Mapping[str
         "persona_proposal_submit once per proposal (kind, reason, evidence_refs, parameters, and either "
         "case_file_item_ids or none_applicable_reason). Only proposals submitted through "
         "persona_proposal_submit count; a proposal written in your reply text is ignored. Cite only "
-        "item_id values from the CaseFile below or canonical ids returned to you by the memory tools. "
+        "item_id values from the CaseFile below or canonical_ref values returned to you by the memory tools. "
         "When done, reply with a one-line summary.\n"
         "Persona:\n" + json.dumps({"persona_id": persona["persona_id"], "mandate": persona.get("mandate")})
         + "\nObserve:\n" + json.dumps(dict(observe), ensure_ascii=False, allow_nan=False)
