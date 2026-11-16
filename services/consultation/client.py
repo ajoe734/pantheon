@@ -150,6 +150,120 @@ class ConsultationServiceClient:
         )
         return created
 
+    def open_persona_meeting(
+        self,
+        *,
+        meeting_type: str,
+        topic: str,
+        convened_by: Dict[str, Any],
+        subject_ref: Optional[str] = None,
+        participants: Optional[List[Any]] = None,
+        evidence_refs: Optional[List[Any]] = None,
+        attribution_record_id: Optional[str] = None,
+        attribution_record: Optional[Dict[str, Any]] = None,
+        agenda: Optional[List[str]] = None,
+        case_file: Optional[Dict[str, Any]] = None,
+        pre_read: Optional[Any] = None,
+        new_evidence: Optional[List[Dict[str, Any]]] = None,
+        idempotency_key: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Open a deliberative persona meeting via POST /api/consult/meetings."""
+        payload: Dict[str, Any] = {
+            "meeting_type": meeting_type,
+            "topic": topic,
+            "convened_by": dict(convened_by),
+        }
+        if subject_ref is not None:
+            payload["subject_ref"] = subject_ref
+        if participants is not None:
+            payload["participants"] = list(participants)
+        if evidence_refs is not None:
+            payload["evidence_refs"] = list(evidence_refs)
+        if attribution_record_id is not None:
+            payload["attribution_record_id"] = attribution_record_id
+        if attribution_record is not None:
+            payload["attribution_record"] = dict(attribution_record)
+        if agenda is not None:
+            payload["agenda"] = list(agenda)
+        if case_file is not None:
+            payload["case_file"] = dict(case_file)
+        if pre_read is not None:
+            payload["pre_read"] = pre_read
+        if new_evidence is not None:
+            payload["new_evidence"] = list(new_evidence)
+        if meeting_id is not None:
+            payload["meeting_id"] = meeting_id
+        if trace_id is not None:
+            payload["trace_id"] = trace_id
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        extra_headers: Dict[str, str] = {}
+        if idempotency_key:
+            extra_headers["Idempotency-Key"] = idempotency_key
+        kwargs: Dict[str, Any] = {"extra_headers": extra_headers}
+        if tenant_id is not None:
+            kwargs["tenant_id"] = tenant_id
+        return self._request_json("POST", "/api/consult/meetings", payload, **kwargs)
+
+    def list_meetings(
+        self,
+        *,
+        status: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        query: Dict[str, str] = {}
+        if status:
+            query["status"] = status
+        if meeting_type:
+            query["type"] = meeting_type
+        if persona_id:
+            query["persona_id"] = persona_id
+        if cursor:
+            query["cursor"] = cursor
+        if limit is not None:
+            query["limit"] = str(limit)
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        return self._request_json("GET", self._with_query("/api/consult/meetings", query), **kwargs)
+
+    def get_meeting(self, meeting_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        try:
+            return self._request_json("GET", f"/api/consult/meetings/{meeting_id}", **kwargs)
+        except ConsultationClientError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+
+    def list_meeting_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        query: Dict[str, str] = {}
+        if status:
+            query["status"] = status
+        if persona_id:
+            query["persona_id"] = persona_id
+        if meeting_id:
+            query["meeting_id"] = meeting_id
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        return self._request_json("GET", self._with_query("/api/consult/meetings/proposals", query), **kwargs)
+
+    def get_meeting_catalogue(self, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        return self._request_json("GET", "/api/consult/meetings/catalogue", **kwargs)
+
     def intake_policy_learning_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request_json("POST", "/api/consult/intake/policy-learning-candidate", payload)
 
@@ -250,6 +364,7 @@ class ConsultationServiceClient:
         tenant_id: Optional[str] = None,
         token: Optional[str] = None,
         service_actor: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         if not self._base_url:
             raise ConsultationClientError("consultation service URL is not configured")
@@ -258,6 +373,8 @@ class ConsultationServiceClient:
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
+        if extra_headers:
+            headers.update(extra_headers)
         request = urllib.request.Request(
             f"{self._base_url}/{path.lstrip('/')}",
             data=body,
@@ -291,3 +408,40 @@ class ConsultationServiceClient:
             ) from exc
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise ConsultationClientError(f"consultation API unavailable: {exc}") from exc
+
+
+def open_persona_meeting(
+    *,
+    meeting_type: str,
+    topic: str,
+    convened_by: Dict[str, Any],
+    subject_ref: Optional[str] = None,
+    participants: Optional[List[Any]] = None,
+    evidence_refs: Optional[List[Any]] = None,
+    attribution_record_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    service_actor: Optional[str] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Module-level convenience wrapper around ConsultationServiceClient.open_persona_meeting."""
+    client = ConsultationServiceClient(
+        base_url=base_url,
+        token=token,
+        tenant_id=tenant_id,
+        service_actor=service_actor,
+    )
+    return client.open_persona_meeting(
+        meeting_type=meeting_type,
+        topic=topic,
+        convened_by=convened_by,
+        subject_ref=subject_ref,
+        participants=participants,
+        evidence_refs=evidence_refs,
+        attribution_record_id=attribution_record_id,
+        idempotency_key=idempotency_key,
+        tenant_id=tenant_id,
+        **kwargs,
+    )

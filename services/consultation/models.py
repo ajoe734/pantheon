@@ -89,6 +89,7 @@ class ConsultRequestType(str, Enum):
     CAPITAL_POOL = "capital_pool"
     INCIDENT = "incident"
     PERSONA_POLICY = "persona_policy"
+    PERSONA_MEETING = "persona_meeting"
 
 
 class ConsultRequestStatus(str, Enum):
@@ -423,4 +424,40 @@ class CreatePolicyLearningCandidateIntakeRequest(BaseModel):
     auto_rationale: Optional[str] = None
     requested_by: Optional[ActorRef] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ConvenedByRef(BaseModel):
+    kind: str = Field(min_length=1)
+    id: str = Field(min_length=1)
+
+
+class ConvenePersonaMeetingRequest(BaseModel):
+    meeting_type: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+    convened_by: ConvenedByRef
+    subject_ref: Optional[str] = None
+    participants: Optional[List[Union[str, Dict[str, Any]]]] = None
+    evidence_refs: List[Any] = Field(default_factory=list)
+    attribution_record_id: Optional[str] = None
+    attribution_record: Optional[Dict[str, Any]] = None
+    agenda: Optional[List[str]] = None
+    case_file: Optional[Dict[str, Any]] = None
+    pre_read: Optional[Any] = None
+    new_evidence: Optional[List[Dict[str, Any]]] = None
+    rounds_requested: Optional[int] = None
+    calls_requested: Optional[int] = None
+    iso_week: Optional[str] = None
+    meeting_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    run_immediately: Optional[bool] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RecordMeetingEvidenceRequest(BaseModel):
+    chair_persona_id: str = Field(min_length=1)
+    evidence_items: List[Dict[str, Any]] = Field(min_length=1)
+    trace_id: Optional[str] = None
+
 
