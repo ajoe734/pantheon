@@ -503,12 +503,18 @@ def execute_claim(
     if str(request.get("tenant_id") or "") != config.tenant_id:
         raise WorkflowBlocked("ConsultRequest tenant does not match worker tenant")
 
-    # A panel claim never short-circuits on an acknowledged handoff: the hold
-    # is persisted before the memory writeback, so the handoff alone does not
-    # prove the memory work finished. The panel path is fully idempotent.
+    # A panel or deliberative meeting claim never short-circuits on an acknowledged
+    # handoff: memory writeback must also complete idempotently.
     is_panel = isinstance((request.get("metadata") or {}).get("panel"), Mapping)
+    is_meeting = (
+        str(request.get("consultation_type") or "") == "persona_meeting"
+        or str(request.get("request_type") or "") == "persona_meeting"
+        or isinstance((request.get("metadata") or {}).get("meeting"), Mapping)
+    )
     recovered = (
-        None if is_panel else _existing_acknowledged_handoff(config, claim.request_id)
+        None
+        if (is_panel or is_meeting)
+        else _existing_acknowledged_handoff(config, claim.request_id)
     )
     if recovered is not None:
         memo_id, handoff_id = recovered
@@ -518,6 +524,16 @@ def execute_claim(
             "outcome": "completed",
             "detail": f"recovered acknowledged handoff={handoff_id}",
         }
+
+    if is_meeting:
+        return _execute_meeting_claim(
+            config=config,
+            state=state,
+            provider=provider,
+            claim=claim,
+            request=request,
+            phase_hook=phase_hook,
+        )
 
     panel = (request.get("metadata") or {}).get("panel")
     if isinstance(panel, Mapping):
@@ -1490,6 +1506,202 @@ def _execute_panel_claim(
         "detail": (
             f"memo={memo_id} handoff={handoff_id} acknowledged_by={consumer_ref} "
             f"gate={gate['outcome']}"
+        ),
+    }
+
+
+class _HttpMeetingStoreProxy:
+    """HTTP-backed store proxy so workflow_executor updates consultation-svc over its API."""
+
+    def __init__(self, config: ExecutorConfig, meeting_id: str, trace_id: str) -> None:
+        self.config = config
+        self.meeting_id = meeting_id
+        self.trace_id = trace_id
+        self._cached_meeting: dict[str, Any] | None = None
+        self._attached_ids: set[str] = set()
+
+    def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
+        if self._cached_meeting is not None and self._cached_meeting.get("meeting_id") == meeting_id:
+            return dict(self._cached_meeting)
+        resp = _api_get(self.config, f"/api/consult/meetings/{meeting_id}")
+        if isinstance(resp, Mapping):
+            self._cached_meeting = dict(resp)
+            return dict(resp)
+        return None
+
+    def put_meeting(self, meeting: Mapping[str, Any]) -> None:
+        self._cached_meeting = dict(meeting)
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"meeting": dict(meeting)},
+        )
+
+    def put_meeting_schedule(self, schedule_entry: Mapping[str, Any]) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"schedules": [dict(schedule_entry)]},
+        )
+
+    def put_meeting_refusal(self, refusal: Mapping[str, Any]) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"refusals": [dict(refusal)]},
+        )
+
+    def put_participant(self, participant: Any) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{participant.request_id}/participants",
+            {
+                "participant_type": participant.participant_type.value,
+                "participant_ref": participant.participant_ref,
+                "role": participant.role.value,
+                "trace_id": self.trace_id,
+                "initiated_by": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "idempotency_key": participant.participant_id,
+            },
+        )
+
+    def get_transcript(self, request_id: str) -> Any:
+        return None
+
+    def add_transcript_event(self, request_id: str, event: Any) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{request_id}/events",
+            {
+                "request_id": request_id,
+                "event_type": event.event_type,
+                "actor": {
+                    "actor_type": event.actor.actor_type,
+                    "actor_id": event.actor.actor_id,
+                },
+                "content": dict(event.content),
+                "evidence_refs": list(event.evidence_refs),
+                "idempotency_key": event.event_id,
+            },
+        )
+
+    def get_evidence_attachment(self, attachment_id: str) -> Any:
+        return True if attachment_id in self._attached_ids else None
+
+    def put_evidence_attachment(self, attachment: Any) -> None:
+        self._attached_ids.add(str(attachment.attachment_id))
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{attachment.request_id}/evidence",
+            {
+                "evidence_ref": attachment.evidence_ref.model_dump(mode="json"),
+                "attached_by": {
+                    "actor_type": attachment.attached_by.actor_type,
+                    "actor_id": attachment.attached_by.actor_id,
+                },
+                "trace_id": attachment.trace_id,
+                "idempotency_key": attachment.attachment_id,
+            },
+        )
+
+    def put_memo(self, memo: Any) -> dict[str, Any]:
+        submitted = _api_post(
+            self.config,
+            "/api/consult/memos",
+            {
+                "request_id": memo.request_id,
+                "memo_type": memo.memo_type.value,
+                "author_type": memo.author_type.value,
+                "author_ref": memo.author_ref,
+                "summary": memo.summary,
+                "findings": [f.model_dump(mode="json") for f in memo.findings],
+                "recommendation": memo.recommendation.value,
+                "confidence": memo.confidence,
+                "trace_id": memo.trace_id,
+                "idempotency_key": memo.memo_id,
+            },
+        )
+        memo_id = str(submitted["memo_id"])
+        published = _api_post(
+            self.config,
+            f"/api/consult/memos/{memo_id}/publish",
+            {},
+        )
+        return dict(published) if isinstance(published, Mapping) else {"memo_id": memo_id}
+
+    def get_request(self, request_id: str) -> Any:
+        return None
+
+    def put_request(self, request_obj: Any) -> None:
+        pass
+
+
+def _execute_meeting_claim(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+    claim: WorkflowClaim,
+    request: Mapping[str, Any],
+    phase_hook: Callable[[str], None] | None,
+) -> dict[str, str]:
+    from .meetings import MeetingRefusedError, execute_persona_meeting
+
+    nonlocal_claim = claim
+
+    def _renew_cb() -> None:
+        nonlocal nonlocal_claim
+        nonlocal_claim = _renew(state, nonlocal_claim, config)
+
+    trace_id = str(
+        request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
+    )
+    proxy_store = _HttpMeetingStoreProxy(config, claim.request_id, trace_id)
+    try:
+        completed_meeting = execute_persona_meeting(
+            store=proxy_store,
+            meeting_id=claim.request_id,
+            tenant_id=config.tenant_id,
+            provider=provider,
+            memory_url=config.memory_url,
+            renew_lease=_renew_cb,
+        )
+    except MeetingRefusedError as exc:
+        _api_post(
+            config,
+            f"/api/consult/meetings/{claim.request_id}/sync",
+            {
+                "request_status": "failed",
+                "completed_at": _utc_now(),
+            },
+        )
+        state.complete(nonlocal_claim, memo_id=f"refused:{exc.reason}", handoff_id="none")
+        return {
+            "request_id": claim.request_id,
+            "outcome": "completed",
+            "detail": f"meeting_refused={exc.reason}",
+        }
+
+    _api_post(
+        config,
+        f"/api/consult/meetings/{claim.request_id}/sync",
+        {
+            "meeting": completed_meeting,
+            "request_status": "published",
+            "completed_at": completed_meeting.get("closed_at") or _utc_now(),
+        },
+    )
+    memo_id = str((completed_meeting.get("minutes") or {}).get("memo_id") or f"mem-{claim.request_id}")
+    dissent_id = str((completed_meeting.get("synthesis") or {}).get("dissent_memo_id") or "none")
+    state.save_progress(nonlocal_claim, phase="meeting_completed", memo_id=memo_id)
+    _phase_hook(phase_hook, "meeting_completed")
+    state.complete(nonlocal_claim, memo_id=memo_id, handoff_id=dissent_id)
+    return {
+        "request_id": claim.request_id,
+        "outcome": "completed",
+        "detail": (
+            f"memo={memo_id} dissent={dissent_id} "
+            f"outcome={completed_meeting.get('outcome')}"
         ),
     }
 

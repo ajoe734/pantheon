@@ -582,3 +582,145 @@ def test_registration_retry_after_transient_owner_failure_does_not_recharge_fami
     reg = second["discovery"]["template_search"]["attempts"][artifact["artifact_id"]]["registration"]
     assert reg["status"] == "approved"
     assert reg["registry_id"] == artifact["artifact_id"]
+
+
+def test_register_requalified_member_creates_new_immutable_entry_with_legacy_lineage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = OwnerEnvironment(tmp_path, monkeypatch)
+    dataset = _recorded_dataset()
+    tpl_views = _template_entries("qlib_alpha158:KMID")
+    template = tpl_views[0]["entry"]["metadata"]["alpha_template"]
+    demand = env.research.research_demand_store.open(
+        TENANT,
+        {
+            "persona_id": "persona-alpha",
+            "mandate": "TW equity",
+            "missing_datasets": [],
+            "tried_families": [],
+            "short_measure": "effective_bets",
+            "pool_version": 0,
+        },
+    )
+    legacy_artifact = compile_template(
+        template,
+        universe=["2330"],
+        demand=demand,
+        source_ref="registry:" + tpl_views[0]["entry"]["registry_id"],
+        dataset=dataset,
+    )
+    legacy_id = legacy_artifact["artifact_id"]
+    legacy_entry = {"registry_id": legacy_id, "version": "1.0.0"}
+
+    requalified = copy.deepcopy(legacy_artifact)
+    requalified["artifact_id"] = f"{legacy_id}-requalify-001"
+    requalified["version"] = "1.1.0"
+    requalified["lineage"] = {
+        **dict(legacy_artifact["lineage"]),
+        "parent_registry_ids": [legacy_id],
+    }
+    passing_eval = _governed_passing_evaluation_for_artifact(requalified, dataset, run_id="bt-req-pass-001")
+    bt_store = SharedBacktestRunStore(env.data_dir / "backtest_runs.json")
+    bt_store.record(passing_eval)
+    raw_gate = SharedReplicationGate(
+        trial_counter_path=tmp_path / "trials.json",
+        backtest_run_store=bt_store,
+    )
+    from services.research.replication.gate_schema import ReplicationRequest
+
+    req = ReplicationRequest(
+        candidate_id="req-cand-1",
+        source_task_id="evd-req-1",
+        research_handoff={
+            "source_metadata": {
+                "api_endpoint": "evolution://decisions/evd-req-1",
+                "retrieved_at": "2026-11-16T00:00:00Z",
+                "governance_context": "Approved EvolutionDecision evd-req-1",
+            },
+            "normalized_findings": {
+                "strategy_spec": {"strategy_id": requalified["strategy_id"], "name": requalified["strategy_id"]},
+                "replication_notes": "Re-qualification",
+                "evaluation_hypotheses": "H1: positive OOS Sharpe",
+            },
+            "family_id": requalified["strategy_id"],
+            "strategy_artifact": requalified,
+            "backtest_dataset": {**dataset, "strategy_id": requalified["strategy_id"]},
+        },
+        proposed_strategy_spec={
+            "name": requalified["strategy_id"],
+            "description": "Re-qualified",
+            "signals": requalified["strategy_logic"],
+            "parameters": dict(requalified["parameters"]),
+            "governance": {"approval_required": True, "policy_id": "oc-001-research-normalization"},
+        },
+        backtest_evaluation=passing_eval,
+        metadata={
+            "tenant_id": TENANT,
+            "persona_id": "persona-alpha",
+            "decision_id": "evd-req-1",
+            "dataset_version_id": passing_eval["dataset_id"],
+            "strategy_artifact_checksum": strategy_artifact_checksum(requalified),
+        },
+        timestamp="2026-11-16T00:00:00Z",
+    )
+    gate_resp = raw_gate.evaluate_candidate(req)
+    assert gate_resp.passed
+
+    registrar = TemplateCandidateRegistrar(
+        data_dir=env.data_dir,
+        owner_call=env.owner_call,
+        admission_store=env.research.alpha_replication_admission_store,
+        queue_store=env.research.alpha_replication_queue,
+        backtest_run_store=bt_store,
+    )
+    with pytest.raises(CandidateRegistrationError, match="requalified_artifact_must_be_new_registry_entry"):
+        registrar.register_requalified_member(
+            tenant_id=TENANT,
+            persona_id="persona-alpha",
+            decision_id="evd-req-1",
+            legacy_entry=legacy_entry,
+            artifact=legacy_artifact,
+            gate_proof=gate_resp.to_dict(),
+            backtest_evaluation=passing_eval,
+        )
+    no_lineage = copy.deepcopy(requalified)
+    no_lineage["lineage"]["parent_registry_ids"] = []
+    with pytest.raises(CandidateRegistrationError, match="requalified_artifact_missing_legacy_lineage"):
+        registrar.register_requalified_member(
+            tenant_id=TENANT,
+            persona_id="persona-alpha",
+            decision_id="evd-req-1",
+            legacy_entry=legacy_entry,
+            artifact=no_lineage,
+            gate_proof=gate_resp.to_dict(),
+            backtest_evaluation=passing_eval,
+        )
+
+    reg = registrar.register_requalified_member(
+        tenant_id=TENANT,
+        persona_id="persona-alpha",
+        decision_id="evd-req-1",
+        legacy_entry=legacy_entry,
+        artifact=requalified,
+        gate_proof=gate_resp.to_dict(),
+        backtest_evaluation=passing_eval,
+    )
+    assert reg["status"] == "approved"
+    assert reg["registry_id"] == requalified["artifact_id"]
+    assert reg["replaces_registry_id"] == legacy_id
+    got = env.registry_client.get(
+        f"/api/registry/strategy-artifacts/{requalified['artifact_id']}",
+        headers=env.registry_headers(TENANT),
+    ).json()["entry"]
+    assert got["artifact_state"] == "approved"
+    assert got["lineage"]["parent_registry_ids"] == [legacy_id]
+    assert got["metadata"]["replaces_registry_id"] == legacy_id
+    baseline = resolve_member_baseline(
+        tenant_id=TENANT,
+        persona_id="persona-alpha",
+        artifact_ref=requalified["artifact_id"],
+        checksum=got["checksum"],
+        entry=got,
+    )
+    assert baseline["status"] == "approved"
+

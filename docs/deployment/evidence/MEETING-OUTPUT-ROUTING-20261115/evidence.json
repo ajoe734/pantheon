@@ -1,0 +1,85 @@
+{
+  "task_id": "MEETING-OUTPUT-ROUTING-20261115",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_commit": "cbe907ff2",
+  "hosted_behavior_claimed": false,
+  "credentials_present": false,
+  "parallel_contract": {
+    "contract_id": "C2",
+    "role": "provider",
+    "caller_task": "MEETING-PROTOCOL-ENGINE-R2-20261116",
+    "caller_merged_on_dev_at_delivery": false,
+    "caller_status_note": "MEETING-PROTOCOL-ENGINE-R2-20261116 was not yet merged on origin/dev (cbe907ff2) at delivery time; this task provides the C2 interface (services/consultation/meeting_outputs.py: dispatch_proposals(meeting: dict) -> list[dict], read_downstream_status(proposal_id) -> {status, downstream_id, updated_at}) and verifies all 8 proposal kinds against the real in-process owner routes (research, evolution, persona harness/lesson-rule/strategy-pool, memory trade-lessons, governance approvals, and BFF Agora candidate decisions)."
+  },
+  "scoped_artifacts": [
+    "services/consultation/meeting_outputs.py",
+    "services/consultation/tests/test_meeting_outputs.py",
+    "services/consultation/sponsor_decision_bridge.py",
+    "services/consultation/test_sponsor_decision_bridge.py",
+    "docs/deployment/evidence/MEETING-OUTPUT-ROUTING-20261115/evidence.json"
+  ],
+  "acceptance_evidence": {
+    "1_single_idempotent_dispatch_under_sponsor_identity": {
+      "implemented_in": [
+        "services/consultation/meeting_outputs.py",
+        "services/consultation/sponsor_decision_bridge.py"
+      ],
+      "verified_by": [
+        "services/consultation/tests/test_meeting_outputs.py::test_dispatch_all_eight_proposal_kinds_to_real_owner_routes_and_read_back_live_status",
+        "services/consultation/tests/test_meeting_outputs.py::test_advisors_and_private_servants_never_sponsor_and_agora_requires_none_sponsor",
+        "services/consultation/test_sponsor_decision_bridge.py::test_bridge_rejects_advisor_and_private_servant_sponsors"
+      ],
+      "summary": "Each of the 8 proposal kinds (research_demand, evolution_proposal via sponsor_decision_bridge, harness_patch, lesson_candidate, lesson_rule, pool_decision, governance_approval, agora_candidate_decision) dispatches once and idempotently via durable ledger + Idempotency-Key under the sponsor persona's own identity (or sponsor_persona_id=None only for agora_candidate_decision). Advisors and private servants are rejected before any downstream write."
+    },
+    "2_downstream_gates_unchanged": {
+      "implemented_in": [
+        "services/consultation/meeting_outputs.py",
+        "services/consultation/sponsor_decision_bridge.py"
+      ],
+      "verified_by": [
+        "services/consultation/tests/test_meeting_outputs.py::test_dispatch_all_eight_proposal_kinds_to_real_owner_routes_and_read_back_live_status",
+        "services/consultation/tests/test_meeting_outputs.py::test_downstream_gates_unchanged_even_when_payload_requests_approved_or_applied",
+        "services/consultation/test_sponsor_decision_bridge.py::test_bridge_propose_request_helpers_preserve_proposed_state_and_sponsor"
+      ],
+      "summary": "Every dispatched proposal enters at its owner entry point's first state (open, proposed, draft, pending_governance_decision, requires_approved_envelope) and no meeting output marks anything approved, endorsed, or applied even if payload fields attempt to pre-approve."
+    },
+    "3_dispatch_failure_recorded_and_retried_idempotently_with_live_status_readback": {
+      "implemented_in": [
+        "services/consultation/meeting_outputs.py"
+      ],
+      "verified_by": [
+        "services/consultation/tests/test_meeting_outputs.py::test_dispatch_failure_is_recorded_and_retried_idempotently",
+        "services/consultation/tests/test_meeting_outputs.py::test_dispatch_all_eight_proposal_kinds_to_real_owner_routes_and_read_back_live_status"
+      ],
+      "summary": "Transient or validation dispatch failures record status='failed', downstream_id=None, and error on both the ledger and the meeting proposal record. Retrying dispatch_proposals re-sends only failed proposals without duplicating already-dispatched proposals. read_downstream_status(proposal_id) queries the authoritative owner GET endpoint and updates both the ledger and the meeting record in place."
+    },
+    "4_integration_tests_against_real_owner_routes": {
+      "implemented_in": [
+        "services/consultation/tests/test_meeting_outputs.py"
+      ],
+      "owner_routes_exercised": {
+        "research_demand": "POST /api/research/persona-demands & GET /api/research/persona-demands",
+        "evolution_proposal": "POST /api/evolution/proposals & GET /api/evolution/proposals/{decision_id}",
+        "harness_patch": "POST /api/personas/{id}/harness/patches & GET /api/personas/{id}/harness",
+        "lesson_candidate": "POST /api/memory/trade-lessons & GET /api/memory/trade-lessons/{id}",
+        "lesson_rule": "POST /api/personas/{id}/lesson-rule-proposals & GET /api/personas/{id}/lesson-rule-proposals",
+        "pool_decision": "POST /api/personas/{id}/strategy-pool/decisions & GET /api/personas/{id}/strategy-pool/versions/{v}",
+        "governance_approval": "POST /api/governance/approvals & GET /api/governance/approvals/{decision_id}",
+        "agora_candidate_decision": "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates & GET /bff/agora/proposals/{proposal_id}/candidate"
+      }
+    }
+  },
+  "commands": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py && PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/consultation/test_sponsor_decision_bridge.py services/consultation/tests/test_meeting_outputs.py",
+      "exit_code": 0,
+      "result": "19 passed in 8.50s"
+    },
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/consultation",
+      "exit_code": 0,
+      "result": "145 passed in 106.85s"
+    }
+  ]
+}

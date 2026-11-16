@@ -479,3 +479,56 @@ def test_api_record_sponsor_decision_failed_dispatch_is_durable_and_retryable() 
         finally:
             main_module.store = old_store
 
+
+@pytest.mark.parametrize(
+    "bad_decision",
+    [
+        {"sponsor_persona_id": "agora-advisor-macro"},
+        {"sponsor_persona_id": "private-servant-user-1"},
+        {"sponsor_persona_id": "persona-momentum", "sponsor_origin": "agora_advisor"},
+        {"sponsor_persona_id": "persona-momentum", "sponsor_origin": "private_servant"},
+        {"sponsor_persona_id": "persona-momentum", "persona_class": "agora_servant"},
+        {"sponsor_persona_id": "persona-momentum", "agora_user_id": "user-123"},
+    ],
+)
+def test_bridge_rejects_advisor_and_private_servant_sponsors(bad_decision: dict[str, object]) -> None:
+    with pytest.raises(SponsorDecisionBridgeError, match="advisors and private servants cannot sponsor"):
+        bridge(_base_decision(**bad_decision))
+    with pytest.raises(SponsorDecisionBridgeError, match="advisors and private servants cannot sponsor"):
+        bridge(
+            _base_decision(
+                type="evolution",
+                target_type="candidate_artifact",
+                action_type="retrain",
+                risk_level="low",
+                **bad_decision,
+            )
+        )
+
+
+def test_bridge_propose_request_helpers_preserve_proposed_state_and_sponsor() -> None:
+    approval = bridge(_base_decision())
+    assert isinstance(approval, ApprovalDecisionProposal)
+    gov_req = approval.to_governance_propose_request(tenant_id="tenant-a")
+    assert gov_req["expected_version"] == 0
+    assert gov_req["tenant_id"] == "tenant-a"
+    assert gov_req["owner_user_id"] == "persona-risk-sponsor"
+    assert gov_req["persona_id"] == "persona-alpha"
+    assert "decision" not in gov_req
+
+    evo = bridge(
+        _base_decision(
+            decision_id="sponsor-decision-evo-helper",
+            type="evolution",
+            target_type="candidate_artifact",
+            action_type="retrain",
+            risk_level="low",
+        )
+    )
+    assert isinstance(evo, EvolutionDecisionProposal)
+    evo_req = evo.to_evolution_propose_request(tenant_id="tenant-a")
+    assert evo_req["tenant_id"] == "tenant-a"
+    assert evo_req["created_by_id"] == "persona-risk-sponsor"
+    assert "decision_state" not in evo_req
+
+

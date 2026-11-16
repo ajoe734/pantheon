@@ -273,3 +273,20 @@ def test_paper_capital_reader_directory_is_issued_renewed_and_capital_only(tmp_p
     # Withdrawal removes only the fixed file in this directory.
     revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
     assert not path.exists()
+
+
+def test_governance_binding_reader_files_rotate_and_are_removed_on_withdrawal(tmp_path):
+    env = configured()
+    names = ("GOVERNANCE_CAPITAL_SERVICE_TOKEN", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN")
+    refresh_files(tmp_path, env, now=NOW)
+    before = {n: (tmp_path / "governance" / n).read_text() for n in names}
+    assert healthy_files(tmp_path, env, now=NOW + 1)
+    refresh_files(tmp_path, env, now=NOW + REFRESH_SECONDS)
+    for name in names:
+        renewed = (tmp_path / "governance" / name).read_text()
+        assert renewed != before[name]
+        assert verify(renewed, now=NOW + REFRESH_SECONDS + 1)["sub"].startswith("pantheon-dev-governance-")
+        assert configured_service_token(name, {name + "_FILE": str(tmp_path / "governance" / name)}) == renewed
+    revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert not any((tmp_path / "governance" / n).exists() for n in names)
+    assert (tmp_path / "governance" / "grant").read_text() == "revoked"

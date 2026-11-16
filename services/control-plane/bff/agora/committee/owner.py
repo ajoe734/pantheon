@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException, Request
 
@@ -40,6 +40,7 @@ def envelope(data: Any, *, owner: str, empty_reason: str = "owner_has_no_records
 # detail and the committee views). No synthetic items, no model call.
 
 _PRIVATE = "persona_private"
+_PRIVATE_SCOPES = frozenset({_PRIVATE, "private_user", "user_private", "private"})
 
 
 def unavailable_case(reason: str) -> dict:
@@ -47,7 +48,11 @@ def unavailable_case(reason: str) -> dict:
 
 
 def _private(item: Mapping[str, Any]) -> bool:
-    return item.get("relevance_scope") == _PRIVATE or item.get("memory_layer") == _PRIVATE
+    for key in ("relevance_scope", "memory_layer", "scope", "memory_scope", "visibility_scope", "owner_scope"):
+        value = str(item.get(key) or "").strip().lower()
+        if value in _PRIVATE_SCOPES:
+            return True
+    return False
 
 
 def project_case_file(case: Any, *, tenant_id: str, private_persona_ids: frozenset = frozenset()) -> dict:
@@ -146,3 +151,256 @@ def project_panel(transcript: Any, *, request_id: str, tenant_id: str) -> dict:
                 **{"summary_" + k: v for k, v in _citations(c.get("summary_evidence_refs"), known).items()}})
     return {"status": "ok", "reason": None, **view, "contributions": contributions,
             "rejected_contributions": rejected}
+
+
+def project_panel_rounds(transcript: Any = None, *, case_file_view: Optional[Mapping[str, Any]] = None) -> list[dict]:
+    """Project the single independent round of a gate panel for unified session reads."""
+    positions: list[dict] = []
+    if isinstance(case_file_view, Mapping):
+        for contrib in case_file_view.get("contributions") or []:
+            if not isinstance(contrib, Mapping):
+                continue
+            claims = contrib.get("claims") or []
+            citations = [
+                cid
+                for cl in claims if isinstance(cl, Mapping)
+                for cid in (cl.get("cited_item_ids") or [])
+                if isinstance(cid, str)
+            ]
+            positions.append({
+                "label": str(contrib.get("role") or contrib.get("persona_id") or "panel_reviewer"),
+                "persona_id": contrib.get("persona_id"),
+                "role": contrib.get("role") or "panel_reviewer",
+                "style": "independent_gate_panel",
+                "stance": contrib.get("recommendation") or "review",
+                "confidence": None,
+                "citations": list(dict.fromkeys(citations)),
+                "changed": False,
+            })
+    if not positions and isinstance(transcript, Mapping):
+        for event in transcript.get("events") or []:
+            if not isinstance(event, Mapping):
+                continue
+            actor = event.get("actor") if isinstance(event.get("actor"), Mapping) else {}
+            content = event.get("content") if isinstance(event.get("content"), Mapping) else {}
+            if actor.get("actor_type") == "persona" or event.get("event_type") == "persona_contribution":
+                positions.append({
+                    "label": str(content.get("role") or actor.get("actor_id") or "panel_reviewer"),
+                    "persona_id": actor.get("actor_id") or content.get("persona_id"),
+                    "role": content.get("role") or "panel_reviewer",
+                    "style": "independent_gate_panel",
+                    "stance": content.get("recommendation") or content.get("claim") or "submitted",
+                    "confidence": content.get("confidence"),
+                    "citations": [r for r in (content.get("evidence_refs") or []) if isinstance(r, str)],
+                    "changed": False,
+                })
+    return [{"round": 1, "mode": "independent", "positions": positions}]
+
+
+def project_meeting_proposal(proposal: Any, *, meeting_id: Optional[str] = None) -> dict:
+    """Normalize a meeting proposal and mark unsponsored proposals for Agora candidate decisions."""
+    if not isinstance(proposal, Mapping):
+        raise unavailable("consultation", "invalid_meeting_proposal_response")
+    pid = str(proposal.get("proposal_id") or proposal.get("id") or "").strip()
+    if not pid:
+        raise unavailable("consultation", "invalid_meeting_proposal_response")
+    sponsor = proposal.get("sponsor_persona_id")
+    sponsor_clean = str(sponsor).strip() if sponsor is not None and str(sponsor).strip() else None
+    kind = str(proposal.get("kind") or ("agora_candidate_decision" if sponsor_clean is None else "research_demand")).strip()
+    is_unsponsored = sponsor_clean is None or kind == "agora_candidate_decision"
+    downstream = proposal.get("downstream") if isinstance(proposal.get("downstream"), Mapping) else {}
+    target = str(
+        downstream.get("target")
+        or proposal.get("downstream_target")
+        or ("agora_candidate_decision" if is_unsponsored else kind)
+    )
+    downstream_id = downstream.get("id") or proposal.get("downstream_id") or (pid if is_unsponsored else None)
+    downstream_status = str(downstream.get("status") or proposal.get("status") or "draft")
+    return {
+        **{k: v for k, v in proposal.items() if not _private({k: v})},
+        "proposal_id": pid,
+        "meeting_id": str(proposal.get("meeting_id") or meeting_id or ""),
+        "kind": "agora_candidate_decision" if is_unsponsored and kind == "agora_candidate_decision" else kind,
+        "sponsor_persona_id": None if is_unsponsored else sponsor_clean,
+        "approval_path": "agora_candidate_decision" if is_unsponsored else "governed_owner_entry_point",
+        "downstream": {
+            "target": target,
+            "id": downstream_id,
+            "status": downstream_status,
+        },
+        "execution_authority": "none",
+    }
+
+
+def project_meeting(
+    item: Any,
+    *,
+    tenant_id: str,
+    user_id: Optional[str] = None,
+    detail: Optional[Mapping[str, Any]] = None,
+) -> dict:
+    """Validate and project a deliberative persona meeting from the consultation owner.
+
+    Enforces tenant and private-servant audience boundaries and strips any
+    persona_private or user_private memory items before leaving the BFF.
+    """
+    if not isinstance(item, Mapping):
+        raise unavailable("consultation", "invalid_meeting_response")
+    merged: dict[str, Any] = dict(item)
+    if isinstance(detail, Mapping):
+        merged.update(detail)
+    meeting_id = str(merged.get("meeting_id") or merged.get("request_id") or "").strip()
+    meeting_type = str(merged.get("meeting_type") or "").strip()
+    if not meeting_id or not meeting_type:
+        raise unavailable("consultation", "invalid_meeting_response")
+    item_tenant = merged.get("tenant_id")
+    if item_tenant is not None and str(item_tenant).strip() and str(item_tenant).strip() != tenant_id:
+        raise unavailable("consultation", "meeting_tenant_mismatch", 404)
+
+    convened_by = merged.get("convened_by") if isinstance(merged.get("convened_by"), Mapping) else None
+    if (
+        isinstance(convened_by, Mapping)
+        and str(convened_by.get("kind") or "").strip() == "agora_user"
+        and user_id
+        and str(convened_by.get("id") or "").strip()
+        and str(convened_by.get("id") or "").strip() != user_id
+    ):
+        raise unavailable("consultation", "meeting_not_found", 404)
+
+    raw_participants = merged.get("participants")
+    participants: list[dict[str, Any]] = []
+    if isinstance(raw_participants, list):
+        for p in raw_participants:
+            if isinstance(p, str):
+                participants.append({"persona_id": p, "role": "participant", "origin": "institutional"})
+                continue
+            if not isinstance(p, Mapping) or not p.get("persona_id"):
+                raise unavailable("consultation", "invalid_meeting_response")
+            origin = str(p.get("origin") or "institutional").strip()
+            servant_user = str(p.get("agora_user_id") or "").strip() or None
+            if origin == "private_servant" and user_id and servant_user and servant_user != user_id:
+                raise unavailable("consultation", "meeting_not_found", 404)
+            entry: dict[str, Any] = {
+                "persona_id": str(p["persona_id"]),
+                "role": str(p.get("role") or "participant"),
+                "origin": origin,
+            }
+            if servant_user is not None:
+                entry["agora_user_id"] = servant_user
+            participants.append(entry)
+
+    private_withheld = 0
+    case_file_items: list[dict[str, Any]] = []
+    for citem in merged.get("case_file_items") or []:
+        if not isinstance(citem, Mapping):
+            continue
+        if _private(citem):
+            private_withheld += 1
+            continue
+        case_file_items.append({
+            k: v for k, v in citem.items()
+            if k not in {"private_memory", "persona_private_memory"}
+        })
+
+    pre_read_raw = merged.get("pre_read")
+    if isinstance(pre_read_raw, list):
+        pre_read: Any = []
+        for pitem in pre_read_raw:
+            if isinstance(pitem, Mapping):
+                if _private(pitem):
+                    private_withheld += 1
+                    continue
+                pre_read.append({
+                    k: v for k, v in pitem.items()
+                    if k not in {"private_memory", "persona_private_memory"}
+                })
+    elif isinstance(pre_read_raw, Mapping):
+        pre_read = {}
+        for k, v in pre_read_raw.items():
+            if isinstance(v, Mapping) and _private(v):
+                private_withheld += 1
+                continue
+            if isinstance(v, list):
+                filtered_list = []
+                for elem in v:
+                    if isinstance(elem, Mapping) and _private(elem):
+                        private_withheld += 1
+                        continue
+                    filtered_list.append(elem)
+                pre_read[k] = filtered_list
+            else:
+                pre_read[k] = v
+    else:
+        pre_read = pre_read_raw
+
+    raw_rounds = merged.get("rounds")
+    rounds: list[dict[str, Any]] = []
+    if isinstance(raw_rounds, list):
+        for r in raw_rounds:
+            if not isinstance(r, Mapping) or r.get("round") is None or not isinstance(r.get("positions"), list):
+                raise unavailable("consultation", "invalid_meeting_rounds_response")
+            positions = []
+            for pos in r["positions"]:
+                if not isinstance(pos, Mapping):
+                    raise unavailable("consultation", "invalid_meeting_rounds_response")
+                if _private(pos):
+                    private_withheld += 1
+                    continue
+                positions.append({
+                    "label": pos.get("label"),
+                    "persona_id": pos.get("persona_id"),
+                    "role": pos.get("role"),
+                    "style": pos.get("style"),
+                    "stance": pos.get("stance"),
+                    "confidence": pos.get("confidence"),
+                    "citations": list(pos.get("citations") or []),
+                    "changed": bool(pos.get("changed", False)),
+                })
+            rounds.append({
+                "round": int(r["round"]),
+                "positions": positions,
+            })
+
+    synthesis_raw = merged.get("synthesis")
+    synthesis: Optional[dict[str, Any]] = None
+    projected_proposals: list[dict[str, Any]] = []
+    if isinstance(synthesis_raw, Mapping):
+        raw_props = synthesis_raw.get("proposals") or []
+        if isinstance(raw_props, list):
+            projected_proposals = [project_meeting_proposal(p, meeting_id=meeting_id) for p in raw_props]
+        synthesis = {
+            **dict(synthesis_raw),
+            "proposals": projected_proposals,
+        }
+    elif isinstance(merged.get("proposals"), list):
+        projected_proposals = [project_meeting_proposal(p, meeting_id=meeting_id) for p in merged["proposals"]]
+
+    round_count = merged.get("round")
+    if round_count is None:
+        round_count = len(rounds)
+
+    return {
+        **{k: v for k, v in merged.items() if k not in {"case_file_items", "pre_read", "rounds", "synthesis"}},
+        "session_id": meeting_id,
+        "meeting_id": meeting_id,
+        "request_id": meeting_id,
+        "meeting_type": meeting_type,
+        "consultation_type": "persona_meeting",
+        "session_class": "deliberative_meeting",
+        "status": str(merged.get("status") or "open"),
+        "outcome": merged.get("outcome") or (synthesis.get("outcome") if isinstance(synthesis, Mapping) else None),
+        "chair_persona_id": merged.get("chair_persona_id"),
+        "participants": participants,
+        "round": round_count,
+        "rounds": rounds,
+        "agenda": merged.get("agenda") or merged.get("topic"),
+        "case_file_items": case_file_items,
+        "pre_read": pre_read,
+        "synthesis": synthesis,
+        "proposals": projected_proposals,
+        "writebacks": list(merged.get("writebacks") or []),
+        "usage": merged.get("usage"),
+        "private_items_withheld": private_withheld,
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+    }

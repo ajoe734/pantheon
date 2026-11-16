@@ -28,6 +28,78 @@ from .provider import (
 )
 from .runner import drain_interaction_outbox, run_selected_persona_interaction
 from .store import InteractionConflict, InteractionLifecycleStore
+from ..committee.client import CommitteeOwnerClient
+from .candidate_decisions.router import (
+    CandidateBindingValidationAdapter,
+    CandidateDecisionService,
+    CandidateDecisionStore,
+    ReadStoreApprovalAdapter,
+    create_meeting_candidate_decision_router,
+)
+
+DELIBERATIVE_MEETING_TYPES = frozenset({
+    "MT-1",
+    "MT-2",
+    "MT-3",
+    "MT-4",
+    "MT-5",
+    "MT-6",
+    "pool_evolution_review",
+    "optimisation_review",
+    "optimization_review",
+    "strategy_ideation",
+    "performance_attribution_review",
+    "post_mortem",
+    "regime_interpretation",
+    "quarterly_review",
+})
+GATE_PANEL_TYPES = frozenset({
+    "persona_panel",
+    "trial_admission",
+    "envelope_publication",
+    "harness_patch",
+    "canary_candidacy",
+})
+MAX_MEETING_PARTICIPANTS = 5
+
+
+class ConveneWorkshopMeetingRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    workshop_id: Optional[str] = Field(default=None, min_length=1)
+    meeting_type: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+    subject_ref: Optional[str] = Field(default=None, min_length=1)
+    participants: Optional[List[str]] = None
+    participant_persona_ids: Optional[List[str]] = None
+    evidence_refs: List[str] = Field(default_factory=list)
+    attribution_record_id: Optional[str] = Field(default=None, min_length=1)
+    convened_by: Optional[Dict[str, Any]] = None
+    environment: Literal["research", "shadow", "paper", "canary", "live"] = "research"
+    required_capability: str = "persona_opinion"
+    include_private_servant: bool = True
+
+    @model_validator(mode="after")
+    def validate_meeting_request(self) -> "ConveneWorkshopMeetingRequest":
+        mtype = self.meeting_type.strip()
+        if mtype in GATE_PANEL_TYPES or mtype not in DELIBERATIVE_MEETING_TYPES:
+            raise ValueError(f"Unsupported deliberative meeting_type: {self.meeting_type!r}")
+        if self.environment in {"canary", "live"}:
+            raise ValueError("Agora workshop meetings cannot target canary or live environments")
+        if self.participants is not None and self.participant_persona_ids is not None:
+            if list(self.participants) != list(self.participant_persona_ids):
+                raise ValueError("participants and participant_persona_ids conflict")
+        raw_ids = self.participants if self.participants is not None else self.participant_persona_ids
+        if raw_ids is not None and len(raw_ids) != len(set(raw_ids)):
+            raise ValueError("meeting participants must be unique")
+        return self
+
+    @property
+    def requested_participant_ids(self) -> Optional[List[str]]:
+        if self.participants is not None:
+            return list(self.participants)
+        if self.participant_persona_ids is not None:
+            return list(self.participant_persona_ids)
+        return None
 
 
 class ContextRef(BaseModel):
@@ -1257,5 +1329,281 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "X-SSE-Replay-Store": lifecycle.backend,
             "X-SSE-Resync-Routes": f"/bff/agora/interactions/{interaction_id}",
         })
+
+    def _convene_workshop_meeting(
+        *,
+        path_workshop_id: Optional[str],
+        body: ConveneWorkshopMeetingRequest,
+        authorization: Optional[str],
+        x_tenant_id: Optional[str],
+        idempotency_key: Optional[str],
+    ) -> Dict[str, Any]:
+        from services.control_plane.bff.models import ErrorCode
+
+        resolved = scope(authorization, x_tenant_id, write=True)
+        if not idempotency_key or not idempotency_key.strip():
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+            )
+        if path_workshop_id and body.workshop_id and path_workshop_id != body.workshop_id:
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Path workshop_id and body workshop_id mismatch",
+                "workshop_id_mismatch",
+            )
+        effective_workshop_id = path_workshop_id or body.workshop_id
+        if not effective_workshop_id:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "workshop_id is required to convene a workshop meeting",
+                "workshop_id_required",
+            )
+        session = session_for(effective_workshop_id, resolved)
+        if body.convened_by is not None:
+            if (
+                str(body.convened_by.get("kind") or "").strip() != "agora_user"
+                or str(body.convened_by.get("id") or "").strip() != resolved.user_id
+            ):
+                raise bff_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Workshop meeting convened_by must match authenticated Agora user",
+                    "convened_by_mismatch",
+                )
+
+        read_store = get_read_store()
+        if read_store is None or not callable(getattr(read_store, "list_personas", None)):
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Persona registry read store is unavailable",
+                "data_unavailable",
+            )
+        all_personas = [
+            p for p in (read_store.list_personas(include_market_persona_defaults=True) or [])
+            if isinstance(p, dict) and _persona_id(p)
+        ]
+        personas_by_id = {_persona_id(p): p for p in all_personas}
+
+        eligibility_request = EligibilityRequest(
+            workshop_id=effective_workshop_id,
+            mode="consult",
+            environment=body.environment,
+            required_capability=body.required_capability,
+        )
+        eligibility_result = eligibility(eligibility_request, resolved)
+        eligible_rows = {x["persona_id"]: x for x in eligibility_result["included"]}
+
+        own_servant_ids: List[str] = []
+        for pid, persona in personas_by_id.items():
+            if not _private_persona(persona):
+                continue
+            if persona.get("tenant_id") != resolved.tenant_id:
+                continue
+            if not _persona_user_allowed(persona, resolved.user_id):
+                continue
+            if not _persona_operational(persona):
+                continue
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            ceiling = str(
+                persona.get("environment_ceiling")
+                or metadata.get("environment_ceiling")
+                or "paper"
+            ).strip().lower()
+            order = ["research", "shadow", "paper", "canary", "live"]
+            if ceiling in order and body.environment in order and order.index(body.environment) <= order.index(ceiling):
+                own_servant_ids.append(pid)
+
+        requested_ids = body.requested_participant_ids
+        if requested_ids is not None:
+            for pid in requested_ids:
+                persona = personas_by_id.get(pid)
+                if persona is None:
+                    if "servant" in pid.lower():
+                        raise bff_error(
+                            409,
+                            ErrorCode.RESOURCE_CONFLICT,
+                            "Requested private servant is absent",
+                            "servant_absent",
+                        )
+                    raise bff_error(
+                        422,
+                        ErrorCode.VALIDATION_FAILED,
+                        f"Participant {pid!r} is not eligible",
+                        "participant_eligibility_failed",
+                    )
+                if persona.get("tenant_id") != resolved.tenant_id:
+                    raise bff_error(
+                        403,
+                        ErrorCode.FORBIDDEN,
+                        "Selected Persona belongs to another tenant",
+                        "tenant_mismatch",
+                    )
+                if _private_persona(persona) and not _persona_user_allowed(persona, resolved.user_id):
+                    raise bff_error(
+                        403,
+                        ErrorCode.FORBIDDEN,
+                        "Selected private servant belongs to another user",
+                        "persona_user_mismatch",
+                    )
+                if pid not in eligible_rows and pid not in own_servant_ids:
+                    raise bff_error(
+                        422,
+                        ErrorCode.VALIDATION_FAILED,
+                        f"Participant {pid!r} failed Agora eligibility",
+                        "participant_eligibility_failed",
+                    )
+            selected_participants = list(requested_ids)
+            if body.include_private_servant:
+                for sid in own_servant_ids:
+                    if sid not in selected_participants and len(selected_participants) < MAX_MEETING_PARTICIPANTS:
+                        selected_participants.append(sid)
+        else:
+            non_private_eligible = [
+                x["persona_id"]
+                for x in eligibility_result["included"]
+                if not _private_persona(personas_by_id.get(x["persona_id"], {}))
+            ]
+            if body.include_private_servant and own_servant_ids:
+                cap_for_others = max(0, MAX_MEETING_PARTICIPANTS - len(own_servant_ids[:1]))
+                selected_participants = non_private_eligible[:cap_for_others] + own_servant_ids[:1]
+            else:
+                selected_participants = [
+                    x["persona_id"] for x in eligibility_result["included"]
+                ][:MAX_MEETING_PARTICIPANTS]
+
+        if not selected_participants:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Insufficient eligible participants to convene deliberative meeting",
+                "insufficient_participants",
+            )
+        if len(selected_participants) > MAX_MEETING_PARTICIPANTS:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Deliberative meeting exceeds M9 participant budget cap of 5",
+                "participant_budget_exceeded",
+            )
+
+        evidence_refs = list(body.evidence_refs or [])
+        workshop_ref = f"workshop:{effective_workshop_id}"
+        if workshop_ref not in evidence_refs:
+            evidence_refs.append(workshop_ref)
+        if session.get("strategy_id"):
+            strategy_ref = f"strategy:{session['strategy_id']}"
+            if strategy_ref not in evidence_refs:
+                evidence_refs.append(strategy_ref)
+
+        owner_payload: Dict[str, Any] = {
+            "meeting_type": body.meeting_type.strip(),
+            "topic": body.topic,
+            "convened_by": {
+                "kind": "agora_user",
+                "id": resolved.user_id,
+            },
+            "subject_ref": body.subject_ref or session.get("strategy_id") or effective_workshop_id,
+            "participants": selected_participants,
+            "evidence_refs": evidence_refs,
+        }
+        if body.attribution_record_id is not None:
+            owner_payload["attribution_record_id"] = body.attribution_record_id
+
+        owner_client = CommitteeOwnerClient(
+            resolved.tenant_id,
+            resolved.operator_id,
+            user_id=resolved.user_id,
+        )
+        owner_resp = owner_client.convene_meeting(
+            owner_payload,
+            idempotency_key=idempotency_key.strip(),
+        )
+        data = {
+            "meeting_id": owner_resp["meeting_id"],
+            "status": owner_resp["status"],
+            "workshop_id": effective_workshop_id,
+            "meeting_type": owner_payload["meeting_type"],
+            "topic": body.topic,
+            "convened_by": owner_payload["convened_by"],
+            "subject_ref": owner_payload["subject_ref"],
+            "participants": selected_participants,
+            "evidence_refs": evidence_refs,
+            **({"attribution_record_id": body.attribution_record_id} if body.attribution_record_id is not None else {}),
+            "owner": "consultation",
+            "environment_ceiling": "paper",
+            "execution_authority": "none",
+            "authority": authority_boundary(),
+        }
+        return {
+            "meeting_id": owner_resp["meeting_id"],
+            "status": owner_resp["status"],
+            "data": data,
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.persona.interaction.v1",
+                "audience": f"tenant:{resolved.tenant_id}:user:{resolved.user_id}",
+                "owner": "consultation",
+            },
+            "environment_ceiling": "paper",
+            "execution_authority": "none",
+        }
+
+    @router.post("/bff/agora/workshops/{workshop_id}/meetings", status_code=202)
+    def convene_meeting_for_workshop(
+        workshop_id: str,
+        body: ConveneWorkshopMeetingRequest,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        return _convene_workshop_meeting(
+            path_workshop_id=workshop_id,
+            body=body,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            idempotency_key=idempotency_key,
+        )
+
+    @router.post("/bff/agora/interactions/meetings", status_code=202)
+    @router.post("/bff/agora/meetings", status_code=202)
+    def convene_meeting(
+        body: ConveneWorkshopMeetingRequest,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        return _convene_workshop_meeting(
+            path_workshop_id=None,
+            body=body,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            idempotency_key=idempotency_key,
+        )
+
+    candidate_store = CandidateDecisionStore.from_governance_store(proposals)
+    candidate_service = CandidateDecisionService(
+        candidate_store,
+        interaction_store=lifecycle,
+        validation_adapter=CandidateBindingValidationAdapter(),
+        approval_store=ReadStoreApprovalAdapter(get_read_store),
+    )
+    router.include_router(
+        create_meeting_candidate_decision_router(
+            service=candidate_service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_write_role=require_write_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            get_read_store=get_read_store,
+        )
+    )
+    router.candidate_service = candidate_service
 
     return router

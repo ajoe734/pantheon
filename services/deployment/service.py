@@ -178,6 +178,35 @@ _OUTBOX_DEFAULT_MAX_ATTEMPTS = 3
 _OUTBOX_DEFAULT_RETRY_DELAY_SECONDS = 30
 
 
+# Closes the market snapshot serves per symbol. Mirrors the default of
+# SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES (services/source_ingestion/runtime.py);
+# phase 1 of SD_MARKET_DATA_ONE_WRITE_PER_DAY section 5.4 E2.
+MARKET_SNAPSHOT_SERVED_CLOSES = 60
+
+
+def _refuse_history_beyond_snapshot(artifact: Mapping[str, Any], needed: int, derive: Any) -> None:
+    """Refuse at deployment a strategy that needs more closes than the snapshot serves."""
+    if needed <= MARKET_SNAPSHOT_SERVED_CLOSES:
+        return
+    logic = artifact.get("strategy_logic") or {}
+    kind = logic.get("kind")
+    served = MARKET_SNAPSHOT_SERVED_CLOSES
+    if kind == "persona_portfolio_v1":
+        for member in logic["members"]:
+            member_needed = derive(member["artifact"])
+            if member_needed > served:
+                member_kind = (member["artifact"].get("strategy_logic") or {}).get("kind")
+                raise DeploymentPlanError(
+                    f"history_unavailable: envelope member {member.get('member_id')!r} "
+                    f"(strategy kind {member_kind!r}) needs {member_needed} closes but the "
+                    f"market snapshot serves {served}"
+                )
+    raise DeploymentPlanError(
+        f"history_unavailable: strategy kind {kind!r} needs {needed} closes but the "
+        f"market snapshot serves {served}"
+    )
+
+
 def _iso_sort_key(plan: DeploymentPlan) -> str:
     return str(plan.created_at or "")
 
@@ -532,6 +561,7 @@ class DeploymentPlannerService:
                     minimum_closes = strategy_artifact_minimum_closes(artifact)
                 except (StrategyArtifactValidationError, KeyError, TypeError, ValueError) as exc:
                     raise DeploymentPlanError(f"minimum_closes cannot be derived: {exc}") from exc
+                _refuse_history_beyond_snapshot(artifact, minimum_closes, strategy_artifact_minimum_closes)
             plan.metadata.setdefault("market_data_policy", {
                 "owner": "source-ingest",
                 "contract": "latest_stored_normalized",

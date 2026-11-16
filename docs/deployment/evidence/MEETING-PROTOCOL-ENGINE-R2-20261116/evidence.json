@@ -1,0 +1,53 @@
+{
+  "task_id": "MEETING-PROTOCOL-ENGINE-R2-20261116",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "design_ref": "docs/02-architecture/SD_PERSONA_MEETINGS_2026-11-15.md (amended by SD-PERSONA-MEETINGS-AMEND-20261115)",
+  "parallel_contract_status": {
+    "c1_provider": {
+      "provider_task": "MEETING-PROTOCOL-ENGINE-R2-20261116",
+      "routes": [
+        "POST /api/consult/meetings",
+        "GET /api/consult/meetings",
+        "GET /api/consult/meetings/{meeting_id}",
+        "GET /api/consult/meetings/proposals",
+        "GET /api/consult/meetings/catalogue"
+      ],
+      "client_entry": "services/consultation/client.py:open_persona_meeting"
+    },
+    "c2_consumer": {
+      "provider_task": "MEETING-OUTPUT-ROUTING-20261115",
+      "module": "services/consultation/meeting_outputs.py",
+      "merged_on_dev_at_delivery": false,
+      "note": "services/consultation/meeting_outputs.py was not yet merged on origin/dev at delivery time; engine calls dispatch_proposals(meeting) and read_downstream_status(proposal_id) when present and is verified against a function-edge double in services/consultation/tests/test_persona_meetings.py"
+    },
+    "h10_preread_fallback": {
+      "provider_task": "PANEL-FULL-INTERPRETATIONS-R2-20261114",
+      "merged_on_dev_at_delivery": false,
+      "note": "Uses full committee-visible memory entries (persona_and_committee and institutional, up to 12 items, never persona_private) in pre-read until PANEL-FULL-INTERPRETATIONS-R2-20261114 lands"
+    }
+  },
+  "acceptance_coverage": {
+    "ac1_six_catalogue_types_and_gate_panels_unmodified": "services/consultation/meeting_catalogue.json defines MT-1..MT-6 with MT-4 as performance_attribution_review; unsupported/retired types (e.g. post_mortem) are refused with 422 unsupported_meeting_type; existing gate panel tests pass unmodified",
+    "ac2_preread_round1_independent_round2_anonymised_round3_evidence_gated": "services/consultation/meetings.py and services/openclaw-gateway-adapter/consultation_provider.py enforce pre-read of shared case file + committee-visible memory, independent Round 1, Round 2 labelled by role and style only (persona_id stripped/forbidden), and Round 3 only when chair records new_evidence",
+    "ac3_chair_synthesis_no_vote_dissent_memo_review_fallback": "validate_and_build_synthesis builds sponsored proposals with citations, non-binding confidence tally (voting=false), and dissent_memo_id (MemoType.DISSENT); empty or unreadable synthesis records outcome=REVIEW with proposals=[]",
+    "ac4_rosters_agora_advisors_private_servants_citation_guard": "validate_and_resolve_roster enforces institutional trading/risk/red-team personas, operational non-private Agora advisors, and private servants only in meetings convened by their owning user or MT-4 reviews whose subject is their own trader; advisors and servants cannot sponsor; positions citing outside case file or own pre-read are rejected",
+    "ac5_mt4_attribution_record_red_team_mandate_testable_hypothesis": "MT-4 attaches attribution_record in case file, assigns luck_or_small_sample_or_confounder to persona-red-team, and accepts only testable causal hypotheses naming component and test (routed as research_demand) or records outcome=no_testable_hypothesis",
+    "ac6_budgets_and_insufficient_participants": "enforce_meeting_budgets enforces max_participants (5), max_rounds (2 or 3 with chair new_evidence), max_meetings_per_persona_per_week (3 per ISO week), max_calls_per_meeting (16), and cross-persona >=2 trading personas (insufficient_participants), recording refusals in store",
+    "ac7_memory_writebacks_deny_all_agents_c1_read_routes": "Writes shared minutes once as institutional fact and each participant's outcome to its own persona memory via /api/memory/writebacks/learn-feedback; private memory never enters a round; participants answer from deny-all consultation agents; C1 read routes return lists, detail (404 if unknown), proposals, and catalogue with schedule and refusals",
+    "ac8_integration_tests_and_protocol_doc": "services/consultation/tests/test_persona_meetings.py runs MT-1..MT-6 including MT-4 and gate panel through real consultation service, store, workflow_executor, memory service, and adapter HTTP app with model provider doubled at adapter edge; CONSULTATION_SESSION_PROTOCOL.md section 10 documents deliberative meetings"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py",
+      "exit_code": 0,
+      "result": "13 passed in 14.29s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/consultation/tests services/openclaw-gateway-adapter/tests",
+      "exit_code": 0,
+      "result": "300 passed in 133.32s"
+    }
+  ],
+  "credentials_present": false
+}

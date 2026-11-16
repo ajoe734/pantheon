@@ -291,6 +291,14 @@ jobs:
         run: |
           python3 -m pip install -r services/source_ingestion/requirements.txt
 
+      # Design SD_MARKET_DATA_ONE_WRITE_PER_DAY sections 6 and 6A: fails a PR that grows a store
+      # past its table row on hosted-shaped data (22,500 symbols, 500 days, 500-record batches).
+      - name: Market data budget check
+        timeout-minutes: 5
+        run: |
+          python3 -m pytest -q scripts/test_check_market_data_budget.py
+          python3 scripts/check_market_data_budget.py --output /tmp/market-data-budget-report.json
+
       - name: Run source ingestion tests
         timeout-minutes: 15
         env:

@@ -87,6 +87,9 @@ class ConsultationStore:
         self._transcripts: Dict[str, ConsultTranscript] = {}
         self._evidence: Dict[str, ConsultEvidenceAttachment] = {}
         self._handoffs: Dict[str, ConsultGateHandoff] = {}
+        self._meetings: Dict[str, Dict[str, Any]] = {}
+        self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
+        self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
         self._next_sequence_no = 1
 
         if self.lifecycle_log_path.exists():
@@ -193,6 +196,12 @@ class ConsultationStore:
             self._evidence[record_id] = _model_from_data(ConsultEvidenceAttachment, payload)
         elif record_type == "gate_handoff":
             self._handoffs[record_id] = _model_from_data(ConsultGateHandoff, payload)
+        elif record_type == "persona_meeting":
+            self._meetings[record_id] = _model_copy(payload)
+        elif record_type == "meeting_schedule":
+            self._meeting_schedules[record_id] = _model_copy(payload)
+        elif record_type == "meeting_refusal":
+            self._meeting_refusals[record_id] = _model_copy(payload)
 
     def _append_lifecycle_event(
         self,
@@ -438,6 +447,58 @@ class ConsultationStore:
                     events.append(event)
         return events
 
+    # --- Deliberative Persona Meetings ---
+
+    def put_meeting(self, meeting: Dict[str, Any]) -> None:
+        meeting_id = str(meeting["meeting_id"])
+        trace_id = str(meeting.get("trace_id") or meeting_id)
+        saved = _model_copy(dict(meeting))
+        self._append_lifecycle_event(
+            record_type="persona_meeting",
+            record_id=meeting_id,
+            trace_id=trace_id,
+            payload=saved,
+        )
+        self._meetings[meeting_id] = saved
+
+    def get_meeting(self, meeting_id: str) -> Optional[Dict[str, Any]]:
+        meeting = self._meetings.get(meeting_id)
+        return _model_copy(meeting) if meeting else None
+
+    def list_meetings(self) -> List[Dict[str, Any]]:
+        return [_model_copy(meeting) for meeting in self._meetings.values()]
+
+    def put_meeting_schedule(self, schedule_entry: Dict[str, Any]) -> None:
+        tenant_id = str(schedule_entry.get("tenant_id") or "default")
+        persona_id = str(schedule_entry["persona_id"])
+        meeting_type = str(schedule_entry["meeting_type"])
+        record_id = f"{tenant_id}:{persona_id}:{meeting_type}"
+        saved = _model_copy(dict(schedule_entry))
+        self._append_lifecycle_event(
+            record_type="meeting_schedule",
+            record_id=record_id,
+            trace_id=record_id,
+            payload=saved,
+        )
+        self._meeting_schedules[record_id] = saved
+
+    def list_meeting_schedules(self) -> List[Dict[str, Any]]:
+        return [_model_copy(item) for item in self._meeting_schedules.values()]
+
+    def put_meeting_refusal(self, refusal: Dict[str, Any]) -> None:
+        refusal_id = str(refusal.get("refusal_id") or f"ref-{uuid.uuid4().hex[:12]}")
+        saved = _model_copy({**refusal, "refusal_id": refusal_id})
+        self._append_lifecycle_event(
+            record_type="meeting_refusal",
+            record_id=refusal_id,
+            trace_id=str(refusal.get("trace_id") or refusal_id),
+            payload=saved,
+        )
+        self._meeting_refusals[refusal_id] = saved
+
+    def list_meeting_refusals(self) -> List[Dict[str, Any]]:
+        return [_model_copy(item) for item in self._meeting_refusals.values()]
+
 
 class _PostgresOutboxStore:
     def __init__(self, store: "PostgresConsultationStore") -> None:
@@ -502,6 +563,9 @@ class PostgresConsultationStore(ConsultationStore):
         self._transcripts: Dict[str, ConsultTranscript] = {}
         self._evidence: Dict[str, ConsultEvidenceAttachment] = {}
         self._handoffs: Dict[str, ConsultGateHandoff] = {}
+        self._meetings: Dict[str, Dict[str, Any]] = {}
+        self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
+        self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
         self._next_sequence_no = 1
         if bootstrap:
             self._bootstrap()
@@ -610,6 +674,9 @@ class PostgresConsultationStore(ConsultationStore):
         self._transcripts.clear()
         self._evidence.clear()
         self._handoffs.clear()
+        self._meetings.clear()
+        self._meeting_schedules.clear()
+        self._meeting_refusals.clear()
         self._next_sequence_no = 1
         with self._connect() as conn:
             cursor = conn.execute(

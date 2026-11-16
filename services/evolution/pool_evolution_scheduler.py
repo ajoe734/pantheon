@@ -56,6 +56,34 @@ def proposal(pool, member, entry, action, period):
             "metadata": {"discovery_auto_scope": True, POOL_SCOPE: ctx, "variants": VARIANTS}}
 
 
+def requalify_proposal(pool, member, entry, baseline):
+    from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, LEGACY_FILL_CONVENTION
+
+    convention = str(baseline.get("required_fill_convention") or FILL_CONVENTION)
+    recorded = str(baseline.get("recorded_fill_convention") or LEGACY_FILL_CONVENTION)
+    period = f"requalify:{convention}"
+    body = proposal(pool, member, entry, "revalidate", period)
+    identity = [pool["tenant_id"], pool["persona_id"], member["artifact_ref"],
+                member["checksum"], "requalify", convention]
+    decision_id = "evd-pool-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:24]
+    body["decision_id"] = decision_id
+    body["rationale"] = f"Paper pool member legacy baseline re-qualification: {convention}"
+    body["evidence_refs"] = [{"ref_type": "telemetry_summary", "ref_id": decision_id}]
+    body["metadata"][POOL_SCOPE].update(
+        mode="requalify_legacy_baseline",
+        recorded_fill_convention=recorded,
+        required_fill_convention=convention,
+        baseline_reason=str(baseline.get("reason") or "baseline_computed_under_decision_close_fill"),
+        operator_decision_required=bool(baseline.get("operator_decision_required", True)),
+        stage=member.get("stage"),
+        risk_weight=member.get("risk_weight"),
+        baseline_ref=member.get("baseline_ref"),
+        parent_ref=member.get("parent_ref"),
+        demand_ref=member.get("demand_ref"),
+    )
+    return body
+
+
 @dataclass
 class ScheduleReport:
     proposed: list[str] = field(default_factory=list)
@@ -77,6 +105,10 @@ class PoolEvolutionScheduler:
                 raise
             # A single-active or cooldown refusal is not evidence of execution.
             report.existing.append(body["decision_id"])
+            if ((body.get("metadata") or {}).get(POOL_SCOPE) or {}).get("mode") == "requalify_legacy_baseline":
+                retry = getattr(self.owner, "retry_requalify", None)
+                if callable(retry):
+                    retry(body)
             return
         report.proposed.append(body["decision_id"])
         self.evidence.record({"event": "pool_evolution_proposed", "proposal": body})
@@ -89,13 +121,13 @@ class PoolEvolutionScheduler:
                 # Reconcile an append whose publication was interrupted, including
                 # research trial admission. Publishing the same version is idempotent.
                 self.owner.publish(pool)
-                books = self.owner.books(pool)
+                books = None
                 for member in pool["members"]:
                     if member["stage"] == "removed":
                         continue
                     key = f"{pid}:{member['artifact_ref']}"
                     try:
-                        self._member(pool, member, books, key, report)
+                        books = self._member(pool, member, books, key, report)
                     except Exception as exc:
                         report.errors[key] = f"{type(exc).__name__}: {exc}"
             except Exception as exc:
@@ -108,20 +140,25 @@ class PoolEvolutionScheduler:
         baseline = resolve_member_baseline(tenant_id=pool["tenant_id"], persona_id=pool["persona_id"],
             artifact_ref=member["artifact_ref"], checksum=member["checksum"], entry=entry)
         if baseline["status"] != "approved":
+            if baseline.get("reason") == "baseline_computed_under_decision_close_fill":
+                self._propose(requalify_proposal(pool, member, entry, baseline), report)
+                return books
             report.skipped[key] = "no_approved_baseline:" + baseline["reason"]
-            return
+            return books
+        if books is None:
+            books = self.owner.books(pool)
         book = books.get(member["artifact_ref"], {})
         days = member_days(member, book, today=self.clock())
         comparison = compare_member_book(baseline, book)
         if comparison["status"] != "compared":
             report.skipped[key] = comparison["status"] + ":" + comparison.get("reason", "")
-            return
+            return books
         if not days:
             report.skipped[key] = "no_post_admission_data"
-            return
+            return books
         if member["stage"] == "trial":
             self._compete(pool, member, books, days, report, key)
-            return
+            return books
         metric = next(b for b in (book, book.get("gate_basis", {}), book.get("net_of_costs", {}))
                       if b.get("basis") == baseline["return_basis"])
         self.ledger.append_if_new({"tenant_id": pool["tenant_id"], "persona_id": pool["persona_id"],
@@ -137,7 +174,7 @@ class PoolEvolutionScheduler:
                 artifact_version=entry["version"], verdict=verdict)
             body["metadata"].update(decay["metadata"])
             self._propose(body, report)
-            return
+            return books
         if len(days) >= 20:
             self._propose(proposal(pool, member, entry, "revalidate", f"trading-window:{len(days)//20}"), report)
         family = (entry["metadata"]["strategy_artifact"]).get("strategy_id")
@@ -148,14 +185,15 @@ class PoolEvolutionScheduler:
         used = max(state["trials"], state.get("family_total_trials", 0))
         if used >= FAMILY_LIMIT:
             report.skipped[key] = "family_tried"
-            return
+            return books
         if used + VARIANTS > FAMILY_LIMIT:
             report.skipped[key] = "family_budget_below_50"
-            return
+            return books
         kind = entry["metadata"]["strategy_artifact"]["strategy_logic"]["kind"]
         action = "mutate" if kind == "factor_rule_v1" else "retrain"
         week = date.fromisoformat(days[-1]).isocalendar()
         self._propose(proposal(pool, member, entry, action, f"week:{week.year}-{week.week}"), report)
+        return books
 
     def _compete(self, pool, child, books, days, report, key):
         if not child.get("parent_ref") or len(days) < 60:

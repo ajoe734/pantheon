@@ -264,9 +264,31 @@ The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is i
 them with the member's **virtual book**, not with the persona's combined account.
 
 A baseline whose gate proof was computed with the decision filled at the close of its own bar is not comparable with a
-next-open virtual book. `resolve_member_baseline` reports it as `no_approved_baseline` /
-`baseline_computed_under_decision_close_fill` with `operator_decision_required`; it is neither kept as approved nor
-removed. The re-baseline run is `python -m services.research.rebaseline_next_open`.
+next-open virtual book. `resolve_member_baseline` continues to report that registry entry as `no_approved_baseline` /
+`baseline_computed_under_decision_close_fill` (a decision-close proof never becomes an approved baseline and no legacy
+number is rewritten). The standalone comparison tool remains `python -m services.research.rebaseline_next_open`.
+
+**Operator decision 2026-11-16 (`POOL-LEGACY-MEMBER-REQUALIFY-20261116`):** in place of holding a live pool member
+in `operator_decision_required` indefinitely when its baseline was scored with decision-close fills
+(transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/874a0b84-8f35-4810-9146-7517f0da2c09.jsonl`
+line 8238, 12:35:05.786Z, uuid `d0995ab6-d2dc-4058-878c-f85270ba4585`; answer 「重新驗證，不過就移出 (Recommended)」,
+evidence in `docs/deployment/evidence/POOL-LEGACY-MEMBER-REQUALIFY-20261116/evidence.json`), every pool's existing
+evolution cadence automatically re-qualifies each such live member once per `(member artifact, fill_convention)`:
+
+* **Gate run.** `run_replication_backtest_protocol` and `ReplicationGate.evaluate_candidate` (untouched thresholds)
+  run on the governed two-year point-in-time exchange dataset under `daily_decision_close_d_fills_open_d_plus_1`.
+  Synthetic or fixture series are refused as input; the run records dataset references, window, metrics, and failed checks.
+* **Pass.** The strategy is registered through the existing candidate registration and paper approval path as a new
+  immutable registry entry carrying the next-open proof and lineage (`parent_registry_ids`) to the legacy entry. One
+  pool version removes the legacy member (`removal_reason="replaced_by_requalified_entry"`) and admits the new entry
+  under every admission criterion evaluated against the pool without the legacy member; nothing is waived.
+* **Fail.** The member is removed through the existing pool member removal path with
+  `removal_reason="requalification_failed_next_open_fill"` and a reference to the verdict. It stays in pool history;
+  the persona is not retired, frozen, or paused; the outcome is written to persona memory (`tried_family:<id>`) so the
+  next demand excludes that family.
+* **Could not evaluate.** When the governed dataset is unavailable, synthetic/fixture, shorter than two years, or an
+  owner read fails, the member is never removed: the run records `operator_decision_required: true` with the stated
+  reason and is retried on the next cadence.
 
 ### 5.3 Weights
 

@@ -643,3 +643,91 @@ def test_latest_refusal_reason_and_attempt_time_are_kept_on_the_readback(world):
     first = world.coordinator("a").reconcile_paper_enrollment(record).references["paper_enrollment"]
     assert first["status"] == "refused" and "found 0" in first["reason"] and first["attempted_at"]
     assert _persona(world)["lifecycle_state"] == "research_only"
+
+
+# ---------------------------------------------------------------------------
+# Transition failure is named in the readback reason
+# ---------------------------------------------------------------------------
+
+class _ScriptedGovernance:
+    """Governance transport whose review/decide POSTs fail or succeed on script."""
+
+    def __init__(self, record: dict[str, Any], fail: dict[str, Exception] | None = None,
+                 approve_despite_error: bool = False) -> None:
+        self.record, self.fail = record, fail or {}
+        self.approve_despite_error = approve_despite_error
+
+    def get(self, owner: str, path: str):
+        return dict(self.record)
+
+    def post(self, owner: str, path: str, payload):
+        step = path.rsplit("/", 1)[-1]
+        if step == "review" and step not in self.fail:
+            self.record["decision_state"] = "under_review"
+        if step == "decide" and (step not in self.fail or self.approve_despite_error):
+            self.record.update(decision_state="decided", decision="approved")
+        if step in self.fail:
+            raise self.fail[step]
+        return {}
+
+
+def _enrollment_over(transport) -> tuple[PersonaPaperEnrollment, str]:
+    enrol = PersonaPaperEnrollment(
+        tenant_id=TENANT, persona_id=PERSONA, capital_pool_id="pool", persona_capital_binding_id="pcb",
+        deployment_plan_id="plan", persona_owner=None, transport=transport,
+        runtime_binding_reader=lambda *_: [], governance_actor_id=GATE, proposer=None,
+        proposer_actor_id=PROPOSER,
+    )
+    return enrol, lifecycle_decision_id(TENANT, PERSONA, "research_only", "consultable")
+
+
+def _record(decision_id: str, state: str = "proposed") -> dict[str, Any]:
+    return {
+        "decision_id": decision_id, "target_type": "persona_lifecycle_transition",
+        "target_id": PERSONA, "tenant_id": TENANT, "owner_user_id": PROPOSER, "version": 1,
+        "decision_state": state, "decision": None,
+        "subject": {"persona_id": PERSONA, "from_state": "research_only", "to_state": "consultable"},
+    }
+
+
+def _run(transport_exc: Exception | None, step: str = "review", **kw):
+    from services.control_plane.bff.persona_paper_enrollment import EnrollmentRefused
+
+    enrol, did = _enrollment_over(None)
+    gov = _ScriptedGovernance(_record(did), {step: transport_exc} if transport_exc else {}, **kw)
+    enrol.transport = gov
+    try:
+        return enrol._governance_decision("research_only", "consultable"), None
+    except EnrollmentRefused as exc:
+        return None, exc
+
+
+def test_review_503_reason_names_the_failed_transition_status_and_detail():
+    exc = ConnectionError("governance 503: approval store unavailable Bearer abc.def.ghi token=s3cret")
+    _, refused = _run(exc)
+    assert refused is not None
+    assert ":review_failed:http_503:" in refused.reason and "approval store unavailable" in refused.reason
+    assert "abc.def.ghi" not in refused.reason and "s3cret" not in refused.reason
+    assert refused.retryable is True
+
+
+def test_decide_4xx_stays_refused_and_5xx_or_transport_is_retryable():
+    _, refused = _run(ConnectionError("governance 403: not an automated gate"), step="decide")
+    assert refused is not None and refused.retryable is False
+    assert ":decide_failed:http_403:" in refused.reason
+    _, refused = _run(TimeoutError("timed out"), step="review")
+    assert refused is not None and refused.retryable is True
+    assert ":review_failed:http_transport:timed out" in refused.reason
+
+
+def test_http_error_object_status_and_body_are_used():
+    exc = urllib.error.HTTPError("u", 502, "bad", {}, io.BytesIO(b'{"detail":"upstream down"}'))
+    _, refused = _run(exc)
+    assert refused is not None and refused.retryable is True
+    assert "http_502" in refused.reason and "upstream down" in refused.reason
+
+
+def test_erroring_transition_whose_readback_is_approved_still_enrols():
+    decision_id, refused = _run(ConnectionError("governance 503: lost response"), step="decide",
+                                approve_despite_error=True)
+    assert refused is None and decision_id

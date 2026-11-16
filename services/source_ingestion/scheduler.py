@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
+import time
+import weakref
+from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -197,6 +201,257 @@ class ScheduledIngestResult:
     collector_delivery: CollectorDelivery | None = None
 
 
+# Receipts reference updated market snapshots by identity; the bodies live in the
+# latest market snapshot store. A body is dropped to keep a receipt line bounded.
+SNAPSHOT_REF_SCHEMA_VERSION = "source_ingest_snapshot_ref.v1"
+DEFAULT_SNAPSHOT_DATASET = "tw_price_daily"
+JOURNAL_SLIM_MIN_LINE_BYTES = 16 * 1024
+JOURNAL_WARN_BYTES = 256 * 1024 * 1024
+# SOURCE-RECEIPT-REFS-ONLY: a receipt line holds counts and references only.
+RECEIPT_REFS_SCHEMA_VERSION = "source_ingest_receipt_refs.v1"
+RECEIPT_LINE_BUDGET_BYTES = 16 * 1024
+JOURNAL_GROWTH_ALARM_BYTES_PER_HOUR = 5 * 1024 * 1024
+DEFAULT_RECEIPT_RETENTION_DAYS = 30
+RECEIPT_RETENTION_DAYS_ENV = "SOURCE_INGEST_RECEIPT_RETENTION_DAYS"
+_ID_LIST_COUNT_KEYS = {
+    "source_ids": "source_id_count",
+    "evidence_item_ids": "evidence_item_id_count",
+    "knowledge_object_ids": "knowledge_object_id_count",
+}
+
+
+def snapshot_ref(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded reference to one updated snapshot: id, symbol, dataset, newest event time."""
+    return {
+        "snapshot_id": body.get("snapshot_id"),
+        "symbol": body.get("symbol"),
+        "dataset": body.get("dataset") or DEFAULT_SNAPSHOT_DATASET,
+        "event_time": body.get("event_time"),
+    }
+
+
+def slim_market_snapshot_batch(batch: Any) -> Any:
+    """Return ``batch`` with every snapshot body replaced by a reference.
+
+    Idempotent; entries that already are references (no ``closes``) are kept. Counts
+    and every other batch field are preserved. Non-mapping input is returned as is.
+    """
+    if not isinstance(batch, Mapping):
+        return batch
+    snapshots = batch.get("snapshots")
+    if not isinstance(snapshots, list) or not any(
+        isinstance(item, Mapping) and "closes" in item for item in snapshots
+    ):
+        return batch
+    slim = dict(batch)
+    slim["snapshots"] = [
+        snapshot_ref(item) if isinstance(item, Mapping) and "closes" in item else item for item in snapshots
+    ]
+    return slim
+
+
+def slim_receipt_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Slim ``evidence_refs.market_snapshots`` of a receipt payload; keeps all other fields."""
+    refs = payload.get("evidence_refs")
+    if not isinstance(refs, Mapping):
+        return payload, False
+    batch = refs.get("market_snapshots")
+    slim = slim_market_snapshot_batch(batch)
+    if slim is batch:
+        return payload, False
+    return {**payload, "evidence_refs": {**refs, "market_snapshots": slim}}, True
+
+
+def compact_receipt_evidence_refs(refs: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Counts and references only: no per-record list survives in a receipt.
+
+    ``source_ids`` / ``evidence_item_ids`` / ``knowledge_object_ids`` become counts (the
+    evidence bundle id stays the reference to the items); ``distillation_admissions`` becomes
+    a count and a status histogram; ``market_snapshots.snapshots`` becomes ``snapshot_count``
+    plus one reference to the latest market snapshot store keyed by the ingest run id.
+    Idempotent; every other field is kept.
+    """
+    out = dict(refs)
+    changed = False
+    for key, count_key in _ID_LIST_COUNT_KEYS.items():
+        value = out.get(key)
+        if isinstance(value, (list, tuple)):
+            out[count_key] = len(value)
+            del out[key]
+            changed = True
+    admissions = out.get("distillation_admissions")
+    if isinstance(admissions, Mapping):
+        histogram: dict[str, int] = {}
+        for item in admissions.values():
+            status = str(item.get("status") if isinstance(item, Mapping) else "unknown")
+            histogram[status] = histogram.get(status, 0) + 1
+        out["distillation_admission_count"] = len(admissions)
+        out["distillation_admission_status_counts"] = dict(sorted(histogram.items()))
+        del out["distillation_admissions"]
+        changed = True
+    batch = out.get("market_snapshots")
+    if isinstance(batch, Mapping) and isinstance(batch.get("snapshots"), list):
+        snapshots = batch["snapshots"]
+        datasets = sorted({str(item.get("dataset") or DEFAULT_SNAPSHOT_DATASET)
+                           for item in snapshots if isinstance(item, Mapping)})[:8]
+        compact = {key: value for key, value in batch.items() if key != "snapshots"}
+        compact["snapshot_count"] = len(snapshots)
+        compact["snapshot_refs"] = {
+            "schema_version": RECEIPT_REFS_SCHEMA_VERSION,
+            "store": "latest_market_snapshots",
+            "ingest_run_id": batch.get("ingest_run_id"),
+            "datasets": datasets,
+        }
+        out["market_snapshots"] = compact
+        changed = True
+    return (out, True) if changed else (refs, False)
+
+
+def compact_receipt_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Receipt payload with counts and references only; idempotent; other fields untouched."""
+    refs = payload.get("evidence_refs")
+    if not isinstance(refs, Mapping):
+        return payload, False
+    compact, changed = compact_receipt_evidence_refs(refs)
+    if not changed:
+        return payload, False
+    return {**payload, "evidence_refs": dict(compact)}, True
+
+
+_TAIL_ID_RE = re.compile(rb'"record_id":"((?:[^"\\]|\\.)*)","record_type":"([a-z_]+)"')
+_CREATED_AT_RE = re.compile(rb'"created_at":"([^"]+)"')
+
+
+def receipt_retention_days(default: int = DEFAULT_RECEIPT_RETENTION_DAYS) -> int:
+    raw = os.getenv(RECEIPT_RETENTION_DAYS_ENV)
+    try:
+        return max(0, int(raw)) if raw not in (None, "") else default
+    except ValueError:
+        return default
+
+
+def _line_identity(line: bytes) -> tuple[str, str] | None:
+    """(record_type, record_id) read from the tail of a sorted-key row without parsing it."""
+    match = _TAIL_ID_RE.search(line[-400:])
+    if match is None:
+        return None
+    return match.group(2).decode("ascii"), json.loads(b'"' + match.group(1) + b'"')
+
+
+@dataclass
+class JournalScan:
+    """One streaming pass over a journal: what a rewrite must change. Holds ids only."""
+
+    rows: int = 0
+    bytes: int = 0
+    oversize_receipt_lines: int = 0
+    receipts: int = 0
+    drop_ids: frozenset[str] = frozenset()
+    pinned_ids: frozenset[str] = frozenset()
+
+    @property
+    def needs_rewrite(self) -> bool:
+        return bool(self.oversize_receipt_lines or self.drop_ids)
+
+
+def scan_journal(
+    path: Path,
+    *,
+    retention_days: int,
+    now: datetime | None = None,
+    extra_pinned_run_ids: Iterable[str] = (),
+) -> JournalScan:
+    """Stream ``path`` once; decide which receipt rows are past retention and unpinned.
+
+    Pinned receipts (never dropped): referenced by a watermark, by a frontier item, by a run
+    that is not terminal, the newest run of each connector, or named in ``extra_pinned_run_ids``
+    (lineage). Only small non-receipt rows are parsed; memory is bounded by the id sets.
+    """
+    scan = JournalScan()
+    created: dict[str, str | None] = {}
+    watermark_runs: dict[str, str | None] = {}
+    frontier_runs: dict[str, str | None] = {}
+    run_state: dict[str, tuple[str, str, str]] = {}
+    try:
+        handle = path.open("rb")
+    except OSError:
+        return scan
+    with handle:
+        while line := handle.readline():
+            scan.rows += 1
+            scan.bytes += len(line)
+            ident = _line_identity(line) if line.endswith(b"\n") else None
+            if ident is None:
+                continue
+            record_type, record_id = ident
+            if record_type == "ingest_receipt":
+                scan.receipts += 1
+                if len(line) > RECEIPT_LINE_BUDGET_BYTES:
+                    scan.oversize_receipt_lines += 1
+                match = _CREATED_AT_RE.search(line, 0, 4096)
+                created[record_id] = match.group(1).decode() if match else None
+                continue
+            if len(line) > 256 * 1024:
+                continue
+            try:
+                payload = json.loads(line).get("payload") or {}
+            except ValueError:
+                continue
+            if record_type == "source_watermark":
+                watermark_runs[record_id] = payload.get("last_ingest_run_id")
+            elif record_type == "crawl_frontier_item":
+                frontier_runs[record_id] = payload.get("ingest_run_id")
+            elif record_type == "ingest_run":
+                run_state[record_id] = (
+                    str(payload.get("status") or ""), str(payload.get("started_at") or ""),
+                    str(payload.get("connector_id") or ""))
+    pinned: set[str] = {str(v) for v in watermark_runs.values() if v}
+    pinned.update(str(v) for v in frontier_runs.values() if v)
+    pinned.update(str(v) for v in extra_pinned_run_ids if v)
+    newest: dict[str, tuple[str, str]] = {}
+    for run_id, (status, started, connector) in run_state.items():
+        if status not in {"completed", "failed", "rejected"}:
+            pinned.add(run_id)
+        if connector and (connector not in newest or started >= newest[connector][0]):
+            newest[connector] = (started, run_id)
+    pinned.update(run_id for _, run_id in newest.values())
+    scan.pinned_ids = frozenset(pinned)
+    if retention_days > 0:
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=retention_days)
+        cutoff_text = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+        scan.drop_ids = frozenset(
+            rid for rid, stamp in created.items()
+            if stamp and stamp[:19] < cutoff_text and rid not in pinned
+        )
+    return scan
+
+
+def rewrite_journal_line(line: bytes, drop_ids: frozenset[str]) -> bytes | None:
+    """The row to write for ``line``: None drops it, receipts are compacted, others are kept as is."""
+    if b'"record_type":"ingest_receipt"' not in line[-400:] or not line.endswith(b"\n"):
+        return line
+    ident = _line_identity(line)
+    if ident is not None and ident[1] in drop_ids:
+        return None
+    if len(line) <= RECEIPT_LINE_BUDGET_BYTES:
+        return line
+    try:
+        entry = json.loads(line.decode("utf-8"))
+        payload = entry.get("payload")
+        if not isinstance(payload, Mapping):
+            return line
+        new_payload, changed = compact_receipt_payload(payload)
+    except (ValueError, AttributeError):
+        return line
+    if not changed:
+        return line
+    return (_entry_line({**entry, "payload": dict(new_payload)}) + "\n").encode("utf-8")
+
+
+def _entry_line(entry: Mapping[str, Any]) -> str:
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"))
+
+
 @dataclass(frozen=True)
 class IngestReceipt:
     """Durable, secret-free result receipt for one governed source run."""
@@ -286,8 +541,24 @@ class IngestReceipt:
 class JsonlIngestScheduleStore:
     """Append/replay store for ingest-run state and connector watermarks."""
 
-    def __init__(self, path: str | Path) -> None:
+    _live_by_path: ClassVar[dict[str, "weakref.ReferenceType[JsonlIngestScheduleStore]"]] = {}
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        retention_days: int | None = None,
+        pinned_run_ids: Callable[[], Iterable[str]] | None = None,
+    ) -> None:
         self.path = Path(path)
+        # Receipts older than this many days expire unless a run, watermark, frontier item or
+        # lineage (``pinned_run_ids``) still references them; 0 keeps every receipt.
+        self.retention_days = receipt_retention_days() if retention_days is None else max(0, int(retention_days))
+        self._pinned_run_ids = pinned_run_ids
+        self._last_retention_check = time.monotonic()
+        self._growth_samples: deque[tuple[float, int]] = deque(maxlen=512)
+        self._max_receipt_line = 0
+        self._oversize_receipt_lines = 0
         self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         self._lock = threading.RLock()
         self._runs: dict[str, IngestRun] = {}
@@ -297,11 +568,153 @@ class JsonlIngestScheduleStore:
         self._read_key: tuple[int, int, int] | None = (-1, -1, -1)
         self._read_offset = 0
         self._read_line_no = 0
+        self._last_slim: dict[str, Any] | None = None
         self.reload()
+        JsonlIngestScheduleStore._live_by_path[str(self.path)] = weakref.ref(self)
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
+            self._slim_journal_unlocked()
             self._reload_unlocked(recover_incomplete=True)
+
+    def _slim_journal_unlocked(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Crash-safe in-place rewrite: receipts become counts and references; old ones expire.
+
+        One streaming scan decides what changes (receipt rows over the line budget, receipt rows
+        past ``retention_days`` that no run, watermark, frontier item or lineage pin references).
+        Nothing to change: the journal is not touched. Otherwise the journal streams to a sibling
+        temp file, fsyncs, then atomically replaces the journal. Every state on disk (old file,
+        temp file, new file) is a readable journal; a leftover temp from a crash is discarded.
+        Every non-receipt row is preserved byte for byte. A failed rewrite leaves the journal
+        untouched (replay still compacts in memory).
+        """
+        tmp = self.path.with_name(self.path.name + ".slim.tmp")
+        stats = {"rewritten": False, "rows": 0, "slimmed_rows": 0, "expired_rows": 0,
+                 "bytes_before": 0, "bytes_after": 0}
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return stats
+        if size == 0:
+            return stats
+        pins = tuple(self._pinned_run_ids() or ()) if self._pinned_run_ids else ()
+        scan = scan_journal(self.path, retention_days=self.retention_days, now=now, extra_pinned_run_ids=pins)
+        stats["bytes_before"] = size
+        if not scan.needs_rewrite:
+            return stats
+        slimmed = expired = 0
+        try:
+            with self.path.open("rb") as src, tmp.open("wb") as dst:
+                while line := src.readline():
+                    out = rewrite_journal_line(line, scan.drop_ids)
+                    if out is None:
+                        expired += 1
+                        continue
+                    if out is not line:
+                        slimmed += 1
+                    dst.write(out)
+                    stats["rows"] += 1
+                dst.flush()
+                os.fsync(dst.fileno())
+            os.replace(tmp, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return stats
+        stats.update(rewritten=True, slimmed_rows=slimmed, expired_rows=expired,
+                     bytes_after=self.path.stat().st_size)
+        self._last_slim = stats
+        self._growth_samples.clear()
+        return stats
+
+    def enforce_retention_unlocked(self, *, now: datetime | None = None) -> dict[str, Any]:
+        stats = self._slim_journal_unlocked(now=now)
+        self._last_retention_check = time.monotonic()
+        if stats["rewritten"]:
+            self._reload_unlocked(recover_incomplete=False)
+        return stats
+
+    def enforce_retention(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Apply receipt retention now (also done on start and once a day on the write path)."""
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_if_changed_unlocked()
+            stats = self._slim_journal_unlocked(now=now)
+            self._last_retention_check = time.monotonic()
+            if stats["rewritten"]:
+                self._reload_unlocked(recover_incomplete=False)
+            return stats
+
+    @classmethod
+    def journal_stats_for_path(cls, path: str | Path) -> dict[str, Any]:
+        """``journal_stats`` of the live store for ``path`` without touching a runtime store handle.
+
+        Readiness probes must not replay or call stores; this reads one stat and counters.
+        """
+        live = cls._live_by_path.get(str(Path(path)))
+        store = live() if live is not None else None
+        if store is not None:
+            return store.journal_stats()
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            size = 0
+        return {"journal_bytes": size, "journal_lines": None, "receipt_count": None, "run_count": None,
+                "warn_bytes": JOURNAL_WARN_BYTES,
+                "warning": "ingest_schedule_journal_large" if size >= JOURNAL_WARN_BYTES else None,
+                "receipt_line_budget_bytes": RECEIPT_LINE_BUDGET_BYTES, "alarms": []}
+
+    def journal_stats(self) -> dict[str, Any]:
+        """Journal size and receipt count readback; no replay, no file scan."""
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            size = 0
+        self._sample_growth(size)
+        growth = self._growth_last_hour(size)
+        alarms = []
+        if self._oversize_receipt_lines:
+            alarms.append("ingest_receipt_line_over_16kb")
+        if growth > JOURNAL_GROWTH_ALARM_BYTES_PER_HOUR:
+            alarms.append("ingest_schedule_journal_growth_over_5mb_per_hour")
+        stats: dict[str, Any] = {
+            "journal_bytes": size,
+            "journal_lines": self._read_line_no,
+            "receipt_count": len(self._receipts),
+            "run_count": len(self._runs),
+            "warn_bytes": JOURNAL_WARN_BYTES,
+            "warning": "ingest_schedule_journal_large" if size >= JOURNAL_WARN_BYTES else None,
+            "receipt_line_budget_bytes": RECEIPT_LINE_BUDGET_BYTES,
+            "max_receipt_line_bytes": self._max_receipt_line,
+            "receipt_lines_over_budget": self._oversize_receipt_lines,
+            "growth_bytes_last_hour": growth,
+            "growth_alarm_bytes_per_hour": JOURNAL_GROWTH_ALARM_BYTES_PER_HOUR,
+            "retention_days": self.retention_days,
+            "alarms": alarms,
+        }
+        if self._last_slim:
+            stats["last_slim_rewrite"] = dict(self._last_slim)
+        return stats
+
+    def _sample_growth(self, size: int) -> None:
+        now = time.monotonic()
+        if not self._growth_samples or now - self._growth_samples[-1][0] >= 30:
+            self._growth_samples.append((now, size))
+
+    def _growth_last_hour(self, size: int) -> int:
+        now = time.monotonic()
+        window = [(t, b) for t, b in self._growth_samples if now - t <= 3600]
+        return max(0, size - window[0][1]) if window else 0
 
     def _stat_key(self) -> tuple[int, int, int] | None:
         try:
@@ -335,6 +748,8 @@ class JsonlIngestScheduleStore:
             self._read_offset = 0
             self._read_line_no = 0
             self._read_key = None
+            self._max_receipt_line = 0
+            self._oversize_receipt_lines = 0
         if key is not None:
             # Binary offsets remain correct even if a writer stops within a
             # multibyte character. Only newline-terminated rows are consumed.
@@ -371,10 +786,17 @@ class JsonlIngestScheduleStore:
             item = CrawlFrontierItem.from_dict(payload)
             self._frontier[item.frontier_id] = item
         elif record_type == "ingest_receipt":
+            self._note_receipt_line(len(line))
+            payload, _ = compact_receipt_payload(payload)
             receipt = IngestReceipt.from_dict(payload)
             self._receipts[receipt.ingest_run_id] = receipt
         else:
             raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
+
+    def _note_receipt_line(self, size: int) -> None:
+        self._max_receipt_line = max(self._max_receipt_line, size)
+        if size > RECEIPT_LINE_BUDGET_BYTES:
+            self._oversize_receipt_lines += 1
 
     def _recover_incomplete_receipts(self) -> list[IngestReceipt]:
         """Durably terminalize receipts stranded by a post-processing crash.
@@ -483,10 +905,17 @@ class JsonlIngestScheduleStore:
             return page, receipts, total
 
     def upsert_receipt(self, receipt: IngestReceipt) -> IngestReceipt:
+        # The durable receipt carries references, never snapshot bodies; the caller
+        # keeps its own full batch. Memory and journal hold the identical slim form.
+        compact_refs, changed = compact_receipt_evidence_refs(receipt.evidence_refs)
+        if changed:
+            receipt = replace(receipt, evidence_refs=dict(compact_refs))
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_if_changed_unlocked()
             self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
             self._receipts[receipt.ingest_run_id] = receipt
+            if self.retention_days and time.monotonic() - self._last_retention_check > 86400:
+                self.enforce_retention_unlocked()
             return receipt
 
     def get_receipt(self, ingest_run_id: str) -> IngestReceipt | None:
@@ -768,8 +1197,11 @@ class JsonlIngestScheduleStore:
             "record_id": record_id,
             "payload": dict(payload),
         }
+        row = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
+        if record_type == "ingest_receipt":
+            self._note_receipt_line(len(row.encode("utf-8")))
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.write(row)
             handle.flush()
             os.fsync(handle.fileno())
             stat = os.fstat(handle.fileno())
@@ -783,6 +1215,7 @@ class JsonlIngestScheduleStore:
         # same exclusive lock. A subsequent read need not deserialize it again.
         self._read_offset = stat.st_size
         self._read_line_no += 1
+        self._sample_growth(stat.st_size)
         self._read_key = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 

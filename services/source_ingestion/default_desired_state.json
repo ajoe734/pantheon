@@ -17,6 +17,33 @@
       "state": "configured_disabled"
     }
   ],
+  "platform_sources": [
+    {
+      "created_at": "2026-11-16T00:00:00Z",
+      "lifecycle_state": "research_only",
+      "mandate": "Pull governed Agora decision locks, settled arms, decision journal entries, and servant insights via the internal Agora owner service-token route into SourceRecord and EvidenceBundle without direct DB cross-reads.",
+      "name": "Agora Platform Source Baseline",
+      "persona_id": "persona-source-ingest-agora-platform",
+      "provenance": "agora",
+      "required_data_sources": [
+        {
+          "cadence": "hourly",
+          "connector_candidates": [
+            "agora-platform-source"
+          ],
+          "dataset": "agora_platform_records",
+          "market": "GLOBAL",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        }
+      ]
+    }
+  ],
   "personas": [
     {
       "created_at": "2026-07-14T00:00:00Z",

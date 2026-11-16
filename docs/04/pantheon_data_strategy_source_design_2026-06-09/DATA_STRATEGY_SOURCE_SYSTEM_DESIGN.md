@@ -302,6 +302,8 @@ tw_broker_top:
 
 Do not store full broker-by-stock history unless a paid historical backfill explicitly requires it. The default product requirement is top 15 or top 20 for active/candidate universe.
 
+Daily price bars (one write per trading day, window reads, expiry by deletion, growth budgets): see `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md`.
+
 ### 4.6 Data Source Lifecycle
 
 Data sources should not be hard-deleted by default.

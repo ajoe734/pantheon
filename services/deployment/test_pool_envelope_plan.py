@@ -24,6 +24,7 @@ def _install_envelope(test_client, governance_dir, member_specs):
         for control in child["mutation_surface"]["controls"]:
             if control["parameter_key"] == key:
                 control["current_value"] = lookback
+                control["allowed_range"]["max"] = max(control["allowed_range"]["max"], lookback)
         members.append({"member_id": f"m{i}", "artifact": child, "risk_weight": weight})
     env = build_portfolio_envelope(
         artifact_id=entry["registry_id"], strategy_id=entry["strategy_id"],
@@ -93,3 +94,13 @@ def test_duplicate_symbols_are_refused_and_not_persisted(client):
     response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-env-5"))
     assert response.status_code == 422, response.text
     assert test_client.get("/api/deployment/plans/plan-env-5").status_code == 404
+
+
+def test_envelope_member_needing_more_than_snapshot_is_refused_naming_member(client):
+    test_client, governance_dir = client
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 0.5), (["2317.TW"], 120, 0.5)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-env-long"))
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "'m1'" in detail and "120" in detail and "60" in detail
+    assert test_client.get("/api/deployment/plans/plan-env-long").status_code == 404

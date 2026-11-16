@@ -23,6 +23,7 @@ from services.control_plane.persona.persona_strategy_pool import (
     AppendPoolVersionRequest, PersonaStrategyPoolStore,
 )
 from services.foundation.reliable_delivery import AtomicJsonRecordStore
+from services.persona import persona_cycle_controller as regime_consumer
 from services.persona.cron_ooda_closure import append_ooda_packet
 from services.persona.harness import HarnessSurface, PersistentHarnessOwner
 from services.persona.persona_cycle_controller import (
@@ -945,3 +946,386 @@ def test_standing_questions_not_declared_without_pool_families(system):
         "status": "not_run", "reason": "pool_families_unavailable"}
     assert controller.standing_questions([]) == [q for q in controller.standing_questions([]) if q["key"] == "risk_lessons"]
     assert [q["key"] for q in controller.standing_questions(["Momentum", "momentum", " "])] == ["family:momentum", "risk_lessons"]
+
+
+# --- SD-REGIME-STATE-ENGINE R13: first-wave regime consumers (real registry routes over HTTP) ---
+
+def _registry_transport(monkeypatch, *, observations="seeded", register_spec=True):
+    """Transport over the real registry app: real routes, real stores, the registry's own authentication."""
+    for module in ("numpy", "pandas", "scipy", "statsmodels"):
+        pytest.importorskip(module)
+    from fastapi.testclient import TestClient
+    from services.registry import main as registry_service
+    from services.registry.regime import routes as regime_routes
+    from services.registry.regime.tests import test_evaluator as evaluator_fixtures
+    from services.registry.regime.tests import test_routes as route_fixtures
+    from services.registry.storage import reset_store
+
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", route_fixtures.SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    reset_store()
+    rows = evaluator_fixtures.observations() if observations == "seeded" else [
+        o for o in evaluator_fixtures.observations() if o["dataset"] != "tw_index_daily"]
+    monkeypatch.setattr(regime_routes, "_observations_loader", lambda: (lambda: rows))
+    client = TestClient(registry_service.app)
+    headers = route_fixtures._jwt("tenant-a")
+    route_fixtures._register_models(client, headers)
+    if register_spec:
+        route_fixtures._register_spec(client, headers, "momentum", regime={"primary_axis": "volatility", "horizon": "short"})
+    session = evaluator_fixtures.sessions()[-1]
+    monkeypatch.setattr(regime_consumer, "session_for_run", lambda run: session)
+    calls = []
+
+    def transport(method, path, body=None):
+        calls.append((method, path))
+        response = client.request(method, path, headers=headers, json=body)
+        return response.status_code, response.json()
+
+    return transport, calls, session, regime_routes
+
+
+def test_observe_evaluates_then_reads_active_record_and_case_file_carries_regime_tag(system, monkeypatch):
+    from services.registry.regime.store import get_regime_store
+    transport, calls, session, _ = _registry_transport(monkeypatch)
+    controller, state, owner, _pool = system
+    controller.owners.regime_transport = transport
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None
+    stored = get_regime_store().list_regimes(strategy_id="momentum", states=("active",))
+    assert len(stored) == 1
+    record = stored[0]["record"]
+    # Evaluate first, then the active read, then the shared market state; one mutating call only.
+    assert calls[0] == ("POST", "/api/registry/regime/evaluate")
+    assert ("GET", "/api/registry/regime/strategies/momentum/active") in calls
+    assert [c for c in calls if c[0] != "GET"] == [("POST", "/api/registry/regime/evaluate")]
+    assert packet["orient"]["regime_state_ref"] == "regime-state://" + record["regime_id"]
+    assert cycle["regime"]["status"] == "observed" and cycle["regime"]["records"]["momentum"]["regime_id"] == record["regime_id"]
+    # The case file subject and the lesson query carry the stored record's class.
+    case_file = next(iter(cycle["case_files"].values()))
+    assert record["regime_class"] and case_file["subject"]["regime_tag"] == record["regime_class"]
+    assert f"regime:{record['regime_class']}" in case_file["lesson_query"]["tags"]
+    # The persona's interpretation stays in the packet; the registry record is untouched.
+    assert cycle["regime_interpretation"]["written_to_regime_state"] is False
+    assert cycle["regime_interpretation"]["text"] == OUTPUT["orient"]
+    assert get_regime_store().list_regimes(strategy_id="momentum", states=("active",))[0]["record"] == record
+
+
+@pytest.mark.parametrize("scenario,reason_prefix", [
+    ("refused", "evaluate_refused:409:session_data_incomplete"),
+    ("no_record", "no_active_record_for_pool_strategies"),
+])
+def test_registry_refusal_or_missing_record_runs_the_cycle_with_an_explicit_reason(system, monkeypatch, scenario, reason_prefix):
+    transport, _calls, _session, _ = _registry_transport(
+        monkeypatch, observations="empty" if scenario == "refused" else "seeded", register_spec=scenario != "no_record")
+    controller, state, owner, _pool = system
+    controller.owners.regime_transport = transport
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None and packet["status"] == "closed"
+    assert packet["orient"]["regime_state_ref"] is None
+    assert cycle["regime"]["status"] == "unavailable" and cycle["regime"]["reason"].startswith(reason_prefix)
+    case_file = next(iter(cycle["case_files"].values()))
+    assert case_file["subject"]["regime_tag"] == ""
+    assert not any(t.startswith("regime:") for t in case_file["lesson_query"]["tags"])
+    assert cycle["regime_interpretation"]["regime_unavailable_reason"].startswith(reason_prefix)
+
+
+def test_unconfigured_or_failing_registry_never_blocks_or_invents_a_regime(system):
+    controller, state, owner, _pool = system
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))  # env has no registry URL/token
+    assert packet["persona_cycle"]["regime"]["reason"] == "registry_unconfigured"
+    assert packet["orient"]["regime_state_ref"] is None and packet["persona_cycle"]["failure_reason"] is None
+
+    def boom(method, path, body=None):
+        raise ConnectionError("registry down")
+    controller.owners.regime_transport = boom
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert packet["persona_cycle"]["regime"]["reason"] == "registry_unavailable:ConnectionError"
+    assert packet["orient"]["regime_state_ref"] is None and packet["persona_cycle"]["failure_reason"] is None
+
+
+def test_cycle_requests_macro_regime_shift_consultation_only_on_a_change(system, monkeypatch):
+    controller, state, owner, _pool = system
+    sequence = iter([("2026-11-12", "expansion"), ("2026-11-13", "slowdown"), ("2026-11-16", "slowdown")])
+
+    def regime(persona, observe, run_):
+        session, macro = next(sequence)
+        return {"status": "unavailable", "reason": "test", "session": session, "regime_state_ref": None,
+                "regime_tag": "", "records": {}, "macro": {"state": macro, "session": session}}
+    monkeypatch.setattr(controller.owners, "regime", regime)
+    persona = owner.list_json()[0]
+    first, second, third = (controller.consume_run(persona, "job-1", run(n))["persona_cycle"] for n in (1, 2, 3))
+    assert "consult_requests" not in first                      # no earlier session: nothing to compare
+    request = second["consult_requests"][0]                     # expansion -> slowdown
+    assert request["trigger_rule"] == "macro_regime_shift" and request["status"] == "requested"
+    assert request["panel"]["gated_decision"]["type"] == "macro_regime_shift"
+    assert "persona-risk-officer" in [p["persona_id"] for p in request["panel"]["participants"]]
+    assert "consult_requests" not in third                      # slowdown -> slowdown
+
+
+# --- deliberative meeting triggers (MEETING-TRIGGERS-R2-20261116) ---------------------------------------------
+def _meeting_controller(controller, opener, *, records=(), weekday=None):
+    from services.persona import meeting_triggers as mt
+
+    class Attribution(mt.AttributionPort):
+        def __init__(self):
+            self.runs = []
+
+        def request_weekly_run(self, window_end):
+            self.runs.append(window_end)
+            return {"run_id": "run-w", "status": "queued"}
+
+        def new_records(self, since, limit=50):
+            return list(records)
+
+    attribution = Attribution()
+    controller.meeting_triggers = mt.MeetingTriggers(
+        opener=opener, attribution=attribution,
+        now=lambda: datetime(2026, 11, 16 + (weekday or 0), 3, tzinfo=timezone.utc))
+    return attribution
+
+
+def test_daily_cycle_convenes_weekly_meetings_and_requests_the_outlier_run_once_per_week(system):
+    controller, gateway, owner, _ = system
+    calls = []
+    attribution = _meeting_controller(
+        controller, lambda **kw: calls.append(kw) or {"meeting_id": f"m{len(calls)}", "status": "convened"},
+        records=[{"record_id": "r1", "subject_kind": "persona", "subject_id": "persona-cycle-test",
+                  "direction": "underperform"}], weekday=2)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    meetings = packet["persona_cycle"]["meetings"]
+    assert {"MT-3", "MT-4"} <= {c["meeting_type"] for c in meetings["convened"]}
+    assert meetings["weekly_outlier_run"]["status"] == "requested" and len(attribution.runs) == 1
+    assert next(c for c in calls if c["meeting_type"] == "MT-4")["attribution_record_id"] == "r1"
+    assert all(c["convened_by"] == {"kind": "persona", "id": "persona-cycle-test"} for c in calls)
+    # the next daily cycle of the same ISO week neither re-convenes nor re-requests
+    gateway["runs"]["job-1"] = [run(2), *gateway["runs"]["job-1"]]
+    controller.reconcile_once()
+    assert len(attribution.runs) == 1 and len([c for c in calls if c["meeting_type"] == "MT-3"]) == 1
+
+
+def test_consult_request_for_a_meeting_opens_it_and_the_harness_loop_does_not_override_the_decision(system):
+    controller, gateway, owner, _ = system
+    ask = {"orient": "Need a shared view.", "memory_candidates": [], "proposals": [
+        {"kind": "consult_request", "reason": "why do exits lag", "evidence_refs": [],
+         "none_applicable_reason": "No case-file item bears on this request.",
+         "parameters": {"meeting_type": "MT-2", "topic": "exit lag"}}]}
+    gateway["answer"] = ask
+    _meeting_controller(controller, lambda **kw: {"meeting_id": "m-req", "status": "convened"})
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    decision = packet["persona_cycle"]["decisions"][0]
+    assert decision["status"] == "meeting_opened" and decision["meeting_id"] == "m-req"
+    assert packet["persona_cycle"]["meetings"]["requests"][0]["status"] == "meeting_opened"
+
+
+def test_meeting_refusal_and_unconfigured_owner_are_recorded_and_never_fail_the_cycle(system):
+    controller, gateway, owner, _ = system
+
+    def refuse(**kw):
+        err = RuntimeError("refused")
+        err.payload = {"reason": "meeting_budget_exhausted"}
+        raise err
+    _meeting_controller(controller, refuse, weekday=2)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    result = controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    assert result["failures"] == [] and packet["persona_cycle"]["failure_reason"] is None
+    assert packet["persona_cycle"]["meetings"]["refused"][0]["reason"] == "meeting_budget_exhausted"
+    controller.meeting_triggers = None  # production default: no consultation owner configured in this env
+    assert controller._meeting_step({**owner.list_json()[0]}, {}, {"packet_id": "x"}, {}) == {
+        "status": "not_run", "reason": "consultation_owner_unconfigured"}
+
+
+def test_daily_cycle_declares_market_regime_standing_question_with_active_record_and_retires_when_none_exists(
+    system, monkeypatch
+):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_main import FakeMentalModelHindsight, JWT_SECRET
+    from services.registry.regime.store import get_regime_store
+
+    class _CycleMentalModelHindsight(FakeMentalModelHindsight):
+        def recall(self, bank, body):
+            raise hs.HindsightError("hindsight_unconfigured")
+
+    controller, _state, owner, _pool = system
+    persona = owner.list_json()[0]
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", controller.owners.env["PANTHEON_MEMORY_API_URL"])
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PERSONA_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+    monkeypatch.setattr(hs, "_LAYERED_BANKS", set())
+    fake = _CycleMentalModelHindsight()
+    hs.set_hindsight_client(fake)
+    try:
+        transport, _calls, _session, _ = _registry_transport(monkeypatch, register_spec=True)
+        controller.owners.regime_transport = transport
+        first = controller.consume_run(persona, "job-1", run(1))["persona_cycle"]
+        assert first["failure_reason"] is None
+        stored = get_regime_store().list_regimes(strategy_id="momentum", states=("active",))
+        assert len(stored) == 1
+        record = stored[0]["record"]
+        assert first["standing_questions"]["status"] == "declared"
+        assert first["standing_questions"]["keys"] == ["family:momentum", "risk_lessons", "market_regime"]
+        assert sorted(first["standing_questions"]["created"]) == ["family:momentum", "market_regime", "risk_lessons"]
+        bank = hs.persona_bank(persona["tenant_id"], persona["persona_id"])
+        models = {m["name"]: m for m in fake.banks[bank].values()}
+        assert sorted(models) == ["family:momentum", "market_regime", "risk_lessons"]
+        assert models["market_regime"]["tags"] == [f"anchor:regime:{record['regime_class']}"]
+        assert controller.standing_questions(["momentum"], first["regime"]) == [
+            {"key": m["name"], "text": m["source_query"],
+             **({"anchors": [t.removeprefix("anchor:") for t in m["tags"]]} if m["name"] != "risk_lessons"
+                else {"memory_types": [t.removeprefix("type:") for t in m["tags"]]})}
+            for m in (models["family:momentum"], models["risk_lessons"], models["market_regime"])
+        ]
+
+        # Next daily cycle: when no active regime record exists for the pool strategy, market_regime is retired.
+        no_record_transport, _, _, _ = _registry_transport(monkeypatch, register_spec=False)
+        controller.owners.regime_transport = no_record_transport
+        second = controller.consume_run(persona, "job-1", run(2))["persona_cycle"]
+        assert second["failure_reason"] is None
+        assert second["regime"]["status"] == "unavailable"
+        assert second["regime"]["reason"] == "no_active_record_for_pool_strategies"
+        assert second["standing_questions"]["status"] == "declared"
+        assert second["standing_questions"]["keys"] == ["family:momentum", "risk_lessons"]
+        assert second["standing_questions"]["retired"] == ["market_regime"]
+        assert sorted(second["standing_questions"]["unchanged"]) == ["family:momentum", "risk_lessons"]
+        assert sorted(m["name"] for m in fake.banks[bank].values()) == ["family:momentum", "risk_lessons"]
+    finally:
+        hs.set_hindsight_client(None)
+
+
+def test_daily_cycle_convenes_mt5_once_on_governed_regime_transition_and_skips_repeated_missing_or_proposed(
+    system, monkeypatch
+):
+    controller, state, owner, pool = system
+    two = _add_second_persona(state, owner, pool)
+    one = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    calls = []
+    _meeting_controller(
+        controller,
+        lambda **kw: calls.append(kw) or {"meeting_id": f"m-{len(calls)}", "status": "convened"},
+        weekday=5,
+    )
+
+    sessions_cfg = {
+        "2026-11-12": {"macro": "expansion", "vol": "low", "trend": "up", "state": "active", "model_status": "approved"},
+        "2026-11-13": {"macro": "slowdown", "vol": "high", "trend": "up", "state": "active", "model_status": "approved"},
+        "2026-11-16": {"macro": "slowdown", "vol": "high", "trend": "down", "state": "active", "model_status": "approved"},
+        "2026-11-17": {"macro": "contraction", "vol": "low", "trend": "up", "state": "proposed", "model_status": "candidate"},
+    }
+    current_session = {"value": "2026-11-12"}
+    monkeypatch.setattr(regime_consumer, "session_for_run", lambda _run: current_session["value"])
+
+    def transport(method, path, body=None):
+        sess = current_session["value"]
+        cfg = sessions_cfg[sess]
+        if method == "POST" and path == "/api/registry/regime/evaluate":
+            return 200, {"market": "TW", "session": sess, "sets": [{"model_status": cfg["model_status"]}]}
+        if method == "GET" and path.startswith("/api/registry/regime/strategies/"):
+            sid = path.split("/")[5]
+            axis = "volatility" if sid == "momentum" else "trend"
+            horizon = "short" if sid == "momentum" else "medium"
+            ax_state = cfg["vol"] if sid == "momentum" else cfg["trend"]
+            cls = (
+                ("low_volatility" if ax_state == "low" else "high_volatility")
+                if sid == "momentum"
+                else ("trending_up" if ax_state == "up" else "trending_down")
+            )
+            return 200, {
+                "regime_id": f"regime:TW:{sid}:{sess}:set1:r1",
+                "strategy_id": sid,
+                "state": cfg["state"],
+                "model_status": cfg["model_status"],
+                "regime_class": cls,
+                "confidence": 0.85,
+                "feature_snapshot": {
+                    "profile": {"primary_axis": axis, "horizon": horizon},
+                    "axes": {
+                        axis: {"available": True, "state": ax_state, "horizon": horizon},
+                        "macro": {"available": True, "state": cfg["macro"], "as_of_session": sess[:7]},
+                    },
+                    "macro_environment": cfg["macro"],
+                },
+            }
+        if method == "GET" and path.startswith("/api/registry/regime/market-state/TW/"):
+            return 200, {
+                "market": "TW",
+                "session": sess,
+                "market_states": [
+                    {
+                        "market_state_id": f"TW:{sess}:set1:r1",
+                        "market": "TW",
+                        "session": sess,
+                        "model_set_version": "set1",
+                        "model_status": cfg["model_status"],
+                        "revision": 1,
+                        "state": "proposed" if cfg["state"] == "proposed" else "current",
+                        "axes": {
+                            "volatility": {"short": {"available": True, "state": cfg["vol"], "horizon": "short"}},
+                            "trend": {"medium": {"available": True, "state": cfg["trend"], "horizon": "medium"}},
+                            "macro": {"available": True, "state": cfg["macro"], "as_of_session": sess[:7]},
+                        },
+                    }
+                ],
+            }
+        raise AssertionError((method, path))
+
+    controller.owners.regime_transport = transport
+
+    # Session 1 (2026-11-12): baseline governed observation, no transition yet
+    c1 = controller.consume_run(one, "job-1", {**run(1), "runId": "r-s1-one"})["persona_cycle"]
+    assert not [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert {"meeting_type": "MT-5", "reason": "no_regime_transition"} in c1["meetings"]["not_fired"]
+
+    # Session 2 (2026-11-13): macro expansion->slowdown and momentum volatility low->high -> MT-5 convened once
+    current_session["value"] = "2026-11-13"
+    c2_one = controller.consume_run(one, "job-1", {**run(2), "runId": "r-s2-one"})["persona_cycle"]
+    mt5_calls = [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert len(mt5_calls) == 1
+    assert any(c["meeting_type"] == "MT-5" for c in c2_one["meetings"]["convened"])
+    cf = mt5_calls[0]["case_file"]
+    assert set(cf["regime_records"]) == {"momentum", "carry"}
+    assert cf["market_state"]["session"] == "2026-11-13"
+    assert set(cf["pool_exposures"]) == {"persona-cycle-test", "persona-cycle-two"}
+    assert cf["pool_exposures"]["persona-cycle-two"]["gross_exposure"] == 1.0
+    assert [p["persona_id"] for p in mt5_calls[0]["participants"]] == [
+        "persona-cycle-test",
+        "persona-cycle-two",
+        "persona-risk-officer",
+    ]
+
+    # Repeated read of the same transition in the same session by the second enrolled persona -> already_convened
+    c2_two = controller.consume_run(two, "job-2", {**run(2), "jobId": "job-2", "runId": "r-s2-two"})["persona_cycle"]
+    assert len([c for c in calls if c["meeting_type"] == "MT-5"]) == 1
+    assert any(
+        n.get("meeting_type") == "MT-5" and n.get("reason") == "already_convened"
+        for n in c2_two["meetings"]["not_fired"]
+    )
+
+    # Session 3 (2026-11-16): carry primary axis trend transitions up->down -> MT-5 convened once with rotated chair
+    current_session["value"] = "2026-11-16"
+    c3_one = controller.consume_run(one, "job-1", {**run(3), "runId": "r-s3-one"})["persona_cycle"]
+    mt5_calls = [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert len(mt5_calls) == 2
+    assert any(c["meeting_type"] == "MT-5" for c in c3_one["meetings"]["convened"])
+    assert mt5_calls[1]["metadata"]["chair_persona_id"] == "persona-cycle-two"
+    assert mt5_calls[1]["metadata"]["regime_transitions"][0]["strategy_id"] == "carry"
+
+    # Session 4 (2026-11-17): proposed/candidate records only -> never convenes MT-5
+    current_session["value"] = "2026-11-17"
+    c4_one = controller.consume_run(one, "job-1", {**run(4), "runId": "r-s4-one"})["persona_cycle"]
+    assert len([c for c in calls if c["meeting_type"] == "MT-5"]) == 2
+    assert {"meeting_type": "MT-5", "reason": "no_governed_regime_record"} in c4_one["meetings"]["not_fired"]
+
+

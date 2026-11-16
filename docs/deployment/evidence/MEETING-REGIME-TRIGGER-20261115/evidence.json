@@ -1,0 +1,34 @@
+{
+  "task_id": "MEETING-REGIME-TRIGGER-20261115",
+  "title": "Convene the regime interpretation meeting on governed RegimeState transitions",
+  "design": "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md (sections 5, 6, 11)",
+  "hosted_behavior_claimed": false,
+  "commands": [
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_triggers.py",
+      "result": "27 passed in 1.54s"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py -k test_daily_cycle_convenes_mt5",
+      "result": "1 passed, 49 deselected in 2.71s"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_triggers.py services/persona/test_persona_cycle_controller.py services/persona/test_consult_triggers.py services/persona/test_regime_reference_removal.py",
+      "result": "108 passed, 1 warning in 55.34s"
+    }
+  ],
+  "acceptance": {
+    "1": "MT-5 (regime_interpretation) is convened once per transition via MeetingTriggers._mt5 when a governed (active, approved-model) RegimeState transition occurs on the macro axis or on the primary axis of any enrolled pool, with a tenant-scoped transition idempotency key and rotating trading-persona chair; missing or proposed/candidate records record not_fired (no_governed_regime_record or proposed_regime_record_only) and never convene a meeting.",
+    "2": "The MT-5 case file carries the governed regime_records (facts:regime_record:*), the market_state measurement (facts:market_state:*), and each enrolled pool's exposure (facts:pool_exposure:*); consultation execution writes each participant's interpretation to its own persona memory store and preserves the minority view in a published dissent memo referenced by the meeting minutes.",
+    "3": "Tests in services/persona/test_meeting_triggers.py and services/persona/test_persona_cycle_controller.py cover macro and primary-axis transitions, repeated reads of the same transition (same trigger instance, second enrolled persona in the same session, and subsequent unchanged session), missing records, and proposed records.",
+    "4": "docs/deployment/evidence/MEETING-REGIME-TRIGGER-20261115/evidence.json records exact verification commands and results and contains no credentials."
+  },
+  "scoped_artifacts": [
+    "services/persona/meeting_triggers.py",
+    "services/persona/test_meeting_triggers.py",
+    "services/persona/persona_cycle_controller.py",
+    "services/persona/test_persona_cycle_controller.py",
+    "docs/deployment/evidence/MEETING-REGIME-TRIGGER-20261115/evidence.json"
+  ],
+  "credentials_present": false
+}

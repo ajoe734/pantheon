@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,7 @@ def client():
     try:
         yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -1051,7 +1053,7 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
         f"/api/source-ingest/receipts/{receipt_summary['ingest_run_id']}"
     )
     assert full_receipt.status_code == 200, full_receipt.text
-    assert len(full_receipt.json()["receipt"]["evidence_refs"]["source_ids"]) == 1
+    assert full_receipt.json()["receipt"]["evidence_refs"]["source_id_count"] == 1  # counts only (T2)
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]
