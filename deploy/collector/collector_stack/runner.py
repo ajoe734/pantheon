@@ -140,11 +140,19 @@ class CollectorRunner:
             self.root_dir / "state" / "security-listing.json"
         )
 
-    def listing_symbols(self, today: str) -> list[str]:
+    def listing_symbols(self, today: str) -> list[str] | None:
+        """Allowed symbols for the listing filter, or None while the listing was never initialised on this
+        host (rollout shadow: unfiltered, logged; the daily refresh initialises it). Once a listing exists it
+        is fail closed: older than 3 trading days raises ListingUnavailable (``listing_unavailable``)."""
         sl = load_security_listing_module()
         state = sl.ListingState.load(self.listing_state_path)
+        if state.last_success_date is None:
+            logger.warning("security listing not initialised at %s: collecting unfiltered", self.listing_state_path)
+            return None
         state.require_collectable(today)
-        return sorted(state.listed_symbols())
+        # listed now, plus every symbol ever listed as an ordinary share: a delisted share keeps its daily
+        # history (survivorship); only expired warrants and codes in no listing are skipped.
+        return sorted(state.listed_symbols() | set(state.ordinary_share_registry))
 
     def refresh_security_listing(self, fetch_page: Callable[[str], str], *, listing_date: str) -> dict[str, Any]:
         sl = load_security_listing_module()
@@ -292,7 +300,9 @@ class CollectorRunner:
         if source_id in LISTING_FILTERED_SOURCES and self.warrants_mode == "listed_only":
             # fail closed: raises ListingUnavailable (reason listing_unavailable) when the allowlist is
             # missing or older than 3 trading days; price collection stops, nothing is guessed.
-            kwargs.setdefault("symbols_filter", self.listing_symbols(finished_iso[:10]))
+            allowed = self.listing_symbols(finished_iso[:10])
+            if allowed is not None:
+                kwargs.setdefault("symbols_filter", allowed)
 
         try:
             items: Sequence[CollectedItem] = collector.collect(**kwargs)

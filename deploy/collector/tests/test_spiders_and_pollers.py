@@ -971,13 +971,15 @@ def test_listed_only_collects_listed_and_skips_unlisted(tmp_path, test_hasher, f
     assert _wl_symbols(out) == ["2330"]
 
 
-def test_listing_missing_or_older_than_three_trading_days_stops_price_collection(tmp_path, test_hasher, fixtures_dir):
+def test_listing_older_than_three_trading_days_stops_price_collection_and_uninitialised_is_shadow(tmp_path, test_hasher, fixtures_dir):
     from services.source_ingestion.security_listing import ListingUnavailable
 
     runner = _wl_runner(tmp_path, test_hasher, fixtures_dir)
-    with pytest.raises(ListingUnavailable, match="listing_unavailable"):
-        runner.run_source(_TWSE_PH, run_id="wl2", started_at="2026-11-10T09:00:00Z",
-                          finished_at="2026-11-10T09:00:05Z", allow_disabled=True, collect_kwargs={"dates": ["2026-11-10"]})
+    # never initialised on this host: rollout shadow, unfiltered (the daily refresh initialises it)
+    out = runner.run_source(_TWSE_PH, run_id="wl2", started_at="2026-11-10T09:00:00Z",
+                            finished_at="2026-11-10T09:00:05Z", allow_disabled=True, collect_kwargs={"dates": ["2026-11-10"]})
+    assert _wl_symbols(out) == ["2317", "2330"]
+    runner.transport.calls.clear()
     _wl_state(runner.listing_state_path, ["2330"], last_success="2026-11-02")  # 6 trading days old
     with pytest.raises(ListingUnavailable):
         runner.run_source(_TWSE_PH, run_id="wl3", started_at="2026-11-10T09:00:00Z",

@@ -1,0 +1,44 @@
+{
+  "task_id": "SOURCE-WARRANT-LISTING-EXPIRY-20261117",
+  "recorded_utc": "2026-11-16",
+  "no_credentials": true,
+  "reproduction_acceptance_1": {
+    "source": "live ISIN pages fetched 2026-11-16 (page update date 2026/11/17): strMode=2 and strMode=4",
+    "listing_rows": 57531,
+    "listed_warrants": 55108,
+    "twse_warrants": 41965,
+    "tpex_warrants": 13143,
+    "ordinary_share_registry_rows": 2014,
+    "old_pattern_WARRANT_SYMBOL_RE_misses_listed_warrants": 13143,
+    "old_pattern_matches_non_warrants": 0,
+    "finding": "the symbol pattern misses every TPEx warrant (7xxxxx); only the listing separates a listed warrant from an expired one",
+    "not_measured": "hosted stored-price-symbol count and recorded collector bundle count need hosted/collector host read access that this worker does not have; scripts/delete_expired_warrants.py dry run produces them"
+  },
+  "design_vs_reality_difference": "design section 4.3/6 assumed 7,053 TWSE warrants and ~22,500 allowlist rows (2 MB). Live listing today has 41,965 TWSE warrants and 57,531 rows; compact state file = 3,218,831 bytes (> 2 MB design limit, <= 20 MB hard limit). Design-shaped 22,500 rows = 1,233,074 bytes (test fails above 2 MB). Section 6 row for listing_allowlist needs the daily limit raised or the row count budget restated.",
+  "measurements": {
+    "parse_both_full_pages_seconds": 0.76,
+    "state_bytes_live_57531_rows": 3218831,
+    "state_bytes_design_shaped_22500_rows": 1233074,
+    "writer_batch_500_records": "2 listed stored, 498 unlisted skipped, skipped_not_listed_count=498 (test_batch_of_500_listed_warrants_stored_and_unlisted_skipped)",
+    "stores_touched_budget_row": "listing_allowlist + ordinary_share_registry (section 6): measured above; market_snapshot_current, daily_bars, receipts: not touched (filter only decides what is written)"
+  },
+  "same_parser_acceptance_4": "collector host and hosted both call security_listing.refresh_listing/parse_isin_page; the collector runner imports services.source_ingestion.security_listing or loads the same file from PANTHEON_SECURITY_LISTING_MODULE. Difference: collector image (Dockerfile COPY collector_stack only) does not ship the module yet; deploying it and scheduling refresh_security_listing is a Human/Ops step. Hosted refresh scheduling is not wired in this task (module + function delivered).",
+  "rollback_acceptance_10": "COLLECTOR_WARRANTS_MODE=off / warrants_mode='off' / ListingFilter(enabled=False): previous behaviour; tests test_rollback_mode_off_restores_previous_behaviour and test_filter_disabled_is_previous_behaviour. No persisted format of an existing store changed (listing state is a new file), so no previous-reader test is needed.",
+  "commands": [
+    "python -m pytest services/source_ingestion/tests/test_security_listing.py scripts/test_delete_expired_warrants.py services/source_ingestion/tests/test_active_universe.py",
+    "cd deploy/collector && python -m pytest tests --ignore=tests/test_scrapling_backend.py",
+    "python -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_market_data_storage.py"
+  ],
+  "known_environment_failures": "12 tests in test_taiwan_official_connectors/test_market_data_storage/test_daily_bars_store and 1 in deploy/collector test_tw_suspension_holidays fail identically on the unmodified base commit in this worker venv (requirement_state UnboundLocalError / missing deps); failing sets compared equal before and after.",
+  "not_done": [
+    "hosted deletion run (MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117)",
+    "daily_bars row deletion (retention sweeper SOURCE-RETENTION-SWEEPER-20261118); script reports only",
+    "features and snapshot_current stores are not rewritten by the script (no per symbol key in features rows; snapshot delete entry point is the sweeper's)",
+    "active_universe.py unchanged (FinMind adapters only fetch active-universe symbols); hosted scheduling of the listing refresh"
+  ],
+  "pass_counts": {
+    "listing+delete+active_universe": "30 passed",
+    "deploy/collector tests (excl scrapling)": "255 passed, 5 skipped, 1 failed (pre-existing on base)",
+    "taiwan_official+market_data_storage": "53 passed, 9 failed (all pre-existing on base, same set)"
+  }
+}

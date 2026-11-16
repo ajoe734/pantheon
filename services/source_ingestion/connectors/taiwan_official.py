@@ -881,6 +881,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
     bundle_transport: BundleTransport | None = None
     bundle_root: str | Path | None = None
+    # SOURCE-WARRANT-LISTING-EXPIRY-20261117: a ListingFilter (security_listing). tw_price_daily rows whose symbol
+    # is in no current exchange listing (expired warrant, unknown code) are not turned into records; the count is
+    # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
+    listing_filter: Any | None = None
 
     def _resolve_bundle_transport(
         self,

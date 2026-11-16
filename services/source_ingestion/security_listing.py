@@ -297,7 +297,8 @@ class ListingFilter:
 
     @classmethod
     def from_state(cls, state: ListingState, *, enabled: bool = True) -> "ListingFilter":
-        return cls(listed=state.listed_symbols(), listing_date=state.last_success_date, enabled=enabled)
+        # listed now + every symbol ever listed as an ordinary share (delisted shares keep their daily history)
+        return cls(listed=state.listed_symbols() | frozenset(state.ordinary_share_registry), listing_date=state.last_success_date, enabled=enabled)
 
     def admits(self, symbol: str) -> bool:
         if not self.enabled:  # rollback switch: previous behaviour
