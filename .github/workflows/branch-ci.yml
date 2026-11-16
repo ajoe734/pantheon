@@ -296,9 +296,10 @@ jobs:
         env:
           SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
-          SOURCE_INGEST_DATA_DIR="$(mktemp -d)"
-          export SOURCE_INGEST_DATA_DIR
-          python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py
+          # Same tests as the former single serial pytest, run as 4 deterministic
+          # parallel shards (own data dir each). The runner fails if the shards
+          # run a different count than collected, or if one test exceeds 300s.
+          python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300
 
       # Unconditional (no path filter): these pin deploy guarantees (profiles,
       # mark source, state volumes) that went stale for days because no
