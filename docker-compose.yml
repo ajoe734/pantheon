@@ -2001,6 +2001,8 @@ services:
       PERSONA_DEFAULT_TENANT_ID: ${PERSONA_DEFAULT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_SERVICE_ACTOR: ${PANTHEON_SERVICE_ACTOR:-persona-svc}
+      # current_environment() scopes paper lifecycle approvals (ApprovalUsageContext).
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
       PANTHEON_PERSONA_API_URL: ${PANTHEON_PERSONA_API_URL:-http://persona:8002}
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
