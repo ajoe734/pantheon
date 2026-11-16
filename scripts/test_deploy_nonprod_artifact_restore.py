@@ -1641,6 +1641,10 @@ def test_restore_accepted_baseline_remote_script_uses_current_controller_for_pri
         "dev_release_artifact_driver.py": current_driver.read_bytes(),
         "dev_release_artifacts.py": current_library.read_bytes(),
     }
+    caller_env = {
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"],
+        "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "fixture-viewer",
+    }
     script_bytes = f.build_restore_remote_script(
         repo_root=ROOT,
         current_controller_sha=current_controller_sha,
@@ -1651,7 +1655,7 @@ def test_restore_accepted_baseline_remote_script_uses_current_controller_for_pri
         candidate_image_manifest_path=env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"],
         candidate_image_manifest_sha256=env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"],
         compose_file=env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"],
-        env=env,
+        env=caller_env,
         artifact_root=driver.parents[2],
         vm_source_repo=source_repo,
     )
@@ -1659,7 +1663,11 @@ def test_restore_accepted_baseline_remote_script_uses_current_controller_for_pri
     (tmp_path / "bin/git").write_text(f"#!/bin/sh\nexec {real_git} \"$@\"\n")
     (tmp_path / "bin/git").chmod(0o755)
 
-    result = _run(script_bytes.decode("utf-8"), env)
+    isolated_shell_env = {
+        "PATH": env["PATH"],
+        "RECORDER": env["RECORDER"],
+    }
+    result = _run(script_bytes.decode("utf-8"), isolated_shell_env, synthetic_root=False)
     assert result.returncode == 0, result.stderr
     assert "PANTHEON_ARTIFACT_READBACK_V1 " in result.stdout
     events = _events(recorder)

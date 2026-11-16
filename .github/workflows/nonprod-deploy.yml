@@ -5156,18 +5156,24 @@ jobs:
           ACCEPTED_FRONTEND_SHA: ${{ steps.preflight.outputs.accepted_frontend_sha }}
           DRIFTED_BACKEND_SHA: ${{ steps.preflight.outputs.drifted_backend_sha }}
           PANTHEON_CURRENT_CONTROLLER_SHA: ${{ steps.preflight.outputs.current_controller_sha }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_PUBLIC_HOST: ${{ vars.DEV_BFF_PUBLIC_HOST || 'api.dev.mvl-cap.tw' }}
           DEV_FE_PUBLIC_HOST: ${{ vars.DEV_FE_PUBLIC_HOST || 'app.dev.mvl-cap.tw' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
-          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER }}
-          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE }}
-          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
           DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -5183,22 +5189,29 @@ jobs:
           DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID || 'pantheon-dev-admin-test' }}
           DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET'] }}
           DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'false' }}
-          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr' }}
-          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'mfa,otp,totp,webauthn,hwk,swk' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
           DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
-          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,groups,pantheon_roles' }}
-          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || '' }}
-          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'merge' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           DEV_BFF_TENANT_ID: ${{ vars.DEV_BFF_TENANT_ID || 'tenant-dev' }}
-          DEV_BFF_ALLOWED_TENANTS: ${{ vars.DEV_BFF_ALLOWED_TENANTS || 'tenant-dev' }}
+          DEV_BFF_ALLOWED_TENANTS: ${{ vars.DEV_BFF_ALLOWED_TENANTS || 'tenant-dev,pantheon-dev' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
-          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
-          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
+          DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
+          DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_AGORA_PRIVATE_CONTENT_DEV_KEK: ${{ secrets.DEV_AGORA_PRIVATE_CONTENT_DEV_KEK }}
+          DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
+          DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1500' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
