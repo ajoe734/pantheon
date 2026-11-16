@@ -447,6 +447,11 @@ def test_seed_baseline_is_gate_decision_not_rollback_target(env):
     assert r.json()["members"][0]["baseline_ref"] == "governance-gate-verdict"
 
 
+def _lineage_for(entries, persona):
+    return {"has_more": False, "edges": [
+        {"from": k, "to": persona, "label": "persona"} for k in entries]}
+
+
 def _provisioning_entries(persona="persona-1"):
     meta = {"persona_id": persona, "execution_context": "paper", "persona_capital_binding_id": "pcb-1"}
     base = {"registry_id": "baseline-0", "artifact_state": "approved", "checksum": CHECKSUM,
@@ -466,8 +471,8 @@ def test_real_http_lister_excludes_rollback_baseline_and_superseded(env, monkeyp
     entries = {e["registry_id"]: e for e in (base, run, old)}
 
     def fake_http(path, tenant):
-        if "strategy-artifacts?" in path:
-            return {"items": [{"registry_id": k} for k in entries], "next_page_token": None}
+        if "/lineage?" in path:
+            return _lineage_for(entries, "persona-1")
         return {"entry": entries[path.rsplit("/", 1)[1]]}
 
     monkeypatch.setattr(psp, "_http_json", fake_http)
@@ -481,8 +486,8 @@ def test_seed_through_real_lister_with_provisioning_shape(env, monkeypatch):
     base, run = _provisioning_entries()
     entries = {e["registry_id"]: e for e in (base, run)}
     monkeypatch.setattr(psp, "_http_json", lambda path, t: (
-        {"items": [{"registry_id": k} for k in entries], "next_page_token": None}
-        if "strategy-artifacts?" in path else {"entry": entries[path.rsplit("/", 1)[1]]}))
+        _lineage_for(entries, "persona-1")
+        if "/lineage?" in path else {"entry": entries[path.rsplit("/", 1)[1]]}))
     import sys as _s
     mod = _s.modules["persona_main_pool_test_module"]
     mod.POOL_STORE._lister = psp.http_owner_artifact_lister

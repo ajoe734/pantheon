@@ -390,6 +390,7 @@ from ..persona_provisioning import (
 
 
 # --- deterministic_provisioning_ids ---
+from ..persona_paper_enrollment import retry_due
 from ..persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
@@ -4595,6 +4596,12 @@ def _reconcile_paper_enrollment_once() -> int:
             continue
         existing = (record.references or {}).get("paper_enrollment")
         if isinstance(existing, Mapping) and existing.get("status") == "enrolled":
+            continue
+        if not retry_due(
+            existing,
+            datetime.now(timezone.utc),
+            max(0, int(os.getenv("PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS", "600"))),
+        ):
             continue
         try:
             coordinator = PersonaProvisioningCoordinator(

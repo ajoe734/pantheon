@@ -133,7 +133,9 @@ class StackMixedError(StackError):
 
 
 SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
-                                    "schema", "journal_changed", "reader_rejected", "unavailable"})
+                                    "schema", "journal_changed", "journal_too_large", "reader_rejected",
+                                    "unavailable", "lock_wait_timeout", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"})
 
 
 class SourceCompatibilityError(StackError):
@@ -519,8 +521,16 @@ SOURCE_PATH_FORMAT = _env_format(SOURCE_PATH_KEYS)
 SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_reconciliation", *(
     name + suffix for name in ("tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m")
     for suffix in ("", "_withdrawal"))})
+# Journal size bound, enforced identically by the probe, qualify_source_reader and
+# baseline proof validation. 4 GiB: the probe streams, so memory does not scale with it.
+# Baselines whose journal is under 256 MiB stay readable by the previous script.
+SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024
+SOURCE_JOURNAL_MAX_LINE_BYTES = 16 * 1024 * 1024
+# The Source appends under an exclusive lock and re-reads the file each time, so a
+# shared lock is briefly unavailable. Wait this long (inside the 300 s docker bound).
+SOURCE_JOURNAL_LOCK_WAIT_SECONDS = 120
 SOURCE_PROBE = r'''
-import base64, fcntl, hashlib, json, os, re, sys
+import base64, fcntl, hashlib, json, os, re, sys, time
 from pathlib import Path
 from services.source_ingestion import requirement_state as m
 mode, arg = sys.argv[1:3]
@@ -543,35 +553,58 @@ try:
         # Missing state is not an empty journal proof. The owner must identify
         # an existing file; do not create directories, lock files or projections.
         with path.open("rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            deadline = time.monotonic() + __LOCK_WAIT__
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("journal lock wait timed out") from None
+                    time.sleep(0.05)
             before = os.fstat(f.fileno())
-            if before.st_size > 256 * 1024 * 1024:
+            if before.st_size > __MAX_BYTES__:
                 raise ValueError("journal exceeds bounded qualification")
-            raw = f.read()
-            digest = projection(raw.decode("utf-8").splitlines())
+            digest_obj, size = hashlib.sha256(), [0]
+            def stream_lines():
+                while True:
+                    line = f.readline(__MAX_LINE__ + 1)
+                    if not line:
+                        return
+                    if len(line) > __MAX_LINE__:
+                        raise ValueError("journal line too long")
+                    digest_obj.update(line)
+                    size[0] += len(line)
+                    # Same line boundaries as bytes.decode().splitlines(): a split
+                    # never falls inside a UTF-8 sequence, so decode per segment.
+                    yield from line.decode("utf-8").splitlines()
+            digest = projection(stream_lines())
             after = os.fstat(f.fileno())
-            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns):
+            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns) or size[0] != after.st_size:
                 raise ValueError("journal changed")
-        result = {"journal_sha256": hashlib.sha256(raw).hexdigest(), "journal_size": len(raw), "projection_sha256": digest}
+        result = {"journal_sha256": digest_obj.hexdigest(), "journal_size": size[0], "projection_sha256": digest}
     else:
         raise ValueError("unknown probe mode")
     print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
 except Exception as error:
     message = str(error)
-    reason = next((code for text,code in (
+    reason = "probe_killed" if isinstance(error, MemoryError) else next((code for text,code in (
         ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
         ("id does not match", "snapshot_identity"), ("schema", "schema"),
-        ("journal changed", "journal_changed")) if text in message), "reader_rejected")
+        ("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),
+        ("journal exceeds", "journal_too_large"), ("journal changed", "journal_changed")) if text in message), "reader_rejected")
     line = re.search(r"journal:(\d+)", message)
     print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
                       "line": int(line[1]) if line else None}))
-'''
+'''.replace("__MAX_BYTES__", str(SOURCE_JOURNAL_MAX_BYTES)).replace("__MAX_LINE__", str(SOURCE_JOURNAL_MAX_LINE_BYTES)).replace(
+    "__LOCK_WAIT__", str(SOURCE_JOURNAL_LOCK_WAIT_SECONDS))
 
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
     _match(image_id, IMAGE, "Source probe image")
+    # Raised from 512m to 2048m so older retained baseline images do not OOM on 200MB-450MB journals.
     command = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
-               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "512m",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "2048m",
                "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
                "--env", "PYTHONDONTWRITEBYTECODE=1"]
     if container_id is not None:
@@ -584,12 +617,21 @@ def source_probe(*, docker, image_id, mode, argument="", container_id=None, chec
         raw = docker.call(*command, "--entrypoint", "python3", image_id, "-c", SOURCE_PROBE, mode, argument)
         if len(raw) > 120000:
             raise ArtifactError("Source probe output exceeds bound")
-        result = _json(raw.encode())
-    except ArtifactError:
+        result = _json(raw.encode()) if raw.strip() else None
+    except ArtifactError as error:
+        cause = error.__cause__
+        if isinstance(cause, subprocess.TimeoutExpired):
+            raise SourceCompatibilityError("probe_timeout") from None
+        if isinstance(cause, subprocess.CalledProcessError):
+            # Container killed (e.g. out of memory, 137) or crashed without a result line.
+            raise SourceCompatibilityError("probe_killed" if cause.returncode in (137, -9, 139, -11) else "unavailable") from None
         raise SourceCompatibilityError("unavailable") from None
+    if result is None:
+        raise SourceCompatibilityError("probe_no_output")
     if not isinstance(result, dict) or result.get("ok") is not True:
         reason = result.get("reason") if isinstance(result, dict) else None
-        if reason not in ("point_schema", "checksum", "lineage", "snapshot_identity", "schema", "journal_changed"):
+        if reason not in SOURCE_FAILURE_REASONS - {"reader_rejected", "unavailable", "probe_timeout",
+                                                   "probe_no_output"}:
             reason = "reader_rejected"
         line = result.get("line") if isinstance(result, dict) else None
         raise SourceCompatibilityError(reason, line)
@@ -612,8 +654,8 @@ def qualify_source_reader(*, docker, image_id, check_lease):
                           container_id=owner["container_id"], check_lease=check_lease)
     for key in ("journal_sha256", "projection_sha256"):
         _match(result.get(key), DIGEST, "Source " + key)
-    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= 256 * 1024 * 1024:
-        raise ArtifactError("invalid Source journal size")
+    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
+        raise SourceCompatibilityError("journal_too_large")
     if _stack_rows(docker).get(API_SERVICE) != rows:
         raise StackError("Source owner changed during qualification", [API_SERVICE])
     return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
@@ -627,9 +669,14 @@ def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
     current complete journal. Different images additionally require every
     supported writer form through the retained decoder without projection loss.
     """
-    retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
-    writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
-    if retained != writer and any(retained[k] != writer[k] for k in ("journal_sha256", "journal_size", "projection_sha256")):
+    for _ in range(3):
+        retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
+        writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
+        if (retained["journal_size"], retained["journal_sha256"]) == (writer["journal_size"], writer["journal_sha256"]):
+            if retained["projection_sha256"] != writer["projection_sha256"]:
+                raise StackError("Source readers disagree on journal identity", [API_SERVICE])
+            break
+    else:
         raise StackError("Source readers disagree on journal identity", [API_SERVICE])
     # Equal module bytes alone do not cover changed codec dependencies in a
     # different image. Only an identical immutable image may omit witnesses.
@@ -738,7 +785,7 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
             _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"), "Source snapshot proof")
             for key in ("codec_sha256", "journal_sha256", "projection_sha256"):
                 _match(proof[key], DIGEST, "Source snapshot digest")
-            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= 256 * 1024 * 1024:
+            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
                 raise ArtifactError("invalid Source snapshot proof size")
         if controlled:
             control = row["control"]

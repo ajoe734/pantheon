@@ -284,7 +284,9 @@ class PromotionGate:
         if (not all(expected_checks.values()) or dict(checks) != expected_checks
                 or any(details.get(k) != v for k, v in derived.items())
                 or summary.get("out_of_sample_sharpe_ratio") != sharpe
-                or summary.get("max_drawdown") != drawdown or summary.get("round_trips") != trips):
+                or summary.get("max_drawdown") != drawdown or summary.get("round_trips") != trips
+                or ("fill_convention" in summary and summary["fill_convention"] != ev.get("fill_convention"))
+                or details.get("fill_convention") != ev.get("fill_convention")):
             raise PromotionError("replication_proof differs from the recomputed backtest evaluation.")
 
         verified = copy.deepcopy(dict(proof))

@@ -6427,7 +6427,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             ):
                 service._member_virtual_books.observe(
                     binding_id="b", envelope_checksum="sha256:env", symbol=symbol, event_time=at,
-                    price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
+                    price=price, open_price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
         books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
         self.assertEqual(set(books), {decay["registry_id"], good["registry_id"]})
         for entry in (decay, good):
@@ -6470,7 +6470,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         for day, price in ((1, 100), (2, 110)):
             service._member_virtual_books.observe(
                 binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
-                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
                 members={"child": {"artifact_id": "child", "version": "1", "checksum": parent["checksum"],
                                    "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
                 bar_frequency="1d")
@@ -6487,7 +6487,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         for day, price in ((1, 100), (2, 110)):
             service._member_virtual_books.observe(
                 binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
-                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
                 members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
                                "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
                 bar_frequency="1d")

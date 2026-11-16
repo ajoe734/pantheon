@@ -78,7 +78,7 @@ class PortfolioParityTests(unittest.TestCase):
         for index in range(1, self.prepared.bars_per_instrument["2330.TWSE"]):
             binding = recorded_binding(self.portfolio, self.prepared, index)
             # Daily decisions are taken after the session close is reconciled (fill is the next open;
-            # fill and price parity with the backtest is GATE-DAILY-NEXT-OPEN-REBASELINE-20261115's).
+            # fill and price parity with the backtest: test_daily_next_open_parity.py).
             decision_day = next(iter(binding["market_inputs"].values()))["event_time"][:10]
             decisions = producer_strategy(binding, decision_day + "T10:00:00Z")["portfolio_decisions"]
             for decision in decisions:
