@@ -2262,6 +2262,14 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
+    def test_repo_antigravity_dispatch_uses_the_shared_account_cap(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        account = supervisor.agent_account_id(config, "antigravity")
+        self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "antigravity2"))
+        # Operator 2026-11-16: raise the shared Antigravity account cap from 4 back to 6
+        # while both Codex accounts are quota-terminal; both lanes share this cap.
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
+
     def test_repo_claude_dispatch_uses_the_shared_account_cap(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
