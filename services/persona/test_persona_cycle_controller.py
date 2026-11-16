@@ -23,7 +23,7 @@ from services.control_plane.persona.persona_strategy_pool import (
     AppendPoolVersionRequest, PersonaStrategyPoolStore,
 )
 from services.foundation.reliable_delivery import AtomicJsonRecordStore
-from services.persona import regime_consumer
+from services.persona import persona_cycle_controller as regime_consumer
 from services.persona.cron_ooda_closure import append_ooda_packet
 from services.persona.harness import HarnessSurface, PersistentHarnessOwner
 from services.persona.persona_cycle_controller import (

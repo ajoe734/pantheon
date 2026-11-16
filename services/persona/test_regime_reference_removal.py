@@ -31,5 +31,4 @@ def test_fabricated_regime_references_are_gone():
 def test_only_a_stored_registry_record_id_can_set_the_cycle_regime_ref():
     controller = (ROOT / "services/persona/persona_cycle_controller.py").read_text(encoding="utf-8")
     assert controller.count('["regime_state_ref"] =') == 1
-    consumer = (ROOT / "services/persona/regime_consumer.py").read_text(encoding="utf-8")
-    assert consumer.count("REF_PREFIX + rec[\"regime_id\"]") == 1 and consumer.count('transport("POST"') == 1
+    assert controller.count("REF_PREFIX + rec[\"regime_id\"]") == 1 and controller.count('transport("POST"') == 1

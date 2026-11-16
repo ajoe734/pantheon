@@ -14,9 +14,10 @@ import importlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -32,7 +33,6 @@ from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_I
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
-from services.persona import regime_consumer
 from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 from services.persona.lesson_cycle import MEMORY_CANDIDATE_FORMAT, LessonCycle, lesson_summary
@@ -164,6 +164,103 @@ def cycle_health(packet: dict[str, Any] | None) -> dict[str, Any]:
             "lessons": lesson_summary(cycle),
             "risk_status": (cycle.get("risk_result") or {}).get("status", "unobserved"),
             "harness_loop": {k: (cycle.get("harness_loop") or {}).get(k) for k in ("status", "reasons")}}
+
+
+
+# --- Regime consumer (SD-REGIME-STATE-ENGINE R13) ---
+REF_PREFIX = "regime-state://"
+MARKET = "TW"
+Transport = Callable[[str, str, "dict | None"], "tuple[int, Any]"]  # (method, path, body) -> (status, json)
+
+
+def session_for_run(run: Mapping[str, Any]) -> str:
+    """Taipei calendar date of the cron run; the registry refuses a session without complete data."""
+    ms = run.get("runAtMs")
+    at = datetime.fromtimestamp(ms / 1000, timezone.utc) if isinstance(ms, (int, float)) else datetime.now(timezone.utc)
+    return (at + timedelta(hours=8)).date().isoformat()
+
+
+def http_transport(base_url: str, token: str, tenant: str, *, timeout: float = 20) -> Transport:
+    def call(method: str, path: str, body: dict | None = None) -> tuple[int, Any]:
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        try:
+            with urlopen(Request(base_url.rstrip("/") + path, data=data, headers=headers, method=method),
+                         timeout=timeout) as response:
+                return response.status, json.load(response)
+        except HTTPError as exc:
+            try:
+                return exc.code, json.load(exc)
+            except Exception:
+                return exc.code, None
+    return call
+
+
+def transport_from_env(env: Mapping[str, str], tenant: str) -> Transport | None:
+    base = next((env[k] for k in ("PANTHEON_REGISTRY_API_URL", "REGISTRY_URL") if env.get(k)), "")
+    token = next((env[k] for k in ("PANTHEON_REGISTRY_SERVICE_TOKEN", "PERSONA_REGISTRY_SERVICE_TOKEN") if env.get(k)), "")
+    return http_transport(base, token, tenant) if base and token else None
+
+
+def _unavailable(reason: str, session: str) -> dict[str, Any]:
+    return {"status": "unavailable", "reason": reason, "session": session, "regime_state_ref": None,
+            "regime_tag": "", "records": {}, "macro": None}
+
+
+def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
+    """Evaluate for the session, then read the active record of each strategy. Never raises."""
+    if transport is None:
+        return _unavailable("registry_unconfigured", session)
+    try:
+        status, body = transport("POST", "/api/registry/regime/evaluate", {"session": session, "market": MARKET})
+        if status != 200:
+            code = ((body or {}).get("detail") or {}).get("code") if isinstance(body, dict) else None
+            detail = (body or {}).get("detail") if isinstance(body, dict) else None
+            code = code or (detail if isinstance(detail, str) else None)
+            return _unavailable(f"evaluate_refused:{status}:{code or 'unknown'}"[:160], session)
+        records: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
+        for sid in dict.fromkeys(strategy_ids):
+            code, record = transport("GET", f"/api/registry/regime/strategies/{quote(sid, safe='')}/active", None)
+            if code == 200 and isinstance(record, dict) and record.get("regime_id"):
+                records[sid] = record
+            else:
+                missing.append(sid)
+        macro = None
+        code, ms = transport("GET", f"/api/registry/regime/market-state/{MARKET}/{session}", None)
+        if code == 200 and isinstance(ms, dict):
+            for row in ms.get("market_states") or []:
+                axis = (row.get("axes") or {}).get("macro") or {}
+                if axis.get("available") and axis.get("state"):
+                    macro = {"state": axis["state"], "session": session, "as_of": axis.get("as_of_session")}
+        if not records:
+            out = _unavailable("no_active_record_for_pool_strategies" if strategy_ids else "no_pool_strategies", session)
+            out["macro"] = macro
+            return out
+        first = next((s for s in strategy_ids if s in records), None)
+        rec = records[first]
+        return {"status": "observed", "reason": None, "session": session,
+                "regime_state_ref": REF_PREFIX + rec["regime_id"], "regime_tag": str(rec.get("regime_class") or ""),
+                "records": {s: {"regime_id": r["regime_id"], "regime_class": r.get("regime_class"),
+                                "confidence": r.get("confidence")} for s, r in records.items()},
+                "missing_strategies": missing, "macro": macro}
+    except Exception as exc:  # the cycle runs without a regime rather than inventing one
+        return _unavailable(f"registry_unavailable:{type(exc).__name__}", session)
+
+
+def previous_macro(snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], session: str) -> dict | None:
+    """Latest macro state this persona stored in an earlier session's cycle packet."""
+    best = None
+    for p in snapshots.values():
+        if p.get("tenant_id") != persona["tenant_id"] or persona["persona_id"] not in p.get("persona_ids", []):
+            continue
+        macro = ((p.get("persona_cycle") or {}).get("regime") or {}).get("macro")
+        if macro and macro.get("session") and macro["session"] < session and (
+                best is None or macro["session"] > best["session"]):
+            best = macro
+    return best
 
 
 class PersonaCycleController:
@@ -378,7 +475,7 @@ class PersonaCycleController:
         if result.get("regime_state_ref"):
             packet["orient"]["regime_state_ref"] = result["regime_state_ref"]
         shift = macro_regime_shift_requirement(
-            persona["persona_id"], regime_consumer.previous_macro(snapshots, persona, result["session"]),
+            persona["persona_id"], previous_macro(snapshots, persona, result["session"]),
             result.get("macro"))
         if shift is not None:
             cycle["consult_requests"] = [{"trigger_rule": "macro_regime_shift", "status": "requested",
@@ -691,9 +788,9 @@ class CycleOwners:
     def regime(self, persona, observe, run):
         subject = observe.get("cycle_subject") or {}
         families = subject.get("families") or []
-        return regime_consumer.observe_regime(
-            self.regime_transport or regime_consumer.transport_from_env(self.env, persona["tenant_id"]),
-            session=regime_consumer.session_for_run(run), strategy_ids=families)
+        return observe_regime(
+            self.regime_transport or transport_from_env(self.env, persona["tenant_id"]),
+            session=session_for_run(run), strategy_ids=families)
 
     def risk(self, persona, observe, packet_id):
         if persona["lifecycle_state"] == "consultable":
