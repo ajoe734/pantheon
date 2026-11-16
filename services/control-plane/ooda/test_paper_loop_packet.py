@@ -58,6 +58,11 @@ class TestPaperOodaLoopPacket(unittest.TestCase):
         for matched_ids in replay["query_matches"].values():
             self.assertIn(ooda_packet["packet_id"], matched_ids)
 
+    def test_packet_carries_no_invented_regime_reference(self) -> None:
+        packet = build_evidence_packet(generated_at="2026-05-15T15:10:00Z")
+        self.assertIsNone(packet["ooda_packet"]["orient"]["regime_state_ref"])
+        self.assertEqual(packet["validation_errors"], [])
+
     def test_closed_packet_missing_stage_evidence_fails_validation(self) -> None:
         packet = build_evidence_packet(generated_at="2026-05-15T15:10:00Z")
         mutated = json.loads(json.dumps(packet))
