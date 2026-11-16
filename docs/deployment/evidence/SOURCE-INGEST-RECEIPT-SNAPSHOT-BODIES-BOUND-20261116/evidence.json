@@ -30,7 +30,8 @@
   "validation": {
     "smoke_command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300",
     "result": "all shards exit 0; 2097 collected, ran 2097 (22 skipped by existing conditions); 284+487+495+809 passed",
-    "new_test_file": "test_ingest_receipt_snapshot_refs_bounded.py: 10 passed"
+    "new_test_file": "test_ingest_receipt_snapshot_refs_bounded.py: 10 passed",
+    "ci_rerun_note": "PR #7442 Smoke acceptance failed once in shard 0 on test_full_size_close_through_controller_main_with_persistence (assert seconds == interval_seconds; final tick still reported continuation_pending). Not reproducible: the test passed 7/7 locally (3 serial, 4 concurrent) and the full 4-shard Smoke command passed again (284+487+495+809 passed, exit 0); the logic is in controller_worker, untouched by this task. Resubmitted as a new head for exact-head review."
   },
   "deployment_note": "First start after deploy rewrites /data/source-ingest/ingest_schedule.jsonl in place (needs free disk about the size of the slimmed result, a few MB; temp file is the slim copy). Deploying while the price history backfill runs is safe: rewrite holds the journal lock, other processes rebuild on the inode change."
 }
