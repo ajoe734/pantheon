@@ -33,6 +33,11 @@ EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
 )
 EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 30
 SOURCE_INGESTION_STEP_NAME = "Run source ingestion tests"
+MARKET_DATA_BUDGET_STEP_NAME = "Market data budget check"
+EXPECTED_MARKET_DATA_BUDGET_COMMANDS = (
+    "python3 -m pytest -q scripts/test_check_market_data_budget.py",
+    "python3 scripts/check_market_data_budget.py --output /tmp/market-data-budget-report.json",
+)
 COMPOSE_CONTRACT_STEP_NAME = "Run compose contract tests"
 COMPOSE_CONTRACT_TEST_FILES = (
     "scripts/test_paper_runtime_topology_contract.py",
@@ -141,6 +146,22 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         pytest_args = command.split("python3 -m pytest", 1)[1]
         for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
             self.assertNotIn(flag, pytest_args)
+
+    def test_market_data_budget_step_pinned(self) -> None:
+        names = [s.get("name") for s in self.smoke_steps]
+        self.assertIn(MARKET_DATA_BUDGET_STEP_NAME, names)
+        index = names.index(MARKET_DATA_BUDGET_STEP_NAME)
+        step = self.smoke_steps[index]
+        self.assertNotIn("if", step, "market data budget check must run unconditionally")
+        self.assertFalse(step.get("continue-on-error", False))
+        self.assertLessEqual(step.get("timeout-minutes", 0), 5)
+        self.assertGreater(step.get("timeout-minutes", 0), 0)
+        # pyarrow comes from the source ingestion requirements, so the step must run after them
+        self.assertGreater(index, names.index("Install source ingestion dependencies"))
+        commands = tuple(line.strip() for line in step["run"].strip().splitlines())
+        self.assertEqual(commands, EXPECTED_MARKET_DATA_BUDGET_COMMANDS)
+        for flag in ("|| true", "--only", "--deselect", "-k "):
+            self.assertNotIn(flag, step["run"])
 
     def test_source_ingestion_step_pinned(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]

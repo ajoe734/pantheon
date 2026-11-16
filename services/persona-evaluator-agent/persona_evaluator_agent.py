@@ -680,9 +680,27 @@ def closed_quarter_snapshot(state: dict[str, Any], current_quarter: str) -> tupl
     return quarter, state["latest"][quarter]
 
 
+def quarterly_review_from_env(env: Callable[..., str]) -> Callable[[str], dict[str, Any]] | None:
+    """MT-6 through the consultation owner; None (no review) when it is not configured."""
+    if not (env("PANTHEON_CONSULTATION_API_URL", "") or env("CONSULTATION_SERVICE_TOKEN", "")):
+        return None
+    tenant = env("PANTHEON_TENANT_ID", "default")
+    chair = env("PERSONA_EVALUATOR_MEETING_CHAIR", "persona-evaluator-agent")
+
+    def review(quarter: str) -> dict[str, Any]:
+        from services.consultation.client import ConsultationServiceClient
+        from services.persona.meeting_triggers import convene_quarterly_review
+        client = ConsultationServiceClient(tenant_id=tenant, service_actor=f"persona:{chair}")
+        return convene_quarterly_review(
+            tenant=tenant, quarter=quarter, chair_persona_id=chair, reader=client.get_meeting,
+            opener=lambda **kw: client.open_persona_meeting(tenant_id=tenant, **kw))
+    return review
+
+
 def paper_cycle_once(
     *, store: Store, bff_url: str, bff_headers: dict[str, str], persona_url: str, persona_token: str,
     tenant: str, paper_pool_id: str, fetch: Callable[..., Any] = _http, now: Callable[[], float] = time.time,
+    quarterly_review: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """At quarter close ask the BFF/Capital owner for the governed paper allocation cycle (once per quarter).
 
@@ -711,6 +729,20 @@ def paper_cycle_once(
             health.setdefault(rec["persona_id"], {}).setdefault("recommendation_inputs", []).append({
                 "action_id": rec["action_id"], "recommendation_id": rec["recommendation_id"],
                 "ranking_snapshot_id": snapshot_id, "evidence_ref_ids": rec["evidence_ref_ids"]})
+    review = None
+    if quarterly_review is not None:
+        # MT-6 is convened before the allocation run; its minutes ride along as evidence on every persona's
+        # factors. The allocation keeps its own gates: a refused or unavailable review is recorded, not fatal.
+        try:
+            review = quarterly_review(quarter)
+        except Exception as exc:
+            review = {"status": "unavailable", "quarter": quarter, "reason": type(exc).__name__}
+        if review.get("status") == "pending":
+            return {"status": "waiting_for_quarterly_review", "quarter": quarter,
+                    "meeting_id": review.get("meeting_id"), "at": at}
+        for persona_id in list(health) or list(saved.get("paper_persona_ids") or []):
+            health.setdefault(persona_id, {})["quarterly_review"] = {
+                k: review[k] for k in ("status", "meeting_id", "evidence_ref", "reason") if k in review}
     body = {"authority_mode": PAPER_CYCLE_MODE, "quarter": quarter, "ranking_snapshot_id": snapshot_id,
             "capital_pool_id": paper_pool_id, "pool_health": health}
     headers = {**bff_headers, "X-Tenant-Id": tenant, "Idempotency-Key": f"paper-cycle:{tenant}:{quarter}:{paper_pool_id}"}
@@ -721,6 +753,8 @@ def paper_cycle_once(
                   "rebalance_id": data["rebalance"]["rebalance_id"], "replayed": bool(data.get("replayed")), "at": at}
         reductions = [r for r in saved.get("items") or [] if r.get("action_id") == "reduce_capital_access"]
         record["recommendation_ids"] = [r["recommendation_id"] for r in reductions]
+        if review is not None:
+            record["quarterly_review"] = review
     except Exception as exc:
         record = {"status": "degraded", "reason": f"paper allocation cycle failed: {exc}", "quarter": quarter,
                   "ranking_snapshot_id": snapshot_id, "at": at}
@@ -1149,6 +1183,7 @@ def main() -> None:
             persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
             persona_token=persona_token, tenant=env("PANTHEON_TENANT_ID", "default"),
             paper_pool_id=env("PERSONA_EVALUATOR_PAPER_POOL_ID", ""),
+            quarterly_review=quarterly_review_from_env(env),
         )
         store.update(lambda s: s.update(last_paper_cycle=paper_cycle))
         print(json.dumps({"paper_cycle": paper_cycle}), flush=True)
