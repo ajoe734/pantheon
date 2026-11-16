@@ -1204,3 +1204,128 @@ def test_daily_cycle_declares_market_regime_standing_question_with_active_record
     finally:
         hs.set_hindsight_client(None)
 
+
+def test_daily_cycle_convenes_mt5_once_on_governed_regime_transition_and_skips_repeated_missing_or_proposed(
+    system, monkeypatch
+):
+    controller, state, owner, pool = system
+    two = _add_second_persona(state, owner, pool)
+    one = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    calls = []
+    _meeting_controller(
+        controller,
+        lambda **kw: calls.append(kw) or {"meeting_id": f"m-{len(calls)}", "status": "convened"},
+        weekday=5,
+    )
+
+    sessions_cfg = {
+        "2026-11-12": {"macro": "expansion", "vol": "low", "trend": "up", "state": "active", "model_status": "approved"},
+        "2026-11-13": {"macro": "slowdown", "vol": "high", "trend": "up", "state": "active", "model_status": "approved"},
+        "2026-11-16": {"macro": "slowdown", "vol": "high", "trend": "down", "state": "active", "model_status": "approved"},
+        "2026-11-17": {"macro": "contraction", "vol": "low", "trend": "up", "state": "proposed", "model_status": "candidate"},
+    }
+    current_session = {"value": "2026-11-12"}
+    monkeypatch.setattr(regime_consumer, "session_for_run", lambda _run: current_session["value"])
+
+    def transport(method, path, body=None):
+        sess = current_session["value"]
+        cfg = sessions_cfg[sess]
+        if method == "POST" and path == "/api/registry/regime/evaluate":
+            return 200, {"market": "TW", "session": sess, "sets": [{"model_status": cfg["model_status"]}]}
+        if method == "GET" and path.startswith("/api/registry/regime/strategies/"):
+            sid = path.split("/")[5]
+            axis = "volatility" if sid == "momentum" else "trend"
+            horizon = "short" if sid == "momentum" else "medium"
+            ax_state = cfg["vol"] if sid == "momentum" else cfg["trend"]
+            cls = (
+                ("low_volatility" if ax_state == "low" else "high_volatility")
+                if sid == "momentum"
+                else ("trending_up" if ax_state == "up" else "trending_down")
+            )
+            return 200, {
+                "regime_id": f"regime:TW:{sid}:{sess}:set1:r1",
+                "strategy_id": sid,
+                "state": cfg["state"],
+                "model_status": cfg["model_status"],
+                "regime_class": cls,
+                "confidence": 0.85,
+                "feature_snapshot": {
+                    "profile": {"primary_axis": axis, "horizon": horizon},
+                    "axes": {
+                        axis: {"available": True, "state": ax_state, "horizon": horizon},
+                        "macro": {"available": True, "state": cfg["macro"], "as_of_session": sess[:7]},
+                    },
+                    "macro_environment": cfg["macro"],
+                },
+            }
+        if method == "GET" and path.startswith("/api/registry/regime/market-state/TW/"):
+            return 200, {
+                "market": "TW",
+                "session": sess,
+                "market_states": [
+                    {
+                        "market_state_id": f"TW:{sess}:set1:r1",
+                        "market": "TW",
+                        "session": sess,
+                        "model_set_version": "set1",
+                        "model_status": cfg["model_status"],
+                        "revision": 1,
+                        "state": "proposed" if cfg["state"] == "proposed" else "current",
+                        "axes": {
+                            "volatility": {"short": {"available": True, "state": cfg["vol"], "horizon": "short"}},
+                            "trend": {"medium": {"available": True, "state": cfg["trend"], "horizon": "medium"}},
+                            "macro": {"available": True, "state": cfg["macro"], "as_of_session": sess[:7]},
+                        },
+                    }
+                ],
+            }
+        raise AssertionError((method, path))
+
+    controller.owners.regime_transport = transport
+
+    # Session 1 (2026-11-12): baseline governed observation, no transition yet
+    c1 = controller.consume_run(one, "job-1", {**run(1), "runId": "r-s1-one"})["persona_cycle"]
+    assert not [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert {"meeting_type": "MT-5", "reason": "no_regime_transition"} in c1["meetings"]["not_fired"]
+
+    # Session 2 (2026-11-13): macro expansion->slowdown and momentum volatility low->high -> MT-5 convened once
+    current_session["value"] = "2026-11-13"
+    c2_one = controller.consume_run(one, "job-1", {**run(2), "runId": "r-s2-one"})["persona_cycle"]
+    mt5_calls = [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert len(mt5_calls) == 1
+    assert any(c["meeting_type"] == "MT-5" for c in c2_one["meetings"]["convened"])
+    cf = mt5_calls[0]["case_file"]
+    assert set(cf["regime_records"]) == {"momentum", "carry"}
+    assert cf["market_state"]["session"] == "2026-11-13"
+    assert set(cf["pool_exposures"]) == {"persona-cycle-test", "persona-cycle-two"}
+    assert cf["pool_exposures"]["persona-cycle-two"]["gross_exposure"] == 1.0
+    assert [p["persona_id"] for p in mt5_calls[0]["participants"]] == [
+        "persona-cycle-test",
+        "persona-cycle-two",
+        "persona-risk-officer",
+    ]
+
+    # Repeated read of the same transition in the same session by the second enrolled persona -> already_convened
+    c2_two = controller.consume_run(two, "job-2", {**run(2), "jobId": "job-2", "runId": "r-s2-two"})["persona_cycle"]
+    assert len([c for c in calls if c["meeting_type"] == "MT-5"]) == 1
+    assert any(
+        n.get("meeting_type") == "MT-5" and n.get("reason") == "already_convened"
+        for n in c2_two["meetings"]["not_fired"]
+    )
+
+    # Session 3 (2026-11-16): carry primary axis trend transitions up->down -> MT-5 convened once with rotated chair
+    current_session["value"] = "2026-11-16"
+    c3_one = controller.consume_run(one, "job-1", {**run(3), "runId": "r-s3-one"})["persona_cycle"]
+    mt5_calls = [c for c in calls if c["meeting_type"] == "MT-5"]
+    assert len(mt5_calls) == 2
+    assert any(c["meeting_type"] == "MT-5" for c in c3_one["meetings"]["convened"])
+    assert mt5_calls[1]["metadata"]["chair_persona_id"] == "persona-cycle-two"
+    assert mt5_calls[1]["metadata"]["regime_transitions"][0]["strategy_id"] == "carry"
+
+    # Session 4 (2026-11-17): proposed/candidate records only -> never convenes MT-5
+    current_session["value"] = "2026-11-17"
+    c4_one = controller.consume_run(one, "job-1", {**run(4), "runId": "r-s4-one"})["persona_cycle"]
+    assert len([c for c in calls if c["meeting_type"] == "MT-5"]) == 2
+    assert {"meeting_type": "MT-5", "reason": "no_governed_regime_record"} in c4_one["meetings"]["not_fired"]
+
+
