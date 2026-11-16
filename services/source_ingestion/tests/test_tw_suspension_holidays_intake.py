@@ -96,7 +96,7 @@ def collector_files(tmp_path: Path, *, holidays=True, suspension=True, twse_page
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def pull(files, tmp_path, monkeypatch, source_id, *, max_records=2000):
+def pull(files, tmp_path, monkeypatch, source_id, *, max_records=20000):
     """Production pull entry point (execute_provider_owned_adapter) over a collector bundle tree."""
     class _Transport(BundleTransport):
         def read(self, relative_path: str, *, max_bytes: int) -> bytes:
