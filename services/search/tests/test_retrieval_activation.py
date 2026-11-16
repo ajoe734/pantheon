@@ -277,8 +277,7 @@ def test_source_completion_surfaces_embedding_unavailable_as_503_then_recovers(a
 
 
 def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_factory, monkeypatch):
-    # Retried callers (timed-out scheduler restarts, ingest completion) must not start duplicate
-    # embedding runs over the same unrecorded objects while an earlier run is still in flight.
+    # Retried callers must neither start nor queue a duplicate run while one is in flight.
     import threading
     import time
     from services.search import main as search_main
@@ -309,8 +308,9 @@ def test_concurrent_refresh_callers_never_run_the_pipeline_concurrently(app_fact
         threads = [threading.Thread(target=call) for _ in range(3)]
         [t.start() for t in threads]
         [t.join() for t in threads]
+    # Single-flight: callers arriving during a run get a prompt in_progress answer, not a second run.
     assert statuses == [200, 200, 200]
-    assert state["runs"] == 3 and state["max_active"] == 1
+    assert state["runs"] == 1 and state["max_active"] == 1
 
 
 def test_pg_indexed_document_states_honor_inactive_and_tenant():
