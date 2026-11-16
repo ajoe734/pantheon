@@ -64,10 +64,7 @@ def source(tmp_path, monkeypatch):
     store = LatestMarketSnapshotStore(log)
     app = FastAPI()
     app.include_router(create_ingest_operations_router(SimpleNamespace(
-        latest_market_snapshot_store=store, MARKET_DATA_STORAGE_ROOT=tmp_path / "store",
-        # The daily read goes through the active-universe projection; for this fixture the
-        # stored journal already holds every symbol, so the projection is a plain store read.
-        snapshot_universe=SimpleNamespace(snapshot_for_request=lambda symbol: store.get(symbol, "tw_price_daily")))))
+        latest_market_snapshot_store=store, MARKET_DATA_STORAGE_ROOT=tmp_path / "store")))
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

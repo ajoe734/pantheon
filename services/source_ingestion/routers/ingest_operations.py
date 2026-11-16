@@ -167,8 +167,9 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 detail={"code": "unsupported_snapshot_frequency", "frequency": frequency, "detail": str(exc)},
             ) from exc
         try:
-            if dataset == DAILY_SNAPSHOT_DATASET:
-                snapshot = runtime.snapshot_universe.snapshot_for_request(symbol)
+            universe = getattr(runtime, "snapshot_universe", None)
+            if dataset == DAILY_SNAPSHOT_DATASET and universe is not None:
+                snapshot = universe.snapshot_for_request(symbol)
             else:
                 snapshot = runtime.latest_market_snapshot_store.get(symbol, dataset)
         except (MarketSnapshotStateError, RequirementStateError) as exc:
