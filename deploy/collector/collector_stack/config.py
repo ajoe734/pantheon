@@ -57,6 +57,12 @@ EXCHANGE_WEBSITE_SOURCE_IDS = frozenset(
         "collector-tw-tpex-price-history",
     }
 )
+EXCHANGE_SURVIVORSHIP_SOURCE_IDS = frozenset(
+    {
+        "collector-tw-trading-holidays",
+        "collector-tw-trading-suspension",
+    }
+)
 DISABLED_BY_BUILD_TOKENS = frozenset({"yahoo", "cnyes", "anue"})
 DROPPED_SOURCE_IDS = frozenset({"collector-tw-tpex-flows"})
 
@@ -219,6 +225,7 @@ class CollectorConfig:
     sources: Mapping[str, SourceFetchPolicy]
 
     def get_source(self, source_id: str) -> SourceFetchPolicy:
+        _ensure_survivorship_spiders_registered()
         if source_id in DROPPED_SOURCE_IDS or source_id in self.dropped_sources:
             raise CollectorConfigError(
                 f"source {source_id!r} was dropped per DEV_PLAN §2 (uses TPEx OpenAPI directly)"
@@ -432,6 +439,15 @@ def validate_collector_config(
                 raise CollectorConfigError(
                     f"source {source_id} backfill_page_granularity must be 'per_date_all_stocks', got {granularity!r}"
                 )
+        if source_id in EXCHANGE_SURVIVORSHIP_SOURCE_IDS:
+            if entry.get("max_connections") != 1 or max_connections != 1:
+                raise CollectorConfigError(
+                    f"source {source_id} must set max_connections=1 (single connection for exchange websites)"
+                )
+            if min_interval < 5.0:
+                raise CollectorConfigError(
+                    f"source {source_id} min_interval_seconds must be >= 5.0 (at most 1 request every 5 seconds)"
+                )
 
         cadence = str(entry.get("cadence") or "").strip()
         cadence_seconds = int(entry.get("cadence_seconds") or 86400)
@@ -477,6 +493,34 @@ def validate_collector_config(
     )
 
 
+def _ensure_survivorship_spiders_registered() -> None:
+    import sys
+
+    runner_mod = sys.modules.get("collector_stack.runner")
+    if runner_mod is None:
+        return
+    runner_cls = getattr(runner_mod, "CollectorRunner", None)
+    if runner_cls is None or getattr(runner_cls, "_survivorship_spiders_registered", False):
+        return
+    orig_build = runner_cls.build_collector
+
+    def _build_collector(self: Any, policy: SourceFetchPolicy) -> Any:
+        sid = policy.source_id
+        if sid in EXCHANGE_SURVIVORSHIP_SOURCE_IDS:
+            from .spiders import TwTradingHolidayScheduleSpider, TwTradingSuspensionSpider
+
+            cls = (
+                TwTradingHolidayScheduleSpider
+                if sid == TwTradingHolidayScheduleSpider.source_id
+                else TwTradingSuspensionSpider
+            )
+            return cls(policy, transport=self.transport, contact_user_agent=self.config.contact_user_agent)
+        return orig_build(self, policy)
+
+    runner_cls.build_collector = _build_collector  # type: ignore[method-assign]
+    runner_cls._survivorship_spiders_registered = True  # type: ignore[attr-defined]
+
+
 def load_collector_config(
     path: Path | str = DEFAULT_POLICY_PATH,
     *,
@@ -484,6 +528,7 @@ def load_collector_config(
 ) -> CollectorConfig:
     """Load and validate fetch-policy.json from disk."""
 
+    _ensure_survivorship_spiders_registered()
     policy_path = Path(path)
     raw = json.loads(policy_path.read_text(encoding="utf-8"))
     return validate_collector_config(raw, env=env)

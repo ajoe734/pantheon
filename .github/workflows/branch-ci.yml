@@ -296,9 +296,10 @@ jobs:
         env:
           SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
-          SOURCE_INGEST_DATA_DIR="$(mktemp -d)"
-          export SOURCE_INGEST_DATA_DIR
-          python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py
+          # Same tests as the former single serial pytest, run as 4 deterministic
+          # parallel shards (own data dir each). The runner fails if the shards
+          # run a different count than collected, or if one test exceeds 300s.
+          python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300
 
       # Unconditional (no path filter): these pin deploy guarantees (profiles,
       # mark source, state volumes) that went stale for days because no
@@ -880,6 +881,10 @@ jobs:
           # moves numpy/scipy forward (pip check is clean, mlflow needs numpy<3).
           "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
             -r services/research/vectorbt/requirements.txt
+          # Regime classifier libraries: same pins as the deployed research
+          # image (services/research/runtime-requirements.txt).
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
+            "statsmodels==0.15.0" "ruptures==1.1.10"
           "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite

@@ -391,6 +391,32 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_tx_daily",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_taifex_publication",
+        priority=48,
+        reason="TAIFEX TX and MTX daily price, settlement, volume and open interest are market-level Taiwan regime evidence; the official feed serves only the latest session so history accumulates forward only",
+        metadata={
+            "detail_level": "daily_index_futures_price_volume_open_interest",
+            "source_role": "official_reference",
+            "normalized_target": "taifex_tx_daily",
+            "symbol_scope": "market_context_no_symbol_filter",
+            "storage_targets": [
+                "raw/taifex/tx_daily",
+                "normalized/taifex_tx_daily",
+                "features/taifex_market_tx_daily",
+            ],
+            "raw_storage_policy": {
+                "compression": "gzip",
+                "retention_days": 2555,
+                "partition": "raw/taifex/tx_daily/date=YYYY-MM-DD/",
+            },
+            "archive_behavior": "skip_symbol_archive_detail",
+            "repair_override_required": True,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="tw-finmind-broker-bulk-parquet",
         dataset="tw_broker_trading_daily_backfill",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),

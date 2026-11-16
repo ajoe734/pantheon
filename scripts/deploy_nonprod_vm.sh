@@ -955,6 +955,8 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
+    command_prefix+=" SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}")"
+    command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_INGEST_MAX_RECORDS:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
     command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
@@ -1148,6 +1150,8 @@ ssh_bash() {
       SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" \
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
       SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+      SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}" \
+      SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-}" \
       bash -s
       return $?
     fi
@@ -1446,7 +1450,7 @@ PY
   # Real official-source pulls plus durable/index readback can exceed the
   # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
   # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
-  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 300 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 300 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-taifex-futures-options-chip" && -z "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -2530,7 +2534,8 @@ for k in ("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS", "SOURCE_INGEST_CONTROLLER_
 cmd = ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml"]
 if action == "bounded":
     allowed_hosts = os.environ.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") or "openapi.twse.com.tw,www.tpex.org.tw"
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull"})
+    max_records = (os.environ.get("SOURCE_INGEST_MAX_RECORDS") or env.get("SOURCE_INGEST_MAX_RECORDS") or "100").strip()
+    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull", "SOURCE_INGEST_MAX_RECORDS": max_records})
     if arg:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = arg
     bounded_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET") or ""
@@ -2816,7 +2821,7 @@ RECOVER_DLQ_PY
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
   case "${connector_id}:${dataset}" in
-    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip)
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
       return 0 ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
@@ -3261,8 +3266,8 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
   SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
   SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" \
-  SOURCE_INGEST_MAX_RECORDS="100"
-  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET
+  SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
+  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS SOURCE_INGEST_MAX_RECORDS
   validate_source_refresh_profile
   BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
   write_bounded_refresh_outcome() {
@@ -3550,7 +3555,7 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${bounded_concurrency}" \
-    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \

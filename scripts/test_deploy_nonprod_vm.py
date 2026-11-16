@@ -3939,3 +3939,135 @@ def test_untagged_image_removal_wired_after_protection_and_no_forbidden_prunes()
     removal = _prune_shell_function("remove_dev_untagged_unreferenced_images_for_build")
     assert "docker rmi -f" not in removal and "--force" not in removal
     assert "volume prune" not in source
+
+
+def test_tx_daily_admission_is_exact_and_does_not_widen_the_ssf_profile():
+    hosts = 'openapi.taifex.com.tw,www.taifex.com.tw'
+    assert _chip_admission('tw-taifex-tx-daily', 'taifex_tx_daily', hosts).returncode == 0
+    for dataset in ('taifex_ssf_contracts', 'taifex_futures_chip', 'tw_price_daily', ''):
+        assert _chip_admission('tw-taifex-tx-daily', dataset, hosts).returncode != 0
+    assert _chip_admission('tw-taifex-futures-options-chip', 'taifex_tx_daily', hosts).returncode != 0
+    assert 'tw-taifex-tx-daily:taifex_tx_daily' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+
+
+def test_refresh_only_ssh_and_local_forward_timeout_and_max_records() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    ssh_start = source.index('  if [[ "${remote_component}" == "refresh-only" ]]; then')
+    ssh_block = source[ssh_start : source.index("\n  else\n", ssh_start)]
+    assert 'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}")' in ssh_block
+    assert 'SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_INGEST_MAX_RECORDS:-}")' in ssh_block
+
+    local_start = source.index('    if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then')
+    local_block = source[local_start : source.index("\n    fi\n", local_start) + 7]
+    assert 'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}"' in local_block
+    assert 'SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-}"' in local_block
+
+    # Execute both forwarding blocks with caller-supplied values.
+    ssh_harness = (
+        "set -euo pipefail\n"
+        "shell_quote() { printf '%q' \"$1\"; }\n"
+        "remote_component=refresh-only\n"
+        "remote_output=''\n"
+        "DEPLOY_ENV=dev\n"
+        + ssh_block
+        + "\nfi\n"
+        + 'eval "${command_prefix% bash -s} python3 -c \'import json,os; print(json.dumps([os.environ.get(\\\"SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS\\\"), os.environ.get(\\\"SOURCE_INGEST_MAX_RECORDS\\\")]))\'"\n'
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": "300",
+        "SOURCE_INGEST_MAX_RECORDS": "500",
+    }
+    ssh_res = subprocess.run(["bash", "-c", ssh_harness], env=env, capture_output=True, text=True, check=False)
+    assert ssh_res.returncode == 0, ssh_res.stderr
+    assert json.loads(ssh_res.stdout.strip()) == ["300", "500"]
+
+    local_harness = (
+        "set -euo pipefail\n"
+        "remote_component=refresh-only\n"
+        "DEV_DEPLOY_SSH_HOST=''\n"
+        "run_local() {\n"
+        + local_block
+        + "\n}\n"
+        + "run_local <<'EOF'\n"
+        + 'printf "%s|%s\\n" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}" "${SOURCE_INGEST_MAX_RECORDS}"\n'
+        + "EOF\n"
+    )
+    local_res = subprocess.run(["bash", "-c", local_harness], env=env, capture_output=True, text=True, check=False)
+    assert local_res.returncode == 0, local_res.stderr
+    assert local_res.stdout.strip() == "300|500"
+
+
+@pytest.mark.parametrize(
+    ("outer_timeout", "expected_controller_timeout"),
+    [(30, "30"), (120, "120"), (240, "240"), (300, "300"), (1800, "300")],
+)
+def test_validate_source_refresh_profile_caps_controller_timeout_at_300s(
+    outer_timeout: int, expected_controller_timeout: str
+) -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("validate_source_refresh_profile() {")
+    end = source.index("\n}\n\n# One required scheduled/async worker", start) + 2
+    script = (
+        'set -euo pipefail\nerror() { echo "$*" >&2; exit 1; }\n'
+        + source[start:end]
+        + "\nexport PANTHEON_DEV_COMPOSE_PROFILES=root,source-ingest-scheduler\n"
+        "export PANTHEON_EXTERNAL_EGRESS=allowlist\n"
+        "export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw,www.tpex.org.tw\n"
+        "export SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull\n"
+        "export SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof\n"
+        "export SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no\n"
+        "export SOURCE_INGEST_CONTROLLER_MAX_TICKS=1\n"
+        "export SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1\n"
+        "export SOURCE_INGEST_MAX_RECORDS=500\n"
+        "export SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-official-twse-margin-balances\n"
+        "export SOURCE_INGEST_BOUNDED_DATASET=tw_margin_short_balance\n"
+        f"export SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS={outer_timeout}\n"
+        "validate_source_refresh_profile >/dev/null\n"
+        'printf "%s\\n" "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected_controller_timeout
+
+
+@pytest.mark.parametrize("caller_max_records,expected_max_records", [(None, "100"), ("", "100"), ("500", "500")])
+def test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records(
+    tmp_path: Path, caller_max_records: str | None, expected_max_records: str
+) -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"' in source
+    assert source.count('SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"') >= 3
+
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    captured_up_env = tmp_path / "up_env.json"
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"img"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} img") echo sha256:aa ;;\n'
+        f'  *" up "*) python3 -c "import json,os; print(json.dumps({{\'max_records\': os.environ.get(\'SOURCE_INGEST_MAX_RECORDS\')}}))" > "{captured_up_env}" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        'esac\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps(["SOURCE_INGEST_MAX_RECORDS=100"]), encoding="utf-8")
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python(), encoding="utf-8")
+    run_env = {"PATH": f"{fake}:{os.environ['PATH']}"}
+    if caller_max_records is not None:
+        run_env["SOURCE_INGEST_MAX_RECORDS"] = caller_max_records
+    proc = subprocess.run(
+        ["python3", str(script), str(env_file), "bounded", "sha256:aa", "2330.TW"],
+        capture_output=True,
+        text=True,
+        env=run_env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(captured_up_env.read_text(encoding="utf-8"))["max_records"] == expected_max_records

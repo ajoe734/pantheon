@@ -2554,6 +2554,7 @@ def _producer_proof_registration(
         backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
         max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
         round_trips=details.get("out_of_sample_round_trips"),
+        fill_convention=details.get("fill_convention"),
     )
     wire["evaluation_summary"] = summary
     _bind_backtest_run_gate_verdict(
@@ -2754,9 +2755,12 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
     def run_worker():
         rstore = get_store()
         template_run = _is_template_search_run(rstore.get_run(run_id) or {})
-        label = "Template search" if template_run else "Retrain"
+        regime_run = _is_regime_fit_run(rstore.get_run(run_id) or {})
+        label = "Template search" if template_run else ("Regime model fit" if regime_run else "Retrain")
         try:
-            if template_run:
+            if regime_run:
+                _execute_regime_fit(run_id, params)
+            elif template_run:
                 _execute_template_search(run_id, params)
             elif _evolution_action(params) == "retrain":
                 _execute_retrain(run_id, params)
@@ -2990,6 +2994,128 @@ def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
                 store.put_run(run)
                 store.append_event(event)
         _trigger_retrain_execution(run["run_id"], run["parameters"])
+
+
+# --- Regime classifier research (REGIME-RESEARCH-CLASSIFIER-20261115) ---
+# Fits and walk-forward validates the regime axis models over governed index/breadth/chip rows
+# and registers them as registry model_artifact entries (candidate, or approved for paper only
+# when validation passed). Runs as a normal Research run requested by the persona pool cycle,
+# like template search. Paper only; no language model; no placeholder history.
+_REGIME_FIT_ADAPTER = "regime_classifier_fit"
+
+
+def _is_regime_fit_run(run: Dict[str, Any]) -> bool:
+    # Recorded only by the authenticated request route below; dispatch_run rejects the adapter
+    # as unknown, so a caller-supplied run can never start this executor.
+    return (run.get("adapter") == _REGIME_FIT_ADAPTER
+            and (run.get("parameters") or {}).get("action_type") == "regime_classifier_fit")
+
+
+def _regime_store_root() -> Path:
+    explicit = os.getenv("RESEARCH_REGIME_STORE_ROOT") or os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT")
+    return Path(explicit or "/data/source-ingest/market_data_store")
+
+
+class _RegimeRegistryClient:
+    """Registry owner calls over the authenticated retrain transport (no direct store access)."""
+
+    def __init__(self, tenant_id: str) -> None:
+        self.tenant_id = tenant_id
+        self.base = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+
+    def _call(self, step: str, method: str, path: str, body: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Any:
+        return _retrain_call(step=step, service="registry", method=method, tenant_id=self.tenant_id,
+                             token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=self.base + path, body=body,
+                             extra_headers=headers)
+
+    def create_entry(self, payload: Dict[str, Any], *, idempotency_key: str) -> Any:
+        return self._call("register_regime_model", "POST", "/api/registry/entries", dict(payload),
+                          {"Idempotency-Key": idempotency_key})
+
+    def advance(self, registry_id: str, body: Dict[str, Any]) -> Any:
+        return self._call("advance_regime_model", "POST",
+                          f"/api/registry/entries/{urllib.parse.quote(registry_id, safe='')}/advance", dict(body))
+
+
+def _execute_regime_fit(run_id: str, params: Dict[str, Any]) -> None:
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run.update(status="running", updated_at=utc_now())
+    store.put_run(run)
+    tenant_id = str(params.get("tenant_id") or "")
+    if not tenant_id:
+        raise _RetrainFailure("resolve_tenant", "run parameters carry no tenant_id")
+    from services.research.regime.features import load_governed_observations
+    from services.research.regime.registration import run_regime_research
+
+    root = _regime_store_root()
+    if not root.is_dir():
+        raise _RetrainFinished("unavailable", "governed_regime_data_missing:store_root_not_found")
+    observations, notes = load_governed_observations(root)
+    pinned = os.environ.get("RESEARCH_REGIME_TRUSTED_NOW")
+    decision_time = pinned or datetime.now(timezone.utc).isoformat()
+    try:
+        result = run_regime_research(observations, decision_time=decision_time, client=_RegimeRegistryClient(tenant_id),
+                                     source_run_id=run_id)
+    except _OwnerRejection as exc:
+        raise _RetrainFinished("registry_rejected", f"HTTP {exc.status}: {exc.detail}") from None
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run["regime_fit"] = {**result, "data_notes": notes}
+    store.put_run(run)
+    reason = "approved:" + ",".join(result["approved"]) if result["approved"] else (
+        "candidates_only" if result["status"] == "completed" else "governed_regime_data_unavailable")
+    raise _RetrainFinished("regime_fit_" + result["status"], reason)
+
+
+@app.post("/api/research/regime-models/fit", status_code=202)
+def request_regime_model_fit(
+    body: Dict[str, Any] = Body(default_factory=dict),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    """Queue a regime model fit as a normal Research run; idempotent per tenant, market and day."""
+    market = str(body.get("market") or "TW")
+    if market != "TW":
+        raise HTTPException(status_code=422, detail="only the TW market is supported")
+    demand_id = body.get("demand_id")
+    if demand_id is not None and not any(
+            row["demand_id"] == demand_id for row in research_demand_store.list(tenant_id, status="open")):
+        raise HTTPException(status_code=404, detail="research demand is not open for this tenant")
+    day = utc_now()[:10]
+    key = f"regime-fit:{tenant_id}:{market}:{day}"
+    with _plan_progress_lock:
+        runs = store.list_runs()
+        active = next((r for r in runs if _is_regime_fit_run(r) and r.get("tenant_id") == tenant_id
+                       and r.get("idempotency_key") == key and r.get("status") in ACTIVE_STATUSES), None)
+        if active:
+            return {"run_id": active["run_id"], "status": active["status"], "replayed": True}
+        if sum(r.get("status") in ACTIVE_STATUSES for r in runs) >= MAX_ACTIVE_RUNS:
+            raise HTTPException(status_code=429, detail="research run capacity reached; retry later")
+        timestamp = utc_now()
+        task = create_task(CreateTaskBody(
+            title="Fit regime classifier models for " + market,
+            objective="Fit and walk-forward validate regime axis models over governed data; register as model_artifact",
+            actor_id="persona-pool-cycle", constraints={"tenant_id": tenant_id},
+            idempotency_key=key + ":" + timestamp))
+        run_id = _next_id("rrun", timestamp, {r["run_id"] for r in runs})
+        event = _event(timestamp, "run_queued", "Regime model fit queued.", "persona-pool-cycle", run_id, [])
+        run = {"id": run_id, "run_id": run_id, "task_id": task["task_id"], "adapter": _REGIME_FIT_ADAPTER,
+               "requested_mode": "regime_research", "dispatch_mode": "regime_research",
+               "production_activation": "disabled", "status": "queued", "tenant_id": tenant_id,
+               "created_by": "persona-pool-cycle", "paper_only": True, "attempt_number": 1, "parent_run_id": None,
+               "root_run_id": run_id, "idempotency_key": key,
+               "parameters": {"action_type": "regime_classifier_fit", "tenant_id": tenant_id, "market": market,
+                              **({"demand_id": demand_id} if demand_id else {})},
+               "created_at": timestamp, "updated_at": timestamp, "events": [event],
+               "artifact_refs": [], "proposal_refs": [], "registry_writebacks": []}
+        task.update(status="running", updated_at=timestamp)
+        store.put_task(task)
+        store.put_run(run)
+        store.append_event(event)
+    _trigger_retrain_execution(run["run_id"], run["parameters"])
+    return {"run_id": run["run_id"], "status": "queued", "replayed": False}
 
 
 def _refresh_collector_query_plan(tenant_id: str) -> None:

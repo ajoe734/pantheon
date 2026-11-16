@@ -143,8 +143,9 @@ services:
       HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_RETAIN_EXTRACTION_MODE: chunks
       HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "false"
-      # No background refresh or async retain until the LLM layers are enabled.
-      HINDSIGHT_API_WORKER_ENABLED: "false"
+      # Chunks mode and no consolidation stay the deployed defaults. With the bridge configured the memory service
+      # switches each bank to verbatim retain + auto-consolidation, so the background worker runs only then.
+      HINDSIGHT_API_WORKER_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       HINDSIGHT_API_RETAIN_LLM_PROVIDER: ${HINDSIGHT_RETAIN_LLM_PROVIDER:-none}
       HINDSIGHT_API_RETAIN_LLM_MODEL: ${HINDSIGHT_RETAIN_LLM_MODEL:-}
       # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
@@ -555,10 +556,30 @@ services:
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
+      # Hypothesis card admission path (design section 6A). Every value below is required: an unset
+      # address or credential disables the card path with a readable reason on the worker health file.
+      PANTHEON_GOVERNANCE_URL: ${PANTHEON_GOVERNANCE_URL:-http://governance:8082}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-http://research-orchestrator-svc:8101}
+      PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
+      RESEARCH_GOVERNANCE_PROPOSER_ID: ${RESEARCH_GOVERNANCE_PROPOSER_ID:-}
+      RESEARCH_GOVERNANCE_GATE_ID: ${RESEARCH_GOVERNANCE_GATE_ID:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_PROPOSER_TOKEN}
+      RESEARCH_GOVERNANCE_GATE_TOKEN: ${RESEARCH_GOVERNANCE_GATE_TOKEN:-}
+      RESEARCH_GOVERNANCE_GATE_TOKEN_FILE: ${RESEARCH_GOVERNANCE_GATE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_GATE_TOKEN}
+      RESEARCH_REGISTRY_SERVICE_TOKEN: ${RESEARCH_REGISTRY_SERVICE_TOKEN:-}
+      RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN}
+      RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
+      RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
+      - bff-data:/data/bff:ro
     depends_on:
       research-orchestrator-svc:
         condition: service_healthy
@@ -938,6 +959,8 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
+      # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
+      RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
@@ -2208,8 +2231,8 @@ services:
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
       PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
-      # Reflect needs an operator-chosen Hindsight LLM provider; off until then.
-      PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED: ${PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED:-false}
+      # LLM layers (verbatim retain, consolidation, standing questions) follow the OpenClaw memory-index bridge switch.
+      PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       # memory.retrieve policy is evaluated by the canonical governance
       # service (POST /api/governance/authz/check, which takes no bearer).
       # Without this, retrieve denies with governance_authz_unconfigured.
