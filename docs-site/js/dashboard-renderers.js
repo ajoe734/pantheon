@@ -6,6 +6,8 @@ import {
 import {
   actorRunsAutoWorkers,
   buildActiveWorkRows,
+  bundleRuntimeSummary,
+  bundleWorkerLinks,
   buildDependencyRunway,
   buildProviderPauses,
   buildTruthMismatches,
@@ -27,6 +29,7 @@ import {
   terminalTaskStatus,
   timeAgo,
   titleCase,
+  liveOrBundleMismatches,
   truncate,
   workerRoleLabel,
   workerStartedAt,
@@ -153,7 +156,7 @@ export function renderSupervisorCockpit(status, orchState, approvalQueue, dashbo
   if (!summaryEl || !nextEl || !runtimeEl) return;
 
   const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
-  const runtime = dashboardBundle?.runtime_summary || {};
+  const runtime = bundleRuntimeSummary(orchState, dashboardBundle);
   const pauses = buildProviderPauses(orchState);
   const approvals = approvalQueue?.pending || [];
   const supervisor = orchState?.supervisor || {};
@@ -798,8 +801,8 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
   }
 
   const truth = buildTruthMismatches(status, orchState, null, dashboardBundle?.dispatch_policy);
-  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
-  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
+  const bundleLinks = bundleWorkerLinks(orchState, dashboardBundle);
+  const mismatchItems = liveOrBundleMismatches(truth, orchState, dashboardBundle);
   const mismatchByTask = new Map();
   for (const mismatch of mismatchItems) {
     if (!mismatch.task_id) continue;
@@ -2303,7 +2306,7 @@ export function renderAlertStrip(status, orchState, planningState, approvalQueue
   const truth = buildTruthMismatches(status, orchState, approvalQueue, dashboardBundle?.dispatch_policy);
   const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open");
   const approvalPending = (approvalQueue?.pending || []).length;
-  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
+  const mismatchItems = liveOrBundleMismatches(truth, orchState, dashboardBundle);
 
   for (const pause of pausedProviders) {
     const pauseReason = summarizePausedReason(pause.summary || pause.reason, pause.provider);
@@ -2580,7 +2583,7 @@ export function renderTruthMismatches(status, orchState, approvalQueue, dashboar
   if (!container) return;
   container.innerHTML = "";
   const truth = buildTruthMismatches(status, orchState, approvalQueue, dashboardBundle?.dispatch_policy);
-  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
+  const mismatchItems = liveOrBundleMismatches(truth, orchState, dashboardBundle);
 
   if (!mismatchItems.length) {
     container.innerHTML = `

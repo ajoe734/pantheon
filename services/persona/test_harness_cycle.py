@@ -312,3 +312,16 @@ def test_evaluator_tool_profile_draft_becomes_a_patch_record_with_resolving_rank
         checked = client.post(f"{ROOT}/patches/{patch_id}/precheck", headers=persona_headers)
     assert checked.status_code == 200, checked.text
     assert checked.json()["status"] == "previewed"
+
+
+@pytest.mark.parametrize("decision_status,params,expected", [
+    ("meeting_opened", {"meeting_type": "MT-2"}, "meeting_opened"),       # answered by the meeting triggers
+    ("meeting_refused", {"meeting_type": "MT-2"}, "meeting_refused"),
+    ("requires_owner_gate", {"patch_id": "none"}, "requires_owner_gate"),  # gate-panel ask: loop behaviour unchanged
+])
+def test_meeting_consult_request_decision_is_not_overwritten_by_the_harness_loop(env, decision_status, params, expected):
+    packet = {"packet_id": "ooda-cycle-2", "persona_cycle": {
+        "output": {"proposals": [{"kind": "consult_request", "reason": "r", "evidence_refs": [], "parameters": params}]},
+        "decisions": [{"kind": "consult_request", "status": decision_status, "reason": "meeting_reason"}]}}
+    env.loop.run(PERSONA, packet)
+    assert packet["persona_cycle"]["decisions"][0]["status"] == expected

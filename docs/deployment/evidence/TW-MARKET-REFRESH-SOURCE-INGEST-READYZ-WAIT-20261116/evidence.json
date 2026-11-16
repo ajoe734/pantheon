@@ -1,0 +1,50 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TW-MARKET-REFRESH-SOURCE-INGEST-READYZ-WAIT-20261116",
+  "title": "Wait for source-ingest /readyz up to 180s across bounded refresh recreate and restore and preflight",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "hosted_behavior_claimed": false,
+  "delivery_scope": "Source-only: wait for source-ingest /readyz up to 180s (36 attempts x 5s delay, matching docker-compose start_period 120s plus retries) in scripts/deploy_nonprod_vm.sh manage_source_ingest_refresh_runtime for both bounded and restore actions and in execute_bounded_source_refresh_entrypoint before resolve_bounded_source_refresh_active_symbols and check_taiwan_refresh_preflight; raise .github/workflows/dev-tw-market-refresh.yml job timeout-minutes to 60 and Execute bounded Taiwan chip refresh timeout-minutes to 35; wrap non-blocking TAIFEX and FinMind deploy_nonprod_vm.sh invocations inside bash -c '... || exit 0' under run_with_dev_environment_lease.sh; add/update unit tests.",
+  "changes": [
+    "In scripts/deploy_nonprod_vm.sh manage_source_ingest_refresh_runtime, wait for ${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz via curl_with_retry with 36 attempts and 5s delay (--max-time 5 --connect-timeout 5) for both action == bounded and action == restore instead of skipping /readyz on bounded and timing out after 12x5s (60s) on restore.",
+    "In scripts/deploy_nonprod_vm.sh execute_bounded_source_refresh_entrypoint (refresh-only entrypoint), wait for ${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz via curl_with_retry with 36 attempts and 5s delay (--max-time 5 --connect-timeout 5) before resolve_bounded_source_refresh_active_symbols and check_taiwan_refresh_preflight.",
+    "In .github/workflows/dev-tw-market-refresh.yml, raise job refresh timeout-minutes from 45 to 60 and step Execute bounded Taiwan chip refresh timeout-minutes from 15 to 35, and wrap the non-blocking TAIFEX and FinMind deploy_nonprod_vm.sh invocations inside bash -c '... || exit 0' under .lease-controller/scripts/run_with_dev_environment_lease.sh so non-blocking failures never quarantine the shared lease heartbeat.",
+    "Updated and added unit tests in scripts/test_deploy_nonprod_vm.py and scripts/test_dev_tw_market_refresh_workflow.py covering bounded and restore /readyz 36x5 wait, preflight /readyz 36x5 wait, exit-safe non-blocking TAIFEX/FinMind steps under lease, and updated workflow timeouts (35m/60m)."
+  ],
+  "acceptance_status": {
+    "1": "met: scripts/deploy_nonprod_vm.sh manage_source_ingest_refresh_runtime waits for source-ingest /readyz with 36 attempts and 5s delay (180s matching docker-compose start_period 120s plus retries) for both bounded and restore actions",
+    "2": "met: scripts/deploy_nonprod_vm.sh execute_bounded_source_refresh_entrypoint (--refresh-only entrypoint) waits for source-ingest /readyz (36 attempts at 5s) before resolve_bounded_source_refresh_active_symbols and check_taiwan_refresh_preflight",
+    "3": "met: .github/workflows/dev-tw-market-refresh.yml sets job timeout-minutes to 60 and Execute bounded Taiwan chip refresh timeout-minutes to 35 and keeps non-blocking TAIFEX and FinMind refresh steps exit-safe inside run_with_dev_environment_lease.sh via bash -c '... || exit 0'",
+    "4": "met: unit tests in scripts/test_deploy_nonprod_vm.py and scripts/test_dev_tw_market_refresh_workflow.py cover bounded and restore /readyz 36x5 wait, preflight /readyz wait, exit-safe non-blocking lease execution, and updated workflow timeouts; evidence.json records exact commands and pass counts with hosted_behavior_claimed false"
+  },
+  "validation": [
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "pass_count": 1,
+      "result": "exit 0"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py",
+      "pass_count": 18,
+      "result": "18 passed in 6.72s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py scripts/test_deploy_nonprod_vm.py::test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight scripts/test_deploy_nonprod_vm.py::test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_and_restore",
+      "pass_count": 21,
+      "result": "21 passed in 24.73s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_source_ingest_deploy_diagnostics_contract.py -k \"workflow or taifex or regression\"",
+      "pass_count": 6,
+      "deselected_count": 30,
+      "result": "6 passed, 30 deselected in 30.08s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "pass_count": 154,
+      "skip_count": 2,
+      "result": "154 passed, 2 skipped in 200.27s"
+    }
+  ]
+}

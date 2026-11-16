@@ -516,7 +516,7 @@ def build_complete_ooda_packet(
     packet.observe.market_refs.append("dataset://qlib-twse-tpex-smoke-v1")
     _advance("observe", LoopStatus.OBSERVING)
 
-    packet.orient.regime_state_ref = "regime-state://tw-paper-neutral-001"
+    # No regime reference: the fixture has no stored RegimeState record, and none is invented.
     packet.orient.universe_selection_ref = "universe://twse-tpex-paper-top50-001"
     packet.orient.signal_inference_refs.append("signal-inference://qlib-lgbm-paper-001")
     packet.orient.allocation_proposal_refs.append("allocation-proposal://paper-zero-capital-001")

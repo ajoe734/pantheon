@@ -105,12 +105,14 @@ def stack(tmp_path, monkeypatch):
         response = clients[u.hostname].request(req.method, u.path + ("?" + u.query if u.query else ""),
                                                headers=dict(req.header_items()), content=req.data)
         content = response.content
+        status_code = response.status_code
         if (u.hostname, u.path) in control["response"]:
             content = json.dumps(control["response"][(u.hostname, u.path)]).encode()
-        if response.status_code >= 400:
-            raise HTTPError(req.full_url, response.status_code, "owner rejected", {}, io.BytesIO(content))
+            status_code = 200
+        if status_code >= 400:
+            raise HTTPError(req.full_url, status_code, "owner rejected", {}, io.BytesIO(content))
         result = io.BytesIO(content)
-        result.status = response.status_code
+        result.status = status_code
         return result
 
     monkeypatch.setattr("urllib.request.urlopen", transport)
@@ -285,3 +287,157 @@ def test_unconfigured_owners_and_credentials_never_fall_back(stack, monkeypatch)
         monkeypatch.delenv(name, raising=False)
     assert client.get(MEMORY + "?persona_id=persona-a", headers=headers()).json()["reason"] == "memory_owner_unconfigured"
     assert calls == []
+
+
+def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rounds(stack):
+    client, _, control, *_ = stack
+    control["response"][("consultation.test", "/api/consult/meetings")] = {
+        "items": [
+            {
+                "meeting_id": "mtg-a",
+                "meeting_type": "MT-3",
+                "status": "closed",
+                "outcome": "completed",
+                "chair_persona_id": "persona-a",
+                "participants": [
+                    {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
+                    {"persona_id": "agora-servant-alice", "role": "servant", "origin": "private_servant", "agora_user_id": "alice"},
+                ],
+                "round": 2,
+                "created_at": "2026-11-16T10:00:00Z",
+                "closed_at": "2026-11-16T10:05:00Z",
+            },
+            {
+                "meeting_id": "mtg-bob-private",
+                "meeting_type": "MT-1",
+                "status": "closed",
+                "outcome": "completed",
+                "chair_persona_id": "persona-a",
+                "convened_by": {"kind": "agora_user", "id": "bob"},
+                "participants": [
+                    {"persona_id": "agora-servant-bob", "role": "servant", "origin": "private_servant", "agora_user_id": "bob"},
+                ],
+                "round": 1,
+                "created_at": "2026-11-16T11:00:00Z",
+                "closed_at": "2026-11-16T11:05:00Z",
+            },
+        ],
+        "next_cursor": None,
+    }
+    meeting_detail = {
+        "meeting_id": "mtg-a",
+        "meeting_type": "MT-3",
+        "status": "closed",
+        "outcome": "completed",
+        "chair_persona_id": "persona-a",
+        "participants": [
+            {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
+            {"persona_id": "agora-servant-alice", "role": "servant", "origin": "private_servant", "agora_user_id": "alice"},
+        ],
+        "agenda": "Evaluate volatility breakout hypothesis",
+        "case_file_items": [
+            {"item_id": "cf-1", "kind": "hypothesis_card", "excerpt": "Shared fact", "relevance_scope": "committee"},
+            {"item_id": "cf-priv", "kind": "private_note", "excerpt": "Must not leak", "relevance_scope": "persona_private"},
+        ],
+        "pre_read": [
+            {"persona_id": "persona-a", "interpretation": "Committee-visible pre-read", "scope": "committee"},
+            {"persona_id": "agora-servant-alice", "interpretation": "Private servant note", "memory_scope": "private_user"},
+        ],
+        "rounds": [
+            {
+                "round": 1,
+                "positions": [
+                    {
+                        "label": "trading_momentum",
+                        "persona_id": "persona-a",
+                        "role": "chair",
+                        "style": "momentum",
+                        "stance": "support",
+                        "confidence": 0.82,
+                        "citations": ["cf-1"],
+                        "changed": False,
+                    },
+                    {
+                        "label": "servant_operator_guided",
+                        "persona_id": "agora-servant-alice",
+                        "role": "servant",
+                        "style": "operator-guided",
+                        "stance": "conditional",
+                        "confidence": 0.74,
+                        "citations": ["cf-1"],
+                        "changed": False,
+                    },
+                ],
+            },
+            {
+                "round": 2,
+                "positions": [
+                    {
+                        "label": "trading_momentum",
+                        "persona_id": "persona-a",
+                        "role": "chair",
+                        "style": "momentum",
+                        "stance": "support",
+                        "confidence": 0.85,
+                        "citations": ["cf-1"],
+                        "changed": False,
+                    },
+                    {
+                        "label": "servant_operator_guided",
+                        "persona_id": "agora-servant-alice",
+                        "role": "servant",
+                        "style": "operator-guided",
+                        "stance": "support",
+                        "confidence": 0.80,
+                        "citations": ["cf-1"],
+                        "changed": True,
+                    },
+                ],
+            },
+        ],
+        "synthesis": {
+            "proposals": [
+                {
+                    "proposal_id": "prop-unsponsored-a",
+                    "meeting_id": "mtg-a",
+                    "kind": "agora_candidate_decision",
+                    "sponsor_persona_id": None,
+                    "citations": ["cf-1"],
+                }
+            ],
+            "tally": {"support": 1.65, "oppose": 0.0},
+            "dissent_memo_id": None,
+            "outcome": "completed",
+        },
+        "writebacks": [{"persona_id": "persona-a", "entry_id": "wb-1"}],
+        "usage": {"calls": 5},
+    }
+    control["response"][("consultation.test", "/api/consult/meetings/mtg-a")] = meeting_detail
+    control["response"][("consultation.test", "/api/consult/meetings/mtg-bob-private")] = {
+        **meeting_detail,
+        "meeting_id": "mtg-bob-private",
+        "convened_by": {"kind": "agora_user", "id": "bob"},
+        "participants": [
+            {"persona_id": "agora-servant-bob", "role": "servant", "origin": "private_servant", "agora_user_id": "bob"},
+        ],
+    }
+
+    sessions = client.get(PANEL, headers=headers())
+    assert sessions.status_code == 200, sessions.text
+    items = sessions.json()["data"]
+    by_id = {item["session_id"]: item for item in items}
+    assert set(by_id) == {"panel-a", "mtg-a"}
+    assert by_id["panel-a"]["session_class"] == "gate_panel"
+    assert len(by_id["panel-a"]["rounds"]) == 1
+    assert by_id["mtg-a"]["session_class"] == "deliberative_meeting"
+    assert [r["round"] for r in by_id["mtg-a"]["rounds"]] == [1, 2]
+    assert "Must not leak" not in sessions.text
+    assert "Private servant note" not in sessions.text
+    assert by_id["mtg-a"]["private_items_withheld"] == 2
+    assert by_id["mtg-a"]["proposals"][0]["approval_path"] == "agora_candidate_decision"
+
+    detail = client.get(PANEL + "/mtg-a", headers=headers())
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["session_class"] == "deliberative_meeting"
+    assert len(detail.json()["data"]["rounds"]) == 2
+    assert client.get(PANEL + "/mtg-bob-private", headers=headers()).status_code == 404

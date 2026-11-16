@@ -367,6 +367,7 @@ _PERSONA_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _RESERVED_AGENT_IDS = frozenset({"main", STRUCTURED_AGENT_ID})
 COMMITTEE_VISIBLE_SCOPE = "persona_and_committee"
 COMMITTEE_MEMORY_LIMIT = 8
+MEETING_PRE_READ_LIMIT = 12
 
 
 class PanelAdmissionDenied(Exception):
@@ -564,6 +565,8 @@ def committee_visible_memory(
     retrieval: Mapping[str, Any] | None,
     persona_id: str,
     tenant_id: str | None = None,
+    *,
+    limit: int = COMMITTEE_MEMORY_LIMIT,
 ) -> list[dict[str, Any]]:
     """Keep only committee-visible hits; persona_private never enters a panel.
 
@@ -574,7 +577,11 @@ def committee_visible_memory(
     if not isinstance(retrieval, Mapping) or not tenant_id:
         return []
     retrieval = _tenant_bound_retrieval(retrieval, tenant_id)
-    hits, _rejected = normalize_retrieval_hits(retrieval, persona_id=persona_id)
+    hits, _rejected = normalize_retrieval_hits(
+        retrieval,
+        persona_id=persona_id,
+        max_hits=max(limit * 2, len(retrieval.get("hits") or [])),
+    )
     visible: list[dict[str, Any]] = []
     for hit in hits:
         if hit["type"] == "institutional" or (
@@ -582,7 +589,130 @@ def committee_visible_memory(
             and hit.get("relevance_scope") == COMMITTEE_VISIBLE_SCOPE
         ):
             visible.append(hit)
-    return visible[:COMMITTEE_MEMORY_LIMIT]
+    return visible[:limit]
+
+
+def _validate_meeting_turn(
+    request_payload: Mapping[str, Any],
+    persona_id: str,
+) -> dict[str, Any]:
+    """Validate deliberative persona_meeting turn invariants at the adapter boundary."""
+    meeting = (
+        request_payload.get("meeting")
+        if isinstance(request_payload.get("meeting"), Mapping)
+        else ((request_payload.get("metadata") or {}).get("meeting") or {})
+    )
+    if not isinstance(meeting, Mapping):
+        raise ContributionProviderError("persona_meeting metadata must be an object")
+
+    case = request_payload.get("case_file")
+    if isinstance(case, Mapping):
+        for group in (case.get("groups") or {}).values():
+            if not isinstance(group, Mapping):
+                continue
+            for item in group.get("items") or []:
+                if isinstance(item, Mapping) and (
+                    item.get("memory_layer") == "persona_private"
+                    or item.get("relevance_scope") == "persona_private"
+                ):
+                    raise ContributionProviderError(
+                        "private memory cannot enter a persona meeting case file"
+                    )
+
+    own_pre_read = meeting.get("own_pre_read")
+    if isinstance(own_pre_read, Mapping):
+        for entry in own_pre_read.get("entries") or []:
+            if isinstance(entry, Mapping) and (
+                entry.get("memory_layer") == "persona_private"
+                or entry.get("relevance_scope") == "persona_private"
+            ):
+                raise ContributionProviderError(
+                    "private memory cannot enter a persona meeting pre-read"
+                )
+
+    round_val = meeting.get("round", 1)
+    prior_positions = meeting.get("prior_round_positions")
+    if round_val == 1:
+        if prior_positions:
+            raise ContributionProviderError(
+                "round 1 must be independent and cannot include prior_round_positions"
+            )
+    elif round_val in (2, 3):
+        if not isinstance(prior_positions, list):
+            raise ContributionProviderError(
+                f"round {round_val} requires prior_round_positions list"
+            )
+        for pos in prior_positions:
+            if not isinstance(pos, Mapping):
+                raise ContributionProviderError(
+                    "prior_round_positions items must be objects"
+                )
+            if "persona_id" in pos or "participant_ref" in pos:
+                raise ContributionProviderError(
+                    "round 2/3 positions must be anonymised by role and style only; persona_id is forbidden"
+                )
+            if not str(pos.get("role") or "").strip() or not str(pos.get("style") or "").strip():
+                raise ContributionProviderError(
+                    "round 2/3 positions must be labelled with role and style"
+                )
+        if round_val == 3:
+            new_ev = meeting.get("new_evidence")
+            if not isinstance(new_ev, list) or not new_ev:
+                raise ContributionProviderError(
+                    "round 3 requires new evidence recorded by the chair"
+                )
+    return dict(meeting)
+
+
+def _meeting_persona_prompt(
+    payload: ConsultationContributionRequest,
+    persona_id: str,
+    meeting: Mapping[str, Any],
+    committee_memory: list[dict[str, Any]] | None = None,
+) -> str:
+    """Prompt for a deliberative persona_meeting round or synthesis turn."""
+    round_val = meeting.get("round", 1)
+    meeting_type = str(meeting.get("meeting_type") or meeting.get("meeting_code") or "MT-1")
+    assigned_case = str(meeting.get("assigned_case") or "")
+    role_instruction = ""
+    if assigned_case == "luck_or_small_sample_or_confounder":
+        role_instruction = (
+            " Red-team mandate (MT-4 performance attribution review): you are assigned "
+            "the opposing case and MUST argue luck, small sample size, or a confounder "
+            "for the leading explanation."
+        )
+    elif assigned_case == "oppose_leading_proposal":
+        role_instruction = (
+            " Red-team mandate (devil's advocate): you are assigned the opposing case "
+            "to the leading proposal."
+        )
+    if round_val == "synthesis" or meeting.get("phase") == "synthesis":
+        round_instruction = (
+            f"Chair synthesis turn for {meeting_type} (no vote). Summarize proposals with "
+            "one trading-persona sponsor and citations, non-binding confidence tally, and "
+            "dissent. For MT-4, accept ONLY testable causal hypotheses naming the component "
+            "and empirical test; otherwise record outcome=no_testable_hypothesis."
+        )
+    elif round_val in (2, 3):
+        round_instruction = (
+            f"Deliberative meeting {meeting_type} round {round_val} (anonymised cross-visibility). "
+            "Every round-1 position is labelled by role and style only. State what you accept "
+            "(accepted), what you dispute and why (disputed), and whether your position changed "
+            "(changed: true/false)."
+            + role_instruction
+        )
+    else:
+        round_instruction = (
+            f"Deliberative meeting {meeting_type} round 1 (independent position). "
+            "State your independent stance, confidence (0..1), and citations from the shared "
+            "case file or your own pre-read."
+            + role_instruction
+        )
+    return (
+        _persona_prompt(payload, persona_id, committee_memory)
+        + "\nDeliberative meeting instruction: "
+        + round_instruction
+    )
 
 
 PERSONA_OWN_AGENT = "persona_own_agent"
@@ -876,6 +1006,11 @@ def create_app(
             if own_agent:
                 persona_id = str(participant.get("persona_id") or "").strip()
                 is_panel = isinstance((payload.request.get("metadata") or {}).get("panel"), Mapping)
+                is_meeting = (
+                    str(payload.request.get("consultation_type") or "") == "persona_meeting"
+                    or isinstance(payload.request.get("meeting"), Mapping)
+                    or isinstance((payload.request.get("metadata") or {}).get("meeting"), Mapping)
+                )
                 try:
                     panel_agent_id = admit_panel_agent(
                         provider,
@@ -892,7 +1027,10 @@ def create_app(
                         exc.message,
                         retryable=exc.status_code >= 500,
                     )
+                meeting_turn: dict[str, Any] = {}
                 try:
+                    if is_meeting:
+                        meeting_turn = _validate_meeting_turn(payload.request, persona_id)
                     case = payload.request.get("case_file")
                     query = ((case.get("lesson_query") or {}).get("query")
                              if isinstance(case, Mapping) else None)
@@ -936,14 +1074,28 @@ def create_app(
                 memory_status = "available" if isinstance(retrieval, Mapping) else "unavailable"
                 if is_panel and memory_status == "unavailable":
                     raise ContributionProviderError("panel committee memory retrieval unavailable")
-                result = provider.invoke(
-                    _persona_prompt(
+                visible_mem = committee_visible_memory(
+                    retrieval,
+                    persona_id,
+                    payload.tenant_id,
+                    limit=MEETING_PRE_READ_LIMIT if is_meeting else COMMITTEE_MEMORY_LIMIT,
+                )
+                prompt_text = (
+                    _meeting_persona_prompt(
                         payload,
                         persona_id,
-                        committee_visible_memory(
-                            retrieval, persona_id, payload.tenant_id
-                        ),
-                    ),
+                        meeting_turn,
+                        visible_mem,
+                    )
+                    if is_meeting
+                    else _persona_prompt(
+                        payload,
+                        persona_id,
+                        visible_mem,
+                    )
+                )
+                result = provider.invoke(
+                    prompt_text,
                     agent_id=panel_agent_id,
                     mode="user",
                     session_id=session_id + ":" + persona_id,

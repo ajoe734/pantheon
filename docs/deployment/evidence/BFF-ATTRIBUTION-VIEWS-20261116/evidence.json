@@ -1,0 +1,30 @@
+{
+  "task_id": "BFF-ATTRIBUTION-VIEWS-20261116",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "hosted_behavior_claimed": false,
+  "parallel_contract": {
+    "contract_id": "PARALLEL CONTRACT 2026-11-16 C3",
+    "provider_task": "PERFORMANCE-OUTLIER-ATTRIBUTION-20261116",
+    "provider_merged_on_dev": false,
+    "note": "Provider routes (GET /api/attribution/records, /records/{record_id}, /shadow/{decision_id}) were not present in services/evaluation at delivery. The BFF is built to the fixed C3 shape with the owner doubled at urllib.request.urlopen; no integration test against the real provider was possible. If the merged provider differs, follow it. Owner base URL env: PANTHEON_EVALUATION_API_URL / PANTHEON_EVALUATION_SERVICE_URL / EVALUATION_URL; token env: EVALUATION_SERVICE_TOKEN / EVALUATION_API_TOKEN (names chosen here, confirm with provider)."
+  },
+  "changes": {
+    "services/control-plane/bff/attribution/client.py": "AttributionOwnerClient (GET only, service token, management read budget) plus shaping: record list/detail with decomposition, luck interval, MT-4 meeting link and hypothesis validation status; shadow comparison merging four arms (trader, base_strategy, private_servant, institutional_view) from the Agora decision lock with settlement source from the attribution owner; explicit unavailable envelope. No attribution number is computed.",
+    "services/control-plane/bff/attribution/router.py": "GET /bff/management/attribution/records, /outliers, /records/{record_id}, /shadow/{decision_id}; operators see all identities, a trader only own records/decisions; unknown or not-owned id is 404; filter validation 422; meeting enrichment from consultation is best effort.",
+    "services/control-plane/bff/attribution/__init__.py": "exports",
+    "services/control-plane/bff/core/app_factory.py": "mounts the attribution router with an Agora decision-lock reader from the agora_owner dependency",
+    "services/control-plane/bff/tests/test_attribution_views.py": "11 tests"
+  },
+  "validation": [
+    {
+      "command": "/tmp/rv-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_attribution_views.py",
+      "result": "11 passed"
+    },
+    {
+      "command": "/tmp/rv-venv/bin/python -m pytest -q test_attribution_views.py test_meetings_views.py test_normalized_route_uniqueness.py test_route_resolution_no_shadowing.py test_bff_path_dedupe.py",
+      "result": "39 passed"
+    }
+  ],
+  "credentials_present": false
+}

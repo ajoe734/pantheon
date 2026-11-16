@@ -135,6 +135,14 @@ from .pipeline import IngestDistillationJobQueue, IngestPipelineService
 from .strategy_seed_store import StrategySpecSeedStore
 
 
+def _ref_count(refs: Mapping[str, Any], listed_key: str, count_key: str) -> int:
+    """Count from the receipt's count field (refs-only form) or its embedded list (older rows)."""
+    value = refs.get(listed_key)
+    if value:
+        return len(value)
+    return int(refs.get(count_key) or 0)
+
+
 def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
     """Fixed-field read projection; full evidence stays on the receipt endpoint.
 
@@ -162,14 +170,15 @@ def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
         "watermark": receipt.watermark,
         "evidence_refs": {
             "evidence_bundle_id": refs.get("evidence_bundle_id"),
-            "source_id_count": len(refs.get("source_ids") or ()),
-            "evidence_item_id_count": len(refs.get("evidence_item_ids") or ()),
-            "knowledge_object_id_count": len(refs.get("knowledge_object_ids") or ()),
-            "distillation_admission_count": len(refs.get("distillation_admissions") or {}),
+            "source_id_count": _ref_count(refs, "source_ids", "source_id_count"),
+            "evidence_item_id_count": _ref_count(refs, "evidence_item_ids", "evidence_item_id_count"),
+            "knowledge_object_id_count": _ref_count(refs, "knowledge_object_ids", "knowledge_object_id_count"),
+            "distillation_admission_count": _ref_count(
+                refs, "distillation_admissions", "distillation_admission_count"),
             "market_snapshots": {
                 "accepted_record_count": snapshots.get("accepted_record_count", 0),
                 "updated_snapshot_count": snapshots.get("updated_snapshot_count", 0),
-                "snapshot_count": len(snapshots.get("snapshots") or ()),
+                "snapshot_count": _ref_count(snapshots, "snapshots", "snapshot_count"),
             },
         },
     }

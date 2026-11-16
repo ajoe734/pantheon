@@ -1,0 +1,53 @@
+{
+  "task_id": "PERFORMANCE-OUTLIER-ATTRIBUTION-20261116",
+  "title": "Deterministic outlier detection and decomposition for traders and institutional personas",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "design_refs": [
+    "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md#12.5",
+    "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A4_shadow_human_actual_sourcing.md"
+  ],
+  "credentials_present": false,
+  "parallel_contract": {
+    "provided_contract": "C3 attribution owner routes in services/evaluation (POST /api/attribution/runs, GET /api/attribution/records, GET /api/attribution/records/{record_id}, GET /api/attribution/shadow/{decision_id})",
+    "consumed_contract": "C4 AgoraDecisionLock via AGORA-PLATFORM-SOURCE-20261116 (/internal/agora/platform-source/records) and AGORA-SHADOW-MODE-20261116 (services/agora/shadow_mode.py)",
+    "merged_provider_alignment": "Both AGORA-SHADOW-MODE-20261116 (PR #7440) and AGORA-PLATFORM-SOURCE-20261116 (PR #7456) are merged on dev. Settlement normalizes both canonical C4 AgoraDecisionLock arms (human_actual, private_servant, base_strategy, committee_variant) and raw AgoraHumanDecisionLock.v1 arms (institutional_view -> committee_variant, top-level decision -> human_actual). Integration test runs the real evaluation FastAPI app against the real AgoraPlatformSourceOwner router and build_decision_lock over recorded TWSE market rows and MemberVirtualBooks snapshots."
+  },
+  "acceptance_map": {
+    "1_shadow_arms_settled_one_cutoff_cost_model_window_a4_labels_missing_price_reason": [
+      "services/evaluation/tests/test_shadow_settlement.py::test_settle_four_arms_shares_cutoff_cost_model_and_window_with_a4_labels",
+      "services/evaluation/tests/test_shadow_settlement.py::test_settle_a4_raw_decision_lock_and_supersede_with_verified_broker_fill",
+      "services/evaluation/tests/test_shadow_settlement.py::test_missing_price_or_cutoff_leaves_arm_unsettled_with_reason"
+    ],
+    "2_weekly_run_ranks_traders_personas_pool_members_deciles_min_sample_disagreements_configurable": [
+      "services/evaluation/tests/test_outlier_attribution.py::test_config_defaults_match_design_and_support_env_override",
+      "services/evaluation/tests/test_outlier_attribution.py::test_cohort_ranking_top_bottom_decile_minimum_sample_and_baseline",
+      "services/evaluation/tests/test_outlier_attribution.py::test_disagreement_detection_when_arms_diverge_beyond_subject_std"
+    ],
+    "3_five_component_decomposition_sample_size_bootstrap_luck_interval_regime_context_no_llm": [
+      "services/evaluation/tests/test_outlier_attribution.py::test_five_component_decomposition_telescoping_sum_luck_interval_and_regime_context"
+    ],
+    "4_attribution_records_stored_and_served_by_c3_read_routes_404_on_unknown": [
+      "services/evaluation/tests/test_shadow_settlement.py::test_shadow_route_returns_settled_arms_and_404_when_unknown",
+      "services/evaluation/tests/test_outlier_attribution.py::test_production_entrypoint_integration_with_real_agora_platform_source_and_recorded_twse_data"
+    ],
+    "5_integration_tests_run_production_entry_point_over_recorded_market_rows_locks_and_fills": [
+      "services/evaluation/tests/test_outlier_attribution.py::test_production_entrypoint_integration_with_real_agora_platform_source_and_recorded_twse_data"
+    ],
+    "6_evidence_json_records_commands_and_results_without_credentials": [
+      "docs/deployment/evidence/PERFORMANCE-OUTLIER-ATTRIBUTION-20261116/evidence.json"
+    ]
+  },
+  "commands": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest services/evaluation -v",
+      "exit_code": 0,
+      "summary": "58 passed in 3.85s"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_paper_runtime_topology_contract.py services/evolution/test_compose_activation.py services/openclaw-gateway-adapter/test_compose_activation.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py::TestPaperPerformanceComposeWiring tests/integration/test_product_functional_compose_contract.py tests/run_evaluation_smoke.py",
+      "exit_code": 0,
+      "summary": "26 passed in 7.69s"
+    }
+  ]
+}
