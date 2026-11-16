@@ -1,0 +1,77 @@
+{
+  "task_id": "AGORA-PLATFORM-SOURCE-20261116",
+  "title": "Agora records as a governed platform data source with full fields",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "kind": "functional_and_integration_verification",
+  "credentials_present": false,
+  "parallel_contract": {
+    "contract_id": "C4",
+    "peer_task_id": "AGORA-SHADOW-MODE-20261116",
+    "shared_schema": "AgoraDecisionLock {decision_id, tenant_id, agora_user_id, account_id, broker_ids, decision_time, data_cutoff, raw_text, arms:{human_actual, private_servant, base_strategy, committee_variant}, unavailable_arms, created_at}",
+    "merge_order_note": "AGORA-SHADOW-MODE-20261116 is currently blocked/unmerged on dev; AgoraPlatformSourceOwner and AgoraOwnerAdapter normalize both the canonical C4 AgoraDecisionLock shape and the AgoraHumanDecisionLock.v1 comparison_arms shape and fall back cleanly when decision_locks tables are not yet populated."
+  },
+  "governed_source_registration": {
+    "definition_id": "agora-platform-source",
+    "adapter_token": "AgoraOwnerAdapter.records_from_payload",
+    "dataset": "agora_platform_records",
+    "schema_hash": "agora_platform_record.v1",
+    "provenance": "agora",
+    "required_pit_fields": [
+      "event_time",
+      "available_time",
+      "ingest_time"
+    ],
+    "record_kinds": [
+      "decision_lock",
+      "settled_arm",
+      "decision_journal",
+      "servant_insight"
+    ],
+    "owner_internal_route": "GET /internal/agora/platform-source/records",
+    "role_scoped_bff_route": "GET /bff/agora/platform-source/records"
+  },
+  "acceptance_map": {
+    "1_internal_service_token_incremental_cursor_and_single_db_owner": [
+      "test_internal_service_token_route_auth_and_incremental_cursor_pagination",
+      "test_no_other_owner_reads_agora_database_directly",
+      "test_configured_connector_fetcher_live_http_pull_and_shadow_mode_c4_compatibility"
+    ],
+    "2_governed_source_pit_and_downstream_paths": [
+      "test_agora_platform_source_definition_and_desired_state_registration",
+      "test_production_pull_against_real_owner_route_and_downstream_routing"
+    ],
+    "3_trader_identity_account_broker_raw_text_and_role_access": [
+      "test_role_scoped_bff_route_and_record_access_follow_operator_and_owner_roles",
+      "test_production_pull_against_real_owner_route_and_downstream_routing"
+    ],
+    "4_validation_gates_before_strategy_rule_lesson_promotion": [
+      "test_validation_gates_prevent_unvalidated_promotion_to_strategy_rule_or_lesson",
+      "test_production_pull_against_real_owner_route_and_downstream_routing"
+    ],
+    "5_integration_tests_production_pull_against_real_owner_route": [
+      "test_production_pull_against_real_owner_route_and_downstream_routing",
+      "test_configured_connector_fetcher_live_http_pull_and_shadow_mode_c4_compatibility"
+    ],
+    "6_evidence_json_recorded_without_credentials": [
+      "docs/deployment/evidence/AGORA-PLATFORM-SOURCE-20261116/evidence.json"
+    ]
+  },
+  "commands": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_agora_owner_connector.py -v",
+      "exit_code": 0,
+      "summary": "7 passed in 2.57s"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py -q",
+      "exit_code": 0,
+      "summary": "19 passed in 4.30s"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_srcm_p1_contracts.py services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_collector_source_alignment_contract.py services/source_ingestion/tests/test_controller_worker.py -q",
+      "exit_code": 0,
+      "summary": "397 passed in 239.26s"
+    }
+  ]
+}
