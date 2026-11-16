@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime as _real_datetime, timezone as _tz
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,20 @@ from services.source_ingestion.external_sources import validate_external_source_
 from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
 from services.source_ingestion.tests.test_collector_newest_session_progress import TWSE, recorded_run
 from services.source_ingestion.tests.test_scheduled_connector import admission_stack, client  # noqa: F401
+
+
+class _FrozenDatetime(_real_datetime):
+    """Recorded fixtures are pinned to 2026-11-14; keep health staleness deterministic."""
+
+    @classmethod
+    def now(cls, tz=None):
+        frozen = _real_datetime(2026, 11, 14, 19, 0, 0, tzinfo=_tz.utc)
+        return frozen if tz is not None else frozen.replace(tzinfo=None)
+
+
+@pytest.fixture(autouse=True)
+def frozen_collector_clock(monkeypatch):
+    monkeypatch.setattr(cb, "datetime", _FrozenDatetime)
 
 
 @pytest.fixture(autouse=True)
