@@ -1,0 +1,15 @@
+{
+  "task": "SD-MARKET-DATA-ONE-WRITE-PER-DAY-20261116",
+  "type": "design_only",
+  "design_doc": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md",
+  "parent_pointer": "DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md section 4.5 (pointer line only)",
+  "code_finding_correction": "MarketDataStorageWriter.write_run partitions by record trade_date/event_time (market_data_storage._date_for_record); wall-clock fallback only when absent. pipeline.run_date is used for usage accounting. Real defects: one file per ingest_run_id per partition, no symbol index, whole-record copies. Measurement M1 requested.",
+  "sources_read_2026-11-16": [
+    "https://duckdb.org/docs/data/partitioning/hive_partitioning",
+    "https://www.quantconnect.com/docs/v2/lean-engine/data-format/us-equity",
+    "https://zipline-trader.readthedocs.io/en/stable/bundles.html"
+  ],
+  "open_operator_decision": "expired warrants: fetch/keep or not",
+  "verification": "docs only; no tests run; hosted figures are coordinator measurements, estimates are labeled design estimates",
+  "implementation_tasks": ["T1 daily_bars store","T2 receipts refs only","T3 snapshot slim","T4 backfill and cleanup","T5 retention sweeper","T6 optional LEAN export","T7 budget check"]
+}
