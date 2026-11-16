@@ -602,8 +602,9 @@ except Exception as error:
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
     _match(image_id, IMAGE, "Source probe image")
+    # Raised from 512m to 2048m so older retained baseline images do not OOM on 200MB-450MB journals.
     command = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
-               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "512m",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "2048m",
                "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
                "--env", "PYTHONDONTWRITEBYTECODE=1"]
     if container_id is not None:
@@ -668,9 +669,14 @@ def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
     current complete journal. Different images additionally require every
     supported writer form through the retained decoder without projection loss.
     """
-    retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
-    writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
-    if retained != writer and any(retained[k] != writer[k] for k in ("journal_sha256", "journal_size", "projection_sha256")):
+    for _ in range(3):
+        retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
+        writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
+        if (retained["journal_size"], retained["journal_sha256"]) == (writer["journal_size"], writer["journal_sha256"]):
+            if retained["projection_sha256"] != writer["projection_sha256"]:
+                raise StackError("Source readers disagree on journal identity", [API_SERVICE])
+            break
+    else:
         raise StackError("Source readers disagree on journal identity", [API_SERVICE])
     # Equal module bytes alone do not cover changed codec dependencies in a
     # different image. Only an identical immutable image may omit witnesses.
