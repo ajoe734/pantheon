@@ -2457,7 +2457,7 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = script.index("execute_bounded_source_refresh_entrypoint() {")
     body = script[start : script.index("\n}\n", start)]
-    finmind_guard = body.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    finmind_guard = body.index('tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"')
     readyz_wait = body.index(
         'curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5'
     )
