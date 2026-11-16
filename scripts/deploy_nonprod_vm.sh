@@ -5272,7 +5272,7 @@ remove_dev_untagged_unreferenced_images_for_build() {
   local -a candidates=()
   declare -A seen=()
   remaining=$((budget - (SECONDS - started) - grace))
-  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --all --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
     info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
     return 0
   fi

@@ -3831,6 +3831,8 @@ elif args[:1] == ["inspect"]:
 elif args[:2] == ["image", "ls"]:
     for img_id, tags in imgs.items():
         short = img_id.split(":", 1)[1]
+        # containerd image store: untagged images only listed with -a/--all
+        if not tags and not ({{"-a", "--all"}} & set(args)): continue
         for t in (tags or ["<none>:<none>"]): print(f"{{t}}|sha256:{{short}}")
 elif args[:1] == ["rmi"]:
     assert "-f" not in args and "--force" not in args
