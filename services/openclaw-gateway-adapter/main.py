@@ -68,6 +68,12 @@ from pydantic import BaseModel, Field, model_validator
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
 from services.knowledge.evidence import JsonlEvidenceRepository
 from memory_llm_bridge import MEMORY_INDEX_AGENT_ID, BridgeConfig, MemoryLlmBridge
+from persona_tool_broker import (
+    BrokerConfig as PersonaToolBrokerConfig,
+    BrokerRefusal as PersonaToolBrokerRefusal,
+    PersonaToolBroker,
+    http_memory_get as _persona_tool_http_memory_get,
+)
 from session_lifecycle import (
     LifecycleError,
     SessionLifecycleStore,
@@ -1964,6 +1970,88 @@ async def memory_llm_chat_completions(
         verify_policy=_verify,
     )
     return JSONResponse(status_code=response.status_code, content=response.body, headers=response.headers)
+
+
+def _persona_agent_registry_lookup(agent_id: str) -> Optional[Dict[str, Any]]:
+    """One agent's entry from the gateway's `agents.list` (the persona agent registry)."""
+    proc = _gateway_state_agent_runner(["openclaw", "config", "get", "agents.list", "--json"])
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "OpenClaw agent config read failed")[:200])
+    agents = json.loads(proc.stdout or "[]")
+    if not isinstance(agents, list):
+        raise RuntimeError("OpenClaw agent config is not a JSON list")
+    return next((a for a in agents if isinstance(a, dict) and str(a.get("id") or "") == agent_id), None)
+
+
+_PERSONA_TOOL_BROKER_CONFIG = PersonaToolBrokerConfig.from_env()
+_PERSONA_TOOL_BROKER = PersonaToolBroker(
+    _PERSONA_TOOL_BROKER_CONFIG,
+    agent_lookup=_persona_agent_registry_lookup,
+    memory_get=_persona_tool_http_memory_get(_PERSONA_TOOL_BROKER_CONFIG),
+)
+_PERSONA_TOOLS_INTERNAL_PREFIX = "/internal/persona-tools/v1"
+
+
+@app.post(f"{_PERSONA_TOOLS_INTERNAL_PREFIX}/call")
+async def persona_tool_call(request: Request, authorization: Optional[str] = Header(default=None)) -> JSONResponse:
+    """Internal endpoint for the gateway `pantheon-persona-tools` plugin (design H9).
+
+    Authenticated by the plugin-config broker secret only. It resolves the calling
+    agent to its persona, enforces the tool profile and run purpose, and is the sole
+    holder of the memory credential. Not a new privileged route: it only reads one
+    persona's own scope or records a proposal, and applies nothing.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    response = await run_in_threadpool(_PERSONA_TOOL_BROKER.handle, authorization=authorization, body=body)
+    return JSONResponse(status_code=response.status_code, content=response.body)
+
+
+@app.post(f"{_PERSONA_TOOLS_INTERNAL_PREFIX}/authorize")
+async def persona_tool_authorize(request: Request, authorization: Optional[str] = Header(default=None)) -> JSONResponse:
+    """Pre-call check for the plugin's before_tool_call hook; no memory read, no call recorded."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    response = await run_in_threadpool(
+        _PERSONA_TOOL_BROKER.handle, authorization=authorization, body=body, authorize_only=True
+    )
+    return JSONResponse(status_code=response.status_code, content=response.body)
+
+
+class PersonaToolRunRegistration(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    persona_id: str = Field(min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=40)
+    # The gateway session identity the dispatch will use (the OpenResponses `user` value
+    # or the explicit session key); unique per run.
+    session_user: str = Field(min_length=1, max_length=400)
+
+
+@app.post(f"{_AGENTS_API_PREFIX}/persona-tools/runs")
+async def register_persona_tool_run(req: PersonaToolRunRegistration) -> JSONResponse:
+    """Register one run's purpose before dispatch; calls from unregistered runs are refused."""
+    if not _PERSONA_TOOL_BROKER_CONFIG.enabled:
+        return JSONResponse(status_code=404, content={"status": "disabled", "error_code": "PERSONA_TOOL_BROKER_DISABLED"})
+    try:
+        run = await run_in_threadpool(_PERSONA_TOOL_BROKER.register_run, req.persona_id, req.purpose, req.session_user)
+    except PersonaToolBrokerRefusal as exc:
+        return JSONResponse(status_code=exc.status_code, content={
+            "status": "refused", "error_code": "PERSONA_TOOL_RUN_REFUSED", "reason": exc.reason, "message": exc.message})
+    return JSONResponse(status_code=201, content={"status": "ok", "run": run})
+
+
+@app.get(f"{_AGENTS_API_PREFIX}/persona-tools/runs/{{run_ref}}")
+def read_persona_tool_run(run_ref: str) -> JSONResponse:
+    """The per-run tool record (calls and recorded proposals) the daily-cycle controller reads."""
+    record = _PERSONA_TOOL_BROKER.run_record(run_ref)
+    if record is None:
+        return JSONResponse(status_code=404, content={"status": "not_found", "error_code": "PERSONA_TOOL_RUN_NOT_FOUND"})
+    return JSONResponse(status_code=200, content={"status": "ok", "record": record})
 
 
 # OpenClaw 2026.7.1 replaces args/resumeArgs wholesale from the cliBackends
