@@ -357,6 +357,18 @@ TW_INDEX_OHLC_COLLECTOR_DATASET = "tw_index_ohlc_daily"
 TW_MARKET_BREADTH_DATASET = "tw_market_breadth_daily"
 # Collector row datasets that are normalized as index / breadth rows, never as per-symbol prices.
 REGIME_INDEX_BREADTH_DATASETS = frozenset({TW_INDEX_DATASET, TW_INDEX_OHLC_COLLECTOR_DATASET, TW_MARKET_BREADTH_DATASET})
+# TW-SUSPENSION-HOLIDAYS-INTAKE-20261115: official exchange schedule / suspension records.  Their row date
+# (a holiday, a suspension day) is not their publication date: the event time is the stated publication
+# (never later than the fetch) and availability is the verified fetch, so nothing is back-dated.
+TW_TRADING_HOLIDAYS_DATASET = "tw_trading_holidays"
+TW_TRADING_SUSPENSION_DATASET = "tw_trading_suspension"
+SURVIVORSHIP_EVIDENCE_DATASETS = frozenset({TW_TRADING_HOLIDAYS_DATASET, TW_TRADING_SUSPENSION_DATASET})
+# Raw source values of the two datasets, kept as the official pages state them; nothing is derived.
+SURVIVORSHIP_EVIDENCE_KEYS = (
+    "venue", "api_endpoint", "official_publication_ref", "holiday_name", "description", "is_closed",
+    "market_status", "year", "suspended_date", "suspended_date_raw", "suspended_time_raw", "resumed_date",
+    "resumed_date_raw", "resumed_time_raw", "security_category", "serial_no",
+)
 BREADTH_GROUPS = ("whole_market", "stocks")
 BREADTH_COUNT_KEYS = ("advancers", "limit_up", "decliners", "limit_down", "unchanged", "untraded", "no_comparison")
 PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
@@ -1479,6 +1491,10 @@ class CollectorBundleAdapter:
         ):
             if row.get(optional) not in (None, "", [], {}):
                 metadata[optional] = row[optional]
+        if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+            for optional in SURVIVORSHIP_EVIDENCE_KEYS:
+                if row.get(optional) not in (None, "", [], {}):
+                    metadata[optional] = row[optional]
 
         if self.source_type in {"macro", "social"}:
             # Provider item labels cannot turn raw evidence into a governed row.
@@ -1529,6 +1545,8 @@ class CollectorBundleAdapter:
             ):
                 if metadata.get(market_key) not in (None, "", [], {}):
                     market_row.setdefault(market_key, metadata[market_key])
+            if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+                market_row = self._survivorship_evidence_row(item_id, market_row, metadata)
             exchange = str(market_row.get("exchange") or "").upper()
             if self.dataset in PRIORITY_LATEST_DATASETS and market_row.get("symbol") and exchange in {"TWSE", "TPEX"}:
                 # Same canonical identity as the official OpenAPI row, so a session's collector and
@@ -1566,6 +1584,28 @@ class CollectorBundleAdapter:
             trace_id=trace_id,
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
+
+    @staticmethod
+    def _survivorship_evidence_row(item_id: str, row: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalized holiday / suspension row; raw source values kept, a malformed row fails closed."""
+        dataset = str(row.get("dataset") or "")
+        out: dict[str, Any] = {k: v for k, v in row.items() if v not in (None, "", [], {})}
+        for key in SURVIVORSHIP_EVIDENCE_KEYS:
+            if metadata.get(key) not in (None, "", [], {}):
+                out.setdefault(key, metadata[key])
+        trade_date = str(out.get("trade_date") or "").strip()
+        venue = str(out.get("venue") or "")
+        if not trade_date or venue not in {"TWSE", "TPEx"} or not str(out.get("api_endpoint") or ""):
+            raise SourceEvidenceError(f"collector item {item_id} lacks trade_date, venue or its official endpoint")
+        out["date"] = trade_date
+        out["market"] = "TW"
+        if dataset == TW_TRADING_HOLIDAYS_DATASET:
+            if not isinstance(out.get("is_closed"), bool):
+                raise SourceEvidenceError(f"collector holiday item {item_id} has no is_closed state")
+            out["closed"] = out["is_closed"]
+        elif not str(out.get("symbol") or "").strip() or not (out.get("suspended_date") or out.get("resumed_date")):
+            raise SourceEvidenceError(f"collector suspension item {item_id} lacks a symbol or a dated event")
+        return out
 
     @staticmethod
     def _regime_market_row(item_id: str, row: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -1622,6 +1662,10 @@ class CollectorBundleAdapter:
             trade_date = date.fromisoformat(str(row["trade_date"]).strip())
         except ValueError as exc:
             raise SourceEvidenceError(f"collector item {item_id} has an invalid trade_date") from exc
+        if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+            if published_at > fetched_at:
+                raise SourceEvidenceError(f"collector item {item_id} published_at is after its fetch time")
+            return published_at
         is_price = self.dataset in PRIORITY_LATEST_DATASETS
         session_close = datetime(trade_date.year, trade_date.month, trade_date.day, 5, 30, tzinfo=timezone.utc)
         if is_price and fetched_at < session_close:

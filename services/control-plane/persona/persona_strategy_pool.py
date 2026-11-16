@@ -647,7 +647,13 @@ class PersonaStrategyPoolStore:
                     baselines[ref] = baseline
                 # Until a separate permitted-universe owner is available, do
                 # not infer authority to widen P: use the pool's approved universe.
-                symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                if live:
+                    symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                else:
+                    symbols = self._last_live_universe(persona_id, tenant_id)
+                    if not symbols:
+                        raise ValueError("empty_pool_approved_universe_unknown")
+                decision["approved_universe"] = sorted(symbols)
                 if not {s.split(".")[0] for s in baselines[candidate.artifact_ref]["validated_universe"]} <= symbols:
                     raise ValueError("candidate_outside_pool_approved_universe")
                 trial = PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
@@ -709,6 +715,26 @@ class PersonaStrategyPoolStore:
             expected_version=request.expected_version, members=[PoolMember.model_validate(m) for m in members],
             change_reason=f"paper pool {request.action}: {decision['status']}; " + "; ".join(decision["reasons"])),
             actor_id=actor_id, decision=decision)
+
+    def _last_live_universe(self, persona_id, tenant_id):
+        """Approved universe of an empty pool: the one it had at its last version with live members.
+
+        Stopgap until the persona declares its permitted universe P (design section 4.3); it is never
+        wider than that version's universe. A version's recorded ``approved_universe`` wins; older
+        versions are read from their live members' registry artifacts (the symbols they were approved on).
+        """
+        for version in reversed(self.versions(persona_id, tenant_id)):
+            recorded = (version.get("decision") or {}).get("approved_universe")
+            live = [m for m in version["members"] if m["stage"] != "removed"]
+            if recorded and live:
+                return {str(s) for s in recorded}
+            if live:
+                symbols = set()
+                for member in live:
+                    artifact = ((self._reader(member["artifact_ref"], tenant_id) or {}).get("metadata") or {}).get("strategy_artifact") or {}
+                    symbols |= {str(s).split(".")[0] for s in (artifact.get("parameters") or {}).get("symbols") or []}
+                return symbols
+        return set()
 
     def _promote_trials(self, members, stats, policy, persona_id, tenant_id):
         """Trial -> active at a re-weight (coordinator-proposed condition in the policy file).

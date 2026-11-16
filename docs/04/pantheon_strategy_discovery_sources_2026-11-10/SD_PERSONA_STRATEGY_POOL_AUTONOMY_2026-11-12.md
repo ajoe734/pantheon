@@ -235,6 +235,28 @@ session D+1** with the statutory costs; a session without an open price gives no
 Admission results now report `fill_convention`; thresholds (correlation cut-off, Sharpe improvement, deflation) are
 unchanged, so some candidates that cleared admission under close fills no longer do on the same recorded bars.
 
+#### 5.1b A pool with no live member (2026-11-16, POOL-EMPTY-POOL-OPERATION-20261116)
+
+Operator decision 2026-11-16: a strategy that loses its approved baseline is re-validated and, if it fails, only
+leaves the pool; capital stays idle and the persona opens its own demand. An empty pool therefore keeps operating:
+
+* **Publish.** The empty version is published from the previous approved envelope (flat, members `[]`, pool snapshot
+  pinned); the persona keeps its capital binding and runtime binding and is never retired, frozen or paused.
+* **Paper runtime.** No member views, no virtual book write, no position. The risk budget observations pool health
+  needs are known and zero (`idle_pool_observations`), so health reads `no_live_members` and low utilisation, not unknown.
+* **Cycle.** The daily cycle answers `no_live_members`: it opens one research demand and does not open a second while
+  one is open, or admits a fresh candidate.
+* **Universe (stopgap, reading of §4.3).** Until the persona declares its permitted universe P, the approved universe of
+  a pool with no live member is the universe approved at its last version that had live members, and never wider
+  (recorded as `decision.approved_universe`; older versions are read from their live members' artifacts). A candidate
+  inside it is not refused for universe, a candidate outside it still is, and with no such version the admission is
+  refused with `empty_pool_approved_universe_unknown`. This is the coordinator's reading, not an operator decision.
+* **Criteria for the first member.** Every other criterion of §5.1 applies unchanged: its own approved next-open
+  baseline, the virtual-book drawdown rule, the consultation memo rule for persona-initiated admission, the admission
+  backtest and the deflated threshold. "Combined is better than the pool alone" against an idle pool: the pool's
+  Sharpe is 0 by definition (`pool_idle: true` in the result), so the combined result must beat it by the minimum
+  improvement on the candidate's own out of sample result; nothing is waived and idle capital changes no criterion.
+
 ### 5.2 Baseline
 
 The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is its approved baseline;

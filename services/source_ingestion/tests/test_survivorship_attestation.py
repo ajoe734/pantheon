@@ -38,3 +38,11 @@ def test_no_suspension_dataset_names_the_missing_dataset():
 def test_empty_window_is_false():
     a = attest_survivorship([], {}, {})
     assert a["includes_delisted"] is False and a["includes_suspended"] is False
+
+
+def test_unknown_suspension_session_names_its_cause_and_keeps_the_flag_false():
+    known = caps(S[:2]) | caps(S[2:], ("TWSE",))
+    cause = {(S[2], "TPEx"): "TPEx all-market page was stored without its no-close rows (pre-intake format)"}
+    a = attest_survivorship(S, caps(S), known, suspension_unknown=cause)
+    assert a["includes_delisted"] is True and a["includes_suspended"] is False
+    assert a["suspended"]["gaps"] == [{"session": S[2], "reason": cause[(S[2], "TPEx")]}]
