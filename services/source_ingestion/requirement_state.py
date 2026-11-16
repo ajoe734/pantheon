@@ -896,6 +896,25 @@ MARKET_SNAPSHOT_WARN_BYTES = MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES * 3 // 4
 _COMPACT_CHUNK_BYTES = 4 * 1024 * 1024
 
 
+_TAIL_CHECK_BYTES = 4096
+
+
+def _complete_journal_lines(fd: int, start: int, end: int) -> Iterable[tuple[int, str]]:
+    """Yield (end_offset, text) per newline-terminated line in [start, end); a partial tail is never yielded."""
+    offset, carry = start, b""
+    while offset < end:
+        chunk = os.pread(fd, min(_COMPACT_CHUNK_BYTES, end - offset), offset)
+        if not chunk:
+            break
+        offset += len(chunk)
+        data = carry + chunk
+        position = 0
+        while (newline := data.find(b"\n", position)) != -1:
+            yield offset - len(data) + newline + 1, data[position:newline].decode("utf-8")
+            position = newline + 1
+        carry = data[position:]
+
+
 def _journal_lines(fd: int, start: int, end: int) -> Iterable[tuple[int, bytes]]:
     """Yield (offset, line-with-newline) for [start, end) using pread only."""
     offset, carry, carry_offset = start, b"", start
@@ -1029,6 +1048,11 @@ class LatestMarketSnapshotStore:
         # (inode, size, mtime_ns) of the journal exactly as this store last
         # read or wrote it; None forces a full re-parse under the next lock.
         self._journal_signature: tuple[int, int, int] | None = None
+        # Incremental read position: inode, consumed byte offset (always just past a
+        # newline), consumed line count, and the bytes right before the offset.  The
+        # tail proves the prefix is unchanged, because in-place compaction keeps the inode.
+        self._consumed: tuple[int, int, int, bytes] | None = None
+        self._appended_lines = 0
         # Bytes of the newest line per live key; None until first needed.
         self._line_bytes: dict[tuple[str, str], int] | None = None
         self._last_compaction_at: str | None = None
@@ -1043,6 +1067,7 @@ class LatestMarketSnapshotStore:
 
     def _invalidate(self) -> None:
         self._journal_signature = None
+        self._consumed = None
         self._line_bytes = None
 
     @staticmethod
@@ -1055,17 +1080,94 @@ class LatestMarketSnapshotStore:
             os.close(fd)
             raise
 
-    def _current_locked(self, handle: Any) -> dict[tuple[str, str], LatestMarketSnapshot]:
-        """Latest state under the exclusive lock; re-parse only if another writer changed the file."""
-        signature = self._signature(handle.fileno())
-        if self._journal_signature is not None and signature == self._journal_signature:
-            return dict(self._latest_by_symbol)
-        handle.seek(0)
-        current = _market_snapshots_from_lines(handle, path=self.path)
-        self._line_bytes = None
-        self._journal_signature = signature
+    def _mark_consumed(self, fd: int, size: int, lines: int) -> None:
+        """Record that the journal bytes [0, size) are folded into memory (size is at a line end)."""
+        keep = min(_TAIL_CHECK_BYTES, size)
+        self._consumed = (os.fstat(fd).st_ino, size, lines, os.pread(fd, keep, size - keep))
+
+    def _fold_new_lines(
+        self, current: dict[tuple[str, str], LatestMarketSnapshot], lines: Iterable[str]
+    ) -> None:
+        """Apply appended lines on top of ``current`` using the unchanged journal reader.
+
+        The reader only builds a map from scratch, so runs of snapshot lines are parsed as one
+        batch (last line per key wins) and a withdrawal tombstone, which that map cannot
+        express, is validated by the same reader and then applied here in order.
+        """
+        run: list[str] = []
+        for text in lines:
+            if '"withdrawn"' not in text:
+                run.append(text)
+                continue
+            if run:
+                current.update(_market_snapshots_from_lines(run, path=self.path))
+                run = []
+            parsed = _market_snapshots_from_lines([text], path=self.path)
+            if parsed:
+                current.update(parsed)
+                continue
+            if text.strip():
+                state = json.loads(text)["state"]
+                current.pop(
+                    (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
+                )
+        if run:
+            current.update(_market_snapshots_from_lines(run, path=self.path))
+
+    def _sync_locked(self, fd: int) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Fold journal bytes not yet consumed into a copy of memory; full rebuild if the prefix changed.
+
+        Caller holds a flock.  Only newline-terminated rows are consumed, so a writer's
+        partial tail is read once, after it is finished.
+        """
+        status = os.fstat(fd)
+        size = status.st_size
+        base: dict[tuple[str, str], LatestMarketSnapshot] | None = None
+        offset = lines = 0
+        if self._consumed is not None:
+            inode, offset, lines, tail = self._consumed
+            if (
+                inode == status.st_ino
+                and offset <= size
+                # Same bytes, new mtime: a same-size rewrite, never an append.
+                and (size > offset or self._signature(fd) == self._journal_signature)
+                and os.pread(fd, len(tail), offset - len(tail)) == tail
+            ):
+                base = dict(self._latest_by_symbol)
+            else:
+                offset = lines = 0
+        end, count = offset, lines
+
+        def _counted() -> Iterable[str]:
+            nonlocal end, count
+            for line_end, text in _complete_journal_lines(fd, offset, size):
+                end = line_end
+                count += 1
+                yield text
+
+        if base is not None:
+            try:
+                current = base
+                self._fold_new_lines(current, _counted())
+            except MarketSnapshotStateError:
+                # Re-read from zero so the failure carries the exact line number of a fresh read.
+                base = None
+                offset = lines = end = count = 0
+        if base is None:
+            current = _market_snapshots_from_lines(_counted(), path=self.path)
+        if base is None or end != offset:
+            self._line_bytes = None
+        self._mark_consumed(fd, end, count)
+        self._journal_signature = self._signature(fd)
         self._latest_by_symbol = dict(current)
         return current
+
+    def _current_locked(self, handle: Any) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Latest state under the exclusive lock; parse only bytes appended since the last read."""
+        fd = handle.fileno()
+        if self._journal_signature is not None and self._signature(fd) == self._journal_signature:
+            return dict(self._latest_by_symbol)
+        return self._sync_locked(fd)
 
     @staticmethod
     def _envelope_line(state: Mapping[str, Any]) -> str:
@@ -1078,6 +1180,7 @@ class LatestMarketSnapshotStore:
         )
 
     def _note_line(self, key: tuple[str, str], line: str | None) -> None:
+        self._appended_lines += 1
         if self._line_bytes is None:
             return
         if line is None:
@@ -1089,10 +1192,17 @@ class LatestMarketSnapshotStore:
         self, handle: Any, current: dict[tuple[str, str], LatestMarketSnapshot]
     ) -> None:
         handle.flush()
-        os.fsync(handle.fileno())
+        fd = handle.fileno()
+        os.fsync(fd)
+        previous = self._consumed
         self._latest_by_symbol = current
-        self._journal_signature = self._signature(handle.fileno())
-        self._maybe_compact_locked(handle.fileno(), current)
+        self._journal_signature = self._signature(fd)
+        # _current_locked synced to EOF under this lock, so our appended lines are the
+        # only new bytes and each ends with a newline.
+        if previous is not None:
+            self._mark_consumed(fd, os.fstat(fd).st_size, previous[2] + self._appended_lines)
+        self._appended_lines = 0
+        self._maybe_compact_locked(fd, current)
 
     def _maybe_compact_locked(
         self, fd: int, current: Mapping[tuple[str, str], LatestMarketSnapshot]
@@ -1115,6 +1225,8 @@ class LatestMarketSnapshotStore:
             return
         self._line_bytes = kept
         self._journal_signature = self._signature(fd)
+        if os.fstat(fd).st_size != size:
+            self._mark_consumed(fd, os.fstat(fd).st_size, len(kept))
         self._last_compaction_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
     def compact(self, *, force: bool = True) -> bool:
@@ -1135,6 +1247,8 @@ class LatestMarketSnapshotStore:
                         after = os.fstat(handle.fileno()).st_size
                         self._line_bytes = kept
                         self._journal_signature = self._signature(handle.fileno())
+                        if after != before:
+                            self._mark_consumed(handle.fileno(), after, len(kept))
                         self._latest_by_symbol = dict(current)
                         if after < before:
                             self._last_compaction_at = (
@@ -1177,11 +1291,10 @@ class LatestMarketSnapshotStore:
                 self._invalidate()
                 return {}
             try:
-                with self.path.open("r", encoding="utf-8") as handle:
+                with self.path.open("rb") as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
                     try:
-                        signature = self._signature(handle.fileno())
-                        snapshots = _market_snapshots_from_lines(handle, path=self.path)
+                        snapshots = self._sync_locked(handle.fileno())
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             except MarketSnapshotStateError:
@@ -1194,9 +1307,6 @@ class LatestMarketSnapshotStore:
                 raise MarketSnapshotStateError(
                     f"market snapshot log is unreadable: {self.path}"
                 ) from exc
-            self._latest_by_symbol = snapshots
-            self._journal_signature = signature
-            self._line_bytes = None
             return dict(snapshots)
 
     def get(self, symbol: str, dataset: str = DAILY_SNAPSHOT_DATASET) -> LatestMarketSnapshot | None:
