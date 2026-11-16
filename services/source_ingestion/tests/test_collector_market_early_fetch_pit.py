@@ -10,12 +10,13 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from services.source_ingestion import controller_worker as cw
-from services.source_ingestion.connectors import collector_bundle as cb
+from services.source_ingestion.connectors import base, collector_bundle as cb
 from services.source_ingestion.external_sources import validate_external_source_record
 from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
 from services.source_ingestion.tests.test_collector_newest_session_progress import TWSE, recorded_run
@@ -27,6 +28,20 @@ def isolated_metadata_cache():
     cb._METADATA_CACHE.clear()
     yield
     cb._METADATA_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def pinned_connector_clock(monkeypatch):
+    monkeypatch.setattr(base, "_utc_now", lambda: datetime(2026, 11, 15, tzinfo=timezone.utc))
+    real_observed = cb.observed_from_collector_status
+    monkeypatch.setattr(
+        cb,
+        "observed_from_collector_status",
+        lambda *args, **kwargs: real_observed(
+            *args,
+            **{**kwargs, "now": kwargs.get("now") or base._utc_now()},
+        ),
+    )
 
 
 def price_bundle(*, fetched="2026-11-11T06:16:05Z", counts=(("2026-11-10", 1375), ("2026-11-11", 1376))):
@@ -146,7 +161,7 @@ def test_preclose_price_is_rejected_with_typed_reason(tmp_path):
     assert not a._priority_key_path().exists()
 
 
-def test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy(tmp_path):
+def test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy(tmp_path, monkeypatch):
     files, early = price_bundle(fetched="2026-11-11T05:29:59Z")
     more, newest = price_bundle(fetched="2026-11-14T18:19:33Z", counts=(("2026-11-13", 1377),))
     files.update(more)
@@ -159,6 +174,11 @@ def test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy(tmp_pat
     assert len(result.observed["rejected_bundles"]) == 1
     assert not a._raw_bundle_path(cb.verify_bundle(a.transport,
         expected_source_id=TWSE, entry=early, item_window=(0, 0))).exists()
+    monkeypatch.setattr(base, "_utc_now", lambda: datetime(2026, 11, 16, 18, 19, 34, tzinfo=timezone.utc))
+    stale = a.pull()
+    assert stale.observed["health_state"] == "degraded"
+    assert "newest_bundle_older_than_twice_cadence" in stale.observed["reasons"]
+    assert not stale.no_new_data
 
 
 @pytest.mark.parametrize("reject,same_second", [(False, False), (True, False), (True, True)],
