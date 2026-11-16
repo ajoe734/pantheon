@@ -5,6 +5,8 @@ import {
   actorRunsAutoWorkers,
   buildActiveWorkRows,
   buildTruthMismatches,
+  buildWorkerCapacity,
+  bundleRuntimeSummary,
   deriveAgentState,
   workerRoleLabel,
 } from "./dashboard-core.js";
@@ -106,4 +108,41 @@ test("agent lanes carry the live worker records, including reviewer runs", () =>
   assert.deepEqual(lanes.Claude.live_workers.map((item) => item.task_id), ["REVIEWING-001"]);
   assert.equal(workerRoleLabel(lanes.Claude.live_workers[0]), "審查");
   assert.deepEqual(lanes["Human/Ops"].live_workers, []);
+});
+
+// A bundle written before FINISHED-001's worker exited: it still links that
+// worker, counts 3 running, and carries a mismatch for a Human/Ops task.
+const staleBundle = {
+  dispatch_policy: dispatchPolicy,
+  runtime_summary: {
+    supervisor_pid: 1410671,
+    heartbeat_at: "2026-11-16T15:38:49Z",
+    running_workers: 3,
+    pending_workers: 0,
+    mismatch_count: 1,
+    lanes: { Antigravity: { running: 3, pending: 0 } },
+  },
+  worker_task_links: [{ task_id: "FINISHED-001", runtime_bucket: "running" }],
+  truth_mismatches: [{ type: "active_task_without_worker", task_id: "HUMAN-ACCEPTANCE-001" }],
+};
+const staleStatus = { tasks: [...status.tasks, task("FINISHED-001", "Antigravity", "review_approved")], agents: status.agents };
+const liveRunningOnly = { workers: { "antigravity-run": orchState.workers["antigravity-run"] } };
+
+test("live runtime state wins over a lagging bundle", () => {
+  const { rows } = buildActiveWorkRows(staleStatus, liveRunningOnly, staleBundle);
+  const state = Object.fromEntries(rows.map((row) => [row.task.id, row.state]));
+  assert.notEqual(state["HUMAN-ACCEPTANCE-001"], "attention");
+  assert.notEqual(state["FINISHED-001"], "running");
+  assert.equal(state["RUNNING-001"], "running");
+
+  assert.deepEqual(bundleRuntimeSummary(liveRunningOnly, staleBundle), {});
+  const capacity = buildWorkerCapacity(staleStatus, liveRunningOnly, staleBundle);
+  assert.equal(capacity.totals.running, 1);
+});
+
+test("the bundle is still used when the runtime state could not be read", () => {
+  const { rows } = buildActiveWorkRows(staleStatus, null, staleBundle);
+  const finished = rows.find((row) => row.task.id === "FINISHED-001");
+  assert.deepEqual(finished.runtimeWorkers, staleBundle.worker_task_links);
+  assert.equal(bundleRuntimeSummary(null, staleBundle).running_workers, 3);
 });

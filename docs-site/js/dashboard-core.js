@@ -537,9 +537,8 @@ export function buildActiveWorkRows(status, orchState, dashboardBundle = null, a
   const dispatchPolicy = dashboardBundle?.dispatch_policy || null;
   const truth = buildTruthMismatches(status, orchState, approvalQueue, dispatchPolicy);
   const queueEvents = normalizeDispatchQueue(orchState, status);
-  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
-  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
-  const mismatchItems = truth.mismatches.length ? truth.mismatches : bundleMismatches;
+  const bundleLinks = bundleWorkerLinks(orchState, dashboardBundle);
+  const mismatchItems = liveOrBundleMismatches(truth, orchState, dashboardBundle);
 
   const queueByTask = new Map();
   for (const event of queueEvents) {
@@ -686,13 +685,36 @@ function workerLaneLabel(key, fallback = null) {
   return agentLabel(fallback || key);
 }
 
+// The page reads the supervisor's runtime state on every refresh, so when it
+// loaded it is the live truth. The dashboard bundle is rewritten only on task
+// mutations and can lag by many minutes; use it only when the runtime state
+// could not be read.
+export function hasLiveRuntimeState(orchState) {
+  return Boolean(orchState && typeof orchState.workers === "object" && orchState.workers !== null);
+}
+
+export function liveOrBundleMismatches(truth, orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState) || truth.mismatches.length) return truth.mismatches;
+  return Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
+}
+
+export function bundleWorkerLinks(orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState)) return [];
+  return Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
+}
+
+export function bundleRuntimeSummary(orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState)) return {};
+  return dashboardBundle?.runtime_summary || {};
+}
+
 function finiteCount(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 export function buildWorkerCapacity(status, orchState, dashboardBundle = null, approvalQueue = null) {
-  const runtime = dashboardBundle?.runtime_summary || {};
+  const runtime = bundleRuntimeSummary(orchState, dashboardBundle);
 
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
