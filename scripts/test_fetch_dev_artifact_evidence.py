@@ -277,3 +277,212 @@ def test_cli_imports_only_its_checked_in_siblings_under_safe_python_path(tmp_pat
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+# --- DEV-DEPLOY-RESTORE-ACCEPTED-BASELINE-AFTER-FAILED-COMPENSATION-20261116 ---
+
+def _sealed_attempt_fixtures(run_id: str = "43718489118", attempt: str = "1"):
+    from scripts.test_capture_dev_artifact_baseline import manifest as build_manifest
+    from scripts import capture_dev_artifact_baseline as capture
+    from scripts import dev_candidate_receipt as candidate
+
+    identity = {
+        "candidate_id": "56a3a01c6e3ad250c403daac505ca4270a5f108da737717c77478ee208e5f826",
+        "run_id": run_id,
+        "attempt": attempt,
+        "controller_sha": "725836718295f445fd9923790b58ed29842d9869",
+        "candidate_backend_sha": "725836718295f445fd9923790b58ed29842d9869",
+        "candidate_frontend_sha": "87fc32ab860325573a205500ff381092c2012617",
+        "previous_backend_sha": "94b73806ae004049f82f26d1d225f290086a4942",
+        "previous_frontend_sha": "87fc32ab860325573a205500ff381092c2012617",
+    }
+    manifest = build_manifest(identity)
+    manifest_raw = capture.encoded(manifest)
+    manifest_sha256 = hashlib.sha256(manifest_raw).hexdigest()
+    baseline_zip = archive([
+        ("artifact-baseline.json", manifest_raw, stat.S_IFREG | 0o600),
+        ("SHA256SUMS", f"{manifest_sha256}  artifact-baseline.json\n".encode(), stat.S_IFREG | 0o600),
+    ])
+    folder = capture.ARTIFACT_ROOT / f"baseline-{identity['run_id']}-{identity['attempt']}-{identity['candidate_id']}"
+    services = {}
+    for index, service in enumerate(("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler"), 1):
+        services[service] = {
+            "image_id": "sha256:" + str(index) * 64,
+            "oci_revision": identity["candidate_backend_sha"],
+            "git_sha": None if service == "loop-run-projector-scheduler" else identity["candidate_backend_sha"],
+            "compose_image": "pantheon-" + service,
+        }
+    override = {"services": {service: {"image": row["image_id"], "pull_policy": "never"}
+                             for service, row in services.items()}}
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": services["operator-bff"]["image_id"],
+    }
+    override_sha = hashlib.sha256(capture.encoded(override)).hexdigest()
+    inner_receipt = {
+        "schema_version": "pantheon.dev-candidate-image-admission.v2",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": identity,
+        "seal_lease_id": manifest["capture_lease_id"],
+        "sealed_at": "2026-11-15T13:45:00Z",
+        "baseline_manifest_sha256": manifest_sha256,
+        "candidate_compose_sha256": "c" * 64,
+        "candidate_bundle_sha256": "d" * 64,
+        "image_override_sha256": override_sha,
+        "services": services,
+    }
+    inner_sha = hashlib.sha256(capture.encoded(inner_receipt)).hexdigest()
+    outer_receipt = {
+        "candidate_image_manifest": inner_receipt,
+        "candidate_image_manifest_path": str(folder / "candidate-images.json"),
+        "candidate_image_manifest_sha256": inner_sha,
+        "candidate_image_override_path": str(folder / "candidate-images.override.json"),
+        "candidate_image_override_sha256": override_sha,
+    }
+    receipt_raw = capture.encoded(outer_receipt)
+    candidate_zip = archive([
+        ("candidate-receipt.json", receipt_raw, stat.S_IFREG | 0o600),
+    ])
+    return {
+        "identity": identity,
+        "manifest": manifest,
+        "manifest_raw": manifest_raw,
+        "manifest_sha256": manifest_sha256,
+        "baseline_zip": baseline_zip,
+        "baseline_zip_sha256": hashlib.sha256(baseline_zip).hexdigest(),
+        "receipt": outer_receipt,
+        "receipt_raw": receipt_raw,
+        "candidate_sha256": inner_sha,
+        "candidate_zip": candidate_zip,
+        "candidate_zip_sha256": hashlib.sha256(candidate_zip).hexdigest(),
+    }
+
+
+def test_fetch_discovers_attempt_1_artifacts_when_run_is_on_later_attempt(tmp_path):
+    fixtures = _sealed_attempt_fixtures(run_id="43718489118", attempt="1")
+    listing = {
+        "total_count": 4,
+        "artifacts": [
+            {
+                "id": 999999,
+                "name": "pantheon-dev-artifact-baseline-43718489118-2",
+                "expired": False,
+                "digest": "sha256:" + "9" * 64,
+                "size_in_bytes": 123,
+                "workflow_run": {"id": 43718489118, "run_attempt": 2},
+            },
+            {
+                "id": 14163830735,
+                "name": "pantheon-dev-artifact-baseline-43718489118-1",
+                "expired": False,
+                "digest": "sha256:" + fixtures["baseline_zip_sha256"],
+                "size_in_bytes": len(fixtures["baseline_zip"]),
+                "workflow_run": {"id": 43718489118, "run_attempt": 2},
+            },
+            {
+                "id": 14164431785,
+                "name": "pantheon-dev-artifact-candidate-43718489118-1",
+                "expired": False,
+                "digest": "sha256:" + fixtures["candidate_zip_sha256"],
+                "size_in_bytes": len(fixtures["candidate_zip"]),
+                "workflow_run": {"id": 43718489118, "run_attempt": 2},
+            },
+        ],
+    }
+    calls = []
+
+    def api(path: str) -> bytes:
+        calls.append(path)
+        if path == "repos/ajoe734/pantheon/actions/runs/43718489118/artifacts":
+            return json.dumps(listing).encode()
+        if path == "repos/ajoe734/pantheon/actions/artifacts/14163830735/zip":
+            return fixtures["baseline_zip"]
+        if path == "repos/ajoe734/pantheon/actions/artifacts/14164431785/zip":
+            return fixtures["candidate_zip"]
+        raise AssertionError(path)
+
+    baseline_out = f.fetch(
+        kind="baseline",
+        run_id="43718489118",
+        attempt="1",
+        output_dir=tmp_path / "baseline",
+        api=api,
+    )
+    candidate_out = f.fetch(
+        kind="candidate",
+        run_id="43718489118",
+        attempt="1",
+        output_dir=tmp_path / "candidate",
+        api=api,
+    )
+    assert baseline_out == {
+        "artifact_id": "14163830735",
+        "artifact_sha256": fixtures["baseline_zip_sha256"],
+        "run_id": "43718489118",
+        "attempt": "1",
+        "kind": "baseline",
+        "output_dir": str(tmp_path / "baseline"),
+        "manifest_path": str(tmp_path / "baseline/artifact-baseline.json"),
+        "manifest_sha256": fixtures["manifest_sha256"],
+        "previous_backend_sha": "94b73806ae004049f82f26d1d225f290086a4942",
+        "previous_frontend_sha": "87fc32ab860325573a205500ff381092c2012617",
+    }
+    assert candidate_out == {
+        "artifact_id": "14164431785",
+        "artifact_sha256": fixtures["candidate_zip_sha256"],
+        "run_id": "43718489118",
+        "attempt": "1",
+        "kind": "candidate",
+        "output_dir": str(tmp_path / "candidate"),
+        "receipt_file": str(tmp_path / "candidate/candidate-receipt.json"),
+        "candidate_image_manifest_sha256": fixtures["candidate_sha256"],
+    }
+    assert calls == [
+        "repos/ajoe734/pantheon/actions/runs/43718489118/artifacts",
+        "repos/ajoe734/pantheon/actions/artifacts/14163830735/zip",
+        "repos/ajoe734/pantheon/actions/runs/43718489118/artifacts",
+        "repos/ajoe734/pantheon/actions/artifacts/14164431785/zip",
+    ]
+
+
+@pytest.mark.parametrize("artifact_id,expected_digest", [("12345", None), (None, "a" * 64)])
+def test_fetch_rejects_partial_artifact_id_or_digest(tmp_path, artifact_id, expected_digest):
+    with pytest.raises(f.CaptureError, match="must be provided together"):
+        f.fetch(
+            kind="baseline",
+            artifact_id=artifact_id,
+            expected_digest=expected_digest,
+            run_id="43718489118",
+            attempt="1",
+            output_dir=tmp_path / "out",
+            api=lambda _p: b"{}",
+        )
+
+
+def test_fetch_discovery_rejects_missing_or_corrupt_inner_sums(tmp_path):
+    fixtures = _sealed_attempt_fixtures()
+    bad_zip = archive([
+        ("artifact-baseline.json", fixtures["manifest_raw"], stat.S_IFREG | 0o600),
+        ("SHA256SUMS", ("0" * 64 + "  artifact-baseline.json\n").encode(), stat.S_IFREG | 0o600),
+    ])
+    listing = {
+        "artifacts": [{
+            "id": 14163830735,
+            "name": "pantheon-dev-artifact-baseline-43718489118-1",
+            "expired": False,
+            "digest": "sha256:" + hashlib.sha256(bad_zip).hexdigest(),
+            "size_in_bytes": len(bad_zip),
+            "workflow_run": {"id": 43718489118},
+        }]
+    }
+    with pytest.raises(f.CaptureError, match="SHA256SUMS does not match"):
+        f.fetch(
+            kind="baseline",
+            run_id="43718489118",
+            attempt="1",
+            output_dir=tmp_path / "out",
+            api=lambda path: json.dumps(listing).encode() if path.endswith("/artifacts") else bad_zip,
+        )
+    assert not (tmp_path / "out").exists()
+
