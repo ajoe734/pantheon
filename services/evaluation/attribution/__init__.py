@@ -1,0 +1,71 @@
+"""Performance outlier detection, shadow-arm settlement, and 5-component decomposition (C3, §12.5)."""
+from __future__ import annotations
+
+from .decomposition import (
+    COMPONENT_NAMES,
+    NO_LANGUAGE_MODEL_PROOF,
+    bootstrap_luck_interval,
+    decompose_observation,
+    decompose_outlier,
+    resolve_regime_context,
+)
+from .outliers import (
+    DIRECTIONS,
+    OutlierAttributionConfig,
+    SUBJECT_KINDS,
+    build_subjects_from_inputs,
+    build_window,
+    compute_risk_adjusted_metrics,
+    detect_cohort_outliers,
+    detect_disagreement_outliers,
+    iso_week_for_date,
+    run_weekly_outlier_attribution,
+)
+from .settlement import (
+    A4_DEFAULT_CONFIDENCE,
+    A4_DISPLAY_LABELS,
+    ACTUAL_FILL_SOURCES,
+    CANONICAL_SHADOW_ARMS,
+    CostModelConfig,
+    OBSERVATION_WINDOW_SESSIONS,
+    SETTLEMENT_SOURCES,
+    SETTLEMENT_SOURCE_PRIORITY,
+    SettledArmRecord,
+    ShadowDecisionSettlement,
+    map_action_to_exposure,
+    settle_decision_lock,
+)
+from .store import AgoraPlatformSourceClient, AttributionStore
+
+__all__ = [
+    "A4_DEFAULT_CONFIDENCE",
+    "A4_DISPLAY_LABELS",
+    "ACTUAL_FILL_SOURCES",
+    "AgoraPlatformSourceClient",
+    "AttributionStore",
+    "CANONICAL_SHADOW_ARMS",
+    "COMPONENT_NAMES",
+    "CostModelConfig",
+    "DIRECTIONS",
+    "NO_LANGUAGE_MODEL_PROOF",
+    "OBSERVATION_WINDOW_SESSIONS",
+    "OutlierAttributionConfig",
+    "SETTLEMENT_SOURCES",
+    "SETTLEMENT_SOURCE_PRIORITY",
+    "SUBJECT_KINDS",
+    "SettledArmRecord",
+    "ShadowDecisionSettlement",
+    "bootstrap_luck_interval",
+    "build_subjects_from_inputs",
+    "build_window",
+    "compute_risk_adjusted_metrics",
+    "decompose_observation",
+    "decompose_outlier",
+    "detect_cohort_outliers",
+    "detect_disagreement_outliers",
+    "iso_week_for_date",
+    "map_action_to_exposure",
+    "resolve_regime_context",
+    "run_weekly_outlier_attribution",
+    "settle_decision_lock",
+]
