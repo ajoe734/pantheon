@@ -348,14 +348,18 @@ def test_whole_stack_restore_succeeds_with_current_controller_and_streaming_sour
     # Prepare a local git checkout representing the current controller HEAD
     # that also contains the previous_backend_sha commit with the baseline compose file.
     controller_repo = tmp_path / "controller-repo"
-    controller_repo.mkdir()
+    controller_repo.mkdir(mode=0o755)
+    (controller_repo / "scripts").mkdir(mode=0o755)
+    for name in ("dev_release_artifact_driver.py", "dev_release_artifacts.py", "deploy_nonprod_vm.sh"):
+        dst = controller_repo / "scripts" / name
+        dst.write_bytes((REPO_ROOT / "scripts" / name).read_bytes())
+        dst.chmod(0o755 if name.endswith(".sh") else 0o644)
+    compose_dst = controller_repo / "docker-compose.yml"
+    compose_dst.write_bytes(driver_case.baseline_compose.read_bytes())
+    compose_dst.chmod(0o644)
     subprocess.run(["git", "-C", str(controller_repo), "init", "-q", "-b", "dev"], check=True)
     for k, v in (("user.name", "t"), ("user.email", "t@t")):
         subprocess.run(["git", "-C", str(controller_repo), "config", k, v], check=True)
-    (controller_repo / "scripts").mkdir()
-    for name in ("dev_release_artifact_driver.py", "dev_release_artifacts.py", "deploy_nonprod_vm.sh"):
-        (controller_repo / "scripts" / name).write_bytes((REPO_ROOT / "scripts" / name).read_bytes())
-    (controller_repo / "docker-compose.yml").write_bytes(driver_case.baseline_compose.read_bytes())
     subprocess.run(["git", "-C", str(controller_repo), "add", "."], check=True)
     subprocess.run(["git", "-C", str(controller_repo), "commit", "-qm", "current controller"], check=True)
     current_controller_sha = subprocess.check_output(
@@ -467,14 +471,18 @@ def test_restore_failure_propagates_driver_reason_and_keeps_lease_quarantined(
     bff_version_file.chmod(0o600)
 
     controller_repo = tmp_path / "controller-repo"
-    controller_repo.mkdir()
+    controller_repo.mkdir(mode=0o755)
+    (controller_repo / "scripts").mkdir(mode=0o755)
+    for name in ("dev_release_artifact_driver.py", "dev_release_artifacts.py", "deploy_nonprod_vm.sh"):
+        dst = controller_repo / "scripts" / name
+        dst.write_bytes((REPO_ROOT / "scripts" / name).read_bytes())
+        dst.chmod(0o755 if name.endswith(".sh") else 0o644)
+    compose_dst = controller_repo / "docker-compose.yml"
+    compose_dst.write_bytes(driver_case.baseline_compose.read_bytes())
+    compose_dst.chmod(0o644)
     subprocess.run(["git", "-C", str(controller_repo), "init", "-q", "-b", "dev"], check=True)
     for k, v in (("user.name", "t"), ("user.email", "t@t")):
         subprocess.run(["git", "-C", str(controller_repo), "config", k, v], check=True)
-    (controller_repo / "scripts").mkdir()
-    for name in ("dev_release_artifact_driver.py", "dev_release_artifacts.py", "deploy_nonprod_vm.sh"):
-        (controller_repo / "scripts" / name).write_bytes((REPO_ROOT / "scripts" / name).read_bytes())
-    (controller_repo / "docker-compose.yml").write_bytes(driver_case.baseline_compose.read_bytes())
     subprocess.run(["git", "-C", str(controller_repo), "add", "."], check=True)
     subprocess.run(["git", "-C", str(controller_repo), "commit", "-qm", "current controller"], check=True)
     current_controller_sha = subprocess.check_output(

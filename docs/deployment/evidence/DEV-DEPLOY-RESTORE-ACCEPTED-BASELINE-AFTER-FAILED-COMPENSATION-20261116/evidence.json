@@ -123,6 +123,10 @@
     {
       "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_fetch_dev_artifact_evidence.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_nonprod_restore_accepted_baseline.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_capture_dev_artifact_baseline.py -q",
       "result": "673 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py -q",
+      "result": "33 passed"
     }
   ]
 }
