@@ -28,16 +28,29 @@ def _rec(symbol: str, day: int, close: float) -> SourceRecord:
     )
 
 
+def _line(symbol: str, version: int) -> str:
+    """One real state line: a full 60-close snapshot exactly as the store serialises it."""
+    points = tuple(
+        m.MarketSnapshotPoint(
+            event_time=f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}T05:30:00Z", close=100.0 + d + version,
+            source_id=f"s-{symbol}-{d}", connector_id="finmind-tw-daily", content_ref=f"ref-{symbol}-{d}",
+            ingest_run_id=f"run-{version}", market="TW")
+        for d in range(60)
+    )
+    snap = m.LatestMarketSnapshot(symbol=symbol, points=points, observed_at="2026-11-12T08:00:00Z", market="TW")
+    return m.LatestMarketSnapshotStore._envelope_line(snap.to_dict())
+
+
 def _grow(path: Path, target_bytes: int, symbols: int = 1800) -> None:
-    """Append real store lines (60 closes each once warm) until the journal reaches target_bytes."""
-    store = m.LatestMarketSnapshotStore(path, compact_min_bytes=10**15)
-    day = 0
-    while path.stat().st_size < target_bytes:
-        for s in range(symbols):
-            store.append_normalized_records(
-                [_rec(f"{1000 + s}.TWSE", day % 90, 100.0 + day)], ingest_run_id=f"r{day}",
-                observed_at=f"2026-11-12T08:{day % 60:02d}:00Z")
-        day += 1
+    """Append real full-state lines (compaction off, as before #7414) until the journal reaches target_bytes."""
+    path.touch()
+    version = path.stat().st_size // 1000  # distinct lines on every call
+    with path.open("a", encoding="utf-8") as handle:
+        while path.stat().st_size < target_bytes:
+            for s in range(symbols):
+                handle.write(_line(f"{1000 + s}.TWSE", version) + "\n")
+            handle.flush()
+            version += 1
 
 
 def _measure(path: Path, legacy: bool, rounds: int = 12) -> dict:
