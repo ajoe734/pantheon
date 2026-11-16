@@ -4,6 +4,7 @@ import {
   planningHighSignalTypes,
 } from "./dashboard-config.js?v=20260517-audit";
 import {
+  actorRunsAutoWorkers,
   buildActiveWorkRows,
   buildDependencyRunway,
   buildProviderPauses,
@@ -27,6 +28,8 @@ import {
   timeAgo,
   titleCase,
   truncate,
+  workerRoleLabel,
+  workerStartedAt,
 } from "./dashboard-core.js?v=20260517-audit";
 
 function escapeHtml(value) {
@@ -458,7 +461,7 @@ export function renderWorkload(status, orchState = null) {
   }
 }
 
-export function renderAgentLanes(status, agentStates) {
+export function renderAgentLanes(status, agentStates, dashboardBundle = null) {
   const container = qs("#agent-lanes");
   if (!container) return;
   container.innerHTML = "";
@@ -470,14 +473,41 @@ export function renderAgentLanes(status, agentStates) {
   }
 
   for (const agent of lanes) {
-    const focusTasks = (agent.current_task_ids || [])
-      .map((taskId) => taskMap.get(taskId))
-      .filter(Boolean)
-      .map((task) => `<li><strong>${task.id}</strong>：${task.summary_zh || task.title}</li>`)
+    // Worker lines come from the supervisor's runtime records, so they show
+    // what is executing now rather than the agent's task-board bookkeeping.
+    const liveWorkers = Array.isArray(agent.live_workers) ? agent.live_workers : [];
+    const runsAutoWorkers = actorRunsAutoWorkers(agent.name, dashboardBundle?.dispatch_policy);
+    const workerLines = liveWorkers
+      .map((worker) => {
+        const task = taskMap.get(worker.task_id);
+        const facts = [
+          workerRoleLabel(worker),
+          worker.workspace_branch || "",
+          `啟動 ${formatTime(workerStartedAt(worker))}`,
+          `心跳 ${formatTime(worker.last_heartbeat_at)}`,
+          `commit ${Number(worker.commit_progress_count || 0)}`,
+        ].filter(Boolean);
+        const summary = task ? `：${truncate(task.summary_zh || task.title, 90)}` : "";
+        return `<li><strong>${worker.task_id || worker.run_id}</strong> · ${facts.join(" · ")}${summary}</li>`;
+      })
       .join("");
+    const focusTasks = liveWorkers.length
+      ? ""
+      : (agent.current_task_ids || [])
+        .map((taskId) => taskMap.get(taskId))
+        .filter(Boolean)
+        .map((task) => `<li><strong>${task.id}</strong>：${task.summary_zh || task.title}</li>`)
+        .join("");
     const card = document.createElement("article");
     card.className = "lane";
-    const activeTasks = (agent.current_task_ids || []).length ? agent.current_task_ids.join(", ") : "目前沒有焦點任務";
+    const workerChip = liveWorkers.length
+      ? `<span class="chip">${liveWorkers.length} 個 worker 在跑</span>`
+      : runsAutoWorkers
+        ? '<span class="chip">沒有 worker 在跑</span>'
+        : "";
+    const activeTasks = liveWorkers.length
+      ? ""
+      : `<span class="chip">${(agent.current_task_ids || []).length ? agent.current_task_ids.join(", ") : "目前沒有焦點任務"}</span>`;
     card.innerHTML = `
       <div class="lane-head">
         <strong>${agent.name}</strong>
@@ -485,14 +515,15 @@ export function renderAgentLanes(status, agentStates) {
       </div>
       <p class="lane-copy">${(agent.capability_lane || []).map(laneLabel).join(" · ")}</p>
       <div class="lane-meta">
-        <span class="chip">${agent.branch || "未指定分支"}</span>
-        <span class="chip">${activeTasks}</span>
+        ${workerChip}
+        ${activeTasks}
         <span class="chip">可開工 ${agent.ready_count || 0}</span>
         <span class="chip">等前置 ${agent.waiting_count || 0}</span>
         <span class="chip">已批准 ${agent.approved_count || 0}</span>
       </div>
+      ${workerLines ? `<ul class="note-list compact">${workerLines}</ul>` : ""}
       ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
-      <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>
+      <p class="lane-copy">任務備註：${truncate(agent.next, 120)}</p>
       <p class="lane-copy">最後更新：${formatTime(agent.last_update)}</p>
     `;
     container.appendChild(card);
@@ -766,7 +797,7 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
     board.appendChild(contextCard);
   }
 
-  const truth = buildTruthMismatches(status, orchState);
+  const truth = buildTruthMismatches(status, orchState, null, dashboardBundle?.dispatch_policy);
   const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
   const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
   const mismatchByTask = new Map();
@@ -2269,7 +2300,7 @@ export function renderAlertStrip(status, orchState, planningState, approvalQueue
   const alerts = [];
   const pausedProviders = pausedProviderEntries(orchState);
   const planning = normalizePlanningState(planningState);
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const truth = buildTruthMismatches(status, orchState, approvalQueue, dashboardBundle?.dispatch_policy);
   const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open");
   const approvalPending = (approvalQueue?.pending || []).length;
   const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
@@ -2498,7 +2529,7 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
   if (!container) return;
   const tasks = status.tasks || [];
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const truth = buildTruthMismatches(status, orchState);
+  const truth = buildTruthMismatches(status, orchState, null, dashboardBundle?.dispatch_policy);
   const summary = dashboardBundle?.execution_summary || {};
   const readyNow = tasks.filter((task) => {
     if (String(task.status || "").toLowerCase() !== "todo") return false;
@@ -2548,7 +2579,7 @@ export function renderTruthMismatches(status, orchState, approvalQueue, dashboar
   const container = qs("#truth-mismatches");
   if (!container) return;
   container.innerHTML = "";
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const truth = buildTruthMismatches(status, orchState, approvalQueue, dashboardBundle?.dispatch_policy);
   const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
 
   if (!mismatchItems.length) {
@@ -2593,7 +2624,7 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
   if (!containers.length) return;
   const tasks = status.tasks || [];
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const truth = buildTruthMismatches(status, orchState);
+  const truth = buildTruthMismatches(status, orchState, null, dashboardBundle?.dispatch_policy);
   const summary = dashboardBundle?.execution_summary || {};
   const readyCount = tasks.filter((task) => {
     if (String(task.status || "").toLowerCase() !== "todo") return false;

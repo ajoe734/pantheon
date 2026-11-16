@@ -563,3 +563,26 @@ def test_grant_content_carries_both_explicit_widenings_the_issued_proposers_matc
         lifecycle, card = _grant_widenings({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
     assert lifecycle.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
     assert card.proposer_subject == issuer.CARD_PROPOSER_SUBJECT
+
+
+def test_governance_binding_readers_are_distinct_read_only_and_least_privilege():
+    from scripts import issue_dev_paper_principals as issuer
+    values = issue_environment(configured(), now=NOW)
+    capital_var, runtime_var = "GOVERNANCE_CAPITAL_SERVICE_TOKEN", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN"
+    capital, runtime = verify(values[capital_var]), verify(values[runtime_var])
+    assert capital["roles"] == ["capital-reader"] and runtime["roles"] == ["viewer"]
+    assert capital["scope"] == runtime["scope"] == "pantheon:dev-owner-read"
+    assert capital["sub"] == issuer.GOVERNANCE_CAPITAL_READER_SUBJECT
+    assert runtime["sub"] == issuer.GOVERNANCE_RUNTIME_READER_SUBJECT
+    assert capital["sub"] != runtime["sub"] != issuer.PAPER_SUBJECT
+    assert values[capital_var] != values[runtime_var]
+    for claims in (capital, runtime):
+        assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+        assert not {"admin", "operator", "approver", "risk_owner", "automated_gate", "approval_proposer",
+                    "registry-writer", "capital.admin", "persona.admin"}.intersection(claims["roles"])
+    assert values["GOVERNANCE_CAPITAL_BASE_URL"] == "http://capital:8092"
+    assert values["GOVERNANCE_RUNTIME_MANAGER_BASE_URL"] == "http://runtime-manager:8081"
+    for variable in (capital_var, runtime_var):
+        assert variable in issuer.CONSUMER_FILES["governance"]
+        assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+        assert variable not in issuer.WRITERS
