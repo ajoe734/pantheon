@@ -1,0 +1,49 @@
+{
+  "task_id": "HYPOTHESIS-CARD-GATE-CANDIDATE-20261115",
+  "owner": "Claude2",
+  "reproduction_at_base_4a48892cd": {
+    "conversion_drops_card_and_rule": "services/research/strategy_spec/conversion.py:194-254 (_build_strategy_spec_payload) never reads seed.metadata.hypothesis_card; StrategySpec schema forbids extra top-level keys, so to_dict() cannot carry strategy_artifact/backtest_dataset (services/research/strategy_spec/models.py:577-603)",
+    "distilled_spec_has_no_artifact_or_dataset": "services/source_ingestion/distillation_controller.py:314 convert_seed(...) passes no binding; worker reads raw_spec.strategy_artifact/backtest_dataset at services/research/alpha_replication/revalidation_worker.py:836-837 and returns None, so the gate returns missing_backtest_run (services/research/replication/gate.py:1384)",
+    "no_internal_admission_caller": "ReplicationAdmissionStore.create_admission callers: services/research/main.py:1007 (HTTP route) and the template path services/research/candidate_registration.py:185 only"
+  },
+  "changes": {
+    "conversion": "services/research/strategy_spec/conversion.py: build_card_strategy_artifact + _apply_hypothesis_card; card, predictions, factor_rule_v1, strategy_artifact(+checksum), backtest_dataset reference and card_wiring land in spec metadata; governed dataset dependency is first; no rule or binding => research_only_draft with reason",
+    "binding_source": "services/source_ingestion/distillation_controller.py: card_dataset_binding_from_env (PANTHEON_L2_CARD_DATASET_ID|PERSONA_POOL_SOURCE_DATASET_ID, PANTHEON_L2_CARD_SYMBOLS, optional PANTHEON_L2_CARD_SOURCE_DATASET_REFS, PANTHEON_L2_CARD_BAR_FREQUENCY)",
+    "worker": "services/research/alpha_replication/revalidation_worker.py: _lift_card_inputs (metadata -> candidate inputs incl. predictions), dataset_resolver (reference -> governed dataset version, fail closed), persists the full evaluation for card specs",
+    "admission_owner": "services/research/alpha_replication/admission.py: CardSpecAdmissionOwner (criterion 3), register_card_pass (criterion 4, calls TemplateCandidateRegistrar.register_passed_attempt)",
+    "controller": "services/research/alpha_replication/replication_controller.py: _admit_card_specs before enqueue, _register_card_passes after the worker; inert unless card_registrar, card_matcher and demands_provider are configured"
+  },
+  "criterion_3_authority": "Per design section 6A (amendment 2026-11-15) and open question O-21 (answered (b), named paper-only authority) in docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md, merged to dev via SD-RESEARCH-ADMISSION-AUTHORITY-20261115 (PR 7389, 5ec067086); standing decision P-4. Research creates the admission only for a gate_ready card-derived spec matched by the discovery scorer (injected matcher) to an open persona demand; approval is a real Governance decision proposed by the research proposer principal and decided by the distinct automated paper gate principal; unmatched specs stay drafts; no human item is created. Branch rebased onto dev containing the section.",
+  "findings_for_followup": [
+    "Every compiled rule carries a screen, so the gate needs candidate_pool_market.v1 with includes_delisted and includes_suspended attested, otherwise real_backtest_validation returns survivorship_limited. The governed dataset resolver wired in production must supply that; the integration test sets the attestation flags on a recorded market to exercise the pass path.",
+    "Production wiring of card_registrar, card_matcher (discovery scorer), demands_provider and dataset_resolver into ReplicationControllerConfig/main is not done here (not in the artifact list); the card binding env vars are not in any deploy config file."
+  ],
+  "validation": {
+    "venv": "/tmp/hc-venv (python 3.12, requirements of /tmp/rv-venv plus vectorbt, asyncpg)",
+    "commands": [
+      {
+        "cmd": "pytest -q services/research/strategy_spec services/research/alpha_replication services/research/tests/test_hypothesis_card_gate_candidate.py services/research/tests/test_candidate_registration.py",
+        "result": "238 passed"
+      },
+      {
+        "cmd": "pytest -q services/source_ingestion/tests/test_distillation_controller.py test_hypothesis_compiler_wiring.py test_hypothesis_extraction.py test_hypothesis_compiler.py",
+        "result": "117 passed"
+      },
+      {
+        "cmd": "pytest -q services/research/tests/test_hypothesis_card_gate_candidate.py services/research/alpha_replication/test_evolution_executor_case_file.py (combined order, /tmp/hc-venv)",
+        "result": "23 passed (was 16 failed before the isolation fix)"
+      },
+      {
+        "cmd": "pytest -q test_hypothesis_card_gate_candidate.py + test_candidate_registration.py + test_evolution_executor_case_file.py (/tmp/rv-venv)",
+        "result": "26 passed"
+      },
+      {
+        "cmd": "pytest -q <T> + retrain_executor_real_auth/single_owner_routes/retrieval_influence/candidate_registration files vs same without T (/tmp/hc-venv)",
+        "result": "with T: 11 failed, 92 passed; without T: 11 failed, 86 passed. Identical 11 failures with and without T, so T adds 6 passes and no failures"
+      }
+    ],
+    "not_run": "full services/source_ingestion/tests directory exceeded the 10 minute bounded batch and was not completed; whole services/research/tests directory exceeds the bounded batch with vectorbt installed, and without pandas/vectorbt (/tmp/rv-venv) it showed 24 failed both with and without T (T adds 6 passes, no extra failures)",
+    "fixture_provenance": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json and hypothesis_predictions_recorded.json are hand-authored model-shaped responses (their provenance field says so), not live provider captures; no live model call in CI. Criterion 6 asks for a recorded real-run output: no real provider capture was available to this worker, so this is NOT satisfied literally; a real capture must be supplied by an operator with provider access.",
+    "isolation_fix": "Root cause: OwnerEnvironment patches build_opener while urllib.request.urlopen lazily caches a module-global _opener, so the first urlopen in the e2e test pinned the fake _ResearchOpener process-wide (TypeError open() takes 2-3 args, 4 given). An autouse fixture in test_hypothesis_card_gate_candidate.py restores urllib.request._opener and resets the registry store on teardown. The approval_reader assignment is instance-level on a per-call RegistryService and does not leak."
+  }
+}

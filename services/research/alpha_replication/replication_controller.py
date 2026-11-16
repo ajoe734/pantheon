@@ -40,7 +40,28 @@ class ReplicationControllerConfig:
         seed_store_path: Path | None = None,
         authority: ExperimentAuthority | None = None,
         admission_store: ReplicationAdmissionStore | None = None,
+        card_registrar: Any = None,
+        card_matcher: Any = None,
+        demands_provider: Any = None,
+        dataset_resolver: Any = None,
+        card_wiring_builder: Any = None,
     ) -> None:
+        # Card-derived StrategySpec wiring (all optional; unset = no card path).
+        # card_registrar: TemplateCandidateRegistrar; card_matcher(entry, demand)->bool is
+        # the existing discovery scorer; demands_provider(tenant_id)->open demands;
+        # dataset_resolver(binding)->governed dataset version.
+        self.card_registrar = card_registrar
+        self.card_matcher = card_matcher
+        self.demands_provider = demands_provider
+        self.dataset_resolver = dataset_resolver
+        # card_wiring_builder() -> CardWiring, evaluated every tick by the production entry point
+        # (main) so a mounted credential or dataset pointer that appears later enables the path and
+        # one that disappears disables it, with the reason on the health file. Never a fallback.
+        self.card_wiring_builder = card_wiring_builder
+        self.card_path_status: dict[str, Any] = {
+            "enabled": all((card_registrar, card_matcher, demands_provider)),
+            "reason": None if all((card_registrar, card_matcher, demands_provider)) else "card_path_not_wired",
+        }
         self.database_url = database_url or os.getenv("DATABASE_URL") or "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
         self.registry_url = registry_url or os.getenv("PANTHEON_REGISTRY_URL") or "http://registry:8087"
         self.interval_seconds = int(os.getenv("ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS", str(interval_seconds)))
@@ -53,6 +74,19 @@ class ReplicationControllerConfig:
         self.seed_store_path = seed_store_path or Path(os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or "data/source-ingest/distill_seeds.jsonl")
         self.authority = authority
         self.admission_store = admission_store or ReplicationAdmissionStore(self.data_dir)
+
+
+def refresh_card_wiring(config: "ReplicationControllerConfig") -> dict[str, Any]:
+    """Rebuild the four card collaborators from the deployed environment (production entry point only)."""
+    if config.card_wiring_builder is None:
+        return config.card_path_status
+    wiring = config.card_wiring_builder()
+    config.card_registrar = wiring.registrar
+    config.card_matcher = wiring.matcher
+    config.demands_provider = wiring.demands_provider
+    config.dataset_resolver = wiring.dataset_resolver
+    config.card_path_status = {"enabled": wiring.enabled, "reason": wiring.reason, "missing": list(wiring.missing)}
+    return config.card_path_status
 
 
 def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
@@ -72,6 +106,68 @@ def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> lis
         raise
     except Exception as exc:
         raise RuntimeError(f"Failed to query registry for strategy {strategy_id}: {exc}") from exc
+
+
+def _list_registry_strategy_specs(registry_url: str, artifact_state: str) -> list[dict]:
+    url = f"{registry_url}/api/registry/strategy-specs?artifact_state={artifact_state}"
+    headers = {}
+    token = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return [v["entry"] for v in json.loads(response.read().decode("utf-8")) if "entry" in v]
+
+
+def _admit_card_specs(config: "ReplicationControllerConfig", tenant_id: str) -> list[dict[str, Any]]:
+    """Research owner: admit card-derived specs the discovery scorer matched to an open demand."""
+    from services.research.alpha_replication.admission import CardSpecAdmissionOwner
+
+    owner = CardSpecAdmissionOwner(
+        registrar=config.card_registrar, store=config.admission_store, matcher=config.card_matcher
+    )
+    demands = list(config.demands_provider(tenant_id))
+    results: list[dict[str, Any]] = []
+    for entry in _list_registry_strategy_specs(config.registry_url, "draft"):
+        if (entry.get("metadata") or {}).get("tenant_id") != tenant_id:
+            continue
+        try:
+            outcome = owner.admit(entry, demands)
+        except Exception as exc:  # noqa: BLE001 - one spec never blocks the tick
+            outcome = {"status": "error", "registry_id": entry.get("registry_id"),
+                       "reason": f"{type(exc).__name__}:{str(exc)[:160]}"}
+        if outcome["status"] != "draft" or outcome.get("reason") == "no_open_demand_match":
+            results.append(outcome)
+    return results
+
+
+def _register_card_passes(config: "ReplicationControllerConfig", worker: Any, tenant_id: str,
+                          approved: list[dict]) -> list[dict[str, Any]]:
+    """Register passing card runs through the template path's registration function."""
+    from services.research.alpha_replication.admission import register_card_pass
+
+    demands = {d["demand_id"]: d for d in config.demands_provider(tenant_id)}
+    results: list[dict[str, Any]] = []
+    for entry in approved:
+        spec = (entry.get("metadata") or {}).get("strategy_spec") or {}
+        if ((spec.get("metadata") or {}).get("card_wiring") or {}).get("status") != "gate_ready":
+            continue
+        adm = config.admission_store.get_admission(tenant_id, entry["registry_id"]) or {}
+        demand = demands.get(adm.get("demand_ref"))
+        if demand is None:
+            continue
+        for run in worker.list_runs(tenant_id=tenant_id, strategy_spec_id=entry["registry_id"]):
+            meta = run.get("metadata") or {}
+            if run.get("status") != "completed" or (meta.get("replication_gate") or {}).get("admission_status") != "admitted":
+                continue
+            try:
+                reg = register_card_pass(registrar=config.card_registrar, entry=entry, demand=demand,
+                                         run_metadata=meta)
+                results.append({"registry_id": entry["registry_id"], "run_id": run.get("run_id"), **reg})
+            except Exception as exc:  # noqa: BLE001
+                results.append({"registry_id": entry["registry_id"], "run_id": run.get("run_id"),
+                                "status": "error", "reason": f"{type(exc).__name__}:{str(exc)[:160]}"})
+    return results
 
 
 def _queue_payload_from_registry_entry(
@@ -161,6 +257,15 @@ def run_controller_tick(
     actual_meta: dict[str, Any] = {}
     
     try:
+        refresh_card_wiring(config)
+        card_enabled = all((config.card_registrar, config.card_matcher, config.demands_provider))
+        card_error: str | None = None
+        card_admissions: list[dict[str, Any]] = []
+        if card_enabled:
+            try:
+                card_admissions = _admit_card_specs(config, state.tenant_id)
+            except Exception as exc:  # noqa: BLE001 - a card owner outage never stops the queue
+                card_error = f"card_admission_unavailable:{type(exc).__name__}:{str(exc)[:200]}"
         # 1. Read admissions from ReplicationAdmissionStore for current tenant
         admissions = config.admission_store.list_admissions(tenant_id=state.tenant_id)
 
@@ -230,8 +335,15 @@ def run_controller_tick(
             worker_id="alpha-revalidation-worker",
             authority=config.authority,
             registry_url=config.registry_url,
+            dataset_resolver=config.dataset_resolver,
         )
         tick_result = worker.run_once(tenant_id=state.tenant_id)
+        card_registrations: list[dict[str, Any]] = []
+        if card_enabled:
+            try:
+                card_registrations = _register_card_passes(config, worker, state.tenant_id, approved_specs)
+            except Exception as exc:  # noqa: BLE001
+                card_error = card_error or f"card_registration_unavailable:{type(exc).__name__}:{str(exc)[:200]}"
         
         reconcile_meta = {
             "enqueued_new": enqueued_count,
@@ -256,6 +368,10 @@ def run_controller_tick(
             "authority_receipts": tick_result.get("authority_receipts", []),
             "errors": tick_result.get("errors", []),
             "dispatch_mode": tick_result.get("dispatch_mode"),
+            "card_admissions": card_admissions,
+            "card_registrations": card_registrations,
+            # Readable on the worker health file: why the card path is or is not running.
+            "card_path": {**config.card_path_status, "error": card_error},
         }
         
         # 4. Observe actual state: get metrics
@@ -376,8 +492,18 @@ def initialize_controller_state(store: ControllerStateStore) -> ControllerState:
     return state
 
 
-def main() -> int:
+def build_production_config() -> ReplicationControllerConfig:
+    """Controller configuration of the deployed worker: the card collaborators come from the environment."""
+    from services.research.alpha_replication.card_production_wiring import build_card_wiring
+
     config = ReplicationControllerConfig()
+    config.card_wiring_builder = lambda: build_card_wiring(
+        data_dir=config.data_dir, admission_store=config.admission_store)
+    return config
+
+
+def main() -> int:
+    config = build_production_config()
     store = ControllerStateStore(config.state_path)
     state = initialize_controller_state(store)
 

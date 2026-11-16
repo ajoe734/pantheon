@@ -202,6 +202,86 @@ def plan_next_session_decision(
     )
 
 
+DAILY_FREQUENCY = "1d"
+
+
+def _is_session_day(day: date, holidays: Collection[date]) -> bool:
+    try:
+        session_bounds(day, holidays)
+    except ValueError:
+        return False
+    return True
+
+
+def plan_daily_next_open_decision(
+    *,
+    event_time: Any,
+    bar_availability_ts: Any,
+    decision_time: Any,
+    holidays: Collection[date] = (),
+) -> ExecutionPlan:
+    """Admit a daily decision computed from the close of session D for the open of D+1.
+
+    Same window rules as the intraday path: the official daily bar must be available after the
+    session close, the decision may not precede that availability, and it must be submitted
+    before D+1 08:55.  The decision is never filled at D's close.
+    """
+    decided = parse_ts(decision_time, field="decision_time")
+    available = parse_ts(bar_availability_ts, field="bar_availability_ts")
+    event_text = str(event_time or "").strip()
+    if len(event_text) == 10:  # a bare trade date names the session day without a clock
+        try:
+            day = date.fromisoformat(event_text)
+        except ValueError as exc:
+            raise IntradayWindowError(REASON_BAR_INVALID, f"event_time {event_text!r} is not a date") from exc
+        ended = session_bounds(day, holidays)[1] if _is_session_day(day, holidays) else None
+        if ended is None:
+            raise IntradayWindowError(REASON_BAR_INVALID, f"{event_text} is not a trading day")
+    else:
+        ended = parse_ts(event_time, field="event_time")
+        day = ended.astimezone(TAIPEI_TZ).date()
+    try:
+        opened, closed = session_bounds(day, holidays)
+    except ValueError as exc:
+        raise IntradayWindowError(REASON_BAR_INVALID, str(exc)) from exc
+    if available <= closed:
+        raise IntradayWindowError(
+            REASON_BAR_INVALID, "bar_availability_ts precedes the session close; the day cannot be reconciled yet"
+        )
+    if decided < available:
+        raise IntradayWindowError(
+            REASON_BAR_NOT_AVAILABLE,
+            f"decision time {_iso(decided)} precedes bar_availability_ts {_iso(available)}",
+        )
+    target_day = next_trading_day(day, holidays)
+    cutoff = submission_cutoff(target_day)
+    # Official daily data may land after D+1's submission cutoff.  The open of D+1 has then already
+    # printed, so filling there would be look-ahead: the decision targets the first session whose
+    # open is still ahead of the decision clock (never a past open, never the decision close).
+    for _ in range(10):
+        if decided < cutoff:
+            break
+        target_day = next_trading_day(target_day, holidays)
+        cutoff = submission_cutoff(target_day)
+    else:
+        raise IntradayWindowError(
+            REASON_WINDOW_CLOSED, f"decision time {_iso(decided)} has no upcoming session open"
+        )
+    target_open, _ = session_bounds(target_day, holidays)
+    return ExecutionPlan(
+        bar_frequency=DAILY_FREQUENCY,
+        horizon_bars=1,
+        decision_day=day.isoformat(),
+        target_day=target_day.isoformat(),
+        decision_time=_iso(decided),
+        bar_event_time=_iso(ended),
+        bar_availability_ts=_iso(available),
+        window_closes_at=_iso(cutoff),
+        execution_target_bar_start=_iso(target_open),
+        expires_at=_iso(submission_cutoff(next_trading_day(target_day, holidays))),
+    )
+
+
 def pending_record(
     plan: ExecutionPlan,
     *,
@@ -407,6 +487,8 @@ def advance_decision(
         settled = store.put_decision_record(decision_id + SETTLEMENT_RECORD_SUFFIX, outcome)
     if settled["status"] != STATUS_SETTLED:
         return dict(settled)
+    if plan["bar_frequency"] == DAILY_FREQUENCY:
+        return dict(settled)  # daily decisions are settled at the next open; no intraday horizon grade
     graded = store.get_decision_record(decision_id + GRADE_RECORD_SUFFIX)
     if graded is not None:
         return dict(graded)
@@ -426,7 +508,9 @@ __all__ = [
     "bars_per_session",
     "grade",
     "is_intraday_frequency",
+    "DAILY_FREQUENCY",
     "pending_record",
+    "plan_daily_next_open_decision",
     "plan_next_session_decision",
     "settle",
 ]

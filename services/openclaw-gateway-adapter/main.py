@@ -61,11 +61,13 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, model_validator
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
 from services.knowledge.evidence import JsonlEvidenceRepository
+from memory_llm_bridge import MEMORY_INDEX_AGENT_ID, BridgeConfig, MemoryLlmBridge
 from session_lifecycle import (
     LifecycleError,
     SessionLifecycleStore,
@@ -1910,6 +1912,58 @@ def invoke_openclaw_structured_provider(
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     return JSONResponse(status_code=200, content={"status": "ok", "data": result.to_dict()})
+
+
+_MEMORY_LLM_BRIDGE = MemoryLlmBridge(BridgeConfig.from_env())
+_MEMORY_LLM_BRIDGE_PATH = "/internal/memory-llm/v1/chat/completions"
+
+
+@app.post(_MEMORY_LLM_BRIDGE_PATH)
+async def memory_llm_chat_completions(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    x_memory_operation: Optional[str] = Header(default=None, alias="X-Memory-Operation"),
+) -> JSONResponse:
+    """Internal OpenAI-compatible endpoint for Hindsight's background model calls.
+
+    Runs only the deny-all `memory-index` agent (never the model name sent),
+    behind its own internal token; off unless MEMORY_LLM_BRIDGE_ENABLED. Not a
+    new privileged route: it adds no tool, no memory read and no gateway token
+    exposure to the caller (the gateway token stays in this adapter).
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+
+    def _invoke(messages: List[Dict[str, Any]], instruction: str, remaining: float) -> Dict[str, Any]:
+        result = _OPENCLAW_AGENT_PROVIDER._invoke_via_http(
+            "",
+            agent_id=MEMORY_INDEX_AGENT_ID,
+            session_id=f"memory-index-{uuid.uuid4().hex}",  # one-shot, stateless
+            operator_id="memory-index-bridge",
+            messages=[{"role": "system", "content": instruction}] + messages,
+            timeout_seconds=remaining,
+        )
+        if result.output.get("function_calls"):
+            raise GatewayOpenClawProviderError(
+                "memory index must not emit tool calls", status_code=502,
+                error_code="OPENCLAW_TOOL_MISMATCH",
+            )
+        return {"text": _OPENCLAW_AGENT_PROVIDER._result_text(result), "usage": result.output.get("usage")}
+
+    def _verify(agent_id: str, deadline: float) -> None:
+        _assert_structured_gateway_policy(agent_id, deadline=deadline)
+
+    response = await run_in_threadpool(
+        _MEMORY_LLM_BRIDGE.handle,
+        authorization=authorization,
+        body=body,
+        operation_header=x_memory_operation,
+        invoke=_invoke,
+        verify_policy=_verify,
+    )
+    return JSONResponse(status_code=response.status_code, content=response.body, headers=response.headers)
 
 
 # OpenClaw 2026.7.1 replaces args/resumeArgs wholesale from the cliBackends

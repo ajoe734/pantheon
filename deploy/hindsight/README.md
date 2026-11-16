@@ -106,3 +106,39 @@ Sources: [upstream v1.2.1 image recipe](https://github.com/vectorize-io/hindsigh
 [none-provider contract](https://github.com/vectorize-io/hindsight/blob/v1.2.1/hindsight-api-slim/tests/test_none_llm_provider.py),
 [PGDG archive](https://apt-archive.postgresql.org/pub/repos/apt/),
 [ONNX reranker revision](https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/tree/6f5ff65298512715a1e669753bc754d2bc8f367b).
+
+## Background model calls through the OpenClaw memory-index agent (H5)
+
+Hindsight holds no model key. Its retain, consolidation, reflect and
+mental-model-refresh LLM settings can point at the adapter's internal
+OpenAI-compatible endpoint `POST /internal/memory-llm/v1/chat/completions`,
+which always runs the OpenClaw agent `memory-index` (tools deny `*`, exec
+security deny) whatever model name is sent.
+
+- Off by default: adapter `MEMORY_LLM_BRIDGE_ENABLED=false`, Hindsight providers `none`. The same
+  `MEMORY_LLM_BRIDGE_ENABLED` also starts Hindsight's worker and sets the memory service's
+  `PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED`; the memory service then switches each bank to verbatim
+  retain + consolidation and serves persona standing questions (`MEMORY-LLM-LAYERS-MENTAL-MODELS-20261114`).
+  Compose still ships chunks mode and no consolidation as the Hindsight-level defaults.
+- Enable: set `MEMORY_LLM_BRIDGE_ENABLED=true`, a random `MEMORY_LLM_BRIDGE_TOKEN`
+  (a dedicated token; it is the only credential Hindsight receives, never the
+  gateway token), `HINDSIGHT_LLM_BRIDGE_BASE_URL=http://openclaw-gateway-adapter:8104/internal/memory-llm/v1`,
+  and `HINDSIGHT_LLM_PROVIDER=openai` plus `HINDSIGHT_*_LLM_PROVIDER=openai` (the default-LLM gate: Hindsight skips consolidation when it is `none`, observed in the real-container probe). Re-run `scripts/openclaw-configure-shared-model-pool.sh`
+  so the `memory-index` agent exists.
+- Only the internal `memory-llm-bridge` network joins hindsight and the adapter.
+- Endpoint refuses `tools`/`tool_choice`/`functions` and streaming (422 with a recorded
+  reason), verifies the agent's native-tool policy before every dispatch, and bounds
+  each call by deadline (`MEMORY_LLM_BRIDGE_DEADLINE_SECONDS`), concurrency
+  (`..._MAX_CONCURRENCY`) and a per-UTC-day budget (`..._DAILY_BUDGET`, persisted).
+  Refusals and upstream quota errors return 429 with `Retry-After`, which Hindsight
+  treats as a defer. Telemetry carries operation label, latency, token usage and
+  outcome, never prompt or response content.
+- Models: `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` (default `openai/gpt-5.5`) and
+  `OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS` (default `anthropic/claude-sonnet-4-6`),
+  existing pool slots only; the pool script fails if a ref is not in the pool. Numeric
+  limits are coordinator proposals.
+- The Hindsight per-operation `*_LLM_BASE_URL` setting names follow the pinned
+  1.2.1 naming and must be confirmed in the dev-host run.
+- Real-container probe: the opt-in `test_real_container_bridge_probe` in `services/openclaw-gateway-adapter/test_memory_llm_bridge.py` (real hindsight container + real adapter + gateway double).
+- Opt-in dev-host probe: `PANTHEON_MEMORY_BRIDGE_PROBE_COMMAND` in
+  `services/openclaw-gateway-adapter/test_memory_llm_bridge.py`.

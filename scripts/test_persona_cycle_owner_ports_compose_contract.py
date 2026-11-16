@@ -212,6 +212,22 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GOVERNANCE_URL"),
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_PROPOSER_TOKEN"),
     ("evolution-daily-sweep-scheduler", "paper_quarterly_allocation", "services/evolution/auto_consumer_runtime.py", "AUTO_CONSUMER_GATE_TOKEN"),
+    # 9. Hypothesis card admission path of the alpha replication worker (CARD-ADMISSION-PRODUCTION-WIRING-20261115)
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PANTHEON_REGISTRY_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PANTHEON_GOVERNANCE_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_API_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "PERSONA_API_URL"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_PROPOSER_ID"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_GATE_ID"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_REGISTRY_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
 )
 
 
@@ -303,7 +319,7 @@ def test_code_read_owner_env_vars_are_wired_and_missing_var_fails_contract() -> 
         area: (service, rel_file, env_var)
         for service, area, rel_file, env_var in CODE_READ_OWNER_ENV_SPECS
     }
-    assert len(representative_by_area) == 8
+    assert len(representative_by_area) == 9
     for area, (service, rel_file, env_var) in representative_by_area.items():
         mutated = copy.deepcopy(SERVICES)
         del mutated[service]["environment"][env_var]
@@ -598,3 +614,40 @@ def test_degraded_cycle_report_names_every_missing_owner_port() -> None:
             item["owner_port"] == port_name and item.get("persona_id") == "persona-alpha"
             for item in updated["failures"]
         )
+
+
+def test_enrollment_proposer_principal_is_wired_distinct_and_propose_only() -> None:
+    names = (
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE",
+    )
+    bff_env = _env("operator-bff")
+    for name in names:
+        # Empty default: unconfigured enrolment fails closed, no value is committed.
+        assert _default(bff_env[name]) == "", name
+    # The names are the ones the enrolment code reads.
+    source = (ROOT / "services/control-plane/bff/persona_paper_enrollment.py").read_text(encoding="utf-8")
+    assert "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID" in source
+    assert "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN" in source
+
+    variable = "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"
+    assert variable in issuer.CONSUMER_FILES["operator-bff"]
+    subject, role, scope = issuer.WRITERS[variable]
+    assert subject != issuer.PAPER_SUBJECT
+    assert role == "approval_proposer" and scope == "pantheon:dev-owner-write"
+    issued = issuer.issue_environment(
+        {
+            "PANTHEON_ENV": "dev",
+            "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+            "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+            "PANTHEON_DEV_BFF_JWT_SECRET": "enrollment-proposer-contract-secret-0123456789",
+            "PANTHEON_DEV_BFF_JWT_ISSUER": "pantheon-dev",
+            "PANTHEON_DEV_BFF_JWT_AUDIENCE": "bff-operators",
+        }
+    )
+    assert issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID"] == subject
+    assert issued[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    assert issued[variable] != issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
+    compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert issued[variable] not in compose_text

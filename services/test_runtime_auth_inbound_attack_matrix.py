@@ -34,6 +34,17 @@ ENV = {
 }
 
 
+def _corrupt_sig(sig: str) -> str:
+    """Return a signature whose decoded bytes always differ from ``sig``.
+
+    Flips every bit of the first decoded byte, so the result is invalid for any
+    input (unlike overwriting trailing chars, which can be a no-op).
+    """
+    raw = bytearray(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
+    raw[0] ^= 0xFF
+    return base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode("ascii")
+
+
 def _claims(**over):
     base = {
         "sub": "u1",
@@ -96,7 +107,7 @@ def test_tampered_signature_rejected():
     t = A.encode_jwt_hs256(_claims(), secret=SECRET)
     h, p, s = t.split(".")
     with pytest.raises(A.AuthError):
-        _v(f"{h}.{p}.{s[:-2]}AA")
+        _v(f"{h}.{p}.{_corrupt_sig(s)}")
 
 
 @pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
@@ -153,7 +164,7 @@ def test_jwks_configured_with_allow_shared_secret_rejects_invalid_claims(
     token = A.encode_jwt_hs256(_claims(**over), secret=SECRET)
     if tamper_field == "bad_sig":
         h, p, s = token.split(".")
-        token = f"{h}.{p}.{s[:-2]}AA"
+        token = f"{h}.{p}.{_corrupt_sig(s)}"
     with pytest.raises(A.AuthError) as exc_info:
         A.validate_request_auth(
             authorization="Bearer " + token,
@@ -267,3 +278,30 @@ def test_jwks_configured_routes_rs256_to_jwks_even_with_allow_shared_secret():
     assert ctx.actor_id == "paper-operator"
     assert "operator" in ctx.roles
 
+
+
+def test_corrupt_sig_helper_adversarial_cases():
+    # Find tokens whose signature already ends in "AA" (old mutation was a no-op).
+    found_aa = 0
+    for i in range(200000):
+        t = A.encode_jwt_hs256(_claims(iat=int(time.time()) + i), secret=SECRET)
+        h, p, s = t.split(".")
+        if s.endswith("AA"):
+            bad = _corrupt_sig(s)
+            assert bad != s and bad[:-2] != "" and bad != f"{s[:-2]}AA"
+            with pytest.raises(A.AuthError):
+                _v(f"{h}.{p}.{bad}")
+            found_aa += 1
+            if found_aa >= 3:
+                break
+    assert found_aa >= 1
+    # Last char differing only in ignored low bits decodes to identical bytes;
+    # the helper must still change decoded bytes.
+    t = A.encode_jwt_hs256(_claims(), secret=SECRET)
+    h, p, s = t.split(".")
+    alt = s[:-1] + ("B" if s[-1] == "A" else "A")
+    for sig in (s, alt):
+        bad = _corrupt_sig(sig)
+        assert base64.urlsafe_b64decode(bad + "=") != base64.urlsafe_b64decode(sig + "=")
+        with pytest.raises(A.AuthError):
+            _v(f"{h}.{p}.{bad}")

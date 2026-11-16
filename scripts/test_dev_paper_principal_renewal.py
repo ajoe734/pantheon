@@ -53,7 +53,11 @@ def test_explicit_withdrawal_denies_captured_principal_and_removes_only_fixed_fi
     env = configured()
     refresh_files(tmp_path, env, now=NOW)
     grant_env = {"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(tmp_path / "governance/grant")}
-    assert configured_dev_paper_grant_enabled(grant_env)
+    from services.governance.paper_approval_scope import configured_persona_lifecycle_grant
+    from scripts.issue_dev_paper_principals import ENROLLMENT_PROPOSER_SUBJECT
+    # The issued grant content carries the explicit paper-ladder widening naming the proposer.
+    widening = configured_persona_lifecycle_grant(grant_env)
+    assert widening is not None and widening.proposer_subject == ENROLLMENT_PROPOSER_SUBJECT
     unrelated = tmp_path / "governance/unrelated-audit-note"
     unrelated.write_text("keep")
     captured = (tmp_path / "operator-bff/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN").read_text()

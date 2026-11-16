@@ -25,7 +25,7 @@ def test_internal_index_and_only_memory_holds_client_key():
         assert service['build']['args']['GIT_SHA'] == '${GIT_SHA:-unknown}'
     assert pg['volumes'] == ['memory-index-postgres-data:/var/lib/postgresql/data']
     assert pg['networks'] == ['memory-index-storage']
-    assert api['networks'] == ['memory-index', 'memory-index-storage']
+    assert api['networks'] == ['memory-index', 'memory-index-storage', 'memory-llm-bridge']
     for network, members in [('memory-index', {'memory', 'hindsight'}),
                              ('memory-index-storage', {'memory-index-postgres', 'hindsight'})]:
         assert COMPOSE['networks'][network]['internal'] is True
@@ -43,6 +43,29 @@ def test_internal_index_and_only_memory_holds_client_key():
     assert SERVICES['memory']['environment']['PANTHEON_MEMORY_HINDSIGHT_API_KEY'] == env['HINDSIGHT_API_TENANT_API_KEY']
     assert api['depends_on']['memory-index-postgres']['condition'] == 'service_healthy'
     assert 'hindsight_api.http_probe' in api['healthcheck']['test']
+
+
+def test_llm_bridge_wiring_has_no_model_credential_and_is_off_by_default():
+    api = SERVICES['hindsight']
+    env = api['environment']
+    ops = ('RETAIN', 'CONSOLIDATION', 'REFLECT', 'MENTAL_MODEL_REFRESH')
+    for op in ops:
+        assert env[f'HINDSIGHT_API_{op}_LLM_PROVIDER'] == f'${{HINDSIGHT_{op}_LLM_PROVIDER:-none}}'
+        assert env[f'HINDSIGHT_API_{op}_LLM_API_KEY'] == '${MEMORY_LLM_BRIDGE_TOKEN:-}'
+        assert env[f'HINDSIGHT_API_{op}_LLM_BASE_URL'] == '${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}'
+    blob = json.dumps(api)
+    for forbidden in ('OPENCLAW_GATEWAY_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+                      'CLAUDE_CODE_OAUTH_TOKEN', 'HINDSIGHT_RETAIN_LLM_API_KEY'):
+        assert forbidden not in blob
+    assert 'MEMORY_LLM_BRIDGE_TOKEN' not in json.dumps(
+        {k: v for k, v in SERVICES.items() if k not in ('hindsight', 'openclaw-gateway-adapter')})
+    adapter_env = SERVICES['openclaw-gateway-adapter']['environment']
+    assert adapter_env['MEMORY_LLM_BRIDGE_ENABLED'] == '${MEMORY_LLM_BRIDGE_ENABLED:-false}'
+    assert COMPOSE['networks']['memory-llm-bridge']['internal'] is True
+    members = {n for n, svc in SERVICES.items() if 'memory-llm-bridge' in svc.get('networks', [])}
+    assert members == {'hindsight', 'openclaw-gateway-adapter'}
+    assert env['HINDSIGHT_API_LLM_PROVIDER'] == '${HINDSIGHT_LLM_PROVIDER:-none}'
+    assert env['HINDSIGHT_API_LLM_API_KEY'] == '${MEMORY_LLM_BRIDGE_TOKEN:-}'
 
 
 def test_version_digest_and_extension_pins():
@@ -75,10 +98,15 @@ def test_offline_manifest_and_none_provider_defaults():
         assert all(re.fullmatch('[0-9a-f]{64}', f['sha256']) for f in row['files'].values())
         assert 'model.onnx' in row['files'] and 'tokenizer.json' in row['files']
     env = SERVICES['hindsight']['environment']
-    assert env['HINDSIGHT_API_LLM_PROVIDER'] == 'none'
+    assert env['HINDSIGHT_API_LLM_PROVIDER'] == '${HINDSIGHT_LLM_PROVIDER:-none}'
+    assert env['HINDSIGHT_API_LLM_API_KEY'] == '${MEMORY_LLM_BRIDGE_TOKEN:-}'
     assert env['HINDSIGHT_API_RETAIN_EXTRACTION_MODE'] == 'chunks'
     assert env['HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION'] == 'false'
-    assert env['HINDSIGHT_API_WORKER_ENABLED'] == 'false'
+    # Worker (background consolidation / standing-question refresh) follows the bridge switch, off by default.
+    assert env['HINDSIGHT_API_WORKER_ENABLED'] == '${MEMORY_LLM_BRIDGE_ENABLED:-false}'
+    memory_env = SERVICES['memory']['environment']
+    assert memory_env['PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED'] == '${MEMORY_LLM_BRIDGE_ENABLED:-false}'
+    assert 'PANTHEON_MEMORY_HINDSIGHT_REFLECT_ENABLED' not in memory_env
     for layer in ('RETAIN', 'CONSOLIDATION', 'REFLECT', 'MENTAL_MODEL_REFRESH'):
         assert env[f'HINDSIGHT_API_{layer}_LLM_PROVIDER'].endswith(':-none}')
         assert env[f'HINDSIGHT_API_{layer}_LLM_API_KEY'].endswith(':-}')

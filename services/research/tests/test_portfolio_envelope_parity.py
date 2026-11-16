@@ -51,7 +51,7 @@ def recorded_binding(artifact, prepared, index):
         features, date = _bar_features_for_index(prepared, instrument, index)
         symbol = instrument.replace(".TWSE", ".TW")
         snapshots[symbol] = {"symbol": symbol, "closes": features["close"], "features": features,
-            "event_time": date + "T05:30:00Z", "observed_at": date + "T05:30:00Z",
+            "event_time": date + "T05:30:00Z", "observed_at": date + "T06:00:00Z",
             "source_ref": "recorded:twse:STOCK_DAY:202410-202411:" + symbol}
     binding.pop("market_input", None)
     binding["market_inputs"] = snapshots
@@ -77,7 +77,10 @@ class PortfolioParityTests(unittest.TestCase):
         producer_strategy = CurrentArtifactStrategy(expression_layer=False)
         for index in range(1, self.prepared.bars_per_instrument["2330.TWSE"]):
             binding = recorded_binding(self.portfolio, self.prepared, index)
-            decisions = producer_strategy(binding, "2026-11-12T05:30:00Z")["portfolio_decisions"]
+            # Daily decisions are taken after the session close is reconciled (fill is the next open;
+            # fill and price parity with the backtest: test_daily_next_open_parity.py).
+            decision_day = next(iter(binding["market_inputs"].values()))["event_time"][:10]
+            decisions = producer_strategy(binding, decision_day + "T10:00:00Z")["portfolio_decisions"]
             for decision in decisions:
                 instrument = decision["symbol"].replace(".TW", ".TWSE") if decision["symbol"].endswith(".TW") else decision["symbol"]
                 paper_view = decision["metadata"]["portfolio_net_view"]

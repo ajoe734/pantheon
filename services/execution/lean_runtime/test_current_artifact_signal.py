@@ -424,6 +424,17 @@ class CurrentArtifactSignalTest(unittest.TestCase):
                 runtime_manager_client=_RuntimeManager(runtime_binding),
                 telemetry_emitter=telemetry,
                 poll_interval_seconds=3600,
+                capital_pool_reader=lambda pool_id: {
+                    "pool_id": pool_id,
+                    "budget": 100_000.0,
+                    "risk_policy": {
+                        "risk_policy_id": "rp-test",
+                        "status": "active",
+                        "gross_limit": 10.0,
+                        "net_limit": 10.0,
+                        "max_leverage": 10.0,
+                    },
+                },
             )
             # A decision run_id uses the canonical three-bar rebalance buffer.
             # Drain through that boundary before asserting execution evidence.
@@ -533,6 +544,17 @@ class CurrentArtifactSignalTest(unittest.TestCase):
                 runtime_manager_client=_RuntimeManager(runtime_binding),
                 telemetry_emitter=telemetry,
                 poll_interval_seconds=3600,
+                capital_pool_reader=lambda pool_id: {
+                    "pool_id": pool_id,
+                    "budget": 100_000.0,
+                    "risk_policy": {
+                        "risk_policy_id": "rp-test",
+                        "status": "active",
+                        "gross_limit": 10.0,
+                        "net_limit": 10.0,
+                        "max_leverage": 10.0,
+                    },
+                },
             )
             for _ in range(3):
                 snapshot = service.drain_once()
@@ -589,20 +611,25 @@ class CurrentArtifactSignalTest(unittest.TestCase):
             "symbol": "2330",
             "closes": [500.0, 520.0],
             "source_ref": "source-ingest://normalized/tw-price/2330",
-            "observed_at": _NOW,
+            "event_time": "2026-11-13T05:30:00Z",
+            "observed_at": "2026-11-13T06:00:00Z",
         }
         store = InMemoryPendingSignalStore()
+
+        def official_open(symbol, session_date, now):
+            if session_date > now.date().isoformat():
+                return []
+            return [{"symbol": symbol, "bar_start": f"{session_date}T09:00:00+08:00", "bar_frequency": "1d",
+                     "bar_availability_ts": f"{session_date}T16:00:00+08:00", "open": 521.0}]
+
         producer = PaperSignalProducer(
             store_for=lambda _: store,
             strategy=CurrentArtifactStrategy(),
+            daily_bar_reader=official_open,
         )
-        now_iso = (
-            datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-        self.assertEqual(producer.produce(binding, now_iso), 1)
+        # A daily decision of session D is parked and fills at the official open of D+1.
+        self.assertEqual(producer.produce(binding, "2026-11-13T10:00:00Z"), 0)
+        self.assertEqual(producer.settle_pending_intraday(binding, "2026-11-16T10:00:00Z"), 1)
         signal = store._pending[0]
         self.assertEqual(signal["symbol"], "2330.TW")
         self.assertTrue(is_taiwan_venue_symbol(signal["symbol"]))

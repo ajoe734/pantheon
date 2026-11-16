@@ -165,7 +165,7 @@ def test_active_universe_fanout_keeps_taifex_market_context_unsymbolized() -> No
         and job["dataset"] != "taifex_ssf_contracts"
     ]
 
-    assert {job["dataset"] for job in taifex_jobs} == {"taifex_futures_chip", "taifex_options_chip"}
+    assert {job["dataset"] for job in taifex_jobs} == {"taifex_futures_chip", "taifex_options_chip", "taifex_tx_daily"}
     assert all(job["symbols"] == [] for job in taifex_jobs)
     assert all(job["symbol_count"] == 0 for job in taifex_jobs)
     assert all(job["metadata"]["symbol_scope"] == "market_context_no_symbol_filter" for job in taifex_jobs)
@@ -258,7 +258,11 @@ def test_active_universe_fanout_to_taifex_provider_scopes_ssf_and_preserves_chip
         for job in fanout["jobs"]
         if job["connector_id"] == "tw-taifex-futures-options-chip"
     }
-    assert set(jobs_by_dataset) == {"taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"}
+    assert set(jobs_by_dataset) == {
+        "taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts", "taifex_tx_daily",
+    }
+    assert "contracts" not in jobs_by_dataset["taifex_tx_daily"]
+    assert jobs_by_dataset["taifex_tx_daily"]["symbols"] == []
     assert "contracts" not in jobs_by_dataset["taifex_futures_chip"]
     assert "contracts" not in jobs_by_dataset["taifex_options_chip"]
     assert jobs_by_dataset["taifex_ssf_contracts"]["symbols"] == ["2317"]
@@ -348,7 +352,9 @@ def test_taifex_ssf_contracts_selects_only_active_tw_paper_persona_underlyings_a
         for job in fanout["jobs"]
         if job["connector_id"] == "tw-taifex-futures-options-chip"
     }
-    assert set(taifex_jobs) == {"taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"}
+    assert set(taifex_jobs) == {
+        "taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts", "taifex_tx_daily",
+    }
     assert taifex_jobs["taifex_ssf_contracts"]["symbols"] == ["2330"]
     assert taifex_jobs["taifex_ssf_contracts"]["contracts"] == ["2330"]
     assert taifex_jobs["taifex_futures_chip"]["symbols"] == []
@@ -395,7 +401,7 @@ def test_taifex_ssf_contracts_resolves_governed_persona_and_binding_inputs() -> 
     chip_datasets = {
         j["dataset"] for j in non_paper_fanout["jobs"] if j["connector_id"] == "tw-taifex-futures-options-chip"
     }
-    assert chip_datasets == {"taifex_futures_chip", "taifex_options_chip"}
+    assert chip_datasets == {"taifex_futures_chip", "taifex_options_chip", "taifex_tx_daily"}
 
 
 def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:

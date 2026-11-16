@@ -1,0 +1,53 @@
+{
+  "task_id": "SCREEN-SURVIVORSHIP-ATTESTATION-20261115",
+  "reproduction": {
+    "gate_rule": [
+      "services/registry/candidate_pool.py:369",
+      "services/research/vectorbt/adapter/vectorbt_adapter.py:2533-2535",
+      "services/research/replication/GATE_CONTRACT.md:149-150"
+    ],
+    "no_production_setter_before": "only values in repo were false in services/research/replication/fixtures/recorded_screen_contribution_tw.json:1538-1539 (and test-only True in test_gate_screen_contribution.py recorded_market)",
+    "test": "services/research/tests/test_screen_survivorship_gate_integration.py::test_recorded_history_without_attestation_evidence_is_survivorship_limited (real feed router + real ReplicationGate: details.status == survivorship_limited)"
+  },
+  "attestability_from_governed_data": {
+    "includes_delisted": {
+      "attestable_today": false,
+      "rule": "true only if every session of the window has a stored all-market capture of BOTH venues (api_endpoint bundle://collector-tw-twse-price-history and bundle://collector-tw-tpex-price-history, dated per-date all-stock pages) and every weekday without a session is recorded closed by an official holiday dataset",
+      "missing_official_dataset": "tw_trading_holidays: official TWSE/TPEx holiday schedule (https://www.twse.com.tw/zh/holidaySchedule/holidaySchedule); no such governed dataset is stored, so any real window containing a holiday has an unaccounted weekday and is false. Also unverified: that hosted normalized rows carry meta.venue/api_endpoint as the connector writes them (taiwan_official.py records_from_payload)."
+    },
+    "includes_suspended": {
+      "attestable_today": false,
+      "reason": "deploy/collector/collector_stack/spiders.py (TWSE ~line 990 and TPEx ~line 1449) drops every all-market row whose close is empty ('if close_price is None: continue'), which is exactly the row of a suspended / non-traded security; no suspended list is stored",
+      "missing_official_dataset": "tw_trading_suspension: per-session, per-venue suspended / non-traded security list from the TWSE MI_INDEX all-stock page and the TPEx all-stock daily quotes page (rows without a close), or the exchanges' suspension announcements; the collector must retain them"
+    },
+    "gate_rule_weakened": false
+  },
+  "implementation": {
+    "services/source_ingestion/survivorship_attestation.py": "derives both flags and an evidence block (evidence_refs, sessions covered, gaps, reasons, missing_dataset); false for any gap; no default or config path to true",
+    "services/source_ingestion/candidate_pool_market_feed.py": "publishes includes_delisted / includes_suspended / survivorship_attestation in candidate_pool_market.v1; the gate consumes them unchanged"
+  },
+  "result_in_production_today": "both flags false with named missing datasets; screened rules remain survivorship_limited until tw_trading_holidays and tw_trading_suspension are stored (follow-up task needed: collector retention of no-close rows + official holiday dataset)",
+  "test_note": "integration test uses recorded official TWSE bars; TPEx capture markers, suspension captures and holiday rows are explicit test-side injections (those datasets do not exist in production). It exercises the real feed through the real ingest-operations router and the real ReplicationGate; it does NOT start the compose service entry point or the Governance/registry applications (not done in this batch).",
+  "validation": {
+    "command": "/tmp/hc-venv/bin/python -m pytest -q services/source_ingestion/tests/test_survivorship_attestation.py services/source_ingestion/tests/test_candidate_pool_market_feed.py services/research/tests/test_screen_survivorship_gate_integration.py services/registry/test_candidate_pool.py services/research/replication/tests/test_gate_screen_contribution.py",
+    "passed": 51,
+    "failed": 0,
+    "new_tests": {
+      "test_survivorship_attestation.py": 5,
+      "test_candidate_pool_market_feed.py": 1,
+      "test_screen_survivorship_gate_integration.py": 3
+    }
+  },
+  "credentials_recorded": false,
+  "intake_interface": {
+    "note": "Intake tasks wire data only; no change to attest_survivorship() or candidate_pool_market_feed.py interface is needed. Files are read by candidate_pool_market_feed via the holiday_paths / suspension_paths inputs as normalized JSONL rows (metadata.normalized_row).",
+    "includes_delisted": {
+      "price_inputs": "per session AND per venue (TWSE, TPEx): a row with metadata.api_endpoint in {bundle://collector-tw-twse-price-history (venue TWSE), bundle://collector-tw-tpex-price-history (venue TPEx)}, metadata.venue, normalized_row.date (YYYY-MM-DD), metadata.source_dataset; read by _capture()/_read_bars() (candidate_pool_market_feed.py:101-125)",
+      "holiday_inputs": "tw_trading_holidays rows: normalized_row.date=YYYY-MM-DD, normalized_row.closed=true (boolean), metadata.api_endpoint starting with https://www.twse.com.tw/ ; read by _read_closed_days() (:137-148). Every weekday in the window without a session must have such a row"
+    },
+    "includes_suspended": {
+      "inputs": "tw_trading_suspension rows per session and per venue: normalized_row.capture=='all_market', normalized_row.suspended_symbols=list (may be empty when nothing suspended), normalized_row.date, plus metadata.api_endpoint/venue/source_dataset identical to the price bundle endpoints; read by _read_suspension_captures() (:151-163)",
+      "also_requires": "includes_delisted attested for the same window; collector must keep rows with empty close (spiders.py 'if close_price is None: continue') to produce suspended_symbols"
+    }
+  }
+}

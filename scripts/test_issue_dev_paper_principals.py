@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+from scripts import issue_dev_paper_principals as issuer
 
 from scripts.issue_dev_paper_principals import (
     CONSUMER_FILES, PAPER_SCOPE, PAPER_SUBJECT, READERS, WRITERS, TTL_SECONDS, issue_environment, write_environment,
@@ -333,7 +334,7 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
     root = Path(__file__).resolve().parents[1]
     registry_var = "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN"
     training_var = "TRAINING_SESSION_WORKER_TOKEN"
-    assert CONSUMER_FILES["alpha-replication-worker"] == (registry_var, training_var)
+    assert CONSUMER_FILES["alpha-replication-worker"][:2] == (registry_var, training_var)
     values = issue_environment(configured(), now=NOW)
     claims = verify(values[training_var])
     assert claims["sub"] == claims["service"] == "training-session-preview-worker"
@@ -505,3 +506,60 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
     assert proposer_claims["roles"] == ["approval_proposer"]
     assert proposer_claims["scope"] == "pantheon:dev-owner-write"
 
+
+
+def test_enrollment_proposer_is_distinct_propose_only_and_withdrawn_on_revoke():
+    variable = "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"
+    subject, role, scope = issuer.WRITERS[variable]
+    assert subject != issuer.PAPER_SUBJECT and role == "approval_proposer"
+    assert scope == "pantheon:dev-owner-write"
+    assert variable in issuer.CONSUMER_FILES["operator-bff"]
+    revoked = issuer.revoked_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false",
+    })
+    assert revoked["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID"] == "" and revoked[variable] == ""
+
+
+CARD_VARIABLES = (
+    "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN",
+    "RESEARCH_REGISTRY_SERVICE_TOKEN", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN", "RESEARCH_GOVERNANCE_GATE_TOKEN",
+)
+
+
+def test_card_admission_principals_are_distinct_propose_only_and_withdrawn_on_revoke():
+    variable = "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"
+    subject, role, scope = issuer.WRITERS[variable]
+    assert subject == issuer.CARD_PROPOSER_SUBJECT
+    assert subject not in (issuer.PAPER_SUBJECT, issuer.ENROLLMENT_PROPOSER_SUBJECT)
+    assert role == "approval_proposer" and scope == "pantheon:dev-owner-write"
+    assert set(CARD_VARIABLES) <= set(issuer.CONSUMER_FILES["alpha-replication-worker"])
+    values = issue_environment(configured(), now=NOW)
+    gate = verify(values["RESEARCH_GOVERNANCE_GATE_TOKEN"])
+    assert gate["sub"] == issuer.PAPER_SUBJECT and gate["roles"] == ["automated_gate"]
+    proposer = verify(values[variable])
+    assert proposer["sub"] == issuer.CARD_PROPOSER_SUBJECT and proposer["roles"] == ["approval_proposer"]
+    assert values["RESEARCH_GOVERNANCE_PROPOSER_ID"] == issuer.CARD_PROPOSER_SUBJECT
+    assert values["RESEARCH_GOVERNANCE_GATE_ID"] == issuer.PAPER_SUBJECT
+    for name in CARD_VARIABLES:
+        assert values[name + "_FILE"] == "/run/pantheon-principals/" + name
+    for name in ("ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN"):
+        assert verify(values[name])["roles"] == ["viewer"]
+    revoked = issuer.revoked_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false",
+    })
+    assert revoked["RESEARCH_GOVERNANCE_PROPOSER_ID"] == "" and revoked["RESEARCH_GOVERNANCE_GATE_ID"] == ""
+    assert all(revoked[name] == "" for name in CARD_VARIABLES)
+
+
+def test_grant_content_carries_both_explicit_widenings_the_issued_proposers_match():
+    from services.governance.paper_approval_scope import _grant_widenings
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "grant"
+        path.write_text(issuer.GOVERNANCE_GRANT_CONTENT)
+        path.chmod(0o600)
+        lifecycle, card = _grant_widenings({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
+    assert lifecycle.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
+    assert card.proposer_subject == issuer.CARD_PROPOSER_SUBJECT
