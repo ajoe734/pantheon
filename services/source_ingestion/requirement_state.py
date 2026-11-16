@@ -888,59 +888,6 @@ def _market_snapshots_from_lines(
     return snapshots
 
 
-def _fold_market_snapshot_lines(
-    lines: Iterable[str],
-    *,
-    path: Path,
-    snapshots: dict[tuple[str, str], LatestMarketSnapshot],
-    first_line_number: int,
-) -> dict[tuple[str, str], LatestMarketSnapshot]:
-    """Same per-line rules as ``_market_snapshots_from_lines`` (the deployed reader, kept
-    byte-identical), applied on top of ``snapshots`` for an incremental read."""
-    for line_number, line in enumerate(lines, start=first_line_number):
-        if not line.strip():
-            continue
-        try:
-            envelope = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
-        except (json.JSONDecodeError, _DuplicateJsonKey) as exc:
-            raise MarketSnapshotStateError(
-                f"market snapshot log is malformed at {path}:{line_number}: {exc}"
-            ) from exc
-        if not isinstance(envelope, Mapping) or set(envelope) != _MARKET_SNAPSHOT_ENVELOPE_FIELDS:
-            raise MarketSnapshotStateError(
-                f"market snapshot envelope is invalid at {path}:{line_number}"
-            )
-        if envelope.get("checksum_algorithm") != MARKET_SNAPSHOT_CHECKSUM_ALGORITHM:
-            raise MarketSnapshotStateError("market snapshot checksum algorithm must be sha256")
-        state = envelope.get("state")
-        checksum = envelope.get("checksum")
-        if not isinstance(state, Mapping) or not isinstance(checksum, str):
-            raise MarketSnapshotStateError("market snapshot envelope state or checksum is invalid")
-        if _SHA256_RE.fullmatch(checksum) is None or not hmac.compare_digest(checksum, _checksum(state)):
-            raise MarketSnapshotStateError("market snapshot checksum mismatch")
-        if state.get("withdrawn") is True:
-            # Durable invalidation tombstone: the (symbol, dataset) is no longer published.
-            if set(state) != _MARKET_SNAPSHOT_WITHDRAWAL_FIELDS or state.get(
-                "schema_version"
-            ) != MARKET_SNAPSHOT_SCHEMA_VERSION:
-                raise MarketSnapshotStateError(
-                    f"market snapshot withdrawal is invalid at {path}:{line_number}"
-                )
-            _market_snapshot_timestamp(state["observed_at"], field_name="withdrawal observed_at")
-            snapshots.pop(
-                (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
-            )
-            continue
-        try:
-            snapshot = LatestMarketSnapshot.from_dict(state)
-        except MarketSnapshotStateError as exc:
-            raise MarketSnapshotStateError(
-                f"market snapshot state is invalid at {path}:{line_number}: {exc}"
-            ) from exc
-        snapshots[(snapshot.symbol, snapshot.dataset)] = snapshot
-    return snapshots
-
-
 MARKET_SNAPSHOT_COMPACT_FACTOR = 3
 MARKET_SNAPSHOT_COMPACT_MIN_BYTES = 8 * 1024 * 1024
 # The deployment capture probe rejects journals above this size (scripts/dev_release_artifacts.py).
@@ -1138,6 +1085,35 @@ class LatestMarketSnapshotStore:
         keep = min(_TAIL_CHECK_BYTES, size)
         self._consumed = (os.fstat(fd).st_ino, size, lines, os.pread(fd, keep, size - keep))
 
+    def _fold_new_lines(
+        self, current: dict[tuple[str, str], LatestMarketSnapshot], lines: Iterable[str]
+    ) -> None:
+        """Apply appended lines on top of ``current`` using the unchanged journal reader.
+
+        The reader only builds a map from scratch, so runs of snapshot lines are parsed as one
+        batch (last line per key wins) and a withdrawal tombstone, which that map cannot
+        express, is validated by the same reader and then applied here in order.
+        """
+        run: list[str] = []
+        for text in lines:
+            if '"withdrawn"' not in text:
+                run.append(text)
+                continue
+            if run:
+                current.update(_market_snapshots_from_lines(run, path=self.path))
+                run = []
+            parsed = _market_snapshots_from_lines([text], path=self.path)
+            if parsed:
+                current.update(parsed)
+                continue
+            if text.strip():
+                state = json.loads(text)["state"]
+                current.pop(
+                    (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
+                )
+        if run:
+            current.update(_market_snapshots_from_lines(run, path=self.path))
+
     def _sync_locked(self, fd: int) -> dict[tuple[str, str], LatestMarketSnapshot]:
         """Fold journal bytes not yet consumed into a copy of memory; full rebuild if the prefix changed.
 
@@ -1161,7 +1137,6 @@ class LatestMarketSnapshotStore:
             else:
                 offset = lines = 0
         end, count = offset, lines
-        current = base if base is not None else {}
 
         def _counted() -> Iterable[str]:
             nonlocal end, count
@@ -1170,9 +1145,16 @@ class LatestMarketSnapshotStore:
                 count += 1
                 yield text
 
-        _fold_market_snapshot_lines(
-            _counted(), path=self.path, snapshots=current, first_line_number=lines + 1
-        )
+        if base is not None:
+            try:
+                current = base
+                self._fold_new_lines(current, _counted())
+            except MarketSnapshotStateError:
+                # Re-read from zero so the failure carries the exact line number of a fresh read.
+                base = None
+                offset = lines = end = count = 0
+        if base is None:
+            current = _market_snapshots_from_lines(_counted(), path=self.path)
         if base is None or end != offset:
             self._line_bytes = None
         self._mark_consumed(fd, end, count)

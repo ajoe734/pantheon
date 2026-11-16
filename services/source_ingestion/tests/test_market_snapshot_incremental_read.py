@@ -56,26 +56,21 @@ def _fresh(path):
 
 
 class _Spy:
-    """Counts journal lines and bytes handed to the parser."""
+    """Counts journal lines/bytes read and full (from byte 0) reads."""
 
     def __init__(self, monkeypatch):
-        self.lines = 0
-        self.bytes = 0
-        self.full = 0
-        fold, full = m._fold_market_snapshot_lines, m._market_snapshots_from_lines
+        self.lines = self.bytes = self.full = 0
+        real = m._complete_journal_lines
 
-        def counted(lines, **kw):
-            def gen():
-                for line in lines:
-                    self.lines += 1
-                    self.bytes += len(line) + 1
-                    yield line
-            if kw["first_line_number"] == 1:
+        def counted(fd, start, end):
+            if start == 0:
                 self.full += 1
-            return fold(gen(), **kw)
+            for line_end, text in real(fd, start, end):
+                self.lines += 1
+                self.bytes += len(text) + 1
+                yield line_end, text
 
-        monkeypatch.setattr(m, "_fold_market_snapshot_lines", counted)
-        monkeypatch.setattr(m, "_market_snapshots_from_lines", lambda *a, **k: pytest.fail("whole-file parse"))
+        monkeypatch.setattr(m, "_complete_journal_lines", counted)
 
     def reset(self):
         self.lines = self.bytes = self.full = 0

@@ -57,8 +57,8 @@ def test_append_uses_memory_and_reparses_only_when_file_changed(tmp_path, monkey
     store = _no_compact(path)
     _feed(store, 3, 2)
     calls = []
-    real = m._fold_market_snapshot_lines
-    monkeypatch.setattr(m, "_fold_market_snapshot_lines", lambda *a, **k: calls.append(1) or real(*a, **k))
+    real = m._market_snapshots_from_lines
+    monkeypatch.setattr(m, "_market_snapshots_from_lines", lambda *a, **k: calls.append(1) or real(*a, **k))
     store.append_normalized_records([_record("1000.TWSE", 5, 1.0)], ingest_run_id="r", observed_at="2026-11-12T09:00:00Z")
     store.append_normalized_records([_record("1001.TWSE", 5, 1.0)], ingest_run_id="r", observed_at="2026-11-12T09:00:00Z")
     assert calls == []
