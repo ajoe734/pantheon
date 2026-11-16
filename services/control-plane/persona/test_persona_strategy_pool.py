@@ -691,3 +691,66 @@ def test_trial_stays_trial_when_baseline_no_longer_resolves(env, monkeypatch):
     body = _decision(client, 2, **common).json()
     assert next(m for m in body["members"] if m["artifact_ref"] == "candidate")["stage"] == "trial"
     assert body["decision"]["trial_promotions"][0]["reason"] == "baseline_not_resolved:approval_withdrawn"
+
+
+def _variant(entry, *, symbols=None, buy=True):
+    """A gate-minted registry entry changed in logic or symbols, its checksum and owner binding recomputed."""
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    changed = copy.deepcopy(entry)
+    artifact = changed["metadata"]["strategy_artifact"]
+    if buy:
+        artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+        artifact["parameters"]["zero_momentum_action"] = "BUY"
+    if symbols:
+        artifact["parameters"]["symbols"] = symbols
+    changed["checksum"] = strategy_artifact_checksum(artifact)
+    changed["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = changed["checksum"]
+    return changed
+
+
+def test_empty_pool_keeps_its_last_approved_universe_and_every_other_criterion(env):
+    """No live member: the universe is the last live version's, never wider; no other criterion is waived."""
+    from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    member = entries[two["artifact_ref"]]  # approved on 2330 and 2317
+    inside = _variant(entries[one["artifact_ref"]])  # always long on 2330: clears the bar by itself
+    weak = entries[one["artifact_ref"]]  # the recorded momentum rule: fails the bar by itself
+    outside = _variant(entries[one["artifact_ref"]], symbols=["2454.TW"])
+    reg.entries = {"member": {**member, "registry_id": "member"}, "inside": {**inside, "registry_id": "inside"},
+                   "weak": {**weak, "registry_id": "weak"}, "outside": {**outside, "registry_id": "outside"}}
+    assert _post(client, [_member("member", checksum=member["checksum"], risk_weight=.7)], 0).status_code == 201
+    removed = _member("member", checksum=member["checksum"], stage="removed", risk_weight=0,
+                      removed_at="2026-11-16T00:00:00Z", removal_reason="baseline_not_revalidated")
+    assert _post(client, [removed], 1).status_code == 201
+    books = {ref: _observed_book(e["checksum"], better=ref == "inside") for ref, e in reg.entries.items()}
+    dates = books["inside"]["dates"][-20:]
+    common = {"books": books, "dataset": recorded_dataset(),
+              "observations": idle_pool_observations(dates, source_ref="test:risk-owner", gross_limit=100, drawdown_limit=.1)}
+
+    health = client.post("/api/personas/persona-1/strategy-pool/health",
+                         json={"books": {}, "observations": common["observations"]}, headers=_auth(READ))
+    assert health.status_code == 200 and health.json()["effective_bets"]["reason"] == "no_live_members"
+    assert health.json()["gross_utilisation"]["value"] == 0.0
+
+    def admit(ref, version, **extra):
+        return _decision(client, version, "admit",
+                         candidate={"artifact_ref": ref, "checksum": reg.entries[ref]["checksum"]}, **common, **extra)
+
+    out = admit("outside", 2)
+    assert out.json()["decision"]["reasons"] == ["candidate_outside_pool_approved_universe"]
+    memo = admit("inside", 3, initiated_by="persona")  # the consultation memo rule is unchanged
+    assert memo.json()["decision"]["reasons"] == ["consultation_memo_required"]
+    refused = admit("weak", 4)  # nothing is waived because the pool is idle
+    decision = refused.json()["decision"]
+    assert decision["status"] == "refused" and decision["backtest"]["pool_idle"] is True
+    assert "candidate_oos_sharpe_below_persona_trial_threshold" in decision["reasons"][0]
+    assert "combined_oos_sharpe_did_not_improve" in decision["reasons"][0]
+    applied = admit("inside", 5)
+    assert applied.json()["decision"]["status"] == "applied", applied.text
+    assert applied.json()["decision"]["approved_universe"] == ["2317", "2330"]
+    live = [m for m in applied.json()["members"] if m["stage"] != "removed"]
+    assert [(m["artifact_ref"], m["stage"]) for m in live] == [("inside", "trial")]

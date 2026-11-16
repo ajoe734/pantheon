@@ -1,0 +1,50 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TW-MARKET-REFRESH-CHIP-LEASE-AND-TIMEOUT-20261116",
+  "title": "Fix dev Taiwan chip refresh lease-guard loop and 300s bounded controller RPC timeout",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "hosted_behavior_claimed": false,
+  "delivery_scope": "Source-only: wrap all 6 Taiwan chip refresh profiles under a single run_with_dev_environment_lease.sh invocation with SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=300; forward SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS and SOURCE_INGEST_MAX_RECORDS across SSH and local refresh-only execution and preserve caller-supplied SOURCE_INGEST_MAX_RECORDS in execute_bounded_source_refresh_entrypoint and manage_source_ingest_refresh_runtime; raise validate_source_refresh_profile controller RPC timeout cap from 120s to 300s; add regression tests.",
+  "changes": [
+    "In .github/workflows/dev-tw-market-refresh.yml step Execute bounded Taiwan chip refresh, set SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: 300 and invoke .lease-controller/scripts/run_with_dev_environment_lease.sh once wrapping a bash -c script that iterates all 6 chip profiles and exits with failed at the end so one failing profile does not stop the shared lease heartbeat before remaining profiles run.",
+    "In scripts/deploy_nonprod_vm.sh, forward SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS and SOURCE_INGEST_MAX_RECORDS in ssh_bash refresh-only command_prefix and in run_remote_payload local refresh-only environment.",
+    "In scripts/deploy_nonprod_vm.sh, preserve caller-supplied SOURCE_INGEST_MAX_RECORDS (defaulting to 100 within the 1..500 guard) in execute_bounded_source_refresh_entrypoint and manage_source_ingest_refresh_runtime bounded action.",
+    "In scripts/deploy_nonprod_vm.sh validate_source_refresh_profile, raise the SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS cap from 120 seconds to 300 seconds.",
+    "Updated scripts/test_dev_tw_market_refresh_workflow.py and added regression tests in scripts/test_deploy_nonprod_vm.py verifying single-lease-guard chip execution, SSH/local refresh-only env forwarding, caller-supplied SOURCE_INGEST_MAX_RECORDS preservation, and the 300s controller timeout cap."
+  ],
+  "acceptance_status": {
+    "1": "met: .github/workflows/dev-tw-market-refresh.yml Execute bounded Taiwan chip refresh wraps all six chip refresh profiles inside a single .lease-controller/scripts/run_with_dev_environment_lease.sh invocation and sets SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS to 300",
+    "2": "met: scripts/deploy_nonprod_vm.sh forwards SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS and SOURCE_INGEST_MAX_RECORDS across SSH and local refresh-only invocations and preserves caller-supplied SOURCE_INGEST_MAX_RECORDS (defaulting to 100 within the existing 1..500 guard) in execute_bounded_source_refresh_entrypoint and manage_source_ingest_refresh_runtime",
+    "3": "met: scripts/deploy_nonprod_vm.sh validate_source_refresh_profile caps SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS at 300 seconds instead of 120 seconds",
+    "4": "met: regression tests in scripts/test_deploy_nonprod_vm.py and scripts/test_dev_tw_market_refresh_workflow.py verify single-lease-guard chip execution, SSH/local env forwarding, and the 300s controller timeout cap; evidence.json records commands and pass counts with hosted_behavior_claimed false"
+  },
+  "validation": [
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "pass_count": 1,
+      "result": "exit 0"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py",
+      "pass_count": 16,
+      "result": "16 passed in 5.65s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py scripts/test_deploy_nonprod_vm.py::test_refresh_only_ssh_and_local_forward_timeout_and_max_records scripts/test_deploy_nonprod_vm.py::test_validate_source_refresh_profile_caps_controller_timeout_at_300s scripts/test_deploy_nonprod_vm.py::test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records",
+      "pass_count": 25,
+      "result": "25 passed in 10.81s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "pass_count": 152,
+      "skip_count": 2,
+      "result": "152 passed, 2 skipped in 152.02s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py scripts/test_dev_tw_market_refresh.py",
+      "pass_count": 146,
+      "result": "146 passed in 313.38s"
+    }
+  ]
+}

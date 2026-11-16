@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import weakref
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -197,6 +198,61 @@ class ScheduledIngestResult:
     collector_delivery: CollectorDelivery | None = None
 
 
+# Receipts reference updated market snapshots by identity; the bodies live in the
+# latest market snapshot store. A body is dropped to keep a receipt line bounded.
+SNAPSHOT_REF_SCHEMA_VERSION = "source_ingest_snapshot_ref.v1"
+DEFAULT_SNAPSHOT_DATASET = "tw_price_daily"
+JOURNAL_SLIM_MIN_LINE_BYTES = 16 * 1024
+JOURNAL_WARN_BYTES = 256 * 1024 * 1024
+_SNAPSHOT_BODY_MARKER = b'"closes"'
+
+
+def snapshot_ref(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded reference to one updated snapshot: id, symbol, dataset, newest event time."""
+    return {
+        "snapshot_id": body.get("snapshot_id"),
+        "symbol": body.get("symbol"),
+        "dataset": body.get("dataset") or DEFAULT_SNAPSHOT_DATASET,
+        "event_time": body.get("event_time"),
+    }
+
+
+def slim_market_snapshot_batch(batch: Any) -> Any:
+    """Return ``batch`` with every snapshot body replaced by a reference.
+
+    Idempotent; entries that already are references (no ``closes``) are kept. Counts
+    and every other batch field are preserved. Non-mapping input is returned as is.
+    """
+    if not isinstance(batch, Mapping):
+        return batch
+    snapshots = batch.get("snapshots")
+    if not isinstance(snapshots, list) or not any(
+        isinstance(item, Mapping) and "closes" in item for item in snapshots
+    ):
+        return batch
+    slim = dict(batch)
+    slim["snapshots"] = [
+        snapshot_ref(item) if isinstance(item, Mapping) and "closes" in item else item for item in snapshots
+    ]
+    return slim
+
+
+def slim_receipt_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Slim ``evidence_refs.market_snapshots`` of a receipt payload; keeps all other fields."""
+    refs = payload.get("evidence_refs")
+    if not isinstance(refs, Mapping):
+        return payload, False
+    batch = refs.get("market_snapshots")
+    slim = slim_market_snapshot_batch(batch)
+    if slim is batch:
+        return payload, False
+    return {**payload, "evidence_refs": {**refs, "market_snapshots": slim}}, True
+
+
+def _entry_line(entry: Mapping[str, Any]) -> str:
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"))
+
+
 @dataclass(frozen=True)
 class IngestReceipt:
     """Durable, secret-free result receipt for one governed source run."""
@@ -286,6 +342,8 @@ class IngestReceipt:
 class JsonlIngestScheduleStore:
     """Append/replay store for ingest-run state and connector watermarks."""
 
+    _live_by_path: ClassVar[dict[str, "weakref.ReferenceType[JsonlIngestScheduleStore]"]] = {}
+
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
@@ -297,11 +355,117 @@ class JsonlIngestScheduleStore:
         self._read_key: tuple[int, int, int] | None = (-1, -1, -1)
         self._read_offset = 0
         self._read_line_no = 0
+        self._last_slim: dict[str, Any] | None = None
         self.reload()
+        JsonlIngestScheduleStore._live_by_path[str(self.path)] = weakref.ref(self)
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
+            self._slim_journal_unlocked()
             self._reload_unlocked(recover_incomplete=True)
+
+    def _slim_journal_unlocked(self) -> dict[str, Any]:
+        """Crash-safe in-place rewrite dropping embedded snapshot bodies from receipts.
+
+        Streams the journal to a sibling temp file, parsing only receipt-sized lines
+        that carry a snapshot body, fsyncs, then atomically replaces the journal.
+        Every state on disk (old file, temp file, new file) is a readable journal;
+        a leftover temp from a crash is discarded. Every row and every receipt field
+        other than the snapshot bodies is preserved. A failed rewrite leaves the
+        journal untouched (replay still slims in memory).
+        """
+        tmp = self.path.with_name(self.path.name + ".slim.tmp")
+        stats = {"rewritten": False, "rows": 0, "slimmed_rows": 0, "bytes_before": 0, "bytes_after": 0}
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return stats
+        if size < JOURNAL_SLIM_MIN_LINE_BYTES:
+            return stats
+        stats["bytes_before"] = size
+        slimmed = 0
+        try:
+            with self.path.open("rb") as src, tmp.open("wb") as dst:
+                while line := src.readline():
+                    if (
+                        len(line) >= JOURNAL_SLIM_MIN_LINE_BYTES
+                        and line.endswith(b"\n")
+                        and _SNAPSHOT_BODY_MARKER in line
+                        and b'"record_type":"ingest_receipt"' in line
+                    ):
+                        changed = False
+                        try:
+                            entry = json.loads(line.decode("utf-8"))
+                            payload = entry.get("payload")
+                            if isinstance(payload, Mapping):
+                                new_payload, changed = slim_receipt_payload(payload)
+                        except (ValueError, AttributeError):
+                            changed = False
+                        if changed:
+                            line = (_entry_line({**entry, "payload": dict(new_payload)}) + "\n").encode("utf-8")
+                            slimmed += 1
+                    dst.write(line)
+                    stats["rows"] += 1
+                dst.flush()
+                os.fsync(dst.fileno())
+            if slimmed == 0:
+                tmp.unlink()
+                return stats
+            os.replace(tmp, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return stats
+        stats.update(rewritten=True, slimmed_rows=slimmed, bytes_after=self.path.stat().st_size)
+        self._last_slim = stats
+        return stats
+
+    @classmethod
+    def journal_stats_for_path(cls, path: str | Path) -> dict[str, Any]:
+        """``journal_stats`` of the live store for ``path`` without touching a runtime store handle.
+
+        Readiness probes must not replay or call stores; this reads one stat and counters.
+        """
+        live = cls._live_by_path.get(str(Path(path)))
+        store = live() if live is not None else None
+        if store is not None:
+            return store.journal_stats()
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            size = 0
+        return {"journal_bytes": size, "journal_lines": None, "receipt_count": None, "run_count": None,
+                "warn_bytes": JOURNAL_WARN_BYTES,
+                "warning": "ingest_schedule_journal_large" if size >= JOURNAL_WARN_BYTES else None}
+
+    def journal_stats(self) -> dict[str, Any]:
+        """Journal size and receipt count readback; no replay, no file scan."""
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            size = 0
+        stats: dict[str, Any] = {
+            "journal_bytes": size,
+            "journal_lines": self._read_line_no,
+            "receipt_count": len(self._receipts),
+            "run_count": len(self._runs),
+            "warn_bytes": JOURNAL_WARN_BYTES,
+            "warning": "ingest_schedule_journal_large" if size >= JOURNAL_WARN_BYTES else None,
+        }
+        if self._last_slim:
+            stats["last_slim_rewrite"] = dict(self._last_slim)
+        return stats
 
     def _stat_key(self) -> tuple[int, int, int] | None:
         try:
@@ -371,6 +535,7 @@ class JsonlIngestScheduleStore:
             item = CrawlFrontierItem.from_dict(payload)
             self._frontier[item.frontier_id] = item
         elif record_type == "ingest_receipt":
+            payload, _ = slim_receipt_payload(payload)
             receipt = IngestReceipt.from_dict(payload)
             self._receipts[receipt.ingest_run_id] = receipt
         else:
@@ -483,6 +648,11 @@ class JsonlIngestScheduleStore:
             return page, receipts, total
 
     def upsert_receipt(self, receipt: IngestReceipt) -> IngestReceipt:
+        # The durable receipt carries references, never snapshot bodies; the caller
+        # keeps its own full batch. Memory and journal hold the identical slim form.
+        slim_refs, changed = slim_receipt_payload({"evidence_refs": receipt.evidence_refs})
+        if changed:
+            receipt = replace(receipt, evidence_refs=slim_refs["evidence_refs"])
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_if_changed_unlocked()
             self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
