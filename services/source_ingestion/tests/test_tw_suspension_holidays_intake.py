@@ -249,3 +249,12 @@ def test_without_any_evidence_nothing_is_attested(tmp_path):
         "symbol_canonical": "2330.TWSE", "date": "2026-10-30", "close": 10.0, "volume": 1.0}}}) + "\n")
     market = feed.build_candidate_pool_market(tmp_path, INPUTS)
     assert market["includes_delisted"] is False and market["includes_suspended"] is False
+
+
+def test_suspension_production_cap_is_not_truncating_listed_warrant_intake(official_files, tmp_path, monkeypatch):
+    """The production definition (no per-run override) must carry the cap, not only the test helper."""
+    production_cap = get_connector_definition(SUSPENSION).default_limits["max_records"]
+    _, records = pull(official_files, tmp_path, monkeypatch, SUSPENSION, max_records=production_cap)
+    _, uncapped = pull(official_files, tmp_path / "u", monkeypatch, SUSPENSION, max_records=10_000_000)
+    assert production_cap >= 20000
+    assert len(records) == len(uncapped) > 2000  # evidence: intake exceeds 2000 once listed warrants are kept

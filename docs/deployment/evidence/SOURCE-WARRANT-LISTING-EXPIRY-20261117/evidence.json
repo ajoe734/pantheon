@@ -17,10 +17,11 @@
   "design_vs_reality_difference": "design section 4.3/6 assumed 7,053 TWSE warrants and ~22,500 allowlist rows (2 MB). Live listing today has 41,965 TWSE warrants and 57,531 rows; compact state file = 3,218,831 bytes (> 2 MB design limit, <= 20 MB hard limit). Design-shaped 22,500 rows = 1,233,074 bytes (test fails above 2 MB). Section 6 row for listing_allowlist needs the daily limit raised or the row count budget restated.",
   "measurements": {
     "parse_both_full_pages_seconds": 0.76,
-    "state_bytes_live_57531_rows": 3218831,
-    "state_bytes_design_shaped_22500_rows": 1233074,
+    "state_bytes_live_57531_rows": 1621830,
+    "state_bytes_design_shaped_22500_rows": 625628,
     "writer_batch_500_records": "2 listed stored, 498 unlisted skipped, skipped_not_listed_count=498 (test_batch_of_500_listed_warrants_stored_and_unlisted_skipped)",
-    "stores_touched_budget_row": "listing_allowlist + ordinary_share_registry (section 6): measured above; market_snapshot_current, daily_bars, receipts: not touched (filter only decides what is written)"
+    "stores_touched_budget_row": "listing_allowlist + ordinary_share_registry (section 6): measured above; market_snapshot_current, daily_bars, receipts: not touched (filter only decides what is written)",
+    "budget_reconciliation_acceptance_9": "Reopen fix: state schema v2 interns venue and dates (v1 still loads). Live shaped 57,531 rows = 1,621,830 bytes (was 3,218,831), inside the 2 MB design row; design shaped 22,500 rows = 625,628 bytes. Tests test_live_shaped_state_bytes_budget_and_roundtrip and test_hosted_shaped_state_bytes_budget fail above 2 MB. Design section 6 assumed 7,053 TWSE warrants; live is 41,965, recorded as the new row-count basis."
   },
   "same_parser_acceptance_4": "collector host and hosted both call security_listing.refresh_listing/parse_isin_page; the collector runner imports services.source_ingestion.security_listing or loads the same file from PANTHEON_SECURITY_LISTING_MODULE. Difference: collector image (Dockerfile COPY collector_stack only) does not ship the module yet; deploying it and scheduling refresh_security_listing is a Human/Ops step. Hosted refresh scheduling is not wired in this task (module + function delivered).",
   "rollback_acceptance_10": "COLLECTOR_WARRANTS_MODE=off / warrants_mode='off' / ListingFilter(enabled=False): previous behaviour; tests test_rollback_mode_off_restores_previous_behaviour and test_filter_disabled_is_previous_behaviour. No persisted format of an existing store changed (listing state is a new file), so no previous-reader test is needed.",
@@ -29,16 +30,21 @@
     "cd deploy/collector && python -m pytest tests --ignore=tests/test_scrapling_backend.py",
     "python -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_market_data_storage.py"
   ],
-  "known_environment_failures": "12 tests in test_taiwan_official_connectors/test_market_data_storage/test_daily_bars_store and 1 in deploy/collector test_tw_suspension_holidays fail identically on the unmodified base commit in this worker venv (requirement_state UnboundLocalError / missing deps); failing sets compared equal before and after.",
+  "known_environment_failures": [
+    "Reviewer env lacked pytest/jsonschema/fastapi. Worker re-ran in a venv with pytest and jsonschema: the earlier 13 failures were the missing jsonschema; one remains, test_taiwan_official_connectors::test_tdcc_and_taifex_evidence_and_search_canary_readback, which needs fastapi (services/search/main.py import), unrelated to this task."
+  ],
   "not_done": [
     "hosted deletion run (MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117)",
     "daily_bars row deletion (retention sweeper SOURCE-RETENTION-SWEEPER-20261118); script reports only",
     "features and snapshot_current stores are not rewritten by the script (no per symbol key in features rows; snapshot delete entry point is the sweeper's)",
-    "active_universe.py unchanged (FinMind adapters only fetch active-universe symbols); hosted scheduling of the listing refresh"
+    "active_universe.py unchanged (FinMind adapters only fetch active-universe symbols); hosted scheduling of the listing refresh",
+    "hosted stored-symbol count and recorded collector bundle count (acceptance 1 measurement): needs hosted and collector host read access, produced by the delete_expired_warrants.py dry run on those hosts",
+    "collector image shipping security_listing and hosted listing refresh scheduling (Human/Ops step, named in the README deployment note)"
   ],
   "pass_counts": {
-    "listing+delete+active_universe": "30 passed",
-    "deploy/collector tests (excl scrapling)": "255 passed, 5 skipped, 1 failed (pre-existing on base)",
-    "taiwan_official+market_data_storage": "53 passed, 9 failed (all pre-existing on base, same set)"
-  }
+    "command": "PYTHONPATH=. pytest -q deploy/collector/tests services/source_ingestion/tests/test_taiwan_official_connectors.py test_tw_suspension_holidays_intake.py test_market_data_storage.py test_active_universe.py test_security_listing.py scripts/test_delete_expired_warrants.py",
+    "result": "356 passed, 11 skipped, 1 failed (fastapi missing, environmental) after the reopen fixes; test_tw_suspension_holidays_intake.py 10 passed"
+  },
+  "suspension_cap_reopen_1": "collector-tw-trading-suspension definition now has max_records=20000 in connector_definitions.py (default was 500, truncating intake once listed warrants are kept). test_suspension_production_cap_is_not_truncating_listed_warrant_intake pulls with the production cap and compares to an uncapped pull (equal, > 2000 records).",
+  "no_listing_source_acceptance_3_4": "Neither runtime ships a listing refresh yet. Collector: a host whose security-listing.json was never created collects unfiltered with a logged warning (rollout shadow = the previous behaviour); this is never a deletion path: ListingState.expired_warrants() on an empty state is empty and scripts/delete_expired_warrants.py refuses (listing_unavailable) so nothing is treated as expired or deleted. Once a listing exists it is fail closed after 3 trading days (test_listing_older_than_three_trading_days_stops_price_collection_and_uninitialised_is_shadow). Hosted: market data storage writer with no listing_filter writes as before. The effect: until Ops ships security_listing into the collector image and schedules the refresh, expired warrants are still collected, not newly skipped."
 }

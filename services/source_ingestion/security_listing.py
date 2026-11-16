@@ -27,7 +27,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-SCHEMA_VERSION = "security_listing.v1"
+SCHEMA_VERSION = "security_listing.v2"
+LEGACY_SCHEMA_VERSION = "security_listing.v1"
 MAX_STALE_TRADING_DAYS = 3
 
 TWSE_LISTED_URL = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
@@ -161,33 +162,50 @@ class ListingState:
 
     # ----- persistence
     def to_dict(self) -> dict[str, Any]:
-        """Compact form (design budget: <= 2 MB at ~22,500 rows): categories interned, rows as arrays."""
+        """Compact form: categories, venues and dates interned, rows as arrays. Live listing (57,531 rows,
+        41,965 TWSE warrants) must stay <= 2 MB; measured in the tests."""
         categories = sorted({r["category"] for r in self.allowlist.values()})
-        index = {c: i for i, c in enumerate(categories)}
+        venues = sorted({r["venue"] for r in self.allowlist.values()} | {r["venue"] for r in self.ordinary_share_registry.values()})
+        dates = sorted(
+            {r["first_seen"] for r in self.allowlist.values()} | {r["last_seen"] for r in self.allowlist.values()}
+            | {r["first_seen"] for r in self.ordinary_share_registry.values()}
+        )
+        ci = {c: i for i, c in enumerate(categories)}
+        vi = {v: i for i, v in enumerate(venues)}
+        di = {d: i for i, d in enumerate(dates)}
         return {
             "schema_version": SCHEMA_VERSION,
             "last_success_date": self.last_success_date,
             "categories": categories,
+            "venues": venues,
+            "dates": dates,
             "listing_allowlist": {
-                sym: [r["venue"], index[r["category"]], r["cfi"], r["first_seen"], r["last_seen"]]
+                sym: [vi[r["venue"]], ci[r["category"]], r["cfi"], di[r["first_seen"]], di[r["last_seen"]]]
                 for sym, r in self.allowlist.items()
             },
-            "ordinary_share_registry": {s: [r["venue"], r["first_seen"]] for s, r in self.ordinary_share_registry.items()},
+            "ordinary_share_registry": {s: [vi[r["venue"]], di[r["first_seen"]]] for s, r in self.ordinary_share_registry.items()},
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ListingState":
-        if data.get("schema_version") != SCHEMA_VERSION:
+        version = data.get("schema_version")
+        if version not in (SCHEMA_VERSION, LEGACY_SCHEMA_VERSION):
             raise ListingParseError("listing state: unknown schema_version")
         cats = list(data.get("categories") or [])
+        if version == SCHEMA_VERSION:
+            venues, dates = list(data.get("venues") or []), list(data.get("dates") or [])
+        else:  # v1 stored venue and dates inline
+            venues = dates = None
+        ven = (lambda x: venues[x]) if venues is not None else (lambda x: x)
+        dat = (lambda x: dates[x]) if dates is not None else (lambda x: x)
         allow = {
             sym: {
-                "venue": v[0], "category": cats[v[1]], "cfi": v[2], "is_warrant": str(v[2]).startswith("RW"),
-                "first_seen": v[3], "last_seen": v[4],
+                "venue": ven(v[0]), "category": cats[v[1]], "cfi": v[2], "is_warrant": str(v[2]).startswith("RW"),
+                "first_seen": dat(v[3]), "last_seen": dat(v[4]),
             }
             for sym, v in (data.get("listing_allowlist") or {}).items()
         }
-        reg = {s: {"venue": v[0], "first_seen": v[1]} for s, v in (data.get("ordinary_share_registry") or {}).items()}
+        reg = {s: {"venue": ven(v[0]), "first_seen": dat(v[1])} for s, v in (data.get("ordinary_share_registry") or {}).items()}
         return cls(allowlist=allow, ordinary_share_registry=reg, last_success_date=data.get("last_success_date"))
 
     def save(self, path: str | Path) -> None:

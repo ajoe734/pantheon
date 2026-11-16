@@ -176,3 +176,35 @@ def test_hosted_shaped_state_bytes_budget(tmp_path):
     size = (tmp_path / "s.json").stat().st_size
     print("listing_state_bytes", size)
     assert size <= 2 * 1024 * 1024, size
+
+
+def test_live_shaped_state_bytes_budget_and_roundtrip(tmp_path):
+    """Live listing 2026-11-16: 57,531 rows (41,965 TWSE + 13,143 TPEx warrants, 2,014 ordinary shares)."""
+    s = ListingState(last_success_date="2026-11-16")
+    for i in range(41965):
+        s.allowlist[f"{i + 30000:06d}"] = {"venue": "TWSE", "category": "上市認購(售)權證", "cfi": "RWSCCA",
+                                           "is_warrant": True, "first_seen": "2026-10-05", "last_seen": "2026-11-16"}
+    for i in range(13143):
+        s.allowlist[f"7{i:05d}"] = {"venue": "TPEx", "category": "上櫃認購(售)權證", "cfi": "RWSCCA",
+                                    "is_warrant": True, "first_seen": "2026-10-05", "last_seen": "2026-11-16"}
+    for i in range(2014):
+        s.allowlist[f"{1000 + i}"] = {"venue": "TWSE", "category": "股票", "cfi": "ESVUFR", "is_warrant": False,
+                                     "first_seen": "2026-10-05", "last_seen": "2026-11-16"}
+        s.ordinary_share_registry[f"{1000 + i}"] = {"venue": "TWSE", "first_seen": "2026-10-05"}
+    path = tmp_path / "live.json"
+    s.save(path)
+    size = path.stat().st_size
+    print("live_shaped_listing_state_bytes", size)
+    assert size <= 2 * 1024 * 1024, size
+    back = ListingState.load(path)
+    assert back.allowlist == s.allowlist and back.ordinary_share_registry == s.ordinary_share_registry
+
+
+def test_v1_state_file_still_loads(tmp_path):
+    import json as _json
+    v1 = {"schema_version": "security_listing.v1", "last_success_date": "2026-11-16", "categories": ["股票"],
+          "listing_allowlist": {"2330": ["TWSE", 0, "ESVUFR", "2026-10-05", "2026-11-16"]},
+          "ordinary_share_registry": {"2330": ["TWSE", "2026-10-05"]}}
+    (tmp_path / "v1.json").write_text(_json.dumps(v1), encoding="utf-8")
+    st = ListingState.load(tmp_path / "v1.json")
+    assert st.allowlist["2330"]["last_seen"] == "2026-11-16" and st.ordinary_share_registry["2330"]["venue"] == "TWSE"
