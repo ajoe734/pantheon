@@ -14,10 +14,14 @@ import threading
 import uuid
 from typing import Any, Callable, Dict, Iterable, Iterator, Literal, Mapping, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .institutional_knowledge import (
+    InstitutionalKnowledgeReader,
+    InstitutionalKnowledgeUnavailableError,
+)
 from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from ..models import (
     AGORA_CAPABILITIES,
@@ -720,18 +724,71 @@ def _servant_meta(
     return meta
 
 
+def _extract_caller_identity(extract_identity: Callable[..., Any], authorization: Optional[str], pantheon_session: Optional[str] = None) -> Any:
+    if pantheon_session is not None:
+        try:
+            return extract_identity(authorization, session_cookie=pantheon_session)
+        except TypeError:
+            pass
+    eff_auth = authorization or (f"Bearer {pantheon_session}" if pantheon_session else None)
+    return extract_identity(eff_auth)
+
+
+def _servant_persona_id_for_scope(read_store: Any, scope: Any) -> str:
+    expected = _stable_servant_persona_id(tenant_id=scope.tenant_id, agora_user_id=scope.user_id)
+    if read_store is not None:
+        existing = _find_servant_persona(read_store, tenant_id=scope.tenant_id, agora_user_id=scope.user_id, expected_persona_id=expected)
+        if isinstance(existing, Mapping):
+            pid = str(existing.get("persona_id") or existing.get("id") or "").strip()
+            if pid:
+                return pid
+    return expected
+
+
+def _raise_institutional_knowledge_error(exc: InstitutionalKnowledgeUnavailableError, *, bff_error: Callable[..., HTTPException]) -> None:
+    from services.control_plane.bff.models import ErrorCode
+
+    detail_dict = exc.to_detail()
+    http_exc = bff_error(
+        exc.status_code, ErrorCode.DEPENDENCY_UNAVAILABLE, f"Institutional knowledge {exc.owner} owner is unavailable",
+        exc.reason, precondition_failed=f"{exc.owner}_owner", details_extra=detail_dict,
+    )
+    if isinstance(http_exc.detail, dict):
+        for k, v in (("status", "unavailable"), ("owner", exc.owner), ("reason", exc.reason), ("fallback_used", False)):
+            http_exc.detail.setdefault(k, v)
+    raise http_exc from exc
+
+
 def create_servant_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
-    require_write_role: Callable[..., None],
+    require_write_role: Callable[..., None] = lambda _i: None,
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
-    get_read_store: Callable[[], Any],
-    sync_servant_agent: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    get_read_store: Callable[[], Any] = lambda: None,
+    sync_servant_agent: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda _p: {},
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
+    trading_room_service: Optional[Any] = None,
+    trading_room_store: Optional[Any] = None,
+    institutional_knowledge_reader: Optional[InstitutionalKnowledgeReader] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
+    knowledge_reader = institutional_knowledge_reader or InstitutionalKnowledgeReader()
+
+    def _resolve_trading_room_service() -> Any:
+        if trading_room_service is not None:
+            if getattr(trading_room_service, "institutional_knowledge_reader", None) is None:
+                trading_room_service.institutional_knowledge_reader = knowledge_reader
+            return trading_room_service
+        from ..trading_room.service import TradingRoomService, get_active_trading_room_service
+
+        if trading_room_store is not None:
+            return TradingRoomService(store=trading_room_store, utc_now=utc_now, bff_error=bff_error, institutional_knowledge_reader=knowledge_reader)
+        active = get_active_trading_room_service()
+        if getattr(active, "institutional_knowledge_reader", None) is None:
+            active.institutional_knowledge_reader = knowledge_reader
+        return active
 
     @router.get("/bff/agora/servant")
     def get_agora_servant(
@@ -1405,5 +1462,85 @@ def create_servant_router(
                 "X-SSE-Channel": f"agora-servant:{session_id}",
             },
         )
+
+    def _resolve_knowledge_caller(
+        authorization: Optional[str], pantheon_session: Optional[str], x_tenant_id: Optional[str], x_pantheon_tenant: Optional[str]
+    ) -> tuple[Any, Any, str, Optional[str]]:
+        identity = _extract_caller_identity(extract_identity, authorization, pantheon_session)
+        require_read_role(identity)
+        try:
+            scope = resolve_agora_user_scope(identity, utc_now=utc_now, requested_tenant_id=x_tenant_id or x_pantheon_tenant)
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+        servant_persona_id = _servant_persona_id_for_scope(get_read_store(), scope)
+        eff_auth = authorization or (f"Bearer {pantheon_session}" if pantheon_session else None)
+        return identity, scope, servant_persona_id, eff_auth
+
+    def _knowledge_envelope(data: Dict[str, Any], *, scope: Any, capability: str, proof: str) -> Dict[str, Any]:
+        return {
+            "status": "ok", "data": data,
+            "meta": {
+                "snapshot_at": utc_now(), "capability": capability, "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "read_only": True, "advice_only": True, "execution_authority": "none", "environment_ceiling": "paper", "no_order_route_proof": proof,
+            },
+        }
+
+    @router.get("/bff/agora/servant/institutional-knowledge")
+    def get_servant_institutional_knowledge(
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        fact_kind: Optional[str] = Query(default=None),
+        symbol: Optional[str] = Query(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        strategy_family: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        _identity, scope, servant_persona_id, eff_auth = _resolve_knowledge_caller(authorization, pantheon_session, x_tenant_id, x_pantheon_tenant)
+        try:
+            data = knowledge_reader.read_servant_institutional_knowledge(
+                tenant_id=scope.tenant_id, user_id=scope.user_id, servant_persona_id=servant_persona_id,
+                operator_id=scope.operator_id, authorization=eff_auth, fact_kind=fact_kind,
+                symbol=symbol, strategy_id=strategy_id, strategy_family=strategy_family,
+            )
+        except InstitutionalKnowledgeUnavailableError as exc:
+            _raise_institutional_knowledge_error(exc, bff_error=bff_error)
+        return _knowledge_envelope(data, scope=scope, capability=_SERVANT_CAPABILITY, proof="agora_institutional_knowledge_read_only")
+
+    @router.get("/bff/agora/trading-room/system-suggestions")
+    def list_trading_room_system_suggestions(
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+        decision_event_id: Optional[str] = Query(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        symbol: Optional[str] = Query(default=None),
+        strategy_family: Optional[str] = Query(default=None),
+        event_kind: Optional[str] = Query(default=None),
+        action: Optional[str] = Query(default=None),
+        regime_ref: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        identity, scope, servant_persona_id, eff_auth = _resolve_knowledge_caller(authorization, pantheon_session, x_tenant_id, x_pantheon_tenant)
+        data = _resolve_trading_room_service().get_system_suggestions(
+            identity=identity, decision_event_id=decision_event_id, strategy_id=strategy_id, symbol=symbol,
+            strategy_family=strategy_family, event_kind=event_kind, action=action, regime_ref=regime_ref,
+            servant_persona_id=servant_persona_id, authorization=eff_auth,
+        )
+        return _knowledge_envelope(data, scope=scope, capability="agora.trading.v1", proof="agora_decision_support_only")
+
+    @router.get("/bff/agora/trading-room/decision-events/{decision_event_id}/system-suggestions")
+    def get_decision_event_system_suggestions(
+        decision_event_id: str,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        identity, scope, servant_persona_id, eff_auth = _resolve_knowledge_caller(authorization, pantheon_session, x_tenant_id, x_pantheon_tenant)
+        data = _resolve_trading_room_service().get_decision_system_suggestions(
+            decision_event_id, identity, servant_persona_id=servant_persona_id, authorization=eff_auth,
+        )
+        return _knowledge_envelope(data, scope=scope, capability="agora.trading.v1", proof="agora_decision_support_only")
 
     return router
