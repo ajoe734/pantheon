@@ -26,11 +26,13 @@ from services.source_ingestion.pipeline import (
     ReceiptSnapshotUnavailable,
     resolve_receipt_snapshot_bodies,
 )
+from services.source_ingestion.runtime import _receipt_summary
 from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 from services.source_ingestion.scheduler import (
     IngestReceipt,
     JsonlIngestScheduleStore,
     slim_market_snapshot_batch,
+    compact_receipt_payload,
     slim_receipt_payload,
 )
 from services.source_ingestion.tests.test_latest_market_snapshot import (
@@ -41,7 +43,7 @@ from services.source_ingestion.tests.test_latest_market_snapshot import (
 
 DEPLOYED_SHA = "e7ec353d6"  # hosted stack when this task was opened
 REF_KEYS = {"snapshot_id", "symbol", "dataset", "event_time"}
-RECEIPT_LINE_BOUND_500 = 250_000  # bytes; a 500 record bundle receipt line (measured ~150 KB, ids only)
+RECEIPT_LINE_BOUND_500 = 16 * 1024  # bytes; a 500 record batch receipt line: counts and references only
 
 
 def _static_record(symbol: str, day: int, close: float) -> dict[str, Any]:
@@ -96,19 +98,26 @@ def test_bundle_receipt_holds_refs_not_bodies_and_is_bounded(bundle_run):
     run_id = job["run"]["ingest_run_id"]
     batch = runtime.store.get_receipt(run_id).evidence_refs["market_snapshots"]
     assert batch["accepted_record_count"] == batch["updated_snapshot_count"] == 500
-    assert len(batch["snapshots"]) == 500
-    assert all(set(ref) == REF_KEYS for ref in batch["snapshots"])
-    assert {ref["symbol"] for ref in batch["snapshots"]} == set(symbols)
-    assert all(ref["dataset"] == "tw_price_daily" or ref["dataset"] for ref in batch["snapshots"])
+    assert "snapshots" not in batch  # no per-record list
+    assert batch["snapshot_count"] == 500
+    assert batch["snapshot_refs"]["ingest_run_id"] == run_id
+    refs = runtime.store.get_receipt(run_id).evidence_refs
+    for listed in ("source_ids", "evidence_item_ids", "knowledge_object_ids", "distillation_admissions"):
+        assert listed not in refs
+    assert refs["source_id_count"] == refs["evidence_item_id_count"] == refs["knowledge_object_id_count"] == 500
+    assert refs["distillation_admission_count"] == 500
+    assert refs["evidence_bundle_id"]
     lines = _journal_receipt_lines(runtime.SCHEDULE_STORE_PATH, run_id)
     assert lines, "receipt rows for the bundle run must be in the journal"
-    assert max(len(line) for line in lines) < RECEIPT_LINE_BOUND_500
+    assert max(len(line) for line in lines) <= RECEIPT_LINE_BOUND_500, max(len(line) for line in lines)
     assert all(b'"closes"' not in line for line in lines)
     print("RECEIPT_LINE_BYTES_500=" + str(max(len(line) for line in lines)))
     # Every reader keeps its counts: summary, receipt endpoint, run endpoint.
     full = client.get(f"/api/source-ingest/receipts/{run_id}", headers=_read_headers())
     assert full.status_code == 200
     assert full.json()["receipt"]["evidence_refs"]["market_snapshots"] == batch
+    summary = _receipt_summary(runtime.store.get_receipt(run_id))["evidence_refs"]
+    assert summary["source_id_count"] == 500 and summary["market_snapshots"]["snapshot_count"] == 500
     # The ingest response is unchanged for the caller: bodies are still returned there.
     assert all("closes" in body for body in job["evidence_refs"]["market_snapshots"]["snapshots"])
 
@@ -136,7 +145,10 @@ def test_receipt_size_does_not_grow_with_closes_per_snapshot(tmp_path):
 def test_new_receipts_resolve_bodies_by_identifier_and_fail_closed_when_superseded(bundle_run):
     runtime, _, job, _ = bundle_run
     store = runtime.latest_market_snapshot_store
-    batch = runtime.store.get_receipt(job["run"]["ingest_run_id"]).evidence_refs["market_snapshots"]
+    counts_only = runtime.store.get_receipt(job["run"]["ingest_run_id"]).evidence_refs["market_snapshots"]
+    with pytest.raises(ReceiptSnapshotUnavailable, match="counts and a reference only"):
+        resolve_receipt_snapshot_bodies(store, counts_only)
+    batch = slim_market_snapshot_batch(job["evidence_refs"]["market_snapshots"])  # reference list form
     bodies = resolve_receipt_snapshot_bodies(store, batch)
     assert bodies == job["evidence_refs"]["market_snapshots"]["snapshots"]  # same bodies as before the change
     superseding = [_static_record("S0000.US", 30, 140.0)]
@@ -198,8 +210,7 @@ def _write_legacy_journal(path: Path, count: int = 12) -> list[IngestReceipt]:
 def _identity(receipt: IngestReceipt) -> dict[str, Any]:
     data = receipt.to_dict()
     refs = dict(data["evidence_refs"])
-    refs["market_snapshots"] = {k: v for k, v in refs["market_snapshots"].items() if k != "snapshots"}
-    return {**data, "evidence_refs": refs}
+    return dict(compact_receipt_payload({**data, "evidence_refs": refs})[0])
 
 
 def test_start_slims_embedded_bodies_and_keeps_every_other_field(tmp_path):
@@ -212,9 +223,8 @@ def test_start_slims_embedded_bodies_and_keeps_every_other_field(tmp_path):
     for original in receipts:
         loaded = store.get_receipt(original.ingest_run_id)
         assert _identity(loaded) == _identity(original)
-        slim = loaded.evidence_refs["market_snapshots"]["snapshots"]
-        assert [r["snapshot_id"] for r in slim] == [b["snapshot_id"] for b in original.evidence_refs["market_snapshots"]["snapshots"]]
-        assert all(set(r) == REF_KEYS for r in slim)
+        market = loaded.evidence_refs["market_snapshots"]
+        assert "snapshots" not in market and market["snapshot_count"] == 120
     assert store.journal_stats()["last_slim_rewrite"]["slimmed_rows"] == len(receipts)
     # A second start finds nothing to do and leaves the journal byte-identical.
     after = path.read_bytes()
