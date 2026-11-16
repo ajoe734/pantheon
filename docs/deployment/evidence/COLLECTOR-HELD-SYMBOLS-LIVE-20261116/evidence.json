@@ -7,17 +7,61 @@
   },
   "change": {
     "provider_adapters.py": "_live_paper_held_symbols reads PANTHEON_RUNTIME_BINDING_STORE_PATH (default /data/runtime/runtime_bindings.json) on every collector pull; active (or market_input_ paused) paper bindings of the request/controller tenant; .TW/.TWSE/.TWO/.TPEX map to collector row codes; env list and request priority_symbols remain additional sources; failure -> no live symbols and observed.held_symbols_unavailable typed reason (binding_store_missing|binding_store_unreadable|binding_store_malformed)",
-    "docker-compose.yml": "read-only runtime-data:/data/runtime:ro mount added to source-ingest and source-ingest-scheduler (no new service/endpoint/setting/cache). Needs a deploy to take effect on hosted."
+    "docker-compose.yml": "NOT changed (outside the task artifact contract). Follow-up required for hosted effect: mount runtime-data:/data/runtime:ro into source-ingest and source-ingest-scheduler (or set PANTHEON_RUNTIME_BINDING_STORE_PATH to a readable copy). Until then hosted pulls report observed.held_symbols_unavailable=binding_store_missing and keep existing order."
   },
   "first_pull_delivery": {
-    "collector-tw-tpex-price-history": {"rows_in_bundle": 5268, "held_codes_at_tail": ["15200", "15250", "15260"], "first_four_codes": ["15200", "15250", "15260", "10000"], "pull_number": 1, "rows_in_pull": 150, "pull_seconds": 0.265},
-    "collector-tw-twse-price-history": {"rows_in_bundle": 1376, "held_codes_at_tail": ["11300", "11350", "11370"], "first_four_codes": ["11300", "11350", "11370", "10000"], "pull_number": 1, "rows_in_pull": 150, "pull_seconds": 0.161},
+    "collector-tw-tpex-price-history": {
+      "rows_in_bundle": 5268,
+      "held_codes_at_tail": [
+        "15200",
+        "15250",
+        "15260"
+      ],
+      "first_four_codes": [
+        "15200",
+        "15250",
+        "15260",
+        "10000"
+      ],
+      "pull_number": 1,
+      "rows_in_pull": 150,
+      "pull_seconds": 0.265
+    },
+    "collector-tw-twse-price-history": {
+      "rows_in_bundle": 1376,
+      "held_codes_at_tail": [
+        "11300",
+        "11350",
+        "11370"
+      ],
+      "first_four_codes": [
+        "11300",
+        "11350",
+        "11370",
+        "10000"
+      ],
+      "pull_number": 1,
+      "rows_in_pull": 150,
+      "pull_seconds": 0.161
+    },
     "note": "bundles are recorded-shape fixtures at recorded row counts (recorded_run helper), not the original hosted capture; local fake transport"
   },
   "validation": [
-    {"cmd": "python -m pytest services/source_ingestion/tests/test_collector_held_symbols_live.py -q", "result": "6 passed"},
-    {"cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_progress.py -q", "result": "14 passed"},
-    {"cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py -q", "result": "14 passed"},
-    {"cmd": "python -m pytest services/source_ingestion/tests/test_collector_bundle_connector.py -q", "result": "106 passed, 1 skipped"}
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_held_symbols_live.py -q",
+      "result": "6 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_progress.py -q",
+      "result": "14 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py -q",
+      "result": "14 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_bundle_connector.py -q",
+      "result": "106 passed, 1 skipped"
+    }
   ]
 }
