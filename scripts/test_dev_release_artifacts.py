@@ -1710,3 +1710,99 @@ def test_previous_and_new_probe_emit_identical_proof_both_directions(tmp_path):
     # New baseline proof validates under the unchanged exact four key check, and the
     # previous probe reproduces the same proof from the same journal (reverse direction).
     assert proof == {k: old[k] for k in proof}
+
+
+# --- DEV-RELEASE-ARTIFACTS-SOURCE-PROBE-RESILIENCE-20261116 ---------------------------
+
+def test_source_probe_runs_with_2048m_memory_bound(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 89)
+    docker.calls.clear()
+    artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                    writer_image=writer, check_lease=lambda: None)
+    run_calls = [call for call in docker.calls if call[0] == "run"]
+    assert len(run_calls) >= 5
+    for call in run_calls:
+        mem_idx = call.index("--memory")
+        assert call[mem_idx + 1] == "2048m"
+        assert "512m" not in call
+
+
+def test_qualify_source_writer_retries_on_mid_probe_append_and_succeeds(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 90)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_between_first_two_probes(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_between_first_two_probes
+    proof = artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                            writer_image=writer, check_lease=lambda: None)
+    assert journal_probes == [retained, writer, retained, writer, retained, writer]
+    expected_bytes = docker.source_journal.read_bytes()
+    assert proof["retained"]["journal_size"] == proof["writer"]["journal_size"] == len(expected_bytes)
+    assert proof["retained"]["journal_sha256"] == proof["writer"]["journal_sha256"] == hashlib.sha256(expected_bytes).hexdigest()
+    assert proof["retained"]["projection_sha256"] == proof["writer"]["projection_sha256"]
+
+
+def test_qualify_source_writer_fails_closed_after_three_append_disagreements(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 91)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_after_every_retained_probe(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3, 5):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_after_every_retained_probe
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert journal_probes == [retained, writer] * 3
+
+
+def test_qualify_source_writer_projection_mismatch_on_equal_journal_fails_closed_without_retry(stack_case, monkeypatch):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 92)
+    calls = []
+
+    def fake_qualify_source_reader(*, docker, image_id, check_lease):
+        calls.append(image_id)
+        return {
+            "codec_sha256": "1" * 64,
+            "journal_sha256": "2" * 64,
+            "journal_size": 4096,
+            "projection_sha256": "3" * 64 if image_id == retained else "4" * 64,
+        }
+
+    monkeypatch.setattr(artifacts, "qualify_source_reader", fake_qualify_source_reader)
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert calls == [retained, writer]
