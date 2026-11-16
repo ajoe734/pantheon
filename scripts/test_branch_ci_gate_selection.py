@@ -151,8 +151,32 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         self.assertGreater(names.index(SOURCE_INGESTION_STEP_NAME), names.index("Install test dependencies"))
         run = step.get("run", "")
         # Sharded runner: same targets (defined in the script), per-shard data dirs.
-        self.assertIn("python3 scripts/ci_source_ingestion_test_shards.py", run)
-        self.assertIn("--max-test-seconds", run)
+        commands = [ln.strip() for ln in run.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        self.assertEqual(
+            commands,
+            ["python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300"],
+        )
+        # Every source ingestion test file must land in exactly one non-empty shard.
+        from scripts import ci_source_ingestion_test_shards as sharder
+
+        root = sharder.REPO_ROOT
+        expected_files = sorted(
+            {
+                str(p.relative_to(root))
+                for p in list((root / "services/source_ingestion/tests").rglob("test_*.py"))
+                + list((root / "services/source_ingestion").glob("test_*.py"))
+            }
+        )
+        self.assertTrue(expected_files)
+        plan = sharder.plan_shards(expected_files, 4)
+        self.assertEqual(len(plan), 4)
+        for shard in plan:
+            self.assertTrue(shard, "a shard is empty")
+        flat = [f for shard in plan for f in shard]
+        self.assertEqual(sorted(flat), expected_files)
+        self.assertEqual(len(flat), len(set(flat)))
+        for weighted in sharder.FILE_WEIGHTS:
+            self.assertIn(weighted, expected_files)
         runner = (Path(__file__).resolve().parent / "ci_source_ingestion_test_shards.py").read_text()
         self.assertIn("services/source_ingestion/tests", runner)
         self.assertIn("services/source_ingestion/test_*.py", runner)
