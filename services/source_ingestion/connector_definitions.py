@@ -23,6 +23,14 @@ from .provider_adapters import (
     PROVIDER_ADAPTER_ALIASES,
     is_provider_adapter_allowed,
 )
+from .connectors.agora_owner import (
+    AGORA_OWNER_ADAPTER_TOKEN,
+    AGORA_PLATFORM_SOURCE_CONNECTOR_ID,
+    AGORA_PLATFORM_SOURCE_DATASET,
+    AGORA_PLATFORM_SOURCE_SCHEMA_HASH,
+    AGORA_PLATFORM_SOURCE_TOKEN_ENV,
+    register_agora_provider_adapter,
+)
 from .connectors.collector_bundle import (
     COLLECTOR_BUNDLE_ADAPTER_TOKEN,
     COLLECTOR_BUNDLE_TOKEN_ENV,
@@ -35,6 +43,8 @@ from .source_management_models import (
     SourceManagementContractError,
     assert_no_raw_secrets,
 )
+
+register_agora_provider_adapter()
 
 CONNECTOR_DEFINITION_SCHEMA_VERSION = "connector_definition.v1"
 DEFAULT_DEPLOYMENT_SHA = os.environ.get("PANTHEON_DEPLOYMENT_SHA", "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0")
@@ -367,6 +377,10 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-twse-index-breadth", "provider": "TWSE MI_INDEX price indices and market breadth (web, collector host)",
      "type": "market", "class": "market_daily", "dataset": "tw_index_daily",
      "extra_datasets": ("tw_market_breadth_daily",), "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-trading-holidays", "provider": "TWSE and TPEx official trading holiday schedule (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_trading_holidays", "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-trading-suspension", "provider": "TWSE TWTAWU and TPEx sprcHis official trading suspension records (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_trading_suspension", "attribution": True, "cadence": 86400},
     {"id": "collector-tw-twse-taiex-history", "provider": "TWSE MI_5MINS_HIST TAIEX daily OHLC history (web, collector host)",
      "type": "market", "class": "market_daily", "dataset": "tw_index_daily", "attribution": True, "cadence": 86400},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
@@ -1179,6 +1193,54 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("financialmodelingprep.com", "api.finmindtrade.com", "api.vendor-factors.io"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/alpha-db-vendor-signals",
+    ),
+    # ------------------------------------------------------------------
+    # 19. Agora Governed Platform Source (decision locks, settled arms, journals, insights)
+    # ------------------------------------------------------------------
+    ConnectorDefinition(
+        definition_id=AGORA_PLATFORM_SOURCE_CONNECTOR_ID,
+        adapter_token=AGORA_OWNER_ADAPTER_TOKEN,
+        adapter_version="1.0.0",
+        provider="Agora Owner",
+        source_kinds=("data_source", "strategy_seed_source"),
+        source_types=("internal_note",),
+        source_classes=("internal_agora",),
+        datasets=(AGORA_PLATFORM_SOURCE_DATASET,),
+        auth_modes=("bearer_token",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("id_watermark", "time_watermark"),
+        output_schema_versions=(AGORA_PLATFORM_SOURCE_SCHEMA_HASH,),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "api_url": {"type": "string"},
+                "secret_ref_id": {"type": "string", "default": f"env://{AGORA_PLATFORM_SOURCE_TOKEN_ENV}"},
+                "service_actor": {"type": "string", "default": "source-ingest"},
+                "tenant_id": {"type": "string", "default": "default"},
+                "max_records": {"type": "integer", "minimum": 1, "maximum": 500},
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 60},
+                "cursor_state_path": {"type": "string"},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 200, "max_bytes": 16777216, "timeout_seconds": 15, "max_rate_per_second": 2.0},
+        allowed_host_patterns=("operator-bff", "127.0.0.1", "localhost"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://AGORA-PLATFORM-SOURCE-20261116",
+        metadata={
+            "provenance": "agora",
+            "facts_only": True,
+            "canonical_sink": "SourceRecord/EvidenceBundle",
+            "validation_gates_required": True,
+            "direct_execution_allowed": False,
+            "record_kinds": [
+                "decision_lock",
+                "settled_arm",
+                "decision_journal",
+                "servant_insight",
+            ],
+        },
     ),
 )
 

@@ -2628,10 +2628,10 @@ if action == "restore":
 PY
   local runtime_rc=$?
   (( runtime_rc == 0 )) || return "${runtime_rc}"
-  if [[ "${action}" == "restore" ]]; then
-    # A recreated process is not ready for the next connector's preflight yet.
-    # Use the existing retry budget and the Source healthcheck's /readyz + 5s limit.
-    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 12 5 --max-time 5 --connect-timeout 5
+  if [[ "${action}" == "bounded" || "${action}" == "restore" ]]; then
+    # A recreated process is not ready for dataset preparation or the next connector's preflight yet.
+    # Wait up to 180s (36 * 5s, matching docker-compose start_period 120s plus retries) with a 5s curl limit.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5
   fi
 }
 
@@ -3347,6 +3347,8 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
+  curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
+    || error "source-ingest /readyz did not become ready before bounded refresh preflight"
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"

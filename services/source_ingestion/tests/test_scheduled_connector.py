@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,7 @@ def client():
     try:
         yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -1051,7 +1053,7 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
         f"/api/source-ingest/receipts/{receipt_summary['ingest_run_id']}"
     )
     assert full_receipt.status_code == 200, full_receipt.text
-    assert len(full_receipt.json()["receipt"]["evidence_refs"]["source_ids"]) == 1
+    assert full_receipt.json()["receipt"]["evidence_refs"]["source_id_count"] == 1  # counts only (T2)
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]
@@ -2039,6 +2041,14 @@ def _admission_bundle_files(source_ids, *, item_counts=None):
                 # Index rows are keyed by index name (no symbol); the TAIEX history source emits its own row dataset.
                 row.update(index_name=f"index {n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n,
                            dataset="tw_index_ohlc_daily" if cid.endswith("taiex-history") else "tw_index_daily")
+            elif stype == "market" and collector["dataset"] in {"tw_trading_holidays", "tw_trading_suspension"}:
+                # TW-SUSPENSION-HOLIDAYS-INTAKE-20261115: official schedule / suspension rows carry venue + endpoint.
+                row.update(trade_date=f"2024-11-{12 + n}", dataset=collector["dataset"], venue="TWSE",
+                           api_endpoint="https://example.test/official", published_at="2026-11-10T01:00:00Z")
+                if collector["dataset"] == "tw_trading_holidays":
+                    row.update(is_closed=True, holiday_name=f"holiday {n}")
+                else:
+                    row.update(symbol=f"23{30 + n}", suspended_date=f"2024-11-{12 + n}")
             elif stype == "market":
                 row.update(symbol=f"23{30 + n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n, dataset=collector["dataset"])
             else:

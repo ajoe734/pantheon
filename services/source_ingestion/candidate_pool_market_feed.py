@@ -18,6 +18,7 @@ nothing until a new partition lands.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 from datetime import date, timedelta
 from pathlib import Path
@@ -98,18 +99,38 @@ def _bar(meta: Mapping[str, Any], nrow: Mapping[str, Any]) -> tuple[str, dict[st
     return symbol, bar
 
 
+_EXCHANGE_VENUE = {"TWSE": "TWSE", "TPEX": "TPEx"}
+# The dated all-market official pages the collector price-history spiders read.
+_ALL_MARKET_UPSTREAM = {"TWSE": "MI_INDEX", "TPEx": "dailyQuotes"}
+
+
+def _venue(meta: Mapping[str, Any], nrow: Mapping[str, Any]) -> str:
+    return _EXCHANGE_VENUE.get(str(nrow.get("exchange") or meta.get("exchange") or "").upper(), "")
+
+
 def _capture(meta: Mapping[str, Any], nrow: Mapping[str, Any], *, dataset: str) -> tuple[tuple[str, str], dict[str, Any]] | None:
-    """Evidence that a row came from a dated all-market official capture of one venue."""
-    venue = str(meta.get("venue") or nrow.get("venue") or "")
-    endpoint = str(meta.get("api_endpoint") or nrow.get("api_endpoint") or "")
-    session = str(nrow.get("date") or meta.get("event_time") or "")[:10]
-    if ALL_MARKET_BUNDLES.get(venue) != endpoint or len(session) != 10:
+    """Evidence that a row came from a dated all-market official capture of one venue.
+
+    The identity is the collector bundle that relayed the page (``collector.source_id``) and the upstream
+    page it names (``MI_INDEX`` / ``dailyQuotes``); a row from any other source or page is not a capture.
+    """
+    venue = _venue(meta, nrow)
+    collector = meta.get("collector") if isinstance(meta.get("collector"), Mapping) else {}
+    endpoint = f"bundle://{collector.get('source_id')}"
+    upstream = str(nrow.get("upstream_endpoint") or meta.get("upstream_endpoint") or "")
+    session = str(nrow.get("trade_date") or nrow.get("date") or "")[:10]
+    if ALL_MARKET_BUNDLES.get(venue) != endpoint or upstream != _ALL_MARKET_UPSTREAM[venue] or len(session) != 10:
         return None
-    source_dataset = str(meta.get("source_dataset") or nrow.get("source_dataset") or "")
-    return (session, venue), {"ref": f"{endpoint}/{dataset}/{session}@{source_dataset}"}
+    return (session, venue), {"ref": f"{endpoint}/{dataset}/{session}@{upstream}#{str(collector.get('bundle_sha256') or '')[:12]}"}
 
 
 def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], set[str], dict[tuple[str, str], dict[str, Any]]]:
+    """Bars, sessions and the dated all-market captures; a capture also lists the page's non-traded rows.
+
+    A capture whose rows carry the collector's ``trading_status`` keeps the listed securities that have no
+    close (suspended / not traded); ``non_traded`` is then the official list for that session and venue.
+    An older capture without that field dropped those rows, so it is ``non_traded=None`` (unknown).
+    """
     versions: dict[tuple[str, str], dict[str, Any]] = {}
     captures: dict[tuple[str, str], dict[str, Any]] = {}
     for path in paths:
@@ -118,7 +139,11 @@ def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], 
             nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
             cap = _capture(meta, nrow, dataset=DAILY_BAR_DATASET)
             if cap is not None:
-                captures.setdefault(*cap)
+                held = captures.setdefault(*cap)
+                if nrow.get("trading_status") in ("traded", "not_traded"):
+                    held.setdefault("non_traded", set())
+                    if nrow["trading_status"] == "not_traded":
+                        held["non_traded"].add(f"{nrow.get('symbol')}.{cap[0][1]}")
             parsed = _bar(meta, nrow)
             if parsed is None:
                 continue
@@ -134,33 +159,94 @@ def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], 
     return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions, captures
 
 
+_HOLIDAY_ENDPOINT = {"TWSE": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?",
+                     "TPEx": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?"}
+_SUSPENSION_ENDPOINT = {"TWSE": "https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU?",
+                        "TPEx": "https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?"}
+
+
+def _official_rows(paths: Sequence[Path], dataset: str, endpoints: Mapping[str, str]):
+    """Normalized rows of a governed dataset whose venue and official endpoint agree."""
+    for path in paths:
+        for row in _iter_normalized_rows(path):
+            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+            nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+            venue = str(nrow.get("venue") or "")
+            endpoint = str(nrow.get("api_endpoint") or meta.get("api_endpoint") or "")
+            if nrow.get("dataset") == dataset and venue in endpoints and endpoint.startswith(endpoints[venue]):
+                yield venue, endpoint, nrow
+
+
 def _read_closed_days(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
-    """Official exchange closed days (dataset ``tw_trading_holidays``); none exist today."""
-    out: dict[str, dict[str, Any]] = {}
-    for path in paths:
-        for row in _iter_normalized_rows(path):
-            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
-            nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
-            day = str(nrow.get("date") or "")[:10]
-            endpoint = str(meta.get("api_endpoint") or nrow.get("api_endpoint") or "")
-            if nrow.get("closed") is True and len(day) == 10 and endpoint.startswith("https://www.twse.com.tw/"):
-                out.setdefault(day, {"ref": f"{endpoint}/{HOLIDAY_DATASET}/{day}"})
-    return out
+    """Days both venues' official schedule records as closed (dataset ``tw_trading_holidays``).
+
+    A day closed for one venue only is not accounted for: the other venue may have held a session.
+    """
+    per_day: dict[str, dict[str, str]] = {}
+    for venue, endpoint, nrow in _official_rows(paths, HOLIDAY_DATASET, _HOLIDAY_ENDPOINT):
+        day = str(nrow.get("date") or "")[:10]
+        if nrow.get("closed") is True and len(day) == 10:
+            per_day.setdefault(day, {}).setdefault(venue, f"{endpoint}#{HOLIDAY_DATASET}/{day}")
+    return {day: {"ref": " + ".join(refs[v] for v in ("TWSE", "TPEx"))}
+            for day, refs in per_day.items() if set(refs) == {"TWSE", "TPEx"}}
 
 
-def _read_suspension_captures(paths: Sequence[Path]) -> dict[tuple[str, str], dict[str, Any]]:
-    """Per-session suspended-security captures (dataset ``tw_trading_suspension``); none exist today."""
-    out: dict[tuple[str, str], dict[str, Any]] = {}
-    for path in paths:
-        for row in _iter_normalized_rows(path):
-            meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
-            nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
-            if nrow.get("capture") != "all_market" or not isinstance(nrow.get("suspended_symbols"), list):
+def _suspension_windows(paths: Sequence[Path]) -> tuple[dict[str, list[tuple[str, str, str]]], dict[str, list[tuple[str, str, str | None]]]]:
+    """Per venue: the date ranges an official suspension list was fetched for, and its records.
+
+    The range is the one the request named (TWSE ``startDate``..``endDate``; TPEx ``date=<year>``), so a
+    session is only covered by a list that was actually requested for it.
+    """
+    windows: dict[str, set[tuple[str, str, str]]] = {}
+    events: dict[str, list[tuple[str, str, str | None]]] = {}
+    for venue, endpoint, nrow in _official_rows(paths, SUSPENSION_DATASET, _SUSPENSION_ENDPOINT):
+        if venue == "TWSE":
+            start, end = re.search(r"startDate=(\d{8})", endpoint), re.search(r"endDate=(\d{8})", endpoint)
+            if not (start and end):
                 continue
-            cap = _capture(meta, nrow, dataset=SUSPENSION_DATASET)
-            if cap is not None:
-                out.setdefault(*cap)
-    return out
+            first, last = (f"{m.group(1)[:4]}-{m.group(1)[4:6]}-{m.group(1)[6:]}" for m in (start, end))
+        else:
+            year = re.search(r"date=(\d{4})(?:&|$)", endpoint)
+            if not year:
+                continue
+            first, last = f"{year.group(1)}-01-01", f"{year.group(1)}-12-31"
+        windows.setdefault(venue, set()).add((first, last, endpoint))
+        symbol, suspended = str(nrow.get("symbol") or ""), nrow.get("suspended_date")
+        if symbol and suspended:
+            events.setdefault(venue, []).append((symbol, str(suspended), str(nrow["resumed_date"]) if nrow.get("resumed_date") else None))
+    return {v: sorted(w) for v, w in windows.items()}, events
+
+
+def _suspension_captures(
+    paths: Sequence[Path], window: Sequence[str], price_captures: Mapping[tuple[str, str], Mapping[str, Any]],
+) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], str]]:
+    """Sessions whose suspended / non-traded securities are known, per venue, with the unknown ones' cause.
+
+    Known only when (1) the session's all-market page was stored with its no-close rows kept
+    (``non_traded`` is not None) and (2) the official suspension list was fetched for a range that
+    contains the session.  The list is the page's non-traded rows plus the listed suspension records in force.
+    """
+    windows, events = _suspension_windows(paths)
+    known: dict[tuple[str, str], dict[str, Any]] = {}
+    unknown: dict[tuple[str, str], str] = {}
+    for session in window:
+        for venue in ("TWSE", "TPEx"):
+            capture = price_captures.get((session, venue))
+            if capture is None:
+                continue  # the price gap is reported by the attestation itself
+            covering = [w for w in windows.get(venue, []) if w[0] <= session <= w[1]]
+            if capture.get("non_traded") is None:
+                unknown[(session, venue)] = (
+                    f"{venue} all-market page was stored without its no-close rows (pre-intake format)")
+            elif not covering:
+                unknown[(session, venue)] = f"no official {SUSPENSION_DATASET} list fetched for {venue} covering {session}"
+            else:
+                listed = {f"{sym}.{venue}" for sym, start, end in events.get(venue, [])
+                          if start <= session and (end is None or session < end)}
+                known[(session, venue)] = {
+                    "ref": f"{capture['ref']} + {covering[0][2]}",
+                    "suspended_symbols": sorted(set(capture["non_traded"]) | listed)}
+    return known, unknown
 
 
 def _read_observations(paths: Sequence[Path], dataset: str) -> dict[str, list[dict[str, Any]]]:
@@ -287,8 +373,9 @@ def build_candidate_pool_market(
         for p in bar_paths + [q for d in feature_datasets for q in paths_by_dataset[d]]
     ).encode()).hexdigest()
     window = ordered[-MAX_BARS_PER_SYMBOL:]  # the sessions the carried bars span
-    attestation = attest_survivorship(window, price_captures, _read_suspension_captures(suspension_paths),
-                                   _read_closed_days(holiday_paths))
+    suspension_known, suspension_unknown = _suspension_captures(suspension_paths, window, price_captures)
+    attestation = attest_survivorship(window, price_captures, suspension_known,
+                                      _read_closed_days(holiday_paths), suspension_unknown=suspension_unknown)
     market = {
         "schema_version": SCHEMA_VERSION,
         "scope": SCOPE,

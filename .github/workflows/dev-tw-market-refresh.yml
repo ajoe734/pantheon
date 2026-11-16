@@ -19,7 +19,7 @@ jobs:
   refresh:
     name: Taiwan Market Daily Refresh
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: dev
     env:
       CONTROLLER: ${{ github.workspace }}/.lease-controller
@@ -135,11 +135,13 @@ jobs:
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          force_arg=()
-          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
           refresh_rc=0
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
-            ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${REFRESH_OUTPUT_PATH}" || refresh_rc=$?
+            bash -c '
+              force_arg=()
+              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${REFRESH_OUTPUT_PATH}" || exit 0
+            ' || refresh_rc=$?
           python3 - "${REFRESH_OUTPUT_PATH}" "${refresh_rc}" <<'PY'
           import json, pathlib, sys
           outcome_path, rc = pathlib.Path(sys.argv[1]), int(sys.argv[2])
@@ -181,8 +183,6 @@ jobs:
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/finmind-broker-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          force_arg=()
-          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
           refresh_rc=0
           if [[ -z "${FINMIND_API_TOKEN}" ]]; then
             printf '%s\n' '{"connector_id":"tw-finmind-broker-daily-report","dataset":"tw_broker_top","log":"","reason":"missing_credential","status":"skipped"}' > "${REFRESH_OUTPUT_PATH}"
@@ -191,7 +191,11 @@ jobs:
           fi
           echo "FINMIND_API_TOKEN present (length ${#FINMIND_API_TOKEN})"
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
-            ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || refresh_rc=$?
+            bash -c '
+              force_arg=()
+              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || exit 0
+            ' || refresh_rc=$?
           echo "FinMind broker refresh rc=${refresh_rc}"
 
       - name: Execute bounded Taiwan market refresh
@@ -222,7 +226,7 @@ jobs:
       - name: Execute bounded Taiwan chip refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: chip_refresh
-        timeout-minutes: 15
+        timeout-minutes: 35
         env:
           SOURCE_INGEST_MAX_RECORDS: 500
           SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: 300

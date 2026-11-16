@@ -58,3 +58,28 @@ def test_rebaseline_records_old_and_new_side_by_side_and_reports_the_artifact_th
     # gate thresholds are untouched by the re-baseline
     config = GateConfig()
     assert (config.min_oos_round_trips, config.in_sample_ratio, config.walk_forward_folds) == (20, 0.7, 3)
+
+
+def test_synthetic_or_fixture_series_are_refused_while_recorded_exchange_data_is_accepted():
+    from pathlib import Path
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_governed_tw_replication_dataset
+
+    assert rb.is_synthetic_or_fixture_dataset(None) == "governed_dataset_unavailable"
+    assert rb.is_synthetic_or_fixture_dataset({}) == "governed_dataset_unavailable"
+    assert (
+        rb.is_synthetic_or_fixture_dataset(build_governed_tw_replication_dataset())
+        == "synthetic_or_fixture_dataset_refused"
+    )
+    assert (
+        rb.is_synthetic_or_fixture_dataset(
+            build_governed_tw_replication_dataset(
+                dataset_id="custom:twse:daily",
+                source_dataset_refs=("https://www.twse.com.tw/exchangeReport/STOCK_DAY",),
+            )
+        )
+        == "synthetic_or_fixture_dataset_refused"
+    )
+    recorded_path = Path(__file__).with_name("fixtures") / "template_demand_tw_bars.json"
+    recorded = json.loads(recorded_path.read_text(encoding="utf-8"))["dataset"]
+    assert rb.is_synthetic_or_fixture_dataset(recorded) is None
+

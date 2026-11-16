@@ -246,3 +246,120 @@ def test_grant_without_widening_denies_the_same_enrolment_decision(world, tmp_pa
     denied = _gate_review_and_decide(governance, "apv-plain")
     assert denied.status_code == 403, denied.text
     assert "does not authorise persona lifecycle" in denied.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Real issuer output + real configured binding verifier (no 503 from missing wiring)
+# ---------------------------------------------------------------------------
+
+def _issued_binding_reader_world(world, tmp_path, monkeypatch, strict_client):  # noqa: F811
+    """Wire Governance's *configured* verifier to the real Capital and Runtime Manager apps.
+
+    Tokens are the real ``scripts.issue_dev_paper_principals`` output read from the issued token
+    files; the owner HTTP hop is carried into the real Capital app and the real Runtime Manager
+    Flask app, both verifying the issuer's secret/issuer/audience.
+    """
+    import importlib
+    import sys
+    import yaml
+    from pathlib import Path
+    from scripts import issue_dev_paper_principals as issuer
+    from services.governance import paper_approval_scope as scope
+
+    root = Path(__file__).resolve().parents[3]
+    env = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": TENANT,
+           "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true", "PANTHEON_DEV_BFF_JWT_SECRET": "s" * 40,
+           "PANTHEON_DEV_BFF_JWT_ISSUER": "pantheon-dev", "PANTHEON_DEV_BFF_JWT_AUDIENCE": "bff-operators"}
+    issued_root = tmp_path / "issued"
+    issuer.refresh_files(issued_root, env)
+    token_dir = issued_root / "governance"
+    capital, _headers_for = strict_client
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    reader_default = compose["capital"]["environment"]["CAPITAL_ALLOWED_READER_SERVICES"]
+    reader_services = reader_default.split(":-", 1)[1].rstrip("}")
+    monkeypatch.setenv("CAPITAL_JWT_SECRET", env["PANTHEON_DEV_BFF_JWT_SECRET"])
+    monkeypatch.setenv("CAPITAL_JWT_ISSUER", env["PANTHEON_DEV_BFF_JWT_ISSUER"])
+    monkeypatch.setenv("CAPITAL_JWT_AUDIENCE", env["PANTHEON_DEV_BFF_JWT_AUDIENCE"])
+    monkeypatch.setenv("CAPITAL_ALLOWED_READER_SERVICES", reader_services)
+
+    for key, value in {"PANTHEON_RUNTIME_AUTH_MODE": "strict",
+                       "PANTHEON_RUNTIME_JWT_SECRET": env["PANTHEON_DEV_BFF_JWT_SECRET"],
+                       "PANTHEON_RUNTIME_JWT_ISSUER": env["PANTHEON_DEV_BFF_JWT_ISSUER"],
+                       "PANTHEON_RUNTIME_JWT_AUDIENCE": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"],
+                       "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(tmp_path / "runtime_bindings.json"),
+                       "PANTHEON_COMMAND_STATE_FILE": str(tmp_path / "commands.json")}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.syspath_prepend(str(root / "services" / "runtime-manager"))
+    monkeypatch.delitem(sys.modules, "main", raising=False)
+    runtime_main = importlib.import_module("main")
+    runtime_main._svc = None
+    runtime_service = runtime_main._get_service()
+    for binding in world["manager"].list_all():
+        runtime_service.store._bindings[binding.binding_id] = binding
+    runtime_service.store._save()
+    runtime_client = runtime_main.app.test_client()
+    seen: list[tuple[str, str]] = []
+
+    def owner_get(base, token_provider, _timeout, path, label):
+        bearer = "Bearer " + token_provider()
+        if label == "Capital":
+            assert base.startswith("http://capital:8092")
+            response = capital.get(path, headers={"Authorization": bearer})
+            seen.append((label, str(response.status_code)))
+            if response.status_code != 200:
+                raise scope.PaperCandidateUnavailable("Capital did not return 200")
+            return response.json()
+        assert base.startswith("http://runtime-manager:8081")
+        response = runtime_client.get(path, headers={"Authorization": bearer})
+        seen.append((label, str(response.status_code)))
+        if response.status_code != 200:
+            raise scope.PaperCandidateUnavailable("Runtime Manager did not return 200")
+        return response.get_json()
+
+    monkeypatch.setattr(scope, "_owner_json_get", owner_get)
+    owner_env = {
+        "GOVERNANCE_CAPITAL_BASE_URL": "http://capital:8092",
+        "GOVERNANCE_RUNTIME_MANAGER_BASE_URL": "http://runtime-manager:8081",
+        "GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE": str(token_dir / "GOVERNANCE_CAPITAL_SERVICE_TOKEN"),
+        "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE": str(token_dir / "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN"),
+    }
+    monkeypatch.setattr(gov_main, "_persona_paper_binding_verifier",
+                        lambda: scope.configured_persona_paper_binding_verifier(owner_env))
+    return seen, runtime_service
+
+
+def test_configured_binding_readers_with_issued_principals_approve_paper_ladder(
+        world, tmp_path, monkeypatch, strict_client):  # noqa: F811
+    seen, _ = _issued_binding_reader_world(world, tmp_path, monkeypatch, strict_client)
+    governance = world["governance"]
+    assert governance.post("/api/governance/approvals", json=_proposal("apv-wired", "research_only", "consultable"),
+                           headers=PROPOSE("p-wired")).status_code == 201
+    decided = _gate_review_and_decide(governance, "apv-wired")
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["decision_state"] == "decided" and decided.json()["decision"] == "approved"
+    assert ("Capital", "200") in seen and ("Runtime Manager", "200") in seen
+
+
+def test_configured_binding_readers_deny_persona_without_bindings_never_503(
+        world, tmp_path, monkeypatch, strict_client):  # noqa: F811
+    seen, runtime_service = _issued_binding_reader_world(world, tmp_path, monkeypatch, strict_client)
+    for binding in runtime_service.list_all():
+        runtime_service.retire(binding.binding_id)
+    governance = world["governance"]
+    assert governance.post("/api/governance/approvals", json=_proposal("apv-wired-no", "research_only", "consultable"),
+                           headers=PROPOSE("p-wired-no")).status_code == 201
+    denied = _gate_review_and_decide(governance, "apv-wired-no")
+    assert denied.status_code == 403, denied.text
+    assert denied.status_code != 503 and ("Capital", "200") in seen
+
+
+def test_unconfigured_binding_readers_return_503_reproducing_hosted_failure(world, monkeypatch):
+    for key in ("GOVERNANCE_CAPITAL_BASE_URL", "GOVERNANCE_RUNTIME_MANAGER_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    from services.governance import paper_approval_scope as scope
+    monkeypatch.setattr(gov_main, "_persona_paper_binding_verifier",
+                        lambda: scope.configured_persona_paper_binding_verifier({}))
+    governance = world["governance"]
+    assert governance.post("/api/governance/approvals", json=_proposal("apv-unwired", "research_only", "consultable"),
+                           headers=PROPOSE("p-unwired")).status_code == 201
+    assert _gate_review_and_decide(governance, "apv-unwired").status_code == 503

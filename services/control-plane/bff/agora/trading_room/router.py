@@ -71,6 +71,7 @@ def create_trading_room_router(
     utc_now: Callable[[], str],
     trading_room_store: Optional[TradingRoomStore] = None,
     workshop_store: Optional[Any] = None,
+    decision_lock_owner: Optional[Any] = None,
 ) -> APIRouter:
     """Trading-room router — agora.trading.v1.
 
@@ -84,6 +85,7 @@ def create_trading_room_router(
         workshop_store=workshop_store,
         utc_now=utc_now,
         bff_error=bff_error,
+        decision_lock_owner=decision_lock_owner,
     )
     ctx = TradingRoomRouteContext(
         extract_identity=extract_identity,

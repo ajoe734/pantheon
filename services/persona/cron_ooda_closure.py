@@ -361,7 +361,6 @@ def close_persona_cron_dispatch(
     if turn is not None and turn.status == "completed" and turn.decision.strip():
         turn_at = now()
         packet.orient.evidence_bundle_refs.append(turn_ref)
-        packet.orient.regime_state_ref = turn_ref
         _advance(packet, LoopStatus.ORIENTED, turn_at)
 
         packet.decide.decision_rationale_ref = turn_ref

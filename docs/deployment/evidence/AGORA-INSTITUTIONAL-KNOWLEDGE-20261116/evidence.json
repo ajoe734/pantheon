@@ -1,0 +1,43 @@
+{
+  "task_id": "AGORA-INSTITUTIONAL-KNOWLEDGE-20261116",
+  "title": "Publish validated findings to Agora servants and show them as Trading Room system suggestions (Design §12.7)",
+  "design": "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md §5, §6, §11, §12.7",
+  "recorded_on": "2026-11-16",
+  "commands": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --exec pytest -v services/control-plane/bff/tests/test_agora_institutional_knowledge.py",
+      "result": "8 passed in 5.20s",
+      "covers": [
+        "AC1 Validated attribution findings, endorsed lessons, and validated strategy facts are read from their owners as institutional facts with links to the attribution record and validation result",
+        "AC2 An Agora servant reads them read-only and the Trading Room returns the ones relevant to the trader's current decision as system suggestions with evidence and nothing executes",
+        "AC3 Hypotheses that are unvalidated or recorded as luck_or_unsupported are never returned as suggestions",
+        "AC4 HTTP tests cover a relevant validated finding, an unvalidated one, and an owner outage with the owners doubled at their HTTP edges",
+        "In-process integration against real services.research.main.app and services.memory.main.app with C3 attribution contract double"
+      ]
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --exec pytest -q services/control-plane/bff/tests/test_agora_institutional_knowledge.py services/control-plane/bff/agora/servant/test_servant_status.py services/control-plane/bff/agora/servant/test_servant_research_proposal.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_agora_router.py",
+      "result": "196 passed in 100.59s",
+      "covers": [
+        "Agora servant status and research proposal regression suite",
+        "Agora shadow mode and Trading Room aggregate schema regression suite",
+        "BFF test architecture gate (no services.control_plane.bff.main import, no sys.path mutation)",
+        "Normalized route uniqueness and Agora router wiring gate"
+      ]
+    }
+  ],
+  "parallel_contract_verification": {
+    "attribution_owner": "Verified against the C3 HTTP contract double (GET /api/attribution/records and GET /api/attribution/records/{record_id}) because upstream provider task PERFORMANCE-OUTLIER-ATTRIBUTION-20261116 was not yet merged on dev.",
+    "research_owner": "Verified both with HTTP edge doubles and in-process against the real services.research.main.app (GET /api/research/persona-demands, GET /api/research-orchestrator/alpha-replication/entries).",
+    "memory_owner": "Verified both with HTTP edge doubles and in-process against the real services.memory.main.app (GET /api/memory/trade-lessons, GET /api/memory/entries)."
+  },
+  "safety_and_authority_invariants": {
+    "advice_only": true,
+    "read_only": true,
+    "execution_authority": "none",
+    "environment_ceiling": "paper",
+    "no_order_route_proof": "agora_decision_support_only",
+    "fail_closed_on_owner_outage": true
+  },
+  "credentials_included": false
+}

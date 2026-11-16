@@ -203,3 +203,17 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     prod_smoke = (compose_path.parent / "scripts/smoke_source_search_prod_posture.py").read_text(encoding="utf-8")
     assert "posture_alert_count" in prod_smoke
     assert '"SOURCE_INGEST_EVIDENCE_BACKEND": "postgres"' in prod_smoke
+
+
+def test_source_ingest_mounts_runtime_data_read_only_at_held_reader_default_dir() -> None:
+    from pathlib import PurePosixPath
+
+    from services.source_ingestion import provider_adapters
+
+    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    services = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"]
+
+    binding_dir = str(PurePosixPath(provider_adapters._HELD_BINDING_STORE_DEFAULT).parent)
+    assert f"runtime-data:{binding_dir}:ro" in services["source-ingest"]["volumes"]
+    # The scheduler only calls source-ingest over HTTP; it never runs the pull.
+    assert not any(str(v).startswith("runtime-data:") for v in services["source-ingest-scheduler"]["volumes"])

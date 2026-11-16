@@ -4268,7 +4268,8 @@ class ManagementService:
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        if store is None:
+        from services.consultation.client import ConsultationServiceClient
+        if store is None and not ConsultationServiceClient.configured():
             return self.compose_human_inbox(
                 snap,
                 completed={},
@@ -4459,11 +4460,19 @@ class ManagementService:
                 "status": "ok", "source": "bff_composed", "snapshot_at": snap,
             }
 
-        readers["approval_queue"] = _approvals
-        readers["governance_review_queue"] = _reviews
-        readers["incidents"] = _incidents
-        if hasattr(store, "list_personas"):
-            readers["persona_readiness"] = _personas
+        def _meetings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+            from services.control_plane.bff.meetings.client import read_human_inbox_meeting_items
+            return read_human_inbox_meeting_items(snap, store=store)
+
+        if store is not None:
+            readers["approval_queue"] = _approvals
+            readers["governance_review_queue"] = _reviews
+            readers["incidents"] = _incidents
+            if hasattr(store, "list_personas"):
+                readers["persona_readiness"] = _personas
+        from services.consultation.client import ConsultationServiceClient
+        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured():
+            readers["meetings"] = _meetings
         return readers
 
     def compose_human_inbox(
@@ -4495,7 +4504,7 @@ class ManagementService:
         def _records(key: str) -> List[Dict[str, Any]]:
             return list(completed[key][0]) if key in completed else []
 
-        for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness"):
+        for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness", "meetings"):
             if key in completed:
                 surfaces[key] = completed[key][1]
             elif key in failure_surfaces:
@@ -4507,12 +4516,34 @@ class ManagementService:
             incident_records=_records("incidents"),
             persona_rows=_records("persona_readiness"),
         )
-        filtered = _human_inbox_filter_items(items, source_type=source_type, status=status, priority=priority)
+        meeting_records = _records("meetings")
+        if meeting_records:
+            items = list(items) + [r for r in meeting_records if isinstance(r, dict)]
+            items.sort(
+                key=lambda item: (
+                    _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
+                    str(item.get("created_at") or ""),
+                    str(item.get("id") or ""),
+                ),
+                reverse=True,
+            )
+        if source_type and meeting_records:
+            req_types = {part.strip().lower() for part in source_type.split(",") if part.strip()}
+            pre_filtered = [
+                item for item in items
+                if str(item.get("source_type") or item.get("inboxType") or "").lower() in req_types
+                or str(item.get("kind") or "").lower() in req_types
+            ]
+            filtered = _human_inbox_filter_items(pre_filtered, source_type=None, status=status, priority=priority)
+        else:
+            filtered = _human_inbox_filter_items(items, source_type=source_type, status=status, priority=priority)
         page_items, next_token = _page_slice(filtered, page_token, page_size)
         if not store_missing:
             surfaces["human_inbox"] = _aggregate_group_surface("human_inbox", list(surfaces.values()), snapshot_at=snap)
 
         summary = _human_inbox_summary(filtered, len(page_items))
+        if "meetings" in completed or "meetings" in failure_surfaces:
+            summary["meeting_count"] = len([item for item in filtered if item.get("source_type") == "meeting"])
         summary["priority_counts"] = {
             level: sum(1 for x in filtered if str(x.get("priority") or "").lower() == level)
             for level in ("critical", "high", "medium", "low")

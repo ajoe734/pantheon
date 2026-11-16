@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import urllib.error
 import urllib.request
@@ -193,6 +194,35 @@ def lifecycle_decision_id(tenant_id: str, persona_id: str, source: str, target: 
     """Deterministic Governance decision id for one exact lifecycle step."""
 
     return f"apv-persona-enroll-{_digest(tenant_id, persona_id, source, target)}"
+
+
+_CREDENTIAL_RE = re.compile(
+    r"(?i)(bearer\s+[\w.\-~+/=]+|(?:token|secret|password|authorization|api[_-]?key)[\"']?\s*[:=]\s*[\"']?[^\s,;\"'}]+)"
+)
+_STATUS_RE = re.compile(r"(?<!\d)([45]\d\d)(?!\d)")
+
+
+def _error_status(exc: BaseException) -> int | None:
+    for name in ("code", "status_code", "status"):
+        value = getattr(exc, name, None)
+        if isinstance(value, int) and 400 <= value <= 599:
+            return value
+    match = _STATUS_RE.search(str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _error_detail(exc: BaseException, limit: int = 160) -> str:
+    detail = ""
+    reader = getattr(exc, "read", None)
+    if callable(reader):
+        try:
+            raw = reader()
+            detail = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        except Exception:  # noqa: BLE001
+            detail = ""
+    detail = detail or str(exc)
+    detail = _CREDENTIAL_RE.sub("[redacted]", " ".join(detail.split()))
+    return detail[:limit]
 
 
 def _text(value: Any) -> str:
@@ -511,11 +541,13 @@ class PersonaPaperEnrollment:
             raise EnrollmentRefused(f"governance_decision_not_persisted:{source}_to_{target}", retryable=True)
         self._require_own_decision(record, decision_id, source, target)
         gate = {"actor_role": "automated_gate", "actor_id": self.governance_actor_id}
+        failure: dict[str, Any] | None = None
         if record.get("decision_state") == "proposed":
-            self._transition(path + "/review", {**gate, "expected_version": int(record.get("version") or 0)})
+            failure = self._transition("review", path + "/review", {**gate, "expected_version": int(record.get("version") or 0)})
             record = self._read(path, source, target)
         if record.get("decision_state") == "under_review":
-            self._transition(
+            failure = self._transition(
+                "decide",
                 path + "/decide",
                 {
                     **gate,
@@ -527,10 +559,19 @@ class PersonaPaperEnrollment:
             )
             record = self._read(path, source, target)
         if record.get("decision_state") != "decided" or record.get("decision") != "approved":
-            raise EnrollmentRefused(
+            reason = (
                 f"governance_decision_not_approved:{source}_to_{target}:"
                 f"{record.get('decision_state')}/{record.get('decision')}"
             )
+            retryable = False
+            if failure:
+                status = failure["status"]
+                reason += (
+                    f":{failure['step']}_failed:http_{status if status is not None else 'transport'}"
+                    f":{failure['detail']}"
+                )
+                retryable = status is None or status >= 500
+            raise EnrollmentRefused(reason[:400], retryable=retryable)
         return decision_id
 
     def _read(self, path: str, source: str, target: str) -> Mapping[str, Any]:
@@ -539,11 +580,18 @@ class PersonaPaperEnrollment:
             raise EnrollmentRefused(f"governance_decision_not_persisted:{source}_to_{target}", retryable=True)
         return record
 
-    def _transition(self, path: str, payload: Mapping[str, Any]) -> None:
+    def _transition(self, step: str, path: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        """POST a governance transition; the authoritative readback still decides.
+
+        A failed call is returned (step, HTTP status or ``None`` for transport
+        failures, redacted detail) so a still-unapproved readback can name it.
+        """
+
         try:
             self.transport.post("governance", path, payload)
-        except Exception:  # noqa: BLE001 - the authoritative readback decides
-            pass
+        except Exception as exc:  # noqa: BLE001 - the authoritative readback decides
+            return {"step": step, "status": _error_status(exc), "detail": _error_detail(exc)}
+        return None
 
     def _proposed_by_independent_principal(self, record: Mapping[str, Any]) -> bool:
         owner = _text(record.get("owner_user_id"))

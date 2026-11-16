@@ -1195,6 +1195,56 @@ def _alpha_db(
     )
 
 
+_HELD_BINDING_STORE_DEFAULT = "/data/runtime/runtime_bindings.json"
+_HELD_MARKET_INPUT_PAUSE_PREFIX = "market_input_"
+
+
+def _live_paper_held_symbols(request: Mapping[str, Any]) -> tuple[tuple[str, ...], str | None]:
+    """Active paper binding symbols for this tenant, read on every pull (no cache).
+
+    Returns ``(symbols, typed_reason)``; a failed read yields no symbols and a reason so the
+    pull keeps its existing order. A binding that names another tenant never contributes.
+    """
+    tenant = str(
+        request.get("tenant_id")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or os.getenv("PANTHEON_BFF_TENANT_ID")
+        or "default"
+    ).strip()
+    path = Path(os.getenv("PANTHEON_RUNTIME_BINDING_STORE_PATH") or _HELD_BINDING_STORE_DEFAULT)
+    try:
+        if not path.exists():
+            return (), "binding_store_missing"
+        bindings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return (), "binding_store_unreadable"
+    if not isinstance(bindings, list):
+        return (), "binding_store_malformed"
+    symbols: list[str] = []
+    for binding in bindings:
+        if not isinstance(binding, Mapping):
+            continue
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+        mode = str(binding.get("deployment_mode") or binding.get("execution_mode") or "").strip().lower()
+        status = str(binding.get("status") or "").strip().lower()
+        if mode != "paper":
+            continue
+        if status == "paused":
+            session = metadata.get("session_admission")
+            reason = str(session.get("reason_code") or "") if isinstance(session, Mapping) else ""
+            if not reason.startswith(_HELD_MARKET_INPUT_PAUSE_PREFIX):
+                continue
+        elif status != "active":
+            continue
+        binding_tenant = str(binding.get("tenant_id") or metadata.get("tenant_id") or "default").strip()
+        if binding_tenant != tenant:
+            continue
+        symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip().upper()
+        if symbol and symbol.rsplit(".", 1)[-1] in {"TW", "TWSE", "TWO", "TPEX"} and symbol not in symbols:
+            symbols.append(symbol)
+    return tuple(symbols), None
+
+
 def _collector_bundle(
     adapter: CollectorBundleAdapter,
     request: Mapping[str, Any],
@@ -1206,8 +1256,10 @@ def _collector_bundle(
     # Tuple consumers still rely on adapter-owned partial resume. Configured scheduling
     # also retains the typed outcome and acknowledges its cursor through IngestBatch.
     cursor = explicit or adapter.load_resume_cursor()
-    # Held identities: same sources as the Taiwan official handler (active paper env + request).
+    # Held identities: live paper bindings read at pull time, plus the env list and the request.
+    live_held, held_read_reason = _live_paper_held_symbols(request)
     held_symbols = tuple(dict.fromkeys((
+        *live_held,
         *_string_list(os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",")),
         *_string_list(request.get("priority_symbols")),
     )))
@@ -1217,6 +1269,8 @@ def _collector_bundle(
         max_records=request[EFFECTIVE_MAX_RECORDS_KEY],
         priority_symbols=held_symbols,
     )
+    if held_read_reason:
+        result = replace(result, observed={**dict(result.observed), "held_symbols_unavailable": held_read_reason})
     if not explicit:
         adapter.save_resume_cursor(result)
     return result

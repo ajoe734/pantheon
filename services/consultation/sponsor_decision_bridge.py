@@ -11,15 +11,35 @@ class SponsorDecisionBridgeError(ValueError):
 APPROVAL_DECISION_TYPES = {"approval", "approval_decision"}
 EVOLUTION_DECISION_TYPES = {"evolution", "evolution_decision"}
 
+FORBIDDEN_SPONSOR_ORIGINS = {
+    "agora_advisor",
+    "private_servant",
+    "advisor",
+    "servant",
+    "agora_servant",
+    "user_private_agora_servant",
+}
+FORBIDDEN_SPONSOR_TOKENS = {"advisor", "servant"}
+
 APPROVAL_TARGET_TYPES = {
     "registry_entry",
     "strategy_spec",
+    "strategy_workshop",
+    "persona_training_target",
     "model_artifact",
     "candidate_artifact",
     "allocation_policy",
     "persona_capital_binding",
     "evolution_proposal",
     "deployment_plan",
+    "rebalance_apply",
+    "capital_binding_activation",
+    "capital_pool_activation",
+    "persona_lifecycle_transition",
+    "paper_canary_candidacy",
+    "evolution_execute",
+    "lesson_gate_check_proposal",
+    "pool_policy_parameter_proposal",
 }
 APPROVAL_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
@@ -119,6 +139,39 @@ class ApprovalDecisionProposal:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_governance_propose_request(
+        self,
+        *,
+        tenant_id: str,
+        owner_user_id: str | None = None,
+        expected_version: int = 0,
+        proposal_id: str | None = None,
+        proposal_content_digest: str | None = None,
+        subject: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        sponsor = str((self.metadata or {}).get("sponsor_persona_id") or self.persona_id or "").strip()
+        req: dict[str, Any] = {
+            "expected_version": expected_version,
+            "decision_id": self.decision_id,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "target_version": self.target_version,
+            "risk_level": self.risk_level,
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id or sponsor,
+        }
+        if self.capital_pool_id:
+            req["capital_pool_id"] = self.capital_pool_id
+        if self.persona_id:
+            req["persona_id"] = self.persona_id
+        if proposal_id:
+            req["proposal_id"] = proposal_id
+        if proposal_content_digest:
+            req["proposal_content_digest"] = proposal_content_digest
+        if subject:
+            req["subject"] = dict(subject)
+        return req
+
 
 @dataclass(frozen=True)
 class EvolutionDecisionProposal:
@@ -145,8 +198,88 @@ class EvolutionDecisionProposal:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_evolution_propose_request(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        req = {
+            "decision_id": self.decision_id,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "target_version": self.target_version,
+            "action_type": self.action_type,
+            "risk_level": self.risk_level,
+            "created_by_role": self.created_by_role,
+            "created_by_id": self.created_by_id,
+            "rationale": self.rationale,
+            "evidence_refs": list(self.evidence_refs),
+            "threshold_snapshots": list(self.threshold_snapshots),
+            "metadata": dict(self.metadata),
+        }
+        if tenant_id:
+            req["tenant_id"] = tenant_id
+        if self.target_stage:
+            req["target_stage"] = self.target_stage
+        if self.persona_id:
+            req["persona_id"] = self.persona_id
+        if self.capital_pool_id:
+            req["capital_pool_id"] = self.capital_pool_id
+        if self.linked_incident_id:
+            req["linked_incident_id"] = self.linked_incident_id
+        if self.linked_postmortem_id:
+            req["linked_postmortem_id"] = self.linked_postmortem_id
+        return req
+
 
 GovernanceProposal = ApprovalDecisionProposal | EvolutionDecisionProposal
+
+
+def validate_sponsor_persona(
+    sponsor_persona_id: str | None,
+    *,
+    origin: str | None = None,
+    role: str | None = None,
+    persona_class: str | None = None,
+    archetype: str | None = None,
+    is_servant: bool = False,
+    agora_user_id: str | None = None,
+    allow_none: bool = False,
+) -> str | None:
+    """Validate that a sponsor persona is neither an advisor nor a private servant."""
+    if sponsor_persona_id is None or not str(sponsor_persona_id).strip():
+        if allow_none:
+            return None
+        raise SponsorDecisionBridgeError("sponsor_persona_id is required")
+    text = str(sponsor_persona_id).strip()
+    lowered = text.lower()
+    for tag in (origin, role, persona_class, archetype):
+        if tag and str(tag).strip().lower() in FORBIDDEN_SPONSOR_ORIGINS:
+            raise SponsorDecisionBridgeError(
+                f"advisors and private servants cannot sponsor proposals: {text!r}"
+            )
+    if is_servant or (agora_user_id and str(agora_user_id).strip()):
+        raise SponsorDecisionBridgeError(
+            f"advisors and private servants cannot sponsor proposals: {text!r}"
+        )
+    import re
+    tokens = {tok for tok in re.split(r"[-_:./\s]+", lowered) if tok}
+    if tokens & FORBIDDEN_SPONSOR_TOKENS or lowered in FORBIDDEN_SPONSOR_ORIGINS:
+        raise SponsorDecisionBridgeError(
+            f"advisors and private servants cannot sponsor proposals: {text!r}"
+        )
+    return text
+
+
+def _validate_payload_sponsor(payload: Mapping[str, Any]) -> str:
+    raw_meta = _value(payload, "metadata")
+    meta = raw_meta if isinstance(raw_meta, Mapping) else {}
+    sponsor_persona_id = _required_str(payload, "sponsor_persona_id", "sponsorPersonaId")
+    return validate_sponsor_persona(
+        sponsor_persona_id,
+        origin=_optional_str(payload, "sponsor_origin", "origin") or _optional_str(meta, "sponsor_origin", "origin"),
+        role=_optional_str(payload, "sponsor_role", "role") or _optional_str(meta, "sponsor_role", "role"),
+        persona_class=_optional_str(payload, "persona_class") or _optional_str(meta, "persona_class"),
+        archetype=_optional_str(payload, "archetype") or _optional_str(meta, "archetype"),
+        is_servant=bool(payload.get("is_servant") or meta.get("is_servant")),
+        agora_user_id=_optional_str(payload, "agora_user_id") or _optional_str(meta, "agora_user_id"),
+    ) or sponsor_persona_id
 
 
 def bridge(sponsor_decision: SponsorDecision | Mapping[str, Any] | Any) -> GovernanceProposal:
@@ -170,7 +303,7 @@ def bridge(sponsor_decision: SponsorDecision | Mapping[str, Any] | Any) -> Gover
 
 
 def _approval_proposal(payload: Mapping[str, Any], decision_type: str) -> ApprovalDecisionProposal:
-    sponsor_persona_id = _required_str(payload, "sponsor_persona_id", "sponsorPersonaId")
+    sponsor_persona_id = _validate_payload_sponsor(payload)
     target_type = _required_lower(payload, "target_type", "targetType")
     _ensure_member("target_type", target_type, APPROVAL_TARGET_TYPES)
 
@@ -239,7 +372,7 @@ def _approval_proposal(payload: Mapping[str, Any], decision_type: str) -> Approv
 
 
 def _evolution_proposal(payload: Mapping[str, Any], decision_type: str) -> EvolutionDecisionProposal:
-    sponsor_persona_id = _required_str(payload, "sponsor_persona_id", "sponsorPersonaId")
+    sponsor_persona_id = _validate_payload_sponsor(payload)
     target_type = _required_lower(payload, "target_type", "targetType")
     _ensure_member("target_type", target_type, EVOLUTION_TARGET_TYPES)
 

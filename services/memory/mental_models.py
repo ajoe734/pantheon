@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from . import hindsight_index as hs
 
 MODEL_PREFIX = "pq-"
+REGIME_QUESTION_KEY = "market_regime"
 MIN_REFRESH_ENV = "PANTHEON_MEMORY_MENTAL_MODEL_MIN_REFRESH_SECONDS"
 DEFAULT_MIN_REFRESH_SECONDS = 86400  # coordinator proposal: one day
 MAX_QUESTIONS = 32
@@ -30,6 +31,10 @@ MAX_ANSWER_TOKENS = 2048
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9:_.\-]{0,95}$")
 _PERSONA_MEMORY_TYPES = {"episodic", "semantic", "preference", "strategy_lesson",
                          "risk_observation", "consultation_outcome"}
+REGIME_CLASSES = frozenset({
+    "risk_on", "risk_off", "trending_up", "trending_down", "mean_reverting",
+    "high_volatility", "low_volatility", "regime_transition", "mixed",
+})
 
 
 class StandingQuestionError(ValueError):
@@ -53,6 +58,84 @@ def model_id(key: str) -> str:
     return MODEL_PREFIX + hs._slug(key)
 
 
+def _active_regime_class(record: Any, pool_families: set) -> Optional[str]:
+    if not isinstance(record, Mapping):
+        return None
+    if record.get("state") not in (None, "active"):
+        return None
+    if not str(record.get("regime_id") or "").strip():
+        return None
+    sid = str(record.get("strategy_id") or "").strip().lower()
+    if sid and sid not in pool_families:
+        return None
+    regime_class = str(record.get("regime_class") or "").strip().lower()
+    return regime_class if regime_class in REGIME_CLASSES else None
+
+
+def active_regime_classes(families: Any, regime: Any) -> List[str]:
+    """Sorted active regime classes for strategies in ``families``; empty when none exists."""
+    if not isinstance(families, (list, tuple, set)):
+        return []
+    pool_families = {str(f).strip().lower() for f in families if str(f or "").strip()}
+    if not pool_families or regime is None:
+        return []
+    classes: set = set()
+    if isinstance(regime, Mapping):
+        if "status" in regime and regime.get("status") != "observed":
+            return []
+        if "regime_state_ref" in regime and not str(regime.get("regime_state_ref") or "").startswith("regime-state://"):
+            return []
+        records = regime.get("records")
+        if isinstance(records, Mapping):
+            for sid, rec in records.items():
+                if str(sid or "").strip().lower() in pool_families:
+                    cls = _active_regime_class(rec, pool_families)
+                    if cls:
+                        classes.add(cls)
+        else:
+            cls = _active_regime_class(regime, pool_families)
+            if cls:
+                classes.add(cls)
+    elif isinstance(regime, (list, tuple, set)):
+        for rec in regime:
+            cls = _active_regime_class(rec, pool_families)
+            if cls:
+                classes.add(cls)
+    return sorted(classes)
+
+
+def regime_standing_question(families: Any, regime: Any) -> Optional[Dict[str, Any]]:
+    """Market-regime standing question when an active regime record exists for a pool strategy, else ``None``."""
+    classes = active_regime_classes(families, regime)
+    if not classes:
+        return None
+    label = ", ".join(classes)
+    return {
+        "key": REGIME_QUESTION_KEY,
+        "anchors": [f"regime:{cls}" for cls in classes],
+        "text": (f"What have my own retained interpretations and lessons taught me about operating in the "
+                 f"{label} market regime, and how should that regime change my proposals or risk posture?"),
+    }
+
+
+def standing_questions(families: Any, regime: Any = None) -> List[Dict[str, Any]]:
+    """Deterministic standing-question set from a persona's pool families and active regime records (H13)."""
+    questions: List[Dict[str, Any]] = [
+        {"key": f"family:{fam}", "anchors": [f"family:{fam}"],
+         "text": (f"What have my own retained interpretations and lessons taught me about running the "
+                  f"{fam} strategy family, and what has gone wrong with it?")}
+        for fam in sorted({str(f).strip().lower() for f in (families or ()) if str(f or "").strip()})
+    ]
+    questions.append({
+        "key": "risk_lessons", "memory_types": ["risk_observation"],
+        "text": "Which risk lessons have I recorded, and what should they change in how I size or stop positions?",
+    })
+    regime_question = regime_standing_question(families, regime)
+    if regime_question is not None:
+        questions.append(regime_question)
+    return questions
+
+
 def normalize_questions(raw: Any) -> List[Dict[str, Any]]:
     """Validate a declaration. ``[]`` is valid (retire everything)."""
     if not isinstance(raw, (list, tuple)) or len(raw) > MAX_QUESTIONS:
@@ -70,15 +153,22 @@ def normalize_questions(raw: Any) -> List[Dict[str, Any]]:
             raise StandingQuestionError("duplicate_question_key")
         seen.add(key)
         tags: List[str] = []
+        regime_anchors: List[str] = []
         for anchor in item.get("anchors") or []:
             normalized = hs.parse_subject_anchor(str(anchor))
             if normalized is None:
                 raise StandingQuestionError("invalid_anchor")
+            if normalized.startswith("regime:"):
+                if normalized.split(":", 1)[1] not in REGIME_CLASSES:
+                    raise StandingQuestionError("invalid_regime_anchor")
+                regime_anchors.append(normalized)
             tags.append(f"anchor:{normalized}")
         for memory_type in item.get("memory_types") or []:
             if str(memory_type) not in _PERSONA_MEMORY_TYPES:
                 raise StandingQuestionError("invalid_memory_type")
             tags.append(f"type:{memory_type}")
+        if key == REGIME_QUESTION_KEY and (not regime_anchors or len(regime_anchors) != len(tags)):
+            raise StandingQuestionError("regime_anchor_required")
         out.append({"key": key, "text": text, "tags": sorted(set(tags))})
     return out
 

@@ -1,0 +1,37 @@
+{
+  "task": "SOURCE-INGEST-RECEIPT-SNAPSHOT-BODIES-BOUND-20261116",
+  "method": "References in new receipts (JsonlIngestScheduleStore.upsert_receipt slims evidence_refs.market_snapshots.snapshots to {snapshot_id,symbol,dataset,event_time}); replay slims in memory; start-time crash-safe in-place rewrite of the journal (temp file + fsync + os.replace + dir fsync). Chosen over lazy bodies/retention because every reader needs only counts and identifiers, bodies stay recoverable from the latest market snapshot store by id, and the row format is unchanged so the deployed reader (e7ec353d6) reads it as is.",
+  "reproduction_before": {
+    "receipt_shape": "evidence_refs.market_snapshots.snapshots holds every updated snapshot body (pipeline.py persist_ingest_receipt after persist_latest_market_snapshots); runtime._receipt_summary only counts",
+    "journal_replay": "JsonlIngestScheduleStore._reload_unlocked replays every line at start and keeps runs, watermarks, frontier and receipts in memory (no compaction)",
+    "hosted_shape_synthetic_journal": {"note": "synthetic reproduction of the measured hosted shape: 5818 receipts, 276 of ~7.2 MB (100 x ~71 KB bodies), watermark rows; padding in lineage content_refs; no real data or credentials", "bytes": 2282842438, "receipts": 5818},
+    "deployed_reader_e7ec353d6": {"start_seconds": 16.55, "peak_rss_mb": 2431}
+  },
+  "after": {
+    "new_reader_first_start_with_rewrite": {"start_seconds": 15.17, "peak_rss_mb": 66, "journal_bytes_after": 13790166, "receipts": 5818},
+    "new_reader_second_start": {"start_seconds": 0.89, "peak_rss_mb": 64},
+    "deployed_reader_on_rewritten_journal": {"start_seconds": 0.74, "peak_rss_mb": 64, "receipts": 5818},
+    "bounds_stated": "first start (one-time rewrite) < 60 s and < 200 MB RSS; later starts < 5 s and < 200 MB; health start period is 120 s",
+    "measure_machine": "dev VM, local disk; hosted start time will vary with disk speed, rewrite is a single sequential pass"
+  },
+  "new_receipt_bound": {"bundle_records": 500, "receipt_line_bytes": 207985, "enforced_bound_bytes": 250000, "test": "test_bundle_receipt_holds_refs_not_bodies_and_is_bounded", "remaining_size": "per-record source_ids/evidence_item_ids/knowledge_object_ids, unchanged and bounded by COLLECTOR-MARKET-PROVENANCE-BOUND-20261114"},
+  "readers": [
+    {"reader": "runtime._receipt_summary (registry, freshness)", "needs": "counts only", "changed": false},
+    {"reader": "GET receipts/{id} and run endpoints (runtime/routers)", "needs": "identifiers and counts; returns the stored receipt, now with refs for new receipts and embedded bodies only for any not yet rewritten", "changed": false, "resolver": "pipeline.resolve_receipt_snapshot_bodies resolves by id from the latest market snapshot store and fails closed with ReceiptSnapshotUnavailable (superseded / missing)"},
+    {"reader": "POST jobs response", "needs": "unchanged: the response still returns the full in-memory evidence_refs with bodies; only the durable receipt is slim", "changed": false},
+    {"reader": "notify_search_index_refresh", "needs": "source_ids, bundle id, knowledge_object_ids", "changed": false},
+    {"reader": "scripts/deploy_nonprod_vm.sh bounded refresh preflight", "needs": "reads /api/source-ingest/snapshots/latest only, never receipts", "changed": false},
+    {"reader": "BFF / Agora projections, controller readback", "needs": "no reference to receipt market_snapshots found by grep (only latest snapshot store and counts)", "changed": false},
+    {"reader": "tests", "changed": "test_registry_receipt_summary.py persists legacy-shaped receipts through a helper that writes the deployed writer's row; test_ingest_schedule_incremental_replay.py builds slim receipts for replay equality and builds the hosted-shape journal in legacy form, asserting start drops the bodies"}
+  ],
+  "rollback": {"tests": ["test_deployed_reader_reads_journal_written_and_rewritten_by_new_code", "test_new_reader_reads_journal_written_by_deployed_version"], "previous_reader": "git show e7ec353d6:services/source_ingestion/scheduler.py executed in-test", "result": "same runs, watermarks, frontier and receipt identities both ways"},
+  "readiness": "runtime._source_runtime_metrics().ingest_schedule_journal = {journal_bytes, journal_lines, receipt_count, run_count, warn_bytes, warning, last_slim_rewrite}; reads one stat and counters through JsonlIngestScheduleStore.journal_stats_for_path so the bounded readiness probe never touches the store handle",
+  "no_behaviour_change": "same records, snapshots, evidence and watermarks; only the durable receipt body form changes",
+  "validation": {
+    "smoke_command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300",
+    "result": "all shards exit 0; 2097 collected, ran 2097 (22 skipped by existing conditions); 284+487+495+809 passed",
+    "new_test_file": "test_ingest_receipt_snapshot_refs_bounded.py: 10 passed",
+    "ci_rerun_note": "PR #7442 Smoke acceptance failed once in shard 0 on test_full_size_close_through_controller_main_with_persistence (assert seconds == interval_seconds; final tick still reported continuation_pending). Not reproducible: the test passed 7/7 locally (3 serial, 4 concurrent) and the full 4-shard Smoke command passed again (284+487+495+809 passed, exit 0); the logic is in controller_worker, untouched by this task. Resubmitted as a new head for exact-head review."
+  },
+  "deployment_note": "First start after deploy rewrites /data/source-ingest/ingest_schedule.jsonl in place (needs free disk about the size of the slimmed result, a few MB; temp file is the slim copy). Deploying while the price history backfill runs is safe: rewrite holds the journal lock, other processes rebuild on the inode change."
+}

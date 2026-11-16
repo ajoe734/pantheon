@@ -227,8 +227,9 @@ def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_
         [
             "set -uo pipefail",
             "info() { echo \"$*\"; }",
-            "error() { echo \"ERROR: $*\" >&2; exit 1; }",
+            "error() { LAST_REMOTE_DEPLOY_ERROR=\"$*\"; echo \"ERROR: $*\" >&2; exit 1; }",
             "sleep() { :; }",
+            "curl_with_retry() { [[ -n \"${CURL_RETRY_LOG:-}\" ]] && echo \"$*\" >> \"${CURL_RETRY_LOG}\"; return \"${CURL_RETRY_RC:-0}\"; }",
             "check_taiwan_refresh_preflight() { echo '{\"status\": \"proceed\"}'; }",
             "validate_source_refresh_profile() { :; }",
             f"resolve_bounded_source_refresh_active_symbols() {{ export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS='{symbols}'; }}",
@@ -356,8 +357,10 @@ def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> No
 
 def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures(tmp_path):
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
-    step = next(s for s in _load_workflow()['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
-    assert step['timeout-minutes'] == 15
+    wf = _load_workflow()
+    assert wf['jobs']['refresh']['timeout-minutes'] == 60
+    step = next(s for s in wf['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
+    assert step['timeout-minutes'] == 35
     assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
     assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 300
     assert step.get('continue-on-error', False) is False
@@ -422,6 +425,7 @@ def test_workflow_requests_taifex_tx_daily_once_and_publishes_its_outcome():
     assert 'tw-taifex-tx-daily-refresh-outcome.json' in upload['with']['path']
 
 
+
 def test_workflow_requests_each_finmind_fundamental_dataset_once_after_publication_with_the_secret():
     workflow = _load_workflow()
     steps = workflow['jobs']['refresh']['steps']
@@ -443,3 +447,113 @@ def test_workflow_requests_each_finmind_fundamental_dataset_once_after_publicati
     # the early-cron chip profiles are unchanged: FinMind fundamentals are not among them
     chip = next(s for s in steps if s.get('id') == 'chip_refresh')
     assert 'finmind' not in chip['run']
+
+
+def test_refresh_entrypoint_waits_for_readyz_36x5_before_preflight_and_fails_closed(tmp_path: Path) -> None:
+    ok_dir = tmp_path / "ok"
+    ok_dir.mkdir()
+    retry_log = ok_dir / "curl_retry.log"
+    result, calls, _ = _run_refresh_entrypoint(
+        ok_dir, "2330.TW", "0", {"CURL_RETRY_LOG": str(retry_log)}
+    )
+    assert result.returncode == 0, result.stderr
+    assert retry_log.read_text(encoding="utf-8").splitlines() == [
+        "http://127.0.0.1:18097/readyz 36 5 --max-time 5 --connect-timeout 5"
+    ]
+    assert "manage bounded" in calls and "manage restore" in calls
+
+    fail_dir = tmp_path / "fail"
+    fail_dir.mkdir()
+    fail_retry_log = fail_dir / "curl_retry.log"
+    failed, fail_calls, fail_out = _run_refresh_entrypoint(
+        fail_dir, "2330.TW", "0", {"CURL_RETRY_LOG": str(fail_retry_log), "CURL_RETRY_RC": "1"}
+    )
+    assert failed.returncode != 0
+    assert "source-ingest /readyz did not become ready before bounded refresh preflight" in failed.stderr
+    assert fail_calls == []
+    outcome = json.loads(fail_out.read_text(encoding="utf-8"))
+    assert outcome["status"] == "failed"
+    assert outcome["reason"] == "source-ingest /readyz did not become ready before bounded refresh preflight"
+
+
+def test_non_blocking_taifex_and_finmind_steps_stay_exit_safe_under_lease(tmp_path: Path) -> None:
+    steps = {s.get("id"): s for s in _load_workflow()["jobs"]["refresh"]["steps"] if s.get("id")}
+    wrapper = tmp_path / ".lease-controller/scripts/run_with_dev_environment_lease.sh"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(
+        """#!/usr/bin/env bash
+if [[ -f "${GUARD_FAILED:-}" ]]; then
+  echo "lease heartbeat already quarantined" >&2
+  exit 75
+fi
+printf '%s %s\\n' "$1" "$2" >> "${GUARD_CALLS}"
+"$@"
+rc=$?
+if (( rc != 0 )) && [[ -n "${GUARD_FAILED:-}" ]]; then
+  touch "${GUARD_FAILED}"
+fi
+exit "${rc}"
+""",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    deploy = tmp_path / "scripts/deploy_nonprod_vm.sh"
+    deploy.parent.mkdir(parents=True)
+    deploy.write_text(
+        """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["CALLS"], "a", encoding="utf-8") as stream:
+    stream.write(json.dumps(args) + "\\n")
+out_path = args[args.index("--output") + 1]
+with open(out_path, "w", encoding="utf-8") as stream:
+    json.dump({"status": "failed", "reason": "simulated_nonblocking_failure", "log": "redacted log"}, stream)
+sys.exit(1)
+""",
+        encoding="utf-8",
+    )
+    deploy.chmod(0o755)
+    guard_calls = tmp_path / "guard_calls"
+    guard_failed = tmp_path / "guard_failed"
+    calls_file = tmp_path / "calls"
+    taifex_out = tmp_path / "taifex-ssf-refresh-outcome.json"
+    finmind_out = tmp_path / "finmind-broker-refresh-outcome.json"
+
+    base_env = {
+        **os.environ,
+        "RUNNER_TEMP": str(tmp_path),
+        "FORCE_REFRESH": "true",
+        "CALLS": str(calls_file),
+        "GUARD_CALLS": str(guard_calls),
+        "GUARD_FAILED": str(guard_failed),
+    }
+    taifex_proc = subprocess.run(
+        ["bash", "-e", "-c", steps["taifex_refresh"]["run"]],
+        cwd=tmp_path,
+        env={**base_env, "REFRESH_OUTPUT_PATH": str(taifex_out)},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert taifex_proc.returncode == 0, taifex_proc.stderr
+    assert not guard_failed.exists(), "Non-blocking TAIFEX failure must not quarantine the lease heartbeat"
+    taifex_payload = json.loads(taifex_out.read_text(encoding="utf-8"))
+    assert taifex_payload["status"] == "failed"
+    assert taifex_payload["reason"] == "simulated_nonblocking_failure"
+
+    finmind_proc = subprocess.run(
+        ["bash", "-e", "-c", steps["finmind_refresh"]["run"]],
+        cwd=tmp_path,
+        env={**base_env, "REFRESH_OUTPUT_PATH": str(finmind_out), "FINMIND_API_TOKEN": "secret-token"},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert finmind_proc.returncode == 0, finmind_proc.stderr
+    assert not guard_failed.exists(), "Non-blocking FinMind failure must not quarantine the lease heartbeat"
+    assert guard_calls.read_text(encoding="utf-8").splitlines() == ["bash -c", "bash -c"]
+    recorded_calls = [json.loads(line) for line in calls_file.read_text(encoding="utf-8").splitlines()]
+    assert len(recorded_calls) == 2
+    assert "--non-blocking" in recorded_calls[0] and "--force" in recorded_calls[0]
+    assert "--non-blocking" in recorded_calls[1] and "--force" in recorded_calls[1]
+

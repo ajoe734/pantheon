@@ -442,6 +442,11 @@ class TemplateCandidateRegistrar:
             "persona_id": persona_id,
             "template_id": str(template["template_id"]),
             "family_id": str(receipt["family_id"]),
+            **(
+                {"replaces_registry_id": str(receipt["replaces_registry_id"])}
+                if receipt.get("replaces_registry_id")
+                else {}
+            ),
         }
         wire = json.loads(json.dumps(dict(gate_proof), default=str))
         if "results" in wire:
@@ -466,6 +471,11 @@ class TemplateCandidateRegistrar:
             "execution_context": "paper",
             "capital_scale_pct": 0.0,
             "data_sources": data_sources,
+            **(
+                {"replaces_registry_id": str(receipt["replaces_registry_id"])}
+                if receipt.get("replaces_registry_id")
+                else {}
+            ),
         }
 
         artifact_url = (
@@ -702,4 +712,65 @@ class TemplateCandidateRegistrar:
             "backtest_run_id": backtest_run_id,
             "admission_id": replication_entry.get("admission_id"),
             "paper_only": True,
+            **(
+                {"replaces_registry_id": str(receipt["replaces_registry_id"])}
+                if receipt.get("replaces_registry_id")
+                else {}
+            ),
         }
+
+    def register_requalified_member(
+        self,
+        *,
+        tenant_id: str,
+        persona_id: str,
+        decision_id: str,
+        legacy_entry: Mapping[str, Any],
+        artifact: Mapping[str, Any] | None = None,
+        requalified_artifact: Mapping[str, Any] | None = None,
+        gate_proof: Mapping[str, Any] | None = None,
+        gate_response: Any = None,
+        backtest_evaluation: Mapping[str, Any] | None = None,
+        demand_ref: str | None = None,
+    ) -> dict[str, Any]:
+        """Register and paper-approve a next-open re-qualified member as a new immutable Registry entry."""
+        resolved_artifact = artifact if artifact is not None else requalified_artifact
+        if not isinstance(resolved_artifact, Mapping):
+            raise CandidateRegistrationError("requalified_artifact_missing")
+        if gate_proof is not None:
+            resolved_proof = dict(gate_proof)
+        elif callable(getattr(gate_response, "to_dict", None)):
+            resolved_proof = gate_response.to_dict()
+        elif isinstance(gate_response, Mapping):
+            resolved_proof = dict(gate_response)
+        else:
+            raise CandidateRegistrationError("gate_proof_missing")
+        legacy_id = str(legacy_entry.get("registry_id") or "").strip()
+        if not legacy_id:
+            raise CandidateRegistrationError("legacy_registry_id_missing")
+        if str(resolved_artifact.get("artifact_id") or "").strip() == legacy_id:
+            raise CandidateRegistrationError("requalified_artifact_must_be_new_registry_entry")
+        parent_ids = list((resolved_artifact.get("lineage") or {}).get("parent_registry_ids") or [])
+        if legacy_id not in parent_ids:
+            raise CandidateRegistrationError("requalified_artifact_missing_legacy_lineage")
+        family_id = str(resolved_artifact.get("strategy_id") or resolved_artifact["artifact_id"])
+        inputs = list(((resolved_artifact.get("strategy_logic") or {}).get("inputs")) or [])
+        return self.register_passed_attempt(
+            demand={
+                "tenant_id": tenant_id,
+                "persona_id": persona_id,
+                "demand_id": str(demand_ref or decision_id),
+            },
+            template={
+                "template_id": family_id,
+                "inputs": inputs,
+            },
+            artifact=resolved_artifact,
+            receipt={
+                "status": "admitted",
+                "gate": resolved_proof,
+                "family_id": family_id,
+                "replaces_registry_id": legacy_id,
+            },
+            backtest_evaluation=backtest_evaluation,
+        )
