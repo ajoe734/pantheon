@@ -9,6 +9,8 @@
     "5": "additive records; existing collector/connector suites pass; test_scheduled_connector fixture gained rows for the two new datasets"
   },
   "validation": [
+    {"cmd": "post-merge e7ec353d6 (hc-venv): pytest test_tw_suspension_holidays_intake test_survivorship_attestation test_candidate_pool_market_feed test_screen_survivorship_gate_integration", "result": "34 passed, 0 skipped"},
+    {"cmd": "post-merge e7ec353d6 (hc-venv): pytest test_scheduled_connector.py", "result": "73 passed"},
     {"cmd": "pytest test_tw_suspension_holidays_intake.py test_survivorship_attestation.py test_candidate_pool_market_feed.py (+ gate integration, regime-venv, no vectorbt)", "result": "29 passed, 5 skipped (gate tests need vectorbt)"},
     {"cmd": "pytest services/research/tests/test_screen_survivorship_gate_integration.py (hc-venv, with vectorbt)", "result": "10 passed, 0 skipped"},
     {"cmd": "pytest services/source_ingestion/tests/test_scheduled_connector.py (hc-venv)", "result": "73 passed"},
