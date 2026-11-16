@@ -1,0 +1,62 @@
+{
+  "task_id": "SOURCE-SNAPSHOT-INCREMENTAL-READ-20261116",
+  "kind": "functional (no hosted/VM access)",
+  "design": "LatestMarketSnapshotStore keeps (inode, consumed byte offset, line count, last 4096 bytes before offset); _sync_locked preads only [offset,size), consumes only newline-terminated rows, and rebuilds from zero on inode change, shrink, changed tail bytes (in-place compaction followed by growth), or same-size/new-mtime rewrite. Own appends/compactions advance the position without re-parsing. Appended lines are folded through the unchanged _market_snapshots_from_lines (byte-identical to the deployed reader; tombstones applied in order by _fold_new_lines); any parse error triggers a from-zero read so the error text equals a fresh read. Journal format and compaction output unchanged.",
+  "tests": {
+    "file": "services/source_ingestion/tests/test_market_snapshot_incremental_read.py",
+    "count": 13,
+    "max_test_seconds": 4.1,
+    "acceptance_map": {
+      "1": "test_other_writer_append_parses_only_new_lines, test_own_writes_are_not_reparsed",
+      "2": "test_partial_trailing_line_is_consumed_once_when_complete",
+      "3": "test_rewrite_falls_back_to_one_full_read[replaced|shrank|same_size_rewrite], test_in_place_compaction_then_growth_matches_fresh_store[0|1|400], test_own_compaction_keeps_incremental_position, test_checksum_failure_matches_fresh_read (error fallback)",
+      "4": "test_interleaved_sequence_equals_fresh_read_with_withdrawals, test_checksum_failure_matches_fresh_read",
+      "5": "test_deployed_reader_reads_journal_written_by_incremental_store"
+    }
+  },
+  "smoke_command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300 -> exit 0; ran 2100 (skipped 22) of 2100 collected (re-run after final code)",
+  "changed_existing_assertion": "none: no existing test was edited, weakened or deleted",
+  "benchmark": {
+    "script": "services/source_ingestion/tests/bench_market_snapshot_incremental_read.py",
+    "journal": "full 60-close real-shaped state lines written through LatestMarketSnapshotStore._envelope_line, 1800 symbols, compaction off",
+    "writers": "A timed append; second store B appends before every A append",
+    "before": "legacy_full_parse = incremental position dropped before each append (previous behaviour: whole-file parse)",
+    "results": {
+      "incremental": [
+        {
+          "size_mb": 48.7,
+          "median_s": 0.004974269497324713,
+          "max_s": 0.005668950005201623
+        },
+        {
+          "size_mb": 174.3,
+          "median_s": 0.005245059495791793,
+          "max_s": 0.008339938998688012
+        },
+        {
+          "size_mb": 326.7,
+          "median_s": 0.007686109500355087,
+          "max_s": 0.011837308993563056
+        }
+      ],
+      "legacy_full_parse": [
+        {
+          "size_mb": 48.7,
+          "median_s": 5.710686053003883,
+          "max_s": 5.861313662986504
+        },
+        {
+          "size_mb": 174.3,
+          "median_s": 18.85027193199494,
+          "max_s": 19.072683448990574
+        },
+        {
+          "size_mb": 326.7,
+          "median_s": 35.157098708994454,
+          "max_s": 36.25044606399024
+        }
+      ]
+    },
+    "note": "Full 320 MB run (326.7 MB) done on the first implementation; after the final code a 64 MB re-run gave after 4.7-5.3 ms vs before 2.8-8.7 s, same flat profile. after median stays 5-8 ms from 48.7 MB to 326.7 MB; before grows 5.7 s -> 35.2 s linear in size"
+  }
+}
