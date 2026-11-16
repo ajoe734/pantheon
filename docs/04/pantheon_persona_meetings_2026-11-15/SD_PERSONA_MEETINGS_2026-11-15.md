@@ -262,7 +262,7 @@ Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-
 | Generic learning-sharing meeting | **not added** | operator 9997 |
 | MT-4 post-mortem | **replaced** by MT-4 績效歸因檢討 performance attribution review (§12.6), which also covers the former loss triggers | operator 9997 |
 | Agora data use | servant insights, decision journal and shadow records become a **platform data source with full fields, including trader identity, account, broker ids and raw text** | operator 9948, 10088 |
-| `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/B2_institutional_learning_privacy_model.md` (de-identification, k ≥ 10, opt-in default off) and B3 (alpha contribution governance) | **superseded for this path** by the operator decision; operator decisions outrank team design (`CANONICAL_DOCUMENT_MAP.md` order) | operator 9948, 10088 |
+| `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/B2_institutional_learning_privacy_model.md` (de-identification, k ≥ 10, opt-in default off) and B3 (alpha contribution governance) | **superseded for this path** by the operator decision; the operator's explicit decision is taken as authoritative for this path (`CANONICAL_DOCUMENT_MAP.md` has no rule ranking operator statements over L2 design, so B2 and B3 must be updated to cite this section; correction of an earlier uncited claim) | operator 9948, 10088 |
 | Memory rule (facts shared, interpretations private, exchanged in meetings) | **unchanged**: the Agora records are facts; a servant's and a persona's interpretations stay private and cross only through meeting minutes | operator 2026-11-13 (§1) |
 
 ### 12.3 S1 Shadow mode (implements A4)
@@ -271,7 +271,7 @@ Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-
 
 - At every trader decision in the Trading Room (`services/control-plane/bff/agora/trading_room/routes/decisions.py`) the Agora owner (`services/agora`) writes an immutable decision lock: decision time, data cutoff, the trader's choice (`human_actual` with `execution_observation_kind` per A4 §1), the servant's suggestion (`private_servant`), the base strategy (`base_strategy`) and, when one exists, the institutional view (`committee_variant`).
 - Outcomes are settled by the attribution owner (§12.5) over the same cutoff, cost model and observation window for every arm (A4 §7). Paper proxy is never labelled as an actual fill (A4 §1).
-- Agora still never trades or moves capital (2026-09-29 positioning).
+- Agora still never trades or moves capital (coordinator constraint carried from the Agora scope; no dated source found on the base, so it is not cited).
 
 ### 12.4 S2 Agora as a platform data source
 
