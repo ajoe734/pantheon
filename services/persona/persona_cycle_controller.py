@@ -207,7 +207,30 @@ def transport_from_env(env: Mapping[str, str], tenant: str) -> Transport | None:
 
 def _unavailable(reason: str, session: str) -> dict[str, Any]:
     return {"status": "unavailable", "reason": reason, "session": session, "regime_state_ref": None,
-            "regime_tag": "", "records": {}, "macro": None}
+            "regime_tag": "", "records": {}, "macro": None, "market_state": None}
+
+
+def _summarize_regime_record(strategy_id: str, rec: Mapping[str, Any]) -> dict[str, Any]:
+    snap = rec.get("feature_snapshot") if isinstance(rec.get("feature_snapshot"), Mapping) else {}
+    profile = snap.get("profile") if isinstance(snap.get("profile"), Mapping) else {}
+    primary_axis = str(rec.get("primary_axis") or profile.get("primary_axis") or "")
+    axes = snap.get("axes") if isinstance(snap.get("axes"), Mapping) else {}
+    primary_detail = axes.get(primary_axis) if primary_axis and isinstance(axes.get(primary_axis), Mapping) else {}
+    primary_state = str(
+        rec.get("primary_state")
+        or (primary_detail.get("state") if primary_detail.get("available", True) else "")
+        or ""
+    )
+    return {
+        **rec,
+        "regime_id": rec["regime_id"],
+        "strategy_id": str(rec.get("strategy_id") or strategy_id),
+        "state": str(rec.get("state") or "active"),
+        "regime_class": rec.get("regime_class"),
+        "confidence": rec.get("confidence"),
+        "primary_axis": primary_axis,
+        "primary_state": primary_state,
+    }
 
 
 def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
@@ -225,28 +248,35 @@ def observe_regime(transport: Transport | None, *, session: str, strategy_ids: S
         missing: list[str] = []
         for sid in dict.fromkeys(strategy_ids):
             code, record = transport("GET", f"/api/registry/regime/strategies/{quote(sid, safe='')}/active", None)
-            if code == 200 and isinstance(record, dict) and record.get("regime_id"):
+            if (code == 200 and isinstance(record, dict) and record.get("regime_id")
+                    and record.get("state", "active") == "active"
+                    and record.get("model_status", "approved") == "approved"):
                 records[sid] = record
             else:
                 missing.append(sid)
         macro = None
+        market_state = None
         code, ms = transport("GET", f"/api/registry/regime/market-state/{MARKET}/{session}", None)
         if code == 200 and isinstance(ms, dict):
             for row in ms.get("market_states") or []:
+                if (not isinstance(row, dict) or row.get("model_status", "approved") != "approved"
+                        or row.get("state") in {"proposed", "invalidated"}):
+                    continue
+                market_state = row
                 axis = (row.get("axes") or {}).get("macro") or {}
                 if axis.get("available") and axis.get("state"):
                     macro = {"state": axis["state"], "session": session, "as_of": axis.get("as_of_session")}
         if not records:
             out = _unavailable("no_active_record_for_pool_strategies" if strategy_ids else "no_pool_strategies", session)
             out["macro"] = macro
+            out["market_state"] = market_state
             return out
         first = next((s for s in strategy_ids if s in records), None)
         rec = records[first]
         return {"status": "observed", "reason": None, "session": session,
                 "regime_state_ref": REF_PREFIX + rec["regime_id"], "regime_tag": str(rec.get("regime_class") or ""),
-                "records": {s: {"regime_id": r["regime_id"], "regime_class": r.get("regime_class"),
-                                "confidence": r.get("confidence")} for s, r in records.items()},
-                "missing_strategies": missing, "macro": macro}
+                "records": {s: _summarize_regime_record(s, r) for s, r in records.items()},
+                "missing_strategies": missing, "macro": macro, "market_state": market_state}
     except Exception as exc:  # the cycle runs without a regime rather than inventing one
         return _unavailable(f"registry_unavailable:{type(exc).__name__}", session)
 
@@ -498,12 +528,59 @@ class PersonaCycleController:
                 triggers = self.meeting_triggers = mt.MeetingTriggers(
                     config=mt.MeetingTriggerConfig.from_env(env),
                     attribution=mt.attribution_port_from_env(env, persona["tenant_id"]))
-            enrolled = sorted(p["persona_id"] for p in self.owners.personas()
-                              if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
-                              and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"})
+            enrolled_personas = [
+                p for p in self.owners.personas()
+                if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
+                and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"}
+            ]
+            enrolled = sorted(p["persona_id"] for p in enrolled_personas)
+            if isinstance(observe, dict):
+                self._enrich_enrolled_pool_context(persona, observe, snapshots, enrolled_personas, mt)
             return triggers.run(persona, observe, packet, snapshots, enrolled)
         except Exception as exc:
             return {"status": "unavailable", "reason": "meeting_step_unavailable:" + type(exc).__name__}
+
+    def _enrich_enrolled_pool_context(self, persona, observe, snapshots, enrolled_personas, mt) -> None:
+        tenant = persona["tenant_id"]
+        exposures = dict(observe.get("pool_exposures") or {})
+        extra_families: list[str] = []
+        for ep in enrolled_personas:
+            epid = ep["persona_id"]
+            try:
+                if epid == persona["persona_id"]:
+                    bundle = observe
+                else:
+                    pool = self.owners.pool_store.current(epid, tenant) if getattr(self.owners, "pool_store", None) else {}
+                    subject = self.owners._subject_inputs(ep, {"pool": pool}) if hasattr(self.owners, "_subject_inputs") else {}
+                    prior_obs: list[Any] = []
+                    for p in snapshots.values():
+                        if p.get("tenant_id") == tenant and epid in p.get("persona_ids", []):
+                            ob = ((p.get("persona_cycle") or {}).get("observe_bundle") or {}).get("observations")
+                            if isinstance(ob, list) and ob:
+                                prior_obs = ob
+                    bundle = {"pool": pool, "cycle_subject": subject, "observations": prior_obs}
+                    extra_families.extend(subject.get("families") or [])
+                if epid not in exposures:
+                    exposures[epid] = mt.pool_exposure_for(epid, bundle)
+            except Exception:
+                exposures.setdefault(epid, mt.pool_exposure_for(epid, {}))
+        observe["pool_exposures"] = exposures
+        regime = observe.get("regime")
+        if isinstance(regime, dict) and regime.get("status") == "observed" and isinstance(regime.get("records"), dict):
+            env = getattr(self.owners, "env", os.environ)
+            transport = getattr(self.owners, "regime_transport", None) or transport_from_env(env, tenant)
+            if transport is not None:
+                for sid in dict.fromkeys(extra_families):
+                    if sid in regime["records"]:
+                        continue
+                    try:
+                        code, record = transport("GET", f"/api/registry/regime/strategies/{quote(sid, safe='')}/active", None)
+                        if (code == 200 and isinstance(record, dict) and record.get("regime_id")
+                                and record.get("state", "active") == "active"
+                                and record.get("model_status", "approved") == "approved"):
+                            regime["records"][sid] = _summarize_regime_record(sid, record)
+                    except Exception:
+                        continue
 
     def _lesson_cycle(self) -> Any:
         if self.lesson_cycle is None:

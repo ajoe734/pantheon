@@ -277,3 +277,351 @@ def test_integration_against_the_merged_consultation_meeting_routes(tmp_path, mo
     # a replayed cycle (no local snapshot) sends the same key and payload: the provider answers with the same meeting
     replay = run(MeetingTriggers(opener=mt.default_opener(PERSONA), now=lambda: at_weekday(wd)))
     assert replay["convened"][0]["meeting_id"] == first["meeting_id"]
+
+
+def _regime_obs(
+    session: str,
+    *,
+    macro: str = "expansion",
+    vol_state: str = "low",
+    trend_state: str = "up",
+    state: str = "active",
+    model_status: str = "approved",
+):
+    vol_cls = "low_volatility" if vol_state == "low" else "high_volatility"
+    trend_cls = "trending_up" if trend_state == "up" else "trending_down"
+    ms = {
+        "market_state_id": f"TW:{session}:set-1:r1",
+        "market": "TW",
+        "session": session,
+        "model_set_version": "set-1",
+        "model_status": model_status,
+        "revision": 1,
+        "state": "proposed" if state == "proposed" else "current",
+        "axes": {
+            "volatility": {"short": {"available": True, "state": vol_state, "horizon": "short"}},
+            "trend": {"medium": {"available": True, "state": trend_state, "horizon": "medium"}},
+            "macro": {"available": True, "state": macro, "horizon": "monthly", "as_of_session": session[:7]},
+        },
+    }
+    records = {
+        "momentum": {
+            "regime_id": f"regime:TW:momentum:{session}:set1:r1",
+            "strategy_id": "momentum",
+            "state": state,
+            "model_status": model_status,
+            "regime_class": vol_cls,
+            "confidence": 0.85,
+            "feature_snapshot": {
+                "profile": {"primary_axis": "volatility", "horizon": "short"},
+                "axes": {
+                    "volatility": {"available": True, "state": vol_state, "horizon": "short"},
+                    "macro": {"available": True, "state": macro, "as_of_session": session[:7]},
+                },
+                "macro_environment": macro,
+            },
+        },
+        "carry": {
+            "regime_id": f"regime:TW:carry:{session}:set1:r1",
+            "strategy_id": "carry",
+            "state": state,
+            "model_status": model_status,
+            "regime_class": trend_cls,
+            "confidence": 0.82,
+            "feature_snapshot": {
+                "profile": {"primary_axis": "trend", "horizon": "medium"},
+                "axes": {
+                    "trend": {"available": True, "state": trend_state, "horizon": "medium"},
+                    "macro": {"available": True, "state": macro, "as_of_session": session[:7]},
+                },
+                "macro_environment": macro,
+            },
+        },
+    }
+    return {
+        "regime": {
+            "status": "observed",
+            "reason": None,
+            "session": session,
+            "regime_state_ref": f"regime-state://{records['momentum']['regime_id']}",
+            "regime_tag": vol_cls,
+            "records": records,
+            "macro": {"state": macro, "session": session, "as_of": session[:7]},
+            "market_state": ms,
+        },
+        "pool_exposures": {
+            "persona-a": {
+                "persona_id": "persona-a",
+                "pool_version": 2,
+                "strategy_families": ["momentum"],
+                "underlyings": ["2330"],
+                "members": [{"artifact_ref": "art-mom-1", "stage": "active", "risk_weight": 0.6}],
+                "gross_exposure": 0.6,
+                "net_exposure": 0.6,
+            },
+            "persona-b": {
+                "persona_id": "persona-b",
+                "pool_version": 3,
+                "strategy_families": ["carry"],
+                "underlyings": ["2882"],
+                "members": [{"artifact_ref": "art-carry-1", "stage": "active", "risk_weight": 0.45}],
+                "gross_exposure": 0.45,
+                "net_exposure": 0.45,
+            },
+        },
+    }
+
+
+def _snapshot(packet_id: str, persona_id: str, obs: dict, meetings: dict | None = None):
+    return {
+        "packet_id": packet_id,
+        "tenant_id": "t1",
+        "persona_ids": [persona_id],
+        "persona_cycle": {
+            "regime": obs.get("regime"),
+            "observe_bundle": obs,
+            "meetings": meetings or {"convened": [], "refused": [], "not_fired": [], "requests": []},
+        },
+    }
+
+
+def test_mt5_convenes_once_on_macro_or_enrolled_pool_primary_axis_transition_and_repeats_do_not_reconvene():
+    op = Opener()
+    trig = triggers(op, day=at_weekday(6))
+    obs_s1 = _regime_obs("2026-11-12", macro="expansion", vol_state="low", trend_state="up")
+    # First session: no prior session -> no transition
+    rec_s1 = run(trig, observe=obs_s1)
+    assert "MT-5" not in types(rec_s1)
+    assert {"meeting_type": "MT-5", "reason": "no_regime_transition"} in rec_s1["not_fired"]
+
+    # Second session: macro transitions expansion -> slowdown
+    obs_s2 = _regime_obs("2026-11-13", macro="slowdown", vol_state="low", trend_state="up")
+    snaps = {"p1": _snapshot("p1", "persona-b", obs_s1, rec_s1)}
+    rec_s2 = run(trig, observe=obs_s2, snapshots=snaps)
+    assert "MT-5" in types(rec_s2)
+    mt5_call_1 = next(c for c in op.calls if c["meeting_type"] == "MT-5")
+    assert "macro:expansion->slowdown" in mt5_call_1["topic"] or mt5_call_1["metadata"]["regime_transitions"][0]["axis"] == "macro"
+    assert mt5_call_1["metadata"]["chair_persona_id"] == "persona-a"
+
+    # Repeated read of the same transition on the same trigger instance -> already_convened
+    rec_repeat_instance = run(trig, observe=obs_s2, snapshots=snaps)
+    assert "MT-5" not in types(rec_repeat_instance)
+    assert any(n.get("meeting_type") == "MT-5" and n.get("reason") == "already_convened" for n in rec_repeat_instance["not_fired"])
+    assert len([c for c in op.calls if c["meeting_type"] == "MT-5"]) == 1
+
+    # Repeated read by the second enrolled persona in the same session with snapshot recorded -> already_convened
+    snaps["p2"] = _snapshot("p2", "persona-b", obs_s2, rec_s2)
+    op_other = Opener()
+    rec_other = run(triggers(op_other, day=at_weekday(6)), persona=OTHER, observe=obs_s2, snapshots=snaps)
+    assert "MT-5" not in types(rec_other)
+    assert any(n.get("meeting_type") == "MT-5" and n.get("reason") == "already_convened" for n in rec_other["not_fired"])
+    assert not [c for c in op_other.calls if c["meeting_type"] == "MT-5"]
+
+    # Third session with unchanged macro=slowdown -> no_regime_transition
+    obs_s3 = _regime_obs("2026-11-16", macro="slowdown", vol_state="low", trend_state="up")
+    rec_s3 = run(triggers(op_other, day=at_weekday(6)), observe=obs_s3, snapshots=snaps)
+    assert "MT-5" not in types(rec_s3)
+    assert {"meeting_type": "MT-5", "reason": "no_regime_transition"} in rec_s3["not_fired"]
+    snaps["p3"] = _snapshot("p3", "persona-b", obs_s3, rec_s3)
+
+    # Fourth session: enrolled pool primary axis transitions (carry trend: up -> down)
+    obs_s4 = _regime_obs("2026-11-17", macro="slowdown", vol_state="low", trend_state="down")
+    op_s4 = Opener()
+    rec_s4 = run(triggers(op_s4, day=at_weekday(6)), observe=obs_s4, snapshots=snaps)
+    assert "MT-5" in types(rec_s4)
+    mt5_call_2 = next(c for c in op_s4.calls if c["meeting_type"] == "MT-5")
+    trans = mt5_call_2["metadata"]["regime_transitions"]
+    assert len(trans) == 1 and trans[0]["axis"] == "trend" and trans[0]["strategy_id"] == "carry"
+    assert trans[0]["from_state"] == "up" and trans[0]["to_state"] == "down"
+    # Chair rotates to the next enrolled trading persona on the second MT-5
+    assert mt5_call_2["metadata"]["chair_persona_id"] == "persona-b"
+
+
+def test_mt5_never_convenes_from_missing_or_proposed_regime_record():
+    op = Opener()
+    # 1. Missing regime observation
+    rec_missing = run(triggers(op, day=at_weekday(6)), observe={})
+    assert "MT-5" not in types(rec_missing)
+    assert {"meeting_type": "MT-5", "reason": "no_governed_regime_record"} in rec_missing["not_fired"]
+
+    # 2. Unavailable regime (no active record) even when macro state changed from an earlier governed session
+    obs_s1 = _regime_obs("2026-11-12", macro="expansion", vol_state="low")
+    snaps = {"p1": _snapshot("p1", "persona-b", obs_s1)}
+    obs_no_rec = {
+        "regime": {
+            "status": "unavailable",
+            "reason": "no_active_record_for_pool_strategies",
+            "session": "2026-11-13",
+            "records": {},
+            "macro": {"state": "slowdown", "session": "2026-11-13"},
+        }
+    }
+    rec_no_rec = run(triggers(op, day=at_weekday(6)), observe=obs_no_rec, snapshots=snaps)
+    assert "MT-5" not in types(rec_no_rec)
+    assert {"meeting_type": "MT-5", "reason": "no_governed_regime_record"} in rec_no_rec["not_fired"]
+
+    # 3. Proposed record only (candidate model) even when primary axis and macro changed
+    obs_proposed = _regime_obs("2026-11-13", macro="slowdown", vol_state="high", state="proposed", model_status="candidate")
+    rec_prop = run(triggers(op, day=at_weekday(6)), observe=obs_proposed, snapshots=snaps)
+    assert "MT-5" not in types(rec_prop)
+    assert {"meeting_type": "MT-5", "reason": "proposed_regime_record_only"} in rec_prop["not_fired"]
+
+    # 4. Prior record was proposed and current record is active with a different state -> never transitions from proposed
+    snaps_prop = {"p0": _snapshot("p0", "persona-b", obs_proposed)}
+    obs_active = _regime_obs("2026-11-14", macro="expansion", vol_state="low", state="active")
+    rec_from_prop = run(triggers(op, day=at_weekday(6)), observe=obs_active, snapshots=snaps_prop)
+    assert "MT-5" not in types(rec_from_prop)
+    assert {"meeting_type": "MT-5", "reason": "no_regime_transition"} in rec_from_prop["not_fired"]
+    assert not [c for c in op.calls if c["meeting_type"] == "MT-5"]
+
+
+def test_mt5_case_file_and_consultation_execution_writes_participant_interpretations_and_preserves_minority_view(
+    tmp_path, monkeypatch
+):
+    """End-to-end MT-5: case file carries regime records, market-state measurement, and each pool's exposure;
+    each participant's interpretation is written to its own memory and the minority view is kept in the minutes."""
+    import json
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from services.consultation import main as cm
+    from services.consultation.client import ConsultationClientError, ConsultationServiceClient
+    from services.consultation.store import ConsultationStore
+    from services.consultation.workflow_state import WorkflowStateStore
+
+    inst_path = tmp_path / "inst_memory.json"
+    persona_path = tmp_path / "persona_memory.json"
+    for k, v in {
+        "CONSULTATION_AUTH_REQUIRED": "true",
+        "CONSULTATION_SERVICE_TOKEN": "tok",
+        "PANTHEON_TENANT_ID": "t1",
+        "PANTHEON_MEMORY_STORE": str(inst_path),
+        "PANTHEON_PERSONA_MEMORY_STORE": str(persona_path),
+        "PANTHEON_MEMORY_DATA_DIR": str(tmp_path / "m"),
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    c_store = ConsultationStore(str(tmp_path / "d"))
+    monkeypatch.setattr(cm, "store", c_store)
+    monkeypatch.setattr(cm, "workflow_state", WorkflowStateStore(tmp_path / "wf.sqlite3"))
+
+    class _RegimeMeetingProvider:
+        def ensure_agents(self, *, tenant_id, persona_ids):
+            return None
+
+        def obtain(self, *, tenant_id, request, participant_scope):
+            cf_items = [i["item_id"] for i in request["case_file"]["groups"]["facts"]["items"]]
+            pid = request["participant"]["persona_id"]
+            round_id = request["meeting"]["round"]
+            if round_id == "synthesis":
+                return SimpleNamespace(
+                    summary="Chair synthesis: adopt defensive volatility posture while preserving carry minority view.",
+                    recommendation="approve_with_conditions",
+                    confidence=0.81,
+                    evidence=[{"id": cf_items[0], "evidence_type": "regime_record"}],
+                    event_content={
+                        "synthesis": {
+                            "summary": "Adopt defensive volatility posture; carry pool dissent recorded.",
+                            "outcome": "completed_no_proposal",
+                            "proposals": [],
+                        }
+                    },
+                )
+            stances = {
+                "persona-a": "INTERP-PERSONA-A: volatility transition to high requires trimming momentum beta.",
+                "persona-b": "INTERP-PERSONA-B: carry spread remains resilient; spike is short-lived.",
+                "persona-risk-officer": "INTERP-RISK-OFFICER: macro slowdown plus high volatility warrants tight gross limit.",
+            }
+            disputed = (
+                ["MINORITY-VIEW-PERSONA-B: objects to broad de-risking because carry drawdown is contained."]
+                if round_id == 2 and pid == "persona-b"
+                else []
+            )
+            return SimpleNamespace(
+                summary=stances[pid],
+                recommendation="approve_with_conditions",
+                confidence=0.85 if pid != "persona-b" else 0.65,
+                evidence=[{"id": cid, "evidence_type": "meeting_fact"} for cid in cf_items],
+                event_content={
+                    "stance": stances[pid],
+                    "confidence": 0.85 if pid != "persona-b" else 0.65,
+                    "citations": cf_items,
+                    "accepted": ["baseline_case_facts"],
+                    "disputed": disputed,
+                    "changed": False,
+                    "proposals": [],
+                },
+            )
+
+    monkeypatch.setattr(cm, "meeting_provider", _RegimeMeetingProvider())
+    monkeypatch.setattr(cm, "auto_run_meetings", True)
+    web = TestClient(cm.app)
+
+    def wire(self, method, path, payload=None, *, tenant_id=None, service_actor=None, extra_headers=None, **_):
+        headers = {
+            "Authorization": "Bearer tok",
+            "X-Pantheon-Tenant-Id": tenant_id or "t1",
+            "X-Pantheon-Service-Actor": service_actor or "x",
+            **(extra_headers or {}),
+        }
+        r = web.request(method, path, json=payload, headers=headers)
+        if r.status_code >= 400:
+            raise ConsultationClientError(r.json().get("detail", "err"), status_code=r.status_code, payload=r.json())
+        return r.json()
+
+    monkeypatch.setattr(ConsultationServiceClient, "_request_json", wire)
+
+    obs_s1 = _regime_obs("2026-11-12", macro="expansion", vol_state="low", trend_state="up")
+    obs_s2 = _regime_obs("2026-11-13", macro="slowdown", vol_state="high", trend_state="up")
+    snaps = {"p1": _snapshot("p1", "persona-b", obs_s1)}
+
+    rec = run(
+        MeetingTriggers(opener=mt.default_opener(PERSONA), now=lambda: at_weekday(6)),
+        persona=PERSONA,
+        observe=obs_s2,
+        snapshots=snaps,
+        enrolled=("persona-a", "persona-b"),
+    )
+    mt5_entries = [c for c in rec["convened"] if c["meeting_type"] == "MT-5"]
+    assert len(mt5_entries) == 1
+    meeting_id = mt5_entries[0]["meeting_id"]
+    assert mt5_entries[0]["status"] == "closed"
+
+    detail = c_store.get_meeting(meeting_id)
+    assert detail is not None and detail["status"] == "closed"
+    fact_items = detail["case_file"]["groups"]["facts"]["items"]
+    by_kind: dict[str, list[dict]] = {}
+    for item in fact_items:
+        by_kind.setdefault(item["kind"], []).append(item)
+
+    # Case file carries the governed regime records, the market-state measurement, and each pool's exposure
+    assert {i["subject_fields"]["strategy_id"] for i in by_kind["regime_record"]} == {"momentum", "carry"}
+    assert len(by_kind["market_state"]) == 1
+    assert by_kind["market_state"][0]["market_state"]["session"] == "2026-11-13"
+    assert by_kind["market_state"][0]["market_state"]["axes"]["macro"]["state"] == "slowdown"
+    assert {i["subject_fields"]["persona_id"] for i in by_kind["pool_exposure"]} == {"persona-a", "persona-b"}
+    exp_by_persona = {i["subject_fields"]["persona_id"]: i["pool_exposure"] for i in by_kind["pool_exposure"]}
+    assert exp_by_persona["persona-a"]["gross_exposure"] == 0.6
+    assert exp_by_persona["persona-b"]["gross_exposure"] == 0.45
+
+    # Each participant's interpretation goes to its own private memory
+    persona_memories = json.loads(persona_path.read_text(encoding="utf-8"))
+    by_persona_mem = {m["persona_id"]: m for m in persona_memories}
+    assert set(by_persona_mem) == {"persona-a", "persona-b", "persona-risk-officer"}
+    assert "INTERP-PERSONA-A" in by_persona_mem["persona-a"]["content"]["summary"]
+    assert "INTERP-PERSONA-B" not in by_persona_mem["persona-a"]["content"]["summary"]
+    assert "INTERP-PERSONA-B" in by_persona_mem["persona-b"]["content"]["summary"]
+    assert "INTERP-PERSONA-A" not in by_persona_mem["persona-b"]["content"]["summary"]
+    assert "INTERP-RISK-OFFICER" in by_persona_mem["persona-risk-officer"]["content"]["summary"]
+    for m in persona_memories:
+        assert m["memory_type"] == "consultation_outcome"
+
+    # Minority view is kept in the minutes (dissent memo + institutional minutes record)
+    dissent_id = detail["minutes"]["dissent_memo_id"]
+    assert dissent_id
+    dissent_memo = c_store.get_memo(dissent_id)
+    assert dissent_memo is not None and dissent_memo.memo_type.value == "dissent"
+    assert "MINORITY-VIEW-PERSONA-B" in dissent_memo.summary
+    inst_memories = json.loads(inst_path.read_text(encoding="utf-8"))
+    assert len(inst_memories) == 1
+    assert dissent_id in inst_memories[0]["content"]["body"]
+

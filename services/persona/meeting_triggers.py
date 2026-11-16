@@ -12,6 +12,8 @@ Triggers (SD_PERSONA_MEETINGS_2026-11-15 sections 5, 6, 12):
         run from the attribution owner (idempotent per ISO week)
   MT-4  each attribution record without a meeting (including records raised by a drawdown
         removal, a persona drawdown breach or a paper-loss incident)
+  MT-5  a governed RegimeState transition on the macro axis or on the primary axis of any
+        enrolled pool (never from a missing or proposed record)
   MT-6  quarter end, before the paper allocation run (``quarterly_review``)
   consult_request proposals for a deliberative type are opened within the budget, otherwise
   the refusal reason is recorded.
@@ -158,6 +160,7 @@ class MeetingTriggers:
         self.attribution = attribution
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._day_counts: dict[str, int] = {}
+        self._convened_keys: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------- helpers
     def _opened_this_week(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], week: str) -> int:
@@ -169,8 +172,9 @@ class MeetingTriggers:
             n += sum(1 for c in meetings.get("convened", []) if c.get("iso_week") == week)
         return n
 
-    @staticmethod
-    def _already(snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], key: str) -> bool:
+    def _already(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], key: str) -> bool:
+        if (str(persona.get("tenant_id") or ""), key) in self._convened_keys:
+            return True
         for p in snapshots.values():
             if p.get("tenant_id") != persona["tenant_id"]:
                 continue
@@ -203,6 +207,7 @@ class MeetingTriggers:
             record["refused"].append({**label, "reason": _reason(exc)})
             return None
         self._day_counts[today] = self._day_counts.get(today, 0) + 1
+        self._convened_keys.add((str(persona.get("tenant_id") or ""), key))
         entry = {**label, "meeting_id": result.get("meeting_id"), "status": result.get("status"), "iso_week": ctx["week"]}
         record["convened"].append(entry)
         return entry
@@ -230,6 +235,7 @@ class MeetingTriggers:
             first = sorted(enrolled)[0] if enrolled else None
             self._mt3(ctx, pid, first)
             self._mt4(ctx, pid, first, enrolled)
+            self._mt5(ctx, observe, pid, enrolled)
         except Exception as exc:  # the cycle runs without meetings rather than failing
             record["error"] = "meeting_triggers_unavailable:" + type(exc).__name__
         return record
@@ -337,6 +343,162 @@ class MeetingTriggers:
         if not opened:
             record["not_fired"].append({"meeting_type": "MT-4", "reason": "no_new_attribution_record"})
 
+    @staticmethod
+    def _mt5_count(snapshots: Mapping[str, Mapping[str, Any]], tenant: str) -> int:
+        count = 0
+        for p in snapshots.values():
+            if p.get("tenant_id") != tenant:
+                continue
+            meetings = (p.get("persona_cycle") or {}).get("meetings") or {}
+            count += sum(1 for c in meetings.get("convened", []) if c.get("meeting_type") == "MT-5")
+        return count
+
+    def _mt5(self, ctx, observe, pid, enrolled):
+        record = ctx["record"]
+        persona = ctx["persona"]
+        tenant = persona["tenant_id"]
+        regime = observe.get("regime") or (ctx["packet"].get("persona_cycle") or {}).get("regime")
+        governed_records, saw_proposed = _extract_governed_records(regime)
+        enrolled_regimes = observe.get("enrolled_regimes")
+        if isinstance(enrolled_regimes, Mapping):
+            for _, er in enrolled_regimes.items():
+                er_gov, er_prop = _extract_governed_records(er)
+                saw_proposed = saw_proposed or er_prop
+                for sid, r in er_gov.items():
+                    governed_records.setdefault(sid, r)
+        if not governed_records:
+            reason = "proposed_regime_record_only" if saw_proposed else "no_governed_regime_record"
+            record["not_fired"].append({"meeting_type": "MT-5", "reason": reason})
+            return
+
+        cur_session = str((regime or {}).get("session") or "")
+        # Merge governed active records from same-session packets of other enrolled personas in this tenant.
+        for p in ctx["snapshots"].values():
+            if p.get("tenant_id") != tenant:
+                continue
+            p_reg = (p.get("persona_cycle") or {}).get("regime") or ((p.get("persona_cycle") or {}).get("observe_bundle") or {}).get("regime")
+            if isinstance(p_reg, Mapping) and cur_session and str(p_reg.get("session") or "") == cur_session:
+                p_gov, _ = _extract_governed_records(p_reg)
+                for sid, r in p_gov.items():
+                    governed_records.setdefault(sid, r)
+
+        market_state = _resolve_market_state(regime, governed_records, cur_session or ctx["today"].isoformat())
+        prior_entries = _collect_prior_governed_regimes(ctx["snapshots"], tenant, cur_session, regime)
+
+        transitions: list[dict[str, Any]] = []
+        # 1. Macro axis transition on governed RegimeState
+        cur_macro = _extract_macro_state(regime, governed_records, market_state)
+        prev_macro, prev_macro_session = "", ""
+        for pr_session, pr, pr_records in reversed(prior_entries):
+            cand = _extract_macro_state(pr, pr_records, pr.get("market_state") if isinstance(pr.get("market_state"), Mapping) else None)
+            if cand:
+                prev_macro, prev_macro_session = cand, pr_session
+                break
+        if not prev_macro and isinstance((regime or {}).get("macro"), Mapping):
+            m_obj = regime["macro"]
+            if str(m_obj.get("previous_record_state") or "active").lower() == "active":
+                explicit_prev = str(m_obj.get("previous_state") or m_obj.get("from_state") or "").strip()
+                if explicit_prev and explicit_prev.lower() != "proposed":
+                    prev_macro = explicit_prev
+                    prev_macro_session = str(m_obj.get("from_session") or m_obj.get("previous_session") or "prior")
+        if prev_macro and cur_macro and prev_macro != cur_macro:
+            transitions.append({
+                "axis": "macro",
+                "scope": "macro",
+                "from_state": prev_macro,
+                "to_state": cur_macro,
+                "from_session": prev_macro_session or "prior",
+                "to_session": cur_session or ctx["today"].isoformat(),
+            })
+
+        # 2. Primary axis transition of any enrolled pool strategy
+        for sid, rec in sorted(governed_records.items()):
+            primary_axis, cur_state = _primary_axis_and_state(sid, rec, market_state)
+            if not cur_state:
+                continue
+            prev_state, prev_session, prev_regime_id = "", "", None
+            for pr_session, pr, pr_records in reversed(prior_entries):
+                if sid in pr_records:
+                    prev_rec = pr_records[sid]
+                    _, cand_state = _primary_axis_and_state(
+                        sid, prev_rec, pr.get("market_state") if isinstance(pr.get("market_state"), Mapping) else None
+                    )
+                    if cand_state:
+                        prev_state, prev_session = cand_state, pr_session
+                        prev_regime_id = prev_rec.get("regime_id")
+                        break
+            if not prev_state and not prior_entries:
+                if str(rec.get("previous_record_state") or "active").lower() == "active":
+                    explicit_prev = str(rec.get("previous_state") or rec.get("from_state") or "").strip()
+                    if explicit_prev and explicit_prev.lower() != "proposed":
+                        prev_state = explicit_prev
+                        prev_session = str(rec.get("from_session") or rec.get("previous_session") or f"prior:{cur_session}")
+                if not prev_state and cur_session:
+                    snap = rec.get("feature_snapshot") if isinstance(rec.get("feature_snapshot"), Mapping) else {}
+                    ax_map = snap.get("axes") if isinstance(snap.get("axes"), Mapping) else {}
+                    ax_det = ax_map.get(primary_axis) if isinstance(ax_map.get(primary_axis), Mapping) else {}
+                    if ax_det.get("sessions_in_state") == 1 and str(ax_det.get("last_switch_session") or "") == cur_session:
+                        prev_state = str(ax_det.get("previous_state") or f"pre_switch:{cur_state}")
+                        prev_session = f"switch:{cur_session}"
+            if prev_state and cur_state and prev_state != cur_state:
+                transitions.append({
+                    "axis": primary_axis,
+                    "scope": f"strategy:{sid}",
+                    "strategy_id": sid,
+                    "from_state": prev_state,
+                    "to_state": cur_state,
+                    "from_session": prev_session or "prior",
+                    "to_session": cur_session or ctx["today"].isoformat(),
+                    "from_regime_id": prev_regime_id,
+                    "to_regime_id": rec.get("regime_id"),
+                })
+
+        if not transitions:
+            record["not_fired"].append({"meeting_type": "MT-5", "reason": "no_regime_transition"})
+            return
+
+        sig = [(t["axis"], t["scope"], t["from_state"], t["to_state"], t["from_session"]) for t in transitions]
+        key = _key("MT-5", tenant, sig)
+        enrolled_sorted = sorted(dict.fromkeys([*(enrolled or ()), pid]))
+        chair_id = enrolled_sorted[self._mt5_count(ctx["snapshots"], tenant) % len(enrolled_sorted)]
+        peers = [p for p in enrolled_sorted if p != chair_id][:3]
+        participants = [
+            {"persona_id": chair_id, "role": "chair"},
+            *[{"persona_id": p, "role": "trading_peer"} for p in peers],
+            {"persona_id": "persona-risk-officer", "role": "risk_reviewer"},
+        ]
+        exposures = _collect_pool_exposures(persona, observe, ctx["snapshots"], enrolled_sorted)
+        case_file, case_items = _build_mt5_case_file(
+            governed_records=governed_records,
+            market_state=market_state,
+            exposures=exposures,
+            transitions=transitions,
+            session=cur_session or ctx["today"].isoformat(),
+        )
+        trigger_desc = "regime_transition:" + ";".join(f"{t['axis']}:{t['from_state']}->{t['to_state']}" for t in transitions)
+        topic = (
+            f"Regime interpretation ({cur_session or ctx['today'].isoformat()}): "
+            + "; ".join(f"{t['scope']} ({t['axis']}) {t['from_state']}->{t['to_state']}" for t in transitions)
+        )
+        self._convene(
+            ctx,
+            "MT-5",
+            trigger_desc,
+            topic,
+            key,
+            subject_ref=f"regime:{cur_session or ctx['today'].isoformat()}",
+            participants=participants,
+            case_file=case_file,
+            evidence_refs=[item["item_id"] for item in case_items],
+            metadata={
+                "regime_transitions": transitions,
+                "regime_records": governed_records,
+                "market_state": market_state,
+                "pool_exposures": exposures,
+                "chair_persona_id": chair_id,
+            },
+        )
+
     def _requests(self, ctx, cycle):
         proposals = (cycle.get("output") or {}).get("proposals") or []
         decisions = cycle.get("decisions") or []
@@ -361,6 +523,331 @@ class MeetingTriggers:
             if index < len(decisions):
                 decisions[index].update(status=outcome["status"], reason=outcome.get("reason") or "meeting_opened",
                                         **({"meeting_id": outcome["meeting_id"]} if entry else {}))
+
+
+# ------------------------------------------------------------------- MT-5 ---
+def pool_exposure_for(persona_id: str, observe_bundle: Mapping[str, Any] | None = None,
+                      pool: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build one enrolled pool's exposure summary for the MT-5 case file."""
+    bundle = observe_bundle if isinstance(observe_bundle, Mapping) else {}
+    pool_obj = pool if isinstance(pool, Mapping) else (bundle.get("pool") if isinstance(bundle.get("pool"), Mapping) else {})
+    subject = bundle.get("cycle_subject") if isinstance(bundle.get("cycle_subject"), Mapping) else {}
+    observations = bundle.get("observations") if isinstance(bundle.get("observations"), list) else []
+    raw_members = pool_obj.get("members") if isinstance(pool_obj.get("members"), list) else (
+        bundle.get("members") if isinstance(bundle.get("members"), list) else []
+    )
+    members = [
+        {
+            "artifact_ref": str(m.get("artifact_ref") or m.get("member_id") or ""),
+            "stage": str(m.get("stage") or "active"),
+            "risk_weight": float(m.get("risk_weight") or 0.0),
+        }
+        for m in raw_members
+        if isinstance(m, Mapping) and (m.get("artifact_ref") or m.get("member_id")) and m.get("stage") != "removed"
+    ]
+    gross_weight = round(sum(abs(m["risk_weight"]) for m in members), 6)
+    net_weight = round(sum(m["risk_weight"] for m in members), 6)
+    latest_obs = observations[-1] if observations and isinstance(observations[-1], Mapping) else {}
+    gross_exposure = (
+        float(bundle["gross_exposure"])
+        if isinstance(bundle.get("gross_exposure"), (int, float))
+        else (
+            float(latest_obs["gross_notional"])
+            if isinstance(latest_obs.get("gross_notional"), (int, float))
+            else gross_weight
+        )
+    )
+    net_exposure = (
+        float(bundle["net_exposure"])
+        if isinstance(bundle.get("net_exposure"), (int, float))
+        else net_weight
+    )
+    families = list(
+        bundle.get("strategy_families")
+        or subject.get("families")
+        or ([bundle["strategy_family"]] if bundle.get("strategy_family") else [])
+    )
+    return {
+        "persona_id": str(persona_id),
+        "pool_version": pool_obj.get("pool_version", bundle.get("pool_version")),
+        "strategy_families": [str(f) for f in families if str(f or "").strip()],
+        "underlyings": [str(u) for u in (bundle.get("underlyings") or subject.get("underlyings") or []) if str(u or "").strip()],
+        "members": members,
+        "gross_exposure": gross_exposure,
+        "gross_limit": float(latest_obs["gross_limit"]) if isinstance(latest_obs.get("gross_limit"), (int, float)) else bundle.get("gross_limit"),
+        "net_exposure": net_exposure,
+        "drawdown": float(latest_obs["drawdown"]) if isinstance(latest_obs.get("drawdown"), (int, float)) else bundle.get("drawdown"),
+    }
+
+
+def _extract_governed_records(regime: Any) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Return ``(governed_active_records, saw_proposed)``. Never accepts missing or proposed records."""
+    if not isinstance(regime, Mapping):
+        return {}, False
+    regime_state = str(regime.get("state") or "").strip().lower()
+    regime_model = str(regime.get("model_status") or "").strip().lower()
+    saw_proposed = regime_state == "proposed" or regime_model == "candidate"
+    raw_records = regime.get("records")
+    items: list[tuple[str, Mapping[str, Any]]] = []
+    if isinstance(raw_records, Mapping):
+        for k, v in raw_records.items():
+            if isinstance(v, Mapping):
+                items.append((str(k), v))
+    elif isinstance(raw_records, Sequence) and not isinstance(raw_records, (str, bytes)):
+        for idx, v in enumerate(raw_records):
+            if isinstance(v, Mapping):
+                items.append((str(v.get("strategy_id") or f"strategy-{idx + 1}"), v))
+    for _, r in items:
+        st = str(r.get("state") or "").strip().lower()
+        ms = str(r.get("model_status") or "").strip().lower()
+        if st == "proposed" or ms == "candidate":
+            saw_proposed = True
+    if regime.get("status") not in (None, "observed") or regime_state == "proposed" or regime_model == "candidate":
+        return {}, saw_proposed
+    governed: dict[str, dict[str, Any]] = {}
+    for key_id, r in items:
+        r_state = str(r.get("state") or "active").strip().lower()
+        r_model = str(r.get("model_status") or "approved").strip().lower()
+        if r_state == "proposed" or r_model == "candidate":
+            saw_proposed = True
+            continue
+        if r_state != "active" or r_model != "approved":
+            continue
+        rid = str(r.get("regime_id") or "").strip()
+        if not rid:
+            continue
+        sid = str(r.get("strategy_id") or key_id).strip()
+        governed[sid] = dict(r, regime_id=rid, strategy_id=sid, state="active")
+    return governed, saw_proposed
+
+
+def _primary_axis_and_state(
+    strategy_id: str,
+    rec: Mapping[str, Any],
+    market_state: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    snap = rec.get("feature_snapshot") if isinstance(rec.get("feature_snapshot"), Mapping) else {}
+    profile = snap.get("profile") if isinstance(snap.get("profile"), Mapping) else {}
+    axis = str(rec.get("primary_axis") or profile.get("primary_axis") or "").strip()
+    horizon = str(rec.get("horizon") or profile.get("horizon") or "").strip()
+    explicit_state = str(rec.get("primary_state") or rec.get("axis_state") or "").strip()
+    if explicit_state:
+        return (axis or "primary"), explicit_state
+    axes = snap.get("axes") if isinstance(snap.get("axes"), Mapping) else {}
+    if axis and isinstance(axes.get(axis), Mapping):
+        ax_det = axes[axis]
+        if ax_det.get("available", True) and ax_det.get("state"):
+            return axis, str(ax_det["state"]).strip()
+    if axis and isinstance(market_state, Mapping):
+        ms_axes = market_state.get("axes") if isinstance(market_state.get("axes"), Mapping) else {}
+        ms_ax = ms_axes.get(axis)
+        if isinstance(ms_ax, Mapping):
+            h_det = ms_ax.get(horizon) if horizon and isinstance(ms_ax.get(horizon), Mapping) else ms_ax
+            if isinstance(h_det, Mapping) and h_det.get("available", True) and h_det.get("state"):
+                return axis, str(h_det["state"]).strip()
+    cls = str(rec.get("regime_class") or "").strip()
+    if cls in {"regime_transition", "mixed"}:
+        return (axis or "primary"), ""
+    return (axis or "primary"), cls
+
+
+def _extract_macro_state(
+    regime: Mapping[str, Any] | None,
+    governed_records: Mapping[str, Mapping[str, Any]],
+    market_state: Mapping[str, Any] | None = None,
+) -> str:
+    if not governed_records or not isinstance(regime, Mapping):
+        return ""
+    macro = regime.get("macro")
+    if isinstance(macro, Mapping):
+        if str(macro.get("state") or "").strip().lower() not in {"", "proposed", "unknown"} and macro.get("available", True):
+            return str(macro["state"]).strip()
+    elif isinstance(macro, str) and macro.strip().lower() not in {"", "proposed", "unknown"}:
+        return macro.strip()
+    ms = market_state if isinstance(market_state, Mapping) else (
+        regime.get("market_state") if isinstance(regime.get("market_state"), Mapping) else {}
+    )
+    if str(ms.get("model_status") or "approved").lower() == "approved" and str(ms.get("state") or "current").lower() not in {"proposed", "invalidated"}:
+        m_ax = (ms.get("axes") or {}).get("macro") if isinstance(ms.get("axes"), Mapping) else {}
+        if isinstance(m_ax, Mapping) and m_ax.get("available", True) and str(m_ax.get("state") or "").strip():
+            return str(m_ax["state"]).strip()
+    for rec in governed_records.values():
+        snap = rec.get("feature_snapshot") if isinstance(rec.get("feature_snapshot"), Mapping) else {}
+        axes = snap.get("axes") if isinstance(snap.get("axes"), Mapping) else {}
+        m_ax = axes.get("macro")
+        if isinstance(m_ax, Mapping) and m_ax.get("available", True) and str(m_ax.get("state") or "").strip():
+            return str(m_ax["state"]).strip()
+        env_m = str(snap.get("macro_environment") or "").strip()
+        if env_m and env_m.lower() not in {"unknown", "proposed"}:
+            return env_m
+    return ""
+
+
+def _resolve_market_state(
+    regime: Mapping[str, Any] | None,
+    governed_records: Mapping[str, Mapping[str, Any]],
+    session: str,
+) -> dict[str, Any]:
+    ms = (regime or {}).get("market_state") if isinstance(regime, Mapping) else None
+    if isinstance(ms, Mapping) and ms:
+        out = dict(ms)
+        out.setdefault("market", "TW")
+        out.setdefault("session", str((regime or {}).get("session") or session))
+        out.setdefault("model_status", "approved")
+        return out
+    axes: dict[str, Any] = {}
+    for rec in governed_records.values():
+        snap = rec.get("feature_snapshot") if isinstance(rec.get("feature_snapshot"), Mapping) else {}
+        for ax_name, ax_val in (snap.get("axes") or {}).items() if isinstance(snap.get("axes"), Mapping) else ():
+            axes.setdefault(str(ax_name), ax_val)
+        axis_name, axis_state = _primary_axis_and_state(str(rec.get("strategy_id") or ""), rec)
+        if axis_name and axis_state and axis_name not in axes:
+            axes[axis_name] = {"available": True, "state": axis_state}
+    macro_state = _extract_macro_state(regime, governed_records)
+    if macro_state and "macro" not in axes:
+        axes["macro"] = {"available": True, "state": macro_state}
+    return {
+        "market": "TW",
+        "session": session,
+        "model_status": "approved",
+        "state": "current",
+        "axes": axes,
+    }
+
+
+def _collect_prior_governed_regimes(
+    snapshots: Mapping[str, Mapping[str, Any]],
+    tenant: str,
+    cur_session: str,
+    regime: Mapping[str, Any] | None,
+) -> list[tuple[str, Mapping[str, Any], dict[str, dict[str, Any]]]]:
+    candidates: list[tuple[str, int, Mapping[str, Any], dict[str, dict[str, Any]]]] = []
+    idx = 0
+    if isinstance(regime, Mapping):
+        for k in ("previous", "previous_regime"):
+            prev_reg = regime.get(k)
+            if isinstance(prev_reg, Mapping):
+                gov, _ = _extract_governed_records(prev_reg)
+                if gov:
+                    p_sess = str(prev_reg.get("session") or "")
+                    if not (cur_session and p_sess and p_sess >= cur_session):
+                        idx += 1
+                        candidates.append((p_sess, idx, prev_reg, gov))
+    for p in snapshots.values():
+        if p.get("tenant_id") != tenant:
+            continue
+        p_cycle = p.get("persona_cycle") or {}
+        p_reg = p_cycle.get("regime") or (p_cycle.get("observe_bundle") or {}).get("regime")
+        if not isinstance(p_reg, Mapping):
+            continue
+        gov, _ = _extract_governed_records(p_reg)
+        if not gov:
+            continue
+        p_sess = str(p_reg.get("session") or "")
+        if cur_session and p_sess and p_sess >= cur_session:
+            continue
+        idx += 1
+        candidates.append((p_sess, idx, p_reg, gov))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return [(s, r, g) for s, _, r, g in candidates]
+
+
+def _collect_pool_exposures(
+    persona: Mapping[str, Any],
+    observe: Mapping[str, Any],
+    snapshots: Mapping[str, Mapping[str, Any]],
+    enrolled: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    tenant = persona["tenant_id"]
+    pid = persona["persona_id"]
+    supplied = observe.get("pool_exposures") if isinstance(observe.get("pool_exposures"), Mapping) else {}
+    exposures: dict[str, dict[str, Any]] = {}
+    for epid in enrolled:
+        if epid in supplied and isinstance(supplied[epid], Mapping):
+            exposures[epid] = pool_exposure_for(epid, supplied[epid])
+            continue
+        if epid == pid:
+            exposures[epid] = pool_exposure_for(epid, observe)
+            continue
+        peer_bundle: Mapping[str, Any] = {}
+        for p in snapshots.values():
+            if p.get("tenant_id") == tenant and epid in p.get("persona_ids", []):
+                ob = (p.get("persona_cycle") or {}).get("observe_bundle")
+                if isinstance(ob, Mapping) and ob:
+                    peer_bundle = ob
+        exposures[epid] = pool_exposure_for(epid, peer_bundle)
+    return exposures
+
+
+def _build_mt5_case_file(
+    *,
+    governed_records: Mapping[str, Mapping[str, Any]],
+    market_state: Mapping[str, Any],
+    exposures: Mapping[str, Mapping[str, Any]],
+    transitions: Sequence[Mapping[str, Any]],
+    session: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    items: list[dict[str, Any]] = []
+    for sid, rec in sorted(governed_records.items()):
+        primary_axis, primary_state = _primary_axis_and_state(sid, rec, market_state)
+        rid = str(rec["regime_id"])
+        items.append({
+            "item_id": f"facts:regime_record:{rid}",
+            "group": "facts",
+            "kind": "regime_record",
+            "source_owner": "registry",
+            "source_id": rid,
+            "excerpt": json.dumps(rec, sort_keys=True, ensure_ascii=False),
+            "regime_record": dict(rec),
+            "subject_fields": {
+                "strategy_id": sid,
+                "regime_id": rid,
+                "regime_class": str(rec.get("regime_class") or ""),
+                "primary_axis": primary_axis,
+                "primary_state": primary_state,
+            },
+        })
+    ms_id = str(
+        market_state.get("market_state_id")
+        or f"{market_state.get('market', 'TW')}:{market_state.get('session') or session}:{market_state.get('model_set_version', 'approved')}:r{market_state.get('revision', 1)}"
+    )
+    items.append({
+        "item_id": f"facts:market_state:{ms_id}",
+        "group": "facts",
+        "kind": "market_state",
+        "source_owner": "registry",
+        "source_id": ms_id,
+        "excerpt": json.dumps(dict(market_state), sort_keys=True, ensure_ascii=False),
+        "market_state": dict(market_state),
+        "subject_fields": {
+            "market": str(market_state.get("market") or "TW"),
+            "session": str(market_state.get("session") or session),
+            "market_state_id": ms_id,
+        },
+    })
+    for epid, exp in sorted(exposures.items()):
+        items.append({
+            "item_id": f"facts:pool_exposure:{epid}",
+            "group": "facts",
+            "kind": "pool_exposure",
+            "source_owner": "persona",
+            "source_id": epid,
+            "excerpt": json.dumps(dict(exp), sort_keys=True, ensure_ascii=False),
+            "pool_exposure": dict(exp),
+            "subject_fields": {
+                "persona_id": epid,
+                "gross_exposure": exp.get("gross_exposure"),
+                "net_exposure": exp.get("net_exposure"),
+            },
+        })
+    case_file = {
+        "items": items,
+        "regime_records": {k: dict(v) for k, v in governed_records.items()},
+        "market_state": dict(market_state),
+        "pool_exposures": {k: dict(v) for k, v in exposures.items()},
+        "transitions": [dict(t) for t in transitions],
+    }
+    return case_file, items
 
 
 # ------------------------------------------------------------------- MT-6 ---
