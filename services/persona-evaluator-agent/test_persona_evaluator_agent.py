@@ -587,6 +587,41 @@ def test_quarter_close_triggers_exactly_one_cycle_with_the_persisted_snapshot_an
     assert len([e for e in log if "allocation-policy/evaluate" in e[0]]) == 1
 
 
+def test_quarterly_review_is_convened_before_the_allocation_run_and_its_minutes_ride_as_evidence(tmp_path):
+    store = _seed_closed_quarter(tmp_path)
+    log, asked = [], []
+
+    def review(quarter):
+        asked.append((quarter, len([e for e in log if "allocation-policy/evaluate" in e[0]])))
+        return {"status": "ready", "quarter": quarter, "meeting_id": "m-q", "evidence_ref": "consultation://meetings/m-q"}
+    record = pea.paper_cycle_once(store=store, bff_url="http://bff", bff_headers={}, persona_url="http://persona",
+                                  persona_token="p", tenant="t1", paper_pool_id="pool-paper", fetch=_cycle_fetch(log),
+                                  now=lambda: NEXT_QUARTER_NOW, quarterly_review=review)
+    assert asked == [(QUARTER, 0)] and record["quarterly_review"]["meeting_id"] == "m-q"  # asked before any run
+    body = next(e[1] for e in log if "allocation-policy/evaluate" in e[0])
+    assert body["pool_health"]["p1"]["quarterly_review"]["evidence_ref"] == "consultation://meetings/m-q"
+
+
+def test_pending_quarterly_review_holds_the_run_and_a_refused_one_is_recorded_without_blocking_it(tmp_path):
+    store = _seed_closed_quarter(tmp_path)
+    log = []
+    kw = dict(store=store, bff_url="http://bff", bff_headers={}, persona_url="http://persona", persona_token="p",
+              tenant="t1", paper_pool_id="pool-paper", fetch=_cycle_fetch(log), now=lambda: NEXT_QUARTER_NOW)
+    held = pea.paper_cycle_once(quarterly_review=lambda q: {"status": "pending", "meeting_id": "m-q"}, **kw)
+    assert held["status"] == "waiting_for_quarterly_review" and not [e for e in log if "allocation-policy/evaluate" in e[0]]
+    ran = pea.paper_cycle_once(quarterly_review=lambda q: {"status": "refused", "reason": "meeting_budget_exhausted"}, **kw)
+    assert ran["status"] == "applied" and ran["quarterly_review"]["reason"] == "meeting_budget_exhausted"
+    boom = lambda q: (_ for _ in ()).throw(RuntimeError("down"))
+    store2 = _seed_closed_quarter(tmp_path / "b") if (tmp_path / "b").mkdir() is None else None
+    kw["store"] = store2
+    assert pea.paper_cycle_once(quarterly_review=boom, **kw)["quarterly_review"]["status"] == "unavailable"
+
+
+def test_quarterly_review_is_not_wired_without_a_consultation_owner():
+    assert pea.quarterly_review_from_env(lambda k, d="": d) is None
+    assert callable(pea.quarterly_review_from_env(lambda k, d="": "x" if k == "CONSULTATION_SERVICE_TOKEN" else d))
+
+
 def test_failed_cycle_is_recorded_and_retried_with_the_same_idempotency_key(tmp_path):
     store = _seed_closed_quarter(tmp_path)
     log = []
