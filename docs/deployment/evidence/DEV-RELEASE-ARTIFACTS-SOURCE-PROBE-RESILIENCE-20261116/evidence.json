@@ -89,6 +89,13 @@
       "exit_code": 0,
       "pass_count": 481,
       "result": "481 passed in 99.85s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_latest_market_snapshot_journal_bounded.py scripts/test_dev_remote_watchdog.py",
+      "exit_code": 0,
+      "pass_count": 24,
+      "skipped_count": 1,
+      "result": "24 passed, 1 skipped in 14.81s"
     }
   ],
   "credentials": "none recorded"

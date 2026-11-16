@@ -236,7 +236,7 @@ def test_release_probe_bound_unchanged():
     assert "SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024" in text
     assert "if before.st_size > __MAX_BYTES__:" in text
     assert "<= SOURCE_JOURNAL_MAX_BYTES" in text
-    assert "512m" in text
+    assert "2048m" in text
 
 
 @pytest.mark.skipif(
