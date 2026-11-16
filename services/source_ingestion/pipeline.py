@@ -584,6 +584,12 @@ def resolve_receipt_snapshot_bodies(
     (symbol, dataset); a superseded or missing snapshot fails closed with a readable reason.
     """
     bodies: list[dict[str, Any]] = []
+    if not (batch or {}).get("snapshots") and (batch or {}).get("snapshot_count"):
+        refs = (batch or {}).get("snapshot_refs") or {}
+        raise ReceiptSnapshotUnavailable(
+            f"receipt carries counts and a reference only ({batch['snapshot_count']} snapshots of run "
+            f"{refs.get('ingest_run_id')}); read the bodies from the latest market snapshot store"
+        )
     for item in (batch or {}).get("snapshots") or ():
         if not isinstance(item, Mapping):
             raise ReceiptSnapshotUnavailable("receipt snapshot entry is not an object")
