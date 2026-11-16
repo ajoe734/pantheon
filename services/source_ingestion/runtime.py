@@ -874,6 +874,7 @@ class SourceIngestionRuntime:
             "stale_connector_count": readiness.get("stale_connector_count", 0),
             "degraded_connector_count": readiness.get("degraded_connector_count", 0),
             "posture_alert_count": self.PRODUCTION_POSTURE.alert_count(),
+            "latest_market_snapshot_journal": self.latest_market_snapshot_store.journal_stats(),
         }
 
     def _connector_schema_hash(self, connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
