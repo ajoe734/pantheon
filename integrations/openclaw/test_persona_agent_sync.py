@@ -580,7 +580,10 @@ def test_soul_stages_memory_candidates_and_never_tells_agent_to_edit_memory_md()
 
 def test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed():
     policy = sync.persona_agent_runtime_policy()["tools"]
-    assert policy["allow"] == ["read", sync.PERSONA_PROPOSAL_TOOL]
+    assert policy["allow"] == [
+        "read", sync.PERSONA_PROPOSAL_TOOL, sync.PERSONA_MEMORY_RECALL_TOOL, sync.PERSONA_MENTAL_MODEL_READ_TOOL,
+    ]
+    assert "reflect" not in " ".join(policy["allow"])
     for forbidden in ("broker_place_order", "capital_allocate", "lifecycle_promote", "exec"):
         bad = {**policy, "allow": [*policy["allow"], forbidden]}
         try:
@@ -595,6 +598,22 @@ def test_tool_profile_is_read_only_plus_proposal_and_validator_fails_closed():
         pass
     else:  # pragma: no cover
         raise AssertionError("exec must stay denied")
+
+
+def test_tool_profile_requires_each_brokered_tool_and_every_current_deny():
+    import pytest
+
+    policy = sync.persona_agent_runtime_policy()["tools"]
+    for tool in sync.PERSONA_BROKERED_TOOLS:
+        bad = {**policy, "allow": [t for t in policy["allow"] if t != tool]}
+        with pytest.raises(ValueError, match="missing"):
+            sync.assert_persona_agent_tool_profile(bad)
+    with pytest.raises(ValueError, match="missing_deny:web_fetch"):
+        sync.assert_persona_agent_tool_profile({**policy, "deny": [d for d in policy["deny"] if d != "web_fetch"]})
+    with pytest.raises(ValueError, match="forbidden_tool:persona_reflect"):
+        sync.assert_persona_agent_tool_profile({**policy, "allow": [*policy["allow"], "persona_reflect"]})
+    with pytest.raises(ValueError, match="duplicate"):
+        sync.assert_persona_agent_tool_profile({**policy, "allow": [*policy["allow"], "read"]})
 
 
 def test_invalid_harness_digest_is_reported_not_rendered():
@@ -650,7 +669,7 @@ def test_deploy_script_delegates_to_library_and_backfills_selected_personas(monk
                                      "--persona-id", "persona-c"])
     assert script.main() == 0
     assert seen["ids"] == ["persona-a", "persona-b", "persona-c"]
-    assert seen["policy"]["tools"]["allow"] == ["read", sync.PERSONA_PROPOSAL_TOOL]
+    assert seen["policy"]["tools"]["allow"] == sync.PERSONA_AGENT_TOOL_PROFILE["allow"]
     assert json.loads(capsys.readouterr().out)["counts"]["created"] == 3
 
 
