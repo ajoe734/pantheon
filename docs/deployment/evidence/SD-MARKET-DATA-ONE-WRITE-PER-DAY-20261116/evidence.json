@@ -7,9 +7,41 @@
   "sources_read_2026-11-16": [
     "https://duckdb.org/docs/data/partitioning/hive_partitioning",
     "https://www.quantconnect.com/docs/v2/lean-engine/data-format/us-equity",
-    "https://zipline-trader.readthedocs.io/en/stable/bundles.html"
+    "https://zipline-trader.readthedocs.io/en/stable/bundles.html",
+    "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+    "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
   ],
-  "open_operator_decision": "expired warrants: fetch/keep or not",
-  "verification": "docs only; no tests run; hosted figures are coordinator measurements, estimates are labeled design estimates",
-  "implementation_tasks": ["T1 daily_bars store","T2 receipts refs only","T3 snapshot slim","T4 backfill and cleanup","T5 retention sweeper","T6 optional LEAN export","T7 budget check"]
+  "open_operator_decision": "none blocking; read-only points: phase-1 record ceiling 12KB, 14 trading day rollback window",
+  "verification": "docs only; no repo tests run (pytest not installed on worker); measurements are synthetic on worker host and must be repeated on hosted by T3/T10; hosted figures are coordinator measurements",
+  "implementation_tasks": [
+    "T1 keyed partition store + daily_bars",
+    "T2 receipts refs only",
+    "T3 SQLite current record (+T3b journal retire)",
+    "T4 backfill and cleanup",
+    "T5 retention sweeper",
+    "T6 optional LEAN export",
+    "T7 budget check",
+    "T8 warrant exclusion",
+    "T9 other datasets keyed write",
+    "T10 intraday load_bars bench"
+  ],
+  "operator_decisions_2026_11_16": {
+    "A": "snapshot keeps 60 closes; one replaced current record per (symbol,dataset) in SQLite WAL; compat export for e7ec353d6",
+    "B": "warrants not fetched or kept; identified from TWSE ISIN listing category and CFI RW*; collector symbols_filter, connectors, delete set",
+    "C": "follows SD_INTRADAY_MINUTE_BARS_2026-11-11; 5m-60m never stored or snapshotted; load_bars measured",
+    "D": "section 6A one row per remaining dataset"
+  },
+  "measurements_2026_11_16_worker_host_not_hosted": {
+    "sqlite_current_record": "10700 keys, 4.0KB synthetic record; 500-key replace txn max 194ms median 161ms; concurrent reader p99 1.8ms max 12.8ms (16293 reads); file 44MB->47MB after full replace; checkpoint TRUNCATE 5ms",
+    "load_bars_60_sessions": {
+      "50sym_1m": "28.2s (564ms/sym)",
+      "50sym_5m": "18.4s (368ms/sym)",
+      "50sym_15m": "14.6s",
+      "50sym_60m": "13.8s (276ms/sym)",
+      "200sym_5m": "96.9s (484ms/sym)",
+      "200sym_60m": "70.3s (352ms/sym)",
+      "rss_mb": "44-51"
+    },
+    "listing_counts": "TWSE listed: 1058 shares, 7053 warrants; TPEx: 13143 warrants, 898 shares, 119 ETF, 6 ETN, 1 preferred, 4 ABS"
+  }
 }

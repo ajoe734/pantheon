@@ -7,13 +7,17 @@ Operator direction (2026-11-16, verbatim): 過期就刪掉，封存幹嘛? 另�
 
 ## 0. Decisions in one screen
 
-1. **One store of record: `daily_bars`**, one row per (market, symbol, trade_date), partitioned by trade date, written once. Everything else is a pointer or a derived, bounded view.
-2. **The snapshot stops being a window store.** `latest_market_snapshots` keeps only the newest close per (symbol, dataset) plus a pointer (`window_ref`: dataset, symbol, last trade_date). It is a few hundred bytes per key, not 1.5 to 71 KB.
-3. **Every window reader goes through one bounded reader**, `read_close_window(symbol, end_date, n)` / `read_range(symbols, start, end)`, over the date partitions. No reader parses the journal for history.
-4. **Receipts carry references and counts only.** No snapshot body, no per-record list. (Receipt must stay a complete record of what ran; it need not contain the data.)
-5. **Expiry is deletion, not archival.** Invariant 6 covers data source configuration, not market data rows (see section 4). Exactly one copy of what a backtest or a gate proof needs is kept; everything superseded or past retention is deleted.
-6. **Every store has a per-trading-day size and a total bound plus an alarm** (section 6).
-7. **No new heavy dependency.** `pyarrow` is already pinned in `services/source_ingestion/requirements.txt` (`pyarrow>=15,<30`). Parquet files read by pyarrow is the adopted part; DuckDB is an optional reader, not required (section 5).
+Operator decisions of 2026-11-16 (A to D, binding) amend the reviewed head `9db7ccafe`. Principle applied everywhere: **data is not appended after an older copy of itself; the newer version replaces the older one and the same fact is stored once.**
+
+1. **One store of record for history: `daily_bars`**, one row per (market, symbol, trade_date), partitioned by trade date, written once (section 4.1).
+2. **The latest snapshot KEEPS the 60 daily closes per symbol (decision A; reverses the earlier 0.2).** What changes is the storage: exactly one current record per (symbol, dataset) in a SQLite WAL table, replaced in place by the newer version, no superseded versions kept, an unchanged window writes nothing, and the repeated lineage is stored once per record instead of once per close (section 4.2).
+3. **Window readers** read the 60-close current record by key for the newest window (one key read) and go through the bounded date-partition reader (`read_close_window` / `read_range`) for anything beyond 60 closes or any date range (section 5).
+4. **Receipts carry references and counts only.**
+5. **Expiry is deletion, not archival** for data that is superseded or past retention. Daily bars of delisted ordinary shares are kept (survivorship). **Warrants are neither fetched nor kept (decision B)**; they are identified from the exchange listing, not from a symbol pattern (section 4.3).
+6. **Frequencies other than daily (decision C):** this design follows `SD_INTRADAY_MINUTE_BARS_2026-11-11.md` in full; 1-minute bars are stored once, 5m to 60m are derived on read and never stored or snapshotted; measured latency and a bounded derived cache rule are in section 5.3.
+7. **Every other persisted dataset gets the same rule (decision D)**, one row each in section 6A.
+8. **Every store has a per-trading-day size, a total bound and an alarm** (section 6).
+9. **No new heavy dependency.** `pyarrow` is already pinned (`pyarrow>=15,<30`) for the Parquet part; SQLite is the Python standard library for the current-record part.
 
 ## 1. Correction to the coordinator finding (read before implementing)
 
@@ -51,6 +55,8 @@ Sizes use the coordinator's hosted measurements of 2026-11-16 (stack e7ec353d6) 
 
 (F and H sizes are "not measured"; they are listed so the migration does not miss them.)
 
+Note on row D (read from `requirement_state.py` on this branch): each point repeats `source_id`, `connector_id`, `market`, `event_time`, `content_ref`, `ingest_run_id`; the line also stores the derived `closes` and `lineage` lists and `snapshot_id`; `calendar_evidence` is one object per line. The hosted 71 KB per line is the coordinator's measurement; M3 splits it into those parts. Row D2: the `tw_price_1m` snapshot lines written by `intraday_snapshot_projection` (section 5.3).
+
 ### 2.2 Copy count of one close
 
 - **Two year backfill (one close, one run):** A + B + (C) + D (rewritten once per batch that touches that symbol, so up to the number of batches that carry that symbol; a symbol history split over N batches rewrites its line N times) + E (about 30 KB, bigger than all other copies together) + F. That is **5 persisted copies, 6 with features**, and the one in E is the largest. Re-running the backfill adds another A and B.
@@ -72,10 +78,10 @@ Hosted facts that follow: D is 171 MB live but 6411 to 6500 of about 17200 live 
 
 | Later addition | Verdict | Reason |
 |---|---|---|
-| Latest market snapshot journal | **Departs from 4.5 in the window part; follows it for the newest-close part.** 4.5 says normalized data is stored by source, dataset, date. A 60 day window inside a mutable per-symbol line is a second store of normalized rows. | Replace by pointer plus newest close. |
+| Latest market snapshot journal | **Departs from 4.5 in the storage mechanism only.** 4.5 says normalized data is stored by source, dataset, date. Operator decision A keeps the 60-close window in the snapshot, so the window stays as a derived current record, one per (symbol, dataset), replaced in place; the append-then-compact journal is what departs (append after an older copy). | Replace the journal with one replaced record per key (section 4.2); lineage stored once per record. |
 | Ingest receipts carrying snapshot bodies | **Departs.** 4.5 puts data in raw/normalized with `raw_ref`; tw_broker_top already uses `raw_ref` and `ingest_run_id` references. A receipt body is a third copy. | Receipts carry refs and counts. |
 | Per point lineage and calendar evidence (about 1.2 KB per close) | **Departs from "compact normalized table" (4.5) and invariant 7 is satisfied but wastefully.** Invariant 7 asks for evidence lineage, not a copy per point. | Lineage is stored once per (run, partition) and per (trade_date, calendar) and referenced by id from the bar row. |
-| Collector two year backfill of every listed and delisted symbol | **Departs from 4.4 for the live/warrant part; follows it for delisted shares.** 4.4: no full-market full-depth for every dataset every day; archive_universe keeps "daily price and material events only". A one-off history backfill is allowed; rewriting it every day is not. | Delisted shares keep daily history (survivorship, see SCREEN-SURVIVORSHIP-ATTESTATION-20261115, TW-SUSPENSION-HOLIDAYS-INTAKE-20261115). Warrants are an operator decision. |
+| Collector two year backfill of every listed and delisted symbol | **Departs from 4.4 for the warrant part (excluded); follows it for delisted shares.** 4.4: no full-market full-depth for every dataset every day; archive_universe keeps "daily price and material events only". A one-off history backfill is allowed; rewriting it every day is not. | Delisted shares keep daily history (survivorship, see SCREEN-SURVIVORSHIP-ATTESTATION-20261115, TW-SUSPENSION-HOLIDAYS-INTAKE-20261115). Warrants are not fetched or kept (decision B, section 4.3). |
 | Invariant 6 ("Hard delete is exceptional; retire is the default") | **Does not apply to market data rows.** It sits in the product-object list (invariants 1 to 5 are about data source and seed source objects, section 4.6 lifecycle). Retire/archive applies to a data source configuration, not to bars. | Operator direction; see section 4. |
 
 ## 4. Target and expiry
@@ -92,25 +98,87 @@ Row: `market, symbol, trade_date, open, high, low, close, volume, adjusted flag,
 
 `trade_date` is required and comes from the record's trading date; a record without one is rejected to a dead-letter count, never filed under the ingest day.
 
-### 4.2 Snapshot after the change
+### 4.2 The latest snapshot keeps 60 closes, stored as one replaced record (decision A)
 
-`latest_market_snapshots` line per (symbol, dataset): `symbol, dataset, last_trade_date, close, event_time, source/lineage summary for that one close, window_ref`. About 0.5 KB, rewritten only when a newer trade date arrives. The endpoint `GET /api/source-ingest/snapshots/latest?symbol=` keeps its response shape; `closes` is filled by the bounded reader for the requested `n` (default 60) so existing consumers keep working while they are migrated (rollout rule in section 7).
+Requirement (operator): the latest market snapshot still holds the last 60 daily closes per symbol. Exactly one current record per (symbol, dataset); a newer version replaces it; superseded versions are not kept; an unchanged window writes nothing.
 
-### 4.3 Expiry rules (deletion, not archive)
+**Why the current journal cannot satisfy this.** `LatestMarketSnapshotStore` (`requirement_state.py`) appends a whole new line to `latest_market_snapshots.jsonl` and leaves the older line in place until `_compact_journal_in_place` rewrites the file under an exclusive `flock`. Between appends there are always N superseded copies; compaction is a whole-file rewrite (hosted 171 MB live) and it blocks every reader and writer for its whole duration (on 2026-11-16 it held the lock long enough to fail one controller tick). That is append-after-older-copy by construction, so the mechanism changes, not only the line size.
+
+**Mechanism: a SQLite table in WAL mode (Python standard library, no new dependency).**
+
+```
+market_snapshot_current(symbol, dataset, last_trade_date, window_digest, body BLOB, observed_at,
+                        PRIMARY KEY (symbol, dataset)) WITHOUT ROWID
+snapshot_dict(kind, id, value)      # source_id / connector_id / market / ingest_run_id / calendar_evidence digest, stored once
+pragma journal_mode=WAL; synchronous=FULL; auto_vacuum=INCREMENTAL; busy_timeout=2000
+```
+
+- **Replace, not append.** One `INSERT ... ON CONFLICT(symbol,dataset) DO UPDATE ... WHERE window_digest <> excluded.window_digest`. Pages of the old version are reused; no superseded copy exists after commit. `window_digest` is the sha256 of the canonical window; an equal digest changes no row (an unchanged window writes nothing; the existing "prior.points == candidate.points" short-circuit in `append_normalized_records` becomes this predicate).
+- **Crash safety.** One transaction per ingest batch (about 500 symbols). SQLite WAL with `synchronous=FULL` gives all-or-nothing commit: a kill before commit leaves the previous complete state, a power loss is recovered from the WAL on open. There is no multi-step in-place rewrite, so there is no intermediate state to reason about (the four-step in-place compaction is deleted). Withdrawals (`withdraw_sessions`) become a transaction on the same row.
+- **Space.** `auto_vacuum=INCREMENTAL`; after commit the writer runs `incremental_vacuum(200)` in bounded steps, so the file stays within about 1.1x of live bytes. No whole-file compaction exists any more.
+- **No lock held across a long operation.** Readers in WAL mode never wait for the writer (they read the last committed snapshot). The only blocking is writer versus writer, capped by `busy_timeout` 2 s then a retryable error (source-ingest has one writer process behind `process_lock.py`).
+
+**Measured on this worker host (not hosted), 2026-11-16, synthetic records of 4.0 KB, 10,700 keys.** Load 10,700 keys in 21 batches of 500: 3.0 s, file 44 MB. Then replace all 10,700 keys with new versions (the daily full replacement) while a second thread reads random keys: write transaction of 500 keys max 194 ms (median 161 ms, includes building the blobs in Python), concurrent reader p99 1.8 ms and max 12.8 ms over 16,293 reads, file 44 MB to 47 MB (no growth from the replacement), `wal_checkpoint(TRUNCATE)` 5 ms; a batch whose digests are unchanged wrote no rows (123 ms to evaluate 500). The hosted-shaped acceptance test in T3 must repeat this with real-size records on the hosted host.
+
+**Longest block (the bound T3 must prove).** Reader: 0 ms wait on a writer (WAL), single key read p99 <= 10 ms. Writer: transaction of one 500-record batch <= 250 ms p99 (measured max 194 ms above); a second writer waits at most 2 s and then gets a retryable error (no tick failure; the controller retries next tick). Maintenance step (incremental vacuum): <= 50 ms per step. Compare today: the exclusive lock covers the whole 171 MB rewrite (seconds to tens of seconds). T3 asserts these bounds with a test that runs a reader loop during a full 10,700-key replacement and fails if any reader call exceeds 100 ms.
+
+**Size of one 60-close record.** Today about 71 KB (coordinator measurement; hosted line, not visible from this branch). Reading the code, the repetition per close is: each of the 60 `points` repeats `source_id`, `connector_id`, `market`, a 25-character `event_time`, a `content_ref` and an `ingest_run_id`; the line then repeats the same information again in the derived `closes` array and in the derived `lineage` lists (`content_refs`, `ingest_run_ids` hold all 60 values a second time); `snapshot_id` is also derived. `calendar_evidence` is one object per line in the code, not per close, so the "calendar evidence repeats per close" claim must be confirmed by measurement M3 before it is relied on. The 60 closes are kept; the repetition is removed like this:
+
+| Removed repetition | How | Reader effect |
+|---|---|---|
+| `closes` array and `lineage` aggregate lists | not stored; they are properties computed from the points (they already are properties in `LatestMarketSnapshot`) | none |
+| `source_id`, `connector_id`, `market` repeated in 60 points | stored once per record in the header (or as a dictionary id when a record mixes sources) | none |
+| `ingest_run_id` per point | dictionary id per distinct run in the record | none |
+| 25 character `event_time` per point | `trade_date` (10 chars) plus the fixed session time rule; the public form is rebuilt on read | none |
+| `calendar_evidence` | stored once per distinct digest in `snapshot_dict`, referenced by id (same evidence object for all symbols of one day) | none |
+| `content_ref` per point | phase 1: kept per close; phase 2 (after T1): replaced by the pointer (symbol, trade_date) into `daily_bars`, whose row carries the `content_hash` / `lineage_ref` | none |
+
+`GET /api/source-ingest/snapshots/latest` returns the same JSON (`closes`, `lineage`, `points`, `snapshot_id`, `calendar_evidence`), rebuilt from the compact record; `snapshot_id` is computed on the rebuilt canonical form and must equal the journal's value for the same data (a T3 test compares both on 10,700 keys). Design estimate of the record: about 4 KB with a 32 hex `content_ref` per close (my synthetic record above); with the real `content_ref` length and lineage dictionary the target is **<= 12 KB per record in phase 1 and <= 4 KB in phase 2**, versus 71 KB today. T3 reports the measured value on a copy of the hosted journal.
+
+**Total live size at hosted volume.** Keys after the sweeps (delisted symbol keys, warrant keys): at most about 10,700 live keys today, expected about 6,000 after warrant keys are deleted (M5 measures). Phase 1: 10,700 x 12 KB = 128 MB hard ceiling (expected 6,000 x about 8 KB = about 50 MB). Phase 2: 10,700 x 4 KB = 43 MB ceiling. Absolute ceiling if every one of the 17,200 historical keys were live: 17,200 x 12 KB = 206 MB, below today's 171 MB live plus 2x superseded copies. The 60 close values are stored twice (current record and `daily_bars`), bounded at 60 x 16 bytes per key; the lineage is stored once.
+
+**How the previous hosted reader (e7ec353d6) keeps working during rollout and rollback.** The previous reader is the older service image reading `latest_market_snapshots.jsonl` in its own format. Rule: until the rollback window closes, a **compat export** keeps that file valid, without ever appending after an older copy:
+
+1. Phase S0 (shadow): the writer commits to SQLite first, then keeps appending to the journal exactly as today. Both stores are current; the reader still reads the journal. Nothing changes for the old image.
+2. Phase S1 (switch, flag `MARKET_SNAPSHOT_STORE=journal|dual|sqlite`, default `journal`): `dual` reads SQLite and compares with the journal on every read of the controller path, logging mismatches (target 0 over 5 trading days); `sqlite` reads SQLite only. Rolling back is setting the flag back (same image).
+3. Phase S2 (journal stops being appended): once S1 shows 0 mismatches, the writer stops appending. A **compat exporter** streams the SQLite table in one read transaction to `latest_market_snapshots.jsonl.tmp` (one fat-format line per key, one version per key), fsyncs, and renames over the old path (atomic; the old reader detects the new inode through its signature check and reloads). It runs after each completed daily ingest and at most once per hour, never under a lock that blocks the writer. The old file is kept as `.prev` for one run.
+4. Rollback to the old image at any point: the exported journal is a complete, valid one-line-per-key journal in the old format, at most one export interval stale (daily data changes once per trading day). Phase S2 ends after 14 trading days without rollback; the exporter and the journal file are then deleted (T3b).
+
+**Sweeper.** Keys whose symbol is delisted (listing source) and has no close for 10 trading days, or which are warrants, are deleted from `market_snapshot_current` in one transaction; the bars remain in `daily_bars`.
+
+### 4.3 Expiry rules (deletion, not archive) and warrants (decision B)
 
 | Data | Rule | Enforced by |
 |---|---|---|
-| Daily bars of **delisted shares** | **Kept** (the only copy a backtest and the survivorship gate proof need); frozen, never rewritten | partition immutability; no delete |
-| Daily bars of live symbols | keep `retention_days` (2555 for prices) then delete the partition | retention sweeper (T5) |
-| Snapshot lines of delisted or expired symbols | **deleted** (the bars remain in daily_bars) | T3 sweeper, at the first run after the symbol has no close for 10 trading days and is marked delisted by the calendar/listing source |
-| Superseded snapshot versions in the journal | deleted by compaction (already exists; keep) | `LatestMarketSnapshotStore.compact` |
-| Snapshot bodies inside receipts | deleted (rewritten out during receipt migration); future receipts never contain them | T2 |
-| Raw and normalized run files (A, B, C) after daily_bars verified | deleted after a verification window (default 30 days) | T4 |
-| Partitions past `retention_days` | deleted | T5 |
-| Lineage records of deleted partitions | deleted with them; lineage of kept bars is kept | T5 |
-| Gate proof or lineage references | A bar referenced by a gate proof / paper session evidence is not past retention by definition: its `lineage_ref` and partition are pinned (`pin` list in manifest) | T5 test |
+| Daily bars of **delisted ordinary shares** | **Kept**, frozen, never rewritten (backtest and survivorship proof need them) | partition immutability; no delete |
+| Daily bars of live symbols | keep `retention_days` (2555 for prices), then delete the partition | retention sweeper (T5) |
+| Current-record rows of delisted or expired symbols and of warrants | **deleted** (bars of delisted shares stay in `daily_bars`) | T3 sweeper |
+| Superseded snapshot versions | do not exist (replace in place); the old journal's superseded lines disappear with the journal | T3 |
+| Snapshot bodies inside receipts | deleted by receipt migration; future receipts never carry them | T2 |
+| Raw and normalized run files (A, B, C) after `daily_bars` verified | deleted after a verification window (default 30 days) | T4 |
+| Partitions past `retention_days`; lineage of deleted partitions | deleted; lineage of kept bars kept | T5 |
+| A bar referenced by a gate proof / paper session evidence | its partition is pinned in the manifest and not past retention by definition | T5 test |
 
-"Expired warrants" (TPEx warrants, about 6400 live-symbol keys without a close after 2024-12 are mostly these plus delisted shares): **operator decision.** None of the three trading personas uses warrants today. Options and cost (design estimate, M5/M7 to confirm): (a) do not fetch or keep warrants: saves about 4 to 5 million of the 8.6 million two-year closes (roughly half the store) and the collector time for them; (b) fetch, keep only while listed, delete at expiry: bounded, small steady cost; (c) keep forever: about +350 MB per 2 years columnar and un-bounded growth. Recommendation: (a) until a strategy or gate declares a warrant dependency, and delete existing warrant keys from D and the market store once the operator approves.
+**Warrants: not fetched, not kept (option (a) decided).**
+
+*How a warrant is identified (authoritative source, not a symbol pattern).* The exchange security listing. I read the TWSE ISIN listing pages on 2026-11-16 (`https://isin.twse.com.tw/isin/C_public.jsp?strMode=2` for listed, `strMode=4` for TPEx; both updated 2026/11/16). Each page groups rows under a category header and carries a CFI code column. Counts that day:
+
+| Page | Category header | Rows | CFI code |
+|---|---|---|---|
+| TWSE (listed) | 股票 | 1,058 | ESVUFR (1,057), ESVTFR (1) |
+| TWSE (listed) | 上市認購(售)權證 | 7,053 | RWSCCA, RWSCCE, RWSCPE |
+| TPEx | 上櫃認購(售)權證 | 13,143 | RWSCCA, RWSCCE, RWSCPE |
+| TPEx | ETF / ETN / 股票 / 特別股 / 受益證券 | 119 / 6 / 898 / 1 / 4 | CE..., CM..., ESVUFR, EP..., DA... |
+
+So warrants are the rows under the warrant category headers with CFI code starting `RW`; today's listings hold 20,196 warrants against about 2,100 shares, ETFs and ETNs. A `listing_allowlist` (symbol, venue, category, cfi, first_seen, last_seen) is built from these two pages once per trading day, and a symbol is a warrant if and only if the listing says so. The symbol shape (the collector's `WARRANT_SYMBOL_RE = ^0[3-8]\d{3}[0-9A-Za-z]$` in `deploy/collector/collector_stack/spiders.py`, used by the suspension spider) is **not** an identification rule and is retired in favour of the listing lookup. If the listing cannot be fetched or parsed (header or column change), the allowlist is not replaced, the previous one is used for at most 3 trading days, and after that collection of price rows fails closed with `listing_unavailable` (nothing is guessed).
+
+*Where collection stops.*
+
+1. **Collector fetch policy** (`deploy/collector/fetch-policy.json` and spiders): `TwsePriceHistorySpider` and `TpexPriceHistorySpider` already accept `symbols_filter` (the `allowed_symbols` set); today they admit any `[0-9A-Za-z]{4,6}` code, which includes six-character warrant codes. The runner passes the listing allowlist (category not warrant) as `symbols_filter`, and the fetch policy records `warrants: excluded` and the allowlist date. The T86 spider and the suspension spider use the same filter. The two paused price-history sources are re-enabled only with this filter active.
+2. **Hosted connectors**: `taiwan_official.py` / `provider_adapters.py` (`tw_price_daily` from the per-date all-stock pages), the FinMind adapters (`finmind_taiwan.py`, only active-universe symbols) and `active_universe.py` apply the same allowlist at record creation; a record whose symbol is not in the allowlist is not stored and is counted in the run summary as `excluded_non_share_count` (so a reviewer sees the exclusion, nothing disappears silently).
+3. **Pipeline guard**: `MarketDataStorageWriter.write_run` rejects a price record whose symbol is not in the allowlist (defence in depth, same counter).
+
+*Deletion of existing warrant keys from every store.* The delete set is computed once and reported before deleting: every symbol that the listing marks as warrant today, plus every symbol that is in no stock/ETF listing, was never in the `ordinary_share_registry` (all symbols ever listed as share, built from the daily listing snapshots; for the history before the first snapshot it is seeded from the symbols that the stored all-market official captures, the same evidence `survivorship_attestation.py` uses, show with a share-category row; `survivorship_attestation.py` itself holds no delisted list), and is not a pinned symbol. A symbol shaped like an ordinary share (four digits) is never in the automatic delete set, it goes to a review list. Stores cleaned: `market_snapshot_current` (and the old journal until it is removed), `market_data_store` raw and normalized partitions (T4 cleanup rewrites partitions without those rows), `daily_bars`, features, source_evidence and distillation rows, receipt journal (already bodies-free after T2), BFF/Agora projections (they read through the endpoint, so they follow), and the collector bundle store on the collector host (raw warrant rows older than `raw_retention_days` expire by the existing 90-day rule; T8 deletes the remainder). Daily bars of delisted ordinary shares stay.
 
 ## 5. Readers and the one bounded reader
 
@@ -130,95 +198,156 @@ Decision: Hive-style date partitions of Parquet, read through a small `daily_bar
 
 ### 5.2 Per reader
 
-Read latency estimates at hosted volume (17200 symbols; 60 partitions of about 0.7 MB; design estimates, to be measured by the T1/T4 hosted-shaped benchmark; target p95 shown).
+The newest 60-close window is one key read of `market_snapshot_current`; anything beyond 60 closes or any date range goes through the date-partition reader. Latency figures for the partition reader are design estimates (17,200 symbols; 60 partitions of about 0.7 MB) to be measured by the T1 hosted-shaped benchmark; the current-record figures are bounded by the measurement in section 4.2.
 
 | Reader | Today | Target | p95 target |
 |---|---|---|---|
-| `services/execution/lean_runtime/paper_signal_producer.py` (`recent_closes`, pool market inputs) | closes from binding metadata / `/snapshots/latest` | endpoint answers from the reader for the bound symbols (pool, <= 50 symbols): 60 partitions, symbol filter | <= 150 ms per call, one call per pool tick |
-| `services/execution/market_snapshot_admission.py` | needs newest close, event time, lineage validity | reads the snapshot newest-close line only (0.5 KB), no window | <= 5 ms |
-| `services/registry/portfolio_envelope.py` (`closes` argument) | window supplied by caller from snapshot | caller gets it from the reader; module stays pure | n/a (pure); caller <= 150 ms |
-| `services/execution/lean_runtime/performance_telemetry.py` (`MarketMark` from `snapshots/latest`) | newest close | newest close from snapshot line | <= 5 ms per symbol |
-| `scripts/deploy_nonprod_vm.sh` bounded refresh preflight (reads `closes` of one symbol) | snapshot `closes` | same endpoint, reader behind it; preflight asks `n=60` for one symbol | <= 100 ms |
+| `services/execution/lean_runtime/paper_signal_producer.py` (`recent_closes`, pool market inputs) | closes from binding metadata / `/snapshots/latest` | endpoint answers the 60-close window from the current record for the bound symbols (pool, <= 50 symbols): 50 key reads | <= 100 ms per call, one call per pool tick |
+| `services/execution/market_snapshot_admission.py` | newest close, event time, lineage validity | same current record (no window parse beyond the last point) | <= 10 ms |
+| `services/registry/portfolio_envelope.py` (`closes` argument) | window supplied by caller from snapshot | caller gets the window from the endpoint; module stays pure | caller <= 100 ms |
+| `services/execution/lean_runtime/performance_telemetry.py` (`MarketMark`) | newest close | current record | <= 10 ms per symbol |
+| `scripts/deploy_nonprod_vm.sh` bounded refresh preflight (`closes` of one symbol) | snapshot `closes` | same endpoint | <= 100 ms |
 | `scripts/run_isolated_l12_runtime_e2e.py` (2330.TW `closes`) | snapshot `closes` | same endpoint | <= 100 ms |
-| Gate and pool datasets, backtests (date range) | scan journal / partitions | `read_range` with caps | 2 years x 1 symbol <= 500 ms; 500 symbols x 250 days <= 3 s |
-| BFF and Agora projections | pass through source-ingest endpoints (BFF does not read volumes, section 4.4 note) | unchanged; endpoint is the single reader | unchanged |
+| Gate and pool datasets, backtests (date range, more than 60 closes) | scan journal / partitions | `read_range` over `daily_bars` with caps | 2 years x 1 symbol <= 500 ms; 500 symbols x 250 days <= 3 s |
+| BFF and Agora projections | pass through source-ingest endpoints | unchanged; the endpoint is the single reader | unchanged |
 
-Hosted-shaped acceptance (not a three symbol fixture): 17200 symbols x 500 trading days x row-groups of 4000 rows, generated, with 6500 dead symbols.
+Hosted-shaped acceptance (not a three symbol fixture): 17,200 symbols x 500 trading days x row-groups of 4,000 rows, generated, with 6,500 dead symbols; and 10,700 current records at real size.
+
+### 5.3 Frequencies other than daily (decision C): follow or depart
+
+I read `SD_INTRADAY_MINUTE_BARS_2026-11-11.md` (operator decision 2026-11-11) first. **Verdict: follow, on all four points; depart on nothing.**
+
+| Point of the 2026-11-11 decision | Verdict | Where it is true in the code today |
+|---|---|---|
+| 1-minute bars stored once per (symbol, session_date, bar_start) in `tw_price_1m` | **Follows.** | `IntradayStore.put_symbol_day` (`intraday_store.py`): an identical re-fetch is a no-op, differing content for an existing key quarantines the day instead of overwriting; layout `normalized/tw_price_1m/<session_date>/<symbol>.jsonl.gz` plus a day manifest. |
+| 5m / 15m / 30m / 60m derived on read, never stored as their own dataset | **Follows.** | `services/research/intraday_bars.py` `aggregate_session` / `load_bars` read reconciled `tw_price_1m` shards only. |
+| Daily truth is never derived from minute bars | **Follows.** | `pipeline.persist_latest_market_snapshots` excludes minute records permanently (`is_minute_bar_record`); reconciliation reads `tw_price_daily` and never writes it. |
+| Minute data never in `tw_price_daily` | **Follows.** | same exclusion. |
+
+**Inventory: what the snapshot store holds for intraday datasets today.**
+
+| Dataset | Written to the snapshot store today? | Rule and size bound in the target |
+|---|---|---|
+| `tw_price_1m` | Yes, by `intraday_snapshot_projection.project_reconciled_minute_snapshots`, the only writer (pass days only). A record holds the last `max_closes` = 60 **minute** closes of the latest reconciled session per active-universe symbol. | **Kept, bounded, one current record per (symbol, `tw_price_1m`)** in the same SQLite table, replaced when a newer reconciled session passes; it is a derived pointer of the `IntradayStore` shard (the store of record), not a second copy of history. Bound: <= 4 KB per record, <= 200 symbols (active universe) = <= 1 MB; the projection withdraws a day that is no longer a clean pass (existing `withdraw_sessions`, becomes a delete/replace of the row). |
+| `tw_price_5m`, `tw_price_15m`, `tw_price_30m`, `tw_price_60m` | **Never written.** No writer exists: `requirement_state.py` only admits those names in `_FREQUENCY_SNAPSHOT_DATASETS` so a `frequency=` query validates. | **Never written, enforced:** T3 makes the writer refuse these dataset names and the endpoint answer `not_stored_derive_on_read` for them; derived bars come from `load_bars`. Size bound 0 bytes. |
+| `tw_price_1m` shards (`IntradayStore`) | n/a (store of record) | Budget from the 2026-11-11 design: about 1.5 GB steady, 3 GB budget at 200 symbols and 2 years; rolling 2-year retention enforced by its manifest-driven pruner; hosted free space still measured by K2. Not changed by this design. |
+
+**Measured read plus aggregation latency of `load_bars`, 2026-11-16, worker host (not hosted), single thread, real `IntradayStore` and `reconcile_day` on generated sessions** (271 bars per session as in the intraday design; synthetic constant prices, so gzip shards are smaller than real ones and the read cost is a floor). 60 sessions per symbol, every session reconciled; the script builds the store with `put_symbol_day` and `reconcile_day`, then calls `load_bars` per symbol:
+
+| Symbols x sessions | Frequency | Total | Per symbol (60 sessions) | Bars returned |
+|---|---|---|---|---|
+| 50 x 60 | 1m | 28.2 s | 564 ms | 813,000 |
+| 50 x 60 | 5m | 18.4 s | 368 ms | 162,000 |
+| 50 x 60 | 15m | 14.6 s | 292 ms | 54,000 |
+| 50 x 60 | 60m | 13.8 s | 276 ms | 15,000 |
+| 200 x 60 | 5m | 96.9 s | 484 ms | 648,000 |
+| 200 x 60 | 60m | 70.3 s | 352 ms | 60,000 |
+
+Peak RSS 44 to 51 MB. The cost is linear in symbols and sessions and is dominated by per-file sha256 verification, gzip and JSON parsing and object construction, not by the aggregation (60m is 2x cheaper than 1m only because fewer `Bar` objects are built). Store build for 200 x 60: 291 s, 24,060 files, 43 MB.
+
+**Bound.** `load_bars` is called per symbol with at most 60 sessions: bound **<= 1.0 s per symbol per 60 sessions** (measured 0.28 to 0.56 s) and **<= 60 s for a 200-symbol, 60-session backfill-style read** (measured 70 to 97 s: this misses the bound for 200 symbols). The named consumers: (1) the next-session paper decision (K7) reads a pool of at most 50 symbols once per day in the window between reconciliation and 08:55; 14 to 28 s meets it with a large margin; (2) intraday replay/replication (K5/K6) reads one symbol for up to 60 sessions per run: 0.3 to 0.6 s, meets it; (3) a universe-wide intraday screen over 200 symbols x 60 sessions cannot meet 60 s with on-read aggregation (70 to 97 s). For consumer (3) and for any repeated read of the same window (evolution search re-running candidates), the design specifies a **bounded derived cache, not a second store of record**: key (symbol, session_date, frequency, `shard_sha256` from the day manifest); value the aggregated bars of that one session; invalidation by key (a changed or re-admitted shard has a new `shard_sha256`, so the old entry is never hit; waived or quarantined days are never cached); size cap 512 MB LRU, in a cache directory outside the store, deleted freely, rebuilt from `tw_price_1m` at any time, never read by anything that needs a record of truth; hit-rate and size reported in health. The cache is built only if T10's benchmark on hosted shows a named consumer over its bound; otherwise it is not built.
 
 ## 6. Growth budget
 
-Volume: 17200 symbols (about 10700 live), two years (about 500 trading days), collector batches of about 500 records. Estimates are design targets, to be replaced with measured values in T1.
+Volume: 17,200 symbols (about 10,700 live before the warrant deletion; expected about 6,000 after, M5), two years (about 500 trading days), collector batches of about 500 records. Estimates are design targets, replaced with measured values in each task.
 
 | Store | Size per trading day | Total bound | Alarm |
 |---|---|---|---|
-| `daily_bars` (live + delisted) | <= 1.2 MB (17200 x about 60 B compressed, with margin) | <= 1.0 GB at 2 years; delisted history grows only with delistings | alarm if a day exceeds 2 MB or total exceeds 1.5 GB |
-| `lineage` | <= 0.3 MB (calendar evidence once per day, run refs once per run) | <= 150 MB | alarm at 1.5x |
-| `latest_market_snapshots` | rewrites only keys with a newer date: <= 10700 x 0.5 KB = 5.4 MB per day written | live <= 10 MB (about 17200 x 0.5 KB = 8.6 MB); file <= 3x live (existing compaction) = 30 MB | alarm if live bytes > 15 MB or any line > 4 KB |
-| `ingest_schedule.jsonl` receipts | about 35 batches per day x <= 8 KB = <= 0.3 MB; no line > 16 KB | <= 200 MB for retained receipts (retention by count of days, default 30) | alarm if any receipt line > 16 KB, or file growth > 5 MB per hour |
-| raw/normalized run files (transition only) | same as today until T4 | removed by T4 after verification window | alarm if still present 60 days after T4 |
-| source_evidence, distillation | target: no per-close evidence row; one evidence item per run (about 35 per day) | <= 50 MB | alarm at 2x of M4 baseline |
-| in-memory receipt replay | n/a | source-ingest RSS bound set from M6 (target < 1 GiB for receipt store) | alarm on RSS above bound |
+| `daily_bars` (shares, ETFs; live + delisted) | <= 1.2 MB (17,200 x about 60 B compressed, with margin; falls with the warrant exclusion) | <= 1.0 GB at 2 years; delisted history grows only with delistings | day > 2 MB or total > 1.5 GB |
+| `lineage` | <= 0.3 MB (calendar evidence once per day, run refs once per run) | <= 150 MB | 1.5x |
+| `market_snapshot_current` (SQLite, 60 closes per key) | rows replaced only for keys with a newer window: <= 10,700 x 12 KB = 128 MB written per day in the worst case (expected 6,000 x 8 KB = 48 MB); no growth of the file from replacement | live <= 128 MB phase 1, <= 43 MB phase 2 (ceiling 206 MB if all 17,200 keys were live); file <= 1.1x live; WAL <= 64 MB | any record > 16 KB, live bytes > ceiling, file > 1.3x live, writer transaction > 500 ms, reader call > 100 ms |
+| compat journal export (phase S2 only) | one file rewrite per daily ingest, at most hourly | <= 1x live in the old format (<= 171 MB, today's size) | exists 14 trading days after S2 starts |
+| `ingest_schedule.jsonl` receipts | about 35 batches per day x <= 8 KB = <= 0.3 MB; no line > 16 KB | <= 200 MB for retained receipts (30 days) | any line > 16 KB, or growth > 5 MB per hour |
+| raw/normalized run files (transition only) | as today until T4 | removed by T4 after the verification window | still present 60 days after T4 |
+| `listing_allowlist` + `ordinary_share_registry` (new, section 4.3) | <= 0.2 MB per day (about 2,100 rows), replaced by the newest listing; the registry only gains symbols | <= 5 MB | listing older than 3 trading days |
+| `tw_price_1m` shards (IntradayStore) | per the 2026-11-11 design (200 symbols x 271 bars) | about 1.5 GB steady, 3 GB budget | per that design |
+| source_evidence, distillation | no per-close evidence row; one evidence item per run (about 35 per day) | <= 50 MB | 2x of the M4 baseline |
+| in-memory receipt replay | n/a | RSS bound from M6 (target < 1 GiB) | RSS above bound |
+| other datasets | section 6A, one row each | section 6A | section 6A |
 
-Review check for each later implementation PR: the PR evidence must include (1) the budget table row for each store it touches with the measured value on hosted-shaped data, (2) a test that fails when the per-day or per-line limit is exceeded (budget test is an assertion on bytes, not a log line), (3) the alarm name and where it is emitted (source-ingest health payload field, so Ops can see it), and (4) a statement of which stores the PR does not touch. A reviewer rejects a PR that adds a store without a row.
+Review check for each later implementation PR: the PR evidence must include (1) the budget row for each store it touches with the measured value on hosted-shaped data, (2) a test that fails when the per-day or per-record limit is exceeded (an assertion on bytes, not a log line), (3) the alarm name and where it is emitted (source-ingest health payload field, so Ops can see it), and (4) a statement of which stores the PR does not touch. A reviewer rejects a PR that adds a store without a row. T7 turns the table into `scripts/check_market_data_budget.py`.
+
+## 6A. Every other persisted dataset (decision D)
+
+Same rule as `tw_price_daily`: the key is unique, a newer version replaces the older one (partition replace by manifest swap for date partitions; row replace for current records), an unchanged re-run writes nothing, and nothing is appended after an older copy of the same key. **Evidence on what exists today:** every dataset below is written by the same generic `MarketDataStorageWriter.write_run` (`services/source_ingestion/market_data_storage.py`), which appends one `<ingest_run_id>.jsonl` file per (dataset, date) with no key check; so none of them satisfies the rule at key level today, and this is the same defect as section 1, not a per-dataset one. The measurement M2 is run per dataset (files per partition, duplicate share) before T9 touches it. Keys and sizes below are read from the connector definitions and spiders and are design estimates where marked; no new store is invented: T1's keyed partition writer takes a per-dataset key declaration.
+
+| Dataset | Unique key | Write rule | Retention | Growth budget per trading day (design estimate) | Readers |
+|---|---|---|---|---|---|
+| `tw_index_daily` | (index_code, trade_date) | partition replace by key | 2555 d (like prices) | <= 0.1 MB (about 40 indices) | regime evaluator (`registry/regime/evaluator.py`, `research/regime/features.py`), BFF/Agora projections |
+| `tw_index_ohlc_daily` | (index_code, trade_date) | same | 2555 d | <= 0.1 MB | collector bundle reader, regime features |
+| `tw_market_breadth_daily` | (market, trade_date) | same (one row per market per day) | 2555 d | <= 10 KB | regime features, `feature_catalogue.py` |
+| `tw_institutional_flow` | (symbol, trade_date, investor_class) | same | 2555 d | <= 0.3 MB columnar (about 1,900 shares x 3 classes; raw JSON about 3 MB today) | `registry/factor_rule.py`, `registry/sector_features.py` |
+| `tw_margin_short_balance` | (symbol, trade_date) | same | 2555 d | <= 0.2 MB | feature catalogue, factor rules |
+| `tw_broker_top` | (symbol, trade_date, rank) | same; already carries `raw_ref` and `ingest_run_id` by reference (the one dataset already close to the rule; verify with M2) | 750 d | <= 0.2 MB for the active universe (200 symbols x 15 brokers) | `data-plane/taiwan_reference.py`, personas service |
+| `tw_broker_branch_detail` | (symbol, trade_date, broker_id, branch_id) | same; active-universe core tier only, per-symbol-per-date requests (FinMind) | 250 d (large) | bounded by tier: <= 5 MB until measured; T9 measures first (`finmind_broker_backfill.py`) | broker features |
+| `taifex_ssf_contracts` | (contract_id, trade_date) | same | 750 d | <= 0.1 MB | `data-plane/models/contract_master.py`, universe |
+| `taifex_tx_daily` | (contract_id, trade_date) | same (TX and MTX, a few rows per day) | 2555 d | <= 10 KB | regime / futures features |
+| `tw_macro_series` | (series_code, period) | row replace by key (a revised value replaces the old one, the old value is not kept) | no expiry (tiny) | <= 10 KB | feature catalogue, scheduler |
+| `tw_community_daily` | (symbol, trade_date, platform) | derived from `collector_social_posts`; replace by key | 180 d | <= 0.2 MB | feature catalogue |
+| collector news / social / paper datasets (`collector_news`, `collector_social_posts`, papers) | content hash of the item (url, published_at, body hash) | write once per hash; a re-fetch with the same hash writes nothing; changed content replaces (edit) | `raw_retention_days` = 90 in `fetch-policy.json` for raw; derived rows 365 d | bounded by `max_requests_per_run` x cadence (for example 20 + 10 + 15 per day); <= 20 MB per day raw until measured | search index (`services/search/index_pipeline.py`), distillation |
+| `features/returns` and other `features/<name>` | (symbol, trade_date) | **not stored**: derived on read from `daily_bars` (today a 200 B stub per record, written only when `_feature_targets` is non-empty) | 0 | 0 (remove after T4) | feature loaders |
+
+Datasets that already satisfy the rule: none can be claimed from code (see above); `tw_price_1m` (section 5.3) and the retention window of collector raw (90 days in policy) are the only two with a stated mechanism. Each row's task acceptance (T9) includes its budget row and a hosted-shaped test.
 
 ## 7. Migration and rollback
 
-Principles: additive first, old reader keeps working, each step crash safe, deletion last and only after verification.
+Principles: additive first, the previous reader keeps working, each step crash safe, deletion last and only after verification.
 
-1. **T0 (prerequisite, immediate):** keep the collector price history sources disabled until T2 is deployed (operator-approved since 2026-11-16T14:06Z). Re-enable condition: receipts no longer contain `market_snapshots.snapshots`; verified by a hosted receipt line size <= 16 KB for a 500 record batch and `ingest_schedule.jsonl` growth <= 5 MB per hour for one hour.
-2. **T2 receipts** (stop the bleeding): new receipts carry counts and refs only. Old journal untouched. Rollback: revert; old receipts still readable.
-3. **T1 daily_bars writer, dual write:** the pipeline writes daily_bars in addition to raw/normalized. Old stores unchanged. Rollback: stop writing; delete `daily_bars`.
-4. **Backfill daily_bars from the existing market_data_store** (offline job): read normalized `date=` partitions oldest to newest, dedupe by (symbol, trade_date, content_hash) keeping the newest run, write one temp partition, verify row and symbol counts against the manifest, atomically publish the manifest. Resumable by date (each date partition is independent and idempotent; a crash leaves an unpublished temp dir that the next run removes).
-5. **Reader switch behind a flag:** `/snapshots/latest` fills `closes` from daily_bars when `MARKET_WINDOW_SOURCE=daily_bars`; default stays on the journal. Compare mode runs both and logs mismatches (target 0 over 5 trading days). Consumers do not change (same JSON).
-6. **Snapshot slimming (T3):** write new slim lines; the store keeps reading the old fat lines (`closes` present) and new lines (`window_ref`). Compaction rewrites to slim form. Rollback: flag back to journal; fat lines remain until compaction, and compaction to slim form only starts after step 5 shows 0 mismatches.
-7. **Receipt journal rewrite (T2b):** offline: stream `ingest_schedule.jsonl` to a new file replacing `market_snapshots.snapshots` with counts, write temp, verify line count and receipt ids, rename; keep the old file for 7 days. This also fixes the 5.9 to 6.4 GiB replay: the file drops from 2.2 GB to about tens of MB. Rollback: rename back.
-8. **Delete (T4, T5)** after 5 trading days of zero mismatch: raw/normalized run files older than the verification window; partitions past `retention_days`; snapshot lines of delisted symbols; warrant keys only after the operator decision.
+1. **T0 (prerequisite, immediate):** keep the collector price history sources disabled until T2 and the warrant filter of T8 are deployed (operator-approved since 2026-11-16T14:06Z). Re-enable condition: receipts no longer contain `market_snapshots.snapshots` (hosted receipt line <= 16 KB for a 500-record batch and `ingest_schedule.jsonl` growth <= 5 MB per hour for one hour) and the listing allowlist is active.
+2. **T2 receipts** (stop the growth): new receipts carry counts and refs only. Old journal untouched. Rollback: revert; old receipts remain readable.
+3. **T1 `daily_bars` dual write:** the pipeline also writes `daily_bars`. Old stores unchanged. Rollback: stop writing; delete `daily_bars`.
+4. **T4 backfill** from the existing `market_data_store` (offline): normalized `date=` partitions oldest to newest, dedupe by (symbol, trade_date, content_hash) keeping the newest run, write a temp partition, verify row and symbol counts against the manifest, publish the manifest by atomic rename. Resumable per date; a crash leaves an unpublished temp dir removed by the next run. Warrant rows are not carried over.
+5. **T3 current record store, phases S0 to S2** (section 4.2): S0 SQLite written beside the journal; S1 flag `MARKET_SNAPSHOT_STORE` with compare mode (0 mismatches over 5 trading days); S2 journal stops being appended and the compat exporter keeps the old format file valid for the previous reader (e7ec353d6) until the 14-trading-day rollback window ends. Rollback at any phase: flag back to `journal` (same image), or redeploy the previous image against the exported journal.
+6. **T2b receipt journal rewrite** (offline): stream `ingest_schedule.jsonl` to a new file with `market_snapshots.snapshots` replaced by counts; temp file, verify line count and receipt ids, rename; keep the old file 7 days. Fixes the 5.9 to 6.4 GiB replay (2.2 GB to tens of MB). Rollback: rename back.
+7. **T8 warrants:** allowlist built and shadowed for 3 trading days (excluded counts reported), then enforced in the collector and connectors, then the delete set is reported and deleted store by store (each store's delete is its own verified step, section 4.3).
+8. **Delete (T4, T5)** after 5 trading days of zero mismatch: raw/normalized run files past the verification window; partitions past `retention_days`; snapshot rows of delisted symbols.
 
-Rollout order on hosted: nonprod VM (e7ec353d6 stack) first with the hosted-shaped benchmark, then production; collector sources re-enabled only after T2 evidence on production. Each step records a manifest digest in evidence so rollback can be checked.
+Rollout order on hosted: nonprod VM (e7ec353d6 stack) first with the hosted-shaped benchmarks, then production; collector sources re-enabled only after T2 and T8 evidence on production. Each step records a manifest digest in evidence so rollback can be checked.
 
 ## 8. In-flight tasks
 
 | Task | Verdict | Why |
 |---|---|---|
-| SOURCE-INGEST-RECEIPT-SNAPSHOT-BODIES-BOUND-20261116 | **Stays and becomes T2** (counts and refs in receipts; receipt migration). Review it against section 6 limits; if it only truncates a body, extend it to remove the body. | Same scope as target item 4. |
-| SOURCE-SNAPSHOT-INCREMENTAL-READ-20261116 | **Replaced** by T1+T3 for the window part. It only makes the same rewritten-line store cheaper to read. Keep only if it is already merged-ready and limited to newest-close read; otherwise cancel. | Reader over date partitions makes it unnecessary. |
-| SOURCE-SNAPSHOT-JOURNAL-BOUNDED-20261115 (merged) | **Stays.** Dedup and the compaction (`_compact_journal_in_place`) remain the journal mechanism for the slim snapshot. | Does not conflict. |
-| SOURCE-SNAPSHOT-JOURNAL-COMPACTION-20261115 (PR #7414) | **Stays** (single compaction implementation per Human/Ops 2026-11-15). | Same. |
-| Paused collector sources `collector-tw-twse-price-history`, `collector-tw-tpex-price-history` | **Stay disabled**; re-enable per T0 condition above. TPEx warrant records excluded until the operator decision. | Prevents 9 MB/min growth. |
+| SOURCE-INGEST-RECEIPT-SNAPSHOT-BODIES-BOUND-20261116 | **Stays and becomes T2** (counts and refs in receipts; receipt migration). Review against section 6 limits; if it only truncates a body, extend it to remove the body. | Same scope as acceptance 4. |
+| SOURCE-SNAPSHOT-INCREMENTAL-READ-20261116 | **Replaced** by T3. It makes the append-and-rewrite journal cheaper to read; the journal is replaced by one replaced record per key, and reads are key lookups. Cancel unless merge-ready and limited to the newest-close read. | Decision A changes the storage mechanism. |
+| SOURCE-SNAPSHOT-JOURNAL-BOUNDED-20261115 (merged) | **Stays until T3 phase S2, then its in-place compaction is deleted** (the code path `_compact_journal_in_place` has no user once the journal is gone; the exporter writes a fresh file). Dedup behaviour carries over as the `window_digest` predicate. | Needed for S0 and S1. |
+| SOURCE-SNAPSHOT-JOURNAL-COMPACTION-20261115 (PR #7414) | **Stays for S0/S1; retired at S2** for the same reason. | Same. |
+| Paused collector sources `collector-tw-twse-price-history`, `collector-tw-tpex-price-history` | **Stay disabled**; re-enable per the T0 condition above and only with the T8 allowlist filter. | Prevents 9 MB/min growth and warrant collection. |
 
 ## 9. Implementation tasks (no code in this task)
 
-Each task: acceptance includes its growth budget row and a test on hosted-shaped data (17200 symbols, 500 days, 6500 dead, 500-record batches), not a three symbol fixture.
+Each task: acceptance includes its growth budget row and a test on hosted-shaped data (17,200 symbols, 500 days, 6,500 dead, 10,700 current records at real size, 500-record batches), not a three-symbol fixture. Order: T2, T8 shadow, T1, T3 (S0 to S2), T4, T9, T5, T10, T7; T6 optional.
 
 | Task | Files | Acceptance |
 |---|---|---|
-| **T1 SOURCE-DAILY-BARS-STORE-20261117** daily_bars writer, manifest, reader, dual write | new `services/source_ingestion/daily_bars_store.py`, `daily_bars_reader.py`; edit `services/source_ingestion/market_data_storage.py`, `pipeline.py` (`persist_market_data_storage_refs`); tests `services/source_ingestion/tests/test_daily_bars_store.py` | unique (symbol, trade_date); re-run of same content writes nothing; missing trade_date rejected; crash between temp write and manifest rename leaves old state; `read_close_window` p95 <= 150 ms for 50 symbols and `read_range` limits enforced on hosted-shaped data; day size <= 1.2 MB; budget alarm fields in health |
-| **T2 SOURCE-RECEIPT-REFS-ONLY-20261117** (supersedes/extends SOURCE-INGEST-RECEIPT-SNAPSHOT-BODIES-BOUND-20261116) | `services/source_ingestion/pipeline.py` (`persist_latest_market_snapshots`, `persist_ingest_receipt`), `scheduler.py` (`JsonlIngestScheduleStore` retention and replay), `scripts/` receipt migration script; tests | 500-record batch receipt line <= 16 KB; receipt journal rewrite verifies receipt ids; cold replay RSS < 1 GiB on a 2.4 GB-shaped file converted; collector re-enable evidence |
-| **T3 SOURCE-SNAPSHOT-SLIM-20261117** | `services/source_ingestion/requirement_state.py` (`LatestMarketSnapshotStore`), `services/source_ingestion/api` snapshot endpoint, `services/execution/lean_runtime/performance_telemetry.py` (verify only) | line <= 4 KB; live <= 15 MB at 17200 keys; flag `MARKET_WINDOW_SOURCE`; compare mode 0 mismatches on hosted-shaped data; delisted keys swept |
-| **T4 SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118** | `scripts/` backfill and cleanup job; `services/source_ingestion/market_data_storage.py` | idempotent resumable backfill; count equality vs normalized dedupe; deletion only after verification window; evidence of size before/after |
+| **T1 SOURCE-DAILY-BARS-STORE-20261117** keyed date-partition writer (per-dataset key declaration), `daily_bars` manifest, reader, dual write | new `services/source_ingestion/keyed_partition_store.py`, `daily_bars_reader.py`; edit `market_data_storage.py`, `pipeline.py` (`persist_market_data_storage_refs`); tests `services/source_ingestion/tests/test_keyed_partition_store.py` | unique (symbol, trade_date); same-content re-run writes nothing; missing trade_date rejected; crash between temp write and manifest rename leaves the old state; `read_close_window` p95 <= 150 ms for 50 symbols; `read_range` caps enforced; day size <= 1.2 MB; budget alarm fields in health |
+| **T2 SOURCE-RECEIPT-REFS-ONLY-20261117** (supersedes/extends SOURCE-INGEST-RECEIPT-SNAPSHOT-BODIES-BOUND-20261116) | `pipeline.py` (`persist_latest_market_snapshots`, `persist_ingest_receipt`), `scheduler.py` (`JsonlIngestScheduleStore` retention and replay), `scripts/` receipt migration; tests | 500-record receipt line <= 16 KB; journal rewrite verifies receipt ids; cold replay RSS < 1 GiB on a 2.4 GB-shaped file converted; collector re-enable evidence |
+| **T3 SOURCE-SNAPSHOT-CURRENT-RECORD-20261117** SQLite current-record store, compact record, S0 to S2, compat exporter, sweeper | `services/source_ingestion/requirement_state.py` (`LatestMarketSnapshotStore` keeps its public API, new `SqliteSnapshotBackend`), `services/source_ingestion/routers/ingest_operations.py` (`snapshots/latest`, `frequency` handling), `intraday_snapshot_projection.py` (row replace), `services/execution/lean_runtime/performance_telemetry.py` (verify only); tests incl. `test_snapshot_frequency_isolation.py` extended | 10,700 keys at real size on a copy of the hosted journal: record <= 12 KB (phase 1), live <= 128 MB, file <= 1.1x live; the 60 closes of every key equal the journal's, `snapshot_id` identical; unchanged window writes 0 rows (assert); crash test (kill during a 500-key transaction leaves the previous state); reader call never > 100 ms during a full replacement, writer transaction <= 250 ms p99; compare mode 0 mismatches; old-format export read by the e7ec353d6 `LatestMarketSnapshotStore` (checked-in fixture `requirement_state_70a5bb8.py` pattern) returns the same data; `tw_price_5m..60m` writes refused |
+| **T3b SOURCE-SNAPSHOT-JOURNAL-RETIRE-20261201** | `requirement_state.py`, deploy scripts | after 14 trading days in S2: journal, exporter and `_compact_journal_in_place` removed; `dev_release_artifacts.py` capture probe updated |
+| **T4 SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118** | `scripts/` backfill and cleanup; `market_data_storage.py` | idempotent resumable backfill; count equality vs normalized dedupe; no warrant rows carried; deletion only after the verification window; before/after size evidence |
 | **T5 SOURCE-RETENTION-SWEEPER-20261118** | `services/source_ingestion/retention.py`; tests | deletes partitions past `retention_days`; never deletes pinned or delisted-share bars; alarm when not run in 2 days |
-| **T6 (optional) LEAN-DAILY-EXPORT-20261120** | `services/execution/lean_runtime/` exporter | only if lean runtime needs LEAN data folders; derived from daily_bars |
-| **T7 MARKET-DATA-BUDGET-CHECK-20261118** | `scripts/check_market_data_budget.py`, CI | fails when a store row in section 6 is exceeded on hosted-shaped data |
+| **T6 (optional) LEAN-DAILY-EXPORT-20261120** | `services/execution/lean_runtime/` exporter | only if lean runtime needs LEAN folders; derived from `daily_bars` |
+| **T7 MARKET-DATA-BUDGET-CHECK-20261118** | `scripts/check_market_data_budget.py`, CI | fails when a row of sections 6 or 6A is exceeded on hosted-shaped data |
+| **T8 SOURCE-WARRANT-EXCLUSION-20261117** listing allowlist, collector and connector filters, deletion | new `services/source_ingestion/security_listing.py` (parse TWSE ISIN pages by category header and CFI, `listing_allowlist`, `ordinary_share_registry`); `deploy/collector/collector_stack/spiders.py` and `runner.py` (`symbols_filter`, retire `WARRANT_SYMBOL_RE`), `deploy/collector/fetch-policy.json`; `services/source_ingestion/connectors/taiwan_official.py`, `provider_adapters.py`, `active_universe.py`, `market_data_storage.py` (guard); deletion script under `scripts/`; tests with recorded listing pages | parser test on recorded pages of both venues (header rows, CFI `RW*`); fail-closed `listing_unavailable` after 3 days; a 500-record batch with warrant codes stores none and reports `excluded_non_share_count`; delete set report equals count by store; four-digit codes never auto-deleted; bars of delisted shares kept (test) |
+| **T9 SOURCE-DATASETS-KEYED-WRITE-20261119** section 6A datasets on the keyed partition writer | `connector_definitions.py` (per-dataset key declaration), `market_data_storage.py`, per-connector adapters touched only to declare keys; tests per dataset | for each row of 6A: unique key test, same-content re-run writes nothing, budget row measured on hosted-shaped data, readers unchanged |
+| **T10 INTRADAY-LOAD-BARS-BENCH-20261119** | `services/research/intraday_bars.py` (only if a named consumer misses its bound), `scripts/` benchmark; optional `intraday_cache.py` | benchmark on the hosted host: 50 and 200 symbols x 60 sessions, 1m/5m/15m/60m, results in evidence; bound section 5.3; derived cache built only if a consumer misses the bound, keyed by `shard_sha256`, capped 512 MB, never read as truth |
 
-Operator decision open: warrants (section 4.3).
+Operator decisions: warrants (B) decided; snapshot window (A) decided; open points only for the operator to read: the phase-1 record ceiling (12 KB) and the 14-trading-day rollback window.
 
 ## 10. 中文摘要（給 operator）
 
 **現在一筆收盤價被複製幾次？**
-一筆台股日收盤現在至少存在 5 個地方：原始檔（raw）、整理後檔（normalized）、最新快照（每天整行重寫，連 60 天一起）、收據（ingest receipt，一整批約 15 MB 的快照內容）、證據／蒸餾資料。其中最大一份在收據裡（約 30 KB／筆，是收盤價本身的 20 倍）。快照每天整行重寫，所以同一筆收盤價在它的生命週期裡被重寫約 60 次。每次重跑再多一份 raw 和 normalized。
+一筆台股日收盤現在至少存在 5 個地方：原始檔（raw）、整理後檔（normalized）、最新快照（每天整行重寫，連 60 天一起）、收據（ingest receipt，一整批約 15 MB 的快照內容）、證據／蒸餾資料。最大的一份在收據裡（約 30 KB／筆，是收盤價本身的 20 倍）。快照每次新增一天就「在舊的那行後面再寫一行新的」，舊的要等壓縮才刪；壓縮時會把整個檔案鎖住（今天就因此讓一次 controller tick 失敗）。
 
-**有一點要更正：** 協調者說檔案是用「跑資料的日期」分區。程式碼看起來是用交易日（`trade_date`／`event_time`）分區，只有缺日期時才退回用今天。真正的問題是：同一天有幾十個「每次執行一個檔」的檔案，沒有按股票的索引，重跑會再多一組。這需要先量（M1）確認。
+**有一點要更正：** 協調者說檔案是用「跑資料的日期」分區。程式碼是用交易日（`trade_date`／`event_time`）分區，只有缺日期才退回用今天。真正的問題是：同一天有幾十個「每次執行一個檔」的檔案、沒有按股票的索引、重跑會再多一組。需要先量（M1）確認。
 
-**要改成什麼：**
-- 每個交易日每檔股票只寫一次，放在「按交易日分區」的日線庫；要看過去任何一段日期，直接讀那幾天，不用掃全部。
-- 快照只留最新一天的收盤價加一個指標，不再放 60 天。
-- 收據只放數量和參考，不放資料本身。
-- 需要看 60 天的程式（paper 訊號、準入檢查、投組、部署前檢查等）都透過同一個有上限的讀取函式。
-- 每個儲存空間都有每日大小與總量上限，超過會警報。
+**依你 2026-11-16 的裁示，這次改成：**
+- **最新快照保留最近 60 天收盤價（A）。** 但存法改了：每檔每個資料集只有「一筆現行紀錄」，新版直接取代舊版，舊版不留；內容沒變就不寫。用 SQLite（Python 內建，不加新套件），一次寫一批 500 檔，要嘛全成功要嘛全不變，當機也安全；沒有整檔壓縮，也就沒有長時間鎖。讀的人不會被寫的人擋住（在本機實測：一批 500 檔寫入最久 0.19 秒，同時讀取 99% 在 1.8 毫秒內）。一筆 60 天紀錄從約 71 KB 縮成 12 KB 以下（來源／連接器／市場等重複欄位只存一次、衍生的 closes 與 lineage 不存，之後有日線庫再縮到 4 KB 以下）；總量上限約 128 MB（預期約 50 MB），現在是 171 MB 加上舊版。舊版讀取程式（e7ec353d6）在上線與回退期間照常運作：我們會定期把現行紀錄匯出成舊格式檔（原子替換、每筆只一版），14 個交易日沒有回退後才刪除。
+- **權證不抓、不留（B）。** 用交易所公開的證券清單判斷（證交所 ISIN 清單依類別與 CFI 碼 `RW…` 區分，今天上市 7,053 檔、上櫃 13,143 檔權證，對比約 2,100 檔股票／ETF）；不再靠代號長相猜。收集端（collector 價格歷史、T86、停牌）與主機端連接器都只收清單裡的股票／ETF；已存在的權證資料從快照、日線庫、原始檔、功能檔、證據表全部刪除，刪除前先出清單報告；四碼代號（像普通股）不會被自動刪。已下市普通股的日線照舊保留。
+- **其他頻率（C）：** 跟隨 2026-11-11 的分鐘線設計：1 分鐘線每個（股票、日、分鐘）只存一次；5／15／30／60 分鐘即時由 1 分鐘線算，不另存；日線真值絕不由分鐘線算出。快照只保留 1 分鐘的一筆現行紀錄（約 200 檔、不超過 1 MB），5～60 分鐘永遠不寫入快照。實測 `load_bars`（60 個交易日）：50 檔約 14～28 秒、200 檔約 70～97 秒（每檔 0.28～0.56 秒）；下一交易日 paper（≤50 檔）和單檔回放都在上限內，只有 200 檔全市場掃描會超過，所以預先規定「有上限的可丟棄快取」（以資料檔雜湊作鍵、上限 512 MB、不是第二份正本），只有主機實測超標才建。
+- **其他資料集（D）：** 指數、廣度、法人、融資券、券商、期交所、總經、社群、新聞／社群／論文與 features/returns 每一個都列出唯一鍵、寫一次或取代的規則、保存期、每日成長上限與讀者（第 6A 節）；features/returns 不再存，改由日線庫即時算。目前它們共用同一個「每次執行一個檔」的寫入器，所以都需要改，沒有任何一個能先宣稱已達標。
+- 收據只放數量和參考；日線庫「每檔每日一次」依交易日分區，要看任何一段歷史直接讀那幾天。
 
-**哪些會刪掉（不是封存）：**
-- 下市股票的日線**保留**（回測和存活者偏差檢查需要）。
-- 下市或過期代號在快照裡的那一行、被取代的快照版本、收據裡的快照內容、超過保存天數的分區：**全部刪除**。
-- 過期權證：目前三個交易 persona 都沒用到，建議先不抓、不留；這是要你決定的事（省下約一半的歷史筆數，但如果日後有策略要用權證就得重抓）。
+**哪些會刪掉（不是封存）：** 被取代的快照版本（不再存在）、收據裡的快照內容、下市或過期代號在快照的紀錄、權證全部資料、驗證期後的舊 raw／normalized 檔、超過保存期限的分區。已下市普通股的日線保留。
 
-**上線順序：** 先修收據（停止每分鐘 9 MB 的成長）→ 再開日線庫雙寫 → 補歷史 → 讀取切換並對照 5 個交易日 → 最後才刪舊檔。collector 的價格歷史來源要等收據修好才重新啟用。
+**上線順序：** 收據先修（停止每分鐘 9 MB 成長）→ 權證清單影子模式 → 日線庫雙寫 → 快照現行紀錄（影子→對照 5 個交易日→切換→匯出舊格式）→ 補歷史 → 其他資料集 → 最後才刪舊檔；collector 價格歷史要等收據與權證過濾都上線才重新啟用。
