@@ -21,7 +21,7 @@
     "T5 retention sweeper",
     "T6 optional LEAN export",
     "T7 budget check",
-    "T8 warrant exclusion",
+    "T8 warrant listing and expiry",
     "T9 other datasets keyed write",
     "T10 intraday load_bars bench",
     "E1 min_closes window",
@@ -29,7 +29,7 @@
   ],
   "operator_decisions_2026_11_16": {
     "A": "snapshot keeps 60 closes; one replaced current record per (symbol,dataset) in SQLite WAL; compat export for e7ec353d6",
-    "B": "warrants not fetched or kept; identified from TWSE ISIN listing category and CFI RW*; collector symbols_filter, connectors, delete set",
+    "B": "CORRECTED option (b) (operator 2026-11-16T14:43:25Z): listed warrants fetched and stored while listed; deleted (bars, snapshot record, lineage) at first sweeper run after expiry, no archive; no backfill of expired; one-off delete of already expired reported first; identified from TWSE ISIN listing category and CFI RW*; fail closed when listing unreadable; hosted count 2026-11-16: ~7550 warrant-like keys current, ~6750 stale >30d; budgets recomputed (daily_bars <=1.6MB/day, <=0.8GB; current record <=22500 keys, 270MB phase 1)",
     "C": "follows SD_INTRADAY_MINUTE_BARS_2026-11-11; 5m-60m never stored or snapshotted; load_bars measured",
     "D": "section 6A one row per remaining dataset",
     "E": "section 5.4: min_closes extension reads beyond-60 from daily_bars (E1, p95 2.0s at 50x504); deploy-time history refusal (E2); carried-forward indicators not adopted"
