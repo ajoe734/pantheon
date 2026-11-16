@@ -111,7 +111,9 @@ class TradingRoomService:
         workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
+        decision_lock_owner: Optional[Any] = None,
     ):
+        self.decision_lock_owner = decision_lock_owner
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
         self.utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat())
@@ -453,6 +455,16 @@ class TradingRoomService:
             "decided_at": now,
         }
 
+        shadow_lock = self._write_shadow_lock(
+            event=event,
+            decision_event_id=decision_event_id,
+            decision_record=decision_record,
+            body=body,
+            identity=identity,
+            scope=scope,
+            now=now,
+        )
+
         intent = None
         intent_ref: Optional[str] = None
         if body.decision in ("approve", "modify"):
@@ -479,6 +491,8 @@ class TradingRoomService:
             "decision_event_id": decision_event_id,
             "decision": body.decision,
             "intent_ref": intent_ref,
+            "human_decision_id": shadow_lock["human_decision_id"],
+            "execution_observation_kind": shadow_lock["execution_observation_kind"],
         }
         if intent_ref:
             data["no_order_route_proof"] = "agora_intent_record_only"
@@ -490,6 +504,93 @@ class TradingRoomService:
             now,
         )
         return data
+
+    # -----------------------------------------------------------------------
+    # Shadow mode: immutable decision lock in the Agora owner (design A4)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _identity_roles(identity: Any) -> List[str]:
+        roles = identity.get("roles") if isinstance(identity, dict) else getattr(identity, "roles", None)
+        roles = [str(r) for r in (roles or [])]
+        # The write-role gate already ran; a role-less identity acts as the trader.
+        return roles or ["trader"]
+
+    def _write_shadow_lock(
+        self,
+        *,
+        event: Dict[str, Any],
+        decision_event_id: str,
+        decision_record: Dict[str, Any],
+        body: TraderDecisionRequest,
+        identity: Any,
+        scope: Dict[str, str],
+        now: str,
+    ) -> Dict[str, Any]:
+        """Write the lock before the decision is recorded; fail closed."""
+        from services.agora.shadow_mode import (
+            DecisionLockExistsError,
+            DecisionLockInvalidError,
+            build_decision_lock,
+        )
+        from services.agora.write_authority import AgoraWriteForbiddenError
+
+        owner = self.decision_lock_owner
+        if owner is None:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        roles = self._identity_roles(identity)
+        try:
+            lock = build_decision_lock(
+                human_decision_id=owner.store.decision_lock_id(scope["tenant_id"], decision_event_id),
+                decision_record_id=decision_record["decision_record_id"],
+                event=event,
+                decision_event_id=decision_event_id,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                body_decision=body.decision,
+                rationale=body.rationale,
+                modifications=body.modifications,
+                decision_time=now,
+                execution_observation_kind=body.execution_observation_kind,
+                account_id=body.account_id,
+                broker_ids=body.broker_ids,
+                actor_roles=roles,
+            )
+            return dict(owner.create_decision_lock(lock, roles))
+        except DecisionLockExistsError as exc:
+            raise self.bff_error(
+                409, "TRADING_INTENT_ALREADY_RECORDED", str(exc), "decision_lock_exists"
+            ) from exc
+        except DecisionLockInvalidError as exc:
+            raise self.bff_error(422, "VALIDATION_ERROR", str(exc), exc.reason) from exc
+        except AgoraWriteForbiddenError as exc:
+            raise self.bff_error(403, "FORBIDDEN", str(exc), "decision_lock_forbidden") from exc
+        except Exception as exc:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner write failed",
+                "decision_lock_owner_unavailable",
+            ) from exc
+
+    def get_decision_lock(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
+        owner = self.decision_lock_owner
+        if owner is None:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        scope = _workspace_scope(identity)
+        lock = owner.get_decision_lock_for_event(
+            decision_event_id,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            actor_roles=self._identity_roles(identity),
+        )
+        if lock is None:
+            raise self.bff_error(404, "NOT_FOUND", "Decision lock not found", "decision_lock_not_found")
+        return dict(lock)
 
     # -----------------------------------------------------------------------
     # Trading Intents & Governed Handoffs

@@ -203,6 +203,9 @@ class AgoraStore:
         self._interactions = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.interactions", owner_service="agora-svc", bootstrap=bootstrap
         )
+        self._decision_locks = PostgresJsonOwnerStore(
+            dsn=self.dsn, table=f"{self.schema}.decision_locks", owner_service="agora-svc", bootstrap=bootstrap
+        )
 
     # -------------------------------------------------------------------------
     # Sessions & Committees
@@ -1014,6 +1017,32 @@ class AgoraStore:
     def get_interaction(self, interaction_id: str) -> Optional[DictRecord]:
         data = self._interactions.get(interaction_id)
         return DictRecord(data) if data else None
+
+    # -------------------------------------------------------------------------
+    # Shadow-mode decision locks (immutable; insert-only, no update/delete path)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def decision_lock_id(tenant_id: str, decision_event_id: str) -> str:
+        digest = hashlib.sha256(f"{tenant_id}\x1f{decision_event_id}".encode("utf-8")).hexdigest()
+        return f"hdl-{digest[:32]}"
+
+    def create_decision_lock(self, lock: Dict[str, Any]) -> DictRecord:
+        """Insert one lock; a second write for the same decision is rejected."""
+        from .shadow_mode import DecisionLockExistsError
+
+        inserted, existing = self._decision_locks.insert_if_absent(
+            str(lock["human_decision_id"]), dict(lock)
+        )
+        if not inserted:
+            raise DecisionLockExistsError(str(lock.get("decision_event_id")))
+        return DictRecord(existing)
+
+    def get_decision_lock(self, human_decision_id: str) -> Optional[DictRecord]:
+        data = self._decision_locks.get(human_decision_id)
+        return DictRecord(data) if data else None
+
+    def list_decision_locks(self) -> List[DictRecord]:
+        return [DictRecord(row) for row in self._decision_locks.list_all()]
 
 
 def build_agora_store(

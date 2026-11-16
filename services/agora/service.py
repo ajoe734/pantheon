@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .store import AgoraEvidenceStore, AgoraStore, DictRecord, build_agora_store
-from .write_authority import assert_authorized
+from .write_authority import assert_authorized, is_authorized
 
 
 class AgoraEvidenceWriteService:
@@ -501,6 +501,54 @@ class AgoraWriteService:
             interaction_id=interaction_id,
             created_at=created_at,
         )
+
+    # -------------------------------------------------------------------------
+    # Shadow-mode decision locks (design A4). Insert-only; reads are scoped.
+    # -------------------------------------------------------------------------
+    def create_decision_lock(
+        self,
+        lock: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+    ) -> DictRecord:
+        assert_authorized("AgoraDecisionLock", "create", actor_roles)
+        return self.store.create_decision_lock(lock)
+
+    def _lock_readable(
+        self, lock: Optional[DictRecord], tenant_id: str, user_id: str, roles: Union[Sequence[str], str]
+    ) -> bool:
+        if lock is None or str(lock.get("tenant_id")) != str(tenant_id):
+            return False
+        if is_authorized("AgoraDecisionLock", "read_all", roles):
+            return True
+        return str(lock.get("user_id")) == str(user_id) and is_authorized(
+            "AgoraDecisionLock", "create", roles
+        )
+
+    def get_decision_lock_for_event(
+        self,
+        decision_event_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+        actor_roles: Union[Sequence[str], str],
+    ) -> Optional[DictRecord]:
+        lock = self.store.get_decision_lock(
+            self.store.decision_lock_id(tenant_id, decision_event_id)
+        )
+        return lock if self._lock_readable(lock, tenant_id, user_id, actor_roles) else None
+
+    def list_decision_locks(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        actor_roles: Union[Sequence[str], str],
+    ) -> List[DictRecord]:
+        return [
+            lock
+            for lock in self.store.list_decision_locks()
+            if self._lock_readable(lock, tenant_id, user_id, actor_roles)
+        ]
 
 
 def build_agora_write_service(
