@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .tw_close_reconcile import (
     COLLECTOR_CLOSE_KEY,
@@ -1210,6 +1210,10 @@ class LatestMarketSnapshotStore:
         self._line_bytes: dict[tuple[str, str], int] | None = None
         self._last_compaction_at: str | None = None
         self._last_compaction_error: str | None = None
+        # Optional active-universe hooks (snapshot_universe.py): ``admission`` decides which
+        # symbols the daily projection keeps; ``stats_extra`` adds universe state to journal_stats.
+        self.admission: Callable[[str], bool] | None = None
+        self.stats_extra: Callable[[], Mapping[str, Any]] | None = None
         self.reload()
         self.compact(force=False)  # startup: same size trigger as every append
 
@@ -1435,6 +1439,11 @@ class LatestMarketSnapshotStore:
         }
         if self._last_compaction_error:
             stats["last_compaction_error"] = self._last_compaction_error
+        if self.stats_extra is not None:
+            try:
+                stats["snapshot_universe"] = dict(self.stats_extra())
+            except Exception as exc:  # stats must never fail the health surface
+                stats["snapshot_universe"] = {"state": "unreadable", "reason": f"stats_failed:{type(exc).__name__}"}
         return stats
 
     def reload(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
@@ -1547,6 +1556,70 @@ class LatestMarketSnapshotStore:
                 raise MarketSnapshotStateError(
                     f"market snapshot withdrawal failed: {self.path}"
                 ) from exc
+
+    def live_symbols(self, dataset: str = DAILY_SNAPSHOT_DATASET) -> list[str]:
+        """Stored symbols of ``dataset`` currently live in the projection."""
+        key_dataset = _snapshot_dataset(dataset)
+        with self._lock:
+            return sorted(sym for (sym, ds) in self._latest_by_symbol if ds == key_dataset)
+
+    def withdraw_symbols(
+        self,
+        symbols: Iterable[str],
+        *,
+        dataset: str = DAILY_SNAPSHOT_DATASET,
+        observed_at: str | None = None,
+    ) -> list[str]:
+        """Remove whole symbols from the projection with the existing withdrawal tombstone.
+
+        Returns the symbols actually removed.  The tombstone is the line the deployed reader
+        already understands, so no reader/writer rollout ordering is involved.
+        """
+        dataset = _snapshot_dataset(dataset)
+        observed = _market_snapshot_timestamp(
+            observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            field_name="observed_at",
+        )
+        wanted = sorted({_market_snapshot_lookup_symbol(sym) for sym in symbols})
+        if not wanted:
+            return []
+        removed: list[str] = []
+        with self._lock:
+            try:
+                if not self.path.exists():
+                    return []
+                with self._open_exclusive(self.path) as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        current = self._current_locked(handle)
+                        handle.seek(0, os.SEEK_END)
+                        for lookup in wanted:
+                            prior = current.get((lookup, dataset))
+                            if prior is None:
+                                continue
+                            state = {
+                                "schema_version": MARKET_SNAPSHOT_SCHEMA_VERSION,
+                                "symbol": prior.symbol,
+                                "dataset": dataset,
+                                "observed_at": observed,
+                                "withdrawn": True,
+                            }
+                            line = self._envelope_line(state)
+                            handle.write(line + "\n")
+                            current.pop((lookup, dataset), None)
+                            self._note_line((lookup, dataset), None)
+                            removed.append(prior.symbol)
+                        self._commit_locked(handle, current)
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except MarketSnapshotStateError:
+                self._latest_by_symbol = {}
+                self._invalidate()
+                raise
+            except (OSError, UnicodeError) as exc:
+                self._invalidate()
+                raise MarketSnapshotStateError(f"market snapshot withdrawal failed: {self.path}") from exc
+        return removed
 
     @staticmethod
     def _point_from_record(
@@ -1699,8 +1772,16 @@ class LatestMarketSnapshotStore:
         default_market: str | None = None,
         connector: Any | None = None,
         dataset: str = DAILY_SNAPSHOT_DATASET,
+        record_context: Sequence[tuple[str, str | None]] | None = None,
+        enforce_admission: bool = True,
     ) -> dict[str, Any]:
-        """Project normalized stored closes into one bounded snapshot per (symbol, dataset)."""
+        """Project normalized stored closes into one bounded snapshot per (symbol, dataset).
+
+        ``record_context`` (seeding only) gives each record its own (ingest_run_id, default_market)
+        so a replay of stored partitions builds the same points a live run would have built.
+        With ``enforce_admission`` the daily projection keeps only symbols the active-universe
+        admission hook accepts; seeding passes ``False`` because the caller already admitted it.
+        """
 
         dataset = _snapshot_dataset(dataset)
         run_id = _market_snapshot_text(ingest_run_id, field_name="ingest_run_id")
@@ -1715,18 +1796,30 @@ class LatestMarketSnapshotStore:
 
         grouped: dict[str, list[tuple[MarketSnapshotPoint, dict[str, Any] | None]]] = {}
         accepted_record_count = 0
-        for record in records:
+        skipped_non_member: set[str] = set()
+        admission = self.admission if (enforce_admission and dataset == DAILY_SNAPSHOT_DATASET) else None
+        if record_context is not None and len(record_context) != len(records):
+            raise ValueError("record_context must align with records")
+        for index, record in enumerate(records):
             if bool(getattr(record, "is_rejected", False)):
                 continue
+            rec_run_id, rec_market = (
+                (_market_snapshot_text(record_context[index][0], field_name="ingest_run_id"), record_context[index][1])
+                if record_context is not None
+                else (run_id, default_market)
+            )
             candidate = self._point_from_record(
                 record,
-                ingest_run_id=run_id,
-                default_market=default_market,
+                ingest_run_id=rec_run_id,
+                default_market=rec_market,
                 dataset=dataset,
             )
             if candidate is None:
                 continue
             symbol, point, calendar_evidence = candidate
+            if admission is not None and not admission(symbol):
+                skipped_non_member.add(symbol)
+                continue
             grouped.setdefault(symbol, []).append((point, calendar_evidence))
             accepted_record_count += 1
 
@@ -1737,6 +1830,7 @@ class LatestMarketSnapshotStore:
                 "accepted_record_count": 0,
                 "updated_snapshot_count": 0,
                 "snapshots": [],
+                **({"non_member_symbol_count": len(skipped_non_member)} if skipped_non_member else {}),
             }
 
         updated: list[LatestMarketSnapshot] = []
@@ -1836,6 +1930,7 @@ class LatestMarketSnapshotStore:
             "accepted_record_count": accepted_record_count,
             "updated_snapshot_count": len(updated),
             "snapshots": [snapshot.to_public_dict() for snapshot in updated],
+            **({"non_member_symbol_count": len(skipped_non_member)} if skipped_non_member else {}),
         }
 
 

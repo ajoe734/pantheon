@@ -28,6 +28,7 @@ from ..api_models import (
 )
 from ..connectors import SourceEvidenceError
 from ..requirement_state import (
+    DAILY_SNAPSHOT_DATASET,
     MarketSnapshotStateError,
     RequirementStateError,
     snapshot_dataset_for_frequency,
@@ -166,7 +167,10 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 detail={"code": "unsupported_snapshot_frequency", "frequency": frequency, "detail": str(exc)},
             ) from exc
         try:
-            snapshot = runtime.latest_market_snapshot_store.get(symbol, dataset)
+            if dataset == DAILY_SNAPSHOT_DATASET:
+                snapshot = runtime.snapshot_universe.snapshot_for_request(symbol)
+            else:
+                snapshot = runtime.latest_market_snapshot_store.get(symbol, dataset)
         except (MarketSnapshotStateError, RequirementStateError) as exc:
             raise HTTPException(
                 status_code=503,
@@ -186,6 +190,16 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 },
             )
         return snapshot.to_public_dict(requested_symbol=symbol)
+
+    @router.post("/api/source-ingest/snapshots/universe/sweep")
+    def sweep_snapshot_universe() -> dict[str, Any]:
+        """Adopt/refresh active-universe membership and withdraw non-members (idempotent)."""
+        try:
+            return runtime.snapshot_universe.initialize()
+        except (MarketSnapshotStateError, OSError) as exc:
+            raise HTTPException(
+                status_code=503, detail={"code": "snapshot_universe_unavailable", "detail": str(exc)}
+            ) from exc
 
     @router.post("/api/source-ingest/candidate-pool-market")
     def build_candidate_pool_market_input(body: dict[str, Any]) -> dict[str, Any]:
