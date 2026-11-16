@@ -29,6 +29,7 @@ if str(_ADAPTER_DIR) not in sys.path:
 from consultation_provider import consult_agent_id, create_app as create_adapter_app  # noqa: E402
 from services.consultation import main as consultation_main  # noqa: E402
 from services.consultation import meetings as meetings_mod  # noqa: E402
+from services.consultation.meeting_outputs import output_routing_context  # noqa: E402
 from services.consultation.client import ConsultationServiceClient, open_persona_meeting  # noqa: E402
 from services.consultation.provider import HttpContributionProvider  # noqa: E402
 from services.consultation.store import ConsultationStore  # noqa: E402
@@ -284,6 +285,15 @@ class _AdapterModelDouble:
         )
 
 
+def _owner_stub(method: str, url: str, headers: Any, body: Any) -> tuple[int, dict[str, Any]]:
+    # No research owner listens in CI; stand in for its persona-demand intake and read-back.
+    if method.upper() == "GET":
+        assert "/api/research/persona-demands" in url, url
+        return 200, {"demands": [{"demand_id": "demand-stub-1", "status": "submitted"}], "count": 1}
+    assert method.upper() == "POST" and url.endswith("/api/research/persona-demands"), url
+    return 201, {"demand_id": "demand-stub-1", "id": "demand-stub-1", "status": "submitted"}
+
+
 @pytest.fixture
 def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
@@ -419,15 +429,16 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
             tenant_id=TENANT,
             service_actor="meeting-test-client",
         )
-        yield {
-            "api_url": api_url,
-            "memory_url": memory_url,
-            "adapter_url": adapter_url,
-            "cfg": cfg,
-            "client": client,
-            "double": double,
-            "memory_main": memory_main,
-        }
+        with output_routing_context(transport=_owner_stub, store_path=tmp_path / "meeting_outputs.json"):
+            yield {
+                "api_url": api_url,
+                "memory_url": memory_url,
+                "adapter_url": adapter_url,
+                "cfg": cfg,
+                "client": client,
+                "double": double,
+                "memory_main": memory_main,
+            }
 
 
 def _tick(stack: dict[str, Any]) -> dict[str, Any]:
