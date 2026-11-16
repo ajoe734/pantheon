@@ -33,6 +33,7 @@ from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_I
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
+from services.memory import mental_models
 from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 from services.persona.lesson_cycle import MEMORY_CANDIDATE_FORMAT, LessonCycle, lesson_summary
@@ -510,15 +511,9 @@ class PersonaCycleController:
         return self.lesson_cycle
 
     @staticmethod
-    def standing_questions(families: Any) -> list[dict[str, Any]]:
-        """One question per strategy family in the pool and one for risk lessons; no regime question (H13)."""
-        questions = [{"key": f"family:{fam}", "anchors": [f"family:{fam}"],
-                      "text": (f"What have my own retained interpretations and lessons taught me about running the "
-                               f"{fam} strategy family, and what has gone wrong with it?")}
-                     for fam in sorted({str(f).strip().lower() for f in families if str(f or "").strip()})]
-        questions.append({"key": "risk_lessons", "memory_types": ["risk_observation"],
-                          "text": "Which risk lessons have I recorded, and what should they change in how I size or stop positions?"})
-        return questions
+    def standing_questions(families: Any, regime: Any = None) -> list[dict[str, Any]]:
+        """One question per strategy family in the pool, one for risk lessons, and one for market regime when an active record exists (H13)."""
+        return mental_models.standing_questions(families, regime)
 
     def _declare_standing_questions(self, persona: Mapping[str, Any], observe: Mapping[str, Any]) -> dict[str, Any]:
         """Declare this persona's standing-question set to the memory owner; never fails the cycle.
@@ -528,7 +523,7 @@ class PersonaCycleController:
         subject = observe.get("cycle_subject")
         if not isinstance(subject, Mapping) or not isinstance(subject.get("families"), list):
             return {"status": "not_run", "reason": "pool_families_unavailable"}
-        questions = self.standing_questions(subject["families"])
+        questions = self.standing_questions(subject["families"], observe.get("regime"))
         try:
             code, payload = self._lesson_cycle()._memory(
                 "PUT", "/api/memory/persona-standing-questions", persona["tenant_id"],
