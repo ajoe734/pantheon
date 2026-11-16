@@ -115,6 +115,9 @@ class CloseCronDispatchTests(unittest.TestCase):
         self.assertEqual(result.packet["producer"]["cron_run_id"], "run-abc-1")
         self.assertEqual(result.packet["producer"]["fabricated"], False)
         self.assertIn("cron_ooda_turn", result.packet)
+        # The turn reference is evidence, never a regime record.
+        self.assertIsNone(result.packet["orient"]["regime_state_ref"])
+        self.assertTrue(any(r.startswith("cron-ooda-turn://") for r in result.packet["orient"]["evidence_bundle_refs"]))
         self.assertEqual([m for m, _ in runtime.calls][:2], ["cron.run", "cron.runs"])
 
     def test_erroring_turn_stops_honestly_at_observing(self):

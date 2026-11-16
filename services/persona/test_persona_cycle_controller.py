@@ -23,6 +23,7 @@ from services.control_plane.persona.persona_strategy_pool import (
     AppendPoolVersionRequest, PersonaStrategyPoolStore,
 )
 from services.foundation.reliable_delivery import AtomicJsonRecordStore
+from services.persona import regime_consumer
 from services.persona.cron_ooda_closure import append_ooda_packet
 from services.persona.harness import HarnessSurface, PersistentHarnessOwner
 from services.persona.persona_cycle_controller import (
@@ -945,3 +946,122 @@ def test_standing_questions_not_declared_without_pool_families(system):
         "status": "not_run", "reason": "pool_families_unavailable"}
     assert controller.standing_questions([]) == [q for q in controller.standing_questions([]) if q["key"] == "risk_lessons"]
     assert [q["key"] for q in controller.standing_questions(["Momentum", "momentum", " "])] == ["family:momentum", "risk_lessons"]
+
+
+# --- SD-REGIME-STATE-ENGINE R13: first-wave regime consumers (real registry routes over HTTP) ---
+
+def _registry_transport(monkeypatch, *, observations="seeded", register_spec=True):
+    """Transport over the real registry app: real routes, real stores, the registry's own authentication."""
+    for module in ("numpy", "pandas", "scipy", "statsmodels"):
+        pytest.importorskip(module)
+    from fastapi.testclient import TestClient
+    from services.registry import main as registry_service
+    from services.registry.regime import routes as regime_routes
+    from services.registry.regime.tests import test_evaluator as evaluator_fixtures
+    from services.registry.regime.tests import test_routes as route_fixtures
+    from services.registry.storage import reset_store
+
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", route_fixtures.SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    reset_store()
+    rows = evaluator_fixtures.observations() if observations == "seeded" else [
+        o for o in evaluator_fixtures.observations() if o["dataset"] != "tw_index_daily"]
+    monkeypatch.setattr(regime_routes, "_observations_loader", lambda: (lambda: rows))
+    client = TestClient(registry_service.app)
+    headers = route_fixtures._jwt("tenant-a")
+    route_fixtures._register_models(client, headers)
+    if register_spec:
+        route_fixtures._register_spec(client, headers, "momentum", regime={"primary_axis": "volatility", "horizon": "short"})
+    session = evaluator_fixtures.sessions()[-1]
+    monkeypatch.setattr(regime_consumer, "session_for_run", lambda run: session)
+    calls = []
+
+    def transport(method, path, body=None):
+        calls.append((method, path))
+        response = client.request(method, path, headers=headers, json=body)
+        return response.status_code, response.json()
+
+    return transport, calls, session, regime_routes
+
+
+def test_observe_evaluates_then_reads_active_record_and_case_file_carries_regime_tag(system, monkeypatch):
+    from services.registry.regime.store import get_regime_store
+    transport, calls, session, _ = _registry_transport(monkeypatch)
+    controller, state, owner, _pool = system
+    controller.owners.regime_transport = transport
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None
+    stored = get_regime_store().list_regimes(strategy_id="momentum", states=("active",))
+    assert len(stored) == 1
+    record = stored[0]["record"]
+    # Evaluate first, then the active read, then the shared market state; one mutating call only.
+    assert calls[0] == ("POST", "/api/registry/regime/evaluate")
+    assert ("GET", "/api/registry/regime/strategies/momentum/active") in calls
+    assert [c for c in calls if c[0] != "GET"] == [("POST", "/api/registry/regime/evaluate")]
+    assert packet["orient"]["regime_state_ref"] == "regime-state://" + record["regime_id"]
+    assert cycle["regime"]["status"] == "observed" and cycle["regime"]["records"]["momentum"]["regime_id"] == record["regime_id"]
+    # The case file subject and the lesson query carry the stored record's class.
+    case_file = next(iter(cycle["case_files"].values()))
+    assert record["regime_class"] and case_file["subject"]["regime_tag"] == record["regime_class"]
+    assert f"regime:{record['regime_class']}" in case_file["lesson_query"]["tags"]
+    # The persona's interpretation stays in the packet; the registry record is untouched.
+    assert cycle["regime_interpretation"]["written_to_regime_state"] is False
+    assert cycle["regime_interpretation"]["text"] == OUTPUT["orient"]
+    assert get_regime_store().list_regimes(strategy_id="momentum", states=("active",))[0]["record"] == record
+
+
+@pytest.mark.parametrize("scenario,reason_prefix", [
+    ("refused", "evaluate_refused:409:session_data_incomplete"),
+    ("no_record", "no_active_record_for_pool_strategies"),
+])
+def test_registry_refusal_or_missing_record_runs_the_cycle_with_an_explicit_reason(system, monkeypatch, scenario, reason_prefix):
+    transport, _calls, _session, _ = _registry_transport(
+        monkeypatch, observations="empty" if scenario == "refused" else "seeded", register_spec=scenario != "no_record")
+    controller, state, owner, _pool = system
+    controller.owners.regime_transport = transport
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None and packet["status"] == "closed"
+    assert packet["orient"]["regime_state_ref"] is None
+    assert cycle["regime"]["status"] == "unavailable" and cycle["regime"]["reason"].startswith(reason_prefix)
+    case_file = next(iter(cycle["case_files"].values()))
+    assert case_file["subject"]["regime_tag"] == ""
+    assert not any(t.startswith("regime:") for t in case_file["lesson_query"]["tags"])
+    assert cycle["regime_interpretation"]["regime_unavailable_reason"].startswith(reason_prefix)
+
+
+def test_unconfigured_or_failing_registry_never_blocks_or_invents_a_regime(system):
+    controller, state, owner, _pool = system
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))  # env has no registry URL/token
+    assert packet["persona_cycle"]["regime"]["reason"] == "registry_unconfigured"
+    assert packet["orient"]["regime_state_ref"] is None and packet["persona_cycle"]["failure_reason"] is None
+
+    def boom(method, path, body=None):
+        raise ConnectionError("registry down")
+    controller.owners.regime_transport = boom
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert packet["persona_cycle"]["regime"]["reason"] == "registry_unavailable:ConnectionError"
+    assert packet["orient"]["regime_state_ref"] is None and packet["persona_cycle"]["failure_reason"] is None
+
+
+def test_cycle_requests_macro_regime_shift_consultation_only_on_a_change(system, monkeypatch):
+    controller, state, owner, _pool = system
+    sequence = iter([("2026-11-12", "expansion"), ("2026-11-13", "slowdown"), ("2026-11-16", "slowdown")])
+
+    def regime(persona, observe, run_):
+        session, macro = next(sequence)
+        return {"status": "unavailable", "reason": "test", "session": session, "regime_state_ref": None,
+                "regime_tag": "", "records": {}, "macro": {"state": macro, "session": session}}
+    monkeypatch.setattr(controller.owners, "regime", regime)
+    persona = owner.list_json()[0]
+    first, second, third = (controller.consume_run(persona, "job-1", run(n))["persona_cycle"] for n in (1, 2, 3))
+    assert "consult_requests" not in first                      # no earlier session: nothing to compare
+    request = second["consult_requests"][0]                     # expansion -> slowdown
+    assert request["trigger_rule"] == "macro_regime_shift" and request["status"] == "requested"
+    assert request["panel"]["gated_decision"]["type"] == "macro_regime_shift"
+    assert "persona-risk-officer" in [p["persona_id"] for p in request["panel"]["participants"]]
+    assert "consult_requests" not in third                      # slowdown -> slowdown
