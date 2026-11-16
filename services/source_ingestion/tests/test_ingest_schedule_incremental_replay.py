@@ -20,6 +20,7 @@ from services.source_ingestion.scheduler import (
     IngestReceipt,
     JsonlIngestScheduleStore,
     SourceWatermark,
+    slim_receipt_payload,
 )
 
 STAMP = "2026-11-12T00:00:00Z"
@@ -30,10 +31,16 @@ def captured():
     return json.loads((Path(__file__).parent / "fixtures/hosted_registry_20261112.json").read_bytes())
 
 
-def _receipt(captured, index=0, *, large=False):
+def _receipt(captured, index=0, *, large=False, legacy=False):
     row = captured["connectors"][-1 if large else -2]
-    return replace(IngestReceipt.from_dict(row["freshness"]["latest_receipt"]),
-                   ingest_run_id=f"ingest-incremental-{index:05d}")
+    # Receipts are durable in slim form (references, no snapshot bodies); building them
+    # that way keeps memory, journal and replay identical for these replay tests.
+    receipt = replace(IngestReceipt.from_dict(row["freshness"]["latest_receipt"]),
+                      ingest_run_id=f"ingest-incremental-{index:05d}")
+    if legacy:  # the deployed writer's shape: snapshot bodies embedded
+        return receipt
+    slim, _ = slim_receipt_payload({"evidence_refs": receipt.evidence_refs})
+    return replace(receipt, evidence_refs=slim["evidence_refs"])
 
 
 def _run(receipt):
@@ -274,7 +281,7 @@ def build_real_shape_journal(path, captured):
                 payload["status"] = payload["events"][-1]["status"]
                 handle.write(_row("ingest_run", run.ingest_run_id, payload))
         for index in range(3202):
-            receipt = _receipt(captured, index, large=index < 5)
+            receipt = _receipt(captured, index, large=index < 5, legacy=True)
             handle.write(_row("ingest_receipt", receipt.ingest_run_id, receipt.to_dict()))
         for index in range(1585):
             item = CrawlFrontierItem(frontier_id=f"frontier-{index:012d}",
@@ -335,6 +342,7 @@ def registry_on_journal(root, captured, store_class=JsonlIngestScheduleStore):
             "source_metadata": policy["source_metadata"]})
         runtime.manager.register_connector(connector)
     build_real_shape_journal(runtime.SCHEDULE_STORE_PATH, captured)
+    runtime.legacy_journal_bytes = runtime.SCHEDULE_STORE_PATH.stat().st_size
     runtime.store = store_class(runtime.SCHEDULE_STORE_PATH)
     app = FastAPI()
     app.include_router(create_catalog_controller_router(runtime))
@@ -344,7 +352,9 @@ def registry_on_journal(root, captured, store_class=JsonlIngestScheduleStore):
 def test_real_shape_registry_read_after_appends_is_under_300ms(tmp_path, captured, monkeypatch):
     runtime, client, writer = registry_on_journal(tmp_path, captured)
     size = runtime.SCHEDULE_STORE_PATH.stat().st_size
-    assert 44_000_000 < size < 50_000_000
+    assert 44_000_000 < runtime.legacy_journal_bytes < 50_000_000  # hosted-shaped journal as written
+    # Start dropped the five 96-snapshot bodies (~590KB each) and kept every other byte.
+    assert runtime.legacy_journal_bytes - size > 2_500_000
     seen = _spy_reads(monkeypatch, runtime.SCHEDULE_STORE_PATH)
     with client:
         metrics = measure_registry(runtime, client, writer, captured)
