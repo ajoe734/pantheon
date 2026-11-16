@@ -34,6 +34,7 @@ import os
 
 from services.foundation.health import register_fastapi_health_routes
 
+from .regime.routes import router as _regime_router
 from .service import app
 from .storage import RegistryStore, get_store
 
@@ -91,6 +92,9 @@ def _registry_owner_dependency() -> dict:
         return {"status": "error", "detail": f"registry postgres owner table probe failed: {exc}"}
     return {"status": "ok", "backend": "postgres"}
 
+
+# Regime evaluator routes (SD-REGIME-STATE-ENGINE-20261114); their auth helpers resolve from service.py lazily.
+app.include_router(_regime_router)
 
 register_fastapi_health_routes(
     app, "registry", dependencies=lambda: {"registry_owner": _registry_owner_dependency()},
