@@ -1,0 +1,33 @@
+{
+  "id": "pantheon-persona-tools",
+  "name": "Pantheon Persona Tools",
+  "description": "Brokered persona agent tools: memory recall, standing-question read and proposal submission. Every call is forwarded to the Pantheon adapter broker; the plugin holds no memory or persona-service credential.",
+  "version": "1.0.0",
+  "activation": { "onStartup": true },
+  "contracts": {
+    "tools": ["persona_memory_recall", "persona_mental_model_read", "persona_proposal_submit"]
+  },
+  "toolMetadata": {
+    "persona_memory_recall": { "optional": true },
+    "persona_mental_model_read": { "optional": true },
+    "persona_proposal_submit": { "optional": true }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["brokerUrl", "brokerToken"],
+    "properties": {
+      "brokerUrl": {
+        "type": "string",
+        "description": "Base URL of the adapter's internal persona-tools broker, for example http://openclaw-gateway-adapter:8104/internal/persona-tools/v1"
+      },
+      "brokerToken": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Shared broker secret (PERSONA_TOOL_BROKER_TOKEN). Not a memory or persona-service credential."
+      },
+      "authorizeTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 },
+      "callTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 }
+    }
+  }
+}
