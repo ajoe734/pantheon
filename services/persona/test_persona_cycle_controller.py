@@ -1067,6 +1067,86 @@ def test_cycle_requests_macro_regime_shift_consultation_only_on_a_change(system,
     assert "consult_requests" not in third                      # slowdown -> slowdown
 
 
+# --- deliberative meeting triggers (MEETING-TRIGGERS-R2-20261116) ---------------------------------------------
+def _meeting_controller(controller, opener, *, records=(), weekday=None):
+    from services.persona import meeting_triggers as mt
+
+    class Attribution(mt.AttributionPort):
+        def __init__(self):
+            self.runs = []
+
+        def request_weekly_run(self, window_end):
+            self.runs.append(window_end)
+            return {"run_id": "run-w", "status": "queued"}
+
+        def new_records(self, since, limit=50):
+            return list(records)
+
+    attribution = Attribution()
+    controller.meeting_triggers = mt.MeetingTriggers(
+        opener=opener, attribution=attribution,
+        now=lambda: datetime(2026, 11, 16 + (weekday or 0), 3, tzinfo=timezone.utc))
+    return attribution
+
+
+def test_daily_cycle_convenes_weekly_meetings_and_requests_the_outlier_run_once_per_week(system):
+    controller, gateway, owner, _ = system
+    calls = []
+    attribution = _meeting_controller(
+        controller, lambda **kw: calls.append(kw) or {"meeting_id": f"m{len(calls)}", "status": "convened"},
+        records=[{"record_id": "r1", "subject_kind": "persona", "subject_id": "persona-cycle-test",
+                  "direction": "underperform"}], weekday=2)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    meetings = packet["persona_cycle"]["meetings"]
+    assert {"MT-3", "MT-4"} <= {c["meeting_type"] for c in meetings["convened"]}
+    assert meetings["weekly_outlier_run"]["status"] == "requested" and len(attribution.runs) == 1
+    assert next(c for c in calls if c["meeting_type"] == "MT-4")["attribution_record_id"] == "r1"
+    assert all(c["convened_by"] == {"kind": "persona", "id": "persona-cycle-test"} for c in calls)
+    # the next daily cycle of the same ISO week neither re-convenes nor re-requests
+    gateway["runs"]["job-1"] = [run(2), *gateway["runs"]["job-1"]]
+    controller.reconcile_once()
+    assert len(attribution.runs) == 1 and len([c for c in calls if c["meeting_type"] == "MT-3"]) == 1
+
+
+def test_consult_request_for_a_meeting_opens_it_and_the_harness_loop_does_not_override_the_decision(system):
+    controller, gateway, owner, _ = system
+    ask = {"orient": "Need a shared view.", "memory_candidates": [], "proposals": [
+        {"kind": "consult_request", "reason": "why do exits lag", "evidence_refs": [],
+         "none_applicable_reason": "No case-file item bears on this request.",
+         "parameters": {"meeting_type": "MT-2", "topic": "exit lag"}}]}
+    gateway["answer"] = ask
+    _meeting_controller(controller, lambda **kw: {"meeting_id": "m-req", "status": "convened"})
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    decision = packet["persona_cycle"]["decisions"][0]
+    assert decision["status"] == "meeting_opened" and decision["meeting_id"] == "m-req"
+    assert packet["persona_cycle"]["meetings"]["requests"][0]["status"] == "meeting_opened"
+
+
+def test_meeting_refusal_and_unconfigured_owner_are_recorded_and_never_fail_the_cycle(system):
+    controller, gateway, owner, _ = system
+
+    def refuse(**kw):
+        err = RuntimeError("refused")
+        err.payload = {"reason": "meeting_budget_exhausted"}
+        raise err
+    _meeting_controller(controller, refuse, weekday=2)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    result = controller.reconcile_once()
+    packet = next(iter(read_packets(controller.path).values()))
+    assert result["failures"] == [] and packet["persona_cycle"]["failure_reason"] is None
+    assert packet["persona_cycle"]["meetings"]["refused"][0]["reason"] == "meeting_budget_exhausted"
+    controller.meeting_triggers = None  # production default: no consultation owner configured in this env
+    assert controller._meeting_step({**owner.list_json()[0]}, {}, {"packet_id": "x"}, {}) == {
+        "status": "not_run", "reason": "consultation_owner_unconfigured"}
+
+
 def test_daily_cycle_declares_market_regime_standing_question_with_active_record_and_retires_when_none_exists(
     system, monkeypatch
 ):

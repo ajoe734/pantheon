@@ -267,11 +267,13 @@ def previous_macro(snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[
 class PersonaCycleController:
     def __init__(self, registrar: PersonaCronRegistrar, owners: Any, *,
                  store_path: Path | str | None = None, turn_runner: Callable = run_persona_ooda_turn,
-                 pool_cycle: Any = None, harness_loop: Any = None, lesson_cycle: Any = None):
+                 pool_cycle: Any = None, harness_loop: Any = None, lesson_cycle: Any = None,
+                 meeting_triggers: Any = None):
         self.registrar, self.owners, self.turn_runner = registrar, owners, turn_runner
         self.lesson_cycle = lesson_cycle  # None: built lazily on the cycle's own turn runner (services.persona.lesson_cycle)
         self.harness_loop = harness_loop  # None: built lazily from the owner (services.persona.harness_cycle)
         self.pool_cycle = pool_cycle  # PoolAutonomyCycle: the persona's own daily pool OODA
+        self.meeting_triggers = meeting_triggers  # None: built lazily when the consultation owner is configured
         self.path = Path(store_path) if store_path else resolve_ooda_packet_store_path()
 
     def consume_run(self, persona: dict[str, Any], job_id: str, run: dict[str, Any]) -> dict[str, Any]:
@@ -451,6 +453,8 @@ class PersonaCycleController:
                 # supporting-episode rule go to the risk persona and, when approved, into persona memory (D5).
                 cycle["lesson_governance"] = self._lesson_step(lambda lc: lc.govern(persona), degraded={
                     "status": "unavailable", "results": []})
+            if run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                cycle["meetings"] = self._meeting_step(persona, observe, packet, snapshots)
             cycle["harness_loop"] = self._harness_loop().run(persona, packet)
             cycle.update(phase="terminal", failure_reason=failure)
             if failure:
@@ -481,6 +485,25 @@ class PersonaCycleController:
         if shift is not None:
             cycle["consult_requests"] = [{"trigger_rule": "macro_regime_shift", "status": "requested",
                                           "panel": shift.to_panel_metadata()}]
+
+    def _meeting_step(self, persona, observe, packet, snapshots) -> dict[str, Any]:
+        """Deliberative-meeting triggers (services.persona.meeting_triggers); never fails the cycle."""
+        try:
+            from services.persona import meeting_triggers as mt
+            env = getattr(self.owners, "env", os.environ)
+            triggers = self.meeting_triggers
+            if triggers is None:
+                if not (env.get("PANTHEON_CONSULTATION_API_URL") or env.get("CONSULTATION_SERVICE_TOKEN")):
+                    return {"status": "not_run", "reason": "consultation_owner_unconfigured"}
+                triggers = self.meeting_triggers = mt.MeetingTriggers(
+                    config=mt.MeetingTriggerConfig.from_env(env),
+                    attribution=mt.attribution_port_from_env(env, persona["tenant_id"]))
+            enrolled = sorted(p["persona_id"] for p in self.owners.personas()
+                              if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
+                              and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"})
+            return triggers.run(persona, observe, packet, snapshots, enrolled)
+        except Exception as exc:
+            return {"status": "unavailable", "reason": "meeting_step_unavailable:" + type(exc).__name__}
 
     def _lesson_cycle(self) -> Any:
         if self.lesson_cycle is None:
