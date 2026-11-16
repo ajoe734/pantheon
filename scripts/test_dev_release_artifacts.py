@@ -1563,3 +1563,150 @@ def test_baseline_proof_sizes_old_and_new_validate_unchanged(stack_case, size):
 def test_baseline_proof_over_new_bound_rejected(stack_case):
     with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(_proof_stack(stack_case, artifacts.SOURCE_JOURNAL_MAX_BYTES + 1))
+
+
+# --- DEV-RELEASE-PROBE-LOCK-WAIT-AND-REASONS-20261115 ---------------------------------
+
+_LEGACY_LOCK = "fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)"
+
+
+def _legacy_probe():
+    """Probe as it was before this task: one non-blocking lock attempt, generic reasons."""
+    code = artifacts.SOURCE_PROBE
+    start = code.index("            deadline = time.monotonic()")
+    end = code.index("            before = os.fstat")
+    code = code[:start] + "            " + _LEGACY_LOCK + "\n" + code[end:]
+    code = code.replace('reason = "probe_killed" if isinstance(error, MemoryError) else next(', "reason = next(")
+    code = code.replace('("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),', "")
+    return code
+
+
+def _run_code(code, journal, timeout=60):
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", code, "journal", str(journal)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=timeout)
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _sample_journal(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    journal = tmp_path / "j.jsonl"
+    journal.write_text(market_snapshot_writer_samples()["official_daily"])
+    return journal
+
+
+def _hold_exclusive(journal, seconds):
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import fcntl,sys,time\nf=open(sys.argv[1],'rb')\nfcntl.flock(f.fileno(),fcntl.LOCK_EX)\n"
+        "print('held',flush=True)\ntime.sleep(float(sys.argv[2]))"), str(journal), str(seconds)],
+        stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def test_reproduce_legacy_lock_contention_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 3)
+    try:
+        legacy = _run_code(_legacy_probe(), journal)
+    finally:
+        holder.wait()
+    assert legacy["ok"] is False and legacy["reason"] == "reader_rejected"
+
+
+def test_reproduce_legacy_memory_exhaustion_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    boom = "digest = projection(stream_lines())"
+    for code, expected in ((_legacy_probe(), "reader_rejected"), (artifacts.SOURCE_PROBE, "probe_killed")):
+        result = _run_code(code.replace(boom, "raise MemoryError()"), journal)
+        assert result["ok"] is False and result["reason"] == expected
+
+
+def test_probe_waits_for_shared_lock_then_qualifies(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 1.5)
+    try:
+        result = _run_code(artifacts.SOURCE_PROBE, journal)
+    finally:
+        holder.wait()
+    assert result["ok"] is True
+
+
+def test_probe_lock_wait_bound_gives_distinct_reason(tmp_path):
+    journal = _sample_journal(tmp_path)
+    code = artifacts.SOURCE_PROBE.replace(
+        f"time.monotonic() + {artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS}", "time.monotonic() + 0.3")
+    assert code != artifacts.SOURCE_PROBE
+    holder = _hold_exclusive(journal, 3)
+    try:
+        result = _run_code(code, journal)
+    finally:
+        holder.terminate()
+        holder.wait()
+    assert result == {"ok": False, "codec_sha256": result["codec_sha256"], "reason": "lock_wait_timeout", "line": None}
+    assert artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS < 300
+
+
+def test_probe_line_too_long_gives_distinct_reason(tmp_path):
+    journal = tmp_path / "long.jsonl"
+    journal.write_bytes(b"x" * 64)
+    code = artifacts.SOURCE_PROBE.replace(str(artifacts.SOURCE_JOURNAL_MAX_LINE_BYTES), "32")
+    result = _run_code(code, journal)
+    assert result["ok"] is False and result["reason"] == "line_too_long"
+
+
+class _ProbeDocker:
+    def __init__(self, exc=None, out=""):
+        self.exc, self.out = exc, out
+
+    def call(self, *args):
+        if self.exc is not None:
+            raise artifacts.ArtifactError("Docker artifact operation failed") from self.exc
+        return self.out
+
+
+def _probe_reason(docker):
+    with pytest.raises(artifacts.SourceCompatibilityError) as caught:
+        artifacts.source_probe(docker=docker, image_id="sha256:" + "a" * 64, mode="codec", check_lease=lambda: None)
+    return caught.value.reason
+
+
+def test_source_probe_transport_failures_have_distinct_reasons():
+    assert _probe_reason(_ProbeDocker(subprocess.TimeoutExpired(["docker"], 300))) == "probe_timeout"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(137, ["docker"]))) == "probe_killed"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(1, ["docker"]))) == "unavailable"
+    assert _probe_reason(_ProbeDocker(out="")) == "probe_no_output"
+    for reason in ("lock_wait_timeout", "line_too_long"):
+        out = json.dumps({"ok": False, "reason": reason, "line": None})
+        assert _probe_reason(_ProbeDocker(out=out)) == reason
+
+
+@pytest.mark.parametrize("reason", ["lock_wait_timeout", "journal_too_large", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"])
+def test_new_reasons_reach_failure_summary_through_remote_record(reason):
+    record = artifacts.failure_record(artifacts.SourceCompatibilityError(reason), "restore")
+    assert record["source_compatibility"] == {"reason": reason, "line": None}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_persisted_source_snapshot_proof_keys_unchanged(stack_case):
+    # Proof is exactly the four keys; the previous controller validated the same shape.
+    stack = _proof_stack(stack_case, 1234)
+    artifacts.validate_stack(stack)
+    assert set(stack["services"][artifacts.API_SERVICE]["source_snapshot"]) == {
+        "codec_sha256", "journal_sha256", "journal_size", "projection_sha256"}
+    extra = copy.deepcopy(stack)
+    extra["services"][artifacts.API_SERVICE]["source_snapshot"]["probe_seconds"] = 1
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(extra)
+
+
+def test_previous_and_new_probe_emit_identical_proof_both_directions(tmp_path):
+    journal = _sample_journal(tmp_path)
+    old, new = _run_code(_legacy_probe(), journal), _run_code(artifacts.SOURCE_PROBE, journal)
+    assert old == new and old["ok"] is True
+    proof = {k: new[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+    # New baseline proof validates under the unchanged exact four key check, and the
+    # previous probe reproduces the same proof from the same journal (reverse direction).
+    assert proof == {k: old[k] for k in proof}
