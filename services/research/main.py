@@ -1270,6 +1270,12 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="research task not found")
     existing = _idempotent_match(store.list_runs(), body.idempotency_key)
     if existing:
+        if existing.get("outcome") == "operator_decision_required" and existing.get("status") == "queued":
+            existing["attempt_number"] = int(existing.get("attempt_number") or 1) + 1
+            existing["updated_at"] = body.requested_at or utc_now()
+            store.put_run(existing)
+            _trigger_retrain_execution(existing["run_id"], existing.get("parameters") or body.parameters)
+            return store.get_run(existing["run_id"]) or existing
         return existing
 
     timestamp = body.requested_at or utc_now()
@@ -1483,6 +1489,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         and _is_retrain_action(body.parameters)
     ):
         _trigger_retrain_execution(run["run_id"], body.parameters)
+        run = store.get_run(run["run_id"]) or run
     if not rejected and is_stage_backend and (body.parameters.get("stage") or (body.parameters.get("plan") and body.parameters["plan"].get("stages"))):
         _progress_plan_stages(body.parameters.get("plan") or {}, run, body.actor_id, store, timestamp)
     return run
@@ -1969,8 +1976,16 @@ def _retrain_trial_counter_path() -> Path:
 
 
 def _default_retrain_dataset_loader(parent_artifact: Dict[str, Any], params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    dataset_path = os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH") or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
-    policy_path = os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH") or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+    dataset_path = (
+        os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH")
+        or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+        or os.environ.get("PERSONA_POOL_CANONICAL_DATASET_PATH")
+    )
+    policy_path = (
+        os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH")
+        or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+        or os.environ.get("PERSONA_POOL_THRESHOLD_POLICY_PATH")
+    )
     if not dataset_path or not policy_path:
         return None
     training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
@@ -2570,6 +2585,247 @@ def _producer_proof_registration(
     }
 
 
+def _execute_legacy_member_requalification(
+    *,
+    run_id: str,
+    params: Dict[str, Any],
+    tenant_id: str,
+    decision_id: str,
+    target_artifact_id: str,
+    entry: Dict[str, Any],
+    entry_meta: Dict[str, Any],
+    parent: Dict[str, Any],
+    ctx: Dict[str, Any],
+    baseline: Dict[str, Any],
+    registry_url: str,
+    read: Any,
+) -> None:
+    """Re-qualify a live legacy decision-close-fill pool member under next-open fills (2026-11-16 decision)."""
+    from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+    from services.research.candidate_registration import TemplateCandidateRegistrar
+    from urllib.parse import urlsplit
+
+    owner = _pool_owner(params)
+    if owner is None:
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": "pool_owner_unavailable"})
+    try:
+        pool = owner.pool(ctx["persona_id"])
+    except Exception as exc:  # noqa: BLE001
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": str(exc)}) from None
+    member = next(
+        (
+            m for m in pool["members"]
+            if m["artifact_ref"] == ctx["artifact_ref"]
+            and m["checksum"] == ctx["checksum"]
+            and m["joined_at"] == ctx["joined_at"]
+        ),
+        None,
+    )
+    if member is None:
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": "member_not_found_in_pool"})
+    if member["stage"] == "removed":
+        raise _RetrainFinished("no_candidate", str(member.get("removal_reason") or "member_already_removed"))
+
+    spec_id = str(
+        (parent.get("lineage") or {}).get("source_strategy_spec_id")
+        or (entry.get("lineage") or {}).get("source_strategy_spec_id")
+        or (entry_meta or {}).get("strategy_spec_id")
+        or ""
+    )
+    spec = None
+    if spec_id:
+        try:
+            spec_view = read("read_strategy_spec", f"/api/registry/strategy-specs/{urllib.parse.quote(spec_id, safe='')}")
+            spec_entry = (spec_view or {}).get("entry") or {}
+            if (
+                spec_entry.get("artifact_state") == "approved"
+                and str(spec_entry.get("owner_tenant") or (spec_entry.get("metadata") or {}).get("tenant_id") or "") == tenant_id
+                and isinstance((spec_entry.get("metadata") or {}).get("strategy_spec"), dict)
+            ):
+                spec = dict((spec_entry.get("metadata") or {})["strategy_spec"])
+        except _OwnerRejection as exc:
+            if exc.status != 404:
+                raise executor.RequalifyDeferred("owner_read_failed:strategy_spec", {"detail": exc.detail}) from None
+        except _RetrainFailure as exc:
+            raise executor.RequalifyDeferred("owner_read_failed:strategy_spec", {"detail": exc.detail}) from None
+
+    try:
+        family_views = read(
+            "read_family_versions",
+            f"/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        )
+        existing_versions = [
+            str(((v or {}).get("entry") or {}).get("version") or "")
+            for v in (family_views if isinstance(family_views, list) else [])
+        ]
+    except _OwnerRejection as exc:
+        if exc.status == 404:
+            existing_versions = []
+        else:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+    except _RetrainFailure as exc:
+        raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        try:
+            dataset = _RETRAIN_DATASET_LOADER(parent, params)
+        except Exception as exc:  # noqa: BLE001
+            raise executor.RequalifyDeferred("governed_dataset_unavailable", {"detail": str(exc)}) from None
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        bt_id = backtests.record(evaluation)
+        if bt_id:
+            _bind_backtest_run_owner(data_dir, bt_id, tenant_id=tenant_id, decision_id=decision_id)
+        return bt_id
+
+    prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        result = executor.requalify_legacy_member(
+            artifact=parent,
+            entry=entry,
+            member=ctx,
+            baseline=baseline,
+            dataset=dataset,
+            gate=gate,
+            spec=spec,
+            decision_id=decision_id,
+            tenant_id=tenant_id,
+            existing_versions=existing_versions,
+            record_backtest=_record_owned,
+            timestamp=utc_now(),
+        )
+    finally:
+        if prev is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+
+    verdict = result["verdict"]
+    if result["outcome"] == "revalidation_failed":
+        removed_receipt = owner.remove_member(
+            pool,
+            member,
+            reason="requalification_failed_next_open_fill",
+            verdict_ref=verdict["verdict_ref"],
+            verdict=verdict,
+        )
+        family_id = str(parent.get("strategy_id") or parent.get("artifact_id") or "")
+        memory_receipt = owner.learn_member_removal(
+            persona_id=ctx["persona_id"],
+            artifact_ref=ctx["artifact_ref"],
+            decision_id=decision_id,
+            verdict_ref=verdict["verdict_ref"],
+            families=[family_id] if family_id else [],
+            detail="requalification_failed_next_open_fill",
+        )
+        _retrain_record(
+            run_id,
+            operator_decision_required=False,
+            evolution_result={
+                **verdict,
+                "pool_removal_receipt": removed_receipt,
+                "memory_writeback": memory_receipt,
+            },
+        )
+        raise _RetrainFinished("revalidation_failed", "requalification_failed_next_open_fill")
+
+    def _requalify_owner_call(
+        *,
+        step: str,
+        service: str,
+        method: str,
+        url: str,
+        tenant_id: str,
+        token_variable: str,
+        body: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+        timeout: float = 15.0,
+    ) -> Any:
+        parsed = urlsplit(url)
+        path = parsed.path + (("?" + parsed.query) if parsed.query else "")
+        has_token = bool(os.getenv(token_variable, "").strip() or os.getenv(token_variable + "_FILE", "").strip())
+        if service == "governance" and not has_token:
+            res = owner.call("GOVERNANCE", method, path, body, optional=(method == "GET"))
+            if res is None and method == "GET":
+                raise _OwnerRejection(404, "not found")
+            return res
+        if service == "registry" and not has_token and owner.env.get("AUTO_CONSUMER_REGISTRY_TOKEN"):
+            res = owner.call("REGISTRY", method, path, body, optional=(method == "GET"))
+            if res is None and method == "GET":
+                raise _OwnerRejection(404, "not found")
+            return res
+        return _retrain_call(
+            step=step,
+            service=service,
+            method=method,
+            url=url,
+            tenant_id=tenant_id,
+            token_variable=token_variable,
+            body=body,
+            extra_headers=extra_headers,
+            timeout=timeout,
+        )
+
+    adm_store = (
+        alpha_replication_admission_store
+        if getattr(alpha_replication_admission_store, "_data_dir", None) == data_dir
+        else ReplicationAdmissionStore(data_dir)
+    )
+    q_store = (
+        alpha_replication_queue
+        if getattr(alpha_replication_queue, "_data_dir", None) == data_dir
+        else AlphaReplicationQueue(data_dir)
+    )
+    registrar = TemplateCandidateRegistrar(
+        data_dir=data_dir,
+        owner_call=_requalify_owner_call,
+        registry_url=registry_url,
+        proposer_id=owner.env.get("AUTO_CONSUMER_PROPOSER_ID") or os.getenv("RESEARCH_GOVERNANCE_PROPOSER_ID"),
+        gate_id=owner.env.get("AUTO_CONSUMER_GATE_ID") or os.getenv("RESEARCH_GOVERNANCE_GATE_ID"),
+        admission_store=adm_store,
+        queue_store=q_store,
+        backtest_run_store=backtests,
+    )
+    registration = registrar.register_requalified_member(
+        tenant_id=tenant_id,
+        persona_id=ctx["persona_id"],
+        decision_id=decision_id,
+        legacy_entry=entry,
+        requalified_artifact=result["requalified_artifact"],
+        gate_response=result["gate_response"],
+        backtest_evaluation=result["backtest_evaluation"],
+    )
+    replace_receipt = owner.replace_requalified_member(
+        ctx,
+        new_artifact=result["requalified_artifact"],
+        new_checksum=registration["checksum"],
+        dataset=dataset,
+    )
+    new_id = str(registration["registry_id"])
+    run = get_store().get_run(run_id) or {}
+    writebacks = list(run.get("registry_writebacks") or [])
+    writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
+    _retrain_record(
+        run_id,
+        operator_decision_required=False,
+        candidate_artifact_id=new_id,
+        registry_writebacks=writebacks,
+        evolution_result={
+            **verdict,
+            "replacement": registration,
+            "pool_replacement_receipt": replace_receipt,
+        },
+    )
+    raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+
+
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """Approved ``mutate`` / ``revalidate`` decision -> real OOS gate -> lineage registration.
 
@@ -2615,14 +2871,23 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
             url=f"{registry_url}{path}", tenant_id=tenant_id,
         )
 
+    is_requalify_mode = str((params.get("pool_member") or {}).get("mode") or "") == "requalify_legacy_baseline"
     try:
         view = read("read_target_artifact", f"/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}")
     except _OwnerRejection as exc:
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
         raise _RetrainFinished("evaluation_rejected", f"target artifact rejected by Registry: {exc.detail}") from None
+    except _RetrainFailure as exc:
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+        raise
     entry = (view or {}).get("entry") if isinstance(view, dict) else None
     entry_meta = (entry or {}).get("metadata") if isinstance(entry, dict) else None
     parent = (entry_meta or {}).get("strategy_artifact") if isinstance(entry_meta, dict) else None
     if not isinstance(parent, dict):
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": "Registry entry carries no strategy_artifact"})
         raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
     family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
     if params.get("pool_member") and action == "revalidate":
@@ -2630,6 +2895,12 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
         ctx = params["pool_member"]
         baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=ctx["persona_id"],
             artifact_ref=ctx["artifact_ref"], checksum=ctx["checksum"], entry=entry)
+        if baseline.get("reason") == "baseline_computed_under_decision_close_fill":
+            _execute_legacy_member_requalification(
+                run_id=run_id, params=params, tenant_id=tenant_id, decision_id=decision_id,
+                target_artifact_id=target_artifact_id, entry=entry or {}, entry_meta=entry_meta or {},
+                parent=parent, ctx=ctx, baseline=baseline, registry_url=registry_url, read=read,
+            )
         dataset = _RETRAIN_DATASET_LOADER(parent, params) if callable(_RETRAIN_DATASET_LOADER) else None
         if not isinstance(dataset, dict):
             raise _RetrainFinished("evaluation_rejected", "governed_post_admission_dataset_unavailable")
@@ -2753,6 +3024,8 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
         _retrain_active_runs.add(run_id)
 
     def run_worker():
+        from services.research.alpha_replication import evolution_executor as executor
+
         rstore = get_store()
         template_run = _is_template_search_run(rstore.get_run(run_id) or {})
         regime_run = _is_regime_fit_run(rstore.get_run(run_id) or {})
@@ -2766,6 +3039,25 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 _execute_retrain(run_id, params)
             else:
                 _execute_evolution_gate(run_id, params)
+        except executor.RequalifyDeferred as deferred:
+            _retrain_record(
+                run_id,
+                status="queued",
+                outcome="operator_decision_required",
+                outcome_reason=deferred.reason,
+                operator_decision_required=True,
+                evolution_result={
+                    "status": "could_not_evaluate",
+                    "operator_decision_required": True,
+                    "reason": deferred.reason,
+                    **deferred.detail,
+                },
+            )
+            cur = rstore.get_run(run_id) or {}
+            task = rstore.get_task(str(cur.get("task_id") or "")) if cur.get("task_id") else None
+            if task:
+                task.update(status="queued", updated_at=utc_now())
+                rstore.put_task(task)
         except _RetrainFinished as done:
             if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
                 return
@@ -2801,7 +3093,10 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
 
-    threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
+    if str((params.get("pool_member") or {}).get("mode") or "") == "requalify_legacy_baseline":
+        run_worker()
+    else:
+        threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
 # --- Persona-written research demands (research_demand.v1) ---
