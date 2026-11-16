@@ -49,6 +49,12 @@
   "ci_red_triage": {
     "check": "Smoke acceptance (run 43733378941)",
     "cause": "'Run source ingestion tests' hit its 15 minute step timeout at ~76% with no test failure; dev run 43732108493 timed out identically at 76%, while a passing run (43733812569) took 12m27s, so the suite sits near the limit. This change adds ~4s (guard test) and removes temp dirs.",
-    "action": "resubmitted on new head for re-run"
+    "action": "resubmitted on new head for re-run",
+    "resolution": "Blocker resolved: CI-SOURCE-INGESTION-TESTS-TIMEOUT-20261115 merged (sharded runner). dev merged into task branch; revalidated 2026-11-16."
+  },
+  "revalidation_20261116": {
+    "isolated_tmpdir": "TMPDIR=/tmp/si-iso-... per run; 0 source_ingest_scheduled_ dirs left",
+    "test_scheduled_connector+cleanup_guard": "75 passed",
+    "importing_modules(early_fetch_pit, provenance_bound, hosted_throughput, progress, controller_worker)": "257 passed, 3 skipped"
   }
 }
