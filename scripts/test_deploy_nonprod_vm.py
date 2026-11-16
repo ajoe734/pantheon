@@ -4103,3 +4103,15 @@ def test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records(
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(captured_up_env.read_text(encoding="utf-8"))["max_records"] == expected_max_records
+
+
+def test_finmind_fundamentals_bounded_prepare_binds_symbols_and_run_date_through_the_fanout():
+    text = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    body = text[text.index('prepare_bounded_source_refresh_dataset() {'):]
+    body = body[:body.index('PREPARE_DATASET_PY\n', body.index('PREPARE_DATASET_PY'))]
+    # No early return for fundamentals: the symbol-keyed fanout job supplies request.symbols and run_date.
+    head = body[:body.index('esac')]
+    assert 'tw_monthly_revenue' not in head.split('return 0')[0]
+    assert 'FINMIND_FUNDAMENTAL_BOUNDED' in body and 'is_fund' in body
+    assert 'FinMindTaiwanFundamentalsAdapter' in body
+    assert '"symbols": list(finmind_batches[0])' in body

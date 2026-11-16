@@ -154,3 +154,99 @@ def test_price_only_rule_is_unchanged(source_case):
     env, _, _ = source_case
     dataset = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, {"artifact_ref": "candidate"})
     assert "features_by_instrument" not in dataset
+
+
+def _screened_revenue_candidate():
+    from services.registry.test_candidate_pool import screen_artifact
+
+    artifact = screen_artifact()
+    artifact["strategy_logic"]["inputs"].append(
+        {"name": "rev_yoy", "dataset": "tw_monthly_revenue", "field": "yoy", "availability_lag_days": 10})
+    artifact["strategy_logic"]["screen"]["steps"] = [{
+        "kind": "rank", "expression": {"ref": "rev_yoy"}, "side": "top",
+        "count": {"const_param": "pool_count"}, "refresh": "monthly"}]
+    return {"artifact_ref": "reg-screen-revenue-yoy", "checksum": "sha256:" + "1" * 64, "strategy_artifact": artifact}
+
+
+def _market_from(dataset, features_by_instrument, *, with_revenue=True):
+    """What the source owner's candidate-pool-market feed returns: governed bars plus dated features."""
+    from services.registry.candidate_pool import canonical_symbol
+
+    symbols = {}
+    for record in dataset["records"]:
+        key = canonical_symbol(record["instrument"])
+        day = str(record["date"])[:10]
+        payload = symbols.setdefault(key, {"dataset": "tw_price_daily", "bars": [], "features": {}})
+        payload["bars"].append({
+            "event_time": f"{day}T13:30:00+08:00", "available_time": f"{day}T18:00:00+08:00",
+            **{k: record[k] for k in ("open", "high", "low", "close", "volume")},
+            "traded_value": record["close"] * record["volume"], "suspended": False})
+    if with_revenue:
+        for instrument, features in features_by_instrument.items():
+            symbols[canonical_symbol(instrument)]["features"] = features
+    days = sorted({str(r["date"])[:10] for r in dataset["records"]})
+    return {"schema_version": "candidate_pool_market.v1", "scope": "all_governed_tw",
+            "source_refs": ["source-ingest://candidate-pool-market/test"], "includes_delisted": False,
+            "includes_suspended": False, "symbols": symbols, "trading_sessions": days,
+            "calendar_coverage_through": days[-1]}
+
+
+def test_screen_using_revenue_yoy_runs_through_dataset_authority_to_admission_backtest(source_case, monkeypatch):
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        BacktestConfig, GovernedVectorbtInputAdapter, _screened_artifact_view_sequence,
+    )
+
+    env, responses, _ = source_case
+    _add_revenue_owner(env, responses, _revenue_rows())
+    env["PERSONA_POOL_FEATURE_CONNECTOR_IDS"] = json.dumps({"tw_monthly_revenue": CONNECTOR})
+    # Real authority-materialized point-in-time revenue observations (non-screened loader path).
+    plain = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, _candidate_with_revenue_rule())
+    seen = []
+
+    def owner_market(url, inputs, **_):
+        seen.append((url, inputs))
+        return _market_from(plain, plain["features_by_instrument"])
+
+    candidate = _screened_revenue_candidate()
+    dataset = governed_dataset_loader(env, clock=lambda: NOW, market_fetcher=owner_market)(PERSONA, candidate)
+    assert seen and any(i["dataset"] == "tw_monthly_revenue" for i in seen[0][1])
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    views = _screened_artifact_view_sequence(prepared, candidate["strategy_artifact"])
+    assert set(views) == set(prepared.instruments)
+    members = {m for v in views.values() for view in v for m in view["candidate_pool_snapshot"]["members"]}
+    assert members, "the revenue yoy rank must admit a member from the loaded observations"
+
+
+def test_screen_without_revenue_in_market_fails_closed(source_case):
+    env, responses, _ = source_case
+    _add_revenue_owner(env, responses, _revenue_rows())
+    env["PERSONA_POOL_FEATURE_CONNECTOR_IDS"] = json.dumps({"tw_monthly_revenue": CONNECTOR})
+    plain = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, _candidate_with_revenue_rule())
+    authority = importlib.import_module("services.training-session.evaluation_authority")
+    with pytest.raises(authority.AuthorityValidationError, match="feature dataset coverage missing"):
+        governed_dataset_loader(env, clock=lambda: NOW, market_fetcher=lambda *a, **k: _market_from(
+            plain, plain["features_by_instrument"], with_revenue=False))(PERSONA, _screened_revenue_candidate())
+
+
+def test_unavailable_market_fails_closed_with_reason(source_case):
+    from services.execution.lean_runtime.pool_market_inputs import PoolMarketInputsUnavailable
+
+    env, _, _ = source_case
+
+    def down(*_a, **_k):
+        raise PoolMarketInputsUnavailable("needs_data", "governed dataset tw_price_daily is missing")
+
+    authority = importlib.import_module("services.training-session.evaluation_authority")
+    with pytest.raises(authority.AuthorityValidationError, match="candidate pool market unavailable"):
+        governed_dataset_loader(env, clock=lambda: NOW, market_fetcher=down)(PERSONA, _screened_revenue_candidate())
+
+
+def test_feature_datasets_never_land_where_the_canonical_pointer_looks(source_case):
+    env, responses, _ = source_case
+    _add_revenue_owner(env, responses, _revenue_rows())
+    env["PERSONA_POOL_FEATURE_CONNECTOR_IDS"] = json.dumps({"tw_monthly_revenue": CONNECTOR})
+    governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, _candidate_with_revenue_rule())
+    root = Path(env["PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"])
+    top = [p for p in root.glob("dataset-version-*.json")]
+    assert top and all("tw_monthly_revenue" not in p.read_text() for p in top)
+    assert list((root / "feature-datasets" / "tw_monthly_revenue").glob("dataset-version-*.json"))

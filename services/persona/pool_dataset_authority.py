@@ -33,6 +33,31 @@ def referenced_feature_inputs(candidate: Mapping) -> dict[str, list[str]]:
     return out
 
 
+def screened_logic(candidate: Mapping) -> Mapping | None:
+    """The candidate's ``factor_rule_v1`` logic when it carries a market ``screen``."""
+    artifact = candidate.get("strategy_artifact")
+    logic = artifact.get("strategy_logic") if isinstance(artifact, Mapping) else None
+    if isinstance(logic, Mapping) and logic.get("kind") == "factor_rule_v1" and "screen" in logic:
+        return logic
+    return None
+
+
+def require_market_feature_coverage(market: Mapping, referenced: Mapping[str, list[str]]) -> None:
+    """Every referenced non-price ``dataset.field`` must be carried by at least one market symbol."""
+    authority = importlib.import_module("services.training-session.evaluation_authority")
+    symbols = market.get("symbols") if isinstance(market, Mapping) else None
+    for ds, fields in referenced.items():
+        for field in fields:
+            if not any(
+                isinstance(p, Mapping) and ((p.get("features") or {}).get(ds) or {}).get(field)
+                for p in (symbols or {}).values()
+            ):
+                raise authority.AuthorityValidationError(
+                    f"feature dataset coverage missing: {ds}.{field} has no point-in-time observations "
+                    "in the candidate pool market"
+                )
+
+
 def _series_for(observations: list[Mapping], instrument: str, dataset: str, field: str) -> list[dict]:
     keys = {instrument, instrument.split(".")[0]}
     rows = [
@@ -75,6 +100,7 @@ def governed_dataset_loader(
     env: Mapping[str, str] | None = None,
     *,
     clock: Callable[[], datetime] | None = None,
+    market_fetcher: Callable[..., Mapping] | None = None,
 ) -> Callable[[Mapping, Mapping], dict]:
     source = os.environ if env is None else env
     now = clock or (lambda: datetime.now(timezone.utc))
@@ -82,9 +108,33 @@ def governed_dataset_loader(
     def load(persona: Mapping, candidate: Mapping) -> dict:
         referenced = referenced_feature_inputs(candidate)
         dataset = _load_price(persona, candidate)
+        logic = screened_logic(candidate)
+        if logic is not None:
+            # A screened rule reads its non-price inputs from the governed whole-market input,
+            # which the source owner builds point-in-time; it fails closed without that market.
+            market = _load_candidate_pool_market(logic)
+            require_market_feature_coverage(market, referenced)
+            return {**dataset, "candidate_pool_market": dict(market)}
         if not referenced:
             return dataset
         return attach_feature_observations(dataset, referenced, _load_feature_observations(candidate, referenced))
+
+    def _load_candidate_pool_market(logic: Mapping) -> Mapping:
+        authority = importlib.import_module("services.training-session.evaluation_authority")
+        if source.get("PERSONA_POOL_CANONICAL_DATASET_PATH") or source.get("TRAINING_SESSION_CANONICAL_DATASET_PATH"):
+            raise authority.AuthorityValidationError(
+                "feature dataset coverage missing: a canonical dataset path override carries no candidate pool market"
+            )
+        from services.execution.lean_runtime.pool_market_inputs import (
+            PoolMarketInputsUnavailable, fetch_candidate_pool_market,
+        )
+
+        fetch = market_fetcher or fetch_candidate_pool_market
+        try:
+            return fetch(str(source.get("SOURCE_INGEST_API_URL") or "").strip(), list(logic.get("inputs") or ()))
+        except PoolMarketInputsUnavailable as exc:
+            raise authority.AuthorityValidationError(
+                f"feature dataset coverage missing: candidate pool market unavailable: {exc}") from exc
 
     def _load_feature_observations(candidate: Mapping, referenced: Mapping[str, list[str]]) -> dict[str, list]:
         authority = importlib.import_module("services.training-session.evaluation_authority")
@@ -117,7 +167,11 @@ def governed_dataset_loader(
                 materialized = source_authority.materialize_source_dataset_version(
                     http_get=lambda url: source_authority.urllib_json_get(url, timeout_seconds=timeout, headers=headers),
                     source_api_url=source_url, connector_id=connector, dataset_id=normalized[ds],
-                    source_volume_root=source_root, output_root=output_root,
+                    source_volume_root=source_root,
+                    # Feature datasets live in their own directory so the canonical price
+                    # dataset-version pointer (newest dataset-version-*.json in output_root)
+                    # can never be repointed at a feature dataset.
+                    output_root=str(Path(output_root) / "feature-datasets" / ds),
                     trusted_now=now(), clock=now,
                 )
             except (source_authority.SourceDatasetAuthorityError, ValueError) as exc:
