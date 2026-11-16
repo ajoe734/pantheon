@@ -1567,6 +1567,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         limit = max_records if max_records is not None else self.max_records
         records: list[SourceRecord] = []
+        if dataset == "tw_price_daily" and self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+            normalized_rows = [
+                r for r in normalized_rows if self.listing_filter.admits(r.get("symbol_canonical") or r.get("symbol") or "")
+            ]
         for row in normalized_rows[: limit]:
             normalized_row = dict(row)
             calendar_evidence = None

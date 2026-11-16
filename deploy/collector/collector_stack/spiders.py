@@ -649,6 +649,8 @@ def _clean_int(value: Any) -> int:
 
 
 class TwseT86DailySpider:
+    skipped_not_listed_count = 0
+
     """Scrapling HTTP spider for TWSE T86 daily institutional buy/sell flows per-date all-stock page (SD §5.1, O-1)."""
 
     source_id = "collector-tw-twse-t86"
@@ -695,9 +697,16 @@ class TwseT86DailySpider:
         *,
         dates: Sequence[str] | None = None,
         urls: Sequence[str] | None = None,
+        symbols_filter: Sequence[str] | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
+        allowed_symbols = (
+            {str(s).strip() for s in symbols_filter if str(s).strip()}
+            if symbols_filter is not None
+            else None
+        )
+        self.skipped_not_listed_count = 0
         if dates is None:
             latest = latest_published_trading_date(fetched_iso)
             dates = recent_weekday_dates(latest, count=self.DEFAULT_RECENT_DATES)
@@ -747,6 +756,9 @@ class TwseT86DailySpider:
                     or ""
                 ).strip()
                 if not symbol or not re.fullmatch(r"[0-9A-Za-z]{4,6}", symbol):
+                    continue
+                if allowed_symbols is not None and symbol not in allowed_symbols:
+                    self.skipped_not_listed_count += 1
                     continue
                 security_name = str(
                     row_map.get("證券名稱")
@@ -861,6 +873,8 @@ def _price_published_at(trade_date: str, fetched_iso: str) -> str:
 
 
 class TwseDailyPriceHistorySpider:
+    skipped_not_listed_count = 0
+
     """Scrapling HTTP spider for TWSE daily price history using per-date all-stock MI_INDEX pages (SD §5.1, O-1)."""
 
     source_id = "collector-tw-twse-price-history"
@@ -920,6 +934,7 @@ class TwseDailyPriceHistorySpider:
             if symbols_filter is not None
             else None
         )
+        self.skipped_not_listed_count = 0
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
@@ -971,6 +986,7 @@ class TwseDailyPriceHistorySpider:
                     if not symbol or not re.fullmatch(r"[0-9A-Za-z]{4,6}", symbol):
                         continue
                     if allowed_symbols is not None and symbol not in allowed_symbols:
+                        self.skipped_not_listed_count += 1
                         continue
                     if "收盤價" not in row_map and "close" not in row_map:
                         continue
@@ -1317,6 +1333,8 @@ class TwseTaiexHistorySpider(TwseIndexBreadthSpider):
 
 
 class TpexDailyPriceHistorySpider:
+    skipped_not_listed_count = 0
+
     """Scrapling HTTP spider for TPEx daily price history using per-date all-stock dailyQuotes pages (SD §5.1, O-1)."""
 
     source_id = "collector-tw-tpex-price-history"
@@ -1376,6 +1394,7 @@ class TpexDailyPriceHistorySpider:
             if symbols_filter is not None
             else None
         )
+        self.skipped_not_listed_count = 0
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
@@ -1441,6 +1460,7 @@ class TpexDailyPriceHistorySpider:
                     if not symbol or not re.fullmatch(r"[0-9A-Za-z]{4,6}", symbol):
                         continue
                     if allowed_symbols is not None and symbol not in allowed_symbols:
+                        self.skipped_not_listed_count += 1
                         continue
                     if "收盤" not in row_map and "收盤價" not in row_map and "close" not in row_map:
                         continue
@@ -2117,7 +2137,7 @@ class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
         "恢復交易日期",
         "恢復交易時間",
     ]
-    WARRANT_SYMBOL_RE = re.compile(r"^0[3-8]\d{3}[0-9A-Za-z]$")
+    skipped_not_listed_count = 0
 
     @classmethod
     def build_twse_url(cls, *, start_yyyymmdd: str = "20240101", end_yyyymmdd: str) -> str:
@@ -2149,7 +2169,7 @@ class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
         venues: Sequence[str] | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        include_warrants: bool = False,
+        symbols_filter: Sequence[str] | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
@@ -2169,6 +2189,14 @@ class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
             else latest_published_trading_date(fetched_iso).replace("-", "")
         )
 
+        # SOURCE-WARRANT-LISTING-EXPIRY: the exchange listing (not a symbol pattern) decides which codes
+        # are collected; None keeps every code (filter disabled / rollback).
+        allowed_symbols = (
+            {str(s).strip() for s in symbols_filter if str(s).strip()}
+            if symbols_filter is not None
+            else None
+        )
+        self.skipped_not_listed_count = 0
         items: list[CollectedItem] = []
         self.no_data_confirmed = False
 
@@ -2195,7 +2223,8 @@ class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
                 res_iso = self._parse_optional_roc_date(res_date_raw, label="TWSE TWTAWU")
                 if susp_iso is None and res_iso is None:
                     raise TwseRegimeParseError(f"TWSE TWTAWU: row lacks both suspension and resumption dates {row!r}")
-                if not include_warrants and self.WARRANT_SYMBOL_RE.match(symbol):
+                if allowed_symbols is not None and symbol not in allowed_symbols:
+                    self.skipped_not_listed_count += 1
                     continue
                 event_date = susp_iso or res_iso or f"{min(target_years):04d}-01-01"
                 raw_values = {
@@ -2283,7 +2312,8 @@ class TwTradingSuspensionSpider(TwseIndexBreadthSpider):
                         raise TwseRegimeParseError(
                             f"TPEx sprcHis {year}: row lacks both suspension and resumption dates {row!r}"
                         )
-                    if not include_warrants and self.WARRANT_SYMBOL_RE.match(symbol):
+                    if allowed_symbols is not None and symbol not in allowed_symbols:
+                        self.skipped_not_listed_count += 1
                         continue
                     event_date = susp_iso or res_iso or f"{year:04d}-01-01"
                     raw_values = {

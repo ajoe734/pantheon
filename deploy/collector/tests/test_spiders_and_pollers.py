@@ -201,6 +201,7 @@ def test_every_section_5_source_runs_on_captured_fixture_with_no_network_call(
         library_dir=library_dir,
         hasher=test_hasher,
         transport=transport,
+        warrants_mode="off",  # generic fixture runs: previous behaviour; listing rules have their own tests
     )
 
     outcome = runner.run_source(
@@ -402,7 +403,7 @@ def _transport(published: dict[str, bool]) -> tuple[_FixtureTransport_cc, list[s
 
 def _runner(tmp_path, hasher, transport) -> _CollectorRunner_cc:
     return _CollectorRunner_cc(_load_cc(_POLICY_CC), root_dir=tmp_path,
-                           hasher=hasher, transport=transport)
+                           hasher=hasher, transport=transport, warrants_mode="off")
 
 
 def test_no_request_before_1440_or_after_1700_or_on_non_trading_days(tmp_path, test_hasher) -> None:
@@ -926,3 +927,81 @@ def test_taifex_vix_missing_download_links_fail_closed(tmp_path, fixtures_dir, t
     outcome = _vix_runner(tmp_path, test_hasher, transport).run_source('collector-tw-taifex-vix', run_id='vix-nolink')
     assert outcome.status == 'partial' and 'no download links' in outcome.bundle.manifest['reason']
     assert outcome.bundle.items_path.read_bytes() == b''
+
+
+# ---------------------------------------------------------------------------
+# SOURCE-WARRANT-LISTING-EXPIRY-20261117: the exchange listing decides what is collected
+# ---------------------------------------------------------------------------
+from collector_stack.config import CollectorConfigError as _CCE_wl  # noqa: E402
+
+_TWSE_PH = "collector-tw-twse-price-history"
+
+
+def _wl_state(path, symbols, *, last_success="2026-11-10"):
+    from services.source_ingestion import security_listing as sl
+
+    st = sl.ListingState(last_success_date=last_success)
+    for sym in symbols:
+        st.allowlist[sym] = {"venue": "TWSE", "category": "股票", "cfi": "ESVUFR", "is_warrant": False,
+                             "first_seen": last_success, "last_seen": last_success}
+    st.save(path)
+
+
+def _wl_runner(tmp_path, test_hasher, fixtures_dir, **kw):
+    base = _json_cc.loads((fixtures_dir / "twse_mi_index_20261110.json").read_text(encoding="utf-8"))
+    t = _FixtureTransport_cc()
+    t.register("https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+               lambda url: _FetchResponse_cc(requested_url=url, final_url=url, http_status=200,
+                                             body=_json_cc.dumps(base).encode("utf-8"), headers={}))
+    return CollectorRunner(_load_cc(_POLICY_CC), root_dir=tmp_path, hasher=test_hasher, transport=t, **kw)
+
+
+def _wl_symbols(outcome):
+    rows = [_json_cc.loads(x) for x in outcome.bundle.items_path.read_text().splitlines() if x.strip()]
+    return sorted({r["symbol"] for r in rows})
+
+
+def test_listed_only_collects_listed_and_skips_unlisted(tmp_path, test_hasher, fixtures_dir):
+    runner = _wl_runner(tmp_path, test_hasher, fixtures_dir)
+    _wl_state(runner.listing_state_path, ["2330"])
+    out = runner.run_source(_TWSE_PH, run_id="wl1", started_at="2026-11-10T09:00:00Z",
+                            finished_at="2026-11-10T09:00:05Z", allow_disabled=True,
+                            collect_kwargs={"dates": ["2026-11-10"]})
+    assert out.status == "complete"
+    assert _wl_symbols(out) == ["2330"]
+
+
+def test_listing_missing_or_older_than_three_trading_days_stops_price_collection(tmp_path, test_hasher, fixtures_dir):
+    from services.source_ingestion.security_listing import ListingUnavailable
+
+    runner = _wl_runner(tmp_path, test_hasher, fixtures_dir)
+    with pytest.raises(ListingUnavailable, match="listing_unavailable"):
+        runner.run_source(_TWSE_PH, run_id="wl2", started_at="2026-11-10T09:00:00Z",
+                          finished_at="2026-11-10T09:00:05Z", allow_disabled=True, collect_kwargs={"dates": ["2026-11-10"]})
+    _wl_state(runner.listing_state_path, ["2330"], last_success="2026-11-02")  # 6 trading days old
+    with pytest.raises(ListingUnavailable):
+        runner.run_source(_TWSE_PH, run_id="wl3", started_at="2026-11-10T09:00:00Z",
+                          finished_at="2026-11-10T09:00:05Z", allow_disabled=True, collect_kwargs={"dates": ["2026-11-10"]})
+    assert runner.transport.calls == []  # nothing was fetched
+
+
+def test_rollback_mode_off_restores_previous_behaviour(tmp_path, test_hasher, fixtures_dir):
+    runner = _wl_runner(tmp_path, test_hasher, fixtures_dir, warrants_mode="off")
+    out = runner.run_source(_TWSE_PH, run_id="wl4", started_at="2026-11-10T09:00:00Z",
+                            finished_at="2026-11-10T09:00:05Z", allow_disabled=True,
+                            collect_kwargs={"dates": ["2026-11-10"]})
+    assert _wl_symbols(out) == ["2317", "2330"]  # no listing file needed, nothing filtered
+    with pytest.raises(_CCE_wl):
+        _wl_runner(tmp_path, test_hasher, fixtures_dir, warrants_mode="bogus")
+
+
+def test_spider_counts_skipped_not_listed_and_t86_suspension_accept_filter(tmp_path, test_hasher, fixtures_dir):
+    runner = _wl_runner(tmp_path, test_hasher, fixtures_dir, warrants_mode="off")
+    spider = runner.build_collector(runner.config.get_source(_TWSE_PH))
+    spider.collect(dates=["2026-11-10"], symbols_filter=["2330"], fetched_at="2026-11-10T09:00:00Z")
+    assert spider.skipped_not_listed_count == 1
+    import inspect
+    from collector_stack.spiders import TwTradingSuspensionSpider, TwseT86DailySpider
+    for cls in (TwTradingSuspensionSpider, TwseT86DailySpider):
+        assert "symbols_filter" in inspect.signature(cls.collect).parameters
+        assert not hasattr(cls, "WARRANT_SYMBOL_RE")

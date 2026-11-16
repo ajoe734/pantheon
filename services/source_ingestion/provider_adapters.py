@@ -7,6 +7,8 @@ connector config cannot import arbitrary code.
 
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import math
 import os
@@ -461,8 +463,12 @@ def _taiwan_official(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    request_listing_filter = request.get("listing_filter")
+    if request_listing_filter is not None and request_listing_filter is not adapter.listing_filter:
+        adapter = dataclasses.replace(adapter, listing_filter=request_listing_filter)
     if request.get("bundle_transport") is not None or request.get("bundle_root") not in (None, ""):
         adapter = TaiwanOfficialMarketDatasetAdapter(
+            listing_filter=adapter.listing_filter,
             connector_id=adapter.connector_id,
             max_records=adapter.max_records,
             source_metadata=adapter.source_metadata,
