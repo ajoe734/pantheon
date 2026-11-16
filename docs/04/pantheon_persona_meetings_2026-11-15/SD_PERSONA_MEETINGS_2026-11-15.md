@@ -236,3 +236,101 @@ Production entry points of each task are exercised by integration tests.
 ### 11.5 Open for the operator
 
 1. Confirm the A1–A6 reading of 「agora的也要可以」, in particular that a servant attends only meetings its own user convened.
+
+**Resolved 2026-11-15/16 by §12:** the operator corrected the purpose of Agora participation (learning exchange about trader habits, Tesla-style shadow mode, attribution of outstanding and under-performance) and confirmed the rest; A2 and A3 are revised in §12.8.
+
+## 12. Amendment 2026-11-16 — Agora shadow mode as a platform data source and performance attribution review
+
+Design only; `hosted_behavior_claimed: false`. Every numeric value is a coordinator proposal.
+
+### 12.1 Operator statements (verbatim)
+
+Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl`:
+
+| Line | Time (UTC) | uuid | Statement |
+|---|---|---|---|
+| 9900 | 2026-11-15T14:42:43.739Z | 6cadb6a2-e0cf-4157-8684-a2721ac23d00 | 「agora的修正，因為agora的persona會跟交易員互動時候，把交易員的交易習慣學習起來，因此會議是讓我們的persona跟agora這些perosna學習交流的時刻。同樣，agora的persona可能會需要從 mangement 的persona學習一些來告訴交易員系統修正的建議。因此這種類的會議比較像是學習分享? 這適合這樣做嗎? 或是應該用別的機制來完成?」 |
+| 9948 | 2026-11-15T15:18:18.510Z | e279b7fe-ad43-4386-9ed9-7eb27b0e9e54 | 「我覺得想法不太對，tesla的自動駕駛會有影子模式，看每一個車主的駕駛行為，因此agora助理歸納出來的內容，去識別化後，應該就能夠油平台直接引用做為資料來源才對。」 |
+| 9997 (queued message) | 2026-11-15T15:20:46.775Z | 2d6e2176-8708-4fcd-a9af-4f8f15678733 | 「而且其實有意義的事情應該是找出交易員或是機構persona做出outstanding 或是underperfrom的原因。並不是擬寫的這種泛泛的白癡分享」 |
+| 10088 | 2026-11-16T12:48:15.182Z | d309900c-5da4-45b7-ba23-001db3c8df99 | 「拿掉：身分、帳號、券商編號、原始文字 應該可以不用拿掉 其他沒什麼問題」 (answering the coordinator's preceding proposal, which listed identity, account, broker ids and raw text as fields to remove before platform use) |
+
+### 12.2 What this changes
+
+| Item | Change | Authority |
+|---|---|---|
+| Purpose of Agora in meetings | from "Agora personas attend" (§11.2) to two-way learning: Agora servants learn each trader's habits; the platform learns from them; servants learn validated findings from the institution and advise traders | operator 9900 |
+| Generic learning-sharing meeting | **not added** | operator 9997 |
+| MT-4 post-mortem | **replaced** by MT-4 績效歸因檢討 performance attribution review (§12.6), which also covers the former loss triggers | operator 9997 |
+| Agora data use | servant insights, decision journal and shadow records become a **platform data source with full fields, including trader identity, account, broker ids and raw text** | operator 9948, 10088 |
+| `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/B2_institutional_learning_privacy_model.md` (de-identification, k ≥ 10, opt-in default off) and B3 (alpha contribution governance) | **superseded for this path** by the operator decision; operator decisions outrank team design (`CANONICAL_DOCUMENT_MAP.md` order) | operator 9948, 10088 |
+| Memory rule (facts shared, interpretations private, exchanged in meetings) | **unchanged**: the Agora records are facts; a servant's and a persona's interpretations stay private and cross only through meeting minutes | operator 2026-11-13 (§1) |
+
+### 12.3 S1 Shadow mode (implements A4)
+
+`docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A4_shadow_human_actual_sourcing.md` (Design Frozen 2026-06-20, never implemented: no `human_actual` or decision-lock code on `origin/dev`) is the Tesla-style shadow mode. It is implemented as written, with the operator's field decision:
+
+- At every trader decision in the Trading Room (`services/control-plane/bff/agora/trading_room/routes/decisions.py`) the Agora owner (`services/agora`) writes an immutable decision lock: decision time, data cutoff, the trader's choice (`human_actual` with `execution_observation_kind` per A4 §1), the servant's suggestion (`private_servant`), the base strategy (`base_strategy`) and, when one exists, the institutional view (`committee_variant`).
+- Outcomes are settled by the attribution owner (§12.5) over the same cutoff, cost model and observation window for every arm (A4 §7). Paper proxy is never labelled as an actual fill (A4 §1).
+- Agora still never trades or moves capital (2026-09-29 positioning).
+
+### 12.4 S2 Agora as a platform data source
+
+- The Agora owner exposes, through an internal service-token read route (no cross-owner database read), its decision locks, settled arms, decision journal entries and servant insights (`AgoraInsight`, `services/agora/service.py`) with all fields.
+- Source ingestion registers one governed source for them (point-in-time, provenance `agora`), so they reach the knowledge base, L2 hypothesis extraction, the attribution owner, meeting case files, and the imitation contracts in `services/research/imitation/` (`CorrectionTrace`, `PreferenceExample`).
+- Records are facts. Nothing from them becomes a strategy, rule or lesson without the existing validation gates.
+
+### 12.5 S3 Outlier detection and decomposition (deterministic, attribution owner `services/evaluation`)
+
+- Weekly (no new scheduler: piggybacks the first enrolled persona's daily cycle of the ISO week, as MT-3) and on the former MT-4 loss events.
+- Subjects: each trader (from settled shadow arms and journal) and each institutional persona and pool member (from paper fills and member virtual books).
+- Outliers: risk-adjusted return over the window ranked against peers and against the subject's own baseline; top and bottom decile with a minimum sample (coordinator proposal: 10 decisions); plus **disagreement cases**: decisions where arms diverged and the outcome gap exceeds a threshold (coordinator proposal: 1 standard deviation of the subject's per-decision outcome).
+- Decomposition per outlier: selection, entry timing, sizing, exit, costs; regime context when a governed RegimeState exists. Each component carries sample size and a luck check (bootstrap interval; coordinator proposal: 1,000 resamples).
+- Output: an attribution record per outlier, stored by the owner, readable by meetings and Management. No language model computes any number.
+
+### 12.6 MT-4 績效歸因檢討 performance attribution review (replaces MT-4 in §6)
+
+| Field | Rule |
+|---|---|
+| Trigger | each new attribution record (§12.5), including the former loss events |
+| Chair / sponsor | the institutional persona closest to the finding (owner of the subject pool, or the persona whose view was overridden in a disagreement case) |
+| Participants | the subject (persona, or the trader's own servant), the party that decided the other way, peers of the same strategy family, risk persona, red-team persona; within the M9 cap |
+| Case file | attribution record with decomposition and luck check, decision-time data, all shadow arms, regime context |
+| Red team | fixed role: argue luck, small sample or a confounder for the leading explanation |
+| Protocol | §5 M3 rounds unchanged |
+| Output | **only testable causal hypotheses**, each with the component it explains and a test (e.g. 「高波動日提前停損，平均少虧 x%」 → research demand with a hypothesis card for validation); no lesson or rule before validation; a hypothesis that fails validation is recorded as `luck_or_unsupported` so it is never cited as a lesson |
+
+### 12.7 S4 Institution to Agora
+
+- Validated findings from §12.6, endorsed lessons and validated strategy facts are published as institutional facts.
+- Agora servants read them through their own recall scope (read-only) and present them to the trader as system suggestions with evidence, in the Trading Room, advice only.
+- A suggestion links back to the attribution record and the validation result.
+
+### 12.8 Agora participation (revises §11.2)
+
+- A1, A4, A5, A6 unchanged.
+- A2 revised: a trader's own servant also attends every MT-4 review whose subject is that trader, whoever convenes it; another user's servant still never attends a workshop meeting.
+- A3 revised: the servant answers from the case file, which now includes its trader's Agora records as facts (§12.4); its private interpretations (memory) still never enter a round.
+
+### 12.9 Management and Agora pages (adds to §11.3)
+
+| Page | Route | Content |
+|---|---|---|
+| 異常與歸因 Outliers and attribution | `/management/performance?tab=attribution` (existing center, extended) | outliers for traders and personas with decomposition, luck check, linked MT-4 review, hypotheses and their validation status |
+| 影子對照 Shadow comparison | `/management/performance?tab=shadow` | per decision: the four arms side by side with settlement source labels (A4 §1) and outcome |
+| Meeting detail (MT-4) | `/management/meetings/:id` | shows the attribution record above the rounds |
+| Agora Trading Room 系統建議 | Agora trading room | validated findings relevant to the trader's current decision, and the trader's own shadow comparisons |
+
+All pages follow §11.3: explicit empty and unavailable states, Management hosted acceptance crawl.
+
+### 12.10 Delivery (adds to and revises §11.4)
+
+| Task | Scope | Depends on |
+|---|---|---|
+| AGORA-SHADOW-MODE | §12.3 decision locks and arms in the Agora owner, written at each Trading Room decision | this amendment |
+| PERFORMANCE-OUTLIER-ATTRIBUTION | §12.5 in `services/evaluation`: settlement of arms, outliers, decomposition, luck check, attribution records and reads | AGORA-SHADOW-MODE |
+| AGORA-PLATFORM-SOURCE | §12.4 owner read route and governed source registration, full fields | AGORA-SHADOW-MODE |
+| MEETING-PROTOCOL-ENGINE (revised) | catalogue with MT-4 attribution review; roster rule A2 revised | this amendment |
+| MEETING-TRIGGERS (revised) | MT-4 from attribution records; others as §8 | engine, PERFORMANCE-OUTLIER-ATTRIBUTION |
+| AGORA-INSTITUTIONAL-KNOWLEDGE | §12.7 publication and servant read scope; Trading Room suggestions read | MEETING-OUTPUT-ROUTING |
+| BFF reads (revised) | meetings reads with trader identities visible to operators; attribution and shadow reads | engine, PERFORMANCE-OUTLIER-ATTRIBUTION |
+| FE pages | §12.9 Management tabs and Agora suggestions | BFF reads, AGORA-INSTITUTIONAL-KNOWLEDGE |
