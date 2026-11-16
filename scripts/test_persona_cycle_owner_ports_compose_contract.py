@@ -689,3 +689,33 @@ def test_governance_binding_readers_are_wired_and_each_missing_setting_fails_con
         mutated = copy.deepcopy(SERVICES)
         del mutated["governance"]["environment"][name]
         assert scan_governance_binding_reader_contract(mutated) == [f"governance missing {name}"]
+
+
+APPROVAL_USAGE_CONTEXT_SERVICES = {
+    "persona": "services/persona/write_owner.py",
+    "deployment": "services/deployment/service.py",
+    "governance": "services/governance/paper_approval_scope.py",
+    "runtime-manager": "services/runtime-manager/deploy_authority.py",
+}
+
+
+def scan_approval_usage_context_env_contract(services: Mapping[str, Any]) -> list[str]:
+    failures: list[str] = []
+    for service in APPROVAL_USAGE_CONTEXT_SERVICES:
+        env = (services[service].get("environment") or {})
+        value = env.get("PANTHEON_ENV")
+        if value != "${PANTHEON_ENV:-dev}":
+            failures.append(f"{service} missing PANTHEON_ENV")
+    return failures
+
+
+def test_approval_usage_context_services_all_wire_pantheon_env() -> None:
+    for service, path in APPROVAL_USAGE_CONTEXT_SERVICES.items():
+        assert "ApprovalUsageContext(" in (ROOT / path).read_text(encoding="utf-8"), service
+    assert scan_approval_usage_context_env_contract(SERVICES) == []
+    for service in APPROVAL_USAGE_CONTEXT_SERVICES:
+        mutated = copy.deepcopy(SERVICES)
+        del mutated[service]["environment"]["PANTHEON_ENV"]
+        assert scan_approval_usage_context_env_contract(mutated) == [
+            f"{service} missing PANTHEON_ENV"
+        ]

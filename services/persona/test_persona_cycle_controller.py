@@ -1065,3 +1065,62 @@ def test_cycle_requests_macro_regime_shift_consultation_only_on_a_change(system,
     assert request["panel"]["gated_decision"]["type"] == "macro_regime_shift"
     assert "persona-risk-officer" in [p["persona_id"] for p in request["panel"]["participants"]]
     assert "consult_requests" not in third                      # slowdown -> slowdown
+
+
+def test_daily_cycle_declares_market_regime_standing_question_with_active_record_and_retires_when_none_exists(
+    system, monkeypatch
+):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_main import FakeMentalModelHindsight, JWT_SECRET
+    from services.registry.regime.store import get_regime_store
+
+    class _CycleMentalModelHindsight(FakeMentalModelHindsight):
+        def recall(self, bank, body):
+            raise hs.HindsightError("hindsight_unconfigured")
+
+    controller, _state, owner, _pool = system
+    persona = owner.list_json()[0]
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", controller.owners.env["PANTHEON_MEMORY_API_URL"])
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PERSONA_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
+    monkeypatch.setattr(hs, "_LAYERED_BANKS", set())
+    fake = _CycleMentalModelHindsight()
+    hs.set_hindsight_client(fake)
+    try:
+        transport, _calls, _session, _ = _registry_transport(monkeypatch, register_spec=True)
+        controller.owners.regime_transport = transport
+        first = controller.consume_run(persona, "job-1", run(1))["persona_cycle"]
+        assert first["failure_reason"] is None
+        stored = get_regime_store().list_regimes(strategy_id="momentum", states=("active",))
+        assert len(stored) == 1
+        record = stored[0]["record"]
+        assert first["standing_questions"]["status"] == "declared"
+        assert first["standing_questions"]["keys"] == ["family:momentum", "risk_lessons", "market_regime"]
+        assert sorted(first["standing_questions"]["created"]) == ["family:momentum", "market_regime", "risk_lessons"]
+        bank = hs.persona_bank(persona["tenant_id"], persona["persona_id"])
+        models = {m["name"]: m for m in fake.banks[bank].values()}
+        assert sorted(models) == ["family:momentum", "market_regime", "risk_lessons"]
+        assert models["market_regime"]["tags"] == [f"anchor:regime:{record['regime_class']}"]
+        assert controller.standing_questions(["momentum"], first["regime"]) == [
+            {"key": m["name"], "text": m["source_query"],
+             **({"anchors": [t.removeprefix("anchor:") for t in m["tags"]]} if m["name"] != "risk_lessons"
+                else {"memory_types": [t.removeprefix("type:") for t in m["tags"]]})}
+            for m in (models["family:momentum"], models["risk_lessons"], models["market_regime"])
+        ]
+
+        # Next daily cycle: when no active regime record exists for the pool strategy, market_regime is retired.
+        no_record_transport, _, _, _ = _registry_transport(monkeypatch, register_spec=False)
+        controller.owners.regime_transport = no_record_transport
+        second = controller.consume_run(persona, "job-1", run(2))["persona_cycle"]
+        assert second["failure_reason"] is None
+        assert second["regime"]["status"] == "unavailable"
+        assert second["regime"]["reason"] == "no_active_record_for_pool_strategies"
+        assert second["standing_questions"]["status"] == "declared"
+        assert second["standing_questions"]["keys"] == ["family:momentum", "risk_lessons"]
+        assert second["standing_questions"]["retired"] == ["market_regime"]
+        assert sorted(second["standing_questions"]["unchanged"]) == ["family:momentum", "risk_lessons"]
+        assert sorted(m["name"] for m in fake.banks[bank].values()) == ["family:momentum", "risk_lessons"]
+    finally:
+        hs.set_hindsight_client(None)
+
