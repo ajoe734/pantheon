@@ -110,6 +110,283 @@ class ExecutorRefusal(Exception):
         self.reason = reason
 
 
+class RequalifyDeferred(Exception):
+    """Could not evaluate a legacy member (missing/short/synthetic dataset or owner read failure).
+
+    Not a gate verdict failure: the member stays in the pool with ``operator_decision_required``
+    and the run is retried on the next cadence.
+    """
+
+    def __init__(self, reason: str, detail: Mapping[str, Any] | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = dict(detail or {})
+
+
+def requalify_legacy_member(
+    *,
+    artifact: Mapping[str, Any],
+    dataset: Mapping[str, Any] | None,
+    member: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+    decision_id: str,
+    tenant_id: str,
+    gate: Any,
+    entry: Mapping[str, Any] | None = None,
+    spec: Mapping[str, Any] | None = None,
+    existing_versions: Any = (),
+    record_backtest: Callable[[dict[str, Any]], Any] | None = None,
+    run_protocol: Callable[..., dict[str, Any]] | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Re-qualify a legacy close-fill member on governed 2-year PIT exchange data under next-open fills."""
+    import hashlib
+    from datetime import datetime, timezone
+    from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION
+    from services.registry.strategy_artifact import strategy_artifact_checksum, validate_strategy_artifact
+    from services.research.rebaseline_next_open import is_synthetic_or_fixture_dataset
+    from services.research.replication.gate_schema import ReplicationRequest
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        INSUFFICIENT_HISTORY_STATUS,
+        BacktestConfig,
+        VectorbtWorkflowError,
+        run_replication_backtest_protocol,
+    )
+
+    if baseline.get("status") == "approved" or baseline.get("reason") != "baseline_computed_under_decision_close_fill":
+        raise ExecutorRefusal("evaluation_rejected", "member_baseline_is_not_legacy_close_fill")
+
+    dataset_refusal = is_synthetic_or_fixture_dataset(dataset)
+    if dataset_refusal is not None:
+        raise RequalifyDeferred(
+            dataset_refusal,
+            detail={
+                "dataset_id": (dataset or {}).get("dataset_id") if isinstance(dataset, Mapping) else None,
+                "source_dataset_refs": list((dataset or {}).get("source_dataset_refs") or [])
+                if isinstance(dataset, Mapping)
+                else [],
+            },
+        )
+    assert isinstance(dataset, Mapping)
+
+    legacy_registry_id = str(member["artifact_ref"])
+    new_version = search.allocate_child_version(artifact.get("version") or "1.0.0", existing_versions or ())
+    digest = hashlib.sha256(
+        f"{decision_id}:{legacy_registry_id}:{FILL_CONVENTION}:{new_version}".encode("utf-8")
+    ).hexdigest()[:12]
+    new_artifact_id = f"{legacy_registry_id}-requalify-{digest}"[:120]
+    run_id = f"bt-{decision_id}-{new_artifact_id}"[:120]
+
+    requalified_artifact = copy.deepcopy(dict(artifact))
+    requalified_artifact["artifact_id"] = new_artifact_id
+    requalified_artifact["version"] = new_version
+    old_lineage = dict(requalified_artifact.get("lineage") or {})
+    source_spec_id = str(
+        old_lineage.get("source_strategy_spec_id")
+        or (spec or {}).get("strategy_spec_id")
+        or legacy_registry_id
+    )
+    prior_runs = [
+        str(r)
+        for r in (old_lineage.get("source_run_ids") or [])
+        if str(r).strip() and str(r) not in {decision_id, run_id}
+    ]
+    requalified_artifact["lineage"] = {
+        **old_lineage,
+        "parent_registry_ids": [legacy_registry_id],
+        "source_strategy_spec_id": source_spec_id,
+        "source_run_ids": [decision_id, run_id, *prior_runs],
+        "source_dataset_refs": list(dataset.get("source_dataset_refs") or []),
+    }
+    validate_strategy_artifact(requalified_artifact)
+    checksum = strategy_artifact_checksum(requalified_artifact)
+
+    protocol_fn = run_protocol or run_replication_backtest_protocol
+    bound_dataset = {**dict(dataset), "strategy_id": str(requalified_artifact["strategy_id"])}
+    prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        try:
+            evaluated = protocol_fn(
+                strategy_artifact=requalified_artifact,
+                dataset=bound_dataset,
+                run_id=run_id,
+                config=BacktestConfig(
+                    strategy_artifact=dict(requalified_artifact),
+                    fill_convention=FILL_CONVENTION,
+                ),
+            )
+        except (VectorbtWorkflowError, ValueError) as exc:
+            raise RequalifyDeferred("backtest_dataset_invalid", detail={"error": str(exc)}) from None
+    finally:
+        if prev_backend is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev_backend
+
+    history_check = evaluated.get("history_check") if isinstance(evaluated.get("history_check"), Mapping) else {}
+    if (
+        evaluated.get("status") == INSUFFICIENT_HISTORY_STATUS
+        or (history_check and not bool(history_check.get("sufficient", False)))
+    ):
+        raise RequalifyDeferred(
+            "insufficient_point_in_time_history",
+            detail={
+                "history_check": dict(history_check),
+                "dataset_id": evaluated.get("dataset_id"),
+                "source_dataset_refs": list(evaluated.get("source_dataset_refs") or []),
+            },
+        )
+    if evaluated.get("status") != "completed":
+        raise RequalifyDeferred(
+            "backtest_evaluation_unavailable",
+            detail={"status": evaluated.get("status")},
+        )
+
+    if record_backtest is not None:
+        record_backtest(evaluated)
+    elif getattr(gate, "backtest_run_store", None) is not None:
+        gate.backtest_run_store.record(dict(evaluated))
+
+    ts = timestamp or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    raw_spec = dict(spec or {})
+    non_schema = (
+        "lifecycle_state",
+        "backtest_evaluation",
+        "backtest_dataset",
+        "strategy_artifact",
+        "skip_backtest",
+        "history_trading_days",
+        "hypothesis_card",
+        "hypothesis_predictions",
+        "mechanism_inputs",
+    )
+    evaluation_spec = {k: v for k, v in raw_spec.items() if k not in non_schema}
+    evaluation_spec.setdefault("name", str(requalified_artifact.get("strategy_id") or new_artifact_id))
+    evaluation_spec.setdefault("description", "Legacy pool member next-open re-qualification")
+    evaluation_spec.setdefault("signals", requalified_artifact.get("strategy_logic") or ["momentum"])
+    evaluation_spec.setdefault("parameters", dict(requalified_artifact.get("parameters") or {}))
+    evaluation_spec.setdefault(
+        "governance",
+        {"approval_required": True, "policy_id": "oc-001-research-normalization"},
+    )
+
+    family_id = str(requalified_artifact.get("strategy_id") or new_artifact_id)
+    request = ReplicationRequest(
+        candidate_id=f"{decision_id}:{new_artifact_id}"[:120],
+        source_task_id=decision_id,
+        research_handoff={
+            "source_metadata": {
+                "api_endpoint": f"evolution://decisions/{decision_id}",
+                "retrieved_at": ts,
+                "governance_context": f"Approved EvolutionDecision {decision_id} legacy baseline re-qualification",
+            },
+            "normalized_findings": {
+                "strategy_spec": {"strategy_id": family_id, "name": evaluation_spec["name"]},
+                "replication_notes": "Legacy close-fill pool member re-qualified on governed 2-year PIT exchange data under next-open fills.",
+                "evaluation_hypotheses": "H1: strategy achieves positive deflated out-of-sample Sharpe after statutory Taiwan costs under next-open fills.",
+            },
+            "family_id": family_id,
+            "strategy_artifact": requalified_artifact,
+            "backtest_dataset": bound_dataset,
+            **{
+                key: dict(raw_spec[key])
+                for key in ("hypothesis_card", "mechanism_inputs")
+                if isinstance(raw_spec.get(key), Mapping)
+            },
+            **(
+                {"hypothesis_predictions": list(raw_spec["hypothesis_predictions"])}
+                if isinstance(raw_spec.get("hypothesis_predictions"), list)
+                else {}
+            ),
+        },
+        proposed_strategy_spec=evaluation_spec,
+        backtest_evaluation=evaluated,
+        metadata={
+            "tenant_id": tenant_id,
+            "persona_id": member.get("persona_id"),
+            "decision_id": decision_id,
+            "dataset_version_id": evaluated.get("dataset_id"),
+            "strategy_artifact_checksum": checksum,
+        },
+        timestamp=ts,
+    )
+    response = gate.evaluate_candidate(request)
+    bt_result = next(
+        (
+            r
+            for r in (getattr(response, "results", []) or [])
+            if getattr(r, "criterion_id", None) == "real_backtest_validation"
+        ),
+        None,
+    )
+    details = getattr(bt_result, "details", None) or {}
+    per_symbol = ((history_check.get("details") or {}).get("per_symbol") or {}) if isinstance(history_check, Mapping) else {}
+    start_dates = [
+        str(v["start_date"])
+        for v in per_symbol.values()
+        if isinstance(v, Mapping) and v.get("start_date")
+    ]
+    end_dates = [
+        str(v["end_date"])
+        for v in per_symbol.values()
+        if isinstance(v, Mapping) and v.get("end_date")
+    ]
+    gate_run_id = str(getattr(response, "gate_run_id", "") or "")
+    backtest_run_id = str(evaluated.get("backtest_run_id") or run_id)
+    verdict = {
+        "passed": bool(response.passed),
+        "gate_run_id": gate_run_id,
+        "backtest_run_id": backtest_run_id,
+        "verdict_ref": f"gate:{gate_run_id}:{backtest_run_id}",
+        "fill_convention": evaluated.get("fill_convention"),
+        "legacy_registry_id": legacy_registry_id,
+        "legacy_checksum": member.get("checksum"),
+        "requalified_artifact_id": new_artifact_id if response.passed else None,
+        "requalified_checksum": checksum if response.passed else None,
+        "dataset_id": evaluated.get("dataset_id"),
+        "source_dataset_refs": list(evaluated.get("source_dataset_refs") or []),
+        "window": {
+            "start_date": min(start_dates) if start_dates else None,
+            "end_date": max(end_dates) if end_dates else None,
+            "calendar_days": history_check.get("calendar_days"),
+            "trading_days": history_check.get("trading_days"),
+            "in_sample_ratio": (evaluated.get("protocol") or {}).get("in_sample_ratio"),
+            "out_of_sample_ratio": (evaluated.get("protocol") or {}).get("out_of_sample_ratio"),
+            "walk_forward_folds": (evaluated.get("protocol") or {}).get("walk_forward_folds"),
+        },
+        "metrics": {
+            "in_sample_sharpe_ratio": details.get("in_sample_sharpe_ratio"),
+            "out_of_sample_sharpe_ratio": details.get("out_of_sample_sharpe_ratio"),
+            "out_of_sample_max_drawdown": details.get("out_of_sample_max_drawdown"),
+            "out_of_sample_total_return": details.get("out_of_sample_total_return"),
+            "out_of_sample_round_trips": details.get("out_of_sample_round_trips"),
+            "deflated_sharpe_threshold": details.get("deflated_sharpe_threshold"),
+            "buy_and_hold_sharpe_ratio": details.get("buy_and_hold_sharpe_ratio"),
+            "tw_0050_sharpe_ratio": details.get("tw_0050_sharpe_ratio"),
+            "walk_forward_fold_sharpes": list(details.get("walk_forward_fold_sharpes") or []),
+        },
+        "checks": dict(details.get("checks") or {}),
+        "failed_checks": list(details.get("failed_checks") or []),
+        "failed_criteria": [
+            getattr(r, "criterion_id", None)
+            for r in (getattr(response, "results", []) or [])
+            if not getattr(r, "passed", True)
+        ],
+    }
+    proof_dict = response.to_dict() if callable(getattr(response, "to_dict", None)) else {}
+    return {
+        "outcome": "revalidation_passed" if response.passed else "revalidation_failed",
+        "reason": "replaced_by_requalified_entry" if response.passed else "requalification_failed_next_open_fill",
+        "verdict": verdict,
+        "artifact": requalified_artifact if response.passed else None,
+        "requalified_artifact": requalified_artifact if response.passed else None,
+        "gate_proof": proof_dict,
+        "gate_response": proof_dict,
+        "backtest_evaluation": evaluated,
+    }
+
+
 def compose_member_case_file(parent, *, params, tenant_id, decision_id, parent_registry_ref):
     """Read owners as the configured research service, never as a persona.
 
