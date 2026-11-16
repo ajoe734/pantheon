@@ -111,6 +111,50 @@ SYNTHETIC_MARKER: dict[str, Any] = {
     "strategy passes. Legacy profile (series_profile='decision_close') stays reproducible.",
 }
 
+SYNTHETIC_DATASET_IDS = frozenset({"dataset:tw-governed-daily-v1"})
+SYNTHETIC_SOURCE_REFS = frozenset({"dataset:twse-daily-ohlcv-v1"})
+
+
+def is_synthetic_or_fixture_dataset(dataset: Mapping[str, Any] | None) -> str | None:
+    """Return a refusal reason when ``dataset`` is a synthetic or fixture series, else ``None``."""
+    if not isinstance(dataset, Mapping):
+        return "governed_dataset_unavailable"
+    if (
+        dataset.get("synthetic_data") is True
+        or dataset.get("synthetic") is True
+        or bool(dataset.get("synthetic_series_profile"))
+        or bool(dataset.get("synthetic_notice"))
+        or dataset.get("series_profile") in ("decision_close", "next_open")
+    ):
+        return "synthetic_or_fixture_dataset_refused"
+    dataset_id = str(dataset.get("dataset_id") or "").strip()
+    if not dataset_id:
+        return "governed_dataset_unavailable"
+    if dataset_id in SYNTHETIC_DATASET_IDS or any(
+        token in dataset_id.lower() for token in ("synthetic", "fixture")
+    ):
+        return "synthetic_or_fixture_dataset_refused"
+    refs = [str(r).strip() for r in (dataset.get("source_dataset_refs") or []) if str(r).strip()]
+    if not refs:
+        return "governed_dataset_unavailable"
+    if set(refs) <= SYNTHETIC_SOURCE_REFS or any(
+        token in r.lower() for r in refs for token in ("synthetic", "fixture")
+    ):
+        return "synthetic_or_fixture_dataset_refused"
+    records = dataset.get("records")
+    if not isinstance(records, Sequence) or not records:
+        return "governed_dataset_unavailable"
+    sample = [r for r in records[:20] if isinstance(r, Mapping)]
+    if sample and all(
+        isinstance(r.get("close"), (int, float))
+        and r.get("open") == round(float(r["close"]) * 0.999, 4)
+        and r.get("high") == round(float(r["close"]) * 1.003, 4)
+        and r.get("low") == round(float(r["close"]) * 0.997, 4)
+        for r in sample
+    ):
+        return "synthetic_or_fixture_dataset_refused"
+    return None
+
 
 def rebaseline_fixture(name: str, *, fixture_dir: Path = FIXTURE_DIR, write: bool = False) -> dict[str, Any]:
     """Old and new metrics side by side for one recorded backtest fixture.
