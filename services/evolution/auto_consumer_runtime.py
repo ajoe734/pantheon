@@ -78,6 +78,18 @@ class PoolOwner:
         if owner == "GOVERNANCE":
             gate = method == "POST" and (path.endswith("/review") or path.endswith("/decide"))
             token = self.env.get("AUTO_CONSUMER_GATE_TOKEN" if gate else "AUTO_CONSUMER_PROPOSER_TOKEN", "")
+        elif owner == "MEMORY":
+            base = (
+                base
+                or self.env.get("MEMORY_API_URL", "")
+                or self.env.get("PANTHEON_MEMORY_API_URL", "")
+                or self.env.get("MEMORY_SVC_URL", "")
+            ).rstrip("/")
+            token = (
+                token
+                or self.env.get("PANTHEON_MEMORY_AUTH_TOKEN", "")
+                or self.env.get("RESEARCH_MEMORY_SERVICE_TOKEN", "")
+            )
         if not base or not token:
             raise RuntimeError(f"AUTO_CONSUMER_{owner}_URL and TOKEN are required")
         status, payload = self.send(method, base + path,
@@ -130,7 +142,11 @@ class PoolOwner:
         pool = self.pool(pid)
         member = next((m for m in pool["members"] if m["artifact_ref"] == decision["target_id"]), None)
         if member is None or (member["stage"] == "removed" and
-                             member.get("removal_reason") != "evolution:" + decision["decision_id"]):
+                             member.get("removal_reason") not in {
+                                 "evolution:" + decision["decision_id"],
+                                 "requalification_failed_next_open_fill",
+                                 "replaced_by_requalified_entry",
+                             }):
             return None
         if ctx and any(ctx.get(k) != member.get(k) for k in ("artifact_ref", "checksum", "joined_at")):
             return None
@@ -174,7 +190,7 @@ class PoolOwner:
             raise RuntimeError("pool envelope publication is not confirmed")
         return receipt
 
-    def remove_member(self, pool, member, *, reason):
+    def remove_member(self, pool, member, *, reason, verdict_ref=None, verdict=None, decision=None):
         from datetime import datetime, timezone
         from urllib.parse import quote
         current = self.pool(pool["persona_id"])
@@ -185,14 +201,173 @@ class PoolOwner:
         already_removed = found["stage"] == "removed"
         if already_removed and found.get("removal_reason") != reason:
             raise RuntimeError("member was removed by another decision")
+        change_reason = f"{reason}:{verdict_ref}" if verdict_ref else reason
+        dec = dict(decision) if isinstance(decision, Mapping) else None
+        if verdict_ref is not None or verdict is not None:
+            dec = {
+                "action": "remove",
+                "status": "applied",
+                "reason": reason,
+                "removed_artifact_ref": member["artifact_ref"],
+                "verdict_ref": verdict_ref,
+                **({"verdict": dict(verdict)} if isinstance(verdict, Mapping) else {}),
+                **(dec or {}),
+            }
         if not already_removed:
             found.update(stage="removed", risk_weight=0, removal_reason=reason,
-                         removed_at=datetime.now(timezone.utc).isoformat())
+                         removed_at=datetime.now(timezone.utc).isoformat(),
+                         **({"removal_verdict_ref": str(verdict_ref)} if verdict_ref else {}))
+            body = {"expected_version": current["pool_version"], "members": members,
+                    "change_reason": change_reason}
+            if dec is not None:
+                body["decision"] = dec
             current = self.call("PERSONA", "POST", f"/api/personas/{quote(pool['persona_id'], safe='')}/strategy-pool/versions",
-                {"expected_version": current["pool_version"], "members": members,
-                 "change_reason": reason})
+                body)
         receipt = self.publish(current)  # retry publication even when append already landed
-        return {**receipt, "already_removed": already_removed, "removed": member["artifact_ref"]}
+        return {**receipt, "already_removed": already_removed, "removed": member["artifact_ref"],
+                **({"verdict_ref": verdict_ref} if verdict_ref else {})}
+
+    def learn_member_removal(
+        self,
+        *,
+        persona_id: str,
+        artifact_ref: str,
+        decision_id: str,
+        verdict_ref: str,
+        families: list[str] | tuple[str, ...],
+        detail: str = "requalification_failed_next_open_fill",
+    ):
+        fam_list = [str(f).strip() for f in (families or ()) if str(f).strip()]
+        tags = [
+            "pool_cycle",
+            "removed",
+            detail,
+            *[f"tried_family:{f}" for f in dict.fromkeys(fam_list)],
+        ]
+        payload = {
+            "source_event_type": "pool_outcome",
+            "source_event_id": f"{decision_id}:removed:{artifact_ref}",
+            "write_authority": "persona-svc",
+            "sponsor_persona_id": persona_id,
+            "contributing_persona_ids": [persona_id],
+            "tenant_id": self.tenant,
+            "summary": f"Pool removed: {artifact_ref} {detail} ({verdict_ref})".strip(),
+            "runtime_telemetry_evidence": [
+                {
+                    "type": "requalification_verdict",
+                    "id": str(verdict_ref or decision_id),
+                    "artifact_ref": artifact_ref,
+                }
+            ],
+            "tags": tags,
+        }
+        has_http_memory = any(
+            self.env.get(k, "").strip()
+            for k in ("AUTO_CONSUMER_MEMORY_URL", "MEMORY_API_URL", "PANTHEON_MEMORY_API_URL", "MEMORY_SVC_URL")
+        )
+        if has_http_memory:
+            return self.call("MEMORY", "POST", "/api/memory/writebacks/learn-feedback", payload)
+        from services.memory.learn_feedback_writeback import write_learn_feedback
+        from services.memory.main import _persona_store, _store
+
+        return write_learn_feedback(payload, persona_store=_persona_store(), institutional_store=_store())
+
+    def replace_requalified_member(self, ctx, *, new_artifact, new_checksum, dataset):
+        from urllib.parse import quote
+        try:
+            from services.control_plane.persona.pool_policy import load_policy
+        except ModuleNotFoundError:
+            import sys
+            from pathlib import Path
+            cp_dir = str(Path(__file__).resolve().parents[1] / "control-plane" / "persona")
+            if cp_dir not in sys.path:
+                sys.path.insert(0, cp_dir)
+            from pool_policy import load_policy  # type: ignore[import-not-found]
+        from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+        from services.persona.pool_autonomy_cycle import candidate_virtual_book
+
+        pid = ctx["persona_id"]
+        new_id = str(new_artifact["artifact_id"])
+        pool = self.pool(pid)
+        existing = next((m for m in pool["members"] if m["artifact_ref"] == new_id), None)
+        if existing is not None:
+            if existing["checksum"] != new_checksum or existing.get("parent_ref") != ctx["artifact_ref"]:
+                raise RuntimeError("requalified replacement identity mismatch")
+            return self.publish(pool)
+        policy = load_policy()
+        bound_dataset = {
+            **dict(dataset),
+            "strategy_id": str(dataset.get("strategy_id") or new_artifact["strategy_id"]),
+        }
+        records = list(bound_dataset.get("records") or [])
+        by_inst: dict[str, set[str]] = {}
+        for rec in records:
+            if isinstance(rec, Mapping) and rec.get("instrument") and rec.get("date"):
+                by_inst.setdefault(str(rec["instrument"]), set()).add(str(rec["date"]))
+        if len(by_inst) >= 2 and len({frozenset(d) for d in by_inst.values()}) > 1:
+            common_dates = set.intersection(*by_inst.values())
+            bound_dataset["records"] = [
+                r for r in records if isinstance(r, Mapping) and str(r.get("date")) in common_dates
+            ]
+        cand_book = candidate_virtual_book(
+            dataset=bound_dataset, artifact=new_artifact, checksum=new_checksum, policy=policy
+        )
+        other_live = [
+            m for m in pool["members"]
+            if m["stage"] != "removed" and m["artifact_ref"] != ctx["artifact_ref"]
+        ]
+        other_books = self.books(pool) if other_live else {}
+        books = {**other_books, new_id: cand_book}
+        common_book_dates = set(cand_book["dates"])
+        for m in other_live:
+            b = other_books.get(m["artifact_ref"]) or {}
+            if isinstance(b.get("dates"), list) and b["dates"]:
+                common_book_dates &= set(b["dates"])
+        dates = sorted(common_book_dates)[-20:] if len(common_book_dates) >= 20 else cand_book["dates"][-20:]
+        observations = idle_pool_observations(
+            dates,
+            source_ref=cand_book["source_ref"],
+            gross_limit=100.0,
+            drawdown_limit=policy.remove_drawdown,
+        )
+        result = self.call(
+            "PERSONA",
+            "POST",
+            f"/api/personas/{quote(pid, safe='')}/strategy-pool/decisions",
+            {
+                "expected_version": pool["pool_version"],
+                "execution_context": "paper",
+                "action": "admit",
+                "candidate": {
+                    "artifact_ref": new_id,
+                    "checksum": new_checksum,
+                    "parent_ref": ctx["artifact_ref"],
+                    **({"demand_ref": ctx["demand_ref"]} if ctx.get("demand_ref") else {}),
+                },
+                "books": books,
+                "observations": observations,
+                "dataset": bound_dataset,
+            },
+        )
+        if (result.get("decision") or {}).get("status") != "applied":
+            raise RuntimeError("requalified replacement admission refused: " + str(result.get("decision")))
+        return self.publish(result)
+
+    def retry_requalify(self, body):
+        import copy
+        import sys
+        evo_main = sys.modules.get("services.evolution.main")
+        outbox = getattr(evo_main, "dispatch_outbox", None) if evo_main is not None else None
+        if outbox is None:
+            return
+        record = outbox.get(self.tenant, body["decision_id"])
+        if record is not None and getattr(record, "claim_token", None):
+            raw = record.to_dict()
+            updated = copy.deepcopy(raw)
+            if isinstance(updated.get("delivery"), dict):
+                updated["delivery"]["claim_token"] = None
+                updated["delivery"]["claim_expires_at"] = None
+            outbox.store.impl.compare_and_set(record.outbox_id, raw, updated)
 
     def compete(self, pool, child, books):
         from urllib.parse import quote

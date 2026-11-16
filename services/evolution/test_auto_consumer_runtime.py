@@ -104,3 +104,49 @@ def test_books_are_keyed_by_pool_registry_ref_instead_of_embedded_artifact_id():
             'persona_capital_binding_id': 'pcb', 'member_virtual_books': [
                 {'member_id': 'registry-alias', 'artifact_id': 'embedded-a', 'checksum': 'sha256:a'}]}]}
     assert list(rt.PoolOwner(env, transport).books({'persona_id': 'p'})) == ['registry-alias']
+
+
+def test_requalification_removal_records_verdict_and_learns_family_in_persona_memory(owners):
+    owner, decision, state = owners
+    verdict = {"verdict_ref": "gate:g-1:bt-1", "passed": False, "failed_checks": ["oos_sharpe_positive_after_costs"]}
+    receipt = owner.remove_member(
+        state["pool"],
+        state["pool"]["members"][0],
+        reason="requalification_failed_next_open_fill",
+        verdict_ref="gate:g-1:bt-1",
+        verdict=verdict,
+    )
+    assert receipt["status"] == "published" and receipt["verdict_ref"] == "gate:g-1:bt-1"
+    removed = state["pool"]["members"][0]
+    assert removed["stage"] == "removed"
+    assert removed["removal_reason"] == "requalification_failed_next_open_fill"
+    assert removed["removal_verdict_ref"] == "gate:g-1:bt-1"
+    version_write = next(body for _, url, body in state["writes"] if url.endswith("/strategy-pool/versions"))
+    assert version_write["change_reason"] == "requalification_failed_next_open_fill:gate:g-1:bt-1"
+    assert version_write["decision"]["verdict_ref"] == "gate:g-1:bt-1"
+    assert version_write["decision"]["verdict"] == verdict
+    # PoolOwner.resolve still resolves a member removed by requalification so retries can confirm publication.
+    assert owner.resolve(decision) is not None
+
+    mem_calls = []
+    env = {**ENV, "AUTO_CONSUMER_MEMORY_URL": "http://mem", "AUTO_CONSUMER_MEMORY_TOKEN": "mem-tok"}
+
+    def mem_transport(method, url, headers, body):
+        mem_calls.append((method, url, body))
+        return 200, {"status": "written", "memory_id": "m-1"}
+
+    mem_owner = rt.PoolOwner(env, mem_transport)
+    mem_receipt = mem_owner.learn_member_removal(
+        persona_id="p",
+        artifact_ref="a",
+        decision_id="d",
+        verdict_ref="gate:g-1:bt-1",
+        families=["strat-tw-replication-001"],
+    )
+    assert mem_receipt["status"] == "written"
+    assert len(mem_calls) == 1
+    _, mem_url, mem_body = mem_calls[0]
+    assert mem_url == "http://mem/api/memory/writebacks/learn-feedback"
+    assert "tried_family:strat-tw-replication-001" in mem_body["tags"]
+    assert "requalification_failed_next_open_fill" in mem_body["tags"]
+

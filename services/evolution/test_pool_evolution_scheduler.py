@@ -149,3 +149,36 @@ def test_family_state_is_frequency_scoped(lane, monkeypatch, frequency, counts, 
         "family_total_trials": sum(v for k, v in counts.items() if k == family or k.startswith(family + "@"))}
     report = scheduler.tick()
     assert [p["action_type"] for p in decisions.proposals] == expected, (report.skipped, report.errors)
+
+
+def test_legacy_close_fill_baseline_proposes_idempotent_requalification_and_retries_deferred_outbox(lane):
+    from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, LEGACY_FILL_CONVENTION
+
+    scheduler, pool, entry, owner, decisions, evidence = lane
+    del entry["evaluation_summary"]["fill_convention"]
+    del entry["replication_proof"]["evaluation_summary"]["fill_convention"]
+    retried = []
+    owner.retry_requalify = lambda body: retried.append(body["decision_id"])
+
+    report = scheduler.tick()
+    assert not report.errors and not report.skipped
+    assert len(decisions.proposals) == 1
+    prop = decisions.proposals[0]
+    assert prop["action_type"] == "revalidate"
+    assert prop["decision_id"] == report.proposed[0]
+    scope = prop["metadata"]["pool_member"]
+    assert scope["mode"] == "requalify_legacy_baseline"
+    assert scope["recorded_fill_convention"] == LEGACY_FILL_CONVENTION
+    assert scope["required_fill_convention"] == FILL_CONVENTION
+    assert scope["baseline_reason"] == "baseline_computed_under_decision_close_fill"
+    assert scope["operator_decision_required"] is True
+
+    # Simulate 409 on next cadence when the proposal already exists (idempotent per artifact + convention).
+    def conflict(body):
+        raise RuntimeError("POST /api/evolution/proposals -> 409")
+
+    decisions.propose = conflict
+    second = scheduler.tick()
+    assert second.existing == [prop["decision_id"]]
+    assert retried == [prop["decision_id"]]
+
