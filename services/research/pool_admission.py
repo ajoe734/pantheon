@@ -139,7 +139,11 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
         if statistics.stdev(returns) <= 0 or statistics.stdev(candidate_returns) <= 0:
             raise ValueError("backtest_correlation_undefined")
         correlations[member["artifact_ref"]] = statistics.correlation(returns, candidate_returns)
-    before = _sharpe(_replay(prepared, _envelope(current, entries), dates), policy.periods_per_year)
+    # An idle pool (no member that is not removed) has no return stream: its Sharpe is 0 by
+    # definition, so "combined better than the pool alone" means the combined result must clear the
+    # minimum improvement on its own out of sample; nothing is waived and no criterion is skipped.
+    idle = not any(m["stage"] != "removed" for m in current)
+    before = 0.0 if idle else _sharpe(_replay(prepared, _envelope(current, entries), dates), policy.periods_per_year)
     after = _sharpe(_replay(prepared, _envelope(proposed, entries), dates), policy.periods_per_year)
     candidate_sharpe = _sharpe(candidate_returns, policy.periods_per_year)
     haircut = policy.trial_penalty_scale * math.sqrt(2 * math.log(trial_count))
@@ -153,10 +157,11 @@ def evaluate_admission(*, dataset, current, proposed, candidate, entries, trial_
         reasons.append("candidate_oos_sharpe_below_persona_trial_threshold")
     from services.registry.portfolio_envelope import uses_target_positions
     target_basis = "portfolio_target_position_cash_net_taiwan_costs"
-    before_basis = target_basis if uses_target_positions(_envelope(current, entries)) else NET_BASIS
+    before_basis = NET_BASIS if idle else (
+        target_basis if uses_target_positions(_envelope(current, entries)) else NET_BASIS)
     after_basis = target_basis if uses_target_positions(_envelope(proposed, entries)) else NET_BASIS
     return {"admitted": not reasons, "reasons": reasons, "correlations": correlations,
-            "pool_oos_sharpe": before, "combined_oos_sharpe": after, "candidate_oos_sharpe": candidate_sharpe,
+            "pool_oos_sharpe": before, "pool_idle": idle, "combined_oos_sharpe": after, "candidate_oos_sharpe": candidate_sharpe,
             "persona_trial_count": trial_count, "sharpe_haircut": haircut, "required_candidate_sharpe": threshold,
             "fill_convention": FILL_CONVENTION, "return_basis": after_basis, "pool_oos_return_basis": before_basis,
             "combined_oos_return_basis": after_basis, "candidate_oos_return_basis": NET_BASIS,

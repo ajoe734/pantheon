@@ -1,0 +1,21 @@
+{
+  "name": "pantheon-persona-tools",
+  "version": "1.0.0",
+  "description": "Pantheon OpenClaw plugin: brokered persona agent tools (recall, standing-question read, proposal).",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22.22.3" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/index.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "openclaw": {
+    "extensions": ["./dist/src/index.js"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -37,5 +37,20 @@ RUN npm install -g \
 RUN rm -rf /home/node/.claude \
     && ln -s /home/node/.openclaw/claude-cli /home/node/.claude \
     && chown -h node:node /home/node/.claude
+# Pantheon persona tools plugin (design H9): registers persona_memory_recall,
+# persona_mental_model_read and persona_proposal_submit and forwards each call to
+# the adapter's internal broker. Built here (npm ci from the lockfile, tests run at
+# build time) and loaded by the compose startup via plugins.load.paths; it is not
+# enabled unless PERSONA_TOOL_BROKER_TOKEN is provided at runtime.
+COPY integrations/openclaw/plugins/pantheon-persona-tools /opt/pantheon/plugins/pantheon-persona-tools
+# A host-built node_modules or dist in the build context must never be reused.
+RUN cd /opt/pantheon/plugins/pantheon-persona-tools \
+    && rm -rf node_modules dist \
+    && npm ci --include=dev --no-audit --no-fund \
+    && npm test \
+    && npm prune --omit=dev --no-audit --no-fund \
+    && rm -rf dist/test test \
+    && chown -R root:root /opt/pantheon/plugins \
+    && chmod -R go-w /opt/pantheon/plugins
 # Restore the upstream runtime user; entrypoint/cmd/workdir are inherited.
 USER node
