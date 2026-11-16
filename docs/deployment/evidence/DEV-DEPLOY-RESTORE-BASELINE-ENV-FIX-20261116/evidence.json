@@ -1,0 +1,79 @@
+{
+  "task": "DEV-DEPLOY-RESTORE-BASELINE-ENV-FIX-20261116",
+  "incident": {
+    "workflow_run_id": 43802624688,
+    "failed_at": "2026-11-16T04:13:03Z",
+    "error": "[dev-artifact-restore] ERROR: whole-stack baseline restore failed (exit 1)",
+    "duration_seconds": 5,
+    "root_cause": "scripts/fetch_dev_artifact_evidence.py::build_restore_remote_script generated a 'set -euo pipefail' bash script splicing memory_llm_bridge_env, with_dev_bff_runtime_env, and run_dev_artifact_driver verbatim from scripts/deploy_nonprod_vm.sh without exporting PANTHEON_ASSISTANT_KERNEL_ENABLED, PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH, PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH, PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS, PANTHEON_BFF_STUB_CAPABILITIES, MANAGEMENT_AI_STORE_BACKEND, MANAGEMENT_AI_STORE_SCHEMA, MANAGEMENT_AI_DATABASE_URL, and PANTHEON_MGMT_AI_ATTACH_BUCKET (which expand without ':-' defaults in with_dev_bff_runtime_env), causing bash -u to exit 1 before dev_release_artifact_driver.py started. Additionally, .github/workflows/nonprod-deploy.yml job restore-accepted-baseline step 'Restore accepted baseline under shared dev lease' omitted DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS (300), DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH, Management AI store/DB vars and secrets, DEV_AGORA_PRIVATE_CONTENT_DEV_KEK, FINMIND_API_TOKEN, DEV_PAPER_PRINCIPALS_AUTHORIZED, and strict-auth OIDC/JWT/MFA/ROLE defaults present on 'Compensate rejected release to exact hosted baseline'."
+  },
+  "reproduction": {
+    "command": "env -i PATH=<stub_bin>:/usr/bin:/bin PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD=<pipe_fd> /bin/bash --noprofile --norc -euo pipefail -s < remote.sh",
+    "unpatched_result": {
+      "returncode": 1,
+      "stderr": "main: line 95: PANTHEON_ASSISTANT_KERNEL_ENABLED: unbound variable",
+      "driver_reached": false
+    },
+    "patched_result": {
+      "returncode": 0,
+      "stdout": "PANTHEON_ARTIFACT_READBACK_V1 {\"schema_version\": \"pantheon.dev-artifact-readback.v1\", \"operation\": \"restore\"}",
+      "driver_reached": true
+    }
+  },
+  "changes": {
+    "files": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/fetch_dev_artifact_evidence.py",
+      "scripts/test_fetch_dev_artifact_evidence.py",
+      "scripts/test_deploy_nonprod_artifact_restore.py",
+      "scripts/test_nonprod_restore_accepted_baseline.py",
+      "docs/deployment/evidence/DEV-DEPLOY-RESTORE-BASELINE-ENV-FIX-20261116/evidence.json"
+    ],
+    "exported_runtime_variables": [
+      "HOME",
+      "PANTHEON_ASSISTANT_KERNEL_ENABLED",
+      "PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH",
+      "PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH",
+      "PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS",
+      "PANTHEON_BFF_STUB_CAPABILITIES",
+      "MANAGEMENT_AI_STORE_BACKEND",
+      "MANAGEMENT_AI_STORE_SCHEMA",
+      "MANAGEMENT_AI_STORE_DSN",
+      "MANAGEMENT_AI_DATABASE_URL",
+      "PANTHEON_MANAGEMENT_AI_DB_USER",
+      "PANTHEON_MANAGEMENT_AI_DB_PASSWORD",
+      "PANTHEON_MANAGEMENT_AI_DB_NAME",
+      "PANTHEON_MANAGEMENT_AI_APP_DB_USER",
+      "PANTHEON_MGMT_AI_ATTACH_BUCKET",
+      "PANTHEON_MGMT_AI_ATTACH_LOCATION",
+      "AGORA_PRIVATE_CONTENT_DEV_KEK",
+      "FINMIND_API_TOKEN",
+      "RECONCILIATION_DRIFT_STORE_BACKEND",
+      "RECONCILIATION_DRIFT_STORE_DSN",
+      "RECONCILIATION_DRIFT_URL",
+      "PANTHEON_RECONCILIATION_DRIFT_API_URL",
+      "RECONCILIATION_DRIFT_AUTH_TOKEN",
+      "PANTHEON_MEMORY_LLM_BRIDGE_TOKEN_FILE",
+      "PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS",
+      "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"
+    ]
+  },
+  "validation": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_fetch_dev_artifact_evidence.py",
+      "result": "119 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_nonprod_restore_accepted_baseline.py",
+      "result": "10 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_artifact_restore.py",
+      "result": "75 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "result": "33 passed"
+    }
+  ]
+}

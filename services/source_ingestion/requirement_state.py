@@ -514,8 +514,22 @@ class MarketSnapshotPoint:
     market: str | None = None
     # Lineage of a close relayed by the collector from the exchange website (provisional, not official).
     collector_close: Mapping[str, Any] | None = None
+    # Official session open of the same bar, carried only when the official row states it.
+    # The paper daily settlement fills at the next session's open; it never substitutes a close.
+    open: float | None = None
 
     def __post_init__(self) -> None:
+        if self.open is not None:
+            if (
+                isinstance(self.open, bool)
+                or not isinstance(self.open, (int, float))
+                or not math.isfinite(float(self.open))
+                or float(self.open) <= 0
+                or self.collector_close is not None
+            ):
+                object.__setattr__(self, "open", None)
+            else:
+                object.__setattr__(self, "open", float(self.open))
         if self.collector_close is not None:
             if not isinstance(self.collector_close, Mapping) or set(self.collector_close) != {
                 "collector_source_id", "exchange_endpoint", "bundle_sha256", "trade_date"
@@ -564,6 +578,8 @@ class MarketSnapshotPoint:
             data["market"] = self.market
         if self.collector_close is not None:
             data["collector_close"] = dict(self.collector_close)
+        if self.open is not None:
+            data["open"] = self.open
         return data
 
     @property
@@ -582,7 +598,7 @@ class MarketSnapshotPoint:
             "content_ref",
             "ingest_run_id",
         }
-        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close"}):
+        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close", "open"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
         if "collector_close" in value and not isinstance(value["collector_close"], Mapping):
             raise MarketSnapshotStateError("collector close lineage schema is invalid")
@@ -595,6 +611,7 @@ class MarketSnapshotPoint:
             ingest_run_id=value["ingest_run_id"],
             market=value.get("market"),
             collector_close=value.get("collector_close"),
+            open=value.get("open"),
         )
 
 
@@ -760,6 +777,13 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "source_ref": f"source-ingest://snapshots/{self.snapshot_id}",
         }
+        opens = [
+            {"event_time": point.event_time, "open": point.open}
+            for point in self.points
+            if point.open is not None
+        ]
+        if opens:
+            public["opens"] = opens
         if self.calendar_evidence is not None:
             public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
@@ -866,6 +890,9 @@ def _market_snapshots_from_lines(
 
 MARKET_SNAPSHOT_COMPACT_FACTOR = 3
 MARKET_SNAPSHOT_COMPACT_MIN_BYTES = 8 * 1024 * 1024
+# The deployment capture probe rejects journals above this size (scripts/dev_release_artifacts.py).
+MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES = 256 * 1024 * 1024
+MARKET_SNAPSHOT_WARN_BYTES = MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES * 3 // 4
 _COMPACT_CHUNK_BYTES = 4 * 1024 * 1024
 
 
@@ -1004,7 +1031,10 @@ class LatestMarketSnapshotStore:
         self._journal_signature: tuple[int, int, int] | None = None
         # Bytes of the newest line per live key; None until first needed.
         self._line_bytes: dict[tuple[str, str], int] | None = None
+        self._last_compaction_at: str | None = None
+        self._last_compaction_error: str | None = None
         self.reload()
+        self.compact(force=False)  # startup: same size trigger as every append
 
     @staticmethod
     def _signature(fd: int) -> tuple[int, int, int]:
@@ -1085,6 +1115,60 @@ class LatestMarketSnapshotStore:
             return
         self._line_bytes = kept
         self._journal_signature = self._signature(fd)
+        self._last_compaction_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    def compact(self, *, force: bool = True) -> bool:
+        """Compact now (startup hook); reuses ``_compact_journal_in_place``, never a second path."""
+        with self._lock:
+            if not self.path.exists():
+                return False
+            try:
+                with self._open_exclusive(self.path) as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        before = os.fstat(handle.fileno()).st_size
+                        current = self._current_locked(handle)
+                        if not force:
+                            self._maybe_compact_locked(handle.fileno(), current)
+                            return False
+                        kept = _compact_journal_in_place(handle.fileno(), path=self.path)
+                        after = os.fstat(handle.fileno()).st_size
+                        self._line_bytes = kept
+                        self._journal_signature = self._signature(handle.fileno())
+                        self._latest_by_symbol = dict(current)
+                        if after < before:
+                            self._last_compaction_at = (
+                                datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                            )
+                        self._last_compaction_error = None
+                        return after < before
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except (MarketSnapshotStateError, OSError, UnicodeError) as exc:
+                self._invalidate()
+                self._last_compaction_error = f"compaction failed: {type(exc).__name__}"
+                return False
+
+    def journal_stats(self) -> dict[str, Any]:
+        """Journal size readback; ``warning`` precedes the deployment capture bound."""
+        try:
+            size = self.path.stat().st_size
+            with self.path.open("rb") as handle:
+                lines = sum(1 for raw in handle if raw.strip())
+        except OSError:
+            size, lines = 0, 0
+        stats: dict[str, Any] = {
+            "journal_bytes": size,
+            "journal_lines": lines,
+            "live_snapshot_count": len(self._latest_by_symbol),
+            "last_compaction_at": self._last_compaction_at,
+            "capture_bound_bytes": MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES,
+            "warn_bytes": MARKET_SNAPSHOT_WARN_BYTES,
+            "warning": "journal_near_capture_bound" if size >= MARKET_SNAPSHOT_WARN_BYTES else None,
+        }
+        if self._last_compaction_error:
+            stats["last_compaction_error"] = self._last_compaction_error
+        return stats
 
     def reload(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
         with self._lock:
@@ -1273,6 +1357,7 @@ class LatestMarketSnapshotStore:
                 content_ref=getattr(record, "content_ref", None),
                 ingest_run_id=ingest_run_id,
                 market=record_market,
+                open=row.get("open"),
             )
             # Prefer the normalized market row because it is the exact
             # source-selected record.  The metadata fallback preserves the
@@ -1293,6 +1378,7 @@ class LatestMarketSnapshotStore:
                     ingest_run_id=point.ingest_run_id,
                     market=point.market,
                     collector_close=collector_lineage,
+                    open=None,
                 )
             calendar_evidence = _market_snapshot_calendar_evidence(
                 row.get("calendar_evidence")
@@ -1452,7 +1538,6 @@ class LatestMarketSnapshotStore:
                                 prior is not None
                                 and prior.points == candidate.points
                                 and prior.calendar_evidence == candidate.calendar_evidence
-                                and prior.observed_at == candidate.observed_at
                                 and prior.market == candidate.market
                                 and prior.close_reconciliation == candidate.close_reconciliation
                             ):

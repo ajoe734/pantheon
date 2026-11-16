@@ -584,3 +584,62 @@ def test_harness_content_has_no_invented_guardrail_and_fails_closed_without_iden
         render_harness_surface_v1({"strategy_family": "f"})
     with pytest.raises(EnrollmentRefused, match="harness_source_missing:strategy_family"):
         render_harness_surface_v1({"mandate": "m"})
+
+
+# ---------------------------------------------------------------------------
+# PERSONA-ENROLLMENT-SEED-LISTER-FIX-20261115: probe classification and retry backoff
+# ---------------------------------------------------------------------------
+
+_PROBE_CASES = [
+    {"persona_id": "persona-d64835a203ce276b8fbb", "name": "Pantheon Dev Paper Release 43688794313 Attempt 1",
+     "mandate": "release probe", "metadata": {}},
+    {"persona_id": "p-1", "name": "Trader", "mandate": "momentum", "metadata": {"data_scope": "test"}},
+    {"persona_id": "p-2", "name": "Trader", "mandate": "momentum", "metadata": {"is_acceptance": "yes"}},
+    {"persona_id": "p-3", "name": "Trader", "mandate": "momentum", "metadata": {"release_probe": True}},
+    {"persona_id": "p-4", "name": "Acceptance probe", "mandate": "x", "metadata": {}},
+    {"persona_id": "persona-2448c7053e33ea48da47", "name": "Momentum Trader", "mandate": "Paper momentum research",
+     "metadata": {"registry_id": "r", "persona_capital_binding_id": "pcb"}},
+    {"persona_id": "p-5", "name": "Release notes", "mandate": "release cadence", "metadata": {}},
+]
+
+
+def test_probe_classification_matches_the_persona_evaluator_rule():
+    from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "persona_evaluator_agent_for_probe_rule",
+        REPO / "services" / "persona-evaluator-agent" / "persona_evaluator_agent.py",
+    )
+    agent = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(agent)
+    answers = [is_probe_or_test_persona(p) for p in _PROBE_CASES]
+    assert answers == [agent._probe_persona(dict(p)) for p in _PROBE_CASES]
+    assert answers[0] is True and answers[5] is False
+
+
+def test_retry_is_throttled_after_a_refusal_and_later_success_still_happens():
+    from datetime import datetime, timedelta, timezone
+    from services.control_plane.bff.persona_paper_enrollment import retry_due
+
+    now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
+    stamp = lambda minutes: (now - timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")  # noqa: E731
+    refused = {"status": "refused", "reason": "pool_seed_refused:x", "attempted_at": stamp(1)}
+    assert retry_due(refused, now, 600) is False
+    assert retry_due({**refused, "attempted_at": stamp(11)}, now, 600) is True  # at most 6 attempts per hour
+    assert retry_due({**refused, "status": "unavailable"}, now, 600) is False
+    assert retry_due(None, now, 600) is True
+    assert retry_due({"status": "refused"}, now, 600) is True  # legacy readback without a timestamp
+    assert retry_due({**refused, "attempted_at": "garbage"}, now, 600) is True
+    assert retry_due({"status": "not_eligible", "attempted_at": stamp(0)}, now, 600) is True
+
+
+def test_latest_refusal_reason_and_attempt_time_are_kept_on_the_readback(world):
+    _complete_paper_admission(world)
+    world.activate_runtime()
+    world.module.POOL_STORE._lister = lambda pid, tenant: []  # zero candidates: fail closed
+    record = world.store.get(world.record.tenant_id, world.record.idempotency_key)
+    first = world.coordinator("a").reconcile_paper_enrollment(record).references["paper_enrollment"]
+    assert first["status"] == "refused" and "found 0" in first["reason"] and first["attempted_at"]
+    assert _persona(world)["lifecycle_state"] == "research_only"

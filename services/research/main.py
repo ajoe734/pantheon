@@ -2554,6 +2554,7 @@ def _producer_proof_registration(
         backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
         max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
         round_trips=details.get("out_of_sample_round_trips"),
+        fill_convention=details.get("fill_convention"),
     )
     wire["evaluation_summary"] = summary
     _bind_backtest_run_gate_verdict(

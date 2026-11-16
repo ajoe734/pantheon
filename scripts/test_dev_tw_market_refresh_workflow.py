@@ -359,11 +359,24 @@ def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures
     step = next(s for s in _load_workflow()['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
     assert step['timeout-minutes'] == 15
     assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
-    assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 120
+    assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 300
     assert step.get('continue-on-error', False) is False
+    assert step['run'].count('run_with_dev_environment_lease.sh') == 1
     wrapper = tmp_path / '.lease-controller/scripts/run_with_dev_environment_lease.sh'
     wrapper.parent.mkdir(parents=True)
-    wrapper.write_text('#!/usr/bin/env bash\nexec "$@"\n')
+    wrapper.write_text('''#!/usr/bin/env bash
+if [[ -f "${GUARD_FAILED:-}" ]]; then
+  echo "lease heartbeat already quarantined" >&2
+  exit 75
+fi
+printf '%s %s\\n' "$1" "$2" >> "${GUARD_CALLS}"
+"$@"
+rc=$?
+if (( rc != 0 )) && [[ -n "${GUARD_FAILED:-}" ]]; then
+  touch "${GUARD_FAILED}"
+fi
+exit "${rc}"
+''')
     wrapper.chmod(0o755)
     deploy = tmp_path / 'scripts/deploy_nonprod_vm.sh'
     deploy.parent.mkdir()
@@ -379,10 +392,14 @@ with open(args[args.index('--output') + 1], 'w') as stream:
 sys.exit(code)
 ''')
     deploy.chmod(0o755)
+    guard_calls = tmp_path / 'guard_calls'
+    guard_failed = tmp_path / 'guard_failed'
     proc = subprocess.run(['bash', '-e', '-c', step['run']], cwd=tmp_path,
                           env={**os.environ, 'RUNNER_TEMP': str(tmp_path), 'FORCE_REFRESH': 'true',
-                               'CALLS': str(tmp_path / 'calls')}, text=True, capture_output=True, timeout=20)
+                               'CALLS': str(tmp_path / 'calls'), 'GUARD_CALLS': str(guard_calls),
+                               'GUARD_FAILED': str(guard_failed)}, text=True, capture_output=True, timeout=20)
     assert proc.returncode == 1, proc.stderr
+    assert guard_calls.read_text().splitlines() == ['bash -c']
     calls = [json.loads(l) for l in (tmp_path / 'calls').read_text().splitlines()]
     chip_profiles = {k: v for k, v in TW_CHIP_REFRESH_PROFILES.items() if v['base'] != 'tw-finmind-fundamentals'}
     assert len(calls) == len(chip_profiles) == 6
@@ -397,7 +414,7 @@ sys.exit(code)
 def test_workflow_requests_taifex_tx_daily_once_and_publishes_its_outcome():
     workflow = _load_workflow()
     step = next(s for s in workflow['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
-    lines = [ln.split() for ln in step['run'].split("<<'PROFILES'\n", 1)[1].split('\nPROFILES')[0].splitlines() if ln.strip()]
+    lines = [ln.split() for ln in re.split(r"<<'?PROFILES'?\n", step['run'], maxsplit=1)[1].split('\nPROFILES')[0].splitlines() if ln.strip()]
     assert [ln for ln in lines if ln[1] == 'taifex_tx_daily'] == [
         ['tw-taifex-tx-daily', 'taifex_tx_daily', 'openapi.taifex.com.tw,www.taifex.com.tw']
     ]

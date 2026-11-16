@@ -592,3 +592,15 @@ def test_v2_baseline_rejects_partial_or_inconsistent_stack(change):
     emitted = v2_result(mutate)
     with pytest.raises(c.CaptureError):
         c.seal_result(json.dumps(emitted).encode(), IDENTITY)
+
+
+@pytest.mark.parametrize("reason", ["lock_wait_timeout", "journal_too_large", "line_too_long", "probe_timeout", "probe_killed", "probe_no_output"])
+def test_wrapper_forwards_distinct_source_probe_reason(fake_transport, capsys, reason):
+    _, _, _, _, evidence, output, transport = fake_transport
+    row = primitive.failure_record(primitive.SourceCompatibilityError(reason), "restore")
+    transport.write_text("import sys\n" + f"print({json.dumps(row)!r},file=sys.stderr)\nraise SystemExit(75)\n")
+    assert c.main() == 75
+    observed = json.loads(capsys.readouterr().err)
+    assert observed["source_compatibility"] == {"reason": reason, "line": None}
+    assert observed["failure_stage"] == "restore"
+    assert not list(evidence.iterdir()) and not output.exists()
