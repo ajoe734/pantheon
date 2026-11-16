@@ -38,12 +38,18 @@ GOVERNANCE_GRANT_CONTENT = (
     "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
     + ";persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
 )
+GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-reader"
+GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"
 TTL_SECONDS = 24 * 60 * 60
 READERS = {
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
     "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-deployment-approval-reader", "approval_reader"),
     "REGISTRY_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-registry-approval-reader", "approval_reader"),
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
+    # Governance paper-ladder lifecycle review -> Capital /api/bindings (capital-reader, GET only) and
+    # Runtime Manager /api/runtime-bindings (viewer, GET only).  Distinct subjects, no write role.
+    "GOVERNANCE_CAPITAL_SERVICE_TOKEN": (GOVERNANCE_CAPITAL_READER_SUBJECT, "capital-reader"),
+    "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN": (GOVERNANCE_RUNTIME_READER_SUBJECT, "viewer"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
@@ -183,7 +189,11 @@ CONSUMER_FILES = {
         "DEPLOYMENT_CAPITAL_SERVICE_TOKEN",
     ),
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
-    "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
+    "governance": (
+        "GOVERNANCE_REGISTRY_SERVICE_TOKEN",
+        "GOVERNANCE_CAPITAL_SERVICE_TOKEN",
+        "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN",
+    ),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
     "persona": (
         "PERSONA_GOVERNANCE_SERVICE_TOKEN",
@@ -337,6 +347,8 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": ENROLLMENT_PROPOSER_SUBJECT,
         "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "true",
         "GOVERNANCE_REGISTRY_BASE_URL": "http://registry:8087",
+        "GOVERNANCE_CAPITAL_BASE_URL": "http://capital:8092",
+        "GOVERNANCE_RUNTIME_MANAGER_BASE_URL": "http://runtime-manager:8081",
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
         "PANTHEON_REGISTRY_JWT_AUDIENCE": audience,
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
