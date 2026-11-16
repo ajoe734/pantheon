@@ -169,7 +169,12 @@ class ConsultationServiceClient:
         meeting_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        iso_week: Optional[str] = None,
+        rounds_requested: Optional[int] = None,
+        calls_requested: Optional[int] = None,
+        run_immediately: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        **extra: Any,
     ) -> Dict[str, Any]:
         """Open a deliberative persona meeting via POST /api/consult/meetings."""
         payload: Dict[str, Any] = {
@@ -199,8 +204,19 @@ class ConsultationServiceClient:
             payload["meeting_id"] = meeting_id
         if trace_id is not None:
             payload["trace_id"] = trace_id
+        if iso_week is not None:
+            payload["iso_week"] = iso_week
+        if rounds_requested is not None:
+            payload["rounds_requested"] = rounds_requested
+        if calls_requested is not None:
+            payload["calls_requested"] = calls_requested
+        if run_immediately is not None:
+            payload["run_immediately"] = run_immediately
         if metadata is not None:
             payload["metadata"] = dict(metadata)
+        for k, v in extra.items():
+            if v is not None and k not in payload:
+                payload[k] = v
         extra_headers: Dict[str, str] = {}
         if idempotency_key:
             extra_headers["Idempotency-Key"] = idempotency_key

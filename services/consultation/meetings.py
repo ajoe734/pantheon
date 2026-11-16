@@ -1388,7 +1388,11 @@ def validate_and_build_synthesis(
                     continue
         else:
             sponsor_meta = participants_by_id.get(sponsor_id)
-            if sponsor_meta is not None and not sponsor_meta.get("can_sponsor", False):
+            can_sponsor_default = (
+                sponsor_meta.get("origin", "institutional") == "institutional"
+                and sponsor_meta.get("role") not in {"risk_reviewer", "red_team", "advisor", "servant"}
+            ) if sponsor_meta is not None else True
+            if sponsor_meta is not None and not sponsor_meta.get("can_sponsor", can_sponsor_default):
                 rejected_proposals.append(
                     {
                         "proposal_id": proposal_id,
@@ -2615,6 +2619,10 @@ def _format_participant_summary(p: Mapping[str, Any]) -> Dict[str, Any]:
         item["style"] = str(p["style"])
     if p.get("agora_user_id") is not None:
         item["agora_user_id"] = str(p["agora_user_id"])
+    if "trading" in p:
+        item["trading"] = bool(p["trading"])
+    if "can_sponsor" in p:
+        item["can_sponsor"] = bool(p["can_sponsor"])
     return item
 
 

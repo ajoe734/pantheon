@@ -577,7 +577,11 @@ def committee_visible_memory(
     if not isinstance(retrieval, Mapping) or not tenant_id:
         return []
     retrieval = _tenant_bound_retrieval(retrieval, tenant_id)
-    hits, _rejected = normalize_retrieval_hits(retrieval, persona_id=persona_id)
+    hits, _rejected = normalize_retrieval_hits(
+        retrieval,
+        persona_id=persona_id,
+        max_hits=max(limit * 2, len(retrieval.get("hits") or [])),
+    )
     visible: list[dict[str, Any]] = []
     for hit in hits:
         if hit["type"] == "institutional" or (
