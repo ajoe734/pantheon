@@ -1,0 +1,48 @@
+{
+ "task": "SOURCE-RECEIPT-REFS-ONLY-20261117-R2",
+ "design_of_record": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (T2, T2b; budget row 'ingest_schedule.jsonl receipts')",
+ "remaining_after_previous_task": {
+  "line_bytes_500_records": 207816,
+  "composition_bytes": {"distillation_admissions": 94001, "market_snapshots.snapshots(refs)": 69000, "knowledge_object_ids": 19501, "source_ids": 16001, "evidence_item_ids": 11501, "storage_refs": "~850", "other": "~1.2k"},
+  "what_it_still_contained": "one entry per record in five per-record lists"
+ },
+ "change": {
+  "receipt_form": "evidence_refs keeps evidence_bundle_id and counts (source_id_count, evidence_item_id_count, knowledge_object_id_count, distillation_admission_count, distillation_admission_status_counts) and market_snapshots = counts + snapshot_count + one snapshot_refs reference (latest_market_snapshots store, ingest_run_id, datasets); no per-record list",
+  "where": "scheduler.compact_receipt_evidence_refs, applied in JsonlIngestScheduleStore.upsert_receipt, in replay, and in the journal rewrite",
+  "retention": "JsonlIngestScheduleStore(retention_days default 30, env SOURCE_INGEST_RECEIPT_RETENTION_DAYS, 0 = keep): at start, via enforce_retention(), and at most once a day on the write path; pinned (never expired): receipt of a run referenced by a watermark, a frontier item, a non-terminal run, the newest run of each connector, or the pinned_run_ids callback (lineage). No second store.",
+  "alarms": "journal_stats / health ingest_schedule_journal: receipt_line_budget_bytes, max_receipt_line_bytes, receipt_lines_over_budget, growth_bytes_last_hour, growth_alarm_bytes_per_hour, retention_days, alarms[] = ingest_receipt_line_over_16kb | ingest_schedule_journal_growth_over_5mb_per_hour",
+  "resolver": "resolve_receipt_snapshot_bodies fails closed with a readable ReceiptSnapshotUnavailable for a counts-and-reference receipt (read the latest snapshot store)",
+  "readers_changed": "runtime._receipt_summary reads the count fields (falls back to lists for older rows); no other reader of receipt lists found by grep"
+ },
+ "budget_row": {
+  "store": "ingest_schedule.jsonl receipts",
+  "limit": "no line > 16 KB; <= 200 MB retained (30 days); growth <= 5 MB per hour",
+  "measured": {"receipt_line_bytes_500_records": 2245, "synthetic_hosted_shape_after_bytes": 205211521, "max_receipt_line_after": 3981},
+  "byte_test": "services/source_ingestion/tests/test_ingest_receipt_snapshot_refs_bounded.py::test_bundle_receipt_holds_refs_not_bodies_and_is_bounded and scripts/test_migrate_ingest_receipts.py::test_500_record_batch_receipt_line_is_at_most_16kb_counts_and_references_only (fail on bytes > 16384)",
+  "note_200MB": "the 205 MB after figure is dominated by 59431 run rows (~3.4 KB each) of a synthetic journal with 10x the hosted receipt count (5818 hosted); receipts are 45120 rows <= 4 KB",
+  "stores_not_touched": ["market_snapshot_current / latest_market_snapshots", "daily_bars", "market_data_store raw and normalized", "tw_price_1m", "collector bundle store", "evidence / distillation stores"]
+ },
+ "hosted_shaped_migration": {
+  "input": "synthetic legacy journal, 2577487924 bytes (2.4 GiB), 118862 rows, 59431 receipts of which 2831 are over 16 KB (500 record batches, every per-record list and snapshot bodies embedded, 810 KB each), 40 connectors, ~40 days of ages; no real data, no credentials",
+  "command": "SOURCE_INGEST_RECEIPT_RETENTION_DAYS=30 python3 scripts/migrate_ingest_receipts.py <journal> --measure-replay --report report.json",
+  "before": {"bytes": 2577487924, "new_reader_cold_replay_seconds": 48.92, "new_reader_peak_rss_mb": 299.2, "deployed_reader_e7ec353d6_peak_rss_mb_from_previous_task_evidence": 2431},
+  "after": {"bytes": 205211521, "receipts": 45120, "runs": 59431, "max_receipt_line_bytes": 3981, "new_reader_cold_replay_seconds": 5.29, "new_reader_peak_rss_mb": 248.6, "previous_reader_e7ec353d6_replay_seconds": 7.98, "previous_reader_peak_rss_mb": 973},
+  "migration": {"seconds": 36.13, "compacted_rows": 2150, "expired_rows": 14311, "backup_kept": "<journal>.pre-migrate.bak (hard link of the old file; remove after 7 days)"},
+  "cold_replay_rss_bound": "< 1 GiB: 248.6 MB new reader, 973 MB previous reader on the migrated file",
+  "identity": "ingest_run, source_watermark, crawl_frontier_item rows byte-identical (digest) and receipt ids equal to before minus the expired set; verified inside the migration under the store lock before the rename"
+ },
+ "crash_safety_and_resume": {
+  "states": "old journal untouched until one atomic os.replace of a complete fsynced temp; state file checkpoints every 64 MB; resume truncates the temp to the checkpointed size; a changed journal inode restarts; a torn tail row refuses the migration",
+  "tests": ["test_migration_resumes_after_a_crash_and_every_state_is_readable", "test_migration_restarts_when_the_journal_was_replaced_since_the_checkpoint", "test_rows_appended_during_the_copy_are_kept", "test_migration_refuses_a_torn_tail_row"]
+ },
+ "previous_reader_both_directions": {
+  "test": "scripts/test_migrate_ingest_receipts.py::test_previous_reader_reads_the_migrated_journal_and_new_reader_reads_the_old_one (e7ec353d6 scheduler executed from git) and the existing rollback tests in test_ingest_receipt_snapshot_refs_bounded.py",
+  "result": "same runs and receipt ids both ways; previous writer can append to a migrated journal"
+ },
+ "validation": {
+  "scripts_tests": "python3 -m pytest scripts/test_migrate_ingest_receipts.py: 14 passed",
+  "shards": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300: 2185 ran, 22 skipped, 2185 collected; shard 0 had 1 failure (test_scheduled_connector.py::test_registry_reports_connector_freshness_after_scheduled_run asserted the old per-record list); after fixing that one assertion it passes alone (1 passed); shards 1 to 3 exit 0 (385, 515, 861 passed)"
+ },
+ "files_outside_artifact_list": ["services/source_ingestion/tests/test_scheduled_connector.py line 1056: assertion on receipt evidence_refs.source_ids changed to source_id_count"],
+ "not_done": ["lineage pinning has no caller yet (pinned_run_ids callback is available, default none)", "hosted run of the migration on the real 2.4 GB file is an operator step; the measured run is on a synthetic copy of the same shape"]
+}
