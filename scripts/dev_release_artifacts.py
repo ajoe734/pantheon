@@ -602,6 +602,7 @@ except Exception as error:
 
 def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
     _match(image_id, IMAGE, "Source probe image")
+    # Raised from 512m to 2048m so older retained baseline images do not OOM on 200MB-450MB journals.
     command = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "2048m",
                "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
