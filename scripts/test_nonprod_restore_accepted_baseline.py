@@ -540,3 +540,69 @@ def test_restore_failure_propagates_driver_reason_and_keeps_lease_quarantined(
     cleanup_script = RESTORE_STEPS["Stop heartbeat and release lease only after complete restore success"]["run"]
     assert 'if [[ "${RESTORE_OUTCOME}" != "success" || -e "${LEASE_FAILURE_FILE}" ]]; then' in cleanup_script
     assert 'echo "Restore accepted baseline was incomplete; lease quarantined until TTL." >&2' in cleanup_script
+
+
+def test_restore_accepted_baseline_step_env_parity_with_compensate_release_step() -> None:
+    coord_steps = {step.get("name"): step for step in JOBS["coordinate-dev-release"]["steps"]}
+    compensate_env = coord_steps["Compensate rejected release to exact hosted baseline"]["env"]
+    restore_env = RESTORE_STEPS["Restore accepted baseline under shared dev lease"]["env"]
+
+    shared_exact_keys = (
+        "DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS",
+        "DEV_BFF_CANONICAL_CORS_ORIGIN",
+        "DEV_BFF_CORS_ORIGINS",
+        "DEV_BFF_AUTH_STUB",
+        "DEV_BFF_AUTH_MODE",
+        "DEV_BFF_JWT_SECRET",
+        "PANTHEON_COLLECTOR_HOST",
+        "PANTHEON_COLLECTOR_BUNDLE_TOKEN",
+        "FINMIND_API_TOKEN",
+        "DEV_PAPER_PRINCIPALS_AUTHORIZED",
+        "DEV_BFF_JWT_ISSUER",
+        "DEV_BFF_JWT_AUDIENCE",
+        "DEV_BFF_JWKS_URI",
+        "DEV_BFF_OIDC_DISCOVERY_URL",
+        "DEV_BFF_OIDC_ISSUER",
+        "DEV_BFF_OIDC_AUDIENCE",
+        "DEV_BFF_OIDC_CLIENT_ID",
+        "DEV_BFF_OIDC_CLIENT_SECRET",
+        "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID",
+        "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID",
+        "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID",
+        "DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID",
+        "DEV_BFF_MFA_REQUIRED",
+        "DEV_BFF_MFA_CLAIMS",
+        "DEV_BFF_MFA_VALUES",
+        "DEV_BFF_REQUIRE_EMAIL_VERIFIED",
+        "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH",
+        "DEV_BFF_ROLE_CLAIMS",
+        "DEV_BFF_ROLE_MAP",
+        "DEV_BFF_ROLE_MAP_MODE",
+        "DEV_BFF_DEFAULT_ROLE",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED",
+        "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN",
+        "DEV_OPENCLAW_ANTHROPIC_API_KEY",
+        "DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID",
+        "DEV_MANAGEMENT_AI_STORE_BACKEND",
+        "DEV_MANAGEMENT_AI_STORE_SCHEMA",
+        "DEV_MANAGEMENT_AI_DB_USER",
+        "DEV_MANAGEMENT_AI_DB_PASSWORD",
+        "DEV_MANAGEMENT_AI_DATABASE_URL",
+        "DEV_AGORA_PRIVATE_CONTENT_DEV_KEK",
+        "DEV_MANAGEMENT_AI_ATTACH_BUCKET",
+        "DEV_MANAGEMENT_AI_ATTACH_LOCATION",
+        "PANTHEON_DEV_PAPER_EXPRESSION_LAYER",
+    )
+    for key in shared_exact_keys:
+        assert key in restore_env, f"Missing {key} in restore-accepted-baseline step env"
+        assert restore_env[key] == compensate_env[key], (
+            f"Mismatch for {key}: restore={restore_env[key]!r} vs compensate={compensate_env[key]!r}"
+        )
+
+    for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B", "TEST_ADMIN"):
+        secret_key = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_SECRET"
+        assert restore_env[secret_key] == f"${{{{ secrets['{secret_key}'] }}}}"
+
