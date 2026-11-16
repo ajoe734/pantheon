@@ -32,6 +32,8 @@ from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_I
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
+from services.persona import regime_consumer
+from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 from services.persona.lesson_cycle import MEMORY_CANDIDATE_FORMAT, LessonCycle, lesson_summary
 
@@ -220,6 +222,7 @@ class PersonaCycleController:
                 cursors = [c for c in prior if c]
                 since = max(cursors, key=lambda c: (c["at"], c["id"])) if cursors else None
                 observe = self.owners.observe(persona, since=since)
+                self._observe_regime(persona, observe, cycle, packet, snapshots, run)
                 self._harness_loop().observation(persona, observe, snapshots, packet_id)
                 cycle["observe_bundle"] = observe
                 for key in ("telemetry_refs", "incident_refs", "human_feedback_refs"):
@@ -262,6 +265,11 @@ class PersonaCycleController:
                     output = CaseFileTurnOutput.model_validate_json(turn.decision)
                     cycle["output"] = output.model_dump(mode="json")
                     check_case_file_citations(output, cycle_case)
+                    # The persona's own reading of the regime lives in the packet only; RegimeState is never written.
+                    cycle["regime_interpretation"] = {
+                        "text": output.orient, "regime_state_ref": (cycle.get("regime") or {}).get("regime_state_ref"),
+                        "regime_unavailable_reason": (cycle.get("regime") or {}).get("reason"),
+                        "written_to_regime_state": False}
                     live_refs = [m["artifact_ref"] for m in (observe.get("pool") or {}).get("members", [])
                                  if m.get("stage") != "removed"]
                     proposal_cases = self._compose_proposal_cases(persona, observe, packet_id, output,
@@ -356,6 +364,25 @@ class PersonaCycleController:
                 raise ValueError(f"daily-cycle packet failed schema invariants: {errors}")
             append_ooda_packet(self.path, packet)
             return packet
+
+    def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:
+        """R13: evaluate, read the pool's active records, set orient.regime_state_ref; never fail the cycle."""
+        if persona["lifecycle_state"] == "consultable":
+            return
+        regime_observe = getattr(self.owners, "regime", None)
+        if regime_observe is None:
+            return
+        result = regime_observe(persona, observe, run)
+        cycle["regime"] = result
+        observe["regime"] = result
+        if result.get("regime_state_ref"):
+            packet["orient"]["regime_state_ref"] = result["regime_state_ref"]
+        shift = macro_regime_shift_requirement(
+            persona["persona_id"], regime_consumer.previous_macro(snapshots, persona, result["session"]),
+            result.get("macro"))
+        if shift is not None:
+            cycle["consult_requests"] = [{"trigger_rule": "macro_regime_shift", "status": "requested",
+                                          "panel": shift.to_panel_metadata()}]
 
     def _lesson_cycle(self) -> Any:
         if self.lesson_cycle is None:
@@ -495,11 +522,13 @@ class PersonaCycleController:
 
 class CycleOwners:
     """Fixed product-owner ports. No caller/model-selected URLs or command routes."""
-    def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None):
+    def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None,
+                 regime_transport=None):
         self.persona_owner, self.pool_store = persona_owner, pool_store
         self.env = os.environ if env is None else env
         self.telemetry_reader = telemetry_reader
         self.feedback_owner = feedback_owner
+        self.regime_transport = regime_transport
 
     def personas(self):
         return self.persona_owner.list_json()
@@ -653,10 +682,18 @@ class CycleOwners:
             decision_type=decision_type, persona_id=persona["persona_id"], tenant_id=persona["tenant_id"],
             strategy_family=subject["families"][0], underlyings=tuple(subject["underlyings"]),
             member_artifact_refs=tuple(member_refs),
-            persona_capital_binding_id=observe.get("persona_capital_binding_id") or "")
+            persona_capital_binding_id=observe.get("persona_capital_binding_id") or "",
+            regime_tag=(observe.get("regime") or {}).get("regime_tag") or "")
         caller = case_files.Caller(actor_id=self.env.get("PANTHEON_CYCLE_ACTOR_ID", CONTROLLER_NAME),
                                    actor_roles=roles, session_id=packet_id, persona_id=persona["persona_id"])
         return case_files.compose_case_file(case_subject, caller, case_files.Owners.from_env(self.env))
+
+    def regime(self, persona, observe, run):
+        subject = observe.get("cycle_subject") or {}
+        families = subject.get("families") or []
+        return regime_consumer.observe_regime(
+            self.regime_transport or regime_consumer.transport_from_env(self.env, persona["tenant_id"]),
+            session=regime_consumer.session_for_run(run), strategy_ids=families)
 
     def risk(self, persona, observe, packet_id):
         if persona["lifecycle_state"] == "consultable":

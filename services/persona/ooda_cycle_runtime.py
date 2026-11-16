@@ -477,7 +477,7 @@ def _build_closed_cycle_packet(
     if scenario.requires_human_gate:
         packet.observe.human_feedback_refs.append(f"human-gate://persona-ooda15/{persona_id}/{scenario.scenario_id}")
 
-    packet.orient.regime_state_ref = f"regime://persona-ooda15/{persona_id}/{_research_stage(persona)}"
+    # regime_state_ref stays empty: a research stage is not a stored RegimeState record.
     packet.orient.universe_selection_ref = f"universe://persona-ooda15/{persona_id}/{_market_scope_token(persona)}"
     packet.orient.signal_inference_refs.extend([
         f"signal-inference://persona-ooda15/{persona_id}/{scenario.scenario_id}",
