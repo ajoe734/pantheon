@@ -1,0 +1,177 @@
+{
+  "task_id": "POOL-LEGACY-MEMBER-REQUALIFY-20261116",
+  "title": "Pool members whose baseline was scored with decision-close fills are re-qualified with next-open fills on governed exchange data and removed when they fail",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "recorded_at": "2026-11-16T16:43:30Z",
+  "operator_decision": {
+    "decided_on": "2026-11-16",
+    "transcript_path": "/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/874a0b84-8f35-4810-9146-7517f0da2c09.jsonl",
+    "transcript_line": 8238,
+    "timestamp": "2026-11-16T12:35:05.786Z",
+    "uuid": "d0995ab6-d2dc-4058-878c-f85270ba4585",
+    "answer": "重新驗證，不過就移出 (Recommended)",
+    "summary": "Live pool members whose Registry baseline proof was scored under decision-close fills are automatically re-qualified once per (member artifact, fill_convention) on governed 2-year point-in-time exchange data under daily_decision_close_d_fills_open_d_plus_1; passing strategies are registered and paper-approved as new immutable Registry entries with lineage to the legacy entry and replace the legacy member in one pool version under all admission criteria; failing strategies are removed with reason requalification_failed_next_open_fill and verdict reference while the persona continues operating and learns the tried family in memory."
+  },
+  "reproduction_before_requalification": {
+    "resolve_member_baseline": {
+      "status": "no_approved_baseline",
+      "reason": "baseline_computed_under_decision_close_fill",
+      "operator_decision_required": true,
+      "recorded_fill_convention": "legacy_daily_decision_close_same_bar",
+      "required_fill_convention": "daily_decision_close_d_fills_open_d_plus_1"
+    },
+    "pool_evolution_scheduler_pre_decision": {
+      "skipped": {
+        "p1:reg-recorded_backtest_tw_2330": "no_approved_baseline:baseline_computed_under_decision_close_fill"
+      }
+    },
+    "periodic_revalidation": {
+      "exception": "ExecutorRefusal",
+      "outcome": "evaluation_rejected",
+      "reason": "no_approved_member_baseline"
+    },
+    "candidate_admission_while_legacy_member_live": {
+      "decision_status": "refused",
+      "reasons": [
+        "reg-recorded_backtest_tw_2330: baseline_computed_under_decision_close_fill"
+      ]
+    }
+  },
+  "recorded_exchange_requalification_outcomes": {
+    "canonical_momentum_artifact_fail_path": {
+      "legacy_registry_id": "reg-recorded_backtest_tw_2330",
+      "strategy_id": "strat-tw-replication-001",
+      "dataset_id": "recorded:twse:template-demand:202401-202610",
+      "source_dataset_refs_count": 68,
+      "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+      "window": {
+        "start_date": "2024-01-02",
+        "end_date": "2026-10-30",
+        "calendar_days": 1032,
+        "trading_days": 683,
+        "in_sample_ratio": 0.7,
+        "out_of_sample_ratio": 0.3,
+        "walk_forward_folds": 3
+      },
+      "metrics": {
+        "out_of_sample_sharpe_ratio": -1.643808,
+        "out_of_sample_max_drawdown": 0.451138,
+        "out_of_sample_round_trips": 106,
+        "buy_and_hold_sharpe_ratio": 1.957343,
+        "tw_0050_sharpe_ratio": 2.103444
+      },
+      "passed": false,
+      "failed_checks": [
+        "oos_sharpe_positive_after_costs",
+        "oos_sharpe_exceeds_deflated_threshold",
+        "walk_forward_consistent_across_folds",
+        "oos_max_drawdown_within_mandate",
+        "oos_sharpe_beats_buy_and_hold"
+      ],
+      "pool_action": {
+        "stage": "removed",
+        "risk_weight": 0.0,
+        "removal_reason": "requalification_failed_next_open_fill",
+        "remains_in_pool_history": true,
+        "persona_lifecycle_state": "paper_owner",
+        "persona_memory_tag": "tried_family:strat-tw-replication-001",
+        "excluded_in_next_demand_tried_families": true
+      }
+    },
+    "passing_factor_rule_artifact_replacement_path": {
+      "legacy_registry_id": "reg-legacy-klen-close-001",
+      "template_id": "qlib_alpha158:KLEN",
+      "dataset_id": "recorded:twse:template-demand:202401-202610",
+      "fill_convention": "daily_decision_close_d_fills_open_d_plus_1",
+      "window": {
+        "start_date": "2024-01-02",
+        "end_date": "2026-10-30",
+        "calendar_days": 1032,
+        "trading_days": 683,
+        "in_sample_ratio": 0.7,
+        "out_of_sample_ratio": 0.3,
+        "walk_forward_folds": 3
+      },
+      "metrics": {
+        "out_of_sample_sharpe_ratio": 2.135469,
+        "out_of_sample_max_drawdown": 0.129477,
+        "out_of_sample_round_trips": 23,
+        "walk_forward_fold_sharpes": [
+          2.263544,
+          0.0959,
+          2.834447
+        ],
+        "buy_and_hold_sharpe_ratio": 1.957343,
+        "tw_0050_sharpe_ratio": 2.103444
+      },
+      "passed": true,
+      "failed_checks": [],
+      "pool_replacement": {
+        "single_pool_version_transition": "1 -> 2",
+        "legacy_member_stage": "removed",
+        "legacy_member_removal_reason": "replaced_by_requalified_entry",
+        "new_member_stage": "trial",
+        "new_member_parent_ref": "reg-legacy-klen-close-001",
+        "admission_evaluated_without_legacy_member": {
+          "admitted": true,
+          "pool_idle": true,
+          "candidate_oos_sharpe": 1.125406,
+          "required_candidate_sharpe": 0.5,
+          "combined_oos_sharpe": 1.451132
+        },
+        "legacy_registry_entry_untouched": true
+      }
+    },
+    "could_not_evaluate_deferral_and_retry": [
+      {
+        "attempt_number": 1,
+        "input": "build_governed_tw_replication_dataset() (synthetic series)",
+        "status": "queued",
+        "outcome": "operator_decision_required",
+        "outcome_reason": "synthetic_or_fixture_dataset_refused",
+        "operator_decision_required": true,
+        "member_removed": false
+      },
+      {
+        "attempt_number": 2,
+        "input": "recorded_dataset() (4 months, < 2 years PIT)",
+        "status": "queued",
+        "outcome": "operator_decision_required",
+        "outcome_reason": "insufficient_point_in_time_history",
+        "operator_decision_required": true,
+        "member_removed": false
+      },
+      {
+        "attempt_number": 3,
+        "input": "Registry strategy-specs read HTTP 503",
+        "status": "queued",
+        "outcome": "operator_decision_required",
+        "outcome_reason": "owner_read_failed:strategy_spec",
+        "operator_decision_required": true,
+        "member_removed": false
+      }
+    ]
+  },
+  "validation": {
+    "total_passed": 146,
+    "batches": [
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q services/evolution/test_pool_evolution_scheduler.py services/evolution/test_auto_consumer.py services/evolution/test_auto_consumer_runtime.py services/evolution/test_auto_consumer_dispatch.py services/evolution/test_approved_baselines.py",
+        "passed": 82,
+        "subtests_passed": 18,
+        "failed": 0
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q services/research/alpha_replication/test_evolution_executor_case_file.py services/research/tests/test_rebaseline_next_open.py services/research/tests/test_candidate_registration.py",
+        "passed": 25,
+        "failed": 0
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_pool_evolution_integration.py",
+        "passed": 39,
+        "failed": 0
+      }
+    ]
+  }
+}

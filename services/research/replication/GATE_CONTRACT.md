@@ -476,11 +476,26 @@ and price) across the four paths on a recorded sequence of sessions.
 `evaluation["fill_convention"]`, the `real_backtest_validation` details and the registry `evaluation_summary` carry the
 convention; the registry owner's recompute rejects a proof whose convention differs from the evaluation.
 
-**Approved baselines.** `resolve_member_baseline` refuses a proof whose summary does not carry the new convention:
+**Approved baselines and live pool re-qualification (POOL-LEGACY-MEMBER-REQUALIFY-20261116).**
+`resolve_member_baseline` refuses a proof whose summary does not carry the new convention:
 `status="no_approved_baseline"`, `reason="baseline_computed_under_decision_close_fill"`,
-`operator_decision_required=true`. Such an entry is reported (`rebaseline_next_open.identify_legacy_baselines`), never
-silently kept as approved and never deleted. `python -m services.research.rebaseline_next_open [--write-fixtures]
-[--evidence PATH]` re-runs each recorded proof through `run_replication_backtest_protocol` and
+`operator_decision_required=true`. A decision-close proof never becomes an approved baseline and no legacy number is
+rewritten. For a live pool member carrying that legacy baseline, the operator decision of 2026-11-16
+(transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/874a0b84-8f35-4810-9146-7517f0da2c09.jsonl`
+line 8238, 12:35:05.786Z, uuid `d0995ab6-d2dc-4058-878c-f85270ba4585`; answer 「重新驗證，不過就移出 (Recommended)」,
+evidence in `docs/deployment/evidence/POOL-LEGACY-MEMBER-REQUALIFY-20261116/evidence.json`) replaces holding the member
+in `operator_decision_required`: on the existing pool evolution cadence, each such live member is automatically
+re-qualified once per `(member artifact, fill_convention)` through `run_replication_backtest_protocol` and
+`ReplicationGate.evaluate_candidate` (untouched thresholds) on the governed two-year point-in-time exchange dataset
+under `daily_decision_close_d_fills_open_d_plus_1` (synthetic or fixture series are refused). When it passes, it is
+registered and paper-approved as a new immutable registry entry with lineage to the legacy entry, and one pool version
+removes the legacy member (`replaced_by_requalified_entry`) and admits the new entry under every admission criterion
+evaluated against the pool without the legacy member. When it fails, the member is removed with
+`requalification_failed_next_open_fill` and a verdict reference (remaining in pool history, persona lifecycle
+untouched) and the outcome is learned in persona memory (`tried_family:<id>`). Only when the run could not evaluate
+(dataset unavailable, synthetic/fixture series, shorter than two years, or owner read failure) does the member remain
+with `operator_decision_required` and retry on the next cadence. `python -m services.research.rebaseline_next_open
+[--write-fixtures] [--evidence PATH]` re-runs each recorded proof through `run_replication_backtest_protocol` and
 `ReplicationGate.evaluate_candidate` under both conventions and records old and new metrics side by side.
 
 **Recorded fixtures.** `recorded_backtest_tw_2330.json` / `recorded_backtest_tw_2330_2317.json` were produced by the
