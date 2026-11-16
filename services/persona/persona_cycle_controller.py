@@ -14,9 +14,10 @@ import importlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -32,6 +33,7 @@ from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_I
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
+from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 from services.persona.lesson_cycle import MEMORY_CANDIDATE_FORMAT, LessonCycle, lesson_summary
 
@@ -164,6 +166,103 @@ def cycle_health(packet: dict[str, Any] | None) -> dict[str, Any]:
             "harness_loop": {k: (cycle.get("harness_loop") or {}).get(k) for k in ("status", "reasons")}}
 
 
+
+# --- Regime consumer (SD-REGIME-STATE-ENGINE R13) ---
+REF_PREFIX = "regime-state://"
+MARKET = "TW"
+Transport = Callable[[str, str, "dict | None"], "tuple[int, Any]"]  # (method, path, body) -> (status, json)
+
+
+def session_for_run(run: Mapping[str, Any]) -> str:
+    """Taipei calendar date of the cron run; the registry refuses a session without complete data."""
+    ms = run.get("runAtMs")
+    at = datetime.fromtimestamp(ms / 1000, timezone.utc) if isinstance(ms, (int, float)) else datetime.now(timezone.utc)
+    return (at + timedelta(hours=8)).date().isoformat()
+
+
+def http_transport(base_url: str, token: str, tenant: str, *, timeout: float = 20) -> Transport:
+    def call(method: str, path: str, body: dict | None = None) -> tuple[int, Any]:
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        try:
+            with urlopen(Request(base_url.rstrip("/") + path, data=data, headers=headers, method=method),
+                         timeout=timeout) as response:
+                return response.status, json.load(response)
+        except HTTPError as exc:
+            try:
+                return exc.code, json.load(exc)
+            except Exception:
+                return exc.code, None
+    return call
+
+
+def transport_from_env(env: Mapping[str, str], tenant: str) -> Transport | None:
+    base = next((env[k] for k in ("PANTHEON_REGISTRY_API_URL", "REGISTRY_URL") if env.get(k)), "")
+    token = next((env[k] for k in ("PANTHEON_REGISTRY_SERVICE_TOKEN", "PERSONA_REGISTRY_SERVICE_TOKEN") if env.get(k)), "")
+    return http_transport(base, token, tenant) if base and token else None
+
+
+def _unavailable(reason: str, session: str) -> dict[str, Any]:
+    return {"status": "unavailable", "reason": reason, "session": session, "regime_state_ref": None,
+            "regime_tag": "", "records": {}, "macro": None}
+
+
+def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
+    """Evaluate for the session, then read the active record of each strategy. Never raises."""
+    if transport is None:
+        return _unavailable("registry_unconfigured", session)
+    try:
+        status, body = transport("POST", "/api/registry/regime/evaluate", {"session": session, "market": MARKET})
+        if status != 200:
+            code = ((body or {}).get("detail") or {}).get("code") if isinstance(body, dict) else None
+            detail = (body or {}).get("detail") if isinstance(body, dict) else None
+            code = code or (detail if isinstance(detail, str) else None)
+            return _unavailable(f"evaluate_refused:{status}:{code or 'unknown'}"[:160], session)
+        records: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
+        for sid in dict.fromkeys(strategy_ids):
+            code, record = transport("GET", f"/api/registry/regime/strategies/{quote(sid, safe='')}/active", None)
+            if code == 200 and isinstance(record, dict) and record.get("regime_id"):
+                records[sid] = record
+            else:
+                missing.append(sid)
+        macro = None
+        code, ms = transport("GET", f"/api/registry/regime/market-state/{MARKET}/{session}", None)
+        if code == 200 and isinstance(ms, dict):
+            for row in ms.get("market_states") or []:
+                axis = (row.get("axes") or {}).get("macro") or {}
+                if axis.get("available") and axis.get("state"):
+                    macro = {"state": axis["state"], "session": session, "as_of": axis.get("as_of_session")}
+        if not records:
+            out = _unavailable("no_active_record_for_pool_strategies" if strategy_ids else "no_pool_strategies", session)
+            out["macro"] = macro
+            return out
+        first = next((s for s in strategy_ids if s in records), None)
+        rec = records[first]
+        return {"status": "observed", "reason": None, "session": session,
+                "regime_state_ref": REF_PREFIX + rec["regime_id"], "regime_tag": str(rec.get("regime_class") or ""),
+                "records": {s: {"regime_id": r["regime_id"], "regime_class": r.get("regime_class"),
+                                "confidence": r.get("confidence")} for s, r in records.items()},
+                "missing_strategies": missing, "macro": macro}
+    except Exception as exc:  # the cycle runs without a regime rather than inventing one
+        return _unavailable(f"registry_unavailable:{type(exc).__name__}", session)
+
+
+def previous_macro(snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], session: str) -> dict | None:
+    """Latest macro state this persona stored in an earlier session's cycle packet."""
+    best = None
+    for p in snapshots.values():
+        if p.get("tenant_id") != persona["tenant_id"] or persona["persona_id"] not in p.get("persona_ids", []):
+            continue
+        macro = ((p.get("persona_cycle") or {}).get("regime") or {}).get("macro")
+        if macro and macro.get("session") and macro["session"] < session and (
+                best is None or macro["session"] > best["session"]):
+            best = macro
+    return best
+
+
 class PersonaCycleController:
     def __init__(self, registrar: PersonaCronRegistrar, owners: Any, *,
                  store_path: Path | str | None = None, turn_runner: Callable = run_persona_ooda_turn,
@@ -220,6 +319,7 @@ class PersonaCycleController:
                 cursors = [c for c in prior if c]
                 since = max(cursors, key=lambda c: (c["at"], c["id"])) if cursors else None
                 observe = self.owners.observe(persona, since=since)
+                self._observe_regime(persona, observe, cycle, packet, snapshots, run)
                 self._harness_loop().observation(persona, observe, snapshots, packet_id)
                 cycle["observe_bundle"] = observe
                 for key in ("telemetry_refs", "incident_refs", "human_feedback_refs"):
@@ -262,6 +362,11 @@ class PersonaCycleController:
                     output = CaseFileTurnOutput.model_validate_json(turn.decision)
                     cycle["output"] = output.model_dump(mode="json")
                     check_case_file_citations(output, cycle_case)
+                    # The persona's own reading of the regime lives in the packet only; RegimeState is never written.
+                    cycle["regime_interpretation"] = {
+                        "text": output.orient, "regime_state_ref": (cycle.get("regime") or {}).get("regime_state_ref"),
+                        "regime_unavailable_reason": (cycle.get("regime") or {}).get("reason"),
+                        "written_to_regime_state": False}
                     live_refs = [m["artifact_ref"] for m in (observe.get("pool") or {}).get("members", [])
                                  if m.get("stage") != "removed"]
                     proposal_cases = self._compose_proposal_cases(persona, observe, packet_id, output,
@@ -356,6 +461,25 @@ class PersonaCycleController:
                 raise ValueError(f"daily-cycle packet failed schema invariants: {errors}")
             append_ooda_packet(self.path, packet)
             return packet
+
+    def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:
+        """R13: evaluate, read the pool's active records, set orient.regime_state_ref; never fail the cycle."""
+        if persona["lifecycle_state"] == "consultable":
+            return
+        regime_observe = getattr(self.owners, "regime", None)
+        if regime_observe is None:
+            return
+        result = regime_observe(persona, observe, run)
+        cycle["regime"] = result
+        observe["regime"] = result
+        if result.get("regime_state_ref"):
+            packet["orient"]["regime_state_ref"] = result["regime_state_ref"]
+        shift = macro_regime_shift_requirement(
+            persona["persona_id"], previous_macro(snapshots, persona, result["session"]),
+            result.get("macro"))
+        if shift is not None:
+            cycle["consult_requests"] = [{"trigger_rule": "macro_regime_shift", "status": "requested",
+                                          "panel": shift.to_panel_metadata()}]
 
     def _lesson_cycle(self) -> Any:
         if self.lesson_cycle is None:
@@ -495,11 +619,13 @@ class PersonaCycleController:
 
 class CycleOwners:
     """Fixed product-owner ports. No caller/model-selected URLs or command routes."""
-    def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None):
+    def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None,
+                 regime_transport=None):
         self.persona_owner, self.pool_store = persona_owner, pool_store
         self.env = os.environ if env is None else env
         self.telemetry_reader = telemetry_reader
         self.feedback_owner = feedback_owner
+        self.regime_transport = regime_transport
 
     def personas(self):
         return self.persona_owner.list_json()
@@ -653,10 +779,18 @@ class CycleOwners:
             decision_type=decision_type, persona_id=persona["persona_id"], tenant_id=persona["tenant_id"],
             strategy_family=subject["families"][0], underlyings=tuple(subject["underlyings"]),
             member_artifact_refs=tuple(member_refs),
-            persona_capital_binding_id=observe.get("persona_capital_binding_id") or "")
+            persona_capital_binding_id=observe.get("persona_capital_binding_id") or "",
+            regime_tag=(observe.get("regime") or {}).get("regime_tag") or "")
         caller = case_files.Caller(actor_id=self.env.get("PANTHEON_CYCLE_ACTOR_ID", CONTROLLER_NAME),
                                    actor_roles=roles, session_id=packet_id, persona_id=persona["persona_id"])
         return case_files.compose_case_file(case_subject, caller, case_files.Owners.from_env(self.env))
+
+    def regime(self, persona, observe, run):
+        subject = observe.get("cycle_subject") or {}
+        families = subject.get("families") or []
+        return observe_regime(
+            self.regime_transport or transport_from_env(self.env, persona["tenant_id"]),
+            session=session_for_run(run), strategy_ids=families)
 
     def risk(self, persona, observe, packet_id):
         if persona["lifecycle_state"] == "consultable":

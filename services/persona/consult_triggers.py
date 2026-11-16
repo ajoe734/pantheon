@@ -40,8 +40,10 @@ RED_TEAM_PERSONA_ID = "persona-red-team"
 DECISION_TRIAL_ADMISSION = "trial_admission"
 DECISION_ENVELOPE_PUBLICATION = "envelope_publication"
 DECISION_HARNESS_PATCH = "harness_patch"
+DECISION_MACRO_REGIME_SHIFT = "macro_regime_shift"
 GATED_DECISION_TYPES = frozenset(
-    {DECISION_TRIAL_ADMISSION, DECISION_ENVELOPE_PUBLICATION, DECISION_HARNESS_PATCH}
+    {DECISION_TRIAL_ADMISSION, DECISION_ENVELOPE_PUBLICATION, DECISION_HARNESS_PATCH,
+     DECISION_MACRO_REGIME_SHIFT}
 )
 
 # Patch scopes that additionally pull in the red team persona.
@@ -179,6 +181,39 @@ def required_consultation(
         target_version=str(target_version or ""),
         candidate_digest=str(candidate_digest or ""),
     )
+
+
+def macro_regime_shift_requirement(
+    persona_id: str,
+    previous: Mapping[str, Any] | None,
+    current: Mapping[str, Any] | None,
+    *,
+    risk_persona_id: str = RISK_PERSONA_ID,
+) -> ConsultRequirement | None:
+    """Consultation required when the macro axis state differs between two sessions.
+
+    ``previous`` and ``current`` are ``{"state", "session"}`` observations read from stored
+    regime records. Either missing, the same state, or a non-later current session means no
+    shift: nothing is inferred from absent data.
+    """
+
+    if not previous or not current:
+        return None
+    before, after = str(previous.get("state") or ""), str(current.get("state") or "")
+    if not before or not after or before == after:
+        return None
+    if str(current.get("session") or "") <= str(previous.get("session") or ""):
+        return None
+    decision_id = "macro-regime-shift-" + hashlib.sha256(
+        json.dumps([persona_id, previous.get("session"), before, current.get("session"), after],
+                   separators=(",", ":")).encode()).hexdigest()[:32]
+    required = required_consultation(
+        DECISION_MACRO_REGIME_SHIFT, decision_id, initiator_persona_id=persona_id,
+        risk_persona_id=risk_persona_id, target_version=str(current.get("session")))
+    assert required is not None
+    return ConsultRequirement(**{**required.__dict__, "reasons": (
+        f"macro regime shifted {before} -> {after} between {previous.get('session')} and {current.get('session')}",
+    )})
 
 
 @dataclass(frozen=True)
