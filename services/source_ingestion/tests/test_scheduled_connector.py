@@ -1053,7 +1053,7 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
         f"/api/source-ingest/receipts/{receipt_summary['ingest_run_id']}"
     )
     assert full_receipt.status_code == 200, full_receipt.text
-    assert len(full_receipt.json()["receipt"]["evidence_refs"]["source_ids"]) == 1
+    assert full_receipt.json()["receipt"]["evidence_refs"]["source_id_count"] == 1  # counts only (T2)
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]

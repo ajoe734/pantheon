@@ -175,6 +175,8 @@ class HarnessLoop:
                 continue
             decision = decisions[index]
             params = proposal.get("parameters") or {}
+            if proposal["kind"] == "consult_request" and decision.get("status") in {"meeting_opened", "meeting_refused"}:
+                continue  # a deliberative-meeting request was already answered by the meeting triggers
             if proposal["kind"] == "consult_request":
                 # Consultations are opened by the loop for a recorded patch only.
                 target = params.get("patch_id")

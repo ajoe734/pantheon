@@ -20,7 +20,7 @@ from services.source_ingestion.scheduler import (
     IngestReceipt,
     JsonlIngestScheduleStore,
     SourceWatermark,
-    slim_receipt_payload,
+    compact_receipt_payload,
 )
 
 STAMP = "2026-11-12T00:00:00Z"
@@ -33,13 +33,13 @@ def captured():
 
 def _receipt(captured, index=0, *, large=False, legacy=False):
     row = captured["connectors"][-1 if large else -2]
-    # Receipts are durable in slim form (references, no snapshot bodies); building them
+    # Receipts are durable in counts-and-references form (no per record list); building them
     # that way keeps memory, journal and replay identical for these replay tests.
     receipt = replace(IngestReceipt.from_dict(row["freshness"]["latest_receipt"]),
                       ingest_run_id=f"ingest-incremental-{index:05d}")
     if legacy:  # the deployed writer's shape: snapshot bodies embedded
         return receipt
-    slim, _ = slim_receipt_payload({"evidence_refs": receipt.evidence_refs})
+    slim, _ = compact_receipt_payload({"evidence_refs": receipt.evidence_refs})
     return replace(receipt, evidence_refs=slim["evidence_refs"])
 
 
