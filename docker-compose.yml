@@ -353,6 +353,7 @@ services:
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
     volumes:
       - source-ingest-data:/data/source-ingest
+      - runtime-data:/data/runtime:ro
     ports:
       - "${SOURCE_INGEST_PORT:-18097}:8097"
     depends_on:
