@@ -2,7 +2,7 @@
   "task_id": "MEETING-MT4-E2E-OUTPUT-TRANSPORT-DEV-RED-20261117",
   "owner": "Antigravity2",
   "reviewer": "Claude2",
-  "base_commit": "896aff77934624bc2fd661d137a3df7639cea347",
+  "base_commit": "454f3b93ec91563d22e167757901884482ce8841",
   "hosted_behavior_claimed": false,
   "credentials_present": false,
   "scoped_artifacts": [
@@ -141,6 +141,12 @@
       "exit_code": 0,
       "pass_count": 74,
       "result": "74 passed in 14.45s"
+    },
+    {
+      "command": "Branch CI Gate PR #7468 Service suites (postgres) job 133495719767 (run 43921082622): python3 -m pytest -q services/consultation",
+      "exit_code": 0,
+      "pass_count": 153,
+      "result": "153 passed, 41 warnings in 74.73s (deployment: 263 passed; consultation: 153 passed; governance: 671 passed, 3 skipped; trade_journey: 552 passed, 34 skipped)"
     }
   ]
 }
