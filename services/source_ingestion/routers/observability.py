@@ -40,6 +40,7 @@ def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
         return {
             "health_records": [r.to_dict() for r in records],
             "count": len(records),
+            "daily_bars": runtime.market_data_storage_writer.daily_bars_store.health(),
         }
 
     @router.get("/api/source-ingest/health/{source_id}")

@@ -174,8 +174,30 @@ class MarketDataStorageManifest:
 class MarketDataStorageWriter:
     """Writes bounded JSONL dev artifacts and returns storage refs."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, daily_bars_store: Any | None = None) -> None:
+        from .daily_bars_store import DailyBarsStore
+
         self.root = Path(root)
+        # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
+        self.daily_bars_store = daily_bars_store if daily_bars_store is not None else DailyBarsStore(self.root)
+
+    def _dual_write_daily_bars(self, grouped, *, result: Any, connector: SourceConnector) -> None:
+        """Also write tw_price_daily records to daily_bars. Never changes the existing stores:
+        a failure is counted and shown in the health payload, not raised into the ingest run."""
+        daily = [r for (dataset, _), recs in grouped.items() if _slug(dataset) == _slug(_DAILY_BAR_DATASET) for r in recs]
+        if not daily:
+            return
+        try:
+            market = (connector.metadata or {}).get("market")
+            self.daily_bars_store.write_records(
+                daily,
+                ingest_run_id=result.run.ingest_run_id,
+                default_market=str(market).strip() if market else None,
+                connector_id=connector.connector_id,
+                observed_at=utc_now_iso(),
+            )
+        except Exception as exc:  # noqa: BLE001 - dual write must not fail the run; health reports it
+            self.daily_bars_store.record_dual_write_error(exc)
 
     def write_run(
         self,
@@ -286,6 +308,7 @@ class MarketDataStorageWriter:
                     }
                 )
 
+        self._dual_write_daily_bars(grouped, result=result, connector=connector)
         return MarketDataStorageManifest(
             ingest_run_id=result.run.ingest_run_id,
             raw_refs=tuple(raw_refs),
