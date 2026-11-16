@@ -1680,6 +1680,18 @@ def mount_bff_routers(
         utc_now=_dep("utc_now"),
     ))
     install_evidence_worker(app, app.state.dataset_store)
+    from ..agora.platform_source_router import create_platform_source_router
+    platform_source_router = create_platform_source_router(
+        agora_owner=dependencies.get("agora_owner"),
+        dataset_store=app.state.dataset_store,
+        journal_write_owner=journal_owner,
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    )
+    app.include_router(platform_source_router)
+    app.state.agora_platform_source_router = platform_source_router
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
     app.state.assistant_control_mode_store = asst_control_mode_store

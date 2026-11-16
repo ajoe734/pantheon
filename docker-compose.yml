@@ -336,6 +336,10 @@ services:
       PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}
       # FinMind broker connectors read env://FINMIND_API_TOKEN; empty => missing-credential outcome.
       FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}
+      # Governed Agora platform source connector reads incremental records via internal Agora owner route.
+      AGORA_PLATFORM_SOURCE_URL: ${AGORA_PLATFORM_SOURCE_URL:-http://operator-bff:8001/internal/agora/platform-source/records}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_SERVICE_ACTOR: ${AGORA_PLATFORM_SOURCE_SERVICE_ACTOR:-source-ingest}
       # Tenant admitted for the deploy coverage readback through the strict JWT boundary.
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
@@ -410,6 +414,9 @@ services:
       SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: ${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}
       FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}
+      AGORA_PLATFORM_SOURCE_URL: ${AGORA_PLATFORM_SOURCE_URL:-http://operator-bff:8001/internal/agora/platform-source/records}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_SERVICE_ACTOR: ${AGORA_PLATFORM_SOURCE_SERVICE_ACTOR:-source-ingest-scheduler}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_LOOP_ID: source-ingestion
       PANTHEON_CONTROLLER_NAME: source-ingestion-controller
@@ -1534,6 +1541,9 @@ services:
       PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE: ${PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE:-/data/bff/agora_persona_lab_runs.json}
       PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
       PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_ALLOWED_SERVICE_ACTORS: ${AGORA_PLATFORM_SOURCE_ALLOWED_SERVICE_ACTORS:-source-ingest,source-ingest-scheduler,agora-owner-connector,attribution-owner,research-orchestrator,meeting-orchestrator}
+      AGORA_PLATFORM_SOURCE_SERVICE_TENANTS: ${AGORA_PLATFORM_SOURCE_SERVICE_TENANTS:-*}
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
       # Post-cutover canonical Postgres reader for lifecycle projections.
       # Legacy JSON projection files and generation symlinks are retired.
