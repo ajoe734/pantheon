@@ -462,6 +462,23 @@ def create_candidate_from_meeting_proposal(
         "owner_user_id": owner_user_id,
         "proposer_id": proposer_id,
     })
+    replay = service.store.replay(
+        tenant_id=tenant_id,
+        owner_user_id=owner_user_id,
+        operation="create",
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+    )
+    if replay is not None:
+        return replay
+    history = service.store.history(record["proposal_id"], tenant_id, owner_user_id)
+    if history:
+        first = history[0]
+        if (
+            first.get("meeting_id") == record["meeting_id"]
+            and first.get("measure_sha256") == record["measure_sha256"]
+        ):
+            return StoredMutation(history[-1], True)
     return service.store.create_candidate(
         record,
         idempotency_key=idempotency_key,

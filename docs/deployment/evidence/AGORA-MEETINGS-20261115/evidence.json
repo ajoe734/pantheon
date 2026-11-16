@@ -1,0 +1,80 @@
+{
+  "task_id": "AGORA-MEETINGS-20261115",
+  "title": "Agora participation in persona meetings: workshop convening, committee reads of both classes, candidate-decision outputs",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "captured_at": "2026-11-16T14:49:30Z",
+  "hosted_behavior_claimed": false,
+  "contains_credentials": false,
+  "parallel_contract_status": {
+    "contract_reference": "PARALLEL CONTRACT 2026-11-16 (SD-PERSONA-MEETINGS-AMEND-20261115 §11.2 / §12.8)",
+    "C1_consultation_meeting_routes": {
+      "provider_task": "MEETING-PROTOCOL-ENGINE-R2-20261116",
+      "merged_on_dev_at_delivery": false,
+      "verification_mode": "HTTP edge transport double against exact coordinator C1 contract (POST /api/consult/meetings with Idempotency-Key -> 202 {meeting_id, status}; GET /api/consult/meetings; GET /api/consult/meetings/{meeting_id}; GET /api/consult/meetings/proposals; GET /api/consult/meetings/catalogue)"
+    },
+    "C2_output_routing_interface": {
+      "provider_task": "MEETING-OUTPUT-ROUTING-20261115",
+      "merged_on_dev_at_delivery": false,
+      "verification_mode": "Consumer routing helpers (create_candidate_from_meeting_proposal, route_meeting_candidate_decisions, read_downstream_status) and BFF HTTP endpoints tested against unsponsored proposal dicts (kind=agora_candidate_decision, sponsor_persona_id=null) and the existing Agora candidate-decision store/validation/formal-approval lifecycle"
+    }
+  },
+  "acceptance": {
+    "1_workshop_convening_and_servant_scoping": {
+      "status": "passed",
+      "implementation": [
+        "services/control-plane/bff/agora/interaction/router.py: POST /bff/agora/workshops/{workshop_id}/meetings, POST /bff/agora/interactions/meetings, and POST /bff/agora/meetings validate workshop ownership, enforce deliberative meeting types (MT-1..MT-4, rejecting gate panels and non-paper environments), build eligible participant rosters via the existing Agora eligibility evaluator (evaluate_persona_eligibility) plus the trader's own private servant (_is_private_servant / _find_user_private_servant), reject another user's private servant with 403 persona_user_mismatch, enforce the M9 5-participant cap, and forward POST /api/consult/meetings with convened_by={kind: 'agora_user', id: scope.user_id} and Idempotency-Key to the consultation owner via CommitteeOwnerClient.convene_meeting."
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_meetings.py::test_trader_convenes_deliberative_meeting_from_workshop_with_eligible_personas_and_own_servant",
+        "services/control-plane/bff/tests/test_agora_meetings.py::test_workshop_meeting_convening_refuses_another_users_servant_and_invalid_requests",
+        "services/control-plane/bff/tests/test_agora_meetings.py::test_mt4_attribution_meeting_batch_candidate_route_and_participant_budget_cap"
+      ]
+    },
+    "2_committee_reads_of_both_classes_with_rounds_and_no_bff_store": {
+      "status": "passed",
+      "implementation": [
+        "services/control-plane/bff/agora/committee/owner.py: project_panel_rounds projects single-round independent gate panels; project_meeting and project_meeting_proposal project multi-round deliberative meetings while withholding private persona/servant items (persona_private, private_user) and enforcing private-servant user visibility.",
+        "services/control-plane/bff/agora/committee/client.py: CommitteeOwnerClient reads gate panels (/api/consult/requests) and deliberative meetings (/api/consult/meetings, /api/consult/meetings/{id}, /api/consult/meetings/proposals, /api/consult/meetings/catalogue) directly from the consultation owner with zero BFF meeting storage and fail-closed 503 envelopes on owner outage.",
+        "services/control-plane/bff/agora/committee/router.py: GET /bff/agora/committee/sessions lists both gate_panel and deliberative_meeting classes with rounds; GET /bff/agora/committee/meetings, /bff/agora/committee/meetings/{meeting_id}, /bff/agora/committee/proposals, and /bff/agora/committee/catalogue expose deliberative meeting details, proposals, and catalogue."
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_meetings.py::test_committee_reads_list_gate_panels_and_deliberative_meetings_with_rounds_and_keep_no_store",
+        "services/control-plane/bff/tests/test_agora_committee_memory_owners.py::test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rounds"
+      ]
+    },
+    "3_unsponsored_proposals_become_agora_candidate_decisions": {
+      "status": "passed",
+      "implementation": [
+        "services/control-plane/bff/agora/interaction/candidate_decisions/router.py: POST /bff/agora/meetings/{meeting_id}/proposals/{proposal_id}/candidates and POST /bff/agora/meetings/{meeting_id}/candidate-decisions verify sponsor_persona_id is null (rejecting trading-persona-sponsored proposals with 422), materialize Agora candidate decision records with provenance_type=consultation_transcript and execution_authority=none, and route them through the existing candidate-decision lifecycle (modify, accept_for_review, validations, review-readiness, formal-approvals:link). Exports route_meeting_candidate_decisions and read_downstream_status for C2 integration."
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_meetings.py::test_unsponsored_proposals_become_agora_candidate_decisions_on_existing_approval_path"
+      ]
+    },
+    "4_http_tests_with_consultation_owner_doubled_at_http_edge": {
+      "status": "passed",
+      "implementation": [
+        "services/control-plane/bff/tests/test_agora_meetings.py and services/control-plane/bff/tests/test_agora_committee_memory_owners.py double urllib.request.urlopen at the consultation owner HTTP edge and verify service-token headers, tenant headers, Idempotency-Key forwarding, convening, refusal codes, multi-round reads, privacy redaction, and candidate-decision routing."
+      ]
+    },
+    "5_evidence_manifest_without_credentials": {
+      "status": "passed",
+      "implementation": [
+        "docs/deployment/evidence/AGORA-MEETINGS-20261115/evidence.json records exact validation commands and outcomes and contains no credentials or secrets."
+      ]
+    }
+  },
+  "commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_meetings.py services/control-plane/bff/tests/test_agora_committee_memory_owners.py services/control-plane/bff/tests/test_agora_candidate_decisions.py",
+      "exit_code": 0,
+      "result": "52 passed, 3 warnings in 20.24s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_write_authority.py",
+      "exit_code": 0,
+      "result": "156 passed, 2 skipped, 3 warnings in 73.63s"
+    }
+  ]
+}
