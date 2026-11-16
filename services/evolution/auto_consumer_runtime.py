@@ -354,17 +354,20 @@ class PoolOwner:
         return self.publish(result)
 
     def retry_requalify(self, body):
+        import copy
         import sys
         evo_main = sys.modules.get("services.evolution.main")
         outbox = getattr(evo_main, "dispatch_outbox", None) if evo_main is not None else None
         if outbox is None:
             return
         record = outbox.get(self.tenant, body["decision_id"])
-        if record is not None and getattr(record.status, "value", record.status) == "claimed":
-            raw = outbox.store._records.get(record.outbox_id)
-            if isinstance(raw, dict):
-                updated = {**raw, "status": "pending", "claimed_by": None, "lease_expires_at": None}
-                outbox.store._records.compare_and_set(record.outbox_id, raw, updated)
+        if record is not None and getattr(record, "claim_token", None):
+            raw = record.to_dict()
+            updated = copy.deepcopy(raw)
+            if isinstance(updated.get("delivery"), dict):
+                updated["delivery"]["claim_token"] = None
+                updated["delivery"]["claim_expires_at"] = None
+            outbox.store.impl.compare_and_set(record.outbox_id, raw, updated)
 
     def compete(self, pool, child, books):
         from urllib.parse import quote

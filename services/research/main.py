@@ -2752,8 +2752,7 @@ def _execute_legacy_member_requalification(
         path = parsed.path + (("?" + parsed.query) if parsed.query else "")
         has_token = bool(os.getenv(token_variable, "").strip() or os.getenv(token_variable + "_FILE", "").strip())
         if service == "governance" and not has_token:
-            svc_key = "PROPOSER" if (method == "POST" and parsed.path == "/api/governance/approvals") else "GOVERNANCE"
-            res = owner.call(svc_key, method, path, body, optional=(method == "GET"))
+            res = owner.call("GOVERNANCE", method, path, body, optional=(method == "GET"))
             if res is None and method == "GET":
                 raise _OwnerRejection(404, "not found")
             return res
