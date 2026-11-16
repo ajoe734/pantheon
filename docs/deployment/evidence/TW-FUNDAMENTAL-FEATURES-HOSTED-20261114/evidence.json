@@ -30,6 +30,9 @@
     {"cmd": "pytest scripts/test_deploy_nonprod_vm.py", "result": "145 passed, 2 skipped"},
     {"cmd": "pytest services/persona/test_pool_dataset_authority_features.py", "result": "5 passed"},
     {"cmd": "pytest services/persona/test_pool_dataset_authority.py services/persona/test_pool_autonomy_cycle.py", "result": "46 passed"},
-    {"cmd": "pytest services/training-session/tests/test_source_dataset_authority.py", "result": "76 passed"}
+    {"cmd": "pytest services/training-session/tests/test_source_dataset_authority.py", "result": "76 passed"},
+    {"cmd": "after merging origin/dev (2026-11-16): pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh_workflow.py", "result": "171 passed, 2 skipped"},
+    {"cmd": "after merging origin/dev: pytest services/source_ingestion/tests/test_finmind_fundamentals.py test_feature_catalogue.py test_active_universe.py", "result": "73 passed"},
+    {"cmd": "after merging origin/dev: pytest services/registry/test_factor_rule.py services/persona/test_pool_dataset_authority_features.py services/persona/test_pool_autonomy_cycle.py services/training-session/tests/test_source_dataset_authority.py", "result": "28 passed; 35 passed; 76 passed"}
   ]
 }
