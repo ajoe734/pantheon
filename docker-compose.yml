@@ -1270,6 +1270,14 @@ services:
       GOVERNANCE_REGISTRY_BASE_URL: ${GOVERNANCE_REGISTRY_BASE_URL:-http://registry:8087}
       GOVERNANCE_REGISTRY_SERVICE_TOKEN: ${GOVERNANCE_REGISTRY_SERVICE_TOKEN:-}
       GOVERNANCE_REGISTRY_SERVICE_TOKEN_FILE: ${GOVERNANCE_REGISTRY_SERVICE_TOKEN_FILE:-}
+      # Paper-ladder persona lifecycle review reads the Capital and Runtime Manager binding owners
+      # with two distinct read-only principals (no secret value committed).
+      GOVERNANCE_CAPITAL_BASE_URL: ${GOVERNANCE_CAPITAL_BASE_URL:-http://capital:8092}
+      GOVERNANCE_CAPITAL_SERVICE_TOKEN: ${GOVERNANCE_CAPITAL_SERVICE_TOKEN:-}
+      GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE: ${GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE:-}
+      GOVERNANCE_RUNTIME_MANAGER_BASE_URL: ${GOVERNANCE_RUNTIME_MANAGER_BASE_URL:-http://runtime-manager:8081}
+      GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN: ${GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN:-}
+      GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE: ${GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE:-}
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -2409,7 +2417,7 @@ services:
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-}
       CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}
       CAPITAL_PERMISSIVE_ALLOWED_TENANTS: ${CAPITAL_PERMISSIVE_ALLOWED_TENANTS:-${PANTHEON_BFF_TENANT_ID:-default}}
-      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager,research-orchestrator}
+      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager,research-orchestrator,pantheon-dev-governance-capital-binding-reader}
     volumes:
       - capital-data:/data/capital
       - dev-paper-capital-tokens:/run/pantheon-principals:ro
