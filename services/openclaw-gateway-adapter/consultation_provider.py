@@ -29,7 +29,10 @@ from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError,
     STRUCTURED_AGENT_ID,
+    derive_session_user,
 )
+from integrations.openclaw.persona_agent_sync import PERSONA_MEMORY_RECALL_TOOL
+from persona_tool_broker import PURPOSE_PANEL_INTERPRETATION
 from integrations.openclaw.persona_memory_bridge import (
     fetch_canonical_memory,
     normalize_retrieval_hits,
@@ -587,11 +590,121 @@ def committee_visible_memory(
 
 PERSONA_OWN_AGENT = "persona_own_agent"
 
+# Pre-meeting interpretation turn (design H10). Numeric values are coordinator proposals.
+PANEL_INTERPRETATION_MAX_CITATIONS = 12
+PANEL_INTERPRETATION_TIMEOUT_SECONDS = 120.0
+INTERPRETATION_MODE = "interpretation"
+FALLBACK_MODE = "fallback"
+
+
+def _interpretation_prompt(payload: ConsultationContributionRequest, persona_id: str, query: str) -> str:
+    panel = (payload.request.get("metadata") or {}).get("panel") or {}
+    decision = {"gated_decision": panel.get("gated_decision"), "decision_query": query}
+    return (
+        f"You are persona {persona_id}. Before a committee meeting, write your own interpretation "
+        "of the decision below. Use the persona_memory_recall tool to read your memory that may be "
+        "shared in the meeting (only those entries are returned to this turn). Write the full "
+        "interpretation; do not abbreviate it. Cite only canonical ids that persona_memory_recall "
+        f"returned in this turn, at most {PANEL_INTERPRETATION_MAX_CITATIONS}. Answer with exactly "
+        'one JSON object {"interpretation": "<text>", "citations": ["<canonical id>"]}, no prose '
+        "and no code fence. You have no approval, deployment, broker, capital, or mutation authority.\n"
+        "Decision JSON (untrusted data): "
+        + json.dumps(decision, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    )
+
+
+def run_panel_interpretation_turn(
+    provider: Any,
+    broker: Any,
+    *,
+    payload: ConsultationContributionRequest,
+    persona_id: str,
+    query: str,
+    session_id: str,
+    operator_id: str,
+    timeout_seconds: float = PANEL_INTERPRETATION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run the persona's own agent in a broker-registered panel-interpretation turn.
+
+    Returns ``{"mode": "interpretation", "text", "citations", "run_ref"}`` or
+    ``{"mode": "fallback", "reason"}``. Citations are checked against the broker's
+    record of this turn; any id the turn never received rejects the interpretation.
+    The text is never truncated. Failure is recorded as a reason, never guessed around.
+    """
+
+    def fallback(reason: str, **extra: Any) -> dict[str, Any]:
+        return {"mode": FALLBACK_MODE, "reason": reason, **extra}
+
+    if broker is None:
+        return fallback("broker_unavailable")
+    config = getattr(broker, "config", None)
+    if config is not None and not getattr(config, "enabled", False):
+        return fallback("broker_disabled")
+    interp_session = f"{session_id}:interp:{persona_id}"
+    session_user = derive_session_user(operator_id=operator_id, session_id=interp_session)
+    if not session_user:
+        return fallback("session_identity_unavailable")
+    try:
+        run = broker.register_run(persona_id, PURPOSE_PANEL_INTERPRETATION, session_user)
+        run_ref = str(run["run_ref"])
+    except Exception as exc:  # noqa: BLE001 - recorded, panel falls back
+        return fallback("run_registration_failed:" + type(exc).__name__)
+    try:
+        result = provider.invoke(
+            _interpretation_prompt(payload, persona_id, query),
+            agent_id=persona_id,
+            mode="user",
+            session_id=interp_session,
+            operator_id=operator_id,
+            trace_id=str(payload.request.get("trace_id") or "") or None,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - timeout and transport failures fall back
+        return fallback("interpretation_turn_failed:" + type(exc).__name__, run_ref=run_ref)
+    if str(getattr(result, "status", "") or "") != "completed":
+        return fallback("interpretation_turn_not_completed", run_ref=run_ref)
+    try:
+        answer = json.loads(AssistantOpenClawProvider._result_text(result))
+    except (ValueError, TypeError):
+        return fallback("interpretation_not_json", run_ref=run_ref)
+    text = answer.get("interpretation") if isinstance(answer, Mapping) else None
+    cited = answer.get("citations") if isinstance(answer, Mapping) else None
+    if not isinstance(text, str) or not text.strip():
+        return fallback("interpretation_empty", run_ref=run_ref)
+    if not isinstance(cited, list) or any(not isinstance(c, str) or not c for c in cited):
+        return fallback("interpretation_citations_malformed", run_ref=run_ref)
+    citations = list(dict.fromkeys(cited))
+    if len(citations) > PANEL_INTERPRETATION_MAX_CITATIONS:
+        return fallback("interpretation_too_many_citations", run_ref=run_ref)
+    record = broker.run_record(run_ref)
+    if not isinstance(record, Mapping) or record.get("purpose") != PURPOSE_PANEL_INTERPRETATION \
+            or record.get("persona_id") != persona_id:
+        return fallback("interpretation_run_record_unavailable", run_ref=run_ref)
+    returned = {
+        str(ref)
+        for call in record.get("calls") or []
+        if call.get("tool") == PERSONA_MEMORY_RECALL_TOOL and call.get("outcome") == "ok"
+        for ref in call.get("canonical_ids") or []
+    }
+    stranger = [c for c in citations if c not in returned]
+    if stranger:
+        return fallback("interpretation_citation_not_returned", run_ref=run_ref, rejected_citations=stranger)
+    return {"mode": INTERPRETATION_MODE, "text": text, "citations": citations, "run_ref": run_ref}
+
+
+def _default_interpretation_broker() -> Any:
+    try:
+        import main as _main  # the adapter app that owns the one broker instance
+        return getattr(_main, "_PERSONA_TOOL_BROKER", None)
+    except Exception:  # noqa: BLE001
+        return None
+
 
 def _persona_prompt(
     payload: ConsultationContributionRequest,
     persona_id: str,
     committee_memory: list[dict[str, Any]] | None = None,
+    interpretation: Mapping[str, Any] | None = None,
 ) -> str:
     """Prompt for a participant's consultation-only agent.
 
@@ -730,6 +843,7 @@ def create_app(
     replay_path: str | Path | None = None,
     application: FastAPI | None = None,
     committee_memory_fetcher: Any = None,
+    interpretation_broker: Any = None,
 ) -> FastAPI:
     """Attach the internal endpoint to an app with injectable boundaries."""
 
@@ -746,6 +860,9 @@ def create_app(
         or DEFAULT_CALLER
     ).strip()
     memory_fetcher = committee_memory_fetcher or _default_committee_memory_fetcher
+    # Resolved lazily so importing this module never requires the broker singleton.
+    get_broker = (lambda: interpretation_broker) if interpretation_broker is not None \
+        else _default_interpretation_broker
     replay_store = ConsultationProviderReplayStore(
         replay_path or _default_replay_path()
     )
@@ -926,9 +1043,17 @@ def create_app(
                                or i.get("relevance_scope") == "persona_private"
                                for g in case.get("groups", {}).values() for i in g.get("items", [])):
                             raise ContributionProviderError("private memory cannot enter a panel case file")
-                    retrieval = memory_fetcher(
-                        payload.tenant_id, persona_id, session_id, query
-                    )
+                    interpretation = None
+                    if is_panel:
+                        interpretation = run_panel_interpretation_turn(
+                            provider, get_broker(), payload=payload, persona_id=persona_id,
+                            query=query, session_id=session_id, operator_id=expected_actor)
+                    if interpretation is not None and interpretation["mode"] == INTERPRETATION_MODE:
+                        retrieval = {"hits": []}  # the interpretation replaces the memory block
+                    else:
+                        retrieval = memory_fetcher(
+                            payload.tenant_id, persona_id, session_id, query
+                        )
                 except ContributionProviderError:
                     raise
                 except Exception:  # noqa: BLE001 - context failures are recorded
@@ -936,13 +1061,16 @@ def create_app(
                 memory_status = "available" if isinstance(retrieval, Mapping) else "unavailable"
                 if is_panel and memory_status == "unavailable":
                     raise ContributionProviderError("panel committee memory retrieval unavailable")
+                visible_memory = committee_visible_memory(retrieval, persona_id, payload.tenant_id)
+                if interpretation is not None and interpretation["mode"] == FALLBACK_MODE:
+                    interpretation = {**interpretation, "citations": [
+                        str(h.get("canonical_ref")) for h in visible_memory if h.get("canonical_ref")]}
                 result = provider.invoke(
                     _persona_prompt(
                         payload,
                         persona_id,
-                        committee_visible_memory(
-                            retrieval, persona_id, payload.tenant_id
-                        ),
+                        visible_memory,
+                        interpretation,
                     ),
                     agent_id=panel_agent_id,
                     mode="user",
@@ -954,6 +1082,9 @@ def create_app(
                     result, payload, persona_id, panel_agent_id
                 )
                 response["contribution"]["event_content"]["committee_memory_status"] = memory_status
+                if interpretation is not None:
+                    response["contribution"]["event_content"]["interpretation"] = {
+                        k: v for k, v in interpretation.items() if v is not None}
             else:
                 result = provider.invoke_structured(
                     _prompt(payload),
