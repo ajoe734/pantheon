@@ -1670,6 +1670,28 @@ def mount_bff_routers(
     )
     app.include_router(meetings_router)
 
+    # 39: Attribution (outliers, records, shadow comparisons; forward-only)
+    from ..attribution.router import create_attribution_router
+    _agora_owner_dep = dependencies.get("agora_owner")
+
+    def _read_agora_lock(decision_id, tenant_id, user_id, roles):
+        owner = _agora_owner_dep() if callable(_agora_owner_dep) else _agora_owner_dep
+        if owner is None or not hasattr(owner, "get_decision_lock_for_event"):
+            raise RuntimeError("agora_owner_unconfigured")
+        return owner.get_decision_lock_for_event(
+            decision_id, tenant_id=tenant_id, user_id=user_id, actor_roles=roles
+        )
+
+    attribution_router = create_attribution_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_operator_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+        lock_reader=_read_agora_lock,
+    )
+    app.include_router(attribution_router)
+
     # Attach shared instances onto app.state
     app.state.events_router = events_router
     app.state.deployment_router = deployment_router
