@@ -1,0 +1,67 @@
+{
+  "task": "COLLECTOR-HELD-SYMBOLS-LIVE-20261116",
+  "diagnosis": {
+    "source": "recorded hosted evidence from TW-SAME-DAY-CLOSE-HOSTED-ACCEPTANCE-20261112 (2026-11-16, accepted 94b73806a); read-only, no VM access by author",
+    "root_cause": "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS is resolved once by scripts/deploy_nonprod_vm.sh (resolve step) so it is empty/stale whenever runtime-manager paper bindings change after deploy; latest_priority.json reported held 0; the source-ingest containers also did not mount the runtime-data volume holding runtime_bindings.json",
+    "recorded": "env empty vs 4 active bindings (2330.TWSE 0050.TWSE 2317.TWSE 2330.TW); TPEx 5268 rows took 62 min at ~150 rows/pull"
+  },
+  "change": {
+    "provider_adapters.py": "_live_paper_held_symbols reads PANTHEON_RUNTIME_BINDING_STORE_PATH (default /data/runtime/runtime_bindings.json) on every collector pull; active (or market_input_ paused) paper bindings of the request/controller tenant; .TW/.TWSE/.TWO/.TPEX map to collector row codes; env list and request priority_symbols remain additional sources; failure -> no live symbols and observed.held_symbols_unavailable typed reason (binding_store_missing|binding_store_unreadable|binding_store_malformed)",
+    "docker-compose.yml": "NOT changed (outside the task artifact contract). Follow-up required for hosted effect: mount runtime-data:/data/runtime:ro into source-ingest and source-ingest-scheduler (or set PANTHEON_RUNTIME_BINDING_STORE_PATH to a readable copy). Until then hosted pulls report observed.held_symbols_unavailable=binding_store_missing and keep existing order."
+  },
+  "first_pull_delivery": {
+    "collector-tw-tpex-price-history": {
+      "rows_in_bundle": 5268,
+      "held_codes_at_tail": [
+        "15200",
+        "15250",
+        "15260"
+      ],
+      "first_four_codes": [
+        "15200",
+        "15250",
+        "15260",
+        "10000"
+      ],
+      "pull_number": 1,
+      "rows_in_pull": 150,
+      "pull_seconds": 0.265
+    },
+    "collector-tw-twse-price-history": {
+      "rows_in_bundle": 1376,
+      "held_codes_at_tail": [
+        "11300",
+        "11350",
+        "11370"
+      ],
+      "first_four_codes": [
+        "11300",
+        "11350",
+        "11370",
+        "10000"
+      ],
+      "pull_number": 1,
+      "rows_in_pull": 150,
+      "pull_seconds": 0.161
+    },
+    "note": "bundles are recorded-shape fixtures at recorded row counts (recorded_run helper), not the original hosted capture; local fake transport"
+  },
+  "validation": [
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_held_symbols_live.py -q",
+      "result": "6 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_progress.py -q",
+      "result": "14 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py -q",
+      "result": "14 passed"
+    },
+    {
+      "cmd": "python -m pytest services/source_ingestion/tests/test_collector_bundle_connector.py -q",
+      "result": "106 passed, 1 skipped"
+    }
+  ]
+}
