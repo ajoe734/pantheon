@@ -1,0 +1,132 @@
+{
+  "task": "DEV-DEPLOY-RESTORE-ACCEPTED-BASELINE-AFTER-FAILED-COMPENSATION-20261116",
+  "incident_chain": {
+    "root_43718489118_attempt_1_gate_rejection_and_failed_compensation": {
+      "root_run_id": 43718489118,
+      "run_attempt": 1,
+      "coordinate_dev_release_job_id": 132832765958,
+      "candidate_backend_sha": "725836718295f445fd9923790b58ed29842d9869",
+      "candidate_frontend_sha": "87fc32ab860325573a205500ff381092c2012617",
+      "accepted_previous_backend_sha": "94b73806ae004049f82f26d1d225f290086a4942",
+      "accepted_previous_frontend_sha": "87fc32ab860325573a205500ff381092c2012617",
+      "candidate_id": "56a3a01c6e3ad250c403daac505ca4270a5f108da737717c77478ee208e5f826",
+      "baseline_artifact": {
+        "artifact_id": 14163830735,
+        "name": "pantheon-dev-artifact-baseline-43718489118-1",
+        "zip_sha256": "e20c8c7962e5154557a9c841d64d2de04e7564741baa5a15b5fd145ad4efae7f",
+        "manifest_sha256": "af98d4218d4ea92c485529c15ce0528199161a6484bdacd85cc231fb6fe4bd79",
+        "capture_journal_size_bytes": 54325534
+      },
+      "candidate_artifact": {
+        "artifact_id": 14164431785,
+        "name": "pantheon-dev-artifact-candidate-43718489118-1",
+        "zip_sha256": "2e777a2871b2a243c390c002bdcf670c88b274ad42440c980d112fb4dde93fda",
+        "candidate_image_manifest_sha256": "e6d6bb7022b69f4bb5385001ba425639dc93295b3c8c3d40c71a31e8169025fd"
+      },
+      "gate_outcome": "frontend release gate rejected (exit 1 at 2026-11-15T14:22:19Z)",
+      "compensation_failure": {
+        "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+        "exit_code": 75,
+        "failure_kind": "contract",
+        "failure_location": "dev_release_artifacts.py:595",
+        "failure_stage": "restore",
+        "source_compatibility": {
+          "line": null,
+          "reason": "reader_rejected"
+        },
+        "status": "error"
+      },
+      "hosted_post_failure_state": "live /bff/version remained on rejected candidate 725836718295f445fd9923790b58ed29842d9869 while hosted deployment.json remained on accepted pair 94b73806ae004049f82f26d1d225f290086a4942 + 87fc32ab860325573a205500ff381092c2012617"
+    },
+    "reproduced_old_probe_oom_exit_137_at_512m_on_80mb_journal": {
+      "controller_commit_tested": "725836718295f445fd9923790b58ed29842d9869",
+      "container_memory_limit": "512m",
+      "journal_size_bytes": 83893060,
+      "distinct_symbols": 1553,
+      "old_whole_file_probe_result": {
+        "exit_code": 137,
+        "mechanism": "725836718 SOURCE_PROBE holds raw=f.read() (80MB) + raw.decode('utf-8').splitlines() while building LatestMarketSnapshot objects and canonical JSON projection in a --memory 512m container, triggering OOM SIGKILL (exit 137) / MemoryError mapped by pre-#7430 source_probe at dev_release_artifacts.py:595 to generic reader_rejected"
+      },
+      "current_streaming_probe_result": {
+        "exit_code": 0,
+        "ok": true,
+        "journal_size": 83893060,
+        "journal_sha256": "10a39c9591e05aab5949cd5db71fda8c0fcff4d261da0add78912bbc96c9ac5a",
+        "projection_sha256": "325e0640940bb245458f19b9cd194291b2f629a7c8605edd8b60220231456421"
+      }
+    },
+    "root_43753087937_capture_failure_at_driver_py_432": {
+      "root_run_id": 43753087937,
+      "run_attempt": 1,
+      "deploy_dev_job_id": 132931156352,
+      "controller_sha": "5475a523ef1d1015b2ef237a538c9d7ebfce8e3e",
+      "rollback_baseline_detection": "Hosted BFF differs from the accepted frontend pair; retaining the accepted pair as rollback authority (baseline_source=accepted_frontend_pair_manifest+live_bff_drift_recovery)",
+      "capture_failure": {
+        "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+        "exit_code": 75,
+        "failure_kind": "contract",
+        "failure_location": "dev_release_artifact_driver.py:432",
+        "failure_stage": "capture",
+        "status": "error",
+        "reason": "_public() during capture requires live /bff/version source_commit_sha (725836718295f445fd9923790b58ed29842d9869) to equal previous_backend_sha (94b73806ae004049f82f26d1d225f290086a4942)"
+      }
+    },
+    "root_43718489118_rerun_attempt_2_exit_75_at_attempt_bound_artifact_fetch": {
+      "root_run_id": 43718489118,
+      "run_attempt": 2,
+      "coordinate_dev_release_job_id": 133022987475,
+      "failed_step": "Fetch exact same-run rollback artifacts before frontend switch",
+      "exit_code": 75,
+      "stderr": "[dev-artifact-download] exact authenticated evidence download failed",
+      "reason": "fetch_dev_artifact_evidence.py was called with --attempt ${GITHUB_RUN_ATTEMPT} (2) while the artifact was uploaded in attempt 1 as pantheon-dev-artifact-baseline-43718489118-1, and coordinate-dev-release also checked out the pre-#7411 controller 725836718295f445fd9923790b58ed29842d9869"
+    }
+  },
+  "change": {
+    "files": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/fetch_dev_artifact_evidence.py",
+      "scripts/test_fetch_dev_artifact_evidence.py",
+      "scripts/test_deploy_nonprod_artifact_restore.py",
+      "scripts/test_nonprod_restore_accepted_baseline.py",
+      "docs/deployment/evidence/DEV-DEPLOY-RESTORE-ACCEPTED-BASELINE-AFTER-FAILED-COMPENSATION-20261116/evidence.json"
+    ],
+    "workflow_dispatch_inputs": {
+      "restore_accepted_baseline_run_id": "prior workflow run id whose captured baseline manifest should be restored (default '')",
+      "restore_accepted_baseline_run_attempt": "prior workflow run attempt that uploaded the captured baseline manifest (default '1')"
+    },
+    "behavior": [
+      "Dev/root workflow_dispatch mode restore-accepted-baseline runs only a baseline restore: no candidate build or deploy, no frontend gate or switch, and no paper or chain probes.",
+      "Current controller fetches the named prior run attempt's captured baseline manifest and its sha256 (and candidate receipt) through fetch_dev_artifact_evidence.py even when the referenced run is on a later attempt.",
+      "Refuses unless the manifest's previous_backend_sha and previous_frontend_sha equal the hosted deployment.json accepted pair and live /bff/version source_commit_sha differs from the accepted backend (drift) and is contained in Pantheon dev.",
+      "Runs whole-stack baseline restore under the shared dev lease via dev_release_artifact_driver.py restore --target baseline --scope stack using the current controller driver and streaming Source probe, followed by readback verification and live /bff/version + deployment.json verification.",
+      "Exits non-zero with the driver's failure reason on restore failure and keeps the existing lease quarantine until TTL."
+    ],
+    "hosted_execution_authority": "Executed by the release coordinator after merge."
+  },
+  "validation": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_fetch_dev_artifact_evidence.py -q",
+      "result": "118 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_artifact_restore.py -q",
+      "result": "75 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_nonprod_restore_accepted_baseline.py -q",
+      "result": "9 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_dev_environment_lease_deploy_contract.py -q",
+      "result": "278 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_fetch_dev_artifact_evidence.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_nonprod_restore_accepted_baseline.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_capture_dev_artifact_baseline.py -q",
+      "result": "673 passed"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py -q",
+      "result": "33 passed"
+    }
+  ]
+}

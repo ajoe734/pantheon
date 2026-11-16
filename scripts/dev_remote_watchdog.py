@@ -35,12 +35,16 @@ class ProtocolError(Exception):
 
 
 @dataclass(frozen=True)
-class Timings:
+class WatchdogTimings:
     # Shorter timings are injectable only into the isolated unit-level API.
+    startup_timeout: float = 30.0
     pause: float = 3.0
     silence_kill: float = 120.0
     poll: float = 0.05
     terminate_grace: float = 1.0
+
+
+Timings = WatchdogTimings
 
 
 class Lines:
@@ -194,7 +198,7 @@ def _acknowledge(fd: int, digest: str) -> None:
         raise ProtocolError("receipt acknowledgement channel unavailable") from None
 
 
-def run_watchdog(input_fd: int = 0, *, timings: Timings = Timings()) -> int:
+def run_watchdog(input_fd: int = 0, *, timings: WatchdogTimings = WatchdogTimings()) -> int:
     """Run one private script; callers cannot configure production timings."""
     stopped_by_signal = False
 
@@ -210,10 +214,11 @@ def run_watchdog(input_fd: int = 0, *, timings: Timings = Timings()) -> int:
     temporary = None
     try:
         if not (0 < timings.poll < timings.pause < timings.silence_kill
+                and timings.poll < timings.startup_timeout
                 and 0 < timings.terminate_grace <= 5):
             raise ProtocolError("invalid watchdog timings")
         lines = Lines(input_fd)
-        startup_deadline = time.monotonic() + timings.pause
+        startup_deadline = time.monotonic() + timings.startup_timeout
         envelope = None
         while envelope is None:
             if stopped_by_signal or time.monotonic() >= startup_deadline:
@@ -224,8 +229,9 @@ def run_watchdog(input_fd: int = 0, *, timings: Timings = Timings()) -> int:
         sequence = 0
         last_heartbeat = None
         # No assumed initial grant: require a real frame before child launch.
+        heartbeat_deadline = min(startup_deadline, deadline, time.monotonic() + timings.silence_kill)
         while last_heartbeat is None:
-            if stopped_by_signal or time.monotonic() >= min(startup_deadline, deadline):
+            if stopped_by_signal or time.monotonic() >= heartbeat_deadline:
                 raise ProtocolError("initial heartbeat missing")
             frame = lines.read(MAX_FRAME_BYTES, timings.poll)
             if frame is not None:

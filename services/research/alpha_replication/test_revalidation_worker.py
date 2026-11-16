@@ -1833,7 +1833,7 @@ def _dropped_screen_worker(tmp_path):
     payload = _queue_payload()
     spec = _strategy_spec(strategy_id=payload["strategy_id"])
     dataset_ref = next(d["ref"] for d in spec["data_dependencies"] if d.get("kind") == "dataset")
-    artifact = sc.artifact("bottom")  # concentrates the pool on the worse symbol
+    artifact = sc.adds_nothing_artifact()  # keeps the whole boundary: cannot beat the same rules over it
     artifact["strategy_id"] = spec["strategy_id"]
     market_dataset = sc.dataset(sc.recorded_market(attest_coverage=True))
     market_dataset["dataset_id"] = dataset_ref

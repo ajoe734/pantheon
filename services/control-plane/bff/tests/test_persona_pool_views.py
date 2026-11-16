@@ -66,7 +66,7 @@ def world(monkeypatch, tmp_path):
     for day in range(21):
         virtual_books.observe(binding_id="binding-paper", envelope_checksum="sha256:envelope",
             symbol="2330.TW", event_time=(datetime(2026, 10, 20, tzinfo=timezone.utc) + timedelta(days=day)).isoformat(),
-            price=100 + day + day % 2, source_ref=f"test:recorded-mark:{day}", bar_frequency="1d",
+            price=100 + day + day % 2, open_price=100 + day + day % 2, source_ref=f"test:recorded-mark:{day}", bar_frequency="1d",
             members={REF: {"artifact_id": REF, "version": "1.0.0", "checksum": CHECKSUM,
                            "virtual_only": False, "view": {"direction": "LONG", "strength": 1}}})
     raw_book = virtual_books.snapshot()[0]
