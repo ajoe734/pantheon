@@ -1,0 +1,47 @@
+{
+  "task_id": "REGIME-MEMORY-STANDING-QUESTION-20261115",
+  "design": [
+    "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_MEMORY_HINDSIGHT_ADOPTION_2026-11-13.md H13",
+    "docs/04/pantheon_regime_state_2026-11-14/SD_REGIME_STATE_ENGINE_2026-11-14.md R13"
+  ],
+  "base": "origin/dev eaeff4ea2",
+  "hosted_behavior_claimed": false,
+  "commands": [
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_mental_models.py",
+      "result": "20 passed in 1.81s"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/memory/test_mental_models.py services/memory/test_main.py services/memory/test_hindsight_index.py",
+      "result": "85 passed, 2 subtests passed in 9.20s"
+    },
+    {
+      "cmd": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py",
+      "result": "46 passed in 46.86s"
+    }
+  ],
+  "acceptance": {
+    "1_declare_with_active_record_and_retire_when_none": {
+      "persona_cycle": "PersonaCycleController._declare_standing_questions passes observe['regime'] alongside observe['cycle_subject']['families'] to PersonaCycleController.standing_questions -> mental_models.standing_questions before the model turn.",
+      "active_record_required": "mental_models.active_regime_classes / regime_standing_question includes key 'market_regime' with anchors ['regime:<regime_class>'] only when an active regime record exists for a strategy in the persona's pool; when none exists, 'market_regime' is omitted so mental_models.declare retires any previously declared 'market_regime' model from the persona bank.",
+      "tests": [
+        "services/persona/test_persona_cycle_controller.py::test_daily_cycle_declares_market_regime_standing_question_with_active_record_and_retires_when_none_exists",
+        "services/persona/test_persona_cycle_controller.py::test_daily_cycle_declares_one_question_per_pool_family_and_risk_lessons_without_regime",
+        "services/memory/test_mental_models.py::test_regime_standing_question_omitted_without_active_pool_strategy_record",
+        "services/memory/test_mental_models.py::test_declare_creates_updates_and_retires_market_regime_standing_question"
+      ]
+    },
+    "2_deterministic_owner_only_and_private_to_owning_persona": {
+      "determinism": "mental_models.standing_questions normalizes, deduplicates, and sorts pool families and active regime classes so identical pool and regime state always yield byte-identical question declarations.",
+      "validation_and_write_boundary": "mental_models.normalize_questions rejects 'market_regime' declarations lacking governed regime:<class> anchors ('regime_anchor_required' / 'invalid_regime_anchor'); PUT /api/memory/persona-standing-questions requires a verified persona-svc JWT; PersonaToolBroker exposes only read-only persona_mental_model_read with _NoInput and refuses any write/edit tool or parameter.",
+      "read_isolation": "Answers live in the persona's own bank and are returned by GET /api/memory/persona-standing-questions and PersonaToolBroker only to the owning persona (or authorized operator read surface for that persona/tenant) after verifying every cited memory in the canonical persona store; other personas, other tenants, and committee/panel sessions are refused or isolated.",
+      "tests": [
+        "services/memory/test_mental_models.py::test_standing_questions_includes_market_regime_when_active_pool_record_exists_and_stays_deterministic",
+        "services/memory/test_mental_models.py::test_normalize_questions_rejects_market_regime_without_governed_regime_anchor",
+        "services/memory/test_mental_models.py::test_agents_cannot_create_or_edit_standing_questions_and_answers_are_readable_only_by_owning_persona"
+      ]
+    },
+    "3_evidence_hygiene": "Commands and test results recorded; no credentials or secrets included."
+  },
+  "credentials_in_evidence": false
+}
