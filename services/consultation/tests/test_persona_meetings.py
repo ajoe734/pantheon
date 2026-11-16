@@ -9,6 +9,7 @@ doubled at the adapter edge.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 import json
 from pathlib import Path
 import socket
@@ -16,7 +17,9 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
+import urllib.error
+import urllib.parse
 
 from fastapi import FastAPI
 import pytest
@@ -29,8 +32,11 @@ if str(_ADAPTER_DIR) not in sys.path:
 from consultation_provider import consult_agent_id, create_app as create_adapter_app  # noqa: E402
 from services.consultation import main as consultation_main  # noqa: E402
 from services.consultation import meetings as meetings_mod  # noqa: E402
-from services.consultation.meeting_outputs import output_routing_context  # noqa: E402
 from services.consultation.client import ConsultationServiceClient, open_persona_meeting  # noqa: E402
+from services.consultation.meeting_outputs import (  # noqa: E402
+    configure_output_routing,
+    output_routing_context,
+)
 from services.consultation.provider import HttpContributionProvider  # noqa: E402
 from services.consultation.store import ConsultationStore  # noqa: E402
 from services.consultation.workflow_executor import ExecutorConfig, run_tick  # noqa: E402
@@ -285,15 +291,6 @@ class _AdapterModelDouble:
         )
 
 
-def _owner_stub(method: str, url: str, headers: Any, body: Any) -> tuple[int, dict[str, Any]]:
-    # No research owner listens in CI; stand in for its persona-demand intake and read-back.
-    if method.upper() == "GET":
-        assert "/api/research/persona-demands" in url, url
-        return 200, {"demands": [{"demand_id": "demand-stub-1", "status": "submitted"}], "count": 1}
-    assert method.upper() == "POST" and url.endswith("/api/research/persona-demands"), url
-    return 201, {"demand_id": "demand-stub-1", "id": "demand-stub-1", "status": "submitted"}
-
-
 @pytest.fixture
 def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
@@ -401,9 +398,135 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
     def _persona_pool_versions(pid: str) -> dict[str, Any]:
         return {"versions": [], "refusals": []}
 
+    output_calls: list[dict[str, Any]] = []
+    recorded_demands: list[dict[str, Any]] = []
+    recorded_patches: dict[str, dict[str, Any]] = {}
+    output_ledger_path = tmp_path / "meeting_output_dispatches.json"
+
+    def _recording_output_transport(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any]]:
+        parsed = urllib.parse.urlsplit(url)
+        path_and_query = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        output_calls.append(
+            {
+                "method": method.upper(),
+                "url": url,
+                "path": path_and_query,
+                "headers": dict(headers),
+                "body": copy.deepcopy(body),
+            }
+        )
+        idem_key = str(headers.get("Idempotency-Key") or "")
+        proposal_id = (
+            idem_key.rsplit(":", 1)[-1]
+            if ":" in idem_key
+            else f"call-{len(output_calls)}"
+        )
+        now_ts = "2026-11-16T12:00:00Z"
+
+        if parsed.path.startswith("/api/research/persona-demands"):
+            if method.upper() == "POST":
+                demand = {
+                    "demand_id": f"demand-{proposal_id}",
+                    "persona_id": (body or {}).get("persona_id"),
+                    "status": "submitted",
+                    "created_at": now_ts,
+                    "updated_at": now_ts,
+                }
+                recorded_demands.append(demand)
+                return 201, dict(demand)
+            return 200, {"demands": list(recorded_demands)}
+
+        if parsed.path.startswith("/api/evolution/proposals"):
+            if method.upper() == "POST":
+                dec_id = str((body or {}).get("decision_id") or f"evo-{proposal_id}")
+                return 201, {
+                    "decision_id": dec_id,
+                    "decision_state": "submitted",
+                    "updated_at": now_ts,
+                }
+            dec_id = parsed.path.rsplit("/", 1)[-1]
+            return 200, {
+                "decision_id": dec_id,
+                "decision_state": "submitted",
+                "updated_at": now_ts,
+            }
+
+        if parsed.path.endswith("/harness/patches") or parsed.path.endswith("/harness"):
+            if method.upper() == "POST":
+                patch_id = str((body or {}).get("patch_id") or f"patch-{proposal_id}")
+                recorded_patches[patch_id] = {
+                    "patch_id": patch_id,
+                    "status": "submitted",
+                }
+                return 201, {
+                    "patch_id": patch_id,
+                    "proposal": {"patch_id": patch_id},
+                    "status": "submitted",
+                    "updated_at": now_ts,
+                }
+            return 200, {"patches": dict(recorded_patches), "events": []}
+
+        if "/strategy-pool/" in parsed.path:
+            return (201 if method.upper() == "POST" else 200), {
+                "pool_version": 2,
+                "decision": {"status": "recorded", "execution_status": "submitted"},
+                "updated_at": now_ts,
+            }
+
+        if parsed.path.startswith("/api/governance/approvals"):
+            dec_id = (
+                str((body or {}).get("decision_id") or f"apv-{proposal_id}")
+                if method.upper() == "POST"
+                else parsed.path.rsplit("/", 1)[-1]
+            )
+            return (201 if method.upper() == "POST" else 200), {
+                "decision_id": dec_id,
+                "decision_state": "submitted",
+                "recorded_at": now_ts,
+            }
+
+        if parsed.path.startswith("/bff/agora/"):
+            cand_id = (
+                f"cand-{proposal_id}"
+                if method.upper() == "POST"
+                else parsed.path.split("/")[4]
+            )
+            return (201 if method.upper() == "POST" else 200), {
+                "data": {
+                    "candidate": {
+                        "proposal_id": cand_id,
+                        "state": "submitted",
+                        "updated_at": now_ts,
+                    }
+                }
+            }
+
+        if parsed.path.startswith("/api/memory/trade-lessons"):
+            lc_id = (
+                str((body or {}).get("lesson_candidate_id") or f"lc-{proposal_id}")
+                if method.upper() == "POST"
+                else parsed.path.rsplit("/", 1)[-1]
+            )
+            return (201 if method.upper() == "POST" else 200), {
+                "lesson_candidate_id": lc_id,
+                "review_state": "submitted",
+                "updated_at": now_ts,
+            }
+
+        raise AssertionError(f"Unrouted output transport path: {parsed.path}")
+
+    configure_output_routing(transport=None, store_path=None, clear_live_refs=True)
     with _serve(consultation_main.app) as api_url, _serve(memory_main.app) as memory_url, _serve(
         adapter_app
-    ) as adapter_url:
+    ) as adapter_url, output_routing_context(
+        transport=_recording_output_transport,
+        store_path=output_ledger_path,
+    ):
         monkeypatch.setenv("PANTHEON_MEMORY_API_URL", memory_url)
         monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", adapter_url)
         monkeypatch.setenv("PANTHEON_PERSONA_API_URL", adapter_url)
@@ -429,7 +552,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
             tenant_id=TENANT,
             service_actor="meeting-test-client",
         )
-        with output_routing_context(transport=_owner_stub, store_path=tmp_path / "meeting_outputs.json"):
+        try:
             yield {
                 "api_url": api_url,
                 "memory_url": memory_url,
@@ -438,7 +561,11 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
                 "client": client,
                 "double": double,
                 "memory_main": memory_main,
+                "output_calls": output_calls,
+                "output_ledger_path": output_ledger_path,
             }
+        finally:
+            configure_output_routing(transport=None, store_path=None, clear_live_refs=True)
 
 
 def _tick(stack: dict[str, Any]) -> dict[str, Any]:
@@ -559,6 +686,28 @@ def test_six_meeting_types_and_mt4_attribution_review_end_to_end(
     assert prop["payload"]["component"] == "exit"
     assert "bootstrap" in prop["payload"]["test"].lower()
     assert prop["downstream"]["status"] == "submitted"
+    assert prop["downstream"]["id"] == f"demand-{prop['proposal_id']}"
+    assert prop["downstream"]["target"] == "/api/research/persona-demands"
+
+    mt4_dispatch_calls = [
+        c
+        for c in stack["output_calls"]
+        if c["method"] == "POST"
+        and c["headers"].get("Idempotency-Key")
+        == f"meeting-output:{mt4_id}:{prop['proposal_id']}"
+    ]
+    assert len(mt4_dispatch_calls) == 1
+    assert mt4_dispatch_calls[0]["method"] == "POST"
+    assert mt4_dispatch_calls[0]["path"] == "/api/research/persona-demands"
+    assert mt4_dispatch_calls[0]["body"] == {
+        "persona_id": "persona-alpha",
+        "mandate": "meeting_research_demand",
+        "missing_datasets": [],
+        "tried_families": ["momentum"],
+        "short_measure": "effective_bets",
+        "pool_version": 1,
+        "evidence_ref": "facts:attribution_record:attr-u1-outlier-1",
+    }
 
     # Memory writebacks: 1 institutional fact + 1 persona memory per participant (4 participants)
     assert len(mt4["writebacks"]) == 4
@@ -780,4 +929,47 @@ def test_both_consultation_classes_gate_panel_and_deliberative_with_c2_module(
     assert prop["downstream"]["status"] == "validated_in_research"
     props_list = client.list_meeting_proposals(meeting_id=mt4_created["meeting_id"])
     assert props_list["items"][0]["downstream"]["status"] == "validated_in_research"
+
+
+def test_mt4_output_transport_connection_error_records_failed_and_meeting_still_closes(
+    stack: dict[str, Any],
+) -> None:
+    client: ConsultationServiceClient = stack["client"]
+
+    def _refused_transport(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any]]:
+        raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    with output_routing_context(
+        transport=_refused_transport,
+        store_path=stack["output_ledger_path"],
+    ):
+        created = client.open_persona_meeting(
+            meeting_type="MT-4",
+            topic="MT-4 with downstream research connection refused",
+            convened_by={"kind": "persona", "id": "persona-alpha"},
+            attribution_record_id="attr-conn-refused-1",
+            participants=["persona-alpha", "persona-risk-officer", "persona-red-team"],
+            iso_week="2026-W53",
+        )
+        res = _tick(stack)
+        assert res["errors"] == [], res
+        assert res["completed"] == 1, res
+
+        mt4_detail = client.get_meeting(created["meeting_id"])
+        assert mt4_detail is not None
+        assert mt4_detail["status"] == "closed"
+        prop = mt4_detail["synthesis"]["proposals"][0]
+        assert prop["downstream"]["status"] == "failed"
+        assert prop["downstream"]["id"] is None
+        assert prop["downstream"]["target"] == "/api/research/persona-demands"
+        assert "Connection refused" in str(prop["downstream"].get("error") or "")
+        props_list = client.list_meeting_proposals(meeting_id=created["meeting_id"])
+        assert props_list["items"][0]["downstream"]["status"] == "failed"
+        assert props_list["items"][0]["downstream"]["id"] is None
+
 
