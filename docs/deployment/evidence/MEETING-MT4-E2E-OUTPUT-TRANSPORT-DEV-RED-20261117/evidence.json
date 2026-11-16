@@ -1,0 +1,146 @@
+{
+  "task_id": "MEETING-MT4-E2E-OUTPUT-TRANSPORT-DEV-RED-20261117",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "base_commit": "896aff77934624bc2fd661d137a3df7639cea347",
+  "hosted_behavior_claimed": false,
+  "credentials_present": false,
+  "scoped_artifacts": [
+    "services/consultation/tests/test_persona_meetings.py",
+    "docs/deployment/evidence/MEETING-MT4-E2E-OUTPUT-TRANSPORT-DEV-RED-20261117/evidence.json"
+  ],
+  "reproduction": {
+    "origin_dev_commit": "896aff77934624bc2fd661d137a3df7639cea347",
+    "regression_merge_commit": "8d56a0d53",
+    "prior_output_routing_merge_commit": "ff914d118",
+    "command": ".venv-pantheon/bin/python3 -m pytest -vv -l --tb=short services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end",
+    "exit_code": 1,
+    "failure_summary": "FAILED services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end - AssertionError: assert 'failed' == 'submitted'",
+    "recorded_locals_prop": {
+      "citations": [
+        "facts:attribution_record:attr-u1-outlier-1"
+      ],
+      "downstream": {
+        "error": "<urlopen error [Errno 111] Connection refused>",
+        "id": null,
+        "status": "failed",
+        "target": "/api/research/persona-demands"
+      },
+      "downstream_id": null,
+      "downstream_target": "/api/research/persona-demands",
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "kind": "research_demand",
+      "meeting_id": "mtg-515340f73cf410f1",
+      "payload": {
+        "component": "exit",
+        "hypothesis": "Early stop-loss on high-vol days reduces tail loss by 31 bps",
+        "summary": "Validate high-vol stop-loss exit timing hypothesis",
+        "test": "Out-of-sample bootstrap over 60 high-volatility sessions (n>=30)"
+      },
+      "proposal_id": "prop-mtg-515340f73cf410f1-1",
+      "sponsor_persona_id": "persona-alpha",
+      "status": "failed"
+    },
+    "reproduced_at_8d56a0d53": {
+      "commit": "8d56a0d53",
+      "command": "git checkout -q 8d56a0d53 && .venv-pantheon/bin/python3 -m pytest -vv -l --tb=short services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end",
+      "exit_code": 1,
+      "output_excerpt": "services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end FAILED [100%]\nE   AssertionError: assert 'failed' == 'submitted'\n 'downstream': {'error': '<urlopen error [Errno 111] Connection refused>', 'id': None, 'status': 'failed', 'target': '/api/research/persona-demands'}"
+    }
+  },
+  "acceptance_evidence": {
+    "ac1_reproduced_on_origin_dev_and_8d56a0d53": "Reproduced on origin/dev (896aff779) and at merge commit 8d56a0d53 (PR #7449 on top of PR #7447 ff914d118) with downstream.status == 'failed', downstream.target == '/api/research/persona-demands', and error '<urlopen error [Errno 111] Connection refused>'.",
+    "ac2_in_process_recording_transport_in_stack_fixture": "services/consultation/tests/test_persona_meetings.py::stack configures meeting output routing via services.consultation.meeting_outputs.output_routing_context(transport=_recording_output_transport, store_path=output_ledger_path) and restores/clears routing state via configure_output_routing(transport=None, store_path=None, clear_live_refs=True) after each test so no test opens a network connection to a downstream owner.",
+    "ac3_real_dispatch_code_and_mt4_assertions": "services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end dispatches the MT-4 proposal through the real services.consultation.meeting_outputs.dispatch_proposals path and asserts prop['downstream']['status'] == 'submitted', prop['downstream']['id'] == f'demand-{prop[\"proposal_id\"]}', prop['downstream']['target'] == '/api/research/persona-demands', and the recorded transport POST call method ('POST'), path ('/api/research/persona-demands'), and body.",
+    "ac4_failure_path_covered": "Covered both in services/consultation/tests/test_persona_meetings.py::test_mt4_output_transport_connection_error_records_failed_and_meeting_still_closes (transport raises urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused')), proposal is recorded with status='failed', id=None, error containing 'Connection refused', and meeting still closes with status='closed') and in services/consultation/tests/test_meeting_outputs.py::test_dispatch_failure_is_recorded_and_retried_idempotently.",
+    "ac5_no_production_code_change": "Zero production code changes; only services/consultation/tests/test_persona_meetings.py and this evidence manifest are modified.",
+    "ac6_consultation_and_meeting_tests_merged_on_2026_11_16_audit": [
+      {
+        "test_file": "services/consultation/tests/test_persona_meetings.py",
+        "pr": "#7449 (8d56a0d53, MEETING-PROTOCOL-ENGINE-R2-20261116)",
+        "result": "fixed here",
+        "detail": "stack fixture now configures output_routing_context with an in-process recording transport; 4/4 tests pass."
+      },
+      {
+        "test_file": "services/consultation/tests/test_persona_meeting_routes.py",
+        "pr": "#7449 (8d56a0d53, MEETING-PROTOCOL-ENGINE-R2-20261116)",
+        "result": "not affected",
+        "detail": "Sets auto_run_meetings = False and tests convening, roster, and budget refusal routes without executing synthesis or proposal dispatch; 4/4 tests pass."
+      },
+      {
+        "test_file": "services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py",
+        "pr": "#7449 (8d56a0d53, MEETING-PROTOCOL-ENGINE-R2-20261116)",
+        "result": "not affected",
+        "detail": "Tests OpenClaw adapter consultation_provider round invariants directly without invoking services.consultation.meetings or meeting_outputs; 6/6 tests pass."
+      },
+      {
+        "test_file": "services/consultation/tests/test_meeting_outputs.py",
+        "pr": "#7447 (ff914d118, MEETING-OUTPUT-ROUTING-20261115)",
+        "result": "not affected",
+        "detail": "owner_harness fixture already configures output_routing_context(transport=in_process_transport, store_path=ledger_path); 4/4 tests pass."
+      },
+      {
+        "test_file": "services/consultation/test_sponsor_decision_bridge.py",
+        "pr": "#7447 (ff914d118, MEETING-OUTPUT-ROUTING-20261115)",
+        "result": "not affected",
+        "detail": "Pure unit tests for sponsor_decision_bridge without HTTP transport; 19/19 tests pass."
+      },
+      {
+        "test_file": "services/control-plane/bff/tests/test_meetings_views.py",
+        "pr": "#7446 (eeb809b51, BFF-MEETINGS-VIEWS-R2-20261116)",
+        "result": "not affected",
+        "detail": "Tests BFF meetings read/convene routes with urllib.request.urlopen doubled at the BFF HTTP edge; 15/15 tests pass."
+      },
+      {
+        "test_file": "services/control-plane/bff/tests/test_meetings_human_inbox.py",
+        "pr": "#7446 (eeb809b51, BFF-MEETINGS-VIEWS-R2-20261116)",
+        "result": "not affected",
+        "detail": "Tests BFF human inbox meeting items with urllib.request.urlopen doubled at the BFF HTTP edge; 5/5 tests pass."
+      },
+      {
+        "test_file": "services/control-plane/bff/tests/test_agora_meetings.py",
+        "pr": "#7448 (9a67df620, AGORA-MEETINGS-20261115)",
+        "result": "not affected",
+        "detail": "Tests BFF Agora workshop meeting convene, committee reads, and Agora candidate decision routes with urlopen doubled; 15/15 tests pass."
+      },
+      {
+        "test_file": "services/control-plane/bff/tests/test_agora_committee_memory_owners.py",
+        "pr": "#7448 (9a67df620, AGORA-MEETINGS-20261115)",
+        "result": "not affected",
+        "detail": "Tests BFF committee panel and memory routes against in-process TestClient owners with urlopen doubled; 13/13 tests pass."
+      },
+      {
+        "test_file": "services/persona/test_consult_triggers.py",
+        "pr": "#7451 (54d8a5303, REGIME-CONSUMERS-FIRST-WAVE-20261115)",
+        "result": "not affected",
+        "detail": "Unit tests for persona consult_triggers gate rules without invoking consultation meeting outputs; 20/20 tests pass."
+      }
+    ]
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -vv services/consultation/tests/test_persona_meetings.py",
+      "exit_code": 0,
+      "pass_count": 4,
+      "result": "4 passed in 8.07s"
+    },
+    {
+      "command": "DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:26432/consultation_test .venv-pantheon/bin/python3 -m pytest -q services/consultation/tests",
+      "exit_code": 0,
+      "pass_count": 82,
+      "result": "82 passed, 41 warnings in 80.41s"
+    },
+    {
+      "command": "DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:26432/consultation_test .venv-pantheon/bin/python3 -m pytest -q services/consultation",
+      "exit_code": 0,
+      "pass_count": 153,
+      "result": "153 passed, 41 warnings in 93.01s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_agora_committee_memory_owners.py services/control-plane/bff/tests/test_agora_meetings.py services/persona/test_consult_triggers.py",
+      "exit_code": 0,
+      "pass_count": 74,
+      "result": "74 passed in 14.45s"
+    }
+  ]
+}
