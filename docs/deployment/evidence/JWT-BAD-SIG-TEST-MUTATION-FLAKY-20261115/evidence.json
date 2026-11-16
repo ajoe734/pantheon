@@ -1,0 +1,11 @@
+{
+  "task": "JWT-BAD-SIG-TEST-MUTATION-FLAKY-20261115",
+  "change": "Replaced s[:-2]+'AA' bad-signature mutation with _corrupt_sig (decode, XOR first byte 0xFF, re-encode); guaranteed to change decoded bytes. Test-only; no production change.",
+  "files": ["services/deployment/test_service.py", "services/test_runtime_auth_inbound_attack_matrix.py"],
+  "focused_test": "test_corrupt_sig_helper_adversarial_cases (signature already ending AA, and lenient-base64 last-char-differs case)",
+  "runs": [
+    {"command": "python /tmp/loop200.py services/test_runtime_auth_inbound_attack_matrix.py -k 'tampered_signature or bad_sig or corrupt_sig'  (pytest.main x200, 3 tests each)", "runs": 200, "failures": 0},
+    {"command": "python /tmp/loop200.py services/deployment/test_service.py -k jwt_key_selection_http_matrix  (pytest.main x200)", "runs": 200, "failures": 0}
+  ],
+  "full_attack_matrix_file": "23 passed"
+}

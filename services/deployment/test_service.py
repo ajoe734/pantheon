@@ -1340,7 +1340,12 @@ def test_deployment_owner_jwt_key_selection_http_matrix(client, monkeypatch):
 
     # 5. Bad signature fails
     h, p, s = valid_hs.split(".")
-    bad_sig_hs = f"{h}.{p}.{s[:-2]}AA"
+    import base64 as _b64
+
+    _raw = bytearray(_b64.urlsafe_b64decode(s + "=" * (-len(s) % 4)))
+    _raw[0] ^= 0xFF  # guaranteed to change the decoded signature bytes
+    _bad_s = _b64.urlsafe_b64encode(bytes(_raw)).rstrip(b"=").decode("ascii")
+    bad_sig_hs = f"{h}.{p}.{_bad_s}"
     resp_bad_sig = test_client.get(
         "/api/deployment/plans",
         headers={"Authorization": f"Bearer {bad_sig_hs}", "X-Tenant-Id": "tenant-deployment-test"},

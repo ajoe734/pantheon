@@ -232,11 +232,17 @@ def test_deployed_reader_reads_compacted_journal_identically(tmp_path):
 
 def test_release_probe_bound_unchanged():
     text = (Path(__file__).parents[3] / "scripts" / "dev_release_artifacts.py").read_text()
-    assert "if before.st_size > 256 * 1024 * 1024:" in text
-    assert "not 0 <= result[\"journal_size\"] <= 256 * 1024 * 1024" in text
+    # R2: bound raised to a documented >= 2 GiB constant, enforced in probe, reader and proof validation.
+    assert "SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024" in text
+    assert "if before.st_size > __MAX_BYTES__:" in text
+    assert "<= SOURCE_JOURNAL_MAX_BYTES" in text
     assert "512m" in text
 
 
+@pytest.mark.skipif(
+    os.environ.get("PANTHEON_RUN_COMPACTION_BENCHMARK") != "1",
+    reason="~10 minute journal growth repro benchmark; opt in with PANTHEON_RUN_COMPACTION_BENCHMARK=1",
+)
 def test_repro_unbounded_growth_and_append_latency(tmp_path):
     """Evidence harness (hosted-shaped: full state line per update, up to 60 closes per symbol).
 

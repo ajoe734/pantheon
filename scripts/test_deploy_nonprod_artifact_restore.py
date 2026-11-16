@@ -1597,3 +1597,76 @@ def test_baseline_restore_sources_from_retained_unqualified_candidate_capture(fi
         rejected = _run(_remote(), env)
         assert rejected.returncode != 0
         assert not any(e["command"] in ("fe_deploy", "driver") for e in _events(recorder))
+
+
+def test_restore_accepted_baseline_remote_script_uses_current_controller_for_prior_run_baseline(fixture, tmp_path):
+    from scripts import fetch_dev_artifact_evidence as f
+
+    env, recorder, driver, library = fixture
+    current_controller_sha = "7" * 40
+    prior_controller_sha = "1" * 40
+    current_dir = driver.parents[1] / current_controller_sha
+    current_dir.mkdir(mode=0o700)
+    current_driver = current_dir / "dev_release_artifact_driver.py"
+    current_library = current_dir / "dev_release_artifacts.py"
+    current_driver.write_bytes(driver.read_bytes())
+    current_driver.chmod(0o400)
+    current_library.write_bytes(library.read_bytes())
+    current_library.chmod(0o400)
+
+    # Create a synthetic source repo at tmp_path/source with previous_backend_sha
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    _git(source_repo, "init", "-q")
+    (source_repo / "docker-compose.yml").write_text("services: {}\n")
+    _git(source_repo, "add", "docker-compose.yml")
+    _git(source_repo, "commit", "-qm", "baseline compose")
+    prev_sha = _git(source_repo, "rev-parse", "HEAD")
+
+    manifest_path = Path(env["PANTHEON_DEV_ARTIFACT_MANIFEST_PATH"])
+    manifest_path.write_text(json.dumps({"fixture": True, "previous": prev_sha}))
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+    identity = {
+        "candidate_id": env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"],
+        "run_id": env["PANTHEON_DEV_ARTIFACT_RUN_ID"],
+        "attempt": "1",
+        "controller_sha": prior_controller_sha,
+        "candidate_backend_sha": SHA,
+        "candidate_frontend_sha": env["PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA"],
+        "previous_backend_sha": prev_sha,
+        "previous_frontend_sha": env["PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA"],
+    }
+    implementations = {
+        "dev_release_artifact_driver.py": current_driver.read_bytes(),
+        "dev_release_artifacts.py": current_library.read_bytes(),
+    }
+    script_bytes = f.build_restore_remote_script(
+        repo_root=ROOT,
+        current_controller_sha=current_controller_sha,
+        implementations=implementations,
+        identity=identity,
+        manifest_path=str(manifest_path),
+        manifest_sha256=manifest_sha256,
+        candidate_image_manifest_path=env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"],
+        candidate_image_manifest_sha256=env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"],
+        compose_file=env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"],
+        env=env,
+        artifact_root=driver.parents[2],
+        vm_source_repo=source_repo,
+    )
+    real_git = __import__("shutil").which("git")
+    (tmp_path / "bin/git").write_text(f"#!/bin/sh\nexec {real_git} \"$@\"\n")
+    (tmp_path / "bin/git").chmod(0o755)
+
+    result = _run(script_bytes.decode("utf-8"), env)
+    assert result.returncode == 0, result.stderr
+    assert "PANTHEON_ARTIFACT_READBACK_V1 " in result.stdout
+    events = _events(recorder)
+    assert [e["command"] for e in events] == ["driver"]
+    assert events[0]["operation"] == "restore"
+    assert events[0]["args"]["--scope"] == "stack"
+    assert events[0]["args"]["--controller-sha"] == prior_controller_sha
+    assert events[0]["args"]["--previous-backend-sha"] == prev_sha
+    assert events[0]["args"]["--attempt"] == "1"
+

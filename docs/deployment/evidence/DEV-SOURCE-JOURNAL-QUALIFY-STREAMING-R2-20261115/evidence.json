@@ -1,0 +1,16 @@
+{
+  "task": "DEV-SOURCE-JOURNAL-QUALIFY-STREAMING-R2-20261115",
+  "trigger": {"root_run": 43716127256, "backend_sha": "32fc7da61", "stage": "capture",
+              "code": "DEV_ARTIFACT_OPERATION_FAILED", "source_compatibility_reason": "reader_rejected",
+              "journal_bytes": 390702732, "journal_lines": 50976, "old_bound_bytes": 268435456},
+  "change": {"files": ["scripts/dev_release_artifacts.py", "scripts/test_dev_release_artifacts.py"],
+             "probe": "journal mode streams via readline, hashing and projecting per line; line cap 16 MiB; same journal_sha256/projection_sha256 as whole-file read",
+             "bound": "SOURCE_JOURNAL_MAX_BYTES = 4 GiB, enforced in probe, qualify_source_reader and baseline proof validation",
+             "new_reason": "journal_too_large (distinct from reader_rejected)",
+             "kept": ["inode/size/mtime check plus size-vs-bytes-read check", "shared flock", "journal_changed"],
+             "baseline_schema": "unchanged; baselines with journal <256 MiB are readable by the previous script"},
+  "tests": {"command": "python -m pytest scripts/test_dev_release_artifacts.py -q",
+            "result": "158 passed, 2 skipped in 213s",
+            "memory": "test generates a >256 MiB journal and asserts child peak RSS < 200 MiB",
+            "compat": "legacy whole-file algorithm oracle equals streamed identity; proof sizes 0, 256MiB, 390702732, 2GiB validate; >4GiB rejected"}
+}

@@ -397,11 +397,11 @@ def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
 def candidate_virtual_book(*, dataset, artifact, checksum, policy) -> dict[str, Any]:
     """Governed replay book for a not-yet-admitted candidate (telemetry has none before admission).
 
-    Reuses admission's replay (same registry interpreter, previous-bar exposure and
-    Taiwan-cost netting) over the untouched window of the governed daily bars.
+    Reuses admission's replay (same registry interpreter, next-open fills of close-decided
+    exposure and Taiwan-cost netting) over the untouched window of the governed daily bars.
     Nothing is invented: unavailable or misaligned data raises.
     """
-    from services.execution.lean_runtime.member_virtual_book import NET_BASIS
+    from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, NET_BASIS
     from services.research.pool_admission import _replay
     from services.research.vectorbt.adapter.vectorbt_adapter import GovernedVectorbtInputAdapter
 
@@ -414,7 +414,7 @@ def candidate_virtual_book(*, dataset, artifact, checksum, policy) -> dict[str, 
     dates = list(calendars[0][int(len(calendars[0]) * policy.in_sample_fraction):])
     returns = _replay(prepared, artifact, dates)
     return {"checksum": checksum, "source_ref": f"governed-replay:{prepared.dataset_id}", "basis": NET_BASIS,
-            "dates": dates[1:], "returns": returns, "since_inception": True, "book_kind": "governed_replay"}
+            "fill_convention": FILL_CONVENTION, "dates": dates[1:], "returns": returns, "since_inception": True, "book_kind": "governed_replay"}
 
 
 def governed_dataset_loader(env: Mapping[str, str] | None = None) -> Callable[[Mapping, Mapping], dict]:
