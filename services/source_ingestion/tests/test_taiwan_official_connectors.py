@@ -2392,7 +2392,9 @@ def test_recorded_chip_profiles_dispatch_existing_adapters_and_store_raw_values(
     monkeypatch.delenv('SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS', raising=False)
     monkeypatch.delenv('SOURCE_INGEST_TW_HISTORY_SYMBOLS', raising=False)
     writer = MarketDataStorageWriter(tmp_path / 'market')
-    for index, (cid, profile) in enumerate(TW_CHIP_REFRESH_PROFILES.items()):
+    # FinMind fundamentals are symbol-keyed and covered by test_finmind_fundamentals.py.
+    chip_profiles = {k: v for k, v in TW_CHIP_REFRESH_PROFILES.items() if v['base'] != 'tw-finmind-fundamentals'}
+    for index, (cid, profile) in enumerate(chip_profiles.items()):
         adapter = chip_profile_provider(cid)
         fetch = dict(adapter.fetch_config())
         fetch['request'] = {**fetch['request'], **{k: v for k, v in profile.items() if k in ('dataset', 'venues', 'contracts')}}

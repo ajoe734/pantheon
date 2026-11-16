@@ -12,6 +12,7 @@ from services.source_ingestion.connectors.finmind_taiwan import (
     FinMindTaiwanFundamentalsAdapter,
     finmind_fundamental_venues,
     finmind_fundamental_window,
+    finmind_fundamental_windows,
 )
 from services.source_ingestion.feature_catalogue import parse_time, statutory_available_date
 
@@ -86,6 +87,14 @@ def test_history_windows_cover_two_years():
         s, e = finmind_fundamental_window("tw_valuation_bwibbu", f"2024-06-{3 + offset:02d}" if offset < 27 else "2024-06-30")
         covered.add(s)
     assert len(covered) > 1
+
+
+def test_valuation_windows_are_latest_plus_one_page_not_the_span_between():
+    for day in range(1, 29):
+        latest, page = finmind_fundamental_windows("tw_valuation_bwibbu", f"2024-06-{day:02d}")
+        total = sum((datetime.fromisoformat(e) - datetime.fromisoformat(s)).days for s, e in (latest, page))
+        assert total <= 65
+        assert datetime.fromisoformat(page[1]) <= datetime.fromisoformat(latest[0])
 
 
 def test_records_carry_point_in_time_metadata():

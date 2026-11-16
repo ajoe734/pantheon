@@ -1847,25 +1847,36 @@ def finmind_fundamental_venues(symbols: Sequence[str]) -> dict[str, tuple[str, s
     return out
 
 
-def finmind_fundamental_window(normalized_dataset: str, run_date: Any) -> tuple[str, str]:
-    """Inclusive (start, end) FinMind request window for one scheduled run.
+def finmind_fundamental_windows(normalized_dataset: str, run_date: Any) -> tuple[tuple[str, str], ...]:
+    """Inclusive (start, end) FinMind request windows for one scheduled run.
 
-    Revenue and statements re-read the complete governed history every run (idempotent).
-    Valuation is daily: every run reads the newest days plus one rotating history page
-    chosen by the run date, so the two-year history completes within a bounded number of
-    daily runs without any stored cursor and without exceeding the per-run record cap.
+    Revenue and statements re-read the complete governed history every run (idempotent) as a
+    single window. Valuation is daily: every run reads the newest days plus one rotating
+    60-day history page chosen by the run date, as two separate bounded windows (never the
+    span between them), so the two-year history completes within a bounded number of daily
+    runs without any stored cursor and without exceeding the per-run record cap.
     """
     end = date.fromisoformat(str(run_date)[:10])
     if normalized_dataset == "tw_monthly_revenue":
-        return (end - timedelta(days=FINMIND_REVENUE_FETCH_DAYS)).isoformat(), end.isoformat()
+        return ((end - timedelta(days=FINMIND_REVENUE_FETCH_DAYS)).isoformat(), end.isoformat()),
     if normalized_dataset == "tw_financial_statement":
-        return (end - timedelta(days=FINMIND_FUNDAMENTALS_HISTORY_DAYS)).isoformat(), end.isoformat()
+        return ((end - timedelta(days=FINMIND_FUNDAMENTALS_HISTORY_DAYS)).isoformat(), end.isoformat()),
     if normalized_dataset == "tw_valuation_bwibbu":
         pages = -(-FINMIND_FUNDAMENTALS_HISTORY_DAYS // FINMIND_VALUATION_PAGE_DAYS)
         page = end.toordinal() % pages
-        page_end = end - timedelta(days=FINMIND_VALUATION_LATEST_DAYS + page * FINMIND_VALUATION_PAGE_DAYS)
-        return (page_end - timedelta(days=FINMIND_VALUATION_PAGE_DAYS)).isoformat(), end.isoformat()
+        latest_start = end - timedelta(days=FINMIND_VALUATION_LATEST_DAYS)
+        page_end = latest_start - timedelta(days=page * FINMIND_VALUATION_PAGE_DAYS)
+        page_start = page_end - timedelta(days=FINMIND_VALUATION_PAGE_DAYS)
+        return (
+            (latest_start.isoformat(), end.isoformat()),
+            (page_start.isoformat(), page_end.isoformat()),
+        )
     raise ValueError(f"unsupported FinMind fundamentals dataset: {normalized_dataset}")
+
+
+def finmind_fundamental_window(normalized_dataset: str, run_date: Any) -> tuple[str, str]:
+    """The single history window of a run (valuation: its rotating history page)."""
+    return finmind_fundamental_windows(normalized_dataset, run_date)[-1]
 
 
 def _fundamental_row(

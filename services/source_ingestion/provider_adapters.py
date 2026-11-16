@@ -32,7 +32,7 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanFundamentalsAdapter,
     FINMIND_FUNDAMENTAL_CATALOG,
     finmind_fundamental_venues,
-    finmind_fundamental_window,
+    finmind_fundamental_windows,
 )
 from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, CollectorPullResult
 from .connectors.social import AdmittedSocialMediaAdapter
@@ -363,7 +363,8 @@ def _finmind_fundamentals(
         raise SourceEvidenceError("provider-owned adapter request.symbols is required")
     venues = finmind_fundamental_venues(symbols)
     run_date = str(_require(request.get("run_date") or request.get("date"), "run_date"))
-    start, end = finmind_fundamental_window(dataset, run_date)
+    windows = finmind_fundamental_windows(dataset, run_date)
+    start, end = min(w[0] for w in windows), max(w[1] for w in windows)
     names = [spec["dataset"], *([spec["companion_dataset"]] if spec.get("companion_dataset") else [])]
     supplied = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else None
     fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
@@ -377,12 +378,17 @@ def _finmind_fundamentals(
         else:
             payloads = {}
             for name in names:
-                try:
-                    payloads[name], _ = fetcher.fetch_dataset(name, symbol=code, start_date=start, end_date=end)
-                except FinMindCredentialError:
-                    raise
-                except FinMindFetchError as exc:
-                    raise SourceEvidenceError(f"FinMind {name} fetch failed for {code}: {exc}") from exc
+                merged: dict[str, Mapping[str, Any]] = {}
+                for w_start, w_end in windows:
+                    try:
+                        fetched, _ = fetcher.fetch_dataset(name, symbol=code, start_date=w_start, end_date=w_end)
+                    except FinMindCredentialError:
+                        raise
+                    except FinMindFetchError as exc:
+                        raise SourceEvidenceError(f"FinMind {name} fetch failed for {code}: {exc}") from exc
+                    for row in _rows_of(fetched):
+                        merged[json.dumps(row, sort_keys=True, default=str)] = row
+                payloads[name] = list(merged.values())
         symbol_rows = adapter.rows_from_payloads(
             dataset, payloads, symbols=[venues[code][1]], ingest_time=request.get("ingest_time"))
         if symbol_rows:
@@ -400,6 +406,7 @@ def _finmind_fundamentals(
     coverage = {
         "status": "partial" if missing else "complete",
         "dataset": dataset, "window_start": start, "window_end": end,
+        "windows": [list(w) for w in windows],
         "requested_symbols": list(venues), "covered_symbols": covered, "missing_symbols": missing,
     }
     return tuple(

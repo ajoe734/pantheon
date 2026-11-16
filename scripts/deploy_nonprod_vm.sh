@@ -2822,11 +2822,17 @@ RECOVER_DLQ_PY
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
   case "${connector_id}:${dataset}" in
-    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily|tw-finmind-monthly-revenue:tw_monthly_revenue|tw-finmind-quarterly-statements:tw_financial_statement|tw-finmind-valuation:tw_valuation_bwibbu)
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
       return 0 ;;
+    tw-finmind-monthly-revenue:tw_monthly_revenue|tw-finmind-quarterly-statements:tw_financial_statement|tw-finmind-valuation:tw_valuation_bwibbu)
+      ;;
+    tw-finmind-monthly-revenue:*|tw-finmind-quarterly-statements:*|tw-finmind-valuation:*)
+      error "FinMind fundamentals bounded refresh got unsupported dataset '${dataset:-missing}' for ${connector_id}" ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
     [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
+  elif [[ "${connector_id}" == tw-finmind-monthly-revenue || "${connector_id}" == tw-finmind-quarterly-statements || "${connector_id}" == tw-finmind-valuation ]]; then
+    :
   elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
     return 0
   elif [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
@@ -2888,7 +2894,14 @@ dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
 
-is_finmind = connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top"
+FINMIND_FUNDAMENTAL_BOUNDED = {
+    "tw-finmind-monthly-revenue": "tw_monthly_revenue",
+    "tw-finmind-quarterly-statements": "tw_financial_statement",
+    "tw-finmind-valuation": "tw_valuation_bwibbu",
+}
+is_fund = FINMIND_FUNDAMENTAL_BOUNDED.get(connector_id) == dataset
+# is_finmind: symbol-keyed FinMind bounded refresh (broker top-N or governed fundamentals).
+is_finmind = is_fund or (connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top")
 if not is_finmind and (connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts"):
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
 if not controller_token:
@@ -2953,7 +2966,7 @@ FINMIND_MAX_SYMBOLS_PER_JOB = 25
 FINMIND_FETCH_MAX_RECORDS_CAP = 1000
 fanout_rules = [
     dataclass_replace(rule, max_symbols_per_run=FINMIND_MAX_SYMBOLS_PER_JOB)
-    if is_finmind and rule.connector_id == connector_id and rule.dataset == dataset
+    if is_finmind and not is_fund and rule.connector_id == connector_id and rule.dataset == dataset
     else rule
     for rule in DEFAULT_SOURCE_UPDATE_RULES
 ]
@@ -3001,7 +3014,14 @@ if not contracts:
 interval_seconds = 86400
 priority = int(selected_rule.priority)
 
-if is_finmind:
+if is_fund:
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanFundamentalsAdapter
+    adapter = FinMindTaiwanFundamentalsAdapter(
+        connector_id=connector_id, max_records=500,
+        connector_metadata={"definition_id": connector_id, "refresh_profile": TW_CHIP_REFRESH_PROFILES[connector_id]},
+    )
+elif is_finmind:
     adapter = FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)
 else:
     adapter = TaifexDerivativesChipAdapter(
@@ -3017,8 +3037,10 @@ if is_finmind:
     # batch job carries its own symbols in job_parameters, which override request.symbols, so
     # all batches are processed. max_records is the per-job top-N buy+sell budget and must stay
     # within the generic provider_owned_adapter guard.
-    rows_per_symbol = int(adapter.max_rank) * 2
-    per_job_budget = rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
+    # Fundamentals jobs are bounded by the rule's max_symbols_per_run and the adapter's
+    # fail-closed 500-record cap (an over-cap window raises; it is never truncated).
+    rows_per_symbol = 1 if is_fund else int(adapter.max_rank) * 2
+    per_job_budget = 500 if is_fund else rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
     if per_job_budget > FINMIND_FETCH_MAX_RECORDS_CAP:
         raise SystemExit(
             f"FinMind per-job row budget {per_job_budget} exceeds provider_owned_adapter cap {FINMIND_FETCH_MAX_RECORDS_CAP}"
@@ -3028,7 +3050,7 @@ if is_finmind:
         for job in (fanout.get("jobs") or [])
         if isinstance(job, dict) and job.get("connector_id") == connector_id and job.get("dataset") == dataset
     ]
-    if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
+    if not is_fund and any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
         raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
     # The adapter's fetch_config() also carries provider-descriptive keys (base_url, endpoint,
     # secret_ref_id, dataset, history_start, max_rank) that the strict ConfiguredFetchBody DTO
@@ -3053,7 +3075,7 @@ desired_requirement = {
     "connector_id": connector_id,
     "provider": "FinMind" if is_finmind else "TAIFEX",
     "dataset": dataset,
-    "source_class": "taiwan_chip" if is_finmind else "derivatives_chip",
+    "source_class": "live_pull" if is_fund else "taiwan_chip" if is_finmind else "derivatives_chip",
     "cadence": "daily",
     "schedule_interval_seconds": interval_seconds,
     "priority": priority,
