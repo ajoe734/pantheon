@@ -148,7 +148,12 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         step = self.smoke_steps[names.index(SOURCE_INGESTION_STEP_NAME)]
         self.assertNotIn("if", step, "source ingestion tests must run unconditionally")
         self.assertFalse(step.get("continue-on-error", False))
+        self.assertEqual(step.get("timeout-minutes"), 15)
         self.assertGreater(names.index(SOURCE_INGESTION_STEP_NAME), names.index("Install test dependencies"))
+        self.assertGreater(
+            names.index(SOURCE_INGESTION_STEP_NAME),
+            names.index("Install source ingestion dependencies"),
+        )
         run = step.get("run", "")
         # Sharded runner: same targets (defined in the script), per-shard data dirs.
         commands = [ln.strip() for ln in run.splitlines() if ln.strip() and not ln.strip().startswith("#")]
@@ -156,25 +161,53 @@ class BranchCiGateSelectionTests(unittest.TestCase):
             commands,
             ["python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300"],
         )
-        # Every source ingestion test file must land in exactly one non-empty shard.
+        # Every source ingestion test file must be covered by expand_targets() and land in
+        # exactly one non-empty shard; dropping a target, a file path, or a shard must fail.
         from scripts import ci_source_ingestion_test_shards as sharder
 
         root = sharder.REPO_ROOT
+        self.assertEqual(
+            tuple(sharder.TARGETS),
+            ("services/source_ingestion/tests", "services/source_ingestion/test_*.py"),
+        )
         expected_files = sorted(
-            {
-                str(p.relative_to(root))
-                for p in list((root / "services/source_ingestion/tests").rglob("test_*.py"))
-                + list((root / "services/source_ingestion").glob("test_*.py"))
-            }
+            str(p.relative_to(root))
+            for p in (root / "services/source_ingestion").rglob("test_*.py")
         )
         self.assertTrue(expected_files)
-        plan = sharder.plan_shards(expected_files, 4)
-        self.assertEqual(len(plan), 4)
-        for shard in plan:
-            self.assertTrue(shard, "a shard is empty")
-        flat = [f for shard in plan for f in shard]
-        self.assertEqual(sorted(flat), expected_files)
-        self.assertEqual(len(flat), len(set(flat)))
+
+        def expand_covered_files(target_paths: list[str]) -> list[str]:
+            covered: set[str] = set()
+            for rel in target_paths:
+                p = root / rel
+                if p.is_dir():
+                    covered.update(str(f.relative_to(root)) for f in p.rglob("test_*.py"))
+                elif p.is_file() and p.name.startswith("test_") and p.suffix == ".py":
+                    covered.add(str(p.relative_to(root)))
+            return sorted(covered)
+
+        def assert_pin_coverage(target_paths: list[str], shard_plan: list[list[str]]) -> None:
+            covered = expand_covered_files(target_paths)
+            self.assertEqual(covered, expected_files, "a source ingestion test path was dropped")
+            self.assertEqual(len(shard_plan), 4, "a shard was dropped")
+            for shard in shard_plan:
+                self.assertTrue(shard, "a shard is empty")
+            flat = [f for shard in shard_plan for f in shard]
+            self.assertEqual(len(flat), len(set(flat)), "duplicate test path across shards")
+            self.assertEqual(sorted(flat), expected_files, "shard plan dropped a test path")
+
+        target_paths = sharder.expand_targets()
+        covered_files = expand_covered_files(target_paths)
+        plan = sharder.plan_shards(covered_files, 4)
+        assert_pin_coverage(target_paths, plan)
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths[:-1], plan)
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, plan[:-1])
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, [*plan[:-1], []])
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, [plan[0][1:], *plan[1:]])
         for weighted in sharder.FILE_WEIGHTS:
             self.assertIn(weighted, expected_files)
         runner = (Path(__file__).resolve().parent / "ci_source_ingestion_test_shards.py").read_text()

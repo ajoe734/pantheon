@@ -3,24 +3,121 @@
   "baseline": {
     "command": "python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py",
     "ci_runs": {
-      "43732108493": "timed out at 15m step timeout (16:01:30Z-16:19:11Z)",
-      "43724757273": "timed out at 15m",
-      "dev c714497da": "12m53s green after PR 7425 made one ~10min benchmark opt-in (about 2 min margin)"
+      "43732108493": {
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43732108493/job/132867706196",
+        "head_sha": "4f36b8103e56b1cc34ef5575d01a83f53a9587ba",
+        "step": "Run source ingestion tests",
+        "started_at": "2026-11-15T16:03:54Z",
+        "completed_at": "2026-11-15T16:19:07Z",
+        "duration_seconds": 913,
+        "conclusion": "failure (timed out at 15m step timeout)"
+      },
+      "43724757273": {
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43724757273/job/132844860027",
+        "head_sha": "c8b0d74e97ed6e93fe2f2f0dc25700a774e7da1b",
+        "step": "Run source ingestion tests",
+        "started_at": "2026-11-15T14:35:45Z",
+        "completed_at": "2026-11-15T14:50:57Z",
+        "duration_seconds": 912,
+        "conclusion": "failure (timed out at 15m step timeout)"
+      },
+      "dev_c714497da": {
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/43743814247",
+        "head_sha": "c714497da7020737568d181e353987f31a7ee6ee",
+        "note": "12m53s (773s) green after PR 7425 made one ~10min benchmark opt-in (~2m margin under 15m timeout)"
+      }
     },
-    "local_serial": "did not finish in 580s (reached ~76% in 9m40s) on a 12 core machine"
+    "local_serial": "did not finish in 580s (reached ~76% in 9m40s) on a 12-core machine; full 2076-test JUnit sum across all test cases is 723.14s (746.34s sum of suite durations across shards)"
   },
   "collected_tests_before_and_after": {
     "before": 2076,
     "after": 2076,
     "files": 95,
-    "note": "collected by the runner with the same targets; runner fails if ran != collected"
+    "ci_ran": 2076,
+    "ci_passed": 2073,
+    "ci_skipped": 3,
+    "note": "collected by scripts/ci_source_ingestion_test_shards.py with the exact same targets (services/source_ingestion/tests and services/source_ingestion/test_*.py); runner fails if ran != collected"
   },
-  "slowest_tests_seconds_under_4_shard_contention": {
-    "test_collector_newest_session_progress::test_hosted_size_sessions_through_controller_and_real_persistence": 136.5,
-    "test_collector_newest_session_hosted_throughput::test_full_hosted_size_sessions_use_real_controller_ticks": 88.3,
-    "test_scheduled_connector::test_full_size_close_through_controller_main_with_persistence": 75.2,
-    "test_collector_bundle_connector::test_real_size_two_day_sweep_continues_and_preserves_newest_priority": 40.2,
-    "test_scheduled_connector::test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source": 23.6
+  "slowest_15_tests_seconds": {
+    "total_test_case_seconds_across_2076_tests": 723.14,
+    "total_suite_seconds_sum_across_4_shards": 746.34,
+    "slowest_15": [
+      {
+        "rank": 1,
+        "test": "services/source_ingestion/tests/test_collector_newest_session_progress.py::test_hosted_size_sessions_through_controller_and_real_persistence",
+        "seconds": 146.41
+      },
+      {
+        "rank": 2,
+        "test": "services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py::test_full_hosted_size_sessions_use_real_controller_ticks",
+        "seconds": 85.79
+      },
+      {
+        "rank": 3,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_full_size_close_through_controller_main_with_persistence",
+        "seconds": 78.56
+      },
+      {
+        "rank": 4,
+        "test": "services/source_ingestion/tests/test_collector_bundle_connector.py::test_real_size_two_day_sweep_continues_and_preserves_newest_priority",
+        "seconds": 39.51
+      },
+      {
+        "rank": 5,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source",
+        "seconds": 24.9
+      },
+      {
+        "rank": 6,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget",
+        "seconds": 22.76
+      },
+      {
+        "rank": 7,
+        "test": "services/source_ingestion/tests/test_collector_market_early_fetch_pit.py::test_real_pipeline_persists_newest_and_advances_sweep_after_restart[early-admitted]",
+        "seconds": 13.85
+      },
+      {
+        "rank": 8,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_steady_controller_calls_drive_real_scheduler_and_collector_adapter",
+        "seconds": 7.17
+      },
+      {
+        "rank": 9,
+        "test": "services/source_ingestion/tests/test_collector_market_early_fetch_pit.py::test_real_pipeline_persists_newest_and_advances_sweep_after_restart[preclose-quarantined]",
+        "seconds": 6.51
+      },
+      {
+        "rank": 10,
+        "test": "services/source_ingestion/tests/test_collector_market_early_fetch_pit.py::test_real_pipeline_persists_newest_and_advances_sweep_after_restart[preclose-same-second-receipts]",
+        "seconds": 6.0
+      },
+      {
+        "rank": 11,
+        "test": "services/source_ingestion/tests/test_distillation_queue_lifetime.py::test_two_process_cold_start_initializes_fresh_queue",
+        "seconds": 5.53
+      },
+      {
+        "rank": 12,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_one_failing_collector_does_not_starve_other_admitted_sources",
+        "seconds": 5.34
+      },
+      {
+        "rank": 13,
+        "test": "services/source_ingestion/tests/test_scheduled_connector.py::test_real_controller_drains_1349_t86_rows_before_daily_cadence",
+        "seconds": 5.31
+      },
+      {
+        "rank": 14,
+        "test": "services/source_ingestion/tests/test_collector_market_provenance_bound.py::test_real_size_day_has_constant_evidence_and_no_distillation[collector-tw-tpex-price-history]",
+        "seconds": 4.93
+      },
+      {
+        "rank": 15,
+        "test": "services/source_ingestion/test_service.py::test_bounded_jobs_listing_at_hosted_scale_stays_small_and_fast",
+        "seconds": 4.49
+      }
+    ]
   },
   "per_file_seconds_top": {
     "test_scheduled_connector.py": 163,
@@ -30,8 +127,8 @@
     "test_collector_market_early_fetch_pit.py": 29,
     "test_controller_worker.py": 28
   },
-  "change": "scripts/ci_source_ingestion_test_shards.py runs whole files in 4 deterministic LPT shards (weights checked in), one SOURCE_INGEST_DATA_DIR per shard; no test deleted/skipped/deselected; per-test guard --max-test-seconds 300 fails with test name; count guard.",
-  "isolation": "Shards use separate data dirs; Postgres tests already use uuid-named schemas, so they do not collide. No conftest change needed.",
+  "change": "scripts/ci_source_ingestion_test_shards.py runs whole files in 4 deterministic LPT shards (weights checked in), one SOURCE_INGEST_DATA_DIR per shard; no test deleted/skipped/deselected; per-test guard --max-test-seconds 300 fails with test name; count guard ensures ran == collected. scripts/test_branch_ci_gate_selection.py pins the sharded step and verifies every source_ingestion test path is covered by expand_targets() and plan_shards(..., 4) and fails if a target, file path, or shard is dropped.",
+  "isolation": "Shards use separate SOURCE_INGEST_DATA_DIR directories; PostgreSQL tests already isolate per-test via UUID-named schemas, so parallel shards do not collide. No conftest change needed.",
   "five_local_parallel_runs": [
     {
       "exit": 0,
@@ -69,7 +166,69 @@
       "collected": 2076
     }
   ],
-  "local_skips_note": "22 tests skip locally because no PostgreSQL; CI has postgres service so they run there.",
-  "unit_tests": "python3 -m unittest scripts.test_ci_source_ingestion_test_shards scripts.test_branch_ci_gate_selection: 18 tests OK",
-  "ci_green_runs_on_pr_head": "PENDING: record after PR CI runs (criterion 6)"
+  "local_skips_note": "22 tests skip locally because no local PostgreSQL service is running; CI smoke job runs postgres:16 service container so 2073 pass and only 3 skip there (2076 total ran).",
+  "validation": {
+    "unit_tests_command": ".venv-pantheon/bin/python3 -m unittest scripts.test_ci_source_ingestion_test_shards scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision",
+    "unit_tests_result": "Ran 29 tests in 0.825s - OK",
+    "local_sharded_command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300",
+    "local_sharded_result": "5/5 consecutive runs passed (191.2s, 191.5s, 190.2s, 191.7s, 194.4s); 2076/2076 collected and ran"
+  },
+  "ci_green_runs_on_pr_head": [
+    {
+      "run_number": 1,
+      "workflow_run_id": 43753864376,
+      "smoke_job_id": 132933832222,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43753864376/job/132933832222",
+      "head_sha": "f5819b34f588596ecd67bcd6f34ed27b6dcf1348",
+      "step": "Run source ingestion tests",
+      "started_at": "2026-11-15T19:45:49Z",
+      "completed_at": "2026-11-15T19:51:44Z",
+      "step_duration_seconds": 355,
+      "shards_wall_clock_seconds": 337,
+      "shard_seconds": [271, 310, 262, 334],
+      "collected": 2076,
+      "ran": 2076,
+      "skipped": 3,
+      "headroom_percent_under_900s_timeout": 60.6,
+      "conclusion": "success"
+    },
+    {
+      "run_number": 2,
+      "workflow_run_id": 43781786382,
+      "attempt": 1,
+      "smoke_job_id": 133020647183,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43781786382/job/133020647183",
+      "head_sha": "50beadff44b96928801d0afc0bfac4d739ee17b6",
+      "step": "Run source ingestion tests",
+      "started_at": "2026-11-16T00:44:17Z",
+      "completed_at": "2026-11-16T00:50:05Z",
+      "step_duration_seconds": 348,
+      "shards_wall_clock_seconds": 330,
+      "shard_seconds": [265, 301, 256, 328],
+      "collected": 2076,
+      "ran": 2076,
+      "skipped": 3,
+      "headroom_percent_under_900s_timeout": 61.3,
+      "conclusion": "success"
+    },
+    {
+      "run_number": 3,
+      "workflow_run_id": 43781786382,
+      "attempt": 2,
+      "smoke_job_id": 133031839762,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/43781786382/job/133031839762",
+      "head_sha": "50beadff44b96928801d0afc0bfac4d739ee17b6",
+      "step": "Run source ingestion tests",
+      "started_at": "2026-11-16T01:20:12Z",
+      "completed_at": "2026-11-16T01:24:43Z",
+      "step_duration_seconds": 271,
+      "shards_wall_clock_seconds": 255,
+      "shard_seconds": [212, 214, 188, 253],
+      "collected": 2076,
+      "ran": 2076,
+      "skipped": 3,
+      "headroom_percent_under_900s_timeout": 69.9,
+      "conclusion": "success"
+    }
+  ]
 }
