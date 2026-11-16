@@ -1659,6 +1659,17 @@ def mount_bff_routers(
         utc_now=_dep("utc_now"),
     ))
 
+    # 38: Meetings
+    from ..meetings.router import create_meetings_router
+    meetings_router = create_meetings_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_operator_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    )
+    app.include_router(meetings_router)
+
     # Attach shared instances onto app.state
     app.state.events_router = events_router
     app.state.deployment_router = deployment_router
