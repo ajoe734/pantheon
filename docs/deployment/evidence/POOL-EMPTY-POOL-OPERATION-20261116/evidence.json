@@ -1,0 +1,49 @@
+{
+  "task_id": "POOL-EMPTY-POOL-OPERATION-20261116",
+  "owner": "Claude2",
+  "base": "origin/dev 6a1d37bb7",
+  "reproduction_on_base": {
+    "method": "new end-to-end test copied onto an archive of origin/dev (only the idle_pool_observations helper added); real pool store, real baseline resolver on gate-minted proofs, real admission replay on recorded TWSE bars, real publisher/coordinator/deployment dispatch",
+    "steps": [
+      {"step": "publish the empty pool version", "result": "passes (flat envelope from previous approved envelope, runtime binding unchanged)"},
+      {"step": "paper runtime tick on the empty envelope", "result": "passes (runtime code unchanged; no member views, no position)"},
+      {"step": "pool health on idle observations", "result": "passes (gross/drawdown utilisation known 0.0; effective_bets unknown with reason no_live_members)"},
+      {"step": "daily pool cycle decision", "result": "passes (open_demand short_measure=no_live_members; no_action while one is open)"},
+      {"step": "admission of a gate-passing candidate", "result": "REFUSED: candidate_outside_pool_approved_universe"}
+    ],
+    "reading_confirmed": "decide derived the approved universe from live members only, so an empty pool refused every candidate with candidate_outside_pool_approved_universe",
+    "second_defect_found_by_code_reading_not_run": "after the universe fix evaluate_admission would still raise from _envelope([]) (empty portfolio requires a prior envelope) and the idle pool Sharpe is undefined"
+  },
+  "changes": {
+    "persona_strategy_pool.py": "empty pool uses the approved universe of its last version with live members (recorded decision.approved_universe, else read from that version's live member artifacts); unknown -> empty_pool_approved_universe_unknown; approved_universe recorded on admissions",
+    "pool_admission.py": "idle pool (no non-removed member): pool Sharpe 0 by definition, pool_idle true in result; every criterion and the deflated threshold unchanged",
+    "member_virtual_book.py": "idle_pool_observations: known zero gross and drawdown rows for an envelope with no member",
+    "design_doc": "section 5.1b states the universe stopgap, the combined-is-better meaning and the empty pool operation"
+  },
+  "readers_of_pool_members": [
+    {"reader": "services/persona/pool_autonomy_cycle.py decide / short_measures", "empty_pool_result": "open_demand no_live_members, then no_action while open (tested)"},
+    {"reader": "services/control-plane/persona/pool_policy.py pool_health", "empty_pool_result": "effective_bets unknown reason no_live_members; no raise (tested)"},
+    {"reader": "services/control-plane/bff/persona_pool_publisher.py _build_envelope", "empty_pool_result": "publishes flat empty envelope (tested end to end)"},
+    {"reader": "services/evolution/pool_evolution_scheduler.py tick", "empty_pool_result": "skips removed members; nothing to evaluate (code read)"},
+    {"reader": "services/persona/pool_publish_port.py membership_digest", "empty_pool_result": "signature of no live members (code read)"},
+    {"reader": "services/control-plane/bff/ports/persona_pool.py books()", "empty_pool_result": "iterates current members including removed ones, so a removed member without a book marks member_virtual_books unavailable (member_books_incomplete); not changed, file outside the artifact list"},
+    {"reader": "ranking (management_read_models) and capital (services/capital)", "empty_pool_result": "do not read pool members (grep)"}
+  ],
+  "validation": [
+    {"command": "pytest services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/research/tests/test_pool_admission.py services/research/tests/test_pool_evolution_integration.py services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/execution/lean_runtime/test_paper_runtime.py services/persona", "result": "651 passed, 1 skipped, 17 deselected, 42 subtests passed"}
+  ],
+  "new_tests": [
+    "test_empty_pool_end_to_end_remove_publish_demand_admit_publish (bff/test_persona_pool_publisher.py)",
+    "test_empty_pool_keeps_its_last_approved_universe_and_every_other_criterion (persona/test_persona_strategy_pool.py)",
+    "test_idle_pool_first_member_must_clear_every_criterion_on_its_own (research/tests/test_pool_admission.py)",
+    "test_idle_pool_observations_are_known_zero_and_invalid_inputs_fail_closed (lean_runtime/test_member_virtual_book.py)",
+    "test_empty_pool_envelope_tick_holds_no_position_and_does_not_raise (lean_runtime/test_paper_runtime.py)"
+  ],
+  "handoff_notes": [
+    "services/persona/pool_autonomy_cycle.py needed no change",
+    "services/control-plane/persona/pool_policy.py is not in the artifact list and was not changed",
+    "services/control-plane/bff/ports/persona_pool.py books() removed-member behaviour is a follow-up (outside the artifact list)",
+    "no production producer of pool risk observations exists in the repo (persona row field pool_observations); idle_pool_observations is the helper for it, wiring it into the runtime emitter is not done here",
+    "the empty-universe rule is the coordinator's reading of section 4.3, not an operator decision"
+  ]
+}

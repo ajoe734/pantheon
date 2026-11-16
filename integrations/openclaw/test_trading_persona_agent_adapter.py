@@ -131,7 +131,7 @@ def test_trading_persona_agent_soul_tools_and_private_memory(env):
     assert "OTHER PRIVATE SECRET" not in memory_md and "mem-other" not in memory_md
     # Tool profile persisted into agents.list: read-only + proposal submission only.
     tools = next(a for a in cli.agents if a["id"] == "persona-a")["tools"]
-    assert tools["allow"] == ["read", "persona_proposal_submit"]
+    assert tools["allow"] == ["read", "persona_proposal_submit", "persona_memory_recall", "persona_mental_model_read"]
     assert tools["exec"]["security"] == "deny"
     assert not any(m in t for t in tools["allow"] for m in ("order", "broker", "capital", "lifecycle"))
 
@@ -212,7 +212,7 @@ def test_concurrent_persona_syncs_do_not_lose_each_others_tool_policy(env):
     assert set(by_id) == {"persona-a", "persona-b"}
     for pid in by_id:
         tools = by_id[pid]["tools"]
-        assert tools["allow"] == ["read", "persona_proposal_submit"]
+        assert tools["allow"] == ["read", "persona_proposal_submit", "persona_memory_recall", "persona_mental_model_read"]
         assert tools["exec"]["security"] == "deny"
 
 
@@ -265,7 +265,7 @@ def test_standalone_cli_reconcile_and_http_ensure_share_one_registry_lock(env, t
     by_id = {a["id"]: a for a in cli.agents}
     assert set(by_id) == {"persona-a", "persona-b"}
     for agent in by_id.values():
-        assert agent["tools"]["allow"] == ["read", "persona_proposal_submit"]
+        assert agent["tools"]["allow"] == ["read", "persona_proposal_submit", "persona_memory_recall", "persona_mental_model_read"]
         assert agent["tools"]["exec"]["security"] == "deny"
 
 
