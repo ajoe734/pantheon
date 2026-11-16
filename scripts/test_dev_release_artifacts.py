@@ -1474,3 +1474,335 @@ def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_c
     del stack["services"][ISSUER]["control"]
     with pytest.raises(artifacts.ArtifactError):
         artifacts.validate_stack(stack)
+
+
+# --- Source journal streaming qualification (DEV-SOURCE-JOURNAL-QUALIFY-STREAMING-R2) ---
+
+def _run_probe(path):
+    import resource
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", artifacts.SOURCE_PROBE, "journal", str(path)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=900)
+    peak_kib = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return json.loads(done.stdout.strip().splitlines()[-1]), peak_kib
+
+
+def _legacy_identity(raw: bytes):
+    """The previous probe's whole-file algorithm, kept as the compatibility oracle."""
+    from services.source_ingestion import requirement_state as m
+    values = m._market_snapshots_from_lines(raw.decode("utf-8").splitlines(), path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return (hashlib.sha256(raw).hexdigest(), len(raw),
+            hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest())
+
+
+def test_source_probe_streaming_matches_legacy_identity(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    samples = market_snapshot_writer_samples()
+    raw = "".join(samples.values()).encode()
+    journal = tmp_path / "j.jsonl"
+    journal.write_bytes(raw)
+    result, _ = _run_probe(journal)
+    assert result["ok"] is True
+    assert (result["journal_sha256"], result["journal_size"], result["projection_sha256"]) == _legacy_identity(raw)
+
+
+def test_source_probe_qualifies_journal_over_old_bound_with_bounded_memory(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    line = market_snapshot_writer_samples()["official_daily"].encode()
+    journal = tmp_path / "big.jsonl"
+    target = 256 * 1024 * 1024 + 1
+    with journal.open("wb") as handle:
+        chunk = line * 4096
+        written = 0
+        while written < target:
+            handle.write(chunk)
+            written += len(chunk)
+    assert journal.stat().st_size > 256 * 1024 * 1024
+    result, peak_kib = _run_probe(journal)
+    assert result["ok"] is True, result
+    assert result["journal_size"] == journal.stat().st_size
+    assert peak_kib < 200 * 1024  # whole-file read would exceed the journal size alone
+    h = hashlib.sha256()
+    with journal.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            h.update(block)
+    assert result["journal_sha256"] == h.hexdigest()
+
+
+def test_source_probe_journal_over_new_bound_has_named_reason(tmp_path):
+    journal = tmp_path / "huge.jsonl"
+    with journal.open("wb") as handle:
+        handle.truncate(artifacts.SOURCE_JOURNAL_MAX_BYTES + 1)  # sparse
+    result, _ = _run_probe(journal)
+    assert result["ok"] is False and result["reason"] == "journal_too_large"
+    assert artifacts.SourceCompatibilityError(result["reason"]).reason == "journal_too_large"
+
+
+def test_source_journal_bound_is_documented_and_consistent():
+    assert artifacts.SOURCE_JOURNAL_MAX_BYTES >= 2 * 1024 ** 3
+    assert str(artifacts.SOURCE_JOURNAL_MAX_BYTES) in artifacts.SOURCE_PROBE
+    assert "256 * 1024 * 1024" not in artifacts.SOURCE_PROBE
+
+
+def _proof_stack(stack_case, size):
+    stack = copy.deepcopy(stack_case[4])
+    row = stack["services"][artifacts.API_SERVICE]
+    row["source_snapshot"] = {"codec_sha256": "1" * 64, "journal_sha256": "2" * 64,
+                              "journal_size": size, "projection_sha256": "3" * 64}
+    return stack
+
+
+@pytest.mark.parametrize("size", [0, 256 * 1024 * 1024, 390702732, 2 * 1024 ** 3])
+def test_baseline_proof_sizes_old_and_new_validate_unchanged(stack_case, size):
+    # Shape is unchanged; sizes <= 256 MiB are what the previous script accepts too.
+    artifacts.validate_stack(_proof_stack(stack_case, size))
+
+
+def test_baseline_proof_over_new_bound_rejected(stack_case):
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(_proof_stack(stack_case, artifacts.SOURCE_JOURNAL_MAX_BYTES + 1))
+
+
+# --- DEV-RELEASE-PROBE-LOCK-WAIT-AND-REASONS-20261115 ---------------------------------
+
+_LEGACY_LOCK = "fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)"
+
+
+def _legacy_probe():
+    """Probe as it was before this task: one non-blocking lock attempt, generic reasons."""
+    code = artifacts.SOURCE_PROBE
+    start = code.index("            deadline = time.monotonic()")
+    end = code.index("            before = os.fstat")
+    code = code[:start] + "            " + _LEGACY_LOCK + "\n" + code[end:]
+    code = code.replace('reason = "probe_killed" if isinstance(error, MemoryError) else next(', "reason = next(")
+    code = code.replace('("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),', "")
+    return code
+
+
+def _run_code(code, journal, timeout=60):
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", code, "journal", str(journal)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=timeout)
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _sample_journal(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    journal = tmp_path / "j.jsonl"
+    journal.write_text(market_snapshot_writer_samples()["official_daily"])
+    return journal
+
+
+def _hold_exclusive(journal, seconds):
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import fcntl,sys,time\nf=open(sys.argv[1],'rb')\nfcntl.flock(f.fileno(),fcntl.LOCK_EX)\n"
+        "print('held',flush=True)\ntime.sleep(float(sys.argv[2]))"), str(journal), str(seconds)],
+        stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def test_reproduce_legacy_lock_contention_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 3)
+    try:
+        legacy = _run_code(_legacy_probe(), journal)
+    finally:
+        holder.wait()
+    assert legacy["ok"] is False and legacy["reason"] == "reader_rejected"
+
+
+def test_reproduce_legacy_memory_exhaustion_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    boom = "digest = projection(stream_lines())"
+    for code, expected in ((_legacy_probe(), "reader_rejected"), (artifacts.SOURCE_PROBE, "probe_killed")):
+        result = _run_code(code.replace(boom, "raise MemoryError()"), journal)
+        assert result["ok"] is False and result["reason"] == expected
+
+
+def test_probe_waits_for_shared_lock_then_qualifies(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 1.5)
+    try:
+        result = _run_code(artifacts.SOURCE_PROBE, journal)
+    finally:
+        holder.wait()
+    assert result["ok"] is True
+
+
+def test_probe_lock_wait_bound_gives_distinct_reason(tmp_path):
+    journal = _sample_journal(tmp_path)
+    code = artifacts.SOURCE_PROBE.replace(
+        f"time.monotonic() + {artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS}", "time.monotonic() + 0.3")
+    assert code != artifacts.SOURCE_PROBE
+    holder = _hold_exclusive(journal, 3)
+    try:
+        result = _run_code(code, journal)
+    finally:
+        holder.terminate()
+        holder.wait()
+    assert result == {"ok": False, "codec_sha256": result["codec_sha256"], "reason": "lock_wait_timeout", "line": None}
+    assert artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS < 300
+
+
+def test_probe_line_too_long_gives_distinct_reason(tmp_path):
+    journal = tmp_path / "long.jsonl"
+    journal.write_bytes(b"x" * 64)
+    code = artifacts.SOURCE_PROBE.replace(str(artifacts.SOURCE_JOURNAL_MAX_LINE_BYTES), "32")
+    result = _run_code(code, journal)
+    assert result["ok"] is False and result["reason"] == "line_too_long"
+
+
+class _ProbeDocker:
+    def __init__(self, exc=None, out=""):
+        self.exc, self.out = exc, out
+
+    def call(self, *args):
+        if self.exc is not None:
+            raise artifacts.ArtifactError("Docker artifact operation failed") from self.exc
+        return self.out
+
+
+def _probe_reason(docker):
+    with pytest.raises(artifacts.SourceCompatibilityError) as caught:
+        artifacts.source_probe(docker=docker, image_id="sha256:" + "a" * 64, mode="codec", check_lease=lambda: None)
+    return caught.value.reason
+
+
+def test_source_probe_transport_failures_have_distinct_reasons():
+    assert _probe_reason(_ProbeDocker(subprocess.TimeoutExpired(["docker"], 300))) == "probe_timeout"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(137, ["docker"]))) == "probe_killed"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(1, ["docker"]))) == "unavailable"
+    assert _probe_reason(_ProbeDocker(out="")) == "probe_no_output"
+    for reason in ("lock_wait_timeout", "line_too_long"):
+        out = json.dumps({"ok": False, "reason": reason, "line": None})
+        assert _probe_reason(_ProbeDocker(out=out)) == reason
+
+
+@pytest.mark.parametrize("reason", ["lock_wait_timeout", "journal_too_large", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"])
+def test_new_reasons_reach_failure_summary_through_remote_record(reason):
+    record = artifacts.failure_record(artifacts.SourceCompatibilityError(reason), "restore")
+    assert record["source_compatibility"] == {"reason": reason, "line": None}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_persisted_source_snapshot_proof_keys_unchanged(stack_case):
+    # Proof is exactly the four keys; the previous controller validated the same shape.
+    stack = _proof_stack(stack_case, 1234)
+    artifacts.validate_stack(stack)
+    assert set(stack["services"][artifacts.API_SERVICE]["source_snapshot"]) == {
+        "codec_sha256", "journal_sha256", "journal_size", "projection_sha256"}
+    extra = copy.deepcopy(stack)
+    extra["services"][artifacts.API_SERVICE]["source_snapshot"]["probe_seconds"] = 1
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(extra)
+
+
+def test_previous_and_new_probe_emit_identical_proof_both_directions(tmp_path):
+    journal = _sample_journal(tmp_path)
+    old, new = _run_code(_legacy_probe(), journal), _run_code(artifacts.SOURCE_PROBE, journal)
+    assert old == new and old["ok"] is True
+    proof = {k: new[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+    # New baseline proof validates under the unchanged exact four key check, and the
+    # previous probe reproduces the same proof from the same journal (reverse direction).
+    assert proof == {k: old[k] for k in proof}
+
+
+# --- DEV-RELEASE-ARTIFACTS-SOURCE-PROBE-RESILIENCE-20261116 ---------------------------
+
+def test_source_probe_runs_with_2048m_memory_bound(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 89)
+    docker.calls.clear()
+    artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                    writer_image=writer, check_lease=lambda: None)
+    run_calls = [call for call in docker.calls if call[0] == "run"]
+    assert len(run_calls) >= 5
+    for call in run_calls:
+        mem_idx = call.index("--memory")
+        assert call[mem_idx + 1] == "2048m"
+        assert "512m" not in call
+
+
+def test_qualify_source_writer_retries_on_mid_probe_append_and_succeeds(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 90)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_between_first_two_probes(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_between_first_two_probes
+    proof = artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                            writer_image=writer, check_lease=lambda: None)
+    assert journal_probes == [retained, writer, retained, writer, retained, writer]
+    expected_bytes = docker.source_journal.read_bytes()
+    assert proof["retained"]["journal_size"] == proof["writer"]["journal_size"] == len(expected_bytes)
+    assert proof["retained"]["journal_sha256"] == proof["writer"]["journal_sha256"] == hashlib.sha256(expected_bytes).hexdigest()
+    assert proof["retained"]["projection_sha256"] == proof["writer"]["projection_sha256"]
+
+
+def test_qualify_source_writer_fails_closed_after_three_append_disagreements(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 91)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_after_every_retained_probe(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3, 5):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_after_every_retained_probe
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert journal_probes == [retained, writer] * 3
+
+
+def test_qualify_source_writer_projection_mismatch_on_equal_journal_fails_closed_without_retry(stack_case, monkeypatch):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 92)
+    calls = []
+
+    def fake_qualify_source_reader(*, docker, image_id, check_lease):
+        calls.append(image_id)
+        return {
+            "codec_sha256": "1" * 64,
+            "journal_sha256": "2" * 64,
+            "journal_size": 4096,
+            "projection_sha256": "3" * 64 if image_id == retained else "4" * 64,
+        }
+
+    monkeypatch.setattr(artifacts, "qualify_source_reader", fake_qualify_source_reader)
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert calls == [retained, writer]

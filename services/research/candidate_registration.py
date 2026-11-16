@@ -437,6 +437,7 @@ class TemplateCandidateRegistrar:
             "out_of_sample_sharpe_ratio": details.get("out_of_sample_sharpe_ratio"),
             "max_drawdown": abs(float(details.get("out_of_sample_max_drawdown") or 0.0)),
             "round_trips": details.get("out_of_sample_round_trips"),
+            "fill_convention": details.get("fill_convention"),
             "demand_ref": demand_id,
             "persona_id": persona_id,
             "template_id": str(template["template_id"]),

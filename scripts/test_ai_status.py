@@ -13246,6 +13246,165 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["commit_metadata_source"], "approved_merge_first_parent")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def _multi_refresh_closeout(
+        self,
+        *,
+        trailer_owner: str,
+        trailer_reviewer: str,
+        event: dict[str, Any],
+        authored_at: str,
+        tip_at: str = "2026-11-15T18:48:00+00:00",
+    ) -> dict[str, Any]:
+        tip, m2, m1, authored = "a" * 40, "d" * 40, "e" * 40, "b" * 40
+        frozen_base = "c" * 40
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.DELIVERY_BINDING_KEY: {
+                "kind": "pull_request",
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "base_sha": frozen_base,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {"path": "evidence.json", "blob_sha": "d" * 40},
+            },
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                "decision": "approve",
+                "mode": "pull_request_review",
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{tip}",
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "f" * 40,
+                ("rev-parse", tip): tip,
+                ("show", "-s", "--format=%P", tip): f"{m2} {frozen_base}",
+                ("show", "-s", "--format=%P", m2): f"{m1} {frozen_base}",
+                ("show", "-s", "--format=%P", m1): f"{authored} {frozen_base}",
+                ("show", "-s", "--format=%P", authored): "",
+                ("show", "-s", "--format=%s", authored): "REG-002: deliver reviewed fix",
+                ("show", "-s", "--format=%b", authored): (
+                    f"LLM-Agent: {trailer_owner}\nTask-ID: REG-002\n"
+                    f"Reviewer: {trailer_reviewer}\n"
+                ),
+                ("show", "-s", "--format=%an", authored): "Codex",
+                ("show", "-s", "--format=%ae", authored): "codex@example.com",
+                ("show", "-s", "--format=%aI", authored): authored_at,
+                ("show", "-s", "--format=%aI", tip): tip_at,
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "e" * 40,
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        def fake_git_command_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{tip}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", tip, "origin/dev"]:
+                return True
+            if args[:2] == ["merge-base", "--is-ancestor"]:
+                return True
+            if args[:2] == ["cat-file", "-e"]:
+                return True
+            raise AssertionError(f"unexpected git predicate: {args}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+                mock.patch.object(
+                    ai_status, "git_command_succeeds", side_effect=fake_git_command_succeeds
+                ),
+            ):
+                return ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collect_done_reviewer_reassignment_orders_against_metadata_commit(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T17:15:00Z",
+        )
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex",
+            trailer_reviewer="Claude",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        proof = delivery["commit_reviewer_reassignment"]
+        self.assertEqual(proof["commit_timestamp"], "2026-11-15T16:22:00+00:00")
+        self.assertEqual(delivery["commit_metadata_ref"], "b" * 40)
+        self.assertEqual(delivery["commit_timestamp_ref"], "b" * 40)
+
+    def test_collect_done_reviewer_reassignment_before_metadata_commit_refused(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T15:48:00Z",
+        )
+        with self.assertRaisesRegex(SystemExit, "must follow the delivered commit"):
+            self._multi_refresh_closeout(
+                trailer_owner="Codex",
+                trailer_reviewer="Claude",
+                event=event,
+                authored_at="2026-11-15T16:22:00+00:00",
+            )
+
+    def test_collect_done_reviewer_stale_trailer_without_event_refused(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._multi_refresh_closeout(
+                trailer_owner="Codex",
+                trailer_reviewer="Claude",
+                event={},
+                authored_at="2026-11-15T16:22:00+00:00",
+            )
+
+    def test_collect_done_owner_reassignment_orders_against_metadata_commit(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex2",
+            new_owner="Codex",
+            old_reviewer="Claude2",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T17:15:00Z",
+        )
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex2",
+            trailer_reviewer="Claude2",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        proof = delivery["commit_owner_reassignment"]
+        self.assertEqual(proof["commit_timestamp"], "2026-11-15T16:22:00+00:00")
+        self.assertEqual(delivery["commit_timestamp_ref"], "b" * 40)
+
     def test_approved_closeout_metadata_rejects_wrong_merge_base(self) -> None:
         approved_head = "a" * 40
         task = {

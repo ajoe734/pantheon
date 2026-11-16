@@ -91,7 +91,7 @@ def test_recorded_bars_tick_to_research_trial_and_sixty_day_parent_removal(
                 for m in members if m['stage'] != 'removed'}
             books.observe(binding_id='binding-1', envelope_checksum='test-envelope',
                 symbol=row['instrument'], event_time=row['date'] + 'T05:30:00Z',
-                price=row['close'], source_ref=dataset['source_dataset_refs'][0], members=views, bar_frequency='1d')
+                price=row['close'], open_price=row['open'], source_ref=dataset['source_dataset_refs'][0], members=views, bar_frequency='1d')
         result = books.snapshot()
         for book in result:
             # The baseline attestation is separately tested. A comparable metric
