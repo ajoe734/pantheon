@@ -7,7 +7,8 @@
   "credentials_present": false,
   "scoped_artifacts": [
     "services/consultation/tests/test_persona_meetings.py",
-    "docs/deployment/evidence/MEETING-MT4-E2E-OUTPUT-TRANSPORT-DEV-RED-20261117/evidence.json"
+    "docs/deployment/evidence/MEETING-MT4-E2E-OUTPUT-TRANSPORT-DEV-RED-20261117/evidence.json",
+    "services/source_ingestion/tests/test_collector_market_early_fetch_pit.py"
   ],
   "reproduction": {
     "origin_dev_commit": "896aff77934624bc2fd661d137a3df7639cea347",
@@ -46,6 +47,13 @@
       "command": "git checkout -q 8d56a0d53 && .venv-pantheon/bin/python3 -m pytest -vv -l --tb=short services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end",
       "exit_code": 1,
       "output_excerpt": "services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end FAILED [100%]\nE   AssertionError: assert 'failed' == 'submitted'\n 'downstream': {'error': '<urlopen error [Errno 111] Connection refused>', 'id': None, 'status': 'failed', 'target': '/api/research/persona-demands'}"
+    },
+    "second_dev_wide_red_reproduction": {
+      "origin_dev_commit": "454f3b93ec91563d22e167757901884482ce8841",
+      "command": ".venv-pantheon/bin/python3 -m pytest -vv services/source_ingestion/tests/test_collector_market_early_fetch_pit.py",
+      "exit_code": 1,
+      "result": "5 failed, 5 passed in 21.17s",
+      "root_cause": "Recorded newest bundle has fetched/last_run_at=2026-11-14T18:19:33Z and cadence_seconds=86400; collector_bundle.py::observed_from_collector_status line 647 reports health_state='degraded' ('newest_bundle_older_than_twice_cadence') once now - last_run_at > 2 * cadence (after 2026-11-16T18:19:33Z)."
     }
   },
   "acceptance_evidence": {
@@ -53,7 +61,7 @@
     "ac2_in_process_recording_transport_in_stack_fixture": "services/consultation/tests/test_persona_meetings.py::stack configures meeting output routing via services.consultation.meeting_outputs.output_routing_context(transport=_recording_output_transport, store_path=output_ledger_path) and restores/clears routing state via configure_output_routing(transport=None, store_path=None, clear_live_refs=True) after each test so no test opens a network connection to a downstream owner.",
     "ac3_real_dispatch_code_and_mt4_assertions": "services/consultation/tests/test_persona_meetings.py::test_six_meeting_types_and_mt4_attribution_review_end_to_end dispatches the MT-4 proposal through the real services.consultation.meeting_outputs.dispatch_proposals path and asserts prop['downstream']['status'] == 'submitted', prop['downstream']['id'] == f'demand-{prop[\"proposal_id\"]}', prop['downstream']['target'] == '/api/research/persona-demands', and the recorded transport POST call method ('POST'), path ('/api/research/persona-demands'), and body.",
     "ac4_failure_path_covered": "Covered both in services/consultation/tests/test_persona_meetings.py::test_mt4_output_transport_connection_error_records_failed_and_meeting_still_closes (transport raises urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused')), proposal is recorded with status='failed', id=None, error containing 'Connection refused', and meeting still closes with status='closed') and in services/consultation/tests/test_meeting_outputs.py::test_dispatch_failure_is_recorded_and_retried_idempotently.",
-    "ac5_no_production_code_change": "Zero production code changes; only services/consultation/tests/test_persona_meetings.py and this evidence manifest are modified.",
+    "ac5_no_production_code_change": "Zero production code changes; only services/consultation/tests/test_persona_meetings.py, services/source_ingestion/tests/test_collector_market_early_fetch_pit.py, and this evidence manifest are modified.",
     "ac6_consultation_and_meeting_tests_merged_on_2026_11_16_audit": [
       {
         "test_file": "services/consultation/tests/test_persona_meetings.py",
@@ -115,7 +123,115 @@
         "result": "not affected",
         "detail": "Unit tests for persona consult_triggers gate rules without invoking consultation meeting outputs; 20/20 tests pass."
       }
-    ]
+    ],
+    "pit_clock_pinning_and_2026_11_wall_clock_audit": {
+      "req1_connector_clock_pinned_in_test_collector_market_early_fetch_pit": "Added autouse fixture pinned_connector_clock in services/source_ingestion/tests/test_collector_market_early_fetch_pit.py that pins services.source_ingestion.connectors.base._utc_now to datetime(2026, 11, 15, tzinfo=timezone.utc) and routes services.source_ingestion.connectors.collector_bundle.observed_from_collector_status default now through base._utc_now(). Neither the production staleness rule in collector_bundle.py nor any recorded bundle timestamp was modified.",
+      "req2_future_wall_clock_and_twice_cadence_degraded_proof": {
+        "future_wall_clock_command": ".venv-pantheon/bin/python3 -c 'import datetime as _dt, time as _time; _real_dt = _dt.datetime; _real_time = _time.time; _offset = _dt.timedelta(days=30); _Meta = type(\"_Meta\", (type(_real_dt),), {\"__instancecheck__\": lambda cls, inst: isinstance(inst, _real_dt)}); _ShiftedDatetime = _Meta(\"_ShiftedDatetime\", (_real_dt,), {\"now\": classmethod(lambda cls, tz=None: _real_dt.now(tz) + _offset), \"utcnow\": classmethod(lambda cls: _real_dt.now(_dt.timezone.utc).replace(tzinfo=None) + _offset)}); _dt.datetime = _ShiftedDatetime; _time.time = lambda: _real_time() + 30 * 86400; import pytest; raise SystemExit(pytest.main([\"-vv\", \"services/source_ingestion/tests/test_collector_market_early_fetch_pit.py\"]))'",
+        "future_wall_clock_observed_utc": "2026-12-16T19:10:30.145935+00:00",
+        "future_wall_clock_pass_count": 10,
+        "future_wall_clock_result": "10 passed, 1 warning in 21.41s",
+        "twice_cadence_degraded_coverage": "test_quarantine_only_sweep_keeps_acknowledged_newest_session_healthy advances base._utc_now to datetime(2026, 11, 16, 18, 19, 34, tzinfo=timezone.utc) (172801s > 2 * 86400s after recorded 2026-11-14T18:19:33Z) and asserts stale.observed['health_state'] == 'degraded', 'newest_bundle_older_than_twice_cadence' in stale.observed['reasons'], and not stale.no_new_data."
+      },
+      "req3_other_2026_11_wall_clock_tests_audit": {
+        "files_needing_same_fix_outside_contract": [
+          {
+            "file": "deploy/collector/tests/test_spiders_and_pollers.py",
+            "test": "test_taifex_vix_is_incremental_and_idempotent",
+            "recorded_timestamp": "202611 (202611new.txt recorded 2026-11-14)",
+            "state": "unpinned — starts failing at 2026-11-30T16:00:00Z (2026-12-01T00:00:00+08:00 Taipei)",
+            "detail": "Calls runner.run_source('collector-tw-taifex-vix', run_id='vix1') and runner2.run_source('collector-tw-taifex-vix', run_id='vix2') without started_at/finished_at, so TaifexVixSpider.collect() computes current_month from the wall clock in Asia/Taipei (UTC+8) and marks daily:202611 finished in state/taifex_vix_ledger.json once month < current_month ('202611' < '202612'), causing the second run to emit 0 items and fail assert len(ids2) == 1."
+          }
+        ],
+        "all_other_tests_comparing_2026_11_timestamps_with_clock": [
+          {
+            "file": "services/source_ingestion/tests/test_collector_bundle_connector.py",
+            "tests": [
+              "test_status_healthy_paused_and_lagging (2026-11-10T08:00:00Z): pinned via NOW = 2026-11-10T12:00:00Z",
+              "test_readonly_threads_complete_metadata_requires_verified_boundary (2026-11-13T00:19:22Z): pinned via now = 2026-11-13T04:25:14Z and monkeypatched observed_from_collector_status",
+              "test_complete_status_never_overrides_unverified_or_contradictory_evidence (2026-11-10T02:05:00Z): pinned via now = 2026-11-10T03:00:00Z",
+              "test_status_reflected_in_observed_state (2026-11-10T08:00:00Z): pinned via NOW = 2026-11-10T12:00:00Z",
+              "test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback (2026-11-11T12:00:00Z): pinned on observed_from_collector_status via now = 2026-11-11T13:00:00Z",
+              "test_pull_reads_status_into_observed (2026-11-10T02:05:00Z, status='paused'): unpinned clock in observed_from_collector_status, but only asserts res.observed['health_state'] == 'degraded' so it never fails",
+              "_measure_real_size_sweep / test_real_size_two_day_sweep_continues_and_preserves_newest_priority (2026-11-13T12:00:00Z): unpinned clock in observed_from_collector_status, but only asserts result.complete and continuation_pending (not health_state or no_new_data) so it never fails"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_collector_outcome_truth.py",
+            "tests": [
+              "setup_path fixture (2026-11-10T02:05:00Z / 02:06:00Z, used by 10 tests): pinned via monkeypatch on observed_from_collector_status with now = 2026-11-10T03:00:00Z",
+              "setup_governed_pipeline (producer=True, 2026-11-10T02:05:00Z, used by test_producer_complete_is_healthy_only_after_verified_delivery_and_committed_replay, test_actual_scheduled_frontier_persists_capped_features_and_restarts, test_failed_persistence_never_acknowledges_features_or_cursor): pinned via monkeypatch on observed_from_collector_status with now = 2026-11-10T03:00:00Z",
+              "test_governed_features_persist_through_configured_pipeline (producer=False, 2026-11-10T02:05:00Z): unpinned clock in observed_from_collector_status and social seen_at, but only asserts run status 'completed', record counts, and watermark (not health_state), and 2026-11-10 social day is already closed for any wall clock >= 2026-11-10T16:00:00Z so it never fails",
+              "test_priority_verified_prefix_survives_ordered_deadline (2026-11-10T02:02:00Z): pinned via monkeypatch on observed_from_collector_status with now = 2026-11-10T03:00:00Z"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_collector_newest_session_progress.py",
+            "tests": [
+              "test_completed_same_session_new_run_has_no_raw_resend (2026-11-13T12:18:42Z / 2026-11-14T00:19:33Z): pinned via monkeypatch on observed_from_collector_status with observed_at = finished_at + 1m / +13h",
+              "test_recorded_weekend_and_preclose_runs_use_rows_and_same_date_never_resets, test_corrected_delivered_item_replays_with_new_hash_and_held_change_keeps_progress, test_real_rollback_readers_parse_additive_ack_state, test_old_prefix_migrates_against_original_manifest_before_same_day_correction, test_hosted_size_sessions_through_controller_and_real_persistence, test_exact_candidate_restarts_same_session_on_recorded_run_keys, test_smaller_same_day_run_retains_undelivered_tail, test_empty_unacknowledged_bundle_does_not_claim_no_new_data (2026-11-13 / 2026-11-14): unpinned clock in observed_from_collector_status, but none assert health_state == 'healthy' or no_new_data is True so none fail as the wall clock advances"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py",
+            "tests": [
+              "test_collector_same_second_readback_keeps_latest_native_run: uses current wall-clock timestamp for fetched and pins base._utc_now to the same timestamp",
+              "test_full_hosted_size_sessions_use_real_controller_ticks (2026-11-14T06:19:33Z): unpinned clock in observed_from_collector_status, but only asserts controller tick status == 'ok', continuation_pending, and snapshot counts (not health_state or no_new_data) so it never fails"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_collector_market_provenance_bound.py",
+            "tests": [
+              "test_completed_receipt_reuses_rows_without_per_row_evidence (2026-11-10T02:05:00Z): pinned via monkeypatch on observed_from_collector_status with now = 2026-11-10T02:06:00Z for the empty boundary replay",
+              "test_real_pg_30_day_controller_backfill (2026-11-11T12:00:00Z): unpinned clock in observed_from_collector_status, but only asserts tick status == 'ok' and persisted row/bundle counts so it never fails"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_collector_held_symbols_live.py",
+            "tests": [
+              "test_binding_activated_after_start_is_held_on_next_pull, test_recorded_size_close_delivers_all_held_rows_in_first_pull, test_unreadable_store_keeps_order_with_typed_reason, test_missing_store_is_typed_and_non_stalling, test_other_tenant_binding_never_selects_held_rows (recorded_run 2026-11-14T00:19:33Z): unpinned clock in observed_from_collector_status, but only assert held symbol ordering and held_symbols_unavailable (not health_state or no_new_data) so they never fail"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_scheduled_connector.py",
+            "tests": [
+              "steady_stack fixture (2026-11-10T02:05:00Z / 2026-11-11T12:00:00Z / 2026-11-12T07:30:00Z / 2026-11-13T07:30:00Z, used by 15 steady/close/intake tests): pinned via monkeypatch on collector_bundle.observed_from_collector_status with now = 2026-11-10T03:00:00Z",
+              "test_collector_empty_then_paused_preserves_source_records_freshness_and_health (2026-11-10T02:05:00Z): pinned via setup_path (now = 2026-11-10T03:00:00Z)"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_taiwan_official_connectors.py",
+            "tests": [
+              "test_recorded_company_profiles_through_provider_refresh_and_storage (2026-11-12): pinned via monkeypatch on tw._utc_now and tw.datetime to recording['recorded_at']"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_demand_priority.py",
+            "tests": [
+              "All demand/deferral tests (START = 2026-11-13T10:00:00Z, expires_at = 2026-12-10T00:00:00Z): pinned via explicit now=START.timestamp(), DistillationJobQueue(now=lambda: clock[0].timestamp()), ResearchDemandStore(now=lambda: START), and hypothesis_card._today"
+            ]
+          },
+          {
+            "file": "services/source_ingestion/tests/test_intraday_reconcile.py",
+            "tests": [
+              "All reconciliation tests (DAY = 2026-11-10): pinned via clock=lambda: NOW (2026-11-10T09:00:00Z)"
+            ]
+          },
+          {
+            "file": "deploy/collector/tests/test_bundle_and_manifest.py",
+            "tests": [
+              "test_bundle_pruner_and_read_only_bundle_server (2026-11-10T00:01:00Z): pinned via prune_expired_bundles(..., now=datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc))"
+            ]
+          },
+          {
+            "file": "deploy/collector/tests/test_spiders_and_pollers.py",
+            "tests": [
+              "test_same_day_close_orchestrator_waits_polls_and_stops_on_deadline (2026-11-12 / 2026-11-14): pinned via explicit now=_taipei(...)"
+            ]
+          }
+        ]
+      }
+    }
   },
   "validation": [
     {
@@ -137,16 +253,16 @@
       "result": "153 passed, 41 warnings in 93.01s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_agora_committee_memory_owners.py services/control-plane/bff/tests/test_agora_meetings.py services/persona/test_consult_triggers.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -vv services/source_ingestion/tests/test_collector_market_early_fetch_pit.py",
       "exit_code": 0,
-      "pass_count": 74,
-      "result": "74 passed in 14.45s"
+      "pass_count": 10,
+      "result": "10 passed, 1 warning in 21.52s"
     },
     {
-      "command": "Branch CI Gate PR #7468 Service suites (postgres) job 133495719767 (run 43921082622): python3 -m pytest -q services/consultation",
+      "command": ".venv-pantheon/bin/python3 -c 'import datetime as _dt, time as _time; _real_dt = _dt.datetime; _real_time = _time.time; _offset = _dt.timedelta(days=30); _Meta = type(\"_Meta\", (type(_real_dt),), {\"__instancecheck__\": lambda cls, inst: isinstance(inst, _real_dt)}); _ShiftedDatetime = _Meta(\"_ShiftedDatetime\", (_real_dt,), {\"now\": classmethod(lambda cls, tz=None: _real_dt.now(tz) + _offset), \"utcnow\": classmethod(lambda cls: _real_dt.now(_dt.timezone.utc).replace(tzinfo=None) + _offset)}); _dt.datetime = _ShiftedDatetime; _time.time = lambda: _real_time() + 30 * 86400; import pytest; raise SystemExit(pytest.main([\"-vv\", \"services/source_ingestion/tests/test_collector_market_early_fetch_pit.py\"]))'",
       "exit_code": 0,
-      "pass_count": 153,
-      "result": "153 passed, 41 warnings in 74.73s (deployment: 263 passed; consultation: 153 passed; governance: 671 passed, 3 skipped; trade_journey: 552 passed, 34 skipped)"
+      "pass_count": 10,
+      "result": "10 passed, 1 warning in 21.41s (with wall clock shifted +30 days to 2026-12-16T19:10:30Z)"
     }
   ]
 }
