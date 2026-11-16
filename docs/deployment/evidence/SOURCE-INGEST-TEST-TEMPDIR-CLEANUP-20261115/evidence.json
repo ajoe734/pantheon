@@ -56,5 +56,11 @@
     "isolated_tmpdir": "TMPDIR=/tmp/si-iso-... per run; 0 source_ingest_scheduled_ dirs left",
     "test_scheduled_connector+cleanup_guard": "75 passed",
     "importing_modules(early_fetch_pit, provenance_bound, hosted_throughput, progress, controller_worker)": "257 passed, 3 skipped"
+  },
+  "ci_red_triage_2": {
+    "check": "Smoke acceptance (run 43879759621, head 84bbd1dc7)",
+    "cause": "test_full_size_close_through_controller_main_with_persistence failed 'assert 1 == 60' (loop-tick sleep seconds vs interval) in shard 0; wall-clock dependent test (real time.sleep(1) ticks, second-granularity run timestamps) under shared CI load. This task only adds shutil.rmtree to the client fixture teardown and a guard test; it does not touch tick/timing logic. Canonical review gate passed on that head.",
+    "local_rerun_20261116": "test_scheduled_connector.py + cleanup guard: 75 passed (217s); the failing test alone passed 2/2 (~78s); no new source_ingest_scheduled_ dirs created by the run",
+    "action": "resubmit on new head for CI re-run"
   }
 }
