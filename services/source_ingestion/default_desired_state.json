@@ -223,6 +223,36 @@
         {
           "cadence": "daily",
           "connector_candidates": [
+            "collector-tw-trading-holidays"
+          ],
+          "dataset": "tw_trading_holidays",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "collector-tw-trading-suspension"
+          ],
+          "dataset": "tw_trading_suspension",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
             "collector-tw-twse-index-breadth"
           ],
           "dataset": "tw_index_daily",
