@@ -472,7 +472,11 @@ class JsonlIngestScheduleStore:
             runs = list(self._runs.values())
             if statuses:
                 runs = [run for run in runs if str(getattr(run.status, "value", run.status)).lower() in statuses]
-            runs.sort(key=lambda run: (str(run.started_at), run.ingest_run_id), reverse=True)
+            run_positions = {run_id: pos for pos, run_id in enumerate(self._runs)}
+            runs.sort(
+                key=lambda run: (str(run.started_at), run_positions[run.ingest_run_id]),
+                reverse=True,
+            )
             total = len(runs)
             page = runs[offset : offset + limit]
             receipts = [self._receipts[run.ingest_run_id] for run in page if run.ingest_run_id in self._receipts]
@@ -490,16 +494,27 @@ class JsonlIngestScheduleStore:
             self._reload_if_changed_unlocked()
             return self._receipts.get(ingest_run_id)
 
+    def _sort_receipts_unlocked(self, receipts: Iterable[IngestReceipt]) -> list[IngestReceipt]:
+        """Order by timestamp; ties by durable run position, then receipt position, then id."""
+        run_positions = {run_id: pos for pos, run_id in enumerate(self._runs)}
+        receipt_positions = {run_id: pos for pos, run_id in enumerate(self._receipts)}
+
+        def key(receipt: IngestReceipt) -> tuple[Any, ...]:
+            ts = receipt.finished_at or receipt.started_at
+            run_pos = run_positions.get(receipt.ingest_run_id)
+            if run_pos is not None:
+                return (ts, 0, run_pos, receipt.ingest_run_id)
+            return (ts, 1, receipt_positions.get(receipt.ingest_run_id, 0), receipt.ingest_run_id)
+
+        return sorted(receipts, key=key)
+
     def list_receipts(self, *, connector_id: str | None = None) -> list[IngestReceipt]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_if_changed_unlocked()
             receipts = list(self._receipts.values())
             if connector_id is not None:
                 receipts = [receipt for receipt in receipts if receipt.connector_id == connector_id]
-            return sorted(
-                receipts,
-                key=lambda receipt: (receipt.finished_at or receipt.started_at, receipt.ingest_run_id),
-            )
+            return self._sort_receipts_unlocked(receipts)
 
     def read_freshness_snapshot(self) -> dict[str, Any]:
         """Read all freshness inputs from one replay of the durable journal.
@@ -513,13 +528,7 @@ class JsonlIngestScheduleStore:
 
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_if_changed_unlocked()
-            receipts = sorted(
-                self._receipts.values(),
-                key=lambda receipt: (
-                    receipt.finished_at or receipt.started_at,
-                    receipt.ingest_run_id,
-                ),
-            )
+            receipts = self._sort_receipts_unlocked(self._receipts.values())
             return {
                 "runs": tuple(self._runs.values()),
                 "receipts": tuple(receipts),

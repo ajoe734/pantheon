@@ -1,0 +1,19 @@
+{
+  "task": "SOURCE-SNAPSHOT-JOURNAL-BOUNDED-20261115",
+  "root_cause": "LatestMarketSnapshotStore compared observed_at when deciding to skip an append, so every historical re-ingest that left the published points unchanged still appended a ~7.6 KB envelope (hosted journal 390702732 bytes / 50976 lines, above the 268435456-byte capture probe bound).",
+  "dedup_decision": "Human/Ops 2026-11-15: SOURCE-SNAPSHOT-JOURNAL-COMPACTION-20261115 (PR #7414) is the single compaction implementation (_compact_journal_in_place, in-place, size-factor trigger). This branch reimplements nothing: requirement_state.py is origin/dev plus the changes below.",
+  "changes": {
+    "skip": "append is skipped when points, calendar evidence, market and close reconciliation are unchanged (observed_at no longer forces a line)",
+    "startup_hook": "LatestMarketSnapshotStore.compact(force=False) at construction applies the same size trigger as every append; compact() (force=True) calls #7414's _compact_journal_in_place under the exclusive lock",
+    "health": "runtime._source_runtime_metrics -> latest_market_snapshot_journal {journal_bytes, journal_lines, live_snapshot_count, last_compaction_at, capture_bound_bytes, warn_bytes (75% of bound), warning, last_compaction_error}"
+  },
+  "lossless_compaction": "Cited from #7414 and proven together with the no-op skip in test_latest_market_snapshot_journal_bounded.py (projection digest identical, original envelope bytes, withdrawn key absent, concurrent writers, crash-safe per #7414 tests). #7414 drops a key whose last word is a withdrawal; the projection is identical.",
+  "rollback_safety": "test_compacted_journal_passes_capture_probe_and_previous_reader runs the real SOURCE_PROBE from scripts/dev_release_artifacts.py before/after compaction (same projection_sha256, smaller journal) and reads the result with the pre-change reader from git merge-base.",
+  "memory": "Not re-measured on this head: the store keeps only the latest projection (test_memory_holds_only_latest_projection: a 20x repeated journal leaves 2 live keys, 2 lines). Hosted-size RSS figures for the in-place compaction are in docs/deployment/evidence/SOURCE-SNAPSHOT-JOURNAL-COMPACTION-20261115/evidence.json.",
+  "validation": [
+    {"cmd": "pytest test_latest_market_snapshot_compaction.py test_latest_market_snapshot.py test_latest_market_snapshot_state.py test_latest_market_snapshot_journal_bounded.py test_requirement_state.py test_pipeline_snapshot_dataset_isolation.py test_snapshot_frequency_isolation.py test_intraday_snapshot_projection.py -k 'not repro_unbounded'", "result": "116 passed, 1 deselected"},
+    {"cmd": "pytest test_latest_market_snapshot_journal_bounded.py", "result": "11 passed"},
+    {"cmd": "test_repro_unbounded_growth_and_append_latency (#7414 evidence harness, 50k appends)", "result": "not completed within 500 s in this worker; excluded, not counted as passed"}
+  ],
+  "credentials": "none recorded"
+}

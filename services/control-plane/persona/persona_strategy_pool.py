@@ -229,33 +229,44 @@ def http_registry_entry_reader(registry_id: str, tenant_id: str) -> Mapping[str,
 
 
 def http_owner_artifact_lister(persona_id: str, tenant_id: str) -> list[Mapping[str, Any]]:
-    """Approved paper execution artifacts the registry binds to this persona."""
+    """Approved paper execution artifacts the registry binds to this persona.
+
+    One registry lineage read rooted at the persona returns exactly the
+    artifacts bound to it (``metadata.persona_id`` edges), so the number of
+    registry calls depends on how many artifacts the persona owns, never on
+    the catalogue size.  Each bound artifact is then verified against its
+    registry owner record.  A truncated lineage answer fails closed.
+    """
+    payload = _http_json(
+        "/api/registry/lineage?depth=1&limit=200&root_id=" + quote(persona_id, safe=""), tenant_id
+    )
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("edges"), list):
+        raise RegistryUnavailable("registry lineage response is malformed")
+    if payload.get("has_more"):
+        raise RegistryUnavailable("registry lineage for the persona is truncated")
+    bound: list[str] = []
+    for edge in payload["edges"]:
+        if (
+            isinstance(edge, Mapping)
+            and edge.get("label") == "persona"
+            and edge.get("to") == persona_id
+            and edge.get("from")
+            and str(edge["from"]) not in bound
+        ):
+            bound.append(str(edge["from"]))
     found: list[Mapping[str, Any]] = []
-    offset = 0
-    while True:
-        payload = _http_json(
-            f"/api/registry/strategy-artifacts?artifact_state=approved&limit=200&offset={offset}",
-            tenant_id,
-        )
-        items = payload.get("items") if isinstance(payload, Mapping) else None
-        if not isinstance(items, list):
-            raise RegistryUnavailable("registry catalog response is malformed")
-        for row in items:
-            registry_id = str((row or {}).get("registry_id") or "")
-            if not registry_id:
-                continue
-            entry = http_registry_entry_reader(registry_id, tenant_id)
-            metadata = entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else {}
-            if (
-                metadata.get("persona_id") == persona_id
-                and metadata.get("execution_context") == "paper"
-                and entry.get("owner_tenant") in (tenant_id, None)
-            ):
-                found.append(entry)
-        nxt = payload.get("next_page_token")
-        if not nxt:
-            return select_running_artifacts(found)
-        offset = int(nxt)
+    for registry_id in bound:
+        entry = http_registry_entry_reader(registry_id, tenant_id)
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), Mapping) else {}
+        state = str(getattr(entry.get("artifact_state"), "value", entry.get("artifact_state")) or "")
+        if (
+            state == "approved"
+            and metadata.get("persona_id") == persona_id
+            and metadata.get("execution_context") == "paper"
+            and entry.get("owner_tenant") in (tenant_id, None)
+        ):
+            found.append(entry)
+    return select_running_artifacts(found)
 
 
 def select_running_artifacts(entries: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:

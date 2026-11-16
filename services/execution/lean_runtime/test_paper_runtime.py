@@ -19,8 +19,8 @@ from services.execution.lean_runtime.paper_runtime import (
     LifecycleTelemetryOutboxError,
     OrderEvent,
     _LifecycleBatch,
-    PaperExecutionAlgorithm,
-    PaperRuntimeService,
+    PaperExecutionAlgorithm as _RealPaperExecutionAlgorithm,
+    PaperRuntimeService as _RealPaperRuntimeService,
     RuntimeBindingResolver,
     RuntimeTelemetryEmitter,
     _extract_verified_bridge,
@@ -32,6 +32,52 @@ from services.execution.lean_runtime.runtime_context import (
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.performance_telemetry import MarketMark
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+
+# Fixture defaults. Production has no default starting cash and no policy-free mode, so
+# tests that are not about those behaviours must say so explicitly; this is the one place.
+TEST_POOL_BUDGET = 100_000.0
+TEST_POOL_RECORD = {
+    "pool_id": "pool-test",
+    "budget": TEST_POOL_BUDGET,
+    "risk_policy": {"risk_policy_id": "rp-test", "status": "active", "gross_limit": 10.0,
+                    "net_limit": 10.0, "max_leverage": 10.0},
+}
+
+
+PaperExecutionAlgorithm = _RealPaperExecutionAlgorithm
+_real_algo_init = _RealPaperExecutionAlgorithm.__init__
+
+
+def _fixture_algo_init(self, *args, **kwargs):
+    unfunded = kwargs.pop("unfunded", False)
+    unbound = kwargs.pop("unbound", False)
+    if not args:
+        if "initial_cash" not in kwargs and not kwargs.get("state_path") and not unfunded:
+            kwargs["initial_cash"] = TEST_POOL_BUDGET
+        if not unbound and not any(
+            k in kwargs for k in ("risk_policy", "risk_policy_ref", "capital_pool_reader", "capital_pool_id")
+        ):
+            kwargs["risk_policy"] = TEST_POOL_RECORD["risk_policy"]
+    _real_algo_init(self, *args, **kwargs)
+
+
+def setUpModule():
+    _RealPaperExecutionAlgorithm.__init__ = _fixture_algo_init
+
+
+def tearDownModule():
+    _RealPaperExecutionAlgorithm.__init__ = _real_algo_init
+
+
+class PaperRuntimeService(_RealPaperRuntimeService):
+    def __init__(self, *args, **kwargs):
+        unbound = kwargs.pop("unbound", False)
+        if "capital_pool_reader" not in kwargs and not unbound:
+            kwargs["capital_pool_reader"] = lambda _pool_id: dict(TEST_POOL_RECORD)
+        super().__init__(*args, **kwargs)
+        if not unbound and not self._algo._capital_pool_id:
+            self._algo._capital_pool_id = "pool-test"
 from services.trade_journey.correlation_envelope import propagate_envelope
 
 
@@ -2810,7 +2856,7 @@ class PaperLedgerLoadHardeningTest(unittest.TestCase):
     def test_nonfinite_performance_window_is_not_written_as_json_extension(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             state_path = Path(temporary_dir) / "paper-ledger.json"
-            algo = PaperExecutionAlgorithm(state_path=str(state_path))
+            algo = PaperExecutionAlgorithm(state_path=str(state_path), initial_cash=100_000.0)
             self.assertTrue(algo.BindPerformanceBinding("binding-a"))
             original = state_path.read_text(encoding="utf-8")
 
@@ -4067,7 +4113,8 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
         self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         ledger = service._algo.performance_ledger()
         self.assertEqual(ledger["fill_count"], 2)
-        self.assertEqual(ledger["cash"], 99985.0)
+        # 2400 buy and 2385 sell, less commission on both sides and 0.3% tax on the sell.
+        self.assertAlmostEqual(ledger["cash"], 99985.0 - (2400 * .001425 + 2385 * (.001425 + .003)))
         self.assertEqual(ledger["positions"], [])
         # Nothing partial reached the outbox and the signal was not DLQ'd.
         self.assertEqual(self._types("sb"), ["signal_generation", "trade_decision"])
@@ -4378,7 +4425,10 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(sell_fill.metadata.get("clamped_quantity"), 3.0)
         self.assertEqual(algo._holding("2330.TW").Quantity, 0.0)
         self.assertEqual(algo.positions(), [])
-        self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+        paid = sum(e.metadata["fee"] + e.metadata["tax"] for e in events)
+        self.assertGreater(paid, 0)
+        self.assertAlmostEqual(algo.performance_ledger()["cash"], 100_000.0 - paid)
+        self.assertAlmostEqual(algo.performance_ledger()["total_costs"], paid)
 
     def test_tw_and_twse_aliases_resolve_to_one_underlying_holding(self):
         events = []
@@ -4436,7 +4486,9 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         ])
         self.assertEqual(events[2].metadata.get("reason"), "sell_without_holdings")
         self.assertEqual(algo.positions(), [])
-        self.assertEqual(algo.performance_ledger()["cash"], 100_020.0)
+        paid = sum(e.metadata["fee"] + e.metadata["tax"] for e in events if e.event_type == "paper_fill_simulated")
+        self.assertGreater(paid, 0)
+        self.assertAlmostEqual(algo.performance_ledger()["cash"], 100_020.0 - paid)
 
     def test_ledger_never_holds_negative_shares_across_any_buy_sell_sequence(self):
         algo = PaperExecutionAlgorithm(initial_cash=500_000.0)
@@ -4990,7 +5042,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 2330 E1, E2, E3
         r_2330_e1_l = replay_case("2330", "E1", "buy")
         self.assertAlmostEqual(r_2330_e1_l["pnl_last"], -235.0)
-        self.assertAlmostEqual(r_2330_e1_l["worst_equity"], 99_765.0)
+        # the one-share entry also pays the 0.1425% cash-share commission on 2370
+        self.assertAlmostEqual(r_2330_e1_l["worst_equity"], 99_765.0 - 2370.0 * 0.001425)
 
         r_2330_e2_l = replay_case("2330", "E2", "buy")
         r_2330_e2_s = replay_case("2330", "E2", "sell")
@@ -5011,7 +5064,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 2317 E1, E2, E3
         r_2317_e1_l = replay_case("2317", "E1", "buy")
         self.assertAlmostEqual(r_2317_e1_l["pnl_last"], -21.0)
-        self.assertAlmostEqual(r_2317_e1_l["worst_equity"], 99_979.0)
+        # less the cash-share commission on the 245.5 entry
+        self.assertAlmostEqual(r_2317_e1_l["worst_equity"], 99_979.0 - 245.5 * 0.001425)
 
         r_2317_e2_l = replay_case("2317", "E2", "buy")
         r_2317_e2_s = replay_case("2317", "E2", "sell")
@@ -5062,7 +5116,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 0050 E1, E2, E3
         r_0050_e1_l = replay_case("0050", "E1", "buy")
         self.assertAlmostEqual(r_0050_e1_l["pnl_last"], -12.45, places=2)
-        self.assertAlmostEqual(r_0050_e1_l["worst_equity"], 99_987.55, places=2)
+        self.assertAlmostEqual(r_0050_e1_l["worst_equity"], 99_987.55 - 104.95 * 0.001425, places=2)
 
         r_0050_e2_l = replay_case("0050", "E2", "buy")
         r_0050_e2_s = replay_case("0050", "E2", "sell")
@@ -5623,6 +5677,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             initial_cash=500_000.0,
             event_sink=events.append,
             capital_pool_id="pool-tw-futures-paper",
+            risk_policy=TEST_POOL_RECORD["risk_policy"],
             in_process_broker=True,
         )
         # 1. Missing price_basis and only market_price supplied -> rejected with price_stale
@@ -5921,7 +5976,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             self.assertIsNotNone(restored.get_instrument_position("ssf:QFF:202611"))
             self.assertEqual(restored.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
             restored_snap = restored.assert_ledger_reconciliation()
-            self.assertAlmostEqual(restored_snap["costs"], 9.494, places=6)
+            # futures 9.494 plus the 0.1425% commission on the 100,000 cash-share buy
+            self.assertAlmostEqual(restored_snap["costs"], 9.494 + 142.5, places=6)
 
             # 4. Value mixed portfolio with authoritative marks (2330.TW @ 1010 -> +1000, QFF @ 2237 -> +1000)
             ledger = restored.performance_ledger()
@@ -5953,7 +6009,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
                 now=datetime(2026, 11, 6, 6, 5, 0, tzinfo=timezone.utc),
             )
             self.assertEqual(valuation.status, "valued")
-            self.assertAlmostEqual(valuation.sample.pnl, 2000.0 - 9.494, places=4)
+            self.assertAlmostEqual(valuation.sample.pnl, 2000.0 - 9.494 - 142.5, places=4)
 
             # 5. Legacy cash-only ledger migration: remove instrument_positions from JSON and reload
             legacy_path = Path(tmpdir) / "legacy-cash-ledger.json"
@@ -6000,7 +6056,202 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             )
             mig_snap = migrated.assert_ledger_reconciliation()
             self.assertAlmostEqual(mig_snap["realized_pnl"], 1000.0, places=4)
-            self.assertAlmostEqual(mig_snap["equity"], 101_000.0, places=4)
+            # 50 sold at 1020: commission 0.1425% plus 0.3% tax
+            self.assertAlmostEqual(mig_snap["equity"], 101_000.0 - 51_000.0 * (0.001425 + 0.003), places=4)
+
+
+class PaperLedgerCapitalCostsLimitsTest(unittest.TestCase):
+    """Starting cash from the pool budget, statutory costs, fail-closed policy, cash check.
+
+    Neighbouring owners are the real ones: services.capital.risk_policy loads the pool
+    record and the policy file from disk, and the in-process broker fills the order.
+    """
+
+    @staticmethod
+    def _ctx(algo, price):
+        algo.SetCurrentSignalContext({
+            "market_price": price,
+            "market_price_as_of": "2026-11-06T05:30:00Z",
+            "market_price_source": "source-ingest://snapshots/mss-2330",
+        })
+
+    def _stores(self, tmpdir, *, budget=100_000.0, policy_status="active", with_policy=True):
+        policy_dir = Path(tmpdir) / "risk_policies"
+        policy_dir.mkdir()
+        if with_policy:
+            (policy_dir / "rp-1.json").write_text(json.dumps({
+                "risk_policy_id": "rp-1", "version": "1.0", "status": policy_status,
+                "allowed_stages": ["paper"], "allowed_asset_classes": ["equity"],
+                "exposure_limits": {"gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0},
+            }), encoding="utf-8")
+        pool = {"pool_id": "pool-1", "risk_policy_ref": "rp-1", "status": "active"}
+        if budget is not None:
+            pool["budget"] = budget
+        store = Path(tmpdir) / "capital_pools.json"
+        store.write_text(json.dumps({"pools": [pool]}), encoding="utf-8")
+        return patch.dict(os.environ, {
+            "CAPITAL_RISK_POLICY_DIR": str(policy_dir),
+            "PANTHEON_CAPITAL_POOL_STORE_PATH": str(store),
+        })
+
+    def _algo(self, events, **kwargs):
+        return PaperExecutionAlgorithm(
+            event_sink=events.append, capital_pool_id="pool-1", in_process_broker=True,
+            unfunded=True, unbound=True, **kwargs,
+        )
+
+    def _order(self, algo, side, qty, signal_id):
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW", signal_id=signal_id, side=side, quantity=qty,
+            quantity_type="SHARES", action=side.upper(),
+        )
+
+    def test_ledger_starts_from_pool_budget_and_pays_costs_through_real_owners(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=250_000.0):
+            events = []
+            algo = self._algo(events, state_path=str(Path(tmpdir) / "ledger.json"))
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 100, "b1")
+            self.assertEqual(events[0].event_type, "paper_fill_simulated")
+            self.assertEqual(algo.performance_ledger()["initial_cash"], 250_000.0)
+            buy_cost = 100_000.0 * 0.001425
+            self.assertAlmostEqual(events[0].metadata["fee"], buy_cost)
+            self.assertEqual(events[0].metadata["tax"], 0.0)
+            self._ctx(algo, 1100.0)
+            self._order(algo, "sell", 100, "s1")
+            sell_fee, sell_tax = 110_000.0 * 0.001425, 110_000.0 * 0.003
+            snap = algo.assert_ledger_reconciliation()
+            self.assertAlmostEqual(snap["costs"], buy_cost + sell_fee + sell_tax)
+            self.assertAlmostEqual(snap["cash"], 250_000.0 + 10_000.0 - snap["costs"])
+            self.assertAlmostEqual(snap["equity"] - 250_000.0, 10_000.0 - snap["costs"])
+
+    def test_missing_pool_budget_fails_closed_without_default_amount(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=None):
+            events = []
+            algo = self._algo(events, state_path=str(Path(tmpdir) / "ledger.json"))
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 1, "b1")
+            self.assertEqual([e.event_type for e in events], ["order_rejection"])
+            self.assertEqual(events[0].metadata["reason"], "starting_cash_unavailable")
+            self.assertIn("no budget", events[0].metadata["available"])
+            self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+            self.assertIn("no budget", algo.starting_cash_error)
+            self.assertFalse((Path(tmpdir) / "ledger.json").exists())
+
+    def test_unfunded_ledger_without_any_pool_never_uses_a_default(self):
+        algo = PaperExecutionAlgorithm(unfunded=True, unbound=True)
+        self.assertFalse(algo.resolve_starting_cash())
+        self.assertIn("no capital pool id", algo.starting_cash_error)
+
+    def test_existing_ledger_keeps_recorded_starting_cash_when_budget_differs(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=999_999.0):
+            path = Path(tmpdir) / "ledger.json"
+            first = PaperExecutionAlgorithm(initial_cash=100_000.0, state_path=str(path))
+            self.assertTrue(first.BindPerformanceBinding("binding-1"))
+            events = []
+            restored = self._algo(events, state_path=str(path))
+            self.assertTrue(restored.BindPerformanceBinding("binding-1"))
+            self.assertEqual(restored.performance_ledger()["initial_cash"], 100_000.0)
+            self.assertEqual(restored.performance_ledger()["cash"], 100_000.0)
+
+    def test_unreadable_risk_policy_rejects_instead_of_running_without_limits(self):
+        for kwargs in ({"with_policy": False}, {"policy_status": "draft"}):
+            with self.subTest(kwargs), tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, **kwargs):
+                events = []
+                algo = self._algo(events)
+                self._ctx(algo, 1000.0)
+                self._order(algo, "buy", 1, "b1")
+                self.assertEqual([e.event_type for e in events], ["order_rejection"])
+                self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
+                self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+    def test_gate_and_expression_inputs_agree_on_unbound_policy(self):
+        from services.execution.lean_runtime.expression_inputs import (
+            ExpressionInputsProvider, ExpressionInputsUnavailable,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, with_policy=False):
+            pool = {"pool_id": "pool-1", "risk_policy_ref": "rp-1", "budget": 100_000.0}
+            provider = ExpressionInputsProvider(
+                capital_pool_reader=lambda _id: pool, runtime_summary_reader=lambda _id: {})
+            with self.assertRaises(ExpressionInputsUnavailable) as raised:
+                provider({"capital_pool_id": "pool-1", "runtime_id": "rt"})
+            self.assertEqual(raised.exception.missing, "risk_policy")
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 1, "b1")
+            self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
+
+    def test_buy_beyond_cash_is_rejected_with_insufficient_cash(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=100_000.0):
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 100, "all-cash")  # costs 100,142.5: more than cash
+            self.assertEqual(events[0].metadata["reason"], "insufficient_cash")
+            self.assertAlmostEqual(events[0].metadata["required"], 100_142.5)
+            self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+            self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+            self._order(algo, "buy", 99, "fits")
+            self.assertEqual(events[1].event_type, "paper_fill_simulated")
+            self.assertGreaterEqual(algo.performance_ledger()["cash"], 0.0)
+
+    def test_hosted_shape_ledger_loads_and_new_ledger_adds_no_keys(self):
+        hosted = {
+            "schema_version": "paper_performance_ledger.v1", "binding_id": "rb-1",
+            "initial_cash": 100000.0, "cash": 100015.0, "fill_count": 3,
+            "ledger_started_at": "2026-11-08T12:20:00Z", "first_fill_at": "2026-11-10T07:01:47Z",
+            "last_fill_at": "2026-11-14T07:45:09Z", "performance_window": {},
+            "pending_performance_pair": None, "pending_fill_publications": [],
+            "holdings": {"2330.TWSE": 1.0}, "open_episodes": {"2330.TWSE": "ep-1"},
+            "execution_prices": {"2330.TWSE": 2350.0, "eq:2330": 2285.0},
+            "realized_pnl": 2365.0, "total_costs": 0.0, "injected_equity_capital": 0.0,
+            "instrument_positions": [{
+                "persona_binding_id": "rb-1", "normalised_underlying": "2330", "instrument_id": "eq:2330",
+                "symbol": "2330.TWSE", "kind": "cash_share", "contract": None, "contract_month": None,
+                "quantity": 1.0, "multiplier": 1.0, "average_entry_price": 2350.0, "mark_price": 2350.0,
+                "initial_margin_reserved": 0.0, "maintenance_margin_required": 0.0,
+                "unrealized_pnl": 0.0, "realized_pnl": 2365.0, "costs": 0.0, "status": "open"}],
+            "margin_call_active": False, "margin_call_since": None,
+            "last_futures_mark_session_date": None, "futures_mark_diagnostic": None,
+            "settled_futures_contracts": [],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=5.0):
+            path = Path(tmpdir) / "ledger.json"
+            path.write_text(json.dumps(hosted), encoding="utf-8")
+            algo = self._algo([], state_path=str(path))
+            self.assertTrue(algo.BindPerformanceBinding("rb-1"))
+            ledger = algo.performance_ledger()
+            self.assertEqual((ledger["initial_cash"], ledger["cash"], ledger["fill_count"]),
+                             (100000.0, 100015.0, 3))
+            algo._persist_state()
+            written = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(set(written) - set(hosted), set())
+            self.assertEqual(written["initial_cash"], 100000.0)
+
+    def test_valuation_method_name_is_unchanged_for_ranking_observations(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir):
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 10, "b1")
+            self.assertEqual(events[0].event_type, "paper_fill_simulated")
+            from services.execution.lean_runtime.performance_telemetry import value_portfolio
+            ledger = algo.performance_ledger()
+            result = value_portfolio(
+                initial_cash=ledger["initial_cash"], cash=ledger["cash"],
+                positions=ledger["positions"],
+                marks={"2330.TW": MarketMark(symbol="2330.TW", price=1000.0,
+                                             as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                             source_ref="source-ingest://snapshots/mss-2330")},
+                fill_count=ledger["fill_count"], last_fill_at=ledger["last_fill_at"],
+            )
+            self.assertEqual(result.diagnostic["valuation_method"], "fill_cash_ledger_mark_to_market")
+            # Same fill, marked at the fill price: the only change is the statutory cost.
+            snap = algo.assert_ledger_reconciliation()
+            self.assertAlmostEqual(snap["equity"] - snap["initial_cash"], -10 * 1000.0 * 0.001425)
+            self.assertEqual(ledger["total_costs"], 10 * 1000.0 * 0.001425)
 
 
 class TestPaperFuturesFillEpisode(unittest.TestCase):
@@ -6176,7 +6427,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
             ):
                 service._member_virtual_books.observe(
                     binding_id="b", envelope_checksum="sha256:env", symbol=symbol, event_time=at,
-                    price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
+                    price=price, open_price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
         books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
         self.assertEqual(set(books), {decay["registry_id"], good["registry_id"]})
         for entry in (decay, good):
@@ -6219,7 +6470,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         for day, price in ((1, 100), (2, 110)):
             service._member_virtual_books.observe(
                 binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
-                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
                 members={"child": {"artifact_id": "child", "version": "1", "checksum": parent["checksum"],
                                    "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
                 bar_frequency="1d")
@@ -6236,7 +6487,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
         for day, price in ((1, 100), (2, 110)):
             service._member_virtual_books.observe(
                 binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
-                event_time=f"2024-10-0{day}T05:30:00Z", price=price, source_ref="r",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
                 members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
                                "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
                 bar_frequency="1d")

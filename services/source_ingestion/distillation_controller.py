@@ -259,6 +259,31 @@ def _drop_nulls(value: Any) -> Any:
     return value
 
 
+def card_dataset_binding_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any] | None:
+    """Governed dataset reference compiled hypothesis rules are bound to.
+
+    Reference only (no records); Research resolves the governed dataset version
+    at gate time. Unset means a card's compiled rule stays a research-only draft.
+    """
+    source = os.environ if env is None else env
+
+    def csv(name: str) -> list[str]:
+        return [v.strip() for v in str(source.get(name) or "").split(",") if v.strip()]
+
+    dataset_id = str(
+        source.get("PANTHEON_L2_CARD_DATASET_ID") or source.get("PERSONA_POOL_SOURCE_DATASET_ID") or ""
+    ).strip()
+    symbols = csv("PANTHEON_L2_CARD_SYMBOLS")
+    if not dataset_id or not symbols:
+        return None
+    return {
+        "dataset_id": dataset_id,
+        "source_dataset_refs": csv("PANTHEON_L2_CARD_SOURCE_DATASET_REFS") or [dataset_id],
+        "symbols": symbols,
+        "bar_frequency": str(source.get("PANTHEON_L2_CARD_BAR_FREQUENCY") or "1d"),
+    }
+
+
 def _versioned_registry_id(source: SourceRecord, job: DistillationJob) -> str:
     digest = (
         job.source_digest.removeprefix("sha256:")
@@ -311,7 +336,9 @@ def _build_registry_payload(
     # Registry delivery and replay must be a pure projection of the committed
     # SourceRecord plus the exact seed/evidence lineage materialized for this
     # version. Never resolve mutable production-note bytes by source_id here.
-    conversion = StrategySpecConversionService().convert_seed(
+    conversion = StrategySpecConversionService(
+        dataset_binding=card_dataset_binding_from_env()
+    ).convert_seed(
         seed=request.seed,
         source_records=[source],
         evidence_items=[request.evidence_item],

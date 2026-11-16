@@ -375,3 +375,105 @@ daily files, complete sessions, zips) are recorded in
 are idempotent and request just the new/changing files. A first run is about 30
 requests at least five seconds apart. Run once with
 `python -m collector_stack.cli --root-dir /data run --source collector-tw-taifex-vix`.
+
+## Survivorship Completeness: Non-Traded/Suspended Rows, Official Holiday Schedule, and Trading Suspensions
+
+### 1. Preserving Non-Traded and Suspended Securities in Price-History Bundles
+
+Both `collector-tw-twse-price-history` (`TwseDailyPriceHistorySpider`) and
+`collector-tw-tpex-price-history` (`TpexDailyPriceHistorySpider`) retain every listed
+security row present in the dated all-market quote table even when its session close
+price is `"--"` (TWSE `MI_INDEX`) or `" ---"` / `"---"` (TPEx `dailyQuotes`):
+
+- Such rows are emitted as explicit `tw_price_daily` items with `open=null`,
+  `high=null`, `low=null`, `close=null`, `change=null` (no price is invented or
+  interpolated), `not_traded=true`, `suspended_or_not_traded=true`,
+  `trading_status="not_traded"`, and `raw_close` preserving the original upstream
+  close string (`"--"` or `"---"`).
+- Normal traded securities carry `not_traded=false`,
+  `suspended_or_not_traded=false`, and `trading_status="traded"`.
+- Existing downstream consumers that require a numeric price (`candidate_pool_market_feed._bar`,
+  `LatestMarketSnapshotStore._point_from_record`, `feature_catalogue.observations_from_row`,
+  and `TaiwanOfficialMarketDatasetAdapter.records_from_price_history_payload`) skip
+  `close=null` / `not_traded=true` rows and leave their outputs unchanged.
+
+### 2. Official Holiday Schedule and Trading Suspension Sources (Disabled by Default)
+
+Two sources in `fetch-policy.json` collect official TWSE and TPEx governance records
+covering `2024` through `2026` with single-connection (`max_connections=1`) and
+`min_interval_seconds=5.0` spacing:
+
+| Source ID | Dataset | Official Endpoints | Official Publication References | Default Policy State |
+| --- | --- | --- | --- | --- |
+| `collector-tw-trading-holidays` | `tw_trading_holidays` | TWSE: `https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?date={yyyy}0101&response=json`<br>TPEx: `https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate?date={yyyy}&response=json` | TWSE: `https://www.twse.com.tw/zh/trading/holiday.html`<br>TPEx: `https://www.tpex.org.tw/zh-tw/announce/market/holiday.html` | `"enabled": false` (6 requests/run across 2024–2026) |
+| `collector-tw-trading-suspension` | `tw_trading_suspension` | TWSE: `https://www.twse.com.tw/rwd/zh/afterTrading/TWTAWU?startDate={start_yyyymmdd}&endDate={end_yyyymmdd}&response=json`<br>TPEx: `https://www.tpex.org.tw/www/zh-tw/bulletin/sprcHis?date={yyyy}&cate=1&response=json` | TWSE: `https://www.twse.com.tw/zh/trading/historical/twtawu.html`<br>TPEx: `https://www.tpex.org.tw/zh-tw/announce/market/halt/historical.html` | `"enabled": false` (4 requests/run across 2024–2026) |
+
+Both sources retain the raw upstream values (`raw_values` and `raw/*.json`) and the
+official publication reference (`official_publication_ref`), and fail closed (`partial`
+bundle with `0` items and `parse_failed: <reason>`) if a table is missing or any header
+or field format changes. They do not alter the pinned 2026 TWSE schedule
+(`twse-2026-schedule-v1`) used by market admission.
+
+### 3. Operator Deployment, Timer Enablement, and Rollback Step
+
+Both sources are disabled by default (`"enabled": false` in `deploy/collector/fetch-policy.json`)
+until the operator deploys them on the collector host:
+
+```bash
+# Deploy / enable after setting "enabled": true for both sources in /opt/pantheon-collector/fetch-policy.json:
+for src in \
+  collector-tw-trading-holidays \
+  collector-tw-trading-suspension; do
+  sudo systemctl disable --now "pantheon-collector-hourly@${src}.timer"
+  sudo systemctl enable --now "pantheon-collector@${src}.timer"
+done
+
+# One-shot verification run:
+sudo systemctl start pantheon-collector@collector-tw-trading-holidays.service
+sudo systemctl start pantheon-collector@collector-tw-trading-suspension.service
+```
+
+**Rollback step** (disable timers, set `"enabled": false` in `fetch-policy.json`, and
+verify config):
+
+```bash
+for src in \
+  collector-tw-trading-holidays \
+  collector-tw-trading-suspension; do
+  sudo systemctl disable --now "pantheon-collector@${src}.timer"
+  sudo systemctl disable --now "pantheon-collector-hourly@${src}.timer"
+  sudo systemctl stop "pantheon-collector@${src}.service" || true
+done
+# Restore "enabled": false in /opt/pantheon-collector/fetch-policy.json and validate:
+docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
+```
+
+### 4. Two-Year History Recovery Analysis and Bounded Re-Collection Plan
+
+Nothing is re-collected by `COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115`:
+
+1. **What can be recovered from retained raw captures without new requests**:
+   - Existing per-item price-history bundle raw files
+     (`/data/bundles/collector-tw-{twse,tpex}-price-history/<date>/<run_id>/raw/*.json`)
+     cannot recover previously dropped non-traded/suspended securities (`0` dates
+     recoverable from per-item raw files), because the prior spiders skipped
+     `close_price is None` rows at `spiders.py` lines `993–994` (TWSE) and
+     `1447–1448` (TPEx) before building `CollectedItem` or writing `raw/<item_id>.json`,
+     and each `raw/<item_id>.json` contains only that single security's row rather than
+     the full upstream quote table.
+   - Where full-page upstream `MI_INDEX` / `dailyQuotes` JSON captures are retained on
+     disk within the 90-day retention window (`raw_retention_days = 90`), those
+     retained dates can be re-parsed offline with `0` new HTTP requests.
+2. **Bounded re-collection plan where full-page raw captures do not exist**:
+   - Published rate limits (`fetch-policy.json`): `max_connections = 1`,
+     `min_interval_seconds = 5.0` (at most 1 request every 5 seconds per exchange).
+   - `collector-tw-twse-price-history`: `488` per-date all-stock `MI_INDEX` requests
+     for 2 years (`244` trading days/year × 2) = `2,440` seconds (~`40.7` minutes).
+   - `collector-tw-tpex-price-history`: `488` per-date all-stock `dailyQuotes` requests
+     for 2 years (`244` trading days/year × 2) = `2,440` seconds (~`40.7` minutes).
+   - `collector-tw-trading-holidays` (2024–2026): `6` requests (`3` TWSE + `3` TPEx) =
+     `30` seconds.
+   - `collector-tw-trading-suspension` (2024–2026): `4` requests (`1` TWSE `TWTAWU` +
+     `3` TPEx `sprcHis`) = `20` seconds.
+   - Total bounded re-collection budget: `986` requests (`4,930` seconds ≈ `82.2`
+     minutes sequential wall-clock time).

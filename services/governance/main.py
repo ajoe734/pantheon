@@ -65,6 +65,10 @@ from services.governance.paper_approval_scope import (
     PaperApprovalDenied,
     PaperCandidateUnavailable,
     configured_paper_registry_reader,
+    configured_persona_paper_binding_verifier,
+    is_persona_lifecycle_decision,
+    require_paper_lifecycle_decision,
+    require_card_admission_decision,
     require_paper_owned_decision,
     resolve_dev_paper_grant,
     validate_paper_decide_body,
@@ -1399,6 +1403,11 @@ def _paper_registry_reader():
     return configured_paper_registry_reader()
 
 
+def _persona_paper_binding_verifier():
+    """Capital + Runtime Manager owner readers for the paper-ladder lifecycle grant."""
+    return configured_persona_paper_binding_verifier()
+
+
 def _approval_reader(authorization: Optional[str]) -> AuthContext:
     ctx = _approval_principal(authorization)
     _dev_paper_grant(ctx)
@@ -1546,6 +1555,7 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     vetoed_handoff: List[Dict[str, Any]] = []
 
     def mutate(decision):
+        lifecycle_evidence = None
         if operation == 'propose':
             if decision is not None:
                 raise ApprovalCommandConflict('Approval decision already exists')
@@ -1567,10 +1577,29 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             # original receipt is replayed exactly while a fresh transition
             # always rechecks the actual candidate.
             current = decision.to_dict()
-            require_paper_owned_decision(current, grant=grant, now=now)
-            if operation == 'decide':
-                validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
-            verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+            if is_persona_lifecycle_decision(current):
+                # Paper-ladder persona lifecycle widening (operator decision
+                # 2026-11-15): proposer, transition and owner-verified paper
+                # bindings are rechecked on every review/decide.
+                lifecycle_evidence = require_paper_lifecycle_decision(
+                    current, grant=grant, now=now, binding_verifier=_persona_paper_binding_verifier())
+                # The dedicated subject never holds an unscoped decision: stamp
+                # the exact grant scope on the lifecycle decision it acts on.
+                decision.authorization_scope = grant.authorization_scope
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+            else:
+                require_paper_owned_decision(current, grant=grant, now=now)
+                widening = grant.card_admission
+                if (widening is not None and current.get('owner_user_id') == widening.proposer_subject
+                        and current.get('owner_user_id') != grant.subject):
+                    # Card admission widening (design 6A): the research-owned decision is admitted by the
+                    # widened grant content only; stamp the exact grant scope as for the lifecycle target.
+                    decision.authorization_scope = grant.authorization_scope
+                    lifecycle_evidence = require_card_admission_decision(current, grant=grant, now=now)
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+                verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
         if operation == 'decide' and str(getattr(body.outcome, 'value', body.outcome)) in (
                 'approved', 'approved_with_conditions'):
             veto_block = _consultation_veto_block(
@@ -1594,6 +1623,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         else:
             fields = body.model_dump(mode='json', exclude={'expected_version', 'actor_role', 'actor_id', 'evidence_refs'})
             refs = [EvidenceRef(**ref.model_dump()) for ref in (body.evidence_refs or [])]
+            if lifecycle_evidence is not None:
+                # The decision record carries the grant id and verified bindings.
+                refs.append(EvidenceRef(
+                    ref_type='audit_log_entry', ref_id=lifecycle_evidence['grant_id'],
+                    note=json.dumps(lifecycle_evidence, sort_keys=True, separators=(',', ':'))))
             decision.decide(actor_role=role, actor_id=ctx.actor_id, evidence_refs=refs or None, **fields)
         errors = decision.validate()
         if errors:
@@ -1615,7 +1649,7 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     except PaperApprovalDenied as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     except PaperCandidateUnavailable as exc:
-        raise HTTPException(503, 'Registry candidate read unavailable') from exc
+        raise HTTPException(503, 'Candidate or binding owner read unavailable') from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

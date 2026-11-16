@@ -292,6 +292,35 @@ def test_existing_deny_all_agents_get_exec_policy(tmp_path) -> None:
     _admission(result.final_agents)
 
 
+def test_memory_index_agent_is_deny_all_with_pool_slot_models(tmp_path) -> None:
+    result, _ = _run_model_pool_script(tmp_path, token_present=False, agents=[{"id": "main"}])
+    assert result.returncode == 0, result.stderr
+    agent = next(a for a in result.final_agents if a["id"] == "memory-index")
+    assert agent["tools"] == {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}
+    assert agent["model"] == {"primary": "openai/gpt-5.5",
+                              "fallbacks": ["anthropic/claude-sonnet-4-6"]}
+    assert sum(a["id"] == "memory-index" for a in result.final_agents) == 1
+    # Same admission assertions as structured-extraction.
+    _admission(result.final_agents)
+    sys.path.insert(0, str(REPO_ROOT / "services" / "openclaw-gateway-adapter"))
+    import main as adapter
+
+    class Provider:
+        def _gateway_call(self, *_a, **_k):
+            return {"valid": True, "config": {"agents": {"list": result.final_agents, "defaults": {"cliBackends": {
+                "claude-cli": {"args": adapter._CLAUDE_CLI_TOOLSEARCH_ARGS,
+                               "resumeArgs": adapter._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS}}}}}}
+
+    saved = adapter._OPENCLAW_AGENT_PROVIDER
+    adapter._OPENCLAW_AGENT_PROVIDER = Provider()
+    try:
+        adapter._assert_structured_gateway_policy("memory-index", deadline=time.monotonic() + 5)
+    finally:
+        adapter._OPENCLAW_AGENT_PROVIDER = saved
+    result2, _ = _run_model_pool_script(tmp_path, token_present=False, agents=result.final_agents)
+    assert result2.final_agents == result.final_agents
+
+
 def test_admission_still_rejects_agent_without_deny_all() -> None:
     import pytest
 

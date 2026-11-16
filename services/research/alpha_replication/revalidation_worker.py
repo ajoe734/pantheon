@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Collection, Mapping
+from typing import Any, Callable, Collection, Mapping
 
 from services.research.experiment_orchestrator.authority import (
     AuthoritativeRunReceipt,
@@ -154,7 +154,11 @@ class AlphaRevalidationWorker:
         registry_url: str | None = None,
         training_session_url: str | None = None,
         lease_seconds: int | None = None,
+        dataset_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None = None,
     ) -> None:
+        # Resolves a governed dataset *reference* (dataset_id binding without
+        # records) into the governed dataset version; absent means fail closed.
+        self._dataset_resolver = dataset_resolver
         self._queue = queue
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
@@ -859,6 +863,12 @@ class AlphaRevalidationWorker:
             run_id=f"bt-{run_id}",
         )
         self._backtest_run_store.record(evaluated)
+        if isinstance(raw_spec.get("card_wiring"), Mapping):
+            # Candidate registration needs the full evaluation the gate verdict is
+            # bound to; the run store keeps only its digest.
+            from services.research.alpha_replication.admission import persist_card_evaluation
+
+            persist_card_evaluation(self._data_dir, evaluated)
         return evaluated
 
     def _publish_research_finding(
@@ -978,7 +988,7 @@ class AlphaRevalidationWorker:
             str(attempt_number),
         )
         run_id = f"erun-alpha-{run_hash}"
-        raw_spec = dict(spec)
+        raw_spec = self._lift_card_inputs(spec)
         evaluation_spec = dict(spec)
         # Registry approval is validated against the immutable envelope above.
         # ReplicationGate is a candidate-content validator and intentionally
@@ -994,6 +1004,8 @@ class AlphaRevalidationWorker:
             "hypothesis_card",
             "hypothesis_predictions",
             "mechanism_inputs",
+            "strategy_artifact_checksum",
+            "card_wiring",
         ):
             evaluation_spec.pop(non_schema_key, None)
 
@@ -1265,6 +1277,42 @@ class AlphaRevalidationWorker:
             status="failed",
             failure_reason=gate_response.summary,
         )
+
+    def _lift_card_inputs(self, spec: Mapping[str, Any]) -> dict[str, Any]:
+        """Candidate inputs a card-derived StrategySpec carries in ``metadata``.
+
+        The StrategySpec schema has no top-level slot for them, so conversion
+        stores them in ``metadata``. Top-level keys win; a governed dataset
+        reference is resolved to the governed dataset version or dropped
+        (fail closed), never synthesised.
+        """
+        raw = dict(spec)
+        meta = spec.get("metadata")
+        if isinstance(meta, Mapping):
+            for key in (
+                "strategy_artifact", "strategy_artifact_checksum", "backtest_dataset",
+                "hypothesis_card", "hypothesis_predictions", "mechanism_inputs", "family_id",
+                "card_wiring",
+            ):
+                if key not in raw and key in meta:
+                    raw[key] = meta[key]
+        dataset = raw.get("backtest_dataset")
+        if isinstance(dataset, Mapping) and not dataset.get("records"):
+            resolved = None
+            if self._dataset_resolver is not None:
+                try:
+                    resolved = self._dataset_resolver(dict(dataset))
+                except Exception:  # noqa: BLE001 - unavailable governed data fails closed
+                    resolved = None
+            if (
+                isinstance(resolved, Mapping)
+                and resolved.get("records")
+                and resolved.get("dataset_id") == dataset.get("dataset_id")
+            ):
+                raw["backtest_dataset"] = dict(resolved)
+            else:
+                raw.pop("backtest_dataset", None)
+        return raw
 
     @staticmethod
     def _dataset_version_id(spec: Mapping[str, Any]) -> str:

@@ -223,11 +223,28 @@ A candidate joins as `trial` only when all hold:
 
 No qualifying candidate → the risk budget stays unused and the reason is recorded.
 
+#### 5.1a Daily fill convention (decision of 2026-11-15)
+
+Admission replay, the candidate replay book, member virtual books, the expression replay and the gate backtest all
+use one convention for daily strategies: a decision computed from the close of session D is filled at the **open of
+session D+1** with the statutory costs; a session without an open price gives no fill with the reason
+`no_open_price` and never falls back to the close. Operator decision 2026-11-15: 「回測和 paper 都改成隔日開盤」
+(option A; transcript reference in
+`docs/deployment/evidence/PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115/evidence.json`, implementation and parity proof in
+`docs/deployment/evidence/GATE-DAILY-NEXT-OPEN-REBASELINE-20261115/evidence.json`). The intraday convention is unchanged.
+Admission results now report `fill_convention`; thresholds (correlation cut-off, Sharpe improvement, deflation) are
+unchanged, so some candidates that cleared admission under close fills no longer do on the same recorded bars.
+
 ### 5.2 Baseline
 
 The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is its approved baseline;
 `DISCOVERY-GATE-PASS-APPROVED-BASELINE-20261112` is re-scoped to key baselines by pool member and to compare
 them with the member's **virtual book**, not with the persona's combined account.
+
+A baseline whose gate proof was computed with the decision filled at the close of its own bar is not comparable with a
+next-open virtual book. `resolve_member_baseline` reports it as `no_approved_baseline` /
+`baseline_computed_under_decision_close_fill` with `operator_decision_required`; it is neither kept as approved nor
+removed. The re-baseline run is `python -m services.research.rebaseline_next_open`.
 
 ### 5.3 Weights
 
@@ -245,6 +262,16 @@ budget until 20 trading days of virtual-book history exist.
   one is removed. This replaces "retire the parent persona".
 * The automatic consumer's retire action changes target from the persona lifecycle to "remove pool member".
   The persona lifecycle is only changed by the operator.
+  The sentence above was written about automatic retirement; freeze and retire remain operator decisions.
+* **Amendment, operator decision 2026-11-15** (transcript
+  `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/b1134a03-3943-4f96-86d7-19e3d4aab6a5.jsonl`
+  line 11873, 10:25:40.843Z, uuid `6a795cd3-bb88-461f-9d9b-441be81526a7`; answer 「paper 自動核准」): the paper
+  automated gate may decide exactly two persona lifecycle steps, `research_only → consultable` and
+  `consultable → paper_owner`, and only for a persona with an active paper capital binding and an active paper
+  runtime binding (both read from their owners), proposed by the named enrolment proposer principal, in the paper
+  environment. The widening is explicit in the dev paper grant content and the decision record carries the grant
+  id and the verified bindings. **Limit: the paper ladder only.** Everything beyond paper (`live_owner`, canary,
+  live), `frozen`, `retired` and every other transition stays with the operator.
 
 ### 5.5 Persona cycle
 

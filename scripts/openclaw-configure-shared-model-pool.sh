@@ -86,13 +86,24 @@ if compose exec -T -u node openclaw-gateway node -e \
   # The argv contains only the literal reference, never the credential value.
   openclaw config set --batch-json "$CLAUDE_TOKEN_BATCH" >/dev/null
 fi
-# Dedicated deny-all agent for the structured extraction route (adapter
-# STRUCTURED_AGENT_ID). Upsert so main and other agents stay unchanged.
-# Fail closed: a read/shape error must never replace the whole registry.
+# Dedicated deny-all agents: structured-extraction (adapter STRUCTURED_AGENT_ID)
+# and memory-index (adapter memory LLM bridge, Hindsight background model calls).
+# Upsert so main and other agents stay unchanged. Fail closed: a read/shape
+# error must never replace the whole registry.
+# memory-index model slots come from existing pool entries by configuration
+# only; no new model or credential is introduced.
+memory_index_primary="${OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL:-openai/gpt-5.5}"
+memory_index_fallbacks="${OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS:-anthropic/claude-sonnet-4-6}"
 agents_cfg="$(openclaw config get agents --json)"
-agents_list="$(jq -ce '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
+agents_list="$(jq -ce --arg mi_primary "$memory_index_primary" --arg mi_fallbacks "$memory_index_fallbacks" \
+  '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
   | (if any(.[]; .id == "structured-extraction") then . else . + [{"id":"structured-extraction"}] end)
+  | (if any(.[]; .id == "memory-index") then . else . + [{"id":"memory-index"}] end)
   | map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"]}) else . end)
+  | map(if .id == "memory-index" then
+      .tools = ((.tools // {}) + {"deny":["*"]})
+      | .model = {"primary": $mi_primary, "fallbacks": ($mi_fallbacks | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))}
+    else . end)
   | map(if (.tools.deny? // null) == ["*"] then .tools.exec = {"security":"deny","ask":"always"} else . end)' <<<"$agents_cfg")"
 openclaw config set agents.list "$agents_list" --strict-json --replace >/dev/null
 openclaw config validate
@@ -123,6 +134,12 @@ jq -e '. == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]' <<<"$fallbacks" >/dev/null
 jq -e '. == true' <<<"$responses_enabled" >/dev/null
 openclaw config get agents.list --json \
   | jq -e 'map(select(.id == "structured-extraction")) | length == 1 and .[0].tools.deny == ["*"] and .[0].tools.exec.security == "deny"' >/dev/null
+openclaw config get agents.list --json \
+  | jq -e 'map(select(.id == "memory-index")) | length == 1 and .[0].tools.deny == ["*"] and .[0].tools.exec.security == "deny" and .[0].tools.exec.ask == "always"' >/dev/null
+# memory-index model refs must be existing pool slots (no new model added).
+openclaw config get agents.list --json \
+  | jq -e --argjson pool "$configured" '(map(select(.id == "memory-index"))[0].model) as $m
+      | ($m.primary | in($pool)) and ($m.fallbacks | all(.[]; in($pool)))' >/dev/null
 for model_ref in \
   openai/gpt-5.6-sol \
   openai/gpt-5.5 \

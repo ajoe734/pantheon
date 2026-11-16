@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import math
 import os
 import sys
 import unittest
@@ -398,9 +399,11 @@ class TestCanonicalArtifactBacktest(unittest.TestCase):
         metrics = result.backtest_result.per_instrument_metrics
         self.assertEqual(list(metrics), ["2330.TWSE"])
         self.assertEqual(result.backtest_result.aggregate_metrics["num_instruments"], 1)
-        # one BUY order per bar once lookback is satisfied, accumulated to a long position
-        self.assertEqual(metrics["2330.TWSE"]["trade_count"], len(self.RISING) - 1)
-        self.assertEqual(metrics["2330.TWSE"]["net_position"], float(len(self.RISING) - 1))
+        # one BUY decided per bar once lookback is satisfied; each fills at the next session's open, so
+        # the first decision (bar 1) fills at bar 2 and the last bar's decision has no next session
+        self.assertEqual(metrics["2330.TWSE"]["trade_count"], len(self.RISING) - 2)
+        self.assertEqual(metrics["2330.TWSE"]["net_position"], float(len(self.RISING) - 2))
+        self.assertEqual(metrics["2330.TWSE"]["fill_rule"], "next_open")
         entry = result.registry_entry["metadata"]
         self.assertEqual(entry["strategy"], "close_to_close_momentum")
         self.assertEqual(entry["strategy_artifact"]["artifact_id"], _momentum_artifact()["artifact_id"])
@@ -409,7 +412,7 @@ class TestCanonicalArtifactBacktest(unittest.TestCase):
     def test_sell_goes_short_instead_of_exiting_long(self) -> None:
         result = self._run(self.FALLING, self.RISING, _momentum_artifact())
         metrics = result.backtest_result.per_instrument_metrics["2330.TWSE"]
-        self.assertEqual(metrics["net_position"], -float(len(self.FALLING) - 1))
+        self.assertEqual(metrics["net_position"], -float(len(self.FALLING) - 2))
         self.assertGreater(metrics["total_return"], 0.0)  # short profits on a falling series
 
     @unittest.skipUnless(_HAS_VECTORBT, "real vectorbt is not installed")
@@ -512,8 +515,12 @@ class TestCanonicalArtifactBacktest(unittest.TestCase):
         self.assertEqual(list(sizes_with), ["2330.TWSE"])
         self.assertTrue(math.isnan(sizes_without["2330.TWSE"][0]))
         self.assertTrue(math.isnan(sizes_with["2330.TWSE"][0]))
-        self.assertEqual(sizes_without["2330.TWSE"][1:], sizes_with["2330.TWSE"][1:])
-        self.assertEqual(sizes_with["2330.TWSE"][1:], [1.0] * (len(self.RISING) - 1))
+        def nan_none(sizes):
+            return [None if math.isnan(x) else x for x in sizes]
+        self.assertEqual(nan_none(sizes_without["2330.TWSE"][1:]), nan_none(sizes_with["2330.TWSE"][1:]))
+        # the first decision (bar 1) fills at the open of bar 2: no order on bars 0 and 1
+        self.assertTrue(math.isnan(sizes_with["2330.TWSE"][1]))
+        self.assertEqual(sizes_with["2330.TWSE"][2:], [1.0] * (len(self.RISING) - 2))
 
         # 3. Run metadata records strength without using it for sizing
         class _OrderCapturingBackend:
@@ -639,6 +646,101 @@ class TestZeroActivitySharpe(unittest.TestCase):
         )
 
 
+def _canonical_dataset_with_opens(closes: list[float], opens: list[float]) -> dict:
+    start = date(2024, 1, 1)
+    rows = [
+        {"instrument": symbol, "date": (start + timedelta(days=i)).isoformat(),
+         "open": o, "high": max(o, c), "low": min(o, c), "close": c, "volume": 1000}
+        for symbol, series in (("2330.TWSE", list(zip(opens, closes))), ("2317.TWSE", list(zip(opens, closes))))
+        for i, (o, c) in enumerate(series)
+    ]
+    return {"dataset_id": "dataset:canonical-opens", "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+            "source_dataset_refs": ["dataset:test-source"], "data_frequency": "daily", "records": rows}
+
+
+class TestDailyNextOpenFillConvention(unittest.TestCase):
+    """Daily decisions are computed from the close of session D and filled at the open of D+1."""
+
+    def test_orders_move_to_the_next_session_and_a_missing_open_gives_no_fill_with_a_reason(self) -> None:
+        from adapter.vectorbt_adapter import _shift_daily_orders_to_next_open
+
+        nan = float("nan")
+        bars = [(10.0, 11.0, 9.0, 10.5, 1.0)] * 4
+        dates = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+        filled, gaps = _shift_daily_orders_to_next_open([nan, 10.0, -10.0, 10.0], bars, dates)
+        self.assertTrue(math.isnan(filled[0]) and math.isnan(filled[1]))
+        self.assertEqual(filled[2:], [10.0, -10.0])  # the last session's decision has no next session
+        self.assertEqual(gaps, [])
+        no_open = list(bars)
+        no_open[2] = (0.0, 11.0, 9.0, 10.5, 1.0)
+        filled, gaps = _shift_daily_orders_to_next_open([nan, 10.0, -10.0, 10.0], no_open, dates)
+        self.assertTrue(math.isnan(filled[2]))  # never falls back to the close of any bar
+        self.assertEqual(filled[3], -10.0)
+        self.assertEqual(gaps, [{"decision_date": "2024-01-02", "fill_date": "2024-01-03",
+                                 "reason": "no_open_price"}])
+
+    @unittest.skipUnless(_HAS_VECTORBT, "real vectorbt is not installed")
+    def test_backtest_fills_at_the_next_open_with_statutory_costs_and_legacy_is_the_old_close_fill(self) -> None:
+        from adapter.vectorbt_adapter import (
+            FILL_CONVENTION, LEGACY_FILL_CONVENTION, BacktestConfig, VectorbtBackend,
+        )
+
+        closes = [100.0 + i for i in range(40)]
+        opens = [c * 0.9 for c in closes]
+        dataset = _canonical_dataset_with_opens(closes, opens)
+        artifact = _momentum_artifact()
+
+        def run(convention: str):
+            with mock.patch.dict(os.environ, {"PANTHEON_VECTORBT_BACKEND": "real"}):
+                return run_vectorbt_workflow(dataset, backend=VectorbtBackend(),
+                    config=BacktestConfig(strategy_artifact=artifact, fill_convention=convention))
+
+        new = run(FILL_CONVENTION).backtest_result.per_instrument_metrics["2330.TWSE"]
+        old = run(LEGACY_FILL_CONVENTION).backtest_result.per_instrument_metrics["2330.TWSE"]
+        # BUY 1 share per decision from bar 1, each filled at the next bar's open (bars 2..39)
+        expected = 100000.0 - sum(opens[j] for j in range(2, 40)) * 1.001425 + 38 * closes[-1]
+        self.assertAlmostEqual(new["final_portfolio_value"], expected, places=2)
+        self.assertEqual((new["fill_convention"], new["fill_rule"]), (FILL_CONVENTION, "next_open"))
+        self.assertEqual(new["unfilled_decisions"], [])
+        legacy_expected = 100000.0 - sum(closes[j] for j in range(1, 40)) * 1.001425 + 39 * closes[-1]
+        self.assertAlmostEqual(old["final_portfolio_value"], legacy_expected, places=2)
+        self.assertEqual((old["fill_convention"], old["fill_rule"]), (LEGACY_FILL_CONVENTION, "decision_close"))
+
+    def test_unbound_stub_crossover_fills_at_the_next_open(self) -> None:
+        from adapter.vectorbt_adapter import (
+            FILL_CONVENTION, LEGACY_FILL_CONVENTION, BacktestConfig, _compute_instrument_metrics,
+        )
+
+        closes = [10.0] * 5 + [11.0, 12.0, 13.0, 14.0, 15.0]
+        opens = [c - 0.5 for c in closes]
+        bars = tuple((o, max(o, c), min(o, c), c, 1.0) for o, c in zip(opens, closes))
+        new = _compute_instrument_metrics(bars, BacktestConfig(fees=0.0), 2, 4)
+        old = _compute_instrument_metrics(bars, BacktestConfig(fees=0.0, fill_convention=LEGACY_FILL_CONVENTION), 2, 4)
+        self.assertEqual(new["fill_convention"], FILL_CONVENTION)
+        # the crossover is decided on the close of bar 5 (11.0) and filled at the open of bar 6 (11.5)
+        self.assertAlmostEqual(new["final_portfolio_value"], 100000.0 * 15.0 / 11.5, places=4)
+        self.assertAlmostEqual(old["final_portfolio_value"], 100000.0 * 15.0 / 11.0, places=4)
+        self.assertEqual(new["unfilled_decisions"], [])
+        self.assertEqual(new["trade_count"], 1)
+
+    def test_stub_session_without_an_open_takes_no_fill(self) -> None:
+        from adapter.vectorbt_adapter import BacktestConfig, _compute_instrument_metrics
+
+        closes = [10.0] * 5 + [12.0] * 5
+        bars = [(c - 1.0, c, c - 1.0, c, 1.0) for c in closes]
+        full = _compute_instrument_metrics(tuple(bars), BacktestConfig(fees=0.0), 2, 4)
+        decided = next(i for i in range(10) if full["trade_count"] and i >= 5)
+        gap_bars = list(bars)
+        # blank the open of every session so the only entry decision has no fill price
+        gap_bars = [(0.0, b[1], b[2], b[3], b[4]) for b in gap_bars]
+        gap = _compute_instrument_metrics(tuple(gap_bars), BacktestConfig(fees=0.0), 2, 4)
+        self.assertEqual(gap["trade_count"], 0)
+        self.assertTrue(gap["unfilled_decisions"])
+        self.assertTrue(all(row["reason"] == "no_open_price" for row in gap["unfilled_decisions"]))
+        self.assertEqual(gap["final_portfolio_value"], 100000.0)  # never a fill at the close
+        self.assertGreaterEqual(decided, 5)
+
+
 class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
     """STRATEGY-ARTIFACT-FACTOR-RULE-KIND-20261110 backtest-to-paper parity tests."""
 
@@ -707,11 +809,20 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
         vbt_actions = vbt_actions_by_inst["2330.TWSE"]
         vbt_sizes = vbt_sizes_by_inst["2330.TWSE"]
 
-        # Warmup bars (indices 0, 1, 2 for z_window=4) have None action and NaN order size
+        # Warmup bars (indices 0, 1, 2 for z_window=4) have None action; the first decision (bar 3)
+        # fills at the open of bar 4, so the order sizes are NaN through bar 3
         self.assertEqual(vbt_actions[:3], [None, None, None])
-        self.assertTrue(all(math.isnan(x) for x in vbt_sizes[:3]))
+        self.assertTrue(all(math.isnan(x) for x in vbt_sizes[:4]))
 
         # Replay the exact same bars through the paper signal producer (CurrentArtifactStrategy)
+        # The synthetic fixture uses consecutive calendar days (weekends included); this parity
+        # test compares actions, not the exchange calendar, so every fixture day is a session.
+        calendar_patch = mock.patch(
+            "services.execution.lean_runtime.instrument_candidates._is_trading_day",
+            return_value=True,
+        )
+        calendar_patch.start()
+        self.addCleanup(calendar_patch.stop)
         paper_strategy = CurrentArtifactStrategy(expression_layer=False)
         paper_actions: list[str | None] = [None, None, None]
         paper_sizes: list[float] = [float("nan")] * 3
@@ -749,12 +860,13 @@ class TestFactorRuleBacktestAndPaperParity(unittest.TestCase):
         self.assertIn("SELL", evaluated_actions)
         self.assertIn("HOLD", evaluated_actions)
 
-        # Identical signed order sizes across all 32 bars
-        for i in range(len(vbt_sizes)):
-            if math.isnan(vbt_sizes[i]):
-                self.assertTrue(math.isnan(paper_sizes[i]), f"bar {i} mismatch")
+        # Identical signed order sizes: the paper decision of bar i is the backtest order filled at
+        # the open of bar i+1 (shared next-open convention); the last bar's decision has no fill yet.
+        for i in range(len(vbt_sizes) - 1):
+            if math.isnan(paper_sizes[i]):
+                self.assertTrue(math.isnan(vbt_sizes[i + 1]), f"bar {i} mismatch")
             else:
-                self.assertEqual(vbt_sizes[i], paper_sizes[i], f"bar {i} mismatch")
+                self.assertEqual(vbt_sizes[i + 1], paper_sizes[i], f"bar {i} mismatch")
 
 
 class TestReplicationGateRealBacktestProtocol(unittest.TestCase):

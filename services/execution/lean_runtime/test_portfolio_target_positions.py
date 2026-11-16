@@ -23,6 +23,24 @@ BUDGET = {"gross_limit": 100000, "gross_used": 10000, "available_cash": 90000}
 NOW = "2026-11-13T06:00:00Z"
 
 
+def constant_open_reader(price=101.0):
+    """Recorded official daily open for any reconciled session (daily decisions fill at D+1 open)."""
+    def reader(symbol, session_date, now):
+        if session_date > now.date().isoformat():
+            return []  # a session that has not happened yet has no official open
+        return [{"symbol": symbol, "bar_start": f"{session_date}T09:00:00+08:00", "bar_frequency": "1d",
+                 "bar_availability_ts": f"{session_date}T16:00:00+08:00", "open": price}]
+    return reader
+
+
+def next_session_day(day):
+    from datetime import date, timedelta
+    following = date.fromisoformat(day) + timedelta(days=1)
+    while following.weekday() >= 5:
+        following += timedelta(days=1)
+    return following.isoformat()
+
+
 def candidate(code="2330", price=100, maximum=1000):
     return {"instrument_id": "eq:" + code, "price": price, "unit": 1,
             "multiplier": 1, "kind": "cash_share", "side_capability": ["long"],
@@ -174,7 +192,7 @@ def test_runtime_fills_net_zero_close_and_weak_target_reduction(tmp_path):
     strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=provider,
                                        candidates_builder=cash_candidates)
     store, telemetry = InMemoryPendingSignalStore(), _Telemetry()
-    producer = PaperSignalProducer(lambda _: store, strategy)
+    producer = PaperSignalProducer(lambda _: store, strategy, daily_bar_reader=constant_open_reader())
     service = PaperRuntimeService(store=store, identity=_identity(binding),
         runtime_manager_client=_RuntimeManager(_runtime_binding(binding)),
         telemetry_emitter=telemetry, lifecycle_outbox_path=tmp_path / "lifecycle.json",
@@ -189,8 +207,12 @@ def test_runtime_fills_net_zero_close_and_weak_target_reduction(tmp_path):
             summary.update(ledger_fill_count=1, ledger_cash=service._algo._cash,
                 positions=[{**p, "mark_price": closes[-1]} for p in positions])
         from datetime import datetime
-        service._algo.Time = datetime.fromisoformat(day + "T06:00:00+00:00")
-        assert producer.produce(binding, day + "T06:00:00Z") == 3, producer.degraded_bindings
+        service._algo.Time = datetime.fromisoformat(day + "T10:00:00+00:00")
+        # Daily decision of session D is parked; it fills at the official open of D+1.
+        assert producer.produce(binding, day + "T10:00:00Z") == 0, producer.degraded_bindings
+        following = next_session_day(day)
+        service._algo.Time = datetime.fromisoformat(following + "T10:00:00+00:00")
+        assert producer.settle_pending_intraday(binding, following + "T10:00:00Z") == 3, producer.degraded_bindings
         for _ in range(4):
             snapshot = service.drain_once()
         assert snapshot["status"] == "ok", snapshot
@@ -238,7 +260,7 @@ def test_member_rule_exit_reduces_combined_target_through_runtime(tmp_path):
     strategy = CurrentArtifactStrategy(expression_layer=True, expression_inputs=production_inputs(summary),
                                        candidates_builder=cash_candidates)
     store, telemetry = InMemoryPendingSignalStore(), _Telemetry()
-    producer = PaperSignalProducer(lambda _: store, strategy)
+    producer = PaperSignalProducer(lambda _: store, strategy, daily_bar_reader=constant_open_reader())
     service = PaperRuntimeService(store=store, identity=_identity(binding),
         runtime_manager_client=_RuntimeManager(_runtime_binding(binding)), telemetry_emitter=telemetry,
         lifecycle_outbox_path=tmp_path / "exit.json", capital_pool_reader=lambda _: _pool())
@@ -250,13 +272,17 @@ def test_member_rule_exit_reduces_combined_target_through_runtime(tmp_path):
                        event_time=day+"T05:30:00Z", observed_at=day+"T06:00:00Z",
                        # Deliberately wrong persona-level state must be ignored.
                        current_direction="SHORT", holding_bars=999)
-        service._algo.Time = datetime.fromisoformat(day+"T06:00:00+00:00")
+        service._algo.Time = datetime.fromisoformat(day+"T10:00:00+00:00")
         positions = service._algo.positions()
         if positions:
             summary.update(ledger_fill_count=1, ledger_cash=service._algo._cash,
                 positions=[{**p, "mark_price": closes[-1]} for p in positions])
         outputs = strategy(binding, day+"T06:00:00Z")["portfolio_decisions"]
-        assert producer.produce(binding, day+"T06:00:00Z") == 3
+        # Daily decision of session D is parked; it fills at the official open of D+1.
+        assert producer.produce(binding, day+"T10:00:00Z") == 0
+        following = next_session_day(day)
+        service._algo.Time = datetime.fromisoformat(following+"T10:00:00+00:00")
+        assert producer.settle_pending_intraday(binding, following+"T10:00:00Z") == 3
         for _ in range(4):
             service.drain_once()
         return outputs, {p["symbol"]: p["quantity"] for p in service._algo.positions()}
@@ -319,12 +345,15 @@ def test_frozen_bar_reads_inputs_once_and_restart_reuses_expression_record():
         assert first["replay_input"]["book_before"] == held()
     assert len(reads) == 1
     store = InMemoryPendingSignalStore()
-    producer = PaperSignalProducer(lambda _: store, strategy)
-    assert producer.produce(binding, NOW) == 3
+    producer = PaperSignalProducer(lambda _: store, strategy, daily_bar_reader=constant_open_reader())
+    # The daily decision is parked, not enqueued; the next session open releases it.
+    assert producer.produce(binding, NOW) == 0
+    assert producer.settle_pending_intraday(binding, "2026-11-16T10:00:00Z") == 3
     def broken(*args, **kwargs):
         raise AssertionError("completed expression must not be recomputed")
     replacement = PaperSignalProducer(lambda _: store,
-        CurrentArtifactStrategy(expression_layer=True, expression_inputs=inputs, candidates_builder=broken))
+        CurrentArtifactStrategy(expression_layer=True, expression_inputs=inputs, candidates_builder=broken),
+        daily_bar_reader=constant_open_reader())
     # Admitted decisions reuse their stored expression even before consumer drain.
     replacement.produce(binding, NOW)
 

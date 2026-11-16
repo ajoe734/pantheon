@@ -12,6 +12,8 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, LEGACY_FILL_CONVENTION
+
 PERIODS_PER_YEAR = 365  # vectorbt pf.sharpe_ratio() default year_freq=365 days with freq='1D'
 # The gate scores share-sized (artifact order_quantity, init_cash) vectorbt
 # portfolios per instrument, daily, sqrt(365) (vectorbt year_freq), Taiwan costs on every fill, and
@@ -146,6 +148,14 @@ def resolve_member_baseline(
     failed = _gate_proof_failure(entry, summary, run_id, checksum)
     if failed:
         return _missing(key, failed)
+    if summary.get("fill_convention") != FILL_CONVENTION:
+        # A proof scored with the decision filled at the close of its own bar is not a baseline for a
+        # book that fills at the next open.  It is reported for an operator decision (re-baseline run),
+        # never kept as approved and never deleted here.
+        return _missing(key, "baseline_computed_under_decision_close_fill",
+                        operator_decision_required=True,
+                        recorded_fill_convention=summary.get("fill_convention") or LEGACY_FILL_CONVENTION,
+                        required_fill_convention=FILL_CONVENTION)
     parameters = artifact.get("parameters") if isinstance(artifact.get("parameters"), Mapping) else {}
     validated = [str(s) for s in parameters.get("symbols") or []]
     if not validated:
@@ -162,7 +172,7 @@ def resolve_member_baseline(
         "persona_id": persona_id, "artifact_ref": artifact_ref, "checksum": checksum,
         "oos_sharpe": float(sharpe), "oos_max_drawdown": abs(float(drawdown)),
         "backtest_run_id": run_id, "validated_universe": validated,
-        "return_basis": RETURN_BASIS, "order_quantity": quantity, "periods_per_year": PERIODS_PER_YEAR,
+        "return_basis": RETURN_BASIS, "fill_convention": FILL_CONVENTION, "order_quantity": quantity, "periods_per_year": PERIODS_PER_YEAR,
         "source_refs": {"registry_id": artifact_ref,
                         "approval_decision_id": entry.get("approval_decision_id"),
                         "backtest_run_id": run_id},

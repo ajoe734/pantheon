@@ -100,6 +100,7 @@ MARKET_CHIP_DATASETS = {
     "tw_market_institutional_flows": "tw_institutional_flow",
     "taifex_market_positions": "taifex_futures_chip",
     "taifex_market_put_call": "taifex_options_chip",
+    "taifex_market_tx_daily": "taifex_tx_daily",
 }
 
 DATASET_SPECS: tuple[DatasetSpec, ...] = (
@@ -114,6 +115,18 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
         "TX/MTX institutional net open interest by investor type"),
     _ds("taifex_market_put_call", "taifex_options_chip", "market", "daily", "date", 0,
         ("taifex:PutCallRatio",), "Official TXO put/call volume and open-interest percentages"),
+    _ds("taifex_market_tx_daily", "taifex_tx_daily", "market", "daily", "date", 0,
+        ("taifex:DailyMarketReportFut",),
+        "TX regular-session front-month settlement price and total open interest; "
+        "the official feed serves only the latest session so history accumulates forward only"),
+    _ds("tw_index_daily", "tw_index_daily", "series", "daily", "date", 0,
+        ("twse:MI_INDEX price indices via collector bundle", "twse:TAIEX/MI_5MINS_HIST via collector bundle"),
+        "TWSE price index daily close (open/high/low where the source gives them), keyed by index name; "
+        "availability is first acquisition, never earlier"),
+    _ds("tw_market_breadth_daily", "tw_market_breadth_daily", "market", "daily", "date", 0,
+        ("twse:MI_INDEX breadth table via collector bundle",),
+        "TWSE advancers, decliners, limit and unchanged counts for the whole market and for stocks; "
+        "availability is first acquisition, never earlier"),
     _ds("tw_industry_classification", "tw_industry_classification", "symbol", "daily", "event_time", 0,
         ("twse:opendata/t187ap03_L", "tpex:mopsfin_t187ap03_O"),
         "Official industry code observed prospectively; available only from acquisition, never backfilled"),
@@ -204,6 +217,11 @@ for _f, _src in (("volume_ratio", "PutCallVolumeRatio%"), ("open_interest_ratio"
     _FIELDS.append(CatalogueField("taifex_market_put_call", _f, _src, "percent",
                                   "Official reported put/call percentage; never inferred from a missing value"))
 
+_FIELDS.append(CatalogueField("taifex_market_tx_daily", "tx_front_month_settlement_price", "settlement_price",
+                               "index_points", "Official TX regular-session settlement of the nearest monthly contract"))
+_FIELDS.append(CatalogueField("taifex_market_tx_daily", "tx_total_open_interest", "open_interest", "contracts",
+                              "Sum of official TX regular-session open interest over all listed monthly contracts"))
+
 _MACRO: tuple[tuple[str, str, int, str, str], ...] = (
     ("tw_macro_cbc", "policy_rate", 1, "percent", "CBC policy discount rate"),
     ("tw_macro_cbc", "m1b_yoy", 25, "percent", "CBC M1B money supply YoY"),
@@ -231,6 +249,23 @@ _FIELDS += [
                    "engagement_weighted_sentiment", "score",
                    "Engagement-weighted bull(+1)/bear(-1) sentiment; single-author bursts down-weighted"),
 ]
+
+# Index series (key kind series, entity = index name) and market breadth (entity TW) carry
+# several fields per row, unlike the one-value-per-row macro series.
+REGIME_DATASETS = ("tw_index_daily", "tw_market_breadth_daily")
+for _f, _u, _d in (
+    ("close", "index_points", "Index daily close"),
+    ("open", "index_points", "Index daily open; present only where the source states it"),
+    ("high", "index_points", "Index daily high; present only where the source states it"),
+    ("low", "index_points", "Index daily low; present only where the source states it"),
+    ("change_points", "index_points", "Index change in points, signed from the source sign column"),
+    ("change_percent", "percent", "Index change percent as published"),
+):
+    _FIELDS.append(CatalogueField("tw_index_daily", _f, _f, _u, _d))
+for _group in ("whole_market", "stocks"):
+    for _key in ("advancers", "decliners", "limit_up", "limit_down", "unchanged", "untraded", "no_comparison"):
+        _FIELDS.append(CatalogueField("tw_market_breadth_daily", f"{_group}_{_key}", f"{_group}_{_key}",
+                                      "securities", f"TWSE {_group.replace('_', ' ')} {_key.replace('_', ' ')} count"))
 
 _SPEC_BY_NAME: dict[str, DatasetSpec] = {spec.name: spec for spec in DATASET_SPECS}
 _FIELD_BY_KEY: dict[tuple[str, str], CatalogueField] = {(f.dataset, f.field): f for f in _FIELDS}
@@ -444,10 +479,10 @@ def observations_from_row(
     for f in catalogue_fields():
         if f.dataset != dataset:
             continue
-        if spec.key_kind == "series" and row.get("field") not in (None, f.field):
+        if spec.key_kind == "series" and dataset not in REGIME_DATASETS and row.get("field") not in (None, f.field):
             continue
         lag = lag_days_for(dataset, f.field)
-        value = _row_value(spec, f, row) if spec.key_kind != "series" else _number(row.get("value"))
+        value = _row_value(spec, f, row) if spec.key_kind != "series" or dataset in REGIME_DATASETS else _number(row.get("value"))
         if value is None:
             continue
         avail_raw = row.get("available_time")
@@ -573,6 +608,37 @@ def market_chip_observations(
             return withheld("incomplete_governed_entity_set", missing_entities=sorted(expected - by_entity.keys()))
         constituents = list(by_entity.values())
         entities = set(by_entity)
+    elif dataset == "taifex_market_tx_daily":
+        # Regular session only: after-hours rows carry no settlement or open interest.
+        # Weekly (W) and spread months are not part of the monthly front-month series.
+        tx = [r for r in items if r.get("contract") == "TX" and r.get("trading_session") == "regular"
+              and r.get("contract_month_kind") == "monthly"]
+        if not tx:
+            return withheld("missing_tx_regular_monthly_rows")
+        by_month: dict[str, Mapping[str, Any]] = {}
+        for row in tx:
+            month = str(row.get("contract_month") or "")
+            if len(month) != 6 or not month.isdigit():
+                return withheld("malformed_source_row")
+            if month in by_month:
+                return withheld("duplicate_entity_rows", entity=month)
+            raw = row.get("raw_row") or {}
+            if not isinstance(raw, Mapping):
+                return withheld("malformed_source_row")
+            oi = _number(raw.get("OpenInterest"))
+            if oi is None or not math.isfinite(oi) or oi != _number(row.get("open_interest")):
+                return withheld("missing_or_invalid_constituent_value", field="tx_total_open_interest", entity=month)
+            by_month[month] = row
+        front = by_month[min(by_month)]
+        raw = front.get("raw_row") or {}
+        settle = _number(raw.get("SettlementPrice"))
+        # Never fall through to a later month when the front month is unpriced.
+        if settle is None or not math.isfinite(settle) or settle <= 0 or settle != _number(front.get("settlement_price")):
+            return withheld("front_month_settlement_missing", entity=min(by_month))
+        values["tx_front_month_settlement_price"] = settle
+        values["tx_total_open_interest"] = math.fsum(_number(r["open_interest"]) for r in by_month.values())
+        constituents = list(by_month.values())
+        entities = {f"TX{m}" for m in by_month}
     else:
         if len(items) != 1 or items[0].get("contract") != "TXO":
             return withheld("incomplete_or_duplicate_txo_market_row")
