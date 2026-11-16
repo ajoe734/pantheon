@@ -2457,10 +2457,14 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = script.index("execute_bounded_source_refresh_entrypoint() {")
     body = script[start : script.index("\n}\n", start)]
+    finmind_guard = body.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    readyz_wait = body.index(
+        'curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5'
+    )
     resolve = body.index("resolve_bounded_source_refresh_active_symbols")
     preflight = body.index('check_taiwan_refresh_preflight "${force}"')
     no_symbols_skip = body.index("no_active_taiwan_symbols")
-    assert resolve < preflight < no_symbols_skip
+    assert finmind_guard < readyz_wait < resolve < preflight < no_symbols_skip
 
 
 def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs() -> None:
@@ -4071,3 +4075,109 @@ def test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records(
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(captured_up_env.read_text(encoding="utf-8"))["max_records"] == expected_max_records
+
+
+def _run_manage_refresh_runtime_shell(
+    tmp_path: Path, action: str, *, fail_attempts: int
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    curl_fn = _prune_shell_function("curl_with_retry")
+    manage_fn = _prune_shell_function("manage_source_ingest_refresh_runtime")
+
+    fake = tmp_path / "bin"
+    fake.mkdir(parents=True, exist_ok=True)
+    curl_log = tmp_path / "curl.log"
+    sleep_log = tmp_path / "sleep.log"
+    attempt_file = tmp_path / "attempts"
+    attempt_file.write_text("0", encoding="utf-8")
+
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"sha256:aa"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} sha256:aa") echo sha256:aa ;;\n'
+        '  *" up "*) : ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") echo \'["A=1","PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="]\' ;;\n'
+        'esac\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    curl = fake / "curl"
+    curl.write_text(
+        f"""#!/usr/bin/env python3
+import pathlib, sys
+log = pathlib.Path({str(curl_log)!r})
+attempts_path = pathlib.Path({str(attempt_file)!r})
+n = int(attempts_path.read_text(encoding="utf-8")) + 1
+attempts_path.write_text(str(n), encoding="utf-8")
+with log.open("a", encoding="utf-8") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\\n")
+sys.exit(1 if n <= {fail_attempts} else 0)
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+
+    sleep = fake / "sleep"
+    sleep.write_text(
+        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\n',
+        encoding="utf-8",
+    )
+    sleep.chmod(0o755)
+
+    env_file = tmp_path / "steady_env.json"
+    env_file.write_text(
+        json.dumps(["A=1", "PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="]),
+        encoding="utf-8",
+    )
+    harness = (
+        "set -euo pipefail\n"
+        + curl_fn
+        + "\n"
+        + manage_fn
+        + f'\nmanage_source_ingest_refresh_runtime "{env_file}" "{action}" "sha256:aa" "2330.TW"\n'
+    )
+    proc = subprocess.run(
+        ["bash", "-c", harness],
+        env={
+            "PATH": f"{fake}:{os.environ['PATH']}",
+            "SOURCE_INGEST_API_URL": "http://127.0.0.1:18097",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    curls = curl_log.read_text(encoding="utf-8").splitlines() if curl_log.exists() else []
+    sleeps = sleep_log.read_text(encoding="utf-8").splitlines() if sleep_log.exists() else []
+    return proc, curls, sleeps
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_and_restore(
+    tmp_path: Path, action: str
+) -> None:
+    # 18 failures (= 90s warmup, exceeding the old 12x5=60s restore cap and previously
+    # skipped entirely on bounded) must still succeed within the 36x5s (180s) budget.
+    warm_dir = tmp_path / f"warm-{action}"
+    warm_dir.mkdir()
+    ok_proc, ok_curls, ok_sleeps = _run_manage_refresh_runtime_shell(warm_dir, action, fail_attempts=18)
+    assert ok_proc.returncode == 0, ok_proc.stderr
+    assert len(ok_curls) == 19
+    assert all(
+        c == "-fsS --max-time 5 --connect-timeout 5 http://127.0.0.1:18097/readyz"
+        for c in ok_curls
+    )
+    assert ok_sleeps == ["5"] * 18
+
+    # Persistent failure exhausts all 36 retry loops + 1 final curl attempt and fails closed.
+    fail_dir = tmp_path / f"fail-{action}"
+    fail_dir.mkdir()
+    fail_proc, fail_curls, fail_sleeps = _run_manage_refresh_runtime_shell(fail_dir, action, fail_attempts=100)
+    assert fail_proc.returncode != 0
+    assert len(fail_curls) == 37
+    assert fail_sleeps == ["5"] * 36
+
