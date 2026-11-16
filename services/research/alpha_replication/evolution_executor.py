@@ -80,7 +80,8 @@ def revalidate_member(*, artifact, dataset, member, baseline):
                 continue
             features, at = _bar_features_for_index(prepared, symbol, index)
             view = evaluate_strategy_view(artifact, prices[:index + 1], features=features, decision_time=at, symbol=symbol)
-            observations.append({"price": prices[index],
+            # decided from this close, filled at the next session's open (shared convention)
+            observations.append({"price": prices[index], "open": prepared.ohlcv_by_instrument[symbol][index][0],
                 "direction": {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]]})
         if len(observations) < 2:
             raise ExecutorRefusal("evaluation_rejected", "post_admission_warmup_incomplete")

@@ -1,0 +1,101 @@
+{
+  "task": "DEV-RELEASE-ARTIFACTS-SOURCE-PROBE-RESILIENCE-20261116",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_revision": "5a88116ad3d1b2f124c4cfa0ad4a8a4c5efaa27e",
+  "hosted_behavior_claimed": false,
+  "changes": {
+    "source_probe_memory_bound": {
+      "file": "scripts/dev_release_artifacts.py",
+      "function": "source_probe",
+      "previous_memory_limit": "512m",
+      "new_memory_limit": "2048m",
+      "rationale": "Prevents older retained baseline images from being OOM-killed (exit 137 / probe_killed / reader_rejected) when qualifying a 200MB-450MB market snapshot journal during compensation or baseline restore."
+    },
+    "qualify_source_writer_append_race_retry": {
+      "file": "scripts/dev_release_artifacts.py",
+      "function": "qualify_source_writer",
+      "max_attempts": 3,
+      "retry_condition": "Retained and writer sequential container probes report different journal_size or journal_sha256 due to a concurrent live source-ingest append between sequential probes.",
+      "fail_closed_conditions": [
+        "If retained and writer observe identical journal_size and journal_sha256 but different projection_sha256, raises StackError('Source readers disagree on journal identity') immediately without retry.",
+        "If all 3 consecutive attempts disagree on journal_size or journal_sha256, raises StackError('Source readers disagree on journal identity')."
+      ]
+    },
+    "watchdog_startup_timeout_separation": {
+      "file": "scripts/dev_remote_watchdog.py",
+      "dataclass": "WatchdogTimings",
+      "alias": "Timings",
+      "startup_timeout_seconds": 30.0,
+      "runtime_pause_seconds": 3.0,
+      "rationale": "Uses time.monotonic() + timings.startup_timeout (default 30.0s) for startup_deadline when reading the initial script envelope over WAN SSH (e.g., 350KB base64 deploy-dev envelopes) before child launch while keeping runtime pause = 3.0s after child launch."
+    },
+    "scoped_artifacts": [
+      "scripts/dev_release_artifacts.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/dev_remote_watchdog.py",
+      "scripts/test_dev_remote_watchdog.py",
+      "docs/deployment/evidence/DEV-RELEASE-ARTIFACTS-SOURCE-PROBE-RESILIENCE-20261116/evidence.json"
+    ]
+  },
+  "validation": [
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_release_artifacts.py",
+      "exit_code": 0,
+      "pass_count": 176,
+      "skipped_count": 2,
+      "result": "176 passed, 2 skipped in 310.08s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_release_artifacts.py -k \"2048m or mid_probe_append or three_append or projection_mismatch_on_equal_journal\"",
+      "exit_code": 0,
+      "pass_count": 4,
+      "deselected_count": 174,
+      "result": "4 passed, 174 deselected in 18.48s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_remote_watchdog.py",
+      "exit_code": 0,
+      "pass_count": 4,
+      "result": "4 passed in 1.57s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m unittest -v scripts.test_dev_remote_watchdog scripts.test_branch_ci_gate_selection",
+      "exit_code": 0,
+      "pass_count": 19,
+      "result": "Ran 19 tests in 1.497s - OK"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m unittest -v scripts.test_component_boundary",
+      "exit_code": 0,
+      "pass_count": 12,
+      "result": "Ran 12 tests in 0.047s - OK"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_branch_ci_gate_selection.py scripts/test_component_boundary.py scripts/test_dev_remote_watchdog.py",
+      "exit_code": 0,
+      "pass_count": 31,
+      "subtests_passed": 15,
+      "result": "31 passed, 15 subtests passed in 2.76s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_remote_guarded_exec.py",
+      "exit_code": 0,
+      "pass_count": 75,
+      "result": "75 passed in 35.89s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py",
+      "exit_code": 0,
+      "pass_count": 481,
+      "result": "481 passed in 99.85s"
+    },
+    {
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-release-artifacts-source-probe-resilience-20261116/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py::test_release_probe_bound_unchanged scripts/test_dev_remote_watchdog.py",
+      "exit_code": 0,
+      "pass_count": 5,
+      "result": "5 passed in 1.85s"
+    }
+  ],
+  "credentials": "none recorded"
+}
