@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,7 @@ def client():
     try:
         yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
