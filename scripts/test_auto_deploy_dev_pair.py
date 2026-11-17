@@ -94,7 +94,13 @@ def test_backend_frontend_and_combined_changes_dispatch_exact_pair(host_b, host_
     assert inputs["ref"] == B and inputs["frontend_sha"] == F
     assert inputs["frontend_profile"] == "operator-live"
     assert inputs["component"] == "root" and inputs["allow_dirty"] == "false"
-    assert inputs["run_loop_prod_tel_002_probe"] == "true"
+    # Automatic dev releases are deploy-only: the full input set is pinned and
+    # no functional-gate / PAPER_BOOTSTRAP_REQUESTED input may be sent.
+    assert inputs == {
+        "environment": "dev", "component": "root", "ref": B, "frontend_sha": F,
+        "frontend_ref": "dev", "frontend_profile": "operator-live",
+        "dev_auth_profile": "strict", "allow_dirty": "false",
+    }
 
 
 def test_accepted_pair_is_noop_but_live_bff_drift_is_not():

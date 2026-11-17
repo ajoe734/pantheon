@@ -1,0 +1,34 @@
+{
+  "task_id": "COLLECTOR-CLOSE-CAPTURE-DISABLED-SOURCE-20261117",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Collector same-day close capture records a terminal 'disabled' per-source result when a source is disabled by fetch-policy (without counting as retry_needed or aborting remaining sources), records per-source 'failed:<Exc>' results for ListingUnavailable and CollectorConfigError (unknown source_id) inside the loop, and exits 0 from CLI capture-close when all uncaptured sources are disabled.",
+  "what_changed": {
+    "deploy/collector/collector_stack/runner.py": "CloseCaptureResult.retry_needed treats 'disabled' alongside 'captured' and 'already_captured' as terminal non-retry states. capture_same_day_close resolves runner.config.get_source(source_id) inside the per-source try block, skips inter-source sleep when a source is disabled, maps SourceDisabledError to result.sources[source_id] = 'disabled', and catches CollectorConfigError and ListingUnavailable as result.sources[source_id] = 'failed:<ExcType>' so one failing/disabled source never aborts the loop.",
+    "deploy/collector/collector_stack/cli.py": "capture-close subcommand supports optional --now ISO-8601 override for deterministic close-window execution, prints the JSON CloseCaptureResult, and exits 0 when result.retry_needed is False (including when all non-captured sources are disabled by policy).",
+    "deploy/collector/tests/test_spiders_and_pollers.py": "Added focused tests covering TWSE disabled with TPEx captured, TPEx disabled with hosted-shape TWSE (1,389 rows) captured once without retry loop on later ticks, both disabled with CLI capture-close exiting 0, and ListingUnavailable / unknown source_id producing per-source failed results while continuing the loop."
+  },
+  "acceptance": {
+    "1_disabled_source_terminal_and_continues": "capture_same_day_close catches SourceDisabledError and sets result.sources[source_id] = 'disabled'; CloseCaptureResult.retry_needed excludes {'captured', 'already_captured', 'disabled'}.",
+    "2_listing_unavailable_and_unknown_source_per_source": "capture_same_day_close catches ListingUnavailable and CollectorConfigError inside the per-source try block and records 'failed:ListingUnavailable' or 'failed:CollectorConfigError' without aborting remaining sources.",
+    "3_cli_json_and_exit_0_when_disabled": "cli.py capture-close prints sorted JSON result and returns 0 when retry_needed is False (verified in test_close_capture_both_disabled_and_cli_exits_zero).",
+    "4_tests_twse_disabled_tpex_disabled_both_disabled": "test_close_capture_twse_disabled_still_captures_tpex, test_close_capture_tpex_disabled_captures_twse_once_without_retry_loop (using hosted-shape 1,389-security twse_mi_index_full_20261110.json fixture), and test_close_capture_both_disabled_and_cli_exits_zero.",
+    "5_run_source_still_refuses_disabled_direct_runs": "CollectorRunner.run_source still raises SourceDisabledError when not policy.enabled and not allow_disabled; verified in test_close_capture_twse_disabled_still_captures_tpex and existing test_cmoney_enabled_and_ptt_mirrors_disabled_by_default.",
+    "6_focused_tests_pass": "deploy/collector/tests/test_spiders_and_pollers.py, deploy/collector/tests/test_config_and_startup_guards.py, and deploy/collector/tests/test_tw_suspension_holidays.py all pass (159 passed)."
+  },
+  "runtime_budget_and_growth_bound": {
+    "cadence": "pantheon-collector-close.timer runs every 10 minutes from 14:40 to 17:00 Asia/Taipei Mon-Fri (15 ticks per trading day).",
+    "disabled_source_growth_per_day": "0 bytes/day, 0 HTTP requests/day, 0 bundles/day, 0 ledger writes/day when disabled by fetch-policy.json.",
+    "enabled_source_growth_per_day": "At most 1 ledger entry (~55 bytes) per enabled source per trading day in /data/state/same-day-close/<source_id>.json (2 files total, ~13.5 KB/year across 244 trading days) and at most 1 bundle per enabled source per trading day under /data/bundles/<source_id>/ (tested with hosted-shape 1,389-row TWSE MI_INDEX payload).",
+    "cap_and_cleanup": "Bundles are bounded by raw_retention_days = 90 and pruned by prune_expired_bundles (collector_stack prune). Same-day-close ledger is written at most once per trading day via atomic tempfile + os.replace on complete capture only.",
+    "backward_compatibility": "Ledger schema ({'completed': {'YYYY-MM-DD': {'run_id': '...'}}}) and bundle schema are unchanged; disabled sources write no state or bundle files, so the previous accepted release reads all left-behind state without modification."
+  },
+  "validation": {
+    "command": "PYTHONPATH=.:deploy/collector ./.venv-pantheon/bin/python3 -m pytest -q deploy/collector/tests/test_spiders_and_pollers.py deploy/collector/tests/test_config_and_startup_guards.py deploy/collector/tests/test_tw_suspension_holidays.py",
+    "result": "159 passed"
+  },
+  "residual_findings": [
+    "deploy/collector/collector_stack/runner.py:367-368 contains a duplicate unreachable 'except FetchBackendUnavailableError: raise' clause after the primary handler at lines 309-331 (outside capture_same_day_close scope).",
+    "deploy/collector/collector_stack/runner.py state/same-day-close/<source_id>.json and deploy/collector/collector_stack/backfill.py state/backfill/<source_id>.json use inline tempfile.mkstemp + os.replace and have no retention/compaction entry yet; attach to WP3.2 storage manifest in docs/operations/problem-register.md."
+  ]
+}

@@ -2507,6 +2507,80 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         )
         self.assertEqual(write_state.call_count, 1)
 
+    def test_lifecycle_outbox_prunes_only_idle_chains_without_pending(self):
+        from datetime import datetime, timedelta, timezone
+
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        def chain(age_days, journey):
+            when = (datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat()
+            event_id = str(uuid.uuid4())
+            return {
+                "sequence_no": 3,
+                "event_id": event_id,
+                "correlation_envelope": {"journey_id": journey, "event_id": event_id, "event_time": when},
+            }
+
+        state = {
+            "schema_version": "paper_lifecycle_telemetry_outbox.v1",
+            "next_admission_no": 1,
+            "chains": {"old": chain(60, "old"), "recent": chain(1, "recent"),
+                       "old-pending": chain(60, "old-pending")},
+            "pending": [{"journey_id": "old-pending"}],
+        }
+        self.assertEqual(LifecycleTelemetryOutbox._prune_expired_chains(state), 1)
+        self.assertEqual(sorted(state["chains"]), ["old-pending", "recent"])
+
+    def test_lifecycle_outbox_growth_bound_on_hosted_shape(self):
+        # Hosted shape: 156 outbox files, 538 MB total -> ~3.4 MB mean, 41 MB max.
+        # One chain checkpoint is ~0.6 KB; with a 35 day window the file is
+        # bounded by journeys-in-window x bytes, not by binding age.
+        from datetime import datetime, timedelta, timezone
+
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        now = datetime.now(timezone.utc)
+        chains = {}
+        for i in range(20000):
+            event_id = str(uuid.uuid4())
+            age = 100 if i < 15000 else 2
+            chains[f"j{i}"] = {
+                "sequence_no": 7,
+                "event_id": event_id,
+                "correlation_envelope": {
+                    "journey_id": f"j{i}", "event_id": event_id,
+                    "event_time": (now - timedelta(days=age)).isoformat(),
+                },
+            }
+        state = {"chains": chains, "pending": []}
+        self.assertEqual(LifecycleTelemetryOutbox._prune_expired_chains(state), 15000)
+        self.assertEqual(len(state["chains"]), 5000)
+
+    def test_state_writers_leave_no_temp_and_startup_sweeps_own_orphans(self):
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            path = root / "b.json.lifecycle-outbox.json"
+            orphan = root / f"b.json.lifecycle-outbox.json.{uuid.uuid4().hex}.tmp"
+            sibling = root / f"c.json.lifecycle-outbox.json.{uuid.uuid4().hex}.tmp"
+            orphan.write_text("x" * 1024)
+            sibling.write_text("y")
+            outbox = LifecycleTelemetryOutbox(path)
+            self.assertFalse(orphan.exists())
+            self.assertTrue(sibling.exists())
+            outbox.verify_writable()
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir() if p.name.endswith(".tmp")),
+                [sibling.name],
+            )
+
     def test_lifecycle_outbox_exact_pending_readmission_is_idempotent(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):
@@ -2846,7 +2920,7 @@ class PaperExecutionInputHardeningTest(unittest.TestCase):
             self.assertTrue(algo.BindPerformanceBinding("binding-a"))
             persisted_before = state_path.read_text(encoding="utf-8")
 
-            with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            with patch("services.execution.lean_runtime.paper_runtime.atomic_write_text", side_effect=OSError("disk full")):
                 with self.assertRaisesRegex(RuntimeError, "persistence failed"):
                     algo.MarketOrder("AAPL", 2.0)
 
