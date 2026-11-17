@@ -839,3 +839,58 @@ def test_pool_beyond_seed_is_left_to_the_cycle_and_legacy_enrolled_readback_is_u
     assert outcome.steps["publish"]["status"] == "deferred" and w.state["publishes"] == 0
     assert enrollment_settled(outcome.to_dict()) is True
     assert enrollment_settled({"status": "enrolled", "steps": {"pool": {"status": "present"}}}) is False
+
+
+# ---------------------------------------------------------------------------
+# PERSONA-ENROLLMENT-READBACK-STABLE-WHEN-PAUSED-20261117
+# ---------------------------------------------------------------------------
+
+def test_paused_runtime_keeps_enrolled_readback_waits_then_publishes_once(monkeypatch):
+    from services.control_plane.bff.persona_paper_enrollment import enrollment_settled, retry_due
+    from datetime import datetime, timezone
+
+    w = _hosted_publish_world(monkeypatch)
+    live = [b for b in w.runtime.bindings.values() if b["status"] == "active"]
+    assert len(live) == 1
+    live[0]["status"] = "paused"  # after the close
+
+    paused = _first_publish_enrollment(w).enroll()
+    assert paused.status == "enrolled" and paused.lifecycle_state == "paper_owner", paused.to_dict()
+    assert paused.steps["publish"]["status"] == "waiting"
+    assert enrollment_settled(paused.to_dict()) is False
+    assert w.state["publishes"] == 0
+    # Unsettled enrolled readbacks are throttled by the same minimum interval.
+    assert retry_due(paused.to_dict(), datetime.now(timezone.utc), 600) is False
+
+    live[0]["status"] = "active"  # runtime resumes
+    resumed = _first_publish_enrollment(w).enroll()
+    assert resumed.steps["publish"]["status"] == "published" and w.state["publishes"] == 1
+    again = _first_publish_enrollment(w).enroll()
+    assert again.steps["publish"]["status"] == "current" and w.state["publishes"] == 1
+
+
+def test_enrolled_readback_is_never_replaced_by_a_failed_pass():
+    from services.control_plane.bff.persona_provisioning_coordinator import PersonaProvisioningCoordinator
+
+    class _Rec:
+        references = {"paper_enrollment": {
+            "persona_id": "p", "status": "enrolled", "reason": None,
+            "lifecycle_state": "paper_owner", "steps": {"pool": {"status": "present"}},
+            "attempted_at": "2026-11-17T00:00:00Z"}}
+        persona_id = "p"
+
+    class _Enr:
+        def enroll(self):
+            from services.control_plane.bff.persona_paper_enrollment import EnrollmentOutcome
+            return EnrollmentOutcome("p", "not_eligible", "paper_runtime_binding_not_active",
+                                     attempted_at="2026-11-18T00:00:00Z")
+
+    coord = PersonaProvisioningCoordinator.__new__(PersonaProvisioningCoordinator)
+    coord._paper_enrollment = lambda record: _Enr()
+    coord._checkpoint = lambda record: record
+    rec = _Rec()
+    coord._enroll_in_place(rec)
+    kept = rec.references["paper_enrollment"]
+    assert kept["status"] == "enrolled" and kept["lifecycle_state"] == "paper_owner"
+    assert kept["steps"]["publish"]["reason"].endswith("paper_runtime_binding_not_active")
+    assert kept["attempted_at"] == "2026-11-18T00:00:00Z"

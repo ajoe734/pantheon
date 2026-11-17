@@ -411,9 +411,12 @@ class PersonaPaperEnrollment:
             return self._not_eligible(outcome, "release_probe_or_test_persona_not_enrolled")
         if outcome.lifecycle_state not in LIFECYCLE_PATH:
             return self._not_eligible(outcome, f"owner_lifecycle_not_enrollable:{outcome.lifecycle_state}")
-        reason = self._paper_binding_gap()
-        if reason:
-            return self._not_eligible(outcome, reason)
+        # Already paper_owner: the runtime may legitimately be paused (after the close), so
+        # the active-binding gate only guards the first lifecycle advance.
+        if outcome.lifecycle_state != ENROLLED_STATE:
+            reason = self._paper_binding_gap()
+            if reason:
+                return self._not_eligible(outcome, reason)
         return persona
 
     @staticmethod
@@ -492,6 +495,14 @@ class PersonaPaperEnrollment:
                 for b in self.runtime_binding_reader(self.deployment_plan_id, self.capital_pool_id) or []
                 if _text(b.get("state") or b.get("status")).lower() in {"active", "running", "ok"}
             ]
+            if not active:
+                # Paused/stopped runtime: wait (unsettled) and publish once after it is active.
+                outcome.steps["publish"] = {
+                    "status": "waiting",
+                    "reason": "paper_runtime_binding_not_active",
+                    "attempted_at": outcome.attempted_at,
+                }
+                return
             if len(active) == 1 and _text(active[0].get("artifact_id")).startswith(
                 ENVELOPE_ARTIFACT_PREFIX
             ):
