@@ -348,16 +348,19 @@ class SourceProvisioningReconciler:
 
         connector = config.connector
         connector_id = connector.connector_id
-        fetch = config.fetch if isinstance(config.fetch, Mapping) else {}
+        fetch = getattr(config, "fetch", None)
+        fetch = fetch if isinstance(fetch, Mapping) else {}
+        metadata = getattr(connector, "metadata", None)
+        metadata = metadata if isinstance(metadata, Mapping) else {}
         if str(fetch.get("mode") or "") == "provider_owned_adapter":
             token = str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "").strip()
             if token and not is_provider_adapter_allowed(token):
                 return f"adapter-not-defined: {token}"
         factory_known = connector_id in self.provider_factories
-        definition_id = str(connector.metadata.get("definition_id") or "").strip()
+        definition_id = str(metadata.get("definition_id") or "").strip()
         if definition_id and not factory_known and get_connector_definition(definition_id) is None:
             return f"connector-definition-not-defined: {definition_id}"
-        marker = connector.metadata.get(RECONCILIATION_METADATA_KEY)
+        marker = metadata.get(RECONCILIATION_METADATA_KEY)
         desired = marker.get("desired_state") if isinstance(marker, Mapping) else None
         dataset = str(desired.get("dataset") or "").strip() if isinstance(desired, Mapping) else ""
         cadence = str(desired.get("cadence") or "").strip() if isinstance(desired, Mapping) else ""

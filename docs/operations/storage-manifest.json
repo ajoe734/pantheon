@@ -2748,6 +2748,17 @@
    "kind": "compose_path",
    "name": "/data/source-ingest/controller_state.json",
    "owner": "compose:source-ingest",
+   "changed_fields": {
+    "cadence": "rewritten in place once per controller tick (one file, atomic replace, no append)",
+    "cap": "reconcile.skipped_ids holds at most 50 entries of at most 128 characters each (MAX_SKIPPED_IDS, MAX_SKIPPED_ID_LENGTH in services/source_ingestion/controller_state.py); reconcile.skipped_count is one integer",
+    "cleanup": "overwritten by the next tick; zero and empty when nothing is skipped; no history is kept",
+    "fields": [
+     "reconcile.skipped_count",
+     "reconcile.skipped_ids"
+    ],
+    "size": "at most about 6.7 KB added with 50 ids (50 x (128 + 4) bytes); whole file asserted below 64 KiB in services/source_ingestion/tests/test_reconcile_tolerates_newer_state.py",
+    "task": "SOURCE-RECONCILE-TOLERATES-NEWER-STATE-20261117"
+   },
    "readers": [
     "docker-compose.yml"
    ],

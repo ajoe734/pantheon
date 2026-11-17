@@ -489,3 +489,166 @@ def test_readback_and_health_show_skipped_fields_zero_and_empty_by_default(api) 
     assert readback["skipped_ids"][0] == "connector_record:future-0"
     health = client.get("/health").json()
     assert health["skipped_count"] == 60 and len(health["skipped_ids"]) == 50
+
+
+# ---------------------------------------------------------------------------------------------
+# Previous-release harness: reproduce the 2026-11-17 failure and prove rollback safety (AC2, AC9, AC10)
+# ---------------------------------------------------------------------------------------------
+
+import shutil
+import subprocess
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import previous_release_reader as harness  # noqa: E402
+
+BASELINE_REVISION = "e7ec353d6"  # the release the hosted rollback landed on (2026-11-17)
+PRE_CHANGE_REVISION = "d88a1a86f"  # dev immediately before this change
+CURRENT_REVISION = "HEAD"
+
+# Runs under whatever code the harness put on sys.path. argv: data_dir mode
+_RECONCILE_DRIVER = r'''
+import importlib, json, os, sys, traceback
+data_dir, mode = sys.argv[1], sys.argv[2]
+os.environ.update({
+    "SOURCE_INGEST_DATA_DIR": data_dir, "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl",
+    "PANTHEON_COLLECTOR_HOST": "http://collector.invalid:9", "FINMIND_API_TOKEN": "local-test-token",
+})
+from fastapi.testclient import TestClient
+module = importlib.import_module("services.source_ingestion.main")
+from services.source_ingestion.controller_worker import load_desired_state
+personas, meta = load_desired_state()
+personas = [dict(p) for p in personas]
+payload = {"personas": personas, "authoritative_snapshot": True, "dry_run": False,
+           "desired_state_sha256": module.runtime._desired_state_digest(personas),
+           "source_authority": meta["authority"]}
+headers = {"Authorization": f"Bearer {module.runtime.controller_token}"}
+out = {"requirement_count": meta["requirement_count"], "module_file": module.__file__}
+with TestClient(module.app) as client:
+    if mode == "readback":
+        r = client.get("/api/source-ingest/controller/readback")
+        body = r.json()
+        out.update(status=r.status_code, connector_count=body.get("connector_count"),
+                   state_present=body.get("controller_state") is not None,
+                   snapshot_bindings=(body.get("requirement_snapshot") or {}).get("binding_count"))
+        print(json.dumps(out)); sys.exit(0)
+    r = client.post("/api/source-ingest/persona-source-provisioning/reconcile", headers=headers, json=payload)
+    out["status"] = r.status_code
+    body = r.json()
+    if r.status_code == 200:
+        out.update(summary=body["summary"], bindings=len(body["bindings"]),
+                   skipped_count=body.get("skipped_count"), retirement_actions=body["retirement_actions"])
+        if mode == "write-with-state":
+            from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+            state = ControllerState("ctrl-rollback", "test-controller", "test", "tenant-dev", {})
+            synthetic = {**body, "skipped": [{"kind": "connector_record", "id": f"future-{i}", "reason": "adapter-not-defined: X"} for i in range(3)], "skipped_count": 3}
+            state.record_success(desired_state=meta, reconcile=synthetic, schedule={}, actual_readback=body["post_readback"])
+            ControllerStateStore(os.path.join(data_dir, "controller_state.json")).save(state)
+    else:
+        out["detail"] = body.get("detail")
+        from services.source_ingestion.api_models import PersonaSourceProvisioningRequest
+        try:
+            module.runtime.reconcile_persona_source_provisioning(
+                PersonaSourceProvisioningRequest(**payload), authorization=headers["Authorization"])
+        except Exception as exc:  # the raise site, as repo-relative file:line:function frames
+            tree = os.environ["PREVIOUS_RELEASE_TREE"] + os.sep
+            out["raised"] = type(exc).__name__
+            out["frames"] = [f"{f.filename.replace(tree, '')}:{f.lineno}:{f.name}"
+                             for f in traceback.extract_tb(exc.__traceback__) if f.filename.startswith(tree)]
+print(json.dumps(out))
+'''
+
+_MODULES = ["services.source_ingestion.requirement_state"]
+
+
+def _write_driver(tmp_path: Path) -> Path:
+    path = tmp_path / "previous_release_reconcile_driver.py"
+    path.write_text(_RECONCILE_DRIVER, encoding="utf-8")
+    return path
+
+
+def _through_harness(revision: str, driver: Path, data_dir: Path, mode: str) -> dict[str, Any]:
+    result = harness.run_driver(revision, driver, modules=_MODULES, driver_args=[str(data_dir), mode], check=False)
+    assert result.returncode == 0, result.stderr[-2000:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_reproduce_first_baseline_release_gets_http_400_from_state_written_by_dev(tmp_path: Path) -> None:
+    """Incident 2026-11-17 06:47Z: e7ec353d6 reconciling state the newer release left on the volume."""
+
+    driver = _write_driver(tmp_path)
+    data_dir = tmp_path / "volume"
+    data_dir.mkdir()
+    written = _through_harness(PRE_CHANGE_REVISION, driver, data_dir, "write")
+    assert written["status"] == 200 and written["bindings"] == written["requirement_count"] == 32
+    connectors = {e["payload"]["connector"]["connector_id"] for e in _jsonl(data_dir / "connector_config.jsonl")}
+    assert {"collector-tw-trading-holidays", "collector-tw-trading-suspension", "tw-finmind-monthly-revenue",
+            "tw-finmind-quarterly-statements", "tw-finmind-valuation"} <= connectors
+
+    old = _through_harness(BASELINE_REVISION, driver, data_dir, "reconcile")
+
+    assert old["requirement_count"] == 27  # the baseline's own desired state
+    assert old["status"] == 400
+    assert old["detail"].startswith(
+        "provider-owned adapter is not allowlisted: FinMindTaiwanFundamentalsAdapter.records_from_rows; allowed="
+    )
+    assert old["raised"] == "SourceEvidenceError"
+    # Raise site at e7ec353d6: retirement of a connector the baseline does not define.
+    assert any(f.startswith("services/source_ingestion/provider_adapters.py:") and f.endswith(":validate_provider_adapter_token") for f in old["frames"])
+    assert any(f.startswith("services/source_ingestion/runtime.py:") and f.endswith(":_retire_removed_requirement_bindings") for f in old["frames"])
+    assert any(f.startswith("services/source_ingestion/configured.py:") and f.endswith(":upsert_config") for f in old["frames"])
+
+
+def test_rollback_proof_previous_releases_read_state_written_by_this_change(tmp_path: Path) -> None:
+    """e7ec353d6 and the commit before this change read what the new code wrote, without error."""
+
+    driver = _write_driver(tmp_path)
+    data_dir = tmp_path / "volume"
+    data_dir.mkdir()
+    written = _through_harness(CURRENT_REVISION, driver, data_dir, "write-with-state")
+    assert written["status"] == 200 and written["bindings"] == 32 and written["skipped_count"] == 0
+    raw_state = json.loads((data_dir / "controller_state.json").read_text(encoding="utf-8"))["state"]
+    assert raw_state["reconcile"]["skipped_count"] == 3 and len(raw_state["reconcile"]["skipped_ids"]) == 3
+
+    for revision in (BASELINE_REVISION, PRE_CHANGE_REVISION):
+        snapshot = tmp_path / f"volume-{revision}"
+        shutil.copytree(data_dir, snapshot)
+        # Reads controller_state.json, the connector store, the schedule store and the requirement log.
+        read = _through_harness(revision, driver, snapshot, "readback")
+        assert read["status"] == 200, revision
+        assert read["connector_count"] == 32 and read["state_present"] is True and read["snapshot_bindings"] == 32
+        # Difference, named: these releases do not know reconcile.skipped_count / skipped_ids; their
+        # ControllerState.from_dict ignores unknown keys (checksum is over the payload as written), so
+        # the read is safe; the next save by them rewrites the file without the two fields.
+
+
+def test_harness_is_reusable_for_another_stateful_service_requirement_state_reader(tmp_path: Path) -> None:
+    """Example for another module: the e7ec353d6 requirement_state reader against a log the current code wrote."""
+
+    driver = tmp_path / "requirement_reader.py"
+    driver.write_text(
+        "import json, sys\n"
+        "from services.source_ingestion.requirement_state import RequirementSnapshotStore\n"
+        "snapshot = RequirementSnapshotStore(sys.argv[1]).reload()\n"
+        "print(json.dumps({'sequence': snapshot.sequence, 'binding_count': snapshot.binding_count}))\n",
+        encoding="utf-8",
+    )
+    from services.source_ingestion.requirement_state import RequirementSnapshotStore
+
+    log = tmp_path / "requirement_snapshots.jsonl"
+    current = RequirementSnapshotStore(log)
+    current.append(
+        desired_state_sha256="b" * 64, bindings={"r1": "c1", "r2": "c2"}, persona_count=1,
+        authority="test://harness-example", authoritative=True,
+    )
+    result = harness.run_driver(
+        BASELINE_REVISION, driver,
+        modules=["services.source_ingestion.requirement_state"], driver_args=[str(log)],
+    )
+    assert result.json() == {"sequence": 1, "binding_count": 2}
+    cli = subprocess.run(
+        [sys.executable, str(Path(harness.__file__)), "--revision", BASELINE_REVISION,
+         "--path", "services", "--module", "services.source_ingestion.requirement_state",
+         "--driver", str(driver), "--", str(log)],
+        capture_output=True, text=True, check=False,
+    )
+    assert cli.returncode == 0 and json.loads(cli.stdout) == {"sequence": 1, "binding_count": 2}

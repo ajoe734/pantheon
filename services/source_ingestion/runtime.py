@@ -803,8 +803,6 @@ class SourceIngestionRuntime:
                 "scheduled_connector_count": 0,
                 "stale_connector_count": 0,
                 "degraded_connector_count": 0,
-                "skipped_count": 0,
-                "skipped_ids": [],
                 "reason": "controller_state_missing",
             }
         except OSError as exc:
