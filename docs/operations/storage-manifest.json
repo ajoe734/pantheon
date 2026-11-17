@@ -5622,7 +5622,27 @@
    ],
    "register_class": "RC3",
    "task": "SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118"
-  }
+  },
+ {
+  "bound_proof": {
+   "contains": "REPORT_MAX_BYTES = 64 * 1024",
+   "file": "services/source_ingestion/retention.py"
+  },
+  "bound_status": "bounded",
+  "cap": "one file, 64 KB (REPORT_MAX_BYTES, asserted on every write: a larger report raises and is not written)",
+  "cleanup": "replaced as a whole by the next run (temp file then rename); no history kept. The sweeper itself is the cleanup of daily bars, lineage, current snapshot records and keyed partitions (retention_days per dataset, expired warrants at the first run after expiry); it deletes only what its dry run report listed and refuses more than 20 percent of a store per run without an override",
+  "growth_driver": "retention sweeper last run report, one compact JSON line (counts and bytes per store, at most 10 sample dates each), written once per trading day",
+  "growth_per_day": "0 bytes (one replaced file; measured size recorded in docs/deployment/evidence/SOURCE-RETENTION-SWEEPER-20261118-R2/evidence.json)",
+  "kind": "jsonl",
+  "name": "retention-last-run.jsonl",
+  "owner": "source_ingestion",
+  "readers": [
+   "services/source_ingestion/retention.py",
+   "services/source_ingestion/routers/observability.py"
+  ],
+  "register_class": "RC3",
+  "task": "SOURCE-RETENTION-SWEEPER-20261118-R2"
+ }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
  "rule": "AGENTS.md Runtime Budget; how to add a writer: docs/operations/storage-manifest.md",

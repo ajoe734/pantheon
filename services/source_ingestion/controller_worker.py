@@ -198,6 +198,32 @@ def run_schedule_tick(
     )
 
 
+_RETENTION_LAST_DAY: dict[str, str] = {}
+
+
+def run_retention_sweep(*, api_url: str, controller_token: str | None, timeout_seconds: float = 30.0,
+                        today: str | None = None) -> dict[str, Any]:
+    """SOURCE-RETENTION-SWEEPER-20261118-R2: the sweeper rides the existing controller tick (no second scheduler).
+
+    Called at most once per Taipei day from here (and once per trading day by the sweeper itself); a failure is
+    returned as data and never fails the tick. Dry run unless the service has the named setting."""
+    from datetime import timedelta
+
+    day = today or datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    if _RETENTION_LAST_DAY.get(api_url) == day:
+        return {"called": False, "reason": "already_called_today"}
+    try:
+        result = _request_json(
+            api_url.rstrip("/") + "/api/source-ingest/retention/run",
+            method="POST", payload={}, bearer_token=controller_token, timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - retention must never fail the ingest tick
+        return {"called": True, "ok": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    _RETENTION_LAST_DAY[api_url] = day
+    return {"called": True, "ok": True, "ran": bool(result.get("ran")), "status": result.get("status") or result.get("reason"),
+            "mode": result.get("mode")}
+
+
 def _load_bearer_token() -> str | None:
     token_file = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN_FILE") or "").strip()
     if token_file:
@@ -2352,6 +2378,8 @@ def run_controller_tick(
             actual_readback=accepted_actual,
         )
         store.save(state)
+        retention = run_retention_sweep(
+            api_url=config.api_url, controller_token=config.controller_token, timeout_seconds=config.timeout_seconds)
         continuation_pending = False
         if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
             # A pull just persisted: pending newest-session or ordered history rows
@@ -2378,6 +2406,7 @@ def run_controller_tick(
             "frontier_recovery": frontier_recovery,
             "schedule_summary": schedule.get("summary"),
             "actual_readback": state.actual_readback,
+            "retention": retention,
         }
     except Exception as exc:
         error = exc if isinstance(exc, ControllerTickError) else ControllerTickError("controller", f"{type(exc).__name__}: {exc}")

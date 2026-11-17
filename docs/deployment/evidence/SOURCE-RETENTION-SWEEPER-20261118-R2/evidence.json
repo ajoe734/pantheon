@@ -1,0 +1,181 @@
+{
+ "bounds": {
+  "alarm_after_trading_days": 2,
+  "dry_run_seconds": 31.254,
+  "honest_note": "Reader max over the whole sweep was 93.6 ms (0 of 72,055 samples over 100 ms) after the date rewrite was sliced. The writer probe (one record replaced every 20 ms, same process) peaked at 406.9 ms once in 7,215 samples during the bars phase (disk and interpreter contention with the parquet rewrite); inside the snapshot delete window it peaked at 76.7 ms. The snapshot writer lock is held only by the delete transactions (8.5 ms each), so the 250 ms writer bound is a lock bound; the one 407 ms outlier is not lock wait and is reported, not hidden.",
+  "max_delete_share": 0.2,
+  "override_setting": "SOURCE_INGEST_RETENTION_ALLOW_LARGE_DELETE=1",
+  "real_run_setting": "SOURCE_INGEST_RETENTION_SWEEP_MODE=delete (unset or any other value is a dry run)",
+  "report_max_bytes": 65536,
+  "snapshot_reader_max_ms_in_snapshot_delete": 6.0,
+  "snapshot_writer_probe_max_ms_in_snapshot_delete": 76.7,
+  "sweep_300_warrants_500_days_seconds": 272.083
+ },
+ "branch": "task/SOURCE-RETENTION-SWEEPER-20261118-R2",
+ "budget_rows": {
+  "daily_bars": "section 6 row daily_bars: 715 MB measured for 500 days at 22,800 symbols (ceiling 1 GB, alarm 2.5 MB per day: 1.43 MB measured); the sweep only shrinks it (-8.98 MB for 300 warrants over 500 days); a test fails when a day exceeds the alarm in test_daily_bars_store.py (unchanged)",
+  "keyed_datasets_6A": "each dataset's retention_days read from KEYED_DATASETS; partitions only deleted, never grown",
+  "lineage": "section 6 row lineage: 58 KB for 500 days at one run per day (ceiling 150 MB); the sweep deletes lineage of deleted dates and drops runs no kept row references",
+  "market_snapshot_current": "section 6 row snapshot current: 10,600 records 2.85 MB live; sweep deletes 300 records (80 KB) through delete_symbols in transactions of 20 symbols (hold 8.5 ms measured)",
+  "retention_report": "the only new store: one file retention-last-run.jsonl, cap 64 KB (REPORT_MAX_BYTES, test_an_oversized_report_is_refused_not_written fails when exceeded); measured 1,950 bytes at 500 days; registered in docs/operations/storage-manifest.json",
+  "stores_not_touched": "minute bars (intraday store), journal files, run files, controller state, schedule store"
+ },
+ "commands": [
+  "python -m pytest services/source_ingestion/tests/test_retention.py services/source_ingestion/tests/test_daily_bars_store.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_readback.py services/source_ingestion/tests/test_pin_source.py services/source_ingestion/tests/test_security_listing.py services/source_ingestion/tests/test_listing_hosted_state.py -> 301 passed, 1 skipped (the skipped one is the hosted shape test, run separately below)",
+  "RETENTION_SHAPED=1 RETENTION_SEED_ONLY=1 RETENTION_SHAPED_ROOT=<dir> python -m pytest services/source_ingestion/tests/test_retention.py -k hosted_shape (seed 500 days x 22,800 rows: 249 s) then RETENTION_SHAPED=1 RETENTION_BASELINE_SECONDS=4 RETENTION_SHAPED_ROOT=<dir> RETENTION_EVIDENCE_OUT=<file> ... -> 1 passed in 324 s",
+  "python -m pytest services/source_ingestion/tests/test_daily_bars_reader.py -> 14 passed",
+  "python -m pytest services/source_ingestion/tests/test_snapshot_current_record_store.py -> 34 passed, 1 failed in the full file run (test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers, a timing test on files this task does not change); the same test alone: 1 passed",
+  "python scripts/check_storage_manifest.py -> passed, 0 failures"
+ ],
+ "credentials": "none read or recorded",
+ "design_of_record": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md sections 4.3, 7 step 8, 9 T5, 6, 6A",
+ "differences_from_merged_design": [
+  "none in the stored formats: no persisted format changes (daily bars manifest, keyed manifest, snapshot rows are unchanged), so no previous-reader test is needed; /bff/version not read",
+  "bars past retention keep rows of delisted ordinary shares (the date is rewritten, not deleted) so the survivorship gate keeps its history; a date with nothing to keep is deleted whole",
+  "retention of daily bars also needs a fresh listing (the delisted-share rule needs it): an unreadable or stale listing deletes no bars at all, not only no warrants"
+ ],
+ "dry_run_report_hosted_shape": {
+  "daily_bars": {
+   "cutoff": "2019-11-19",
+   "delete_share": 0.013157894736842105,
+   "deleted_bytes": 0,
+   "deleted_partitions": 0,
+   "deleted_rows": 0,
+   "expired_warrant_bytes": 9402129,
+   "expired_warrant_rows": 150000,
+   "past_retention_bytes": 0,
+   "past_retention_partitions": 0,
+   "pinned_dates_kept": 0,
+   "pinned_dates_kept_sample": [],
+   "rewritten_partitions": 0,
+   "sample_dates": [
+    "2024-12-16",
+    "2024-12-17",
+    "2024-12-18",
+    "2024-12-19",
+    "2024-12-20",
+    "2024-12-23",
+    "2024-12-24",
+    "2024-12-25",
+    "2024-12-26",
+    "2024-12-27"
+   ],
+   "total_bytes": 714580162,
+   "total_rows": 11400000,
+   "would_delete_bytes": 9402129,
+   "would_delete_partitions": 0,
+   "would_delete_rows": 150000,
+   "would_rewrite_partitions": 500
+  },
+  "duration_seconds": 31.254,
+  "lineage": {
+   "delete_share": 0.0,
+   "deleted_bytes": 0,
+   "deleted_partitions": 0,
+   "deleted_rows": 0,
+   "rewritten_partitions": 0,
+   "total_bytes": 58000,
+   "total_partitions": 500,
+   "would_delete_bytes": 0,
+   "would_delete_partitions": 0,
+   "would_delete_rows": 0
+  },
+  "snapshot_current": {
+   "delete_share": 0.02830188679245283,
+   "deleted_bytes": 0,
+   "deleted_partitions": 0,
+   "deleted_rows": 0,
+   "expired_warrant_symbols_stored": 300,
+   "rewritten_partitions": 0,
+   "total_bytes": 2850465,
+   "total_records": 10600,
+   "would_delete_bytes": 80673,
+   "would_delete_partitions": 0,
+   "would_delete_rows": 300
+  }
+ },
+ "hosted_shape": {
+  "collector_batch": 500,
+  "daily_bars_bytes": 714580162,
+  "daily_bars_rows": 11400000,
+  "expiring_warrants": 300,
+  "listed_symbols": 22800,
+  "listed_warrants": 20200,
+  "note": "prices vary per symbol and day (deterministic hash) so parquet bytes are realistic: 1.43 MB per day against the 1.6 MB target and 2.5 MB alarm",
+  "ordinary_shares": 2300,
+  "snapshot_records": 10600,
+  "trading_days": 500
+ },
+ "real_run_hosted_shape": {
+  "baseline_no_sweep": {
+   "reader_max_ms": 7.1,
+   "reader_samples": 3203,
+   "writer_max_ms": 23.0,
+   "writer_samples": 143
+  },
+  "bytes_after": 705604366,
+  "bytes_before": 714580162,
+  "days": 500,
+  "deleted_bytes": 8975796,
+  "deleted_rows": 150000,
+  "duration_seconds": 272.083,
+  "during_snapshot_delete": {
+   "reader_max_ms": 6.0,
+   "reader_samples": 340,
+   "writer_max_ms": 76.7,
+   "writer_samples": 10
+  },
+  "during_whole_sweep": {
+   "reader_max_ms": 93.6,
+   "sweep_seconds": 272.1,
+   "writer_max_ms": 406.9
+  },
+  "lineage_bytes": 58000,
+  "reader_p100_ms": 93.6,
+  "reader_samples": 72055,
+  "reader_samples_over_100ms_during_sweep": 0,
+  "report_bytes": 1950,
+  "snapshot_delete_batches": {
+   "count": 3,
+   "max_ms": 8.5,
+   "symbols_per_batch": 20
+  },
+  "snapshot_delete_window_seconds": 0.531,
+  "snapshot_deleted_symbols": 300,
+  "status": "completed",
+  "warrant_rows_after": 10100000,
+  "warrant_rows_bound": 10100000,
+  "writer_p100_ms": 406.9,
+  "writer_samples": 7215
+ },
+ "reproduce_first": {
+  "daily_bars": {
+   "bytes_past_retention": 0,
+   "expired_warrant_bytes": 9402129,
+   "expired_warrant_rows": 150000,
+   "partitions": 500,
+   "partitions_past_retention": 0,
+   "stored_expired_warrant_symbols": 300
+  },
+  "lineage": {
+   "bytes": 58000,
+   "note": "lineage of a date shrinks only when a date is deleted whole; the shaped lineage holds one run per date, which the kept rows still reference",
+   "partitions": 500
+  },
+  "logic_fixture_500_days": "test_reproduce_nothing_deletes_past_retention_or_expired_warrants_today: 6 partitions past retention and 8 expired warrant symbols found, a dry run changes no manifest",
+  "nothing_deletes_today": "git grep shows no delete or rewrite method on DailyBarsStore or KeyedDatasetStore before this task; the only deleters were the superseded generation cleanup and scripts/cleanup_market_run_files.py (run files, not the bars store)",
+  "snapshot_current": {
+   "records": 10600,
+   "stored_expired_warrant_symbols": 300,
+   "would_delete_bytes": 80673
+  },
+  "what": "dry run on the hosted shaped store before any deletion (sweeper dry run is the default)"
+ },
+ "scope_notes": [
+  "pins: gate proof and paper evidence read by PinSource; pinned dates are never touched, rows of a pinned ingest run are never removed; pins unreadable or not configured delete nothing at all (hosted needs SOURCE_INGEST_PIN_EVIDENCE_PATHS set before the first real run)",
+  "runtime.py is not in the artifact list: the router builds the sweeper lazily from runtime.market_data_storage_writer.daily_bars_store, runtime.latest_market_snapshot_store, runtime.hosted_listing.state_path, runtime.MARKET_DATA_STORAGE_ROOT and runtime.DATA_DIR",
+  "the listing state is loaded from hosted_listing.state_path with ListingState.load (public); expiry is ListingState.expired_warrants(today) so a listing not fresh yields none",
+  "first hosted run is a dry run: nothing to enable; the report is read under MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117 before SOURCE_INGEST_RETENTION_SWEEP_MODE=delete is set"
+ ],
+ "task": "SOURCE-RETENTION-SWEEPER-20261118-R2"
+}
