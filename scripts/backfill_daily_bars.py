@@ -88,9 +88,27 @@ def _iter_rows(path: Path) -> Iterator[Mapping[str, Any]]:
                 yield json.loads(line)
 
 
+def effective_metadata(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Metadata of a run-file line with ``normalized_row`` completed from the JSON ``body`` the hosted
+    snapshot lines also carry (the evaluator reads that form), so both shapes extract the same bar."""
+    meta = dict(row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {})
+    body = meta.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            body = None
+    merged: dict[str, Any] = dict(body) if isinstance(body, Mapping) else {}
+    if isinstance(meta.get("normalized_row"), Mapping):
+        merged.update(meta["normalized_row"])
+    if merged:
+        meta["normalized_row"] = merged
+    return meta
+
+
 def row_fields(row: Mapping[str, Any]) -> tuple[str | None, str | None]:
     """(trade_date, symbol) of one run-file line, by the same rule as ``DailyBarsStore.extract_rows``."""
-    meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+    meta = effective_metadata(row)
     normalized = meta.get("normalized_row")
     body = normalized if isinstance(normalized, Mapping) else meta
     trade_date = None
@@ -156,7 +174,7 @@ def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> 
         if kind == "delete":
             continue  # expired warrant (or a code in no listing): not carried
         carried.append(_Rec(
-            metadata=row.get("metadata") or {}, source_id=str(row.get("source_id") or ""),
+            metadata=effective_metadata(row), source_id=str(row.get("source_id") or ""),
             is_rejected=False))
     return {
         "rows": rows, "unique": len(newest), "duplicates": rows - len(newest),

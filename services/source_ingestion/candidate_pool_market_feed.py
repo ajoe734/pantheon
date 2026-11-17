@@ -18,13 +18,14 @@ nothing until a new partition lands.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .market_data_storage import _iter_normalized_rows, _slug
+from .market_data_storage import _iter_normalized_rows, _slug, daily_price_reader_mode
 from .survivorship_attestation import ALL_MARKET_BUNDLES, HOLIDAY_DATASET, SUSPENSION_DATASET, attest_survivorship
 
 SCHEMA_VERSION = "candidate_pool_market.v1"
@@ -124,7 +125,9 @@ def _capture(meta: Mapping[str, Any], nrow: Mapping[str, Any], *, dataset: str) 
     return (session, venue), {"ref": f"{endpoint}/{dataset}/{session}@{upstream}#{str(collector.get('bundle_sha256') or '')[:12]}"}
 
 
-def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], set[str], dict[tuple[str, str], dict[str, Any]]]:
+def _read_bars(
+    paths: Sequence[Path], *, captures_only: bool = False
+) -> tuple[dict[str, list[dict[str, Any]]], set[str], dict[tuple[str, str], dict[str, Any]]]:
     """Bars, sessions and the dated all-market captures; a capture also lists the page's non-traded rows.
 
     A capture whose rows carry the collector's ``trading_status`` keeps the listed securities that have no
@@ -144,6 +147,8 @@ def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], 
                     held.setdefault("non_traded", set())
                     if nrow["trading_status"] == "not_traded":
                         held["non_traded"].add(f"{nrow.get('symbol')}.{cap[0][1]}")
+            if captures_only:
+                continue
             parsed = _bar(meta, nrow)
             if parsed is None:
                 continue
@@ -157,6 +162,61 @@ def _read_bars(paths: Sequence[Path]) -> tuple[dict[str, list[dict[str, Any]]], 
         bars.setdefault(symbol, []).append(bar)
     sessions = {event[:10] for (_, event) in versions}
     return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions, captures
+
+
+def _daily_bars_signature(root: Path) -> tuple[int, int, int]:
+    manifest_dir = root / "daily_bars" / "_manifest"
+    return _signature(sorted(manifest_dir.glob("date=*.json")) if manifest_dir.is_dir() else [])
+
+
+def _daily_bars_digest(root: Path) -> str:
+    lines = []
+    for path in sorted((root / "daily_bars" / "_manifest").glob("date=*.json")):
+        lines.append(f"{path.name[5:-5]}:{json.loads(path.read_text(encoding='utf-8')).get('content_digest')}")
+    return hashlib.sha256("|".join(lines).encode()).hexdigest()
+
+
+def _read_bars_from_daily_bars(root: Path) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    """Bars and sessions of the newest ``MAX_BARS_PER_SYMBOL`` stored trade dates through DailyBarsReader,
+    paged by symbol chunks (reader cap) inside one date window (reader cap). Daily bars carry no
+    ``available_time`` or traded value: availability is the regular 14:30 Taipei publish time of the
+    trade date and ``traded_value`` is absent."""
+    from .daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, DailyBarsReader
+    from .daily_bars_store import DailyBarsError, DailyBarsStore
+
+    reader = DailyBarsReader(root)
+    dates = reader.trade_dates()[-min(MAX_BARS_PER_SYMBOL, MAX_RANGE_DAYS):]
+    if not dates:
+        return {}, set()
+    try:
+        names = sorted(DailyBarsStore(root).symbol_stats(dates[0], dates[-1]))
+        bars: dict[str, list[dict[str, Any]]] = {}
+        for i in range(0, len(names), MAX_SYMBOLS):
+            for raw_symbol, rows in reader.read_range(names[i:i + MAX_SYMBOLS], dates[0], dates[-1]).items():
+                symbol = _canonical(raw_symbol)
+                if symbol is None:
+                    continue
+                for row in rows:
+                    close = _number(row.get("close"))
+                    if close is None or close <= 0:
+                        continue
+                    bar: dict[str, Any] = {
+                        "event_time": f"{row['trade_date']}T13:30:00+08:00",
+                        "available_time": f"{row['trade_date']}T14:30:00+08:00", "close": close,
+                    }
+                    for field in ("open", "high", "low", "volume"):
+                        value = _number(row.get(field))
+                        if value is not None:
+                            bar[field] = value
+                    if "volume" in bar:
+                        bar["suspended"] = bar["volume"] <= 0
+                    bars.setdefault(symbol, []).append(bar)
+    except DailyBarsError as exc:
+        raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, f"daily bars read refused: {exc}") from exc
+    for rows in bars.values():
+        rows.sort(key=lambda b: b["event_time"])
+    sessions = {b["event_time"][:10] for rows in bars.values() for b in rows}
+    return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions
 
 
 _HOLIDAY_ENDPOINT = {"TWSE": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?",
@@ -297,8 +357,12 @@ def build_candidate_pool_market(
 
     root = Path(root)
     declared = sorted({(str(i["name"]), str(i["dataset"]), str(i["field"])) for i in inputs})
+    from_bars = daily_price_reader_mode() == "daily_bars"
     bar_paths = _partitions(root, DAILY_BAR_DATASET)
-    if not bar_paths:
+    if from_bars:
+        if _daily_bars_signature(root)[0] == 0:
+            raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, "daily_bars has no stored trade date")
+    elif not bar_paths:
         raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, f"governed dataset {DAILY_BAR_DATASET} has no stored partitions")
     feature_datasets = sorted({d for _, d, _ in declared if d != DAILY_BAR_DATASET and d not in _PRICE_LIKE})
     paths_by_dataset = {d: _partitions(root, d) for d in feature_datasets}
@@ -323,7 +387,9 @@ def build_candidate_pool_market(
     suspension_paths = _partitions(root, SUSPENSION_DATASET)
     holiday_paths = _partitions(root, HOLIDAY_DATASET)
     signature = (
-        str(root), tuple(declared), decision_day, _signature(bar_paths), _signature(suspension_paths), _signature(holiday_paths),
+        str(root), tuple(declared), decision_day, from_bars,
+        _daily_bars_signature(root) if from_bars else None, _signature(bar_paths),
+        _signature(suspension_paths), _signature(holiday_paths),
         tuple((d, _signature(p)) for d, p in sorted(paths_by_dataset.items())),
     )
     with _CACHE_LOCK:
@@ -331,7 +397,14 @@ def build_candidate_pool_market(
     if cached is not None:
         return cached
 
-    bars, sessions, price_captures = _read_bars(bar_paths)
+    if from_bars:
+        # Bars and sessions from daily_bars. The all-market captures that the survivorship attestation
+        # needs are not part of daily bars: they are read from run files while those exist; without them
+        # the attestation is false (fail closed), never assumed.
+        bars, sessions = _read_bars_from_daily_bars(root)
+        _, _, price_captures = _read_bars(bar_paths, captures_only=True)
+    else:
+        bars, sessions, price_captures = _read_bars(bar_paths)
     if not bars:
         raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, f"{DAILY_BAR_DATASET} holds no usable daily bars")
     symbols: dict[str, dict[str, Any]] = {s: {"dataset": DAILY_BAR_DATASET, "bars": rows} for s, rows in bars.items()}
@@ -370,8 +443,10 @@ def build_candidate_pool_market(
             coverage = decision.isoformat()
     digest = hashlib.sha256("|".join(
         f"{p.relative_to(root).as_posix()}:{p.stat().st_size}"
-        for p in bar_paths + [q for d in feature_datasets for q in paths_by_dataset[d]]
+        for p in ([] if from_bars else bar_paths) + [q for d in feature_datasets for q in paths_by_dataset[d]]
     ).encode()).hexdigest()
+    bars_ref = (f"daily_bars@sha256:{_daily_bars_digest(root)}" if from_bars
+                else f"normalized/{DAILY_BAR_DATASET}@sha256:{digest}")
     window = ordered[-MAX_BARS_PER_SYMBOL:]  # the sessions the carried bars span
     suspension_known, suspension_unknown = _suspension_captures(suspension_paths, window, price_captures)
     attestation = attest_survivorship(window, price_captures, suspension_known,
@@ -379,8 +454,7 @@ def build_candidate_pool_market(
     market = {
         "schema_version": SCHEMA_VERSION,
         "scope": SCOPE,
-        "source_refs": [f"normalized/{DAILY_BAR_DATASET}@sha256:{digest}"]
-        + [f"normalized/{d}" for d in feature_datasets],
+        "source_refs": [bars_ref] + [f"normalized/{d}" for d in feature_datasets],
         "trading_sessions": ordered,
         "calendar_coverage_through": coverage,
         "symbols": symbols,

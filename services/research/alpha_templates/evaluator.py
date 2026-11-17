@@ -522,9 +522,79 @@ def _read_snapshot_rows(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
     return rows
 
 
+# --- SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: daily price reads through DailyBarsReader -----
+GOVERNED_DAILY_BARS_READER = "daily_bars"
+
+
+def _daily_price_reader_mode() -> str:
+    from services.source_ingestion.market_data_storage import daily_price_reader_mode
+
+    return daily_price_reader_mode()
+
+
+def _market_store_root(snapshot_dir: str | Path) -> Path:
+    """The market_data_store root that holds ``daily_bars`` (accepts the old normalized path too)."""
+    root = Path(snapshot_dir)
+    if root.name == "tw_price_daily" and root.parent.name == "normalized":
+        return root.parents[1]
+    return root
+
+
+def _daily_bars_snapshot_id(root: Path) -> tuple[str, int]:
+    """Snapshot id = sha256 over the sorted ``date:content_digest`` list of the day manifests."""
+    manifest_dir = root / "daily_bars" / "_manifest"
+    lines = []
+    for path in sorted(manifest_dir.glob("date=*.json")) if manifest_dir.is_dir() else []:
+        try:
+            digest = json.loads(path.read_text(encoding="utf-8"))["content_digest"]
+        except (OSError, ValueError, KeyError) as exc:
+            raise TaiwanEvaluationDataError(f"daily bars manifest unreadable: {path.name}: {exc}") from exc
+        lines.append(f"{path.name[5:-5]}:{digest}")
+    return "sha256:" + hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest(), len(lines)
+
+
+def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> dict[tuple[str, str], dict[str, Any]]:
+    """``{(symbol, trade_date): bar}`` from DailyBarsReader, paged by symbol chunks and date windows
+    within the reader caps. ``value`` is not stored in daily bars (None); ``ts`` is the regular 14:30
+    Taipei publish time of the trade date, the same rule the run-file read applies to date-only rows."""
+    from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, DailyBarsReader
+    from services.source_ingestion.daily_bars_store import DailyBarsError, DailyBarsStore
+
+    reader = DailyBarsReader(root)
+    dates = reader.trade_dates()
+    if not dates:
+        raise TaiwanEvaluationDataError(f"daily bars hold no trading day under {root}")
+    try:
+        names = sorted(set(map(str, symbols))) if symbols is not None else sorted(DailyBarsStore(root).symbol_stats())
+        rows: dict[tuple[str, str], dict[str, Any]] = {}
+        for i in range(0, len(names), MAX_SYMBOLS):
+            chunk = names[i:i + MAX_SYMBOLS]
+            for j in range(0, len(dates), MAX_RANGE_DAYS):
+                window = dates[j:j + MAX_RANGE_DAYS]
+                got = reader.read_range(chunk, window[0], window[-1])
+                for sym, bars in got.items():
+                    for bar in bars:
+                        fields = {f: bar.get(f) for f in ("open", "high", "low", "close", "volume")}
+                        if any(v is None for v in fields.values()):
+                            raise TaiwanEvaluationDataError(
+                                f"daily bars row {sym} {bar['trade_date']} has no {sorted(k for k, v in fields.items() if v is None)}")
+                        ts = _parse_timestamp_utc(f"{bar['trade_date']}T14:30:00+08:00")
+                        rows[(sym, bar["trade_date"])] = {
+                            **{k: float(v) for k, v in fields.items()}, "value": None,
+                            "ts": ts.isoformat().replace("+00:00", "Z"),
+                        }
+    except DailyBarsError as exc:
+        raise TaiwanEvaluationDataError(f"daily bars read refused: {exc}") from exc
+    return rows
+
+
 def snapshot_coverage(snapshot_dir: str | Path) -> dict[str, int]:
     """Distinct trading days per symbol in the snapshot (for insufficiency reporting)."""
     counts: dict[str, int] = {}
+    if _daily_price_reader_mode() == "daily_bars":
+        for sym, _day in _read_daily_bars_rows(_market_store_root(snapshot_dir)):
+            counts[sym] = counts.get(sym, 0) + 1
+        return dict(sorted(counts.items()))
     for sym, _day in _read_snapshot_rows(_snapshot_root(snapshot_dir)):
         counts[sym] = counts.get(sym, 0) + 1
     return dict(sorted(counts.items()))
@@ -544,14 +614,23 @@ def load_tw_price_daily_snapshot(
     (see ``snapshot_coverage``), never padded. ``event_time``/``available_time`` are
     the record's ``available_time`` in UTC.
     """
-    root = _snapshot_root(snapshot_dir)
-    if not root.is_dir():
-        raise TaiwanEvaluationDataError(f"governed snapshot directory missing: {root}")
-    snapshot_id, file_count = compute_snapshot_id(root)
-    if file_count == 0:
-        raise TaiwanEvaluationDataError(f"governed snapshot has no jsonl files: {root}")
+    from_bars = _daily_price_reader_mode() == "daily_bars"
+    if from_bars:
+        root = _market_store_root(snapshot_dir)
+        if not (root / "daily_bars").is_dir():
+            raise TaiwanEvaluationDataError(f"governed daily bars directory missing: {root / 'daily_bars'}")
+        snapshot_id, file_count = _daily_bars_snapshot_id(root)
+        snapshot_rows = _read_daily_bars_rows(root, symbols)
+    else:
+        root = _snapshot_root(snapshot_dir)
+        if not root.is_dir():
+            raise TaiwanEvaluationDataError(f"governed snapshot directory missing: {root}")
+        snapshot_id, file_count = compute_snapshot_id(root)
+        if file_count == 0:
+            raise TaiwanEvaluationDataError(f"governed snapshot has no jsonl files: {root}")
+        snapshot_rows = _read_snapshot_rows(root)
     by_symbol: dict[str, list[tuple[str, dict[str, Any]]]] = {}
-    for (sym, day), bar in _read_snapshot_rows(root).items():
+    for (sym, day), bar in snapshot_rows.items():
         by_symbol.setdefault(sym, []).append((day, bar))
     wanted = set(map(str, symbols)) if symbols is not None else None
     universe: dict[str, dict[str, Any]] = {}
@@ -563,7 +642,7 @@ def load_tw_price_daily_snapshot(
             continue
         bars = []
         for _day, b in series:
-            vwap = b["value"] / b["volume"] if b["volume"] > 0 else b["close"]
+            vwap = b["value"] / b["volume"] if b["value"] is not None and b["volume"] > 0 else b["close"]
             bars.append({
                 "symbol": sym, "date": b["ts"], "event_time": b["ts"], "available_time": b["ts"],
                 "open": b["open"], "high": b["high"], "low": b["low"], "close": b["close"],
@@ -577,6 +656,7 @@ def load_tw_price_daily_snapshot(
             "snapshot_root": str(root),
             "snapshot_id": snapshot_id,
             "snapshot_file_count": file_count,
+            **({"reader": GOVERNED_DAILY_BARS_READER} if from_bars else {}),
             "bar_count": len(bars),
             "first_event_time": bars[0]["event_time"],
             "last_event_time": bars[-1]["event_time"],
@@ -668,10 +748,15 @@ def summarize_universe_provenance(universe: Mapping[str, Mapping[str, Any]]) -> 
             continue
         if kind == GOVERNED_SNAPSHOT_SOURCE_KIND:
             root = Path(str(prov.get("snapshot_root") or ""))
+            current_id = (
+                _daily_bars_snapshot_id(root)[0]
+                if prov.get("reader") == GOVERNED_DAILY_BARS_READER and root.is_dir()
+                else compute_snapshot_id(root)[0] if root.is_dir() else None
+            )
             if (
                 prov.get("source_kind") != kind
                 or not root.is_dir()
-                or compute_snapshot_id(root)[0] != prov.get("snapshot_id")
+                or current_id != prov.get("snapshot_id")
                 or int(prov.get("bar_count") or -1) != len(entry.get("decision_times") or ())
             ):
                 raise TaiwanEvaluationDataError(

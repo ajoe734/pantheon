@@ -188,3 +188,39 @@ def test_budget_alarm_fields_and_enforcement(tmp_path, monkeypatch):
     assert set(report["alarms"]) == {"daily_bars_day_over_2_5mb", "lineage_day_over_1_5x"}
     with pytest.raises(DailyBarsBudgetExceeded):
         store.enforce_budget()
+
+
+# --- SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: sweep, verify, symbol stats ----------------------
+
+def test_sweep_interrupted_removes_temp_and_unreferenced_parts_only(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([record("2330.TW", DAY), record("2317.TW", DAY)], ingest_run_id="r1")
+    before = tree_files(tmp_path)
+    killed = DailyBarsStore(tmp_path, fault=lambda step: (_ for _ in ()).throw(KeyboardInterrupt()) if step == "before_manifest_rename" else None)
+    with pytest.raises(KeyboardInterrupt):
+        killed.write_records([record("2330.TW", DAY, 11.0), record("2317.TW", "2026-11-14")], ingest_run_id="r2")
+    assert tree_files(tmp_path) != before
+    removed = DailyBarsStore(tmp_path).sweep_interrupted()
+    assert removed["temp_files"] >= 1 or removed["orphan_parts"] >= 1
+    assert [f for f in tree_files(tmp_path) if "2026-11-13" in f and "_manifest" not in f and "lineage" not in f] == [
+        f for f in before if "2026-11-13" in f and "_manifest" not in f and "lineage" not in f]
+    assert DailyBarsStore(tmp_path).verify_day(DAY)["verified"]
+
+
+def test_verify_day_names_a_corrupt_or_missing_day(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([record("2330.TW", DAY)], ingest_run_id="r1")
+    assert store.verify_day(DAY)["verified"] is True
+    assert store.verify_day("2026-01-01") == {"trade_date": "2026-01-01", "verified": False, "reason": "no_manifest"}
+    part = next((tmp_path / "daily_bars").rglob("part-*.parquet"))
+    part.write_bytes(b"x")
+    out = store.verify_day(DAY)
+    assert out["verified"] is False and "different size" in out["reason"]
+
+
+def test_symbol_stats_counts_days_and_bounds_without_loading_rows(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([record("2330.TW", "2026-11-12"), record("2317.TW", "2026-11-12")], ingest_run_id="r1")
+    store.write_records([record("2330.TW", "2026-11-13")], ingest_run_id="r2")
+    assert store.symbol_stats() == {"2330.TW": (2, "2026-11-12", "2026-11-13"), "2317.TW": (1, "2026-11-12", "2026-11-12")}
+    assert store.symbol_stats("2026-11-13", "2026-11-13") == {"2330.TW": (1, "2026-11-13", "2026-11-13")}

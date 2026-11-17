@@ -122,3 +122,91 @@ def test_zero_observations_yield_null_not_zero():
         assert metrics["mean_symbol_ic"][h] is None
         assert metrics["per_symbol"]["AAA"]["ic"][h] is None
     assert metrics["hit_rate"] is None and metrics["ic_1d"] is None
+
+
+# --- SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: the same bars through DailyBarsReader -------------
+
+def _backfilled(tmp_path, n=45):
+    """Run-file snapshot plus its daily bars (backfilled through the real backfill script)."""
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    _snap(tmp_path, n)
+    state = ListingState(last_success_date="2026-11-17")
+    for sym in ("AAA", "BBB"):
+        state.allowlist[sym] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                                "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    for p in (tmp_path / "normalized" / "tw_price_daily").glob("date=*/*.jsonl"):
+        pass
+    bf.backfill(tmp_path, state, today="2026-11-17", apply=True)
+    return tmp_path
+
+
+def _ohlcv(uni):
+    out = {}
+    for sym, entry in uni.items():
+        feats = entry["features"]
+        out[sym] = {k: [(r["event_time"], r["value"]) for r in feats[k]] for k in ("open", "high", "low", "close", "volume")}
+        out[sym]["times"] = entry["decision_times"]
+    return out
+
+
+def test_daily_bars_read_matches_run_file_read_and_rollback_setting(tmp_path, monkeypatch):
+    root = _backfilled(tmp_path)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    old = load_tw_price_daily_snapshot(root)  # default: the old read
+    assert old["AAA"]["provenance"].get("reader") is None
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    new = load_tw_price_daily_snapshot(root)
+    assert new["AAA"]["provenance"]["reader"] == "daily_bars"
+    assert _ohlcv(new) == _ohlcv(old)  # zero mismatches in time, open, high, low, close, volume
+    assert snapshot_coverage(root) == {"AAA": 45, "BBB": 5}
+    assert summarize_universe_provenance(new)["governed"] is True
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")  # rollback state
+    assert _ohlcv(load_tw_price_daily_snapshot(root)) == _ohlcv(old)
+
+
+def test_daily_bars_read_survives_run_file_deletion_and_five_day_window(tmp_path, monkeypatch):
+    import shutil
+
+    root = _backfilled(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    shutil.rmtree(root / "normalized")
+    uni = load_tw_price_daily_snapshot(root, symbols=["AAA"])
+    assert list(uni) == ["AAA"] and len(uni["AAA"]["decision_times"]) == 45
+    assert summarize_universe_provenance(uni)["governed"] is True
+
+
+def test_daily_bars_provenance_tamper_and_unknown_setting_fail_closed(tmp_path, monkeypatch):
+    root = _backfilled(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    uni = load_tw_price_daily_snapshot(root)
+    manifest = next((root / "daily_bars" / "_manifest").glob("date=*.json"))
+    doc = json.loads(manifest.read_text())
+    doc["content_digest"] = "0" * 64
+    manifest.write_text(json.dumps(doc))
+    with pytest.raises(TaiwanEvaluationDataError, match="cannot be re-verified"):
+        summarize_universe_provenance(uni)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "typo")
+    with pytest.raises(ValueError, match="PANTHEON_DAILY_PRICE_READER"):
+        load_tw_price_daily_snapshot(root)
+
+
+def test_daily_bars_read_pages_symbols_and_dates_within_reader_caps(tmp_path, monkeypatch):
+    """600 symbols (> 500 per call) over 3 write days: the loader chunks instead of hitting the cap."""
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    state = ListingState(last_success_date="2026-11-17")
+    syms = [f"{2000 + i}" for i in range(600)]
+    for s in syms:
+        state.allowlist[s] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                              "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    for i in range(3):
+        day = (date(2026, 1, 5) + timedelta(days=i)).isoformat()
+        _write(tmp_path, day, [_rec(s, day, 10 + i) for s in syms])
+    bf.backfill(tmp_path, state, today="2026-11-17", apply=True)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    assert snapshot_coverage(tmp_path) == {s: 3 for s in sorted(syms)}
