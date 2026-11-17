@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -4672,6 +4673,9 @@ class RuntimeTelemetryEmitter:
     ) -> bool:
         return self.emit("heartbeat", {"heartbeat": 1, **(extra_metrics or {})}, metadata=metadata)
 
+    def emit_runtime_state_snapshot(self, metadata: dict[str, Any] | None = None) -> bool:
+        return self.emit("runtime_state_snapshot", {"state_snapshot": 1}, metadata=metadata)
+
     def emit_pnl_snapshot(
         self,
         pnl: float,
@@ -5332,6 +5336,7 @@ class PaperRuntimeService:
         self._last_skipped_status: str | None = None
         self._last_error: str | None = None
         self._last_heartbeat_at: str | None = None
+        self._last_state_snapshot_digest: str | None = None
         self._last_heartbeat_monotonic: float | None = None
         self._heartbeat_clock = time.monotonic
         self._poll_count = 0
@@ -6470,8 +6475,6 @@ class PaperRuntimeService:
             "is_real_capital": False,
             "sim_fill_flag": False,
             "capital_scale_pct": 0,
-            "performance_telemetry": dict(self._performance_telemetry),
-            "member_virtual_books": self._member_book_snapshot(),
             "runtime_heartbeat": {"connectivity_status": "connected" if self._last_error is None else "degraded", "broker_status": "not_applicable", **lags},
             **lags,
         }
@@ -6482,6 +6485,35 @@ class PaperRuntimeService:
         if emitted:
             self._last_heartbeat_at = now
             self._last_heartbeat_monotonic = mono_now
+        self._maybe_emit_runtime_state_snapshot()
+
+    def _maybe_emit_runtime_state_snapshot(self) -> None:
+        """Send performance_telemetry/member_virtual_books only when they change.
+
+        The digest is advanced only after a successful emit, so a failed emit
+        is retried at the next heartbeat tick.
+        """
+        try:
+            state = {
+                "performance_telemetry": dict(self._performance_telemetry),
+                "member_virtual_books": self._member_book_snapshot(),
+            }
+            digest = hashlib.sha256(
+                json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            ).hexdigest()
+            if digest == self._last_state_snapshot_digest:
+                return
+            meta = {"runtime_package": "paper_execution_runtime", "state_digest": digest, **state}
+            emit = getattr(self._telemetry, "emit_runtime_state_snapshot", None)
+            if callable(emit):
+                emitted = emit(metadata=meta)
+            else:
+                emitted = self._telemetry.emit("runtime_state_snapshot", {"state_snapshot": 1}, metadata=meta)
+        except Exception:  # noqa: BLE001 - state snapshot must never break the heartbeat path
+            log.exception("runtime_state_snapshot emit failed")
+            return
+        if emitted:
+            self._last_state_snapshot_digest = digest
 
     def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:

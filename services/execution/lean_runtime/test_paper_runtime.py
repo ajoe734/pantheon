@@ -664,9 +664,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
         self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
-        self.assertEqual(len(telemetry.events), 2)
-        self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
-        self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
+        self.assertEqual(
+            [e["event_type"] for e in telemetry.events],
+            ["paper_fill_simulated", "heartbeat", "runtime_state_snapshot"],
+        )
+        self.assertNotIn("performance_telemetry", telemetry.events[1]["metadata"])
+        self.assertNotIn("member_virtual_books", telemetry.events[1]["metadata"])
         self.assertEqual(
             snapshot["paper_state"]["performance_telemetry"]["code"],
             "missing_market_marks",
@@ -698,9 +701,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             self.assertEqual(diagnostic["status"], "invalid_ledger")
             self.assertEqual(diagnostic["code"], "performance_ledger_load_failed")
             self.assertIn("must be an object", diagnostic["detail"])
-            self.assertEqual([event["event_type"] for event in telemetry.events], ["heartbeat"])
             self.assertEqual(
-                telemetry.events[0]["metadata"]["performance_telemetry"]["code"],
+                [event["event_type"] for event in telemetry.events],
+                ["heartbeat", "runtime_state_snapshot"],
+            )
+            self.assertEqual(
+                telemetry.events[1]["metadata"]["performance_telemetry"]["code"],
                 "performance_ledger_load_failed",
             )
 
@@ -2401,21 +2407,52 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         service._maybe_emit_heartbeat()
         self.assertEqual(len(calls), 2)
 
-    def test_heartbeat_carries_changed_state_within_one_interval(self):
+    def _types(self, telemetry):
+        return [e["event_type"] for e in telemetry.events]
+
+    def test_heartbeat_is_liveness_only_and_state_snapshot_sent_on_change(self):
         telemetry = _FakeTelemetryEmitter()
         service, clock = self._cadence_service(telemetry)
         service._maybe_emit_heartbeat()
-        service._performance_telemetry = {"status": "changed", "code": "x"}
-        clock["t"] += 5.0
+        self.assertEqual(self._types(telemetry), ["heartbeat", "runtime_state_snapshot"])
+        hb = telemetry.events[0]["metadata"]
+        self.assertNotIn("performance_telemetry", hb)
+        self.assertNotIn("member_virtual_books", hb)
+        self.assertIn("runtime_heartbeat", hb)
+        # Unchanged state: heartbeat only.
+        clock["t"] += 15.0
         service._maybe_emit_heartbeat()
-        self.assertEqual(len(telemetry.events), 1)
-        clock["t"] += 10.0
-        service._maybe_emit_heartbeat()
-        self.assertEqual(len(telemetry.events), 2)
         self.assertEqual(
-            telemetry.events[-1]["metadata"]["performance_telemetry"]["status"],
-            "changed",
+            self._types(telemetry),
+            ["heartbeat", "runtime_state_snapshot", "heartbeat"],
         )
+        # Changed state: one new snapshot carrying it.
+        service._performance_telemetry = {"status": "changed", "code": "x"}
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry)[-2:], ["heartbeat", "runtime_state_snapshot"])
+        self.assertEqual(
+            telemetry.events[-1]["metadata"]["performance_telemetry"]["status"], "changed"
+        )
+
+    def test_failed_state_snapshot_is_retried_next_tick(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        sent = []
+
+        def emit_snapshot(metadata=None):
+            sent.append(metadata["state_digest"])
+            return results.pop(0)
+
+        telemetry.emit_runtime_state_snapshot = emit_snapshot
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0], sent[1])
 
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):

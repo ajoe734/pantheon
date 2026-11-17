@@ -1,0 +1,37 @@
+{
+  "task_id": "PAPER-RUNTIME-STATE-SNAPSHOT-ON-CHANGE-20261117",
+  "change": "Heartbeat metadata is liveness-only; performance_telemetry and member_virtual_books move to new event runtime_state_snapshot, emitted at start and only when the sha256 of canonical JSON (sort_keys) of either field differs from the last successfully emitted snapshot; a failed emit leaves the digest unchanged so the next heartbeat tick retries.",
+  "registered_in": ["telemetry_event.schema.json (event_type enum + metrics.state_snapshot)", "capture.py EventType.RUNTIME_STATE_SNAPSHOT", "backpressure.py CRITICAL_EVENT_TYPES (never delayed/dropped; heartbeat stays DELAYABLE so heartbeats shed first)", "feedback_adapter.py telemetry event types", "ingest_svc admission: schema-enum driven via _validate_event, no separate list"],
+  "readers": [
+    {"file": "services/telemetry/runtime_summary.py", "reads": "telemetry events (projection input)", "now_accepts": "runtime_state_snapshot, and legacy heartbeat rows for compatibility (_STATE_CARRIER_EVENT_TYPES)"},
+    {"file": "services/evaluation/main.py", "reads": "summary rows"},
+    {"file": "services/evaluation/attribution/outliers.py", "reads": "summary rows"},
+    {"file": "services/evolution/auto_consumer_runtime.py", "reads": "summary rows"},
+    {"file": "services/knowledge/case_file.py", "reads": "summary rows"},
+    {"file": "services/persona-evaluator-agent/persona_evaluator_agent.py", "reads": "summary rows"},
+    {"file": "services/persona/persona_cycle_controller.py", "reads": "summary rows"},
+    {"file": "services/control-plane/bff/ports/persona_pool.py", "reads": "summary rows"},
+    {"file": "services/control-plane/bff/pm12/service.py", "reads": "summary rows (mentions heartbeat only in comments)"},
+    {"file": "services/execution/lean_runtime/paper_runtime.py, member_virtual_book.py, futures_session_inputs.py", "reads": "producer-side in-process state, not telemetry"}
+  ],
+  "readers_note": "grep of services/**/*.py for member_virtual_books/performance_telemetry; none outside runtime_summary.py reads heartbeat metadata.",
+  "tests": {
+    "services/execution/lean_runtime/test_paper_runtime.py": "133 passed (heartbeat liveness-only, snapshot on change, failed-emit retry)",
+    "services/telemetry/test_runtime_summary_projection.py + test_paper_runtime_ingest_contract.py": "140 passed incl. new old-shape vs new-shape replay equivalence and heartbeat-retention rebuild tests",
+    "services/telemetry full run": "remaining failures/errors are pre-existing/environmental: test_lineage_write_path (fails identically on the unmodified tree) and test_main_routes durable-lineage Postgres tests (no Postgres in worker)"
+  },
+  "mixed_version_rollback": {
+    "old_schema_rejects_snapshot": "previous schema enum lacks runtime_state_snapshot, so previous ingest rejects only that event via per-event _validate_event; other events unaffected",
+    "old_reader_with_snapshot_events": "previous runtime_summary.py replayed over snapshot events: no error, member_virtual_books stays unset (state ignored, not failed)",
+    "new_reader_with_old_summary_and_rows": "new reader folds legacy heartbeat rows to identical state (test) and loads summary files written by either version",
+    "rollback_note": "rolled-back runtime stops sending snapshots and resumes state-carrying heartbeats; new reader accepts both"
+  },
+  "growth_bound": {
+    "method": "SYNTHETIC hosted-shaped payload (3-symbol, 8-member books, valued perf block) and analytic daily-bar estimate; no hosted replay was available from the worker.",
+    "heartbeat_metadata_bytes_before": 4413,
+    "heartbeat_metadata_bytes_after": 398,
+    "heartbeats_per_runtime_per_day": 5760,
+    "snapshot_rows_per_runtime_per_day_estimate": "1 at start + one per real state change; daily-bar strategy ~ 1 valuation + fills => roughly 3-6/day, vs 5760 heartbeats",
+    "caveat": "performance_telemetry.attempted_at changes on each failed valuation attempt, so a runtime stuck in marks_unavailable emits a snapshot per attempt, not per heartbeat; hosted acceptance task should confirm real rows/day"
+  }
+}
