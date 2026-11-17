@@ -149,6 +149,9 @@ def _owned_evidence_read(repository: Any, method: str, tenant: str, record_id: s
         raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
 
 
+MAX_HISTORY_AVAILABILITY_SYMBOLS = 100
+
+
 def _taipei_trade_date(event_time: str) -> str:
     """Trade date of a stored point: stored times are UTC, the daily bars calendar is Asia/Taipei."""
     from datetime import datetime, timedelta, timezone
@@ -239,6 +242,45 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             else:
                 public["closes"] = joined["closes"]
         return public
+
+    @router.get("/api/source-ingest/history/availability")
+    def get_history_availability(symbols: str = Query(..., min_length=1)) -> dict[str, Any]:
+        """Governed daily history per symbol (first date, last date, count) from the daily bars manifests.
+
+        Read-only; opens only the symbol column of the row groups that can hold a requested symbol and
+        caches presence per date. ``2330``, ``2330.TW`` and ``2330.TWSE`` resolve to the stored identity.
+        """
+        from ..daily_bars_reader import DailyBarsReadLimit
+        from ..daily_bars_store import DailyBarsError
+        from ..snapshot_universe import member_key
+
+        requested = list(dict.fromkeys(s.strip() for s in symbols.split(",") if s.strip()))
+        if not requested:
+            raise HTTPException(status_code=422, detail={"code": "symbols_required"})
+        if len(requested) > MAX_HISTORY_AVAILABILITY_SYMBOLS:
+            raise HTTPException(status_code=422, detail={
+                "code": "too_many_symbols", "limit": MAX_HISTORY_AVAILABILITY_SYMBOLS, "requested": len(requested)})
+        reader = getattr(runtime, "_min_closes_reader", None)
+        if reader is None:
+            try:
+                reader = DailyBarsReader(runtime.MARKET_DATA_STORAGE_ROOT)
+            except Exception as exc:  # noqa: BLE001 - e.g. pyarrow missing
+                raise HTTPException(status_code=503, detail={"code": "daily_bars_unavailable", "detail": str(exc)}) from exc
+            runtime._min_closes_reader = reader
+        candidates: dict[str, list[str]] = {}
+        for sym in requested:
+            code = member_key(sym)
+            candidates[sym] = list(dict.fromkeys(
+                [sym.upper()] + [f"{code}.{suffix}" for suffix in ("TW", "TWSE", "TWO")]))
+        try:
+            found = reader.availability(sorted({c for cs in candidates.values() for c in cs}))
+        except (DailyBarsError, DailyBarsReadLimit) as exc:
+            raise HTTPException(status_code=503, detail={"code": "daily_bars_unavailable", "detail": str(exc)}) from exc
+        result: dict[str, Any] = {}
+        for sym, names in candidates.items():
+            best = max((found[n] | {"stored_symbol": n} for n in names), key=lambda r: r["count"])
+            result[sym] = best if best["count"] else {"first_date": None, "last_date": None, "count": 0}
+        return {"schema_version": "history_availability.v1", "symbols": result}
 
     @router.post("/api/source-ingest/snapshots/universe/sweep")
     def sweep_snapshot_universe() -> dict[str, Any]:
