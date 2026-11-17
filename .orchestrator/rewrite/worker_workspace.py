@@ -22,6 +22,7 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -2486,6 +2487,100 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
     return referenced
 
 
+WORKER_TEMP_ROOT_ENV = "PANTHEON_WORKER_TEMP_ROOT"
+DEFAULT_WORKER_TEMP_ROOT = "/tmp/pantheon-worker-temp"
+_WORKER_TEMP_NAME_RE = re.compile(r"^(\d+)-([A-Za-z0-9_.-]+)$")
+
+
+def worker_temp_root(config: Mapping[str, Any] | None = None) -> Path:
+    """Single configurable root that holds one temp directory per worker."""
+    configured = os.environ.get(WORKER_TEMP_ROOT_ENV, "").strip()
+    if not configured and isinstance(config, Mapping):
+        raw = config.get("worker_worktree_cleanup")
+        if isinstance(raw, Mapping):
+            configured = str(raw.get("worker_temp_root") or "").strip()
+    return Path(os.path.expanduser(configured or DEFAULT_WORKER_TEMP_ROOT))
+
+
+def _safe_run_id(run_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id)).lstrip(".") or "run"
+
+
+def create_worker_temp_dir(run_id: str, pid: int, root: Path | None = None) -> Path:
+    """Create ``<root>/<pid>-<run_id>`` (mode 0700). The name encodes the owner."""
+    base = Path(root) if root is not None else worker_temp_root()
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"{int(pid)}-{_safe_run_id(run_id)}"
+    path.mkdir(mode=0o700, exist_ok=True)
+    return path
+
+
+def remove_worker_temp_dir(path: Path, root: Path | None = None) -> bool:
+    """Remove one worker temp dir; refuses anything not directly under the root."""
+    base = Path(root) if root is not None else worker_temp_root()
+    target = Path(path)
+    try:
+        if target.parent.resolve() != base.resolve():
+            return False
+        if target.is_symlink():
+            target.unlink()
+            return True
+        if not target.is_dir() or not _WORKER_TEMP_NAME_RE.match(target.name):
+            return False
+        shutil.rmtree(target, ignore_errors=True)
+        return not target.exists()
+    except OSError:
+        return False
+
+
+def _worker_runner_alive(pid: int, run_id: str) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    # A recycled pid can only keep a dir longer (another runner), never delete a live one.
+    return b"worker_runner" in raw
+
+
+def prune_orphan_worker_temp(
+    root: Path | None = None,
+    *,
+    is_alive: Callable[[int, str], bool] | None = None,
+) -> list[str]:
+    """Remove worker temp dirs directly under ``root`` whose runner is gone.
+
+    Symlinks are unlinked (never followed); entries not matching the
+    ``<pid>-<run_id>`` naming are left alone; a live runner's dir is kept.
+    """
+    base = Path(root) if root is not None else worker_temp_root()
+    alive = is_alive or _worker_runner_alive
+    removed: list[str] = []
+    try:
+        entries = list(os.scandir(base))
+    except OSError:
+        return removed
+    for entry in entries:
+        match = _WORKER_TEMP_NAME_RE.match(entry.name)
+        if not match:
+            continue
+        try:
+            if entry.is_symlink():
+                os.unlink(entry.path)
+                removed.append(entry.name)
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+        except OSError:
+            continue
+        pid = int(match.group(1))
+        if alive(pid, match.group(2)):
+            continue
+        shutil.rmtree(entry.path, ignore_errors=True)
+        if not os.path.lexists(entry.path):
+            removed.append(entry.name)
+    return removed
+
+
 def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
     """Remove finished worker worktrees whose branches are merged."""
     settings = worktree_cleanup_settings(config)
@@ -2498,6 +2593,10 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
     bucket["last_orphan_prune_at"] = utc_now()
+    try:
+        prune_orphan_worker_temp(worker_temp_root(config))
+    except Exception:  # temp cleanup must never block worktree pruning
+        pass
     return _cleanup_registered_worker_worktrees(
         config,
         state,

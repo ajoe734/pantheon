@@ -1,0 +1,19 @@
+{
+  "task": "DEV-DEPLOY-ACCEPTANCE-STAGE-20261117",
+  "changes": {
+    "workflow_job": "dev-acceptance-stage in nonprod-deploy.yml, needs deploy-dev + coordinate-dev-release, runs only when coordinate-dev-release succeeded; continue-on-error job, advisory steps exit 0, no job depends on it, no rollback path; no lease-guard wrapper (a guarded step cannot be advisory); the qualification lease (pinned controller, mode qualification, copied from hosted-all12-chain-phase) is acquired only when acceptance/checks.json declares a mutating check",
+    "runner": "scripts/dev_acceptance_stage.py (plan | pending | run): built-in read-only deployed-pair-identity check, declared checks, probe discovery from acceptance/probes/; always exits 0, any internal or declaration error becomes a failed verdict owned by this task",
+    "probe_contract": "acceptance/README.md: executable read-only file per chain, '# acceptance-owner: <id>' header, exit 0 pass / 77 skip / other fail, env ACCEPTANCE_{BACKEND_SHA,FRONTEND_SHA,FE_URL,BFF_URL}; documented example probe in the README (no probe file shipped: outside the task artifact contract)",
+    "verdict": "pantheon.dev-acceptance-verdict.v1: acceptance pending|passed|failed, deployment SHAs, evidenceRun, checks[], failed[] with owner per failing check/probe; a mutating check skipped for lack of the lease keeps the verdict pending",
+    "reporting": "run summary lists deployed and acceptance separately; auto_deploy_dev_pair.py summary_lines reports 'deployed: pending' and 'acceptance: pending' for a dispatched run"
+  },
+  "storage_decision": "The hosted verdict is a SIBLING file <dirname(DEV_DEPLOY_WORKTREE)>/acceptance/latest.json on the dev VM, not a field inside deployment.json: capture_frontend/verify_frontend pin manifest_sha256 and the dist digest, so editing the manifest or adding a file to the release directory would make verify_frontend report an exact artifact mismatch. This deviates from the literal 'inside the manifest' wording of the design (3.4) and is not served over HTTP; it is not verified against the real VM path or permissions from this worker (no hosted ssh) and the publish steps are continue-on-error.",
+  "growth_bound": "one verdict file replaced via tmp+mv per release; per-check detail clipped to 2000 chars; at most 200 results; run artifact uses the existing 30-day retention",
+  "deploymentState": "unchanged; its five readers and their tests were not modified (test_auto_deploy_dev_pair.py only gained a new test)",
+  "tests": "scripts/test_dev_acceptance_stage.py (9), scripts/test_auto_deploy_dev_pair.py, scripts/test_dev_environment_lease_deploy_contract.py (new contract test), plus test_nonprod_dev_artifact_workflow.py, test_cross_repo_release_controller.py, tests/test_release_gate_contract.py: all passed",
+  "not_verified": "the workflow job has not run on GitHub Actions; VM publish path and write permission are unverified; the step-6 execute-plans change and moving the existing in-script advisory checks into checks.json are separate tasks",
+  "residual_findings": [
+    "Verdict is not readable over HTTP, so auto_deploy_dev_pair.py cannot yet show the previous release's acceptance; serving it needs an nginx/FE-release change outside this task.",
+    "The existing advisory checks of design 3.2 still run inside the deploy job; they must be declared in acceptance/checks.json when moved."
+  ]
+}

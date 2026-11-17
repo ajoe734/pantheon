@@ -28,7 +28,7 @@ from services.persona.cron_ooda_closure import append_ooda_packet
 from services.persona.harness import HarnessSurface, PersistentHarnessOwner
 from services.persona.persona_cycle_controller import (
     CaseFileProposal,
-    CycleOwners, PersonaCycleController, packet_identity, read_packets,
+    CycleOwners, PersonaCycleController, packet_identity, read_packets, read_packet_index, run_is_pruned,
 )
 from services.persona.write_owner import CreatePersonaRequest, PersistentPersonaOwner
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
@@ -155,6 +155,8 @@ def system(tmp_path, monkeypatch, memory_service):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             state["paths"].append(self.path)
+            if self.path == "/api/openclaw-adapter/gateway/cron":
+                state.setdefault("methods", []).append(body["method"])
             status = 200
             if self.path == broker_path:
                 assert self.headers.get("X-Pantheon-Service-Token") == "fixture-adapter-token"
@@ -300,6 +302,63 @@ def run(number, status="ok"):
             "jobId": "job-1", "status": status}
 
 
+def _stateful(gateway, at, status="ok"):
+    gateway["jobs"][0]["state"] = {"lastRunAtMs": at, "lastRunStatus": status}
+
+
+def _calls(gateway, since):
+    return gateway["methods"][since:]
+
+
+def test_poll_budget_idle_pass_is_one_call_and_runs_read_only_on_change(system):
+    controller, gateway, _, _ = system
+    controller.reconcile_once()
+    _stateful(gateway, 1, "ok")
+    gateway["runs"]["job-1"] = [run(1)]
+    n = len(gateway["methods"])
+    assert controller.reconcile_once()["failures"] == []  # no watermark yet: reads runs once
+    assert _calls(gateway, n).count("cron.runs") == 1
+    n = len(gateway["methods"])
+    idle = controller.reconcile_once()
+    assert _calls(gateway, n) == ["cron.list"]
+    assert idle["personas"]["persona-cycle-test"]["stage"] == "closed"
+    _stateful(gateway, 2, "ok")
+    gateway["runs"]["job-1"].insert(0, run(2))
+    n = len(gateway["methods"])
+    controller.reconcile_once()
+    assert _calls(gateway, n) == ["cron.list", "cron.runs"]
+    assert gateway["turns"] == 2
+
+
+def test_poll_budget_restart_without_watermark_reads_runs_once(system):
+    controller, gateway, _, _ = system
+    controller.reconcile_once()
+    _stateful(gateway, 1)
+    gateway["runs"]["job-1"] = [run(1)]
+    controller.reconcile_once()
+    restarted = PersonaCycleController(controller.registrar, controller.owners, store_path=controller.path)
+    n = len(gateway["methods"])
+    restarted.reconcile_once()
+    assert _calls(gateway, n).count("cron.runs") == 1
+    assert gateway["turns"] == 1
+
+
+def test_poll_budget_payload_without_state_falls_back_to_runs_every_pass(system):
+    controller, gateway, _, _ = system
+    controller.reconcile_once()
+    n = len(gateway["methods"])
+    controller.reconcile_once()
+    controller.reconcile_once()
+    assert _calls(gateway, n).count("cron.runs") == 2
+
+
+def test_poll_interval_default_and_env_override():
+    from services.persona.persona_cycle_controller import controller_interval_seconds
+    assert controller_interval_seconds({}) == 120.0
+    assert controller_interval_seconds({"PANTHEON_PERSONA_CYCLE_POLL_SECONDS": "45"}) == 45.0
+    assert controller_interval_seconds({"PANTHEON_PERSONA_CYCLE_POLL_SECONDS": "x"}) == 120.0
+
+
 def test_two_consecutive_cron_cycles_duplicate_provider_outage_and_restart(system):
     controller, gateway, owner, _ = system
     initial = controller.reconcile_once()
@@ -356,6 +415,31 @@ def test_concurrent_run_consumers_buy_only_one_turn(system):
     assert packets[0] == packets[1]
     assert state["turns"] == 1
     assert len(read_packets(controller.path)) == 1
+
+
+def test_pruned_run_is_never_consumed_again_and_store_stays_bounded(system):
+    from datetime import datetime, timedelta, timezone
+    controller, state, owner, _ = system
+    controller.path = controller.path.with_suffix(".json")  # hosted shape: single JSON document
+    persona = owner.list_json()[0]
+    first = controller.consume_run(persona, "job-1", run(1))
+    turns = state["turns"]
+    records = json.loads(controller.path.read_text())
+    for record in records:
+        record["recorded_at"] = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    controller.path.write_text(json.dumps(records))
+    controller.consume_run(persona, "job-1", run(2))  # write-time prune of run 1
+    index = read_packet_index(controller.path)
+    assert first["packet_id"] not in index["identities"]
+    assert run_is_pruned(index, "job-1", run(1))
+    assert not run_is_pruned(index, "job-1", run(3))
+    before = state["turns"]
+    stub = controller.consume_run(persona, "job-1", run(1))
+    assert stub["persona_cycle"]["pruned"] is True
+    assert state["turns"] == before and before >= turns
+    assert first["packet_id"] not in read_packets(controller.path)
+    # the persisted cycle packet carries no embedded series
+    assert "quarter_equity_observations" not in controller.path.read_text()
 
 
 def test_restart_does_not_retry_an_uncertain_provider_or_risk_attempt(system):

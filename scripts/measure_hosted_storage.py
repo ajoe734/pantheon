@@ -10,7 +10,8 @@ Two modes:
             The remote script lists file names, sizes and mtimes under /data of running containers
             (find -printf, never file contents, never container environment), runs SELECT-only SQL
             on catalog views through ``docker exec psql`` (default_transaction_read_only=on) and
-            prints disk, docker and memory headline numbers. It writes nothing on hosted.
+            prints disk, docker and memory headline numbers, and per container memory limit,
+            cgroup memory.peak, memory.events max and oom_kill and docker restart count. It writes nothing on hosted.
   report    Pure function of (raw collection, manifest, previous report). Exit 1 when a declared
             bound is exceeded or an orphan temp file exists; 0 otherwise.
 
@@ -66,6 +67,19 @@ echo "@@disk"; df -B1 --output=source,size,used,avail,target / /var/lib/docker 2
 echo "@@free"; free -b 2>/dev/null
 echo "@@docker_df"; docker system df --format '{{json .}}' 2>/dev/null
 echo "@@docker_stats"; docker stats --no-stream --format '{{json .}}' 2>/dev/null
+echo "@@memory"
+# One line per running container: name|service|restarts|limit|peak|max|oom_kill.
+# Reads docker inspect and world-readable cgroup files only; "-" when a value is unavailable.
+for id in $(docker ps -q --no-trunc 2>/dev/null); do
+  meta="$(docker inspect -f '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.RestartCount}}' "$id" 2>/dev/null)" || continue
+  d="/sys/fs/cgroup/system.slice/docker-$id.scope"
+  lim=-; peak=-
+  read -r lim < "$d/memory.max" 2>/dev/null || lim=-
+  read -r peak < "$d/memory.peak" 2>/dev/null || peak=-
+  mx="$(awk '$1=="max"{print $2}' "$d/memory.events" 2>/dev/null)"
+  oom="$(awk '$1=="oom_kill"{print $2}' "$d/memory.events" 2>/dev/null)"
+  printf '%s|%s|%s|%s|%s\n' "$meta" "$lim" "$peak" "${mx:--}" "${oom:--}" | sed 's/^\///'
+done
 echo "@@files"
 for c in $(docker ps --format '{{.Names}}' 2>/dev/null); do
   docker exec "$c" find /data -xdev -type f -printf "$c\t%s\t%T@\t%p\n" 2>/dev/null
@@ -123,6 +137,55 @@ def parse_size(text: str) -> int:
     return int(float(m.group(1)) * _UNITS.get(m.group(2).lower() or "b", 1))
 
 
+def _int_or_none(text: str) -> int | None:
+    text = text.strip()
+    return int(text) if text.isdigit() else None  # "max" (no limit) and "-" (unreadable) become None
+
+
+def parse_memory(lines: list[str]) -> list[dict]:
+    """Lines: name|service|restarts|limit|peak|max|oom_kill."""
+    out = []
+    for line in lines:
+        p = line.split("|")
+        if len(p) != 7:
+            continue
+        out.append({"name": p[0], "service": p[1] or p[0], "restarts": _int_or_none(p[2]),
+                    "limit": _int_or_none(p[3]), "peak": _int_or_none(p[4]),
+                    "max_events": _int_or_none(p[5]), "oom_kill": _int_or_none(p[6])})
+    return out
+
+
+def memory_findings(rows: list[dict], previous: dict | None) -> tuple[list[dict], list[dict]]:
+    """Return (table, findings). A counter lower than the previous one means the container was
+    recreated (cgroup counters reset): that is not growth and produces no finding."""
+    prev = (previous or {}).get("container_memory") or {}
+    table, findings = [], []
+    for r in sorted(rows, key=lambda r: r["name"]):
+        old = prev.get(r["name"]) or {}
+        pct = round(100 * r["peak"] / r["limit"], 1) if r["limit"] and r["peak"] is not None else None
+        table.append(dict(r, percent=pct))
+        base = {"register_class": "RC3", "service": r["service"], "container": r["name"]}
+        if r["oom_kill"]:
+            findings.append({**base, "finding": "container_oom_killed", "oom_kill": r["oom_kill"],
+                             "limit": r["limit"], "peak": r["peak"], "severity": "red"})
+        old_restarts = old.get("restarts")
+        if r["restarts"] is not None and old_restarts is not None and r["restarts"] > old_restarts:
+            findings.append({**base, "finding": "container_restarts_grew", "restarts": r["restarts"],
+                             "previous_restarts": old_restarts, "severity": "red"})
+        old_max = old.get("max_events")
+        if r["max_events"] is not None and old_max is not None and r["max_events"] > old_max:
+            findings.append({**base, "finding": "memory_limit_reached", "max_events": r["max_events"],
+                             "previous_max_events": old_max, "limit": r["limit"], "peak": r["peak"],
+                             "severity": "warning"})
+        if pct is not None and pct >= 90:
+            findings.append({**base, "finding": "memory_peak_near_limit", "percent": pct,
+                             "limit": r["limit"], "peak": r["peak"], "severity": "warning"})
+        if r["limit"] is None:
+            findings.append({**base, "finding": "memory_limit_missing", "peak": r["peak"],
+                             "severity": "warning"})
+    return table, findings
+
+
 def parse_collection(raw: str) -> dict:
     sec = _sections(raw)
     now = int(float((sec.get("time") or ["0"])[0]))
@@ -168,7 +231,7 @@ def parse_collection(raw: str) -> dict:
         p = line.split()
         if p and p[0] == "Mem:" and len(p) >= 7:
             mem = {"total": int(p[1]), "used": int(p[2]), "available": int(p[6])}
-    return {"collected_at": now, "files": files, "line_counts": lines, "tables": tables,
+    return {"collected_at": now, "container_memory": parse_memory(sec.get("memory", [])), "files": files, "line_counts": lines, "tables": tables,
             "disk": disk, "docker_df": docker_df, "top_containers_by_memory": containers[:10], "memory": mem}
 
 
@@ -275,6 +338,9 @@ def build_report(raw: str, manifest: dict, previous: dict | None = None) -> dict
                          "example": v["example"], "older_than_seconds": UNKNOWN_AGE_SECONDS,
                          "register_class": "RC3", "severity": "warning"})
 
+    mem_table, mem_findings = memory_findings(data["container_memory"], previous)
+    findings += mem_findings
+
     red = [f for f in findings if f.get("severity") == "red"]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -284,6 +350,9 @@ def build_report(raw: str, manifest: dict, previous: dict | None = None) -> dict
         "red_count": len(red),
         "findings": findings,
         "measurements": measurements,
+        "container_memory": {r["name"]: r for r in mem_table},
+        "memory_table": [{k: r[k] for k in ("service", "limit", "peak", "percent", "max_events", "oom_kill", "restarts")}
+                         for r in mem_table],
         "coverage": {"manifest_entries": len(entries), "measured": len(measurements),
                      "files_seen": len(data["files"]), "tables_seen": len(data["tables"])},
         "headline": {k: data[k] for k in ("disk", "memory", "docker_df", "top_containers_by_memory")},

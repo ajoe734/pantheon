@@ -1098,6 +1098,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
@@ -4750,6 +4751,7 @@ retire_dormant_and_one_off_profile_containers() {
     COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
       docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
   fi
+  if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
 }
 
 verify_dev_paper_fleet() {
@@ -4859,6 +4861,58 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+# Exact component check over the whole expected steady set of the selected
+# profiles (plus the required loop workers), not only the loop workers: every
+# service one container, running, healthy, on the compose image, revision label
+# equal to the release SHA when the image carries one.
+verify_steady_stack_complete() {
+  local -a stack_services=()
+  local service
+  mapfile -t stack_services < <(
+    { expected_steady_services; printf '%s\n' "${REQUIRED_LOOP_WORKERS[@]}"; } | sed '/^$/d' | sort -u
+  )
+  if (( ${#stack_services[@]} < ${#REQUIRED_LOOP_WORKERS[@]} )); then
+    info "unable to derive the expected steady service set; stack completeness not proven" >&2
+    return 1
+  fi
+  for service in "${REQUIRED_LOOP_WORKERS[@]}"; do
+    printf '%s\n' "${stack_services[@]}" | grep -qxF -- "${service}" || {
+      info "required loop worker ${service} is not in the expected steady set" >&2; return 1; }
+  done
+  verify_exact_component_deployment "${stack_services[@]}"
+}
+
+# Services whose image this release builds AND labels with the release SHA,
+# derived from docker-compose.yml (never a hand-kept list): a service with a
+# build section that passes GIT_SHA as a build arg or sets the
+# org.opencontainers.image.revision label. All profiles are rendered so the
+# bounded dev-paper-principals issuer is covered. A service on a prebuilt or
+# third-party image (e.g. openclaw-gateway, fixed tag, no GIT_SHA arg) is not
+# listed, so its older revision label is not a release mismatch. Prints nothing
+# when the Compose config cannot be rendered; callers then fail closed and
+# require the revision for every service.
+release_labelled_services() {
+  GIT_SHA="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}" \
+    docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    services = json.load(sys.stdin).get("services") or {}
+except Exception:
+    raise SystemExit(0)
+for name in sorted(services):
+    build = services[name].get("build")
+    if not isinstance(build, dict):
+        continue
+    args = build.get("args") or {}
+    labels = build.get("labels") or {}
+    if isinstance(labels, list):
+        labels = dict(item.split("=", 1) for item in labels if "=" in item)
+    if "GIT_SHA" in args or "org.opencontainers.image.revision" in labels:
+        print(name)
+' || true
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -4905,6 +4959,18 @@ verify_exact_component_deployment() {
     fi
     seen_target_services["$service"]=1
   done
+
+  # Revision equality applies only to images this release builds and labels.
+  local revision_scope_derived=false
+  declare -A release_labelled=()
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    release_labelled["$service"]=1
+    revision_scope_derived=true
+  done < <(release_labelled_services)
+  if [[ "$revision_scope_derived" != true ]]; then
+    info "release-built service set not derivable; requiring the revision label for every component" >&2
+  fi
 
   info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
 
@@ -4964,6 +5030,11 @@ verify_exact_component_deployment() {
       fi
       image_rev="$(docker inspect --format '{{with .Config.Labels}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
+      if [[ -z "$cmd" || "$cmd" == "null" || "$cmd" == "[]" ]]; then
+        # Images that declare only an ENTRYPOINT (e.g. third-party stack services)
+        # still have a command identity.
+        cmd="$(docker inspect --format '{{json .Config.Entrypoint}}' "$container_id" 2>/dev/null || true)"
+      fi
       started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container_id" 2>/dev/null || true)"
 
       if [[ "$status" != "running" ]]; then
@@ -5015,8 +5086,16 @@ verify_exact_component_deployment() {
       elif [[ "$image_id" != "$compose_image_id" ]]; then
         identity_errors+=("${service}: container image ID ${image_id:-missing} != Compose image ID ${compose_image_id}")
       fi
-      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
+      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]] \
+        && { [[ "$revision_scope_derived" != true ]] || [[ -n "${release_labelled[$service]:-}" ]]; }; then
         wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
+      fi
+
+      # An image this release does not build carries no revision claim in the
+      # receipt (same contract as an unlabelled image).
+      local receipt_rev="$image_rev"
+      if [[ "$revision_scope_derived" == true && -z "${release_labelled[$service]:-}" ]]; then
+        receipt_rev=""
       fi
 
       if ! entry_json="$(python3 -c '
@@ -5080,7 +5159,7 @@ print(json.dumps({
         "stable": stable,
     },
 }))
-' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$receipt_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
     "$started_at" "${observation_count[$service]}" "${baseline_container_id[$service]}" \
     "${baseline_image_id[$service]}" "${baseline_started_at[$service]}" \
     "${baseline_restart_count[$service]}" "${baseline_health[$service]}" "${service_bad_health[$service]:-0}")"; then
@@ -5590,6 +5669,145 @@ prune_dev_docker_storage_for_build() {
   run_bounded_docker_prune "unused images" docker image prune -af
   run_bounded_docker_prune "system cache" docker system prune -f --filter "label!=com.docker.compose.project=pantheon"
   docker_storage_diagnostics "after prune"
+}
+
+# Build cache size in bytes from `docker system df` ("Build Cache" row), or
+# "unknown". Docker prints decimal units (kB/MB/GB); the cap is parsed the way
+# Docker parses --reserved-space (binary), so the comparison errs permissive.
+dev_docker_builder_cache_bytes() {
+  local row
+  row="$(docker system df --format '{{.Type}}|{{.Size}}' 2>/dev/null | grep -i '^Build Cache|' | head -n1 || true)"
+  python3 -c '
+import re, sys
+m = re.match(r"^[^|]*\|\s*([0-9.]+)\s*([kKmMgGtTpP]?)[bB]?\s*$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1000, "m": 1000**2, "g": 1000**3, "t": 1000**4, "p": 1000**5}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "${row}"
+}
+
+dev_docker_size_to_bytes() {
+  python3 -c '
+import re, sys
+m = re.match(r"^([0-9.]+)\s*([kKmMgGtT]?)(?:[iI]?[bB])?$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "$1"
+}
+
+# Brings the Docker build cache back under the cap after a build, on both the
+# root and bff component paths. Protection of every compose container image is
+# a precondition (skip when it fails); no `-a`/`-af` builder prune is ever used.
+# Never fails the deploy, but a skipped/timed-out/failed/over-cap prune is
+# reported as not done (with cache size before/after) in the log and, through an
+# ADVISORY_CHECK_RESULT line, in the workflow deploy summary.
+cap_dev_docker_builder_cache_after_build() {
+  local phase="${1:-after_build}"
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return 0
+  fi
+  local keep="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+  local status="" reason="" flag="" before="unknown" after="unknown" cap_bytes="unknown" rc=0
+
+  if [[ ! "${keep}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]] || [[ "${keep}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+    status="not_done"; reason="invalid_keep_storage"
+  elif [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" == "false" ]]; then
+    status="not_done"; reason="builder_prune_disabled"
+  elif ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+    status="not_done"; reason="invalid_timeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    status="not_done"; reason="timeout_utility_unavailable"
+  fi
+  cap_bytes="$(dev_docker_size_to_bytes "${keep}" 2>/dev/null || echo unknown)"
+  before="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+
+  if [[ -z "${status}" ]]; then
+    local help_text
+    help_text="$(docker builder prune --help 2>&1 || true)"
+    if grep -q -- '--reserved-space' <<<"${help_text}"; then
+      flag="--reserved-space"
+    elif grep -q -- '--keep-storage' <<<"${help_text}"; then
+      flag="--keep-storage"
+    else
+      status="not_done"; reason="no_supported_cap_flag"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    if ! protect_dev_compose_container_images_for_builder_prune; then
+      status="not_done"; reason="image_protection_incomplete"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    info "capping dev Docker build cache ${phase} (${flag}=${keep}, timeout=${timeout_seconds}s, before=${before}B)"
+    timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" docker builder prune -f "${flag}" "${keep}" || rc=$?
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+    if (( rc == 124 || rc == 137 )); then
+      status="not_done"; reason="prune_timeout_${timeout_seconds}s"
+    elif (( rc != 0 )); then
+      status="not_done"; reason="prune_exit_${rc}"
+    elif [[ "${after}" == "unknown" || "${cap_bytes}" == "unknown" ]]; then
+      status="not_done"; reason="cache_size_unverifiable"
+    elif (( after > cap_bytes )); then
+      status="not_done"; reason="still_over_cap"
+    else
+      status="done"
+    fi
+  else
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+  fi
+
+  DEV_BUILDER_CACHE_CAP_STATUS="${status}"
+  info "dev_builder_cache_cap phase=${phase} status=${status} reason=${reason:-none} cap=${keep} before_bytes=${before} after_bytes=${after}"
+  python3 - "${status}" "${reason}" "${phase}" "${keep}" "${before}" "${after}" <<'CAP_PY' || true
+import json, sys
+status, reason, phase, cap, before, after = sys.argv[1:7]
+print("ADVISORY_CHECK_RESULT " + json.dumps({
+    "check": "docker_build_cache_cap",
+    "status": "passed" if status == "done" else "failed",
+    "reason": "" if status == "done" else f"{reason} cap={cap} before_bytes={before} after_bytes={after}",
+    "mode": "advisory",
+    "scope": "deploy_script",
+    "phase": phase,
+}, sort_keys=True), flush=True)
+CAP_PY
+  return 0
+}
+
+# One-shot compose services (restart: "no") whose profiles were not selected by
+# this deploy: remove their non-running containers (e.g. a Created container
+# left from an earlier attempt). Plain `docker rm` without -f so a running
+# container is never removed; running/restarting states are also skipped.
+# Entries: service:profile[,profile...]
+DEV_ONE_SHOT_PROFILE_SERVICES=(
+  "source-ingest-agora-projector:source-ingest-scheduler,workers"
+)
+retire_unselected_one_shot_service_containers() {
+  local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
+  local entry service profiles profile selected rows cid cstate cname
+  for entry in "${DEV_ONE_SHOT_PROFILE_SERVICES[@]}"; do
+    service="${entry%%:*}"
+    profiles="${entry#*:}"
+    selected=false
+    for profile in ${profiles//,/ }; do
+      [[ "${active_profiles}" == *",${profile},"* ]] && selected=true
+    done
+    [[ "${selected}" == "true" ]] && continue
+    rows="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=${service}" --format '{{.ID}}|{{.State}}|{{.Names}}' 2>/dev/null || true)"
+    [[ -z "${rows}" ]] && continue
+    while IFS='|' read -r cid cstate cname; do
+      [[ -z "${cid}" ]] && continue
+      if [[ "${cstate}" == "running" || "${cstate}" == "restarting" || "${cstate}" == "paused" ]]; then
+        continue
+      fi
+      info "removing non-running container of unselected one-shot service ${service}: ${cname} (id=${cid}, state=${cstate})"
+      docker rm "${cid}" >/dev/null 2>&1 || info "warning: failed to remove ${cname} (id=${cid})"
+    done <<< "${rows}"
+  done
+  return 0
 }
 
 check_dev_deploy_disk_preflight() {
@@ -6190,10 +6408,35 @@ steady_service_rows() {
   done
 }
 
+# The steady service set a profile must keep running, derived from
+# docker-compose.yml (never from what happens to be running): every service of
+# the selected profiles whose resolved restart policy is unless-stopped/always.
+# One-shot services (restart no / on-failure) and services outside the selected
+# profiles are not in the set; the bounded source refresh resolves the scheduler
+# to restart "no", so it is excluded only while that bounded policy is active.
+expected_steady_services() {
+  env COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    ${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:+SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}"} \
+    docker compose -p pantheon -f docker-compose.yml config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+services = json.load(sys.stdin).get("services") or {}
+for name in sorted(services):
+    if str(services[name].get("restart") or "no") in ("unless-stopped", "always"):
+        print(name)
+'
+}
+
+# Baseline file: "service|image" for every expected steady service. A service
+# that was not running at capture is recorded with an empty image so a later
+# check still requires it running (it is not silently absent from the baseline).
+# Fails closed when the expected set cannot be derived.
 capture_steady_service_baseline() {
-  local out="$1"
-  steady_service_rows | python3 -c '
-import sys
+  local out="$1" expected
+  expected="$(expected_steady_services)" || expected=""
+  [[ -n "${expected}" ]] || { info "unable to derive the expected steady service set from docker-compose.yml" >&2; return 1; }
+  steady_service_rows | EXPECTED_STEADY="${expected}" python3 -c '
+import os, sys
 seen = {}
 for line in sys.stdin:
     parts = line.rstrip("\n").split("|")
@@ -6202,6 +6445,8 @@ for line in sys.stdin:
     service, oneoff, restart, state, image, _cid = parts
     if service and oneoff != "True" and restart in ("unless-stopped", "always") and state == "running":
         seen[service] = image
+for service in os.environ["EXPECTED_STEADY"].split():
+    seen.setdefault(service, "")
 for service, image in sorted(seen.items()):
     print(service + "|" + image)
 ' > "${out}"
@@ -6230,11 +6475,36 @@ for service, image in sorted(expected.items()):
         print(service + "||" + ("missing" if not rows else "ambiguous"))
         continue
     _s, _o, _r, state, current, cid = rows[0]
-    if current != image:
+    if image and current != image:
         print(service + "|" + cid + "|image-mismatch")
     elif state != "running":
         print(service + "|" + cid + "|stopped")
 ' "${baseline}"
+}
+
+# Recreates one steady service on the image recorded in the baseline. A service
+# the candidate rebuilt under the same tag (e.g. dev-paper-principal-issuer, which
+# is built and started by its own section) keeps the candidate image after the
+# sealed restore; the baseline image is still present by ID, so re-point the
+# Compose tag at it and recreate without building. Prints the failure reason and
+# returns 1 when the service cannot be brought back.
+recreate_steady_service_on_baseline_image() {
+  local service="$1" image_id="$2" ref
+  [[ -n "${image_id}" ]] || { echo "no baseline image recorded"; return 1; }
+  docker image inspect "${image_id}" >/dev/null 2>&1 || { echo "baseline image ${image_id} is not retained"; return 1; }
+  ref="$(docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | SERVICE="${service}" python3 -c '
+import json, os, sys
+try:
+    print((json.load(sys.stdin).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or "")
+except Exception:
+    print("")
+')" || ref=""
+  [[ -n "${ref}" ]] || { echo "compose image reference for ${service} is unavailable"; return 1; }
+  docker tag "${image_id}" "${ref}" >/dev/null 2>&1 || { echo "could not re-point ${ref} at the baseline image"; return 1; }
+  docker compose -p pantheon -f docker-compose.yml --profile '*' \
+    up -d --no-deps --force-recreate --no-build "${service}" >/dev/null 2>&1 \
+    || { echo "recreate on the baseline image failed"; return 1; }
 }
 
 verify_steady_services_restored() {
@@ -6255,9 +6525,36 @@ verify_steady_services_restored() {
     problems="$(steady_service_problems "${baseline}")"
   fi
   [[ -z "${problems}" ]] && return 0
+  # A service on a non-baseline image (or gone) is recreated on its baseline image.
+  local base_image reason detail="" restored_any=false
+  declare -A restore_failure=()
+  while IFS='|' read -r service cid problem; do
+    [[ "${problem}" == image-mismatch || "${problem}" == missing ]] || continue
+    base_image="$(awk -F'|' -v s="${service}" '$1 == s { print $2; exit }' "${baseline}")"
+    info "compensation: recreating steady service ${service} on its baseline image"
+    if reason="$(recreate_steady_service_on_baseline_image "${service}" "${base_image}")"; then
+      restored_any=true
+    else
+      restore_failure["${service}"]="${reason}"
+    fi
+  done <<<"${problems}"
+  if [[ "${restored_any}" == true ]]; then
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+    [[ -z "${problems}" ]] && return 0
+  fi
   local names
   names="$(cut -d'|' -f1 <<<"${problems}" | paste -sd, -)"
-  info "steady_service_compensation_incomplete: ${names} ($(paste -sd';' - <<<"${problems}"))" >&2
+  while IFS='|' read -r service cid problem; do
+    [[ -n "${service}" ]] || continue
+    detail+="${detail:+;}${service}|${cid}|${problem}"
+    [[ -z "${restore_failure[${service}]:-}" ]] || detail+="|restore: ${restore_failure[${service}]}"
+  done <<<"${problems}"
+  info "steady_service_compensation_incomplete: ${names} (${detail})" >&2
   return 1
 }
 
@@ -6616,12 +6913,15 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
     DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
-    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
+      || rollback_dev_bff_on_failure "steady_service_baseline"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
@@ -6683,7 +6983,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     run_dev_advisory_check trade_journey_residual trade_journey_residual \
       env PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh
-    verify_exact_component_deployment \
+    verify_steady_stack_complete \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;
 
@@ -6705,12 +7005,15 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     cleanup_stale_compose_replacement_containers
+    if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"

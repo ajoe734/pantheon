@@ -574,8 +574,10 @@ def _daily_bars_reader(root: Path):
 
 def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> dict[tuple[str, str], dict[str, Any]]:
     """``{(symbol, trade_date): bar}`` from DailyBarsReader, paged by symbol chunks and date windows
-    within the reader caps. ``value`` is not stored in daily bars (None); ``ts`` is the regular 14:30
-    Taipei publish time of the trade date, the same rule the run-file read applies to date-only rows.
+    within the reader caps. ``value`` is the stored traded value (None when the source gave none, then the
+    volume weighted price is the close) and ``ts`` is the stored available time, which was pinned to 14:30
+    Taipei at write time for a date-only source, the rule the run-file read applies. A row with no stored
+    available time raises, as the run-file read does; 14:30 is never invented (design 4.1a).
 
     Symbol forms (gap G4): a caller that passes a symbol gets it back as the key whether it passed the bare
     code (``2330``) or the canonical symbol (``2330.TW``); without ``symbols`` the key is the bare code, as
@@ -584,6 +586,7 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
     from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, PRICE_COLUMNS
     from services.source_ingestion.daily_bars_store import DailyBarsError
 
+    columns = [*PRICE_COLUMNS, "traded_value", "available_time"]
     reader = _daily_bars_reader(root)
     dates = reader.trade_dates()
     if not dates:
@@ -595,12 +598,12 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
         names = sorted(set(map(str, symbols))) if by_request else sorted(reader.list_symbols())
         rows: dict[tuple[str, str], dict[str, Any]] = {}
         owner: dict[tuple[str, str], str] = {}
-        stamps: dict[str, str] = {}  # one timestamp parse per trade date, not per row
+        stamps: dict[Any, str] = {}  # one text per distinct stored instant, not per row
         for i in range(0, len(names), MAX_SYMBOLS):
             chunk = names[i:i + MAX_SYMBOLS]
             for j in range(0, len(dates), MAX_RANGE_DAYS):
                 window = dates[j:j + MAX_RANGE_DAYS]
-                got = reader.read_range(chunk, window[0], window[-1], any_form=by_request, columns=PRICE_COLUMNS)
+                got = reader.read_range(chunk, window[0], window[-1], any_form=by_request, columns=columns)
                 for requested, bars in got.items():
                     key_symbol = requested if by_request else bare_symbol(requested)
                     for bar in bars:
@@ -613,9 +616,17 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
                             raise TaiwanEvaluationDataError(
                                 f"{key_symbol}: both {owner[(key_symbol, day)]} and {bar['symbol']} have a bar on {day}; the symbol form is ambiguous")
                         owner[(key_symbol, day)] = bar["symbol"]
-                        if day not in stamps:
-                            stamps[day] = _parse_timestamp_utc(f"{day}T14:30:00+08:00").isoformat().replace("+00:00", "Z")
-                        rows[(key_symbol, day)] = {**{k: float(v) for k, v in fields.items()}, "value": None, "ts": stamps[day]}
+                        available = bar.get("available_time")
+                        if available is None:
+                            raise TaiwanEvaluationDataError(
+                                f"daily bars row {bar['symbol']} {day} has no available_time; the date holds no upgraded "
+                                "partition (run scripts/backfill_daily_bars.py while the run files exist)")
+                        if available not in stamps:
+                            stamps[available] = available.isoformat().replace("+00:00", "Z")
+                        value = bar.get("traded_value")
+                        rows[(key_symbol, day)] = {
+                            **{k: float(v) for k, v in fields.items()},
+                            "value": None if value is None else float(value), "ts": stamps[available]}
     except DailyBarsError as exc:
         raise TaiwanEvaluationDataError(f"daily bars read refused: {exc}") from exc
     return rows

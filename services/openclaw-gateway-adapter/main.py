@@ -69,6 +69,9 @@ from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPo
 from services.knowledge.evidence import JsonlEvidenceRepository
 from memory_llm_bridge import MEMORY_INDEX_AGENT_ID, BridgeConfig, MemoryLlmBridge
 from persona_tool_broker import (
+    adapter_memory_actor_id,
+    adapter_memory_actor_roles,
+    adapter_memory_credential,
     BrokerConfig as PersonaToolBrokerConfig,
     BrokerRefusal as PersonaToolBrokerRefusal,
     PersonaToolBroker,
@@ -3146,15 +3149,15 @@ def _gateway_state_memory_materializer(
         memory_api_url=memory_url,
         persona_id=spec.persona_id,
         workspace=str(workspace_path),
-        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "openclaw-persona-sync"),
+        actor_id=adapter_memory_actor_id(os.getenv("PANTHEON_MEMORY_ACTOR_ID", "openclaw-persona-sync")),
         actor_roles=[
             part.strip()
-            for part in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",")
+            for part in adapter_memory_actor_roles(os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator")).split(",")
             if part.strip()
         ] or ["operator"],
         session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{spec.persona_id}",
         limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
-        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+        auth_token=adapter_memory_credential() or None,
         **({"query": query, "tags": list(tags or [])} if query else {}),
     )
     # The cache files must stay owned by the unprivileged gateway user.

@@ -66,8 +66,9 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
     return normalized
 
 
-_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session", "persona_memory_reader", "persona_session")
 # Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
+_PERSONA_LIST_BROAD_ROLES = frozenset({"operator", "admin", "system", "researcher", "analyst", "persona_memory_reader"})
 _MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin", "persona-svc")
 # The persona service lists its own tenant's candidates for the paper endorsement step (persona.admin stays get-only).
 _MEMORY_LESSON_LIST_ROLES = _MEMORY_READ_ROLES + ("persona-svc",)
@@ -577,9 +578,21 @@ async def list_entries(
     scope_filter: Optional[str] = Query(default=None),
     contributing_persona_id: Optional[str] = Query(default=None),
     active_only: bool = Query(default=True),
+    session_persona_id: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
-    _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    if ctx is not None and "persona_session" in ctx.roles and not (ctx.roles & _PERSONA_LIST_BROAD_ROLES):
+        # A persona session may list only its own persona's contributions; governance owns the policy.
+        if not contributing_persona_id:
+            raise HTTPException(status_code=403, detail={"error": "unauthorized", "message": "persona_session requires contributing_persona_id"})
+        decision = _authorize_memory_retrieve(
+            actor_id=ctx.actor_id, actor_roles=sorted(ctx.roles),
+            resource={"scope": "persona", "persona_id": contributing_persona_id},
+            context={"session_id": "list-entries:" + ctx.actor_id, "session_persona_id": session_persona_id or ""},
+        )
+        if not decision["allowed"]:
+            raise HTTPException(status_code=403, detail={"error": "unauthorized", "message": decision["reason"]})
     entries = _store().list(
         knowledge_type=knowledge_type,
         scope=scope,

@@ -173,12 +173,15 @@ def test_http_ports_use_owner_specific_credentials_and_fail_closed(monkeypatch):
         return io.StringIO("{}")
 
     env = {"PERSONA_RESEARCH_SERVICE_TOKEN": "r-tok", "PANTHEON_MEMORY_AUTH_TOKEN": "m-tok",
-           "EVOLUTION_AUTH_TOKEN": "e-tok", "PERSONA_REGISTRY_SERVICE_TOKEN": "g-tok"}
+           "PANTHEON_MEMORY_SERVICE_TOKEN": "mr-tok", "EVOLUTION_AUTH_TOKEN": "e-tok", "PERSONA_REGISTRY_SERVICE_TOKEN": "g-tok"}
     ports = HttpPoolCyclePorts(env=env)
     with mock.patch("services.persona.pool_autonomy_cycle.urlopen", fake_urlopen):
         for service in ("research", "memory", "evolution", "registry"):
             ports._urllib("GET", service, "/x", "t1")
-    assert sorted(seen.values()) == ["Bearer e-tok", "Bearer g-tok", "Bearer m-tok", "Bearer r-tok"]
+        ports._urllib("POST", "memory", "/y", "t1", {})
+    # memory reads use the read-only reader principal; memory writes use the write principal
+    assert seen["http://memory:8086/x"] == "Bearer mr-tok" and seen["http://memory:8086/y"] == "Bearer m-tok"
+    assert sorted(v for k, v in seen.items() if "memory" not in k) == ["Bearer e-tok", "Bearer g-tok", "Bearer r-tok"]
     with pytest.raises(RuntimeError, match="owner_credential_unconfigured:research"):
         HttpPoolCyclePorts(env={})._urllib("GET", "research", "/x", "t1")
     with pytest.raises(RuntimeError, match="governed_dataset_loader_unconfigured"):
@@ -606,3 +609,107 @@ def test_unreadable_publication_state_fails_closed_without_publishing():
 def test_unconfigured_publish_port_is_recorded_not_guessed():
     ports = Ports(pool_now=live_pool(3, ("a", .6, "active")))
     assert run_publish(ports, ports.pool_now) == {"status": "not_attempted", "reason": "publish_port_unconfigured"}
+
+
+# --- Persona memory principals against the real memory route gates (only HTTP transport is faked) -------------------
+
+def _memory_gate_harness(monkeypatch, tmp_path):
+    import io
+    import time
+    import urllib.error
+    from fastapi.testclient import TestClient
+    from services.memory import main as memory_main
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "persona-memory-gate-secret-123456"
+    for key, value in {"PANTHEON_MEMORY_STORE_PATH": tmp_path / "m.json", "PANTHEON_PERSONA_MEMORY_STORE_PATH": tmp_path / "p.json",
+                       "PANTHEON_MEMORY_STORE": tmp_path / "m.json", "PANTHEON_PERSONA_MEMORY_STORE": tmp_path / "p.json"}.items():
+        monkeypatch.setenv(key, str(value))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", secret)
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+    client = TestClient(memory_main.app)
+
+    def token(sub, roles):
+        return encode_jwt_hs256({"sub": sub, "roles": roles, "tenant_id": "t1", "exp": int(time.time()) + 3600}, secret=secret)
+
+    def fake_urlopen(request, timeout=None):
+        url = request.full_url.replace("http://memory:8086", "")
+        headers = {k: v for k, v in request.header_items()}
+        if request.get_method() == "POST":
+            response = client.post(url, content=request.data, headers=headers)
+        else:
+            response = client.get(url, headers=headers)
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(request.full_url, response.status_code, "err", {}, io.BytesIO(response.content))
+        return io.BytesIO(response.content)
+
+    return client, token, fake_urlopen
+
+
+def test_persona_memory_principals_are_admitted_or_refused_at_real_memory_gates(monkeypatch, tmp_path):
+    import urllib.error
+    from unittest import mock
+    from services.knowledge.case_file import Owners, http_json
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+
+    client, token, fake_urlopen = _memory_gate_harness(monkeypatch, tmp_path)
+    reader, writer = token("persona_cycle_controller", ["persona_session"]), token("persona-svc", ["persona-svc"])
+    env = {"MEMORY_API_URL": "http://memory:8086", "PANTHEON_MEMORY_SERVICE_TOKEN": reader, "PANTHEON_MEMORY_AUTH_TOKEN": writer}
+    ports = HttpPoolCyclePorts(env=env)
+    persona = {"persona_id": "persona-a", "tenant_id": "t1"}
+    entry = {"packet_id": "pk1", "outcome": "admission_refused", "family": "momentum", "artifact_ref": "art-1"}
+
+    with mock.patch("services.persona.pool_autonomy_cycle.urlopen", fake_urlopen), \
+            mock.patch("urllib.request.urlopen", fake_urlopen):
+        # Writer principal: pool autonomy memory port write is admitted.
+        assert ports.write_memory(persona, entry)
+        # Reader principal: own-persona listing is admitted and returns the written entry's tag.
+        assert "momentum" in ports.recall_tried_families(persona)
+        # Another persona's listing through the same read principal is refused by governance.
+        with pytest.raises(urllib.error.HTTPError) as other:
+            ports._urllib("GET", "memory", "/api/memory/entries?contributing_persona_id=persona-b&session_persona_id=persona-a", "t1")
+        assert other.value.code == 403
+        # persona_session has no write role: the same route refuses it.
+        with pytest.raises(urllib.error.HTTPError) as denied:
+            HttpPoolCyclePorts(env=dict(env, PANTHEON_MEMORY_AUTH_TOKEN=reader)).write_memory(persona, entry)
+        assert denied.value.code == 403
+        # Case-file reader (real http_json entry point): similar_history/lessons retrieve is admitted for own persona.
+        owners = Owners.from_env({"PANTHEON_MEMORY_API_URL": "http://memory:8086", "PANTHEON_MEMORY_SERVICE_TOKEN": reader})
+        base = [("actor_id", "persona_cycle_controller"), ("session_id", "s1"), ("scope", "persona"), ("query", "momentum"),
+                ("actor_roles", "persona_session"), ("persona_id", "persona-a")]
+        assert http_json(owners.memory, "/api/memory/retrieve", tenant_id="t1", params=base + [("session_persona_id", "persona-a")]) is not None
+        from services.knowledge.case_file import OwnerUnavailable
+        with pytest.raises(OwnerUnavailable, match="http_403"):
+            http_json(owners.memory, "/api/memory/retrieve", tenant_id="t1", params=base + [("session_persona_id", "persona-b")])
+        # The write principal is not a reader.
+        owners_w = Owners.from_env({"PANTHEON_MEMORY_API_URL": "http://memory:8086", "PANTHEON_MEMORY_SERVICE_TOKEN": writer})
+        with pytest.raises(OwnerUnavailable, match="http_403"):
+            http_json(owners_w.memory, "/api/memory/retrieve", tenant_id="t1", params=base + [("session_persona_id", "persona-a")])
+
+
+def test_harness_and_feedback_bridge_writers_use_write_principal_at_real_route_gate(monkeypatch, tmp_path):
+    import urllib.error
+    from unittest import mock
+    from services.persona.harness_adoption import HarnessAdoption
+    from services.persona.learning_feedback_bridge import _memory_headers
+
+    client, token, fake_urlopen = _memory_gate_harness(monkeypatch, tmp_path)
+    reader, writer = token("persona_cycle_controller", ["persona_session"]), token("persona-svc", ["persona-svc"])
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8086")
+    payload = {"tenant_id": "t1", "source_event_type": "harness_experience", "write_authority": "persona-svc"}
+    with mock.patch("services.persona.harness_adoption.urlopen", fake_urlopen):
+        monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", reader)
+        with pytest.raises(urllib.error.HTTPError) as denied:
+            HarnessAdoption._send("memory", payload)
+        assert denied.value.code == 403  # persona_session holds no write role
+        monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", writer)
+        with pytest.raises(urllib.error.HTTPError) as admitted:
+            HarnessAdoption._send("memory", payload)
+        assert admitted.value.code == 422  # past the role gate; the incomplete payload is refused by the writer
+    for tok, expected in ((reader, 403), (writer, 422)):
+        monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", tok)
+        response = client.post("/api/memory/writebacks/learn-feedback", json=payload, headers=_memory_headers())
+        assert response.status_code == expected

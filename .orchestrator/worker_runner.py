@@ -520,6 +520,7 @@ def bind_worker_sandbox(
     extra_readonly_roots: Iterable[Path | str] | None = None,
     sandbox_binary: str | None = None,
     read_only_worktree: bool = False,
+    worker_temp_dir: Path | str | None = None,
 ) -> list[str]:
     """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
 
@@ -568,6 +569,11 @@ def bind_worker_sandbox(
         p = Path(tmp_dir)
         if p.exists() and p.is_dir():
             bwrap_cmd.extend(["--bind-try", str(p), str(p)])
+
+    if worker_temp_dir:
+        wt = Path(worker_temp_dir).expanduser().resolve()
+        if wt.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(wt), str(wt)])
 
     try:
         uid = os.getuid()
@@ -1256,12 +1262,19 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
 
+    worker_temp_dir: Path | None = None
     try:
         # Only a canonically bound wrapper may publish this receipt. Once
         # bound, startup failures use the same terminal path as child failures.
         publish("starting")
         command = bind_relative_command_to_runtime(command, command_root)
         status["command"] = command
+        from rewrite import worker_workspace as _ww
+        worker_temp_dir = _ww.create_worker_temp_dir(args.run_id, os.getpid())
+        status["worker_temp_dir"] = str(worker_temp_dir)
+        child_env = dict(os.environ)
+        for _var in ("TMPDIR", "TMP", "TEMP"):
+            child_env[_var] = str(worker_temp_dir)
         sandboxed_command = bind_worker_sandbox(
             command,
             command_root=command_root,
@@ -1269,6 +1282,7 @@ def main(argv: list[str] | None = None) -> int:
             coordination_root=coordination_root,
             read_only_worktree=binding["read_only_worktree"],
             extra_readonly_roots=binding["source_readonly_roots"],
+            worker_temp_dir=worker_temp_dir,
         )
         if workspace_path:
             os.chdir(workspace_path)
@@ -1287,6 +1301,7 @@ def main(argv: list[str] | None = None) -> int:
                 text=True,
                 cwd=str(workspace_path) if workspace_path else None,
                 start_new_session=True,
+                env=child_env,
             )
         status["child_pid"] = child.pid
         publish("running")
@@ -1470,6 +1485,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         signal.signal(signal.SIGTERM, orig_sigterm)
         signal.signal(signal.SIGINT, orig_sigint)
+        if worker_temp_dir is not None:
+            try:
+                _ww.remove_worker_temp_dir(worker_temp_dir)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

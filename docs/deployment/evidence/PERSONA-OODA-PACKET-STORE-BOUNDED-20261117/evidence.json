@@ -1,0 +1,39 @@
+{
+ "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117",
+ "hosted_observation_2026-11-17": {
+  "file_bytes": 11500000,
+  "records": 6,
+  "largest_packet_bytes": 3500000,
+  "series_entries": [
+   10929,
+   11361
+  ]
+ },
+ "packet_size_bytes": {
+  "before_synthetic_10929_entries": 2251791,
+  "after": 993,
+  "note": "after is a single-record file incl. envelope; measured with synthetic 10929-row series"
+ },
+ "runtime_budget": {
+  "cadence": "3 personas x 1 daily cycle (weekday cron 0 10 * * 1-5) plus retries; each run writes a claim record and a final record, deduped to one by packet_id",
+  "count_and_growth_per_day": "3 packets/day (more only on retry), about 993 B each => about 2979 B/day",
+  "cap": "retention 30 days (PANTHEON_OODA_PACKET_RETENTION_DAYS) and 1000 records (PANTHEON_OODA_PACKET_MAX_RECORDS); list bound 64",
+  "steady_state_bytes_at_window": 89370,
+  "cleanup": "pruned at write time and at first start (compact_ooda_packet_store); per-job watermark in ooda_packets.json.index prevents re-consumption"
+ },
+ "memory": {
+  "per_pass_replay_check": "reads sidecar index only (identities + watermarks), no packet bodies",
+  "index_load_peak_tracemalloc_bytes_for_91_records": 16601,
+  "file_bytes_for_91_records": 90523
+ },
+ "readers_checked": {
+  "persona_cycle_controller": "reads observe_bundle fields human_feedback/pool/observations/books/harness_observation; none is dropped",
+  "case_file_outcomes": "observations, pool, incident_refs: unaffected",
+  "harness_adoption/harness_cycle/harness_shadow_eval": "harness_observation, books, observe fields: unaffected (tests pass)",
+  "BFF cycle_views/persona_pool": "use pool and pool_health, not telemetry",
+  "quarter_equity_observations": "read from owner (telemetry runtime-summaries) by BFF personas/service.py, never from packets; packets keep length, sha256 and source_ref"
+ },
+ "rollback": "compacted file is still a JSON array of packet_snapshot envelopes; test_legacy_file_compaction_keeps_identities_and_old_reader_parses parses it with the previous reader logic; the sidecar .index is ignored by the old release and rebuilt if it writes the file",
+ "manifest": "/data/bff/ooda_packets.json: owner persona, bound_status bounded (the checker accepts bounded/unbounded/unreviewed only; bounded is the reviewed-with-proof state)",
+ "review_independence": "Codex out until 2026-11-20; Antigravity until 2026-11-18T01:34Z; if no other family has capacity at review time, record the exception"
+}

@@ -1147,6 +1147,7 @@ class CollectorBundleAdapter:
         acknowledged_only_keys: set[str] = set()
         rejected: list[Mapping[str, Any]] = []
         rejected_keys: set[str] = set()
+        rejected_items: list[Mapping[str, Any]] = []
         window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
@@ -1183,6 +1184,28 @@ class CollectorBundleAdapter:
                             verified.append(replace(metadata_bundle, items=()))
                             window_stops[key] = 0
                             continue
+                if (self.source_type == "market" and self.dataset not in PRIORITY_LATEST_DATASETS
+                        and self.dataset not in SURVIVORSHIP_EVIDENCE_DATASETS):
+                    candidate = self._verified_metadata(transport, entry)
+                    if candidate.status == "complete":
+                        kept_rows = []
+                        for row in candidate.items:
+                            try:
+                                fetched = _utc(row.get("fetched_at"), "fetched_at")
+                                stated = row.get("published_at")
+                                published = _utc(stated, "published_at", allow_rfc2822=True) if stated else fetched
+                                if row.get("trade_date"):
+                                    self._market_event_time(str(row["id"]), row, stated, published, fetched)
+                            except MarketTimeEvidenceError as exc:
+                                rejected_items.append({
+                                    "source_id": self.source_id, "run_id": candidate.run_id, "cursor": candidate.cursor,
+                                    "item_id": exc.item_id, "trade_date": str(row.get("trade_date")),
+                                    "reason": exc.reason, "fetched_at": str(row.get("fetched_at")),
+                                    "detail": str(exc)[:300]})
+                                continue
+                            kept_rows.append(row)
+                        if len(kept_rows) != len(candidate.items):
+                            metadata_bundle = replace(candidate, items=tuple(kept_rows))
                 if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
                     metadata_bundle = metadata_bundle or self._verify_ordered_bundle(
                         transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
@@ -1298,6 +1321,8 @@ class CollectorBundleAdapter:
         )
         if rejected:
             observed = {**observed, "rejected_bundles": rejected}
+        if rejected_items:
+            observed = {**observed, "rejected_items": rejected_items, "rejected_item_count": len(rejected_items)}
         no_new_data = bool(verified and boundary is not None
                            and all(b.cursor in acknowledged_only_keys | rejected_keys for b in verified) and complete
                            and not records and not feature_records and not feature_rejected
@@ -1689,6 +1714,16 @@ class CollectorBundleAdapter:
                 # the exchange supplied the close earlier. Observation is the conservative
                 # event bound; availability remains the original fetch timestamp.
                 return fetched_at
+        elif event_time > fetched_at:
+            # Index / breadth / flow rows: same principle as prices. A row fetched on its own
+            # trade date at or after the session close is bounded by the fetch time; one
+            # fetched earlier is not final and is refused as that single item.
+            if fetched_at.astimezone(_TAIPEI_TZ).date() == trade_date and fetched_at >= session_close:
+                return fetched_at
+            raise MarketTimeEvidenceError(
+                "market_row_not_final", item_id,
+                f"trade_date {trade_date.isoformat()} event_time {_iso(event_time)} is after "
+                f"fetched_at {_iso(fetched_at)} (before session close {_iso(session_close)} or not its trade date)")
         return event_time
 
     def _record_market_rejection(self, bundle: VerifiedBundle, error: MarketTimeEvidenceError) -> Mapping[str, Any]:

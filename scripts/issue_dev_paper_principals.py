@@ -88,6 +88,9 @@ READERS = {
         "pantheon-dev-persona-evaluator-bff-reader",
         ("viewer", "registry-reader"),
     ),
+    # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
+    # memory write role). The adapter's actor id must equal this subject in strict auth.
+    "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
@@ -140,6 +143,13 @@ WRITERS = {
     "PERSONA_MEMORY_SERVICE_TOKEN": (
         "persona_cycle_controller",
         "persona_session",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona service memory writes (harness adoption, learning feedback, pool outcomes) -> memory owner.
+    # Least privilege: persona-svc write role only; persona_session (reader above) stays read-only.
+    "PERSONA_MEMORY_WRITE_TOKEN": (
+        "persona-svc",
+        "persona-svc",
         "pantheon:dev-owner-write",
     ),
     # Persona lesson-rule proposal publisher -> governance owner (propose-only, no decide).
@@ -201,6 +211,7 @@ CONSUMER_FILES = {
         "PERSONA_POOL_SOURCE_READ_TOKEN",
         "PERSONA_REGISTRY_SERVICE_TOKEN",
         "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_WRITE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
     ),
@@ -253,6 +264,7 @@ CONSUMER_FILES = {
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
+    "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
     # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
     # reader principal, never the deployment volume's governance/registry files.
     "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),
@@ -352,7 +364,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
         "PANTHEON_REGISTRY_JWT_AUDIENCE": audience,
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
-        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
+        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_WRITE_TOKEN"],
         "PANTHEON_MEMORY_SERVICE_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
         "PANTHEON_RESEARCH_SERVICE_TOKEN": values["PERSONA_RESEARCH_SERVICE_TOKEN"],
         "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],

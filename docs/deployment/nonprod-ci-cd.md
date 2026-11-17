@@ -77,6 +77,30 @@ returns nonzero on failure; a deployed pair does not mean AI is usable, and a
 quota/auth failure is not an accepted AI journey. Do not repeat provider calls
 when a known quota limit already explains the failure.
 
+## Dev acceptance stage
+
+`dev-acceptance-stage` runs after `coordinate-dev-release` succeeded, on every
+dev release (automatic or manual, not compensation drills). It runs
+`scripts/dev_acceptance_stage.py`: the read-only `deployed-pair-identity` check,
+the checks declared in `acceptance/checks.json` and every probe in
+`acceptance/probes/` (contract: `acceptance/README.md`). It is `continue-on-error`,
+the script exits 0 on every outcome, nothing depends on the job, and it never rolls
+back: the run conclusion measures deploys, the verdict measures acceptance.
+
+- Verdict `acceptance`: `pending` (no result yet, or a required mutating check
+  could not run without the lease), `passed`, or `failed` with `failed[]` listing each
+  failing check or probe with its owning task or chain id, plus the evidence run.
+- `deploymentState` and its five readers are unchanged. The verdict is stored as a
+  sibling of the hosted `deployment.json` (`<worktree parent>/acceptance/latest.json`
+  on the dev VM), not inside it, because the exact-artifact capture pins the manifest
+  digest. It is replaced per release, never appended; the run artifact
+  `dev-acceptance-verdict-<run>-<attempt>` follows the 30-day workflow retention.
+- A check declared `mutates: true` runs only while the job holds the qualification
+  lease (same pinned controller as the hosted chain job); without it the check is
+  skipped and the verdict stays `pending`.
+- Reporting: a release is `deployed` after the deploy; it is `accepted` only when
+  `acceptance=passed`. The run summary and the automatic checker report both separately.
+
 ## Deployment Script
 
 The workflow uses:
@@ -183,9 +207,8 @@ propagated. Automatic releases are deploy-only: the checker no longer sends
 `run_loop_prod_tel_002_probe` (or any input that sets `PAPER_BOOTSTRAP_REQUESTED`),
 so the deploy job runs build, switch and stack health only, with no Taiwan market
 refresh, TAIFEX refresh, governed paper baseline or canonical paper lifecycle
-probe. Only an unhealthy stack rolls back. Their functional acceptance stays
-pending until the acceptance stage of
-`docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` exists. A manual
+probe. Only an unhealthy stack rolls back. Their functional acceptance is the
+verdict of the `dev-acceptance-stage` job (see "Dev acceptance stage"). A manual
 dispatch that sets the input still runs the probe, now as an advisory check (see
 "Dev deploy: blocking set and advisory set"). Missing or unaccepted baseline evidence requires recovery through
 the existing deployment flow. The checker can run without `--apply` to inspect
@@ -571,3 +594,12 @@ run and the lease ends as it does for any other pre-mutation failure.
 recorded as failed and the next tick dispatches the same pair again. A failure
 in any later step returns `failed_pair_not_retried`. The GitHub schedule itself
 is unchanged.
+
+## Dev steady-state restart-loop check
+
+After the dev switch and after a restore, every steady Compose service is sampled
+twice (>= 90 s apart, read-only `docker inspect`). Restart-count growth, OOMKilled
+or a restarting state fails the deploy as `steady_service_restart_loop` and
+triggers the normal compensation path. Healthcheck status and readiness contents
+are deliberately not criteria. Details:
+`docs/deployment/dev-exact-artifact-rollback.md`.

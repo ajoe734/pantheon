@@ -39,7 +39,7 @@ def _stub_docker(tmp_path: Path, containers: list[dict]) -> dict:
     bin_dir.mkdir()
     stub = bin_dir / "docker"
     stub.write_text(f"""#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 from pathlib import Path
 state = Path({str(state)!r})
 rows = json.loads(state.read_text())
@@ -49,6 +49,25 @@ if args[0] == "ps":
 elif args[0] == "inspect":
     r = next(r for r in rows if r["id"] == args[-1])
     print("|".join([r["service"], r.get("oneoff", "False"), r["restart"], r["state"], r["image"], r["id"]]))
+elif args[0] == "image" and args[1] == "inspect":
+    sys.exit(0 if args[2] in os.environ.get("RETAINED_IMAGES", "").split() else 1)
+elif args[0] == "tag":
+    tags = state.with_name("tags.json")
+    data = json.loads(tags.read_text()) if tags.exists() else {{}}
+    data[args[2]] = args[1]
+    tags.write_text(json.dumps(data))
+elif args[0] == "compose" and "config" in args:
+    names = [r["service"] for r in rows]
+    print(json.dumps({{"services": {{n: {{"image": "pantheon-" + n + ":t"}} for n in names}}}}))
+elif args[0] == "compose" and "up" in args:
+    if os.environ.get("FAIL_UP"):
+        sys.exit(1)
+    data = json.loads(state.with_name("tags.json").read_text())
+    for r in rows:
+        if r["service"] == args[-1]:
+            r["image"] = data["pantheon-" + r["service"] + ":t"]
+            r["state"] = "running"
+    state.write_text(json.dumps(rows))
 elif args[0] == "start":
     for r in rows:
         if r["id"] == args[1] and not r.get("fail_start"):
@@ -56,7 +75,8 @@ elif args[0] == "start":
     state.write_text(json.dumps(rows))
 """, encoding="utf-8")
     stub.chmod(0o755)
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_STEADY_RESTORE_WAIT_SECONDS": "1"}
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_STEADY_RESTORE_WAIT_SECONDS": "1", "RETAINED_IMAGES": os.environ.get("RETAINED_IMAGES", f"{BASE} {SRC}"),
+            "EXPECTED_STEADY_FOR_TEST": "source-ingest source-ingest-scheduler"}
 
 
 def _ctr(service, state, image, cid, restart="unless-stopped", **extra):
@@ -69,8 +89,10 @@ def _run(tmp_path: Path, before: list[dict], after: list[dict]):
     env = _stub_docker(tmp_path, before)
     fmt = re.search(r"^STEADY_SERVICE_FORMAT=.*$", DEPLOY_SCRIPT.read_text(encoding="utf-8"), re.M).group(0)
     prelude = ('set -uo pipefail\ninfo() { echo "[info] $*"; }\n' + fmt + "\n"
+               + 'expected_steady_services() { printf "%s\\n" ${EXPECTED_STEADY_FOR_TEST:-}; }\n'
                + _function("steady_service_rows") + _function("capture_steady_service_baseline")
-               + _function("steady_service_problems") + _function("verify_steady_services_restored"))
+               + _function("steady_service_problems") + _function("recreate_steady_service_on_baseline_image")
+               + _function("verify_steady_services_restored"))
     (tmp_path / "state.json").write_text(json.dumps(before))
     subprocess.run(["bash", "-c", prelude + f'capture_steady_service_baseline {baseline}'], env=env, check=True)
     (tmp_path / "state.json").write_text(json.dumps(after))
@@ -95,8 +117,10 @@ def test_stopped_scheduler_on_baseline_image_is_started(tmp_path):
     assert {r["service"]: r["state"] for r in final}["source-ingest-scheduler"] == "running"
 
 
-def test_stopped_scheduler_on_candidate_image_is_reported_incomplete(tmp_path):
+def test_stopped_scheduler_on_candidate_image_is_reported_incomplete(tmp_path, monkeypatch):
     # The recorded hosted state: candidate image, exit 137, baseline source-ingest.
+    # With the baseline image no longer retained it cannot be restored and is named.
+    monkeypatch.setenv("RETAINED_IMAGES", SRC)
     after = [_ctr("source-ingest", "running", SRC, "c1"), _ctr("source-ingest-scheduler", "exited", CAND, "c2")]
     _b, res, _ = _run(tmp_path, BEFORE, after)
     assert res.returncode != 0
@@ -187,3 +211,97 @@ def test_restore_preconditions_still_refuse_when_nothing_drifted():
         _preconditions([_row("source-ingest", "running", SRC), _row("source-ingest-scheduler", "running", BASE)])
     with pytest.raises(evidence.CaptureError, match="no drift to restore"):
         _preconditions(None)
+
+
+# ---- completeness: expected set is derived, not observed ------------------
+
+def test_2026_11_16_stopped_scheduler_at_capture_is_drift_and_restore_starts_it(tmp_path):
+    # The scheduler was already stopped when the baseline was taken, so a
+    # running-only baseline never contained it and compensation left it stopped.
+    before = [_ctr("source-ingest", "running", SRC, "c1"), _ctr("source-ingest-scheduler", "exited", BASE, "c2")]
+    baseline, res, final = _run(tmp_path, before, before)
+    assert baseline.read_text().splitlines() == [f"source-ingest|{SRC}", "source-ingest-scheduler|"]
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert {r["service"]: r["state"] for r in final}["source-ingest-scheduler"] == "running"
+
+
+def test_missing_expected_service_is_reported_even_if_never_running(tmp_path):
+    before = [_ctr("source-ingest", "running", SRC, "c1")]
+    _b, res, _ = _run(tmp_path, before, before)
+    assert res.returncode != 0
+    assert "source-ingest-scheduler" in res.stdout + res.stderr
+
+
+def test_one_shot_and_excluded_services_are_not_expected():
+    body = _function("expected_steady_services")
+    assert "unless-stopped" in body and "always" in body
+    assert "config --format json" in body and "COMPOSE_PROFILES" in body
+
+
+def test_capture_fails_closed_without_expected_set():
+    body = _function("capture_steady_service_baseline")
+    assert "return 1" in body
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true' not in source
+
+
+def test_root_post_up_check_covers_whole_expected_set():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "verify_steady_stack_complete \\\n      || rollback_dev_bff_on_failure \"exact_component_deployment\"" in source
+    body = _function("verify_steady_stack_complete")
+    assert "expected_steady_services" in body and "REQUIRED_LOOP_WORKERS" in body
+
+
+def test_restore_workflow_passes_steady_state_file():
+    wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    job = wf[wf.index("  restore-accepted-baseline:"):]
+    assert job.count("--steady-state-file") >= 3
+    assert "--mode verify-steady-state" in job
+
+
+def test_restart_loop_after_restore_is_unhealthy_and_named():
+    """Restore path: the post-restore second sample reports the loop (exit 76)."""
+    def r(n):
+        return {"service": "openclaw-gateway-adapter", "state": "running", "restart_count": n, "oom_killed": False}
+    loops = evidence.steady_service_restart_loop([r(54)], [r(55)])
+    assert loops and "openclaw-gateway-adapter" in loops
+    body = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    restore = body[body.index("--mode verify-steady-state"):]
+    assert "--mode verify-restart-loop" in restore[:2500]
+
+
+# ---- 2026-11-17 18:41Z: issuer rebuilt under the same tag ------------------
+
+ISSUER_BEFORE = BEFORE + [_ctr("dev-paper-principal-issuer", "running", BASE, "c5")]
+ISSUER_AFTER = [_ctr("source-ingest", "running", SRC, "c1"), _ctr("source-ingest-scheduler", "running", BASE, "c2"),
+                _ctr("dev-paper-principal-issuer", "running", CAND, "c5")]
+
+
+def _run_issuer(tmp_path, monkeypatch, **env):
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("EXPECTED_STEADY_FOR_TEST", "source-ingest source-ingest-scheduler dev-paper-principal-issuer")
+    return _run(tmp_path, ISSUER_BEFORE, ISSUER_AFTER)
+
+
+def test_issuer_on_candidate_image_is_recreated_on_baseline_image(tmp_path, monkeypatch):
+    _b, res, final = _run_issuer(tmp_path, monkeypatch)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert {r["service"]: r["image"] for r in final}["dev-paper-principal-issuer"] == BASE
+    assert "steady_service_compensation_incomplete" not in res.stdout + res.stderr
+
+
+def test_unrestorable_issuer_is_named_with_the_reason(tmp_path, monkeypatch):
+    _b, res, _ = _run_issuer(tmp_path, monkeypatch, RETAINED_IMAGES=SRC)
+    out = res.stdout + res.stderr
+    assert res.returncode != 0
+    assert "steady_service_compensation_incomplete: dev-paper-principal-issuer" in out
+    assert "image-mismatch" in out and "is not retained" in out
+
+
+def test_failed_recreate_is_named_with_the_reason(tmp_path, monkeypatch):
+    _b, res, _ = _run_issuer(tmp_path, monkeypatch, FAIL_UP="1")
+    out = res.stdout + res.stderr
+    assert res.returncode != 0
+    assert "steady_service_compensation_incomplete: dev-paper-principal-issuer" in out
+    assert "recreate on the baseline image failed" in out

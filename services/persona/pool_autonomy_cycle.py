@@ -490,7 +490,10 @@ class HttpPoolCyclePorts(PoolPublishPort):
     def _urllib(self, method, service, path, tenant, body=None):
         from services.service_token_file import configured_service_token
         name, default = self.SERVICE_URL_ENV[service]
-        token = configured_service_token(self.TOKEN_VARIABLE[service], self.env)
+        variable = self.TOKEN_VARIABLE[service]
+        if service == "memory" and method == "GET":
+            variable = "PANTHEON_MEMORY_SERVICE_TOKEN"  # read-only persona_session principal; writes use the write principal
+        token = configured_service_token(variable, self.env)
         if not token:  # fail closed: never send an empty bearer
             raise RuntimeError(f"owner_credential_unconfigured:{service}")
         request = Request(self.env.get(name, default).rstrip("/") + path, method=method,
@@ -824,7 +827,8 @@ class HttpPoolCyclePorts(PoolPublishPort):
         return self._call("POST", "memory", "/api/memory/writebacks/learn-feedback", persona, payload)
 
     def recall_tried_families(self, persona):
-        out = self._call("GET", "memory", "/api/memory/entries?contributing_persona_id=" + quote(persona["persona_id"], safe=""), persona)
+        out = self._call("GET", "memory", "/api/memory/entries?contributing_persona_id=" + quote(persona["persona_id"], safe="")
+                         + "&session_persona_id=" + quote(persona["persona_id"], safe=""), persona)
         tried = set()
         for entry in (out or {}).get("entries", []):
             tags = (entry.get("content") or {}).get("tags") or entry.get("tags") or []

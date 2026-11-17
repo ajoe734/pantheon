@@ -287,15 +287,37 @@ def render_harness_surface_v1(persona: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+PUBLISH_SETTLED = frozenset({"published", "current", "deferred", "skipped"})
+ENVELOPE_ARTIFACT_PREFIX = "artifact-persona-pool-"
+
+
+def enrollment_settled(existing: Any) -> bool:
+    """True when an enrolled readback needs no further reconcile pass.
+
+    Enrolled readbacks written before the first-publish step carry no ``publish`` step and are
+    therefore unsettled once, so the reconciler publishes the already-enrolled personas.
+    """
+
+    if not isinstance(existing, Mapping) or existing.get("status") != "enrolled":
+        return False
+    steps = existing.get("steps") if isinstance(existing.get("steps"), Mapping) else {}
+    publish = steps.get("publish") if isinstance(steps.get("publish"), Mapping) else {}
+    return _text(publish.get("status")) in PUBLISH_SETTLED
+
+
 def retry_due(existing: Any, now: datetime, min_interval_seconds: int) -> bool:
     """Whether a refused/unavailable enrolment may be attempted again.
 
     ``min_interval_seconds`` between attempts bounds the attempts per hour per
     persona (3600 / interval).  Enrolled and never-attempted records are not
-    throttled here; an unparsable timestamp is treated as due.
+    throttled here; an unparsable timestamp is treated as due.  An enrolled record is only
+    ever re-attempted while its first pool publish is unsettled (see ``enrollment_settled``),
+    and that retry is throttled the same way.
     """
 
-    if not isinstance(existing, Mapping) or existing.get("status") not in {"refused", "unavailable"}:
+    if not isinstance(existing, Mapping) or existing.get("status") not in {
+        "refused", "unavailable", "enrolled"
+    }:
         return True
     raw = _text(existing.get("attempted_at"))
     if not raw:
@@ -327,7 +349,9 @@ class PersonaPaperEnrollment:
         proposer: OwnerTransport | None = None,
         proposer_actor_id: str | None = None,
         now: Callable[[], datetime] | None = None,
+        pool_publisher: Callable[[int], Mapping[str, Any]] | None = None,
     ) -> None:
+        self.pool_publisher = pool_publisher
         self.tenant_id = tenant_id
         self.persona_id = persona_id
         self.capital_pool_id = capital_pool_id
@@ -356,6 +380,8 @@ class PersonaPaperEnrollment:
             outcome.status = "enrolled"
             outcome.lifecycle_state = ENROLLED_STATE
             outcome.reason = None
+            # Last, and never able to change the enrolled state: a failure is only a readback.
+            self._ensure_first_publish(outcome)
         except EnrollmentRefused as exc:
             outcome.status = "unavailable" if exc.retryable else "refused"
             outcome.reason = exc.reason
@@ -385,9 +411,12 @@ class PersonaPaperEnrollment:
             return self._not_eligible(outcome, "release_probe_or_test_persona_not_enrolled")
         if outcome.lifecycle_state not in LIFECYCLE_PATH:
             return self._not_eligible(outcome, f"owner_lifecycle_not_enrollable:{outcome.lifecycle_state}")
-        reason = self._paper_binding_gap()
-        if reason:
-            return self._not_eligible(outcome, reason)
+        # Already paper_owner: the runtime may legitimately be paused (after the close), so
+        # the active-binding gate only guards the first lifecycle advance.
+        if outcome.lifecycle_state != ENROLLED_STATE:
+            reason = self._paper_binding_gap()
+            if reason:
+                return self._not_eligible(outcome, reason)
         return persona
 
     @staticmethod
@@ -421,7 +450,11 @@ class PersonaPaperEnrollment:
         meta = runtime.get("metadata") if isinstance(runtime.get("metadata"), Mapping) else {}
         if not (
             _text(runtime.get("deployment_mode") or runtime.get("deployment_stage")) == "paper"
-            and _text(runtime.get("plan_id")) == self.deployment_plan_id
+            and (
+                _text(runtime.get("plan_id")) == self.deployment_plan_id
+                # The first pool publish replaces the binding under its own plan.
+                or _text(runtime.get("artifact_id")).startswith(ENVELOPE_ARTIFACT_PREFIX)
+            )
             and _text(runtime.get("capital_pool_id")) == self.capital_pool_id
             and _text(runtime.get("persona_capital_binding_id")) == self.persona_capital_binding_id
             and _text(meta.get("persona_id")) == self.persona_id
@@ -445,6 +478,67 @@ class PersonaPaperEnrollment:
                 raise EnrollmentRefused(f"pool_seed_refused:{exc}"[:300]) from exc
             seeded = existing
         outcome.steps["pool"] = {"status": "seeded", "version": (seeded.get("pool_version") or seeded.get("version"))}
+
+    def _ensure_first_publish(self, outcome: EnrollmentOutcome) -> None:
+        """Bind the running paper runtime to the seeded pool v1 envelope (read-before-write).
+
+        The seeded v1 has one member, the artifact already trading, so this is not a membership
+        change and needs no risk-panel memo; later versions stay with the pool cycle.
+        """
+
+        if self.pool_publisher is None:
+            outcome.steps["publish"] = {"status": "skipped", "reason": "pool_publisher_unconfigured"}
+            return
+        try:
+            active = [
+                b
+                for b in self.runtime_binding_reader(self.deployment_plan_id, self.capital_pool_id) or []
+                if _text(b.get("state") or b.get("status")).lower() in {"active", "running", "ok"}
+            ]
+            if not active:
+                # Paused/stopped runtime: wait (unsettled) and publish once after it is active.
+                outcome.steps["publish"] = {
+                    "status": "waiting",
+                    "reason": "paper_runtime_binding_not_active",
+                    "attempted_at": outcome.attempted_at,
+                }
+                return
+            if len(active) == 1 and _text(active[0].get("artifact_id")).startswith(
+                ENVELOPE_ARTIFACT_PREFIX
+            ):
+                outcome.steps["publish"] = {
+                    "status": "current",
+                    "artifact_id": _text(active[0].get("artifact_id")),
+                }
+                return
+            pool = self.persona_owner.get_strategy_pool(self.persona_id, tenant_id=self.tenant_id) or {}
+            version = int(pool.get("pool_version") or pool.get("version") or 0)
+            if version != 1:
+                outcome.steps["publish"] = {
+                    "status": "deferred",
+                    "reason": f"pool_advanced_past_seed:v{version}",
+                }
+                return
+            receipt = self.pool_publisher(version)
+            status = _text(receipt.get("status"))
+            step = {
+                "status": "published" if status == "published" else "dispatched",
+                "pool_version": version,
+                "envelope_artifact_id": receipt.get("envelope_artifact_id"),
+                "attempted_at": outcome.attempted_at,
+            }
+            if status != "published":
+                step["reason"] = _text(receipt.get("note")) or "binding_move_unconfirmed"
+                outcome.reason = f"pool_publish_unconfirmed:{step['reason']}"[:300]
+            outcome.steps["publish"] = step
+        except Exception as exc:  # noqa: BLE001 - paper keeps trading on the previous artifact
+            reason = _text(getattr(exc, "reason", None)) or f"{exc.__class__.__name__}: {exc}"
+            outcome.steps["publish"] = {
+                "status": "failed",
+                "reason": reason[:300],
+                "attempted_at": outcome.attempted_at,
+            }
+            outcome.reason = f"pool_publish_failed:{reason}"[:300]
 
     def _ensure_harness(self, persona: Mapping[str, Any], outcome: EnrollmentOutcome) -> None:
         existing = self.persona_owner.get_harness(self.persona_id, tenant_id=self.tenant_id)
