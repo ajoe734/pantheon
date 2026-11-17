@@ -340,6 +340,8 @@ class PersonaCycleController:
         self.pool_cycle = pool_cycle  # PoolAutonomyCycle: the persona's own daily pool OODA
         self.meeting_triggers = meeting_triggers  # None: built lazily when the consultation owner is configured
         self.path = Path(store_path) if store_path else resolve_ooda_packet_store_path()
+        self._last_health: dict[str, dict[str, Any]] = {}
+        self._consumed_watermarks: dict[str, tuple[Any, Any]] = {}  # job_id -> (lastRunAtMs, lastRunStatus)
 
     def consume_run(self, persona: dict[str, Any], job_id: str, run: dict[str, Any]) -> dict[str, Any]:
         if persona.get("lifecycle_state") not in ELIGIBLE_STATES or not persona.get("tenant_id"):
@@ -740,8 +742,16 @@ class PersonaCycleController:
         by_id = {p["persona_id"]: p for p in personas}
         report["personas"] = {}
         known = read_packets(self.path)
+        job_states = report.get("job_states") or {}
         for pid, job_id in report["jobs"].items():
             try:
+                state = job_states.get(pid)
+                watermark = ((state.get("lastRunAtMs"), state.get("lastRunStatus"))
+                             if isinstance(state, dict) and "lastRunAtMs" in state else None)
+                if watermark is not None and self._consumed_watermarks.get(job_id) == watermark:
+                    # Idle: cron.list shows nothing new, so cron.runs (one adapter CLI spawn) is skipped.
+                    report["personas"][pid] = self._last_health.get(pid) or cycle_health(None)
+                    continue
                 runs = []
                 offset = 0
                 for _ in range(10):
@@ -765,6 +775,7 @@ class PersonaCycleController:
                     raise RuntimeError("cron_run_backlog_exceeds_bounded_batch")
                 packets = []
                 consumed = 0
+                backlog = False
                 for run in sorted(runs, key=lambda r: r.get("runAtMs", 0)):
                     if run.get("status") in {"ok", "error", "skipped"}:
                         identity = packet_identity(by_id[pid], job_id, run)
@@ -773,8 +784,12 @@ class PersonaCycleController:
                         elif consumed < 1:
                             packets.append(self.consume_run(by_id[pid], job_id, run))
                             consumed += 1
+                        else:
+                            backlog = True  # one run per pass: keep reading until drained
                 latest = packets[-1] if packets else None
-                report["personas"][pid] = cycle_health(latest)
+                report["personas"][pid] = self._last_health[pid] = cycle_health(latest)
+                if watermark is not None and not backlog:
+                    self._consumed_watermarks[job_id] = watermark
                 if latest and latest["persona_cycle"].get("failure_reason"):
                     report["failures"].append({"persona_id": pid,
                         "reason": latest["persona_cycle"]["failure_reason"]})
@@ -1011,9 +1026,19 @@ class CycleOwners:
                 "receipt_ref": f"/api/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/versions/{result['pool_version']}"}
 
 
-async def run_controller(controller: PersonaCycleController, stop: asyncio.Event, *, interval_seconds=30):
+def controller_interval_seconds(env: Mapping[str, str] | None = None) -> float:
+    raw = (env if env is not None else os.environ).get("PANTHEON_PERSONA_CYCLE_POLL_SECONDS", "")
+    try:
+        return max(float(raw), 1.0) if raw.strip() else 120.0
+    except ValueError:
+        return 120.0
+
+
+async def run_controller(controller: PersonaCycleController, stop: asyncio.Event, *, interval_seconds=None):
     """Poll actual cron records; this interval never authorizes a persona turn."""
     writers = {}
+    if interval_seconds is None:
+        interval_seconds = controller_interval_seconds()
     while not stop.is_set():
         try:
             report = await asyncio.to_thread(controller.reconcile_once)

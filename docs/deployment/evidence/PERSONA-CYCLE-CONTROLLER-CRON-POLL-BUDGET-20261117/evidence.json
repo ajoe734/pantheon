@@ -1,0 +1,26 @@
+{
+  "task": "PERSONA-CYCLE-CONTROLLER-CRON-POLL-BUDGET-20261117",
+  "kind": "local_fixture_not_hosted_evidence",
+  "change": {
+    "controller": "reconcile_once reads cron.runs for a job only when cron.list state.lastRunAtMs/lastRunStatus differs from the last consumed watermark; no watermark (first pass/restart) or no state -> reads once as before; watermark is not advanced while a one-run-per-pass backlog remains or on failure",
+    "interval": "run_controller default 120s, override PANTHEON_PERSONA_CYCLE_POLL_SECONDS",
+    "registrar_scope_extension": "reconcile_daily_cycles skips readback/cleanup cron.list calls when the single matching job is already exact (previously 3 extra cron.list per persona per pass) and returns job_states from the one list read; mutation paths unchanged"
+  },
+  "runtime_budget_three_personas": {
+    "before": {"interval_s": 30, "passes_per_day": 2880,
+      "calls_per_pass_brief_estimate": 4, "gateway_calls_per_day_brief_estimate": 11520,
+      "calls_per_pass_code_actual": "1 + 3 + 3 (registrar readback/final lists per persona) = 10 ... plus cron.runs per persona",
+      "note": "hosted observed 32 POSTs in 10 minutes"},
+    "after": {"interval_s": 120, "passes_per_day": 720, "calls_per_pass_idle": 1,
+      "gateway_calls_per_day_idle": 720, "plus_run_reads": "about 3 cron.runs per day (one per persona after its daily run)",
+      "total_per_day": "about 723"},
+    "per_call_cost": "one adapter openclaw Node CLI spawn, about 400 MiB for 5-7 s",
+    "new_persistent_writer": false,
+    "out_of_scope": "adapter memory limit (WP3.4 follow-up)"
+  },
+  "tests": {
+    "services/persona/test_persona_cycle_controller.py": "60 passed, 4 skipped",
+    "services/control-plane/cron/test_persona_cron_registrar.py + other reconcile_daily_cycles tests": "45 passed",
+    "new": ["idle pass = exactly [cron.list]", "changed lastRunAtMs -> one cron.runs", "restart without watermark reads once", "no-state payload falls back to cron.runs", "interval default/env"]
+  }
+}

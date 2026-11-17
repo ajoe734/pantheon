@@ -1430,6 +1430,7 @@ class PersonaCronRegistrar:
         workflow = WORKFLOW_CATALOG[PERSONA_DAILY_CYCLE_WORKFLOW_ID]
         failures: list[dict[str, Any]] = []
         converged: dict[str, str] = {}
+        job_states: dict[str, Any] = {}
         legacy = {"pantheon.ingest", "pantheon.review", "pantheon.retrain", "pantheon.deploy"}
         for pid in sorted(eligible):
             try:
@@ -1438,6 +1439,12 @@ class PersonaCronRegistrar:
                 identity = dict(workflow=workflow, persona_id=pid, request_id=request_id,
                                 runtime_id=None, runtime_binding_id=None, capital_pool_id=None,
                                 persona_capital_binding_id=None)
+                if len(matches) == 1 and matches[0].get("id") and self._is_exact_workflow_job(matches[0], **identity):
+                    # Steady state: the single list read above already proved exact
+                    # convergence; readback/cleanup lists are only for mutations.
+                    converged[pid] = str(matches[0]["id"])
+                    job_states[pid] = matches[0].get("state")
+                    continue
                 if matches:
                     keeper = sorted(matches, key=lambda j: str(j.get("id") or ""))[0]
                     if not keeper.get("id"):
@@ -1459,6 +1466,7 @@ class PersonaCronRegistrar:
                 if len(final) != 1 or not self._is_exact_workflow_job(final[0], **identity):
                     raise RuntimeError("daily-cycle duplicate cleanup did not converge")
                 converged[pid] = keep_id
+                job_states[pid] = next((j.get("state") for j in final if j.get("id") == keep_id), None)
             except Exception as exc:
                 failures.append({"persona_id": pid, "reason": str(exc)[:300]})
         for job in jobs:
@@ -1477,7 +1485,8 @@ class PersonaCronRegistrar:
                     raise RuntimeError("orphan/legacy cron removal did not pass readback")
             except Exception as exc:
                 failures.append({"persona_id": pid, "reason": str(exc)[:300]})
-        return {"jobs": converged, "failures": failures, "eligible_count": len(eligible)}
+        return {"jobs": converged, "job_states": job_states, "failures": failures,
+                "eligible_count": len(eligible)}
 
     def reconcile_personas(
         self, persona_ids: list[str]
