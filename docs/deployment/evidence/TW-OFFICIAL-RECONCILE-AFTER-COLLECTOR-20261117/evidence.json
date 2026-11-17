@@ -1,0 +1,28 @@
+{
+  "task_id": "TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117",
+  "diagnosis": "Hosted readback 2026-11-17: the 2026-11-16 session was fully covered by collector closes (1376 TWSE + 5268 TPEx symbols, zero stored-versus-collector mismatches) but no official tw_price_daily row for 2026-11-16 reached hosted (tw-twse-tpex-official-market last succeeded 2026-11-14). check_taiwan_refresh_preflight in scripts/deploy_nonprod_vm.sh only asked whether a snapshot for the session existed (observed after the 13:30 close), so 07:30 returned skipped session_not_closed and the afternoon returned noop already_fresh; the official fetch and close reconciliation never ran.",
+  "change": {
+    "file": "scripts/deploy_nonprod_vm.sh (preflight heredoc only)",
+    "rule": "A snapshot lineage.collector_close entry exists only while no official row replaced the collector row for that trade date (LatestMarketSnapshotStore._merge_point). If any entry has trade_date <= latest closed session, within 7 days, and now >= 07:00 Asia/Taipei on the following day (official next-morning publication), the preflight returns status=proceed reason=official_rows_missing_collector_only with pending_trade_dates and symbols. It is evaluated after the weekend/holiday skips and before session_not_closed / already_fresh.",
+    "unchanged": "No new workflow, timer, service or endpoint. The existing bounded official refresh ingests the rows; the existing snapshot store compares collector vs official, keeps official, and exposes close_reconciliation {compared, agreed, mismatched, mismatches} (services/source_ingestion/tw_close_reconcile.py, requirement_state.py)."
+  },
+  "acceptance": {
+    "1": "see diagnosis",
+    "2": "test_collector_covered_session_proceeds_after_official_publication_and_official_wins (proceed at 2026-06-11 07:30 Taipei with distinct reason)",
+    "3": "same test: after ingesting the recorded official rows, close_reconciliation compared=1 agreed=0 mismatched=1, mismatch kept=official, collector 957.5 vs official 955.0, snapshot close 955.0, collector_close lineage gone; test_agreeing_collector_close_is_reported_in_the_ratio covers compared=1 agreed=1",
+    "4": "test_session_with_official_rows_is_noop_and_before_publication_does_not_proceed (official-held session noop already_fresh; collector-only before 07:00 next morning does not proceed)",
+    "5": "Growth per trading day: about 6644 symbols (1376 TWSE + 5268 TPEx) of official tw_price_daily rows and up to the same number of comparison entries as the collector-only rows are replaced by official rows (one row per symbol per session, replacing, not adding, a point in the bounded per-symbol snapshot history). Bounds: the refresh is the existing bounded refresh, still capped by SOURCE_INGEST_MAX_RECORDS (validated 1..500 per run; default 100) so the added rows arrive across the existing bounded pulls and not in a new job; per-snapshot close_reconciliation is capped at MAX_RECONCILIATION_ENTRIES=60; no additional run is scheduled, the preflight only changes whether the already scheduled 07:30/afternoon refresh proceeds. Note: whether hosted catches up the full ~6644 symbols within the per-run cap is for the operator hosted readback to confirm.",
+    "6": "see validation"
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_tw_official_reconcile_after_collector.py -q",
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_vm.py -q"
+    ],
+    "results": [
+      "3 passed",
+      "157 passed, 2 skipped (209.55s)"
+    ]
+  },
+  "needs_hosted_verification": "Operator readback on the next trading morning (2026-11-18 07:30 Taipei): preflight proceed reason official_rows_missing_collector_only, official 2026-11-16 rows ingested, close_reconciliation compared/agreed/mismatches."
+}
