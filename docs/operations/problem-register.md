@@ -96,7 +96,13 @@ collector pull merged (#7438, #7459) and not deployed; TPEx same-day close took
 trading personas' daily-cycle jobs are registered and ran once at 10:00Z on
 release e7ec353d6; all three failed at observe
 (`observe_prerequisites_unavailable:canonical_memory`); the first run on
-80d4cf2ca is 2026-11-18 10:00Z.
+80d4cf2ca is 2026-11-18 10:00Z. Measured on hosted 11/17 15:40Z (deployed,
+not accepted): strategy distillation writes fell from 54 GB in 5.8 hours to
+14 MB in 80 minutes and the stuck lease is gone, but every tick still reports
+failed because 241 dead letters from Registry 401 responses (enqueued 11/13
+10:51Z to 11/16 17:35Z) are unresolved; infrastructure_health rows fell from
+2991 to 202 per hour; heartbeat cadence cannot be measured until the paper
+runtimes run again (they stop at the 05:30Z close).
 
 ## RC3. Nobody owns data volume
 
@@ -118,6 +124,7 @@ release e7ec353d6; all three failed at observe
 | WP3.1 collector close capture with a disabled source | COLLECTOR-CLOSE-CAPTURE-DISABLED-SOURCE-20261117 (#7491) | merged |
 | WP3.1 hosted reclaim of deleted rows (coordinator) | TELEMETRY-HEARTBEAT-HOSTED-ACCEPTANCE-20261117 | open; its three dependencies are deployed |
 | WP3.1 two snapshot pre-compact backup files on hosted (988 MB, created by hand) | release and hosted operations owner | open |
+| WP3.1 hosted redrive of 241 distillation dead letters (Registry 401 between 11/13 and 11/16) | remediation coordinator; hosted write, waits for operator consent | open |
 | WP3.1 market data stored once per key (market-data owner) | SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118 (#7521), SOURCE-DAILY-BARS-READERS-COMPLETE-20261118 (#7522) | deployed |
 | WP3.1 market data retention sweeper (market-data owner) | SOURCE-RETENTION-SWEEPER-20261118-R2 (#7526) | merged |
 | WP3.2 storage manifest and test | STORAGE-MANIFEST-AND-GUARD-20261117 (#7488) | merged |
