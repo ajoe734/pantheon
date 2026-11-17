@@ -66,7 +66,7 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
     return normalized
 
 
-_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session", "persona_memory_reader")
 # Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
 _MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin", "persona-svc")
 # The persona service lists its own tenant's candidates for the paper endorsement step (persona.admin stays get-only).

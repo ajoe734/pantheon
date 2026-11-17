@@ -4859,6 +4859,27 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+# Exact component check over the whole expected steady set of the selected
+# profiles (plus the required loop workers), not only the loop workers: every
+# service one container, running, healthy, on the compose image, revision label
+# equal to the release SHA when the image carries one.
+verify_steady_stack_complete() {
+  local -a stack_services=()
+  local service
+  mapfile -t stack_services < <(
+    { expected_steady_services; printf '%s\n' "${REQUIRED_LOOP_WORKERS[@]}"; } | sed '/^$/d' | sort -u
+  )
+  if (( ${#stack_services[@]} < ${#REQUIRED_LOOP_WORKERS[@]} )); then
+    info "unable to derive the expected steady service set; stack completeness not proven" >&2
+    return 1
+  fi
+  for service in "${REQUIRED_LOOP_WORKERS[@]}"; do
+    printf '%s\n' "${stack_services[@]}" | grep -qxF -- "${service}" || {
+      info "required loop worker ${service} is not in the expected steady set" >&2; return 1; }
+  done
+  verify_exact_component_deployment "${stack_services[@]}"
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -4964,6 +4985,11 @@ verify_exact_component_deployment() {
       fi
       image_rev="$(docker inspect --format '{{with .Config.Labels}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
+      if [[ -z "$cmd" || "$cmd" == "null" || "$cmd" == "[]" ]]; then
+        # Images that declare only an ENTRYPOINT (e.g. third-party stack services)
+        # still have a command identity.
+        cmd="$(docker inspect --format '{{json .Config.Entrypoint}}' "$container_id" 2>/dev/null || true)"
+      fi
       started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container_id" 2>/dev/null || true)"
 
       if [[ "$status" != "running" ]]; then
@@ -6190,10 +6216,35 @@ steady_service_rows() {
   done
 }
 
+# The steady service set a profile must keep running, derived from
+# docker-compose.yml (never from what happens to be running): every service of
+# the selected profiles whose resolved restart policy is unless-stopped/always.
+# One-shot services (restart no / on-failure) and services outside the selected
+# profiles are not in the set; the bounded source refresh resolves the scheduler
+# to restart "no", so it is excluded only while that bounded policy is active.
+expected_steady_services() {
+  env COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    ${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:+SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}"} \
+    docker compose -p pantheon -f docker-compose.yml config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+services = json.load(sys.stdin).get("services") or {}
+for name in sorted(services):
+    if str(services[name].get("restart") or "no") in ("unless-stopped", "always"):
+        print(name)
+'
+}
+
+# Baseline file: "service|image" for every expected steady service. A service
+# that was not running at capture is recorded with an empty image so a later
+# check still requires it running (it is not silently absent from the baseline).
+# Fails closed when the expected set cannot be derived.
 capture_steady_service_baseline() {
-  local out="$1"
-  steady_service_rows | python3 -c '
-import sys
+  local out="$1" expected
+  expected="$(expected_steady_services)" || expected=""
+  [[ -n "${expected}" ]] || { info "unable to derive the expected steady service set from docker-compose.yml" >&2; return 1; }
+  steady_service_rows | EXPECTED_STEADY="${expected}" python3 -c '
+import os, sys
 seen = {}
 for line in sys.stdin:
     parts = line.rstrip("\n").split("|")
@@ -6202,6 +6253,8 @@ for line in sys.stdin:
     service, oneoff, restart, state, image, _cid = parts
     if service and oneoff != "True" and restart in ("unless-stopped", "always") and state == "running":
         seen[service] = image
+for service in os.environ["EXPECTED_STEADY"].split():
+    seen.setdefault(service, "")
 for service, image in sorted(seen.items()):
     print(service + "|" + image)
 ' > "${out}"
@@ -6230,7 +6283,7 @@ for service, image in sorted(expected.items()):
         print(service + "||" + ("missing" if not rows else "ambiguous"))
         continue
     _s, _o, _r, state, current, cid = rows[0]
-    if current != image:
+    if image and current != image:
         print(service + "|" + cid + "|image-mismatch")
     elif state != "running":
         print(service + "|" + cid + "|stopped")
@@ -6621,7 +6674,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
     DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
-    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
+      || rollback_dev_bff_on_failure "steady_service_baseline"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
@@ -6683,7 +6737,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     run_dev_advisory_check trade_journey_residual trade_journey_residual \
       env PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh
-    verify_exact_component_deployment \
+    verify_steady_stack_complete \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;
 
