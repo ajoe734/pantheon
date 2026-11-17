@@ -1,0 +1,6 @@
+{
+  "task_id": "PERSONA-ENROLLMENT-READBACK-STABLE-WHEN-PAUSED-20261117",
+  "tests": "services/control-plane/bff/tests/test_persona_paper_enrollment.py: 33 passed",
+  "runtime_budget": "The reconciler overwrites one readback per persona in place in bff.persona_provisioning; no new rows or files; 3 trading personas on hosted; zero growth per day. Unsettled passes are throttled by PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS (default 600).",
+  "hosted_proof": "pending deploy: read-only query of bff.persona_provisioning references.paper_enrollment.status == enrolled for persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241 while runtimes are paused; coordinator records it if the task closes before deploy."
+}
