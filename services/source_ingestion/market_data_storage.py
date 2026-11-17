@@ -283,12 +283,16 @@ class MarketDataStorageWriter:
         *,
         daily_bars_store: Any | None = None,
         listing_filter: Any | None = None,
+        listing_provider: Any | None = None,
     ) -> None:
         from .daily_bars_store import DailyBarsStore
 
         # SOURCE-WARRANT-LISTING-EXPIRY: defence in depth. A tw_price_daily record whose symbol is in
         # no current exchange listing (expired warrant, unknown code) is not stored. None = off.
         self.listing_filter = listing_filter
+        # SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118: ``HostedListing`` (security_listing). Builds one
+        # filter per run from the dated hosted state; mode shadow counts only, enforce skips, off reads nothing.
+        self.listing_provider = listing_provider
 
         self.root = Path(root)
         # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
@@ -342,16 +346,25 @@ class MarketDataStorageWriter:
     ) -> MarketDataStorageManifest:
         records = [record for record in result.records if not record.is_rejected]
         skipped_not_listed = 0
-        if self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+        run_filter = self.listing_filter
+        provider_run = False
+        if run_filter is None and self.listing_provider is not None and any(
+            _slug(_dataset_for_record(r, connector)) == _slug(_DAILY_BAR_DATASET) for r in records
+        ):
+            provider_run = True
+            run_filter = self.listing_provider.filter_for_run()
+        if run_filter is not None and getattr(run_filter, "enabled", True):
             kept: list[SourceRecord] = []
             for record in records:
                 if _slug(_dataset_for_record(record, connector)) == _slug(_DAILY_BAR_DATASET):
                     sym = _record_symbol(record)
-                    if sym is not None and not self.listing_filter.admits(sym):
+                    if sym is not None and not run_filter.admits(sym):
                         skipped_not_listed += 1
                         continue
                 kept.append(record)
             records = kept
+        if provider_run:
+            self.listing_provider.record_run(result.run.ingest_run_id, run_filter)
         if not records:
             return MarketDataStorageManifest(
                 ingest_run_id=result.run.ingest_run_id, skipped_not_listed_count=skipped_not_listed
