@@ -821,7 +821,10 @@ def test_runtime_health_carries_the_snapshot_store_block(tmp_path, monkeypatch):
     monkeypatch.setenv("MARKET_SNAPSHOT_STORE", "sqlite")
     for name in [m for m in sys.modules if m.startswith("services.source_ingestion.main")]:
         sys.modules.pop(name)
-    from services.source_ingestion import main as source_main
+    import importlib
+
+    # import_module re-imports; `from pkg import main` would hand back the stale package attribute.
+    source_main = importlib.import_module("services.source_ingestion.main")
 
     body = TestClient(source_main.app).get("/health").json()
     assert body["market_snapshot_store"] == "sqlite"

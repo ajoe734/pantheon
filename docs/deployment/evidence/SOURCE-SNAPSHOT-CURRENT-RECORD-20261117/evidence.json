@@ -99,6 +99,11 @@
     "fix": "four bounded entries added to docs/operations/storage-manifest.json with bound_proof on the ON CONFLICT replace statement",
     "validation": "python3 -m unittest scripts.test_check_storage_manifest: Ran 10 tests OK; check_storage_manifest.py passed=true"
   },
+  "ci_red_return_fix_2": {
+    "cause": "test_runtime_health_carries_the_snapshot_store_block used 'from services.source_ingestion import main', which returns the stale package attribute after sys.modules eviction, so the runtime kept journal mode when an earlier test had imported main (order dependent; failed only in the full Smoke acceptance run)",
+    "fix": "test now uses importlib.import_module for a fresh import; no product code changed",
+    "validation": "test_snapshot_current_record_store.py + test_snapshot_frequency_isolation.py: 57 passed (260 s); refs_bounded then runtime_health in one session: 11 passed. The full services/source_ingestion/tests run exceeded the 590 s bound locally and is not counted; Smoke acceptance on the PR is the full-suite check."
+  },
   "constructors_and_direct_readers_acceptance_11": [
     {
       "file": "services/source_ingestion/runtime.py",
