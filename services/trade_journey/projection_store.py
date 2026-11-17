@@ -7,16 +7,20 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
 import logging
 import math
+import os
+import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from services.trade_journey.materializer import SHARED_IDENTIFIER_TYPES
 
@@ -33,6 +37,49 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 INITIAL_MIGRATION_PATH = (
     MIGRATIONS_DIR / "001_create_trade_journey_projection_schema.sql"
 )
+DROP_REDUNDANT_RECEIPTS_INDEX_MIGRATION_PATH = (
+    MIGRATIONS_DIR / "002_drop_redundant_event_receipts_index.sql"
+)
+
+DEFAULT_RECEIPT_PRUNE_BATCH_SIZE = 5000
+DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN = 20
+DEFAULT_RECEIPT_PRUNE_INTERVAL_SECONDS = 10.0
+DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS = 15000
+
+RECEIPT_PRUNE_ENABLED_ENV = "LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_ENABLED"
+RECEIPT_PRUNE_BATCH_SIZE_ENV = "LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_BATCH_SIZE"
+RECEIPT_PRUNE_MAX_BATCHES_ENV = "LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN"
+RECEIPT_PRUNE_INTERVAL_SECONDS_ENV = "LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_INTERVAL_SECONDS"
+RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS_ENV = "LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS"
+
+CANONICAL_LIFECYCLE_EVENT_TYPES = frozenset(
+    {
+        "trade_journey_fixture",
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "paper_order_simulated",
+        "paper_futures_settled",
+        "paper_margin_call",
+        "paper_forced_liquidation",
+        "order_submitted",
+        "order_accepted",
+        "order_partially_filled",
+        "paper_fill_simulated",
+        "fill_received",
+        "order_filled",
+        "order_rejection",
+        "order_rejection_simulated",
+        "order_canceled",
+        "order_cancelled",
+        "position_snapshot",
+        "position_snapshot_received",
+        "broker_position_snapshot",
+        "reconciliation_completed",
+        "reconciliation_failed",
+    }
+)
+CANONICAL_LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(CANONICAL_LIFECYCLE_EVENT_TYPES))
 CONTROLLER_COLUMNS = (
     "controller_id, tenant_scope, environment_scope, checkpoint_seq, "
     "source_high_watermark, backlog_count, projection_revision, "
@@ -1724,3 +1771,550 @@ class ProjectionStore:
                 )
                 updated_ctrl = cur.fetchone()
                 return ControllerStateRow(*updated_ctrl)
+
+    def prune_non_lifecycle_receipts(
+        self,
+        *,
+        batch_size: int = DEFAULT_RECEIPT_PRUNE_BATCH_SIZE,
+        max_batches: int | None = DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN,
+        statement_timeout_ms: int = DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+        lifecycle_event_types: Sequence[str] | None = None,
+        extra_consumer_checkpoints: Mapping[str, int] | None = None,
+    ) -> "ReceiptPruneRunResult":
+        """Delete existing ignored non-lifecycle receipts with ingested_seq <= min controller checkpoint.
+
+        Runs in bounded batches, each inside its own transaction with a
+        transaction-local ``statement_timeout``. Lifecycle-type receipts
+        (applied, quarantined, and superseded-retry ignored) are never deleted.
+        """
+        t0 = time.monotonic()
+        effective_batch_size = max(1, int(batch_size))
+        effective_timeout_ms = max(100, int(statement_timeout_ms))
+        effective_lifecycle_types = list(
+            lifecycle_event_types
+            if lifecycle_event_types is not None
+            else CANONICAL_LIFECYCLE_EVENT_TYPE_QUERY
+        )
+
+        with self._connect_db(
+            statement_timeout_seconds=max(1.0, effective_timeout_ms / 1000.0)
+        ) as conn:
+            with conn.cursor() as cur:
+                ceiling_info = _resolve_safe_ceiling_sync(
+                    cur,
+                    projection_schema=self.schema,
+                    extra_consumer_checkpoints=extra_consumer_checkpoints,
+                )
+            conn.commit()
+
+            safe_seq = int(ceiling_info["safe_ingested_seq"])
+            checkpoints = dict(ceiling_info["consumer_checkpoints"])
+            if safe_seq <= 0:
+                return ReceiptPruneRunResult(
+                    status="ok",
+                    safe_ingested_seq=safe_seq,
+                    batches_executed=0,
+                    rows_deleted=0,
+                    statement_timeout_ms=effective_timeout_ms,
+                    batch_size=effective_batch_size,
+                    duration_ms=(time.monotonic() - t0) * 1000.0,
+                    consumer_checkpoints=checkpoints,
+                )
+
+            total_deleted = 0
+            batches_run = 0
+            after_seq = 0
+
+            while max_batches is None or batches_run < max_batches:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT set_config('statement_timeout', %s, true)",
+                        (f"{effective_timeout_ms}ms",),
+                    )
+                    cur.execute(
+                        f"""
+                        WITH candidates AS (
+                            SELECT event_id, ingested_seq
+                            FROM {self.schema}.event_receipts
+                            WHERE ingested_seq > %s
+                              AND ingested_seq <= %s
+                              AND disposition = 'ignored'
+                              AND NOT (source_event_type = ANY(%s::text[]))
+                              AND journey_id = ''
+                              AND loop_run_id = ''
+                            ORDER BY ingested_seq ASC
+                            LIMIT %s
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        DELETE FROM {self.schema}.event_receipts AS r
+                        USING candidates
+                        WHERE r.event_id = candidates.event_id
+                        RETURNING r.ingested_seq
+                        """,
+                        (
+                            after_seq,
+                            safe_seq,
+                            effective_lifecycle_types,
+                            effective_batch_size,
+                        ),
+                    )
+                    deleted_rows = cur.fetchall()
+                conn.commit()
+                if not deleted_rows:
+                    break
+                deleted_in_batch = len(deleted_rows)
+                after_seq = max(int(row[0]) for row in deleted_rows)
+                batches_run += 1
+                total_deleted += deleted_in_batch
+                if deleted_in_batch < effective_batch_size:
+                    break
+
+        return ReceiptPruneRunResult(
+            status="ok",
+            safe_ingested_seq=safe_seq,
+            batches_executed=batches_run,
+            rows_deleted=total_deleted,
+            statement_timeout_ms=effective_timeout_ms,
+            batch_size=effective_batch_size,
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+            consumer_checkpoints=checkpoints,
+        )
+
+    prune_ignored_receipts = prune_non_lifecycle_receipts
+
+
+@dataclass
+class ReceiptPruneRunResult:
+    """Result of one bounded non-lifecycle receipt prune execution."""
+
+    status: str
+    safe_ingested_seq: int
+    batches_executed: int
+    rows_deleted: int
+    statement_timeout_ms: int
+    batch_size: int
+    duration_ms: float
+    consumer_checkpoints: dict[str, int] = field(default_factory=dict)
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "safe_ingested_seq": self.safe_ingested_seq,
+            "batches_executed": self.batches_executed,
+            "rows_deleted": self.rows_deleted,
+            "statement_timeout_ms": self.statement_timeout_ms,
+            "batch_size": self.batch_size,
+            "duration_ms": round(self.duration_ms, 3),
+            "consumer_checkpoints": dict(self.consumer_checkpoints),
+            "error": self.error,
+        }
+
+    def __getitem__(self, key: str) -> Any:
+        return self.to_dict()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_dict().get(key, default)
+
+
+_DOLLAR_PARAM_RE = re.compile(r"\$\d+")
+
+
+def _is_telemetry_max_query(query: str) -> bool:
+    return "FROM public.telemetry_events" in query and "MAX(ingested_seq)" in query
+
+
+class _PsycopgCeilingAdapter:
+    """Adapts a synchronous psycopg cursor to the asyncpg interface used by resolve_safe_ingested_seq_ceiling."""
+
+    def __init__(self, cur: Any) -> None:
+        self._cur = cur
+
+    async def fetchval(self, query: str, *args: Any) -> Any:
+        if _is_telemetry_max_query(query):
+            self._cur.execute("SELECT to_regclass('public.telemetry_events')")
+            reg = self._cur.fetchone()
+            if reg is None or reg[0] is None:
+                return 0
+        sql = _DOLLAR_PARAM_RE.sub("%s", query)
+        self._cur.execute(sql, args)
+        row = self._cur.fetchone()
+        return row[0] if row is not None else None
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        sql = _DOLLAR_PARAM_RE.sub("%s", query)
+        self._cur.execute(sql, args)
+        cols = [desc[0] for desc in (self._cur.description or ())]
+        return [dict(zip(cols, row)) for row in self._cur.fetchall()]
+
+
+class _AsyncpgCeilingProxy:
+    """Wraps an asyncpg connection so resolve_safe_ingested_seq_ceiling tolerates databases without public.telemetry_events."""
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    async def fetchval(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        if _is_telemetry_max_query(query):
+            reg = await self._conn.fetchval("SELECT to_regclass('public.telemetry_events')", **kwargs)
+            if reg is None:
+                return 0
+        return await self._conn.fetchval(query, *args, **kwargs)
+
+    async def fetch(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        return await self._conn.fetch(query, *args, **kwargs)
+
+
+def _resolve_safe_ceiling_sync(
+    cur: Any,
+    *,
+    projection_schema: str = DEFAULT_PROJECTION_SCHEMA,
+    extra_consumer_checkpoints: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    from services.telemetry.heartbeat_retention import resolve_safe_ingested_seq_ceiling  # noqa: PLC0415
+
+    coro = resolve_safe_ingested_seq_ceiling(
+        _PsycopgCeilingAdapter(cur),
+        projection_schema=projection_schema,
+        extra_consumer_checkpoints=extra_consumer_checkpoints,
+        require_controller_checkpoint=True,
+    )
+    try:
+        coro.send(None)
+    except StopIteration as stop:
+        return dict(stop.value)
+    finally:
+        coro.close()
+    raise RuntimeError("resolve_safe_ingested_seq_ceiling did not complete synchronously on adapter")
+
+
+async def prune_non_lifecycle_receipts_on_connection(
+    conn: Any,
+    *,
+    batch_size: int = DEFAULT_RECEIPT_PRUNE_BATCH_SIZE,
+    max_batches: int | None = DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN,
+    statement_timeout_ms: int = DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+    projection_schema: str = DEFAULT_PROJECTION_SCHEMA,
+    lifecycle_event_types: Sequence[str] | None = None,
+    extra_consumer_checkpoints: Mapping[str, int] | None = None,
+) -> ReceiptPruneRunResult:
+    """Run bounded non-lifecycle ignored-receipt deletion on an open asyncpg connection."""
+    from services.telemetry.heartbeat_retention import resolve_safe_ingested_seq_ceiling  # noqa: PLC0415
+
+    if not projection_schema.isidentifier():
+        raise ValueError(f"Invalid projection schema identifier: {projection_schema!r}")
+
+    t0 = time.monotonic()
+    effective_batch_size = max(1, int(batch_size))
+    effective_timeout_ms = max(100, int(statement_timeout_ms))
+    effective_lifecycle_types = list(
+        lifecycle_event_types
+        if lifecycle_event_types is not None
+        else CANONICAL_LIFECYCLE_EVENT_TYPE_QUERY
+    )
+
+    ceiling_info = await resolve_safe_ingested_seq_ceiling(
+        _AsyncpgCeilingProxy(conn),
+        projection_schema=projection_schema,
+        extra_consumer_checkpoints=extra_consumer_checkpoints,
+        require_controller_checkpoint=True,
+    )
+    safe_seq = int(ceiling_info["safe_ingested_seq"])
+    checkpoints = dict(ceiling_info["consumer_checkpoints"])
+
+    if safe_seq <= 0:
+        return ReceiptPruneRunResult(
+            status="ok",
+            safe_ingested_seq=safe_seq,
+            batches_executed=0,
+            rows_deleted=0,
+            statement_timeout_ms=effective_timeout_ms,
+            batch_size=effective_batch_size,
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+            consumer_checkpoints=checkpoints,
+        )
+
+    total_deleted = 0
+    batches_run = 0
+    after_seq = 0
+
+    while max_batches is None or batches_run < max_batches:
+        query_timeout = (effective_timeout_ms / 1000.0) + 5.0
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('statement_timeout', $1, true)",
+                f"{effective_timeout_ms}ms",
+                timeout=query_timeout,
+            )
+            deleted_rows = await conn.fetch(
+                f"""
+                WITH candidates AS (
+                    SELECT event_id, ingested_seq
+                    FROM {projection_schema}.event_receipts
+                    WHERE ingested_seq > $1
+                      AND ingested_seq <= $2
+                      AND disposition = 'ignored'
+                      AND NOT (source_event_type = ANY($3::text[]))
+                      AND journey_id = ''
+                      AND loop_run_id = ''
+                    ORDER BY ingested_seq ASC
+                    LIMIT $4
+                    FOR UPDATE SKIP LOCKED
+                )
+                DELETE FROM {projection_schema}.event_receipts AS r
+                USING candidates
+                WHERE r.event_id = candidates.event_id
+                RETURNING r.ingested_seq
+                """,
+                after_seq,
+                safe_seq,
+                effective_lifecycle_types,
+                effective_batch_size,
+                timeout=query_timeout,
+            )
+            deleted_in_batch = len(deleted_rows)
+
+        if not deleted_rows:
+            break
+        after_seq = max(int(row["ingested_seq"]) for row in deleted_rows)
+        batches_run += 1
+        total_deleted += deleted_in_batch
+        if deleted_in_batch < effective_batch_size:
+            break
+
+    return ReceiptPruneRunResult(
+        status="ok",
+        safe_ingested_seq=safe_seq,
+        batches_executed=batches_run,
+        rows_deleted=total_deleted,
+        statement_timeout_ms=effective_timeout_ms,
+        batch_size=effective_batch_size,
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+        consumer_checkpoints=checkpoints,
+    )
+
+
+async def run_non_lifecycle_receipt_prune(
+    dsn: str,
+    *,
+    batch_size: int = DEFAULT_RECEIPT_PRUNE_BATCH_SIZE,
+    max_batches: int | None = DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN,
+    statement_timeout_ms: int = DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+    projection_schema: str = DEFAULT_PROJECTION_SCHEMA,
+    lifecycle_event_types: Sequence[str] | None = None,
+    extra_consumer_checkpoints: Mapping[str, int] | None = None,
+) -> ReceiptPruneRunResult:
+    """Connect to PostgreSQL and run a bounded non-lifecycle receipt prune pass."""
+    import asyncpg  # type: ignore[import]
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        return await prune_non_lifecycle_receipts_on_connection(
+            conn,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            statement_timeout_ms=statement_timeout_ms,
+            projection_schema=projection_schema,
+            lifecycle_event_types=lifecycle_event_types,
+            extra_consumer_checkpoints=extra_consumer_checkpoints,
+        )
+    finally:
+        await conn.close()
+
+
+class NonLifecycleReceiptPruneJob:
+    """Periodic bounded job that deletes ignored non-lifecycle receipts at or below min controller checkpoint."""
+
+    def __init__(
+        self,
+        store_or_dsn: ProjectionStore | str,
+        *,
+        projection_schema: str = DEFAULT_PROJECTION_SCHEMA,
+        batch_size: int | None = None,
+        max_batches_per_run: int | None = None,
+        interval_seconds: float | None = None,
+        statement_timeout_ms: int | None = None,
+        enabled: bool = True,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if isinstance(store_or_dsn, ProjectionStore):
+            self._store: ProjectionStore | None = store_or_dsn
+            self._dsn = str(store_or_dsn.dsn or "").strip()
+            self._schema = str(store_or_dsn.schema or projection_schema)
+        else:
+            self._store = None
+            self._dsn = str(store_or_dsn or "").strip()
+            self._schema = str(projection_schema or DEFAULT_PROJECTION_SCHEMA)
+        self._batch_size = max(
+            1,
+            int(
+                batch_size
+                if batch_size is not None
+                else (os.getenv(RECEIPT_PRUNE_BATCH_SIZE_ENV) or DEFAULT_RECEIPT_PRUNE_BATCH_SIZE)
+            ),
+        )
+        self._max_batches_per_run = max(
+            1,
+            int(
+                max_batches_per_run
+                if max_batches_per_run is not None
+                else (
+                    os.getenv(RECEIPT_PRUNE_MAX_BATCHES_ENV)
+                    or DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN
+                )
+            ),
+        )
+        self._interval_seconds = max(
+            0.1,
+            float(
+                interval_seconds
+                if interval_seconds is not None
+                else (
+                    os.getenv(RECEIPT_PRUNE_INTERVAL_SECONDS_ENV)
+                    or DEFAULT_RECEIPT_PRUNE_INTERVAL_SECONDS
+                )
+            ),
+        )
+        self._statement_timeout_ms = max(
+            100,
+            int(
+                statement_timeout_ms
+                if statement_timeout_ms is not None
+                else (
+                    os.getenv(RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS_ENV)
+                    or DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS
+                )
+            ),
+        )
+        self._enabled = bool(enabled and (self._store is not None or self._dsn))
+        self._clock = clock
+        self._next_due = 0.0
+        self._running = False
+        self._task: asyncio.Task[None] | None = None
+        self._runs_completed = 0
+        self._runs_failed = 0
+        self._total_rows_deleted = 0
+        self._last_run_at: str | None = None
+        self._last_result: dict[str, Any] | None = None
+        self._last_error: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @property
+    def last_result(self) -> dict[str, Any]:
+        return dict(self._last_result or {})
+
+    def is_running(self) -> bool:
+        return bool(self._running and self._task is not None and not self._task.done())
+
+    def run_once_sync(self) -> ReceiptPruneRunResult:
+        store = self._store or ProjectionStore(self._dsn, schema=self._schema, bootstrap=False)
+        return store.prune_non_lifecycle_receipts(
+            batch_size=self._batch_size,
+            max_batches=self._max_batches_per_run,
+            statement_timeout_ms=self._statement_timeout_ms,
+        )
+
+    async def run_once(self) -> ReceiptPruneRunResult:
+        if not self._enabled:
+            result = ReceiptPruneRunResult(
+                status="skipped_disabled",
+                safe_ingested_seq=0,
+                batches_executed=0,
+                rows_deleted=0,
+                statement_timeout_ms=self._statement_timeout_ms,
+                batch_size=self._batch_size,
+                duration_ms=0.0,
+            )
+            self._last_result = result.to_dict()
+            return result
+        try:
+            if self._store is not None:
+                result = await asyncio.to_thread(self.run_once_sync)
+            else:
+                result = await run_non_lifecycle_receipt_prune(
+                    self._dsn,
+                    batch_size=self._batch_size,
+                    max_batches=self._max_batches_per_run,
+                    statement_timeout_ms=self._statement_timeout_ms,
+                    projection_schema=self._schema,
+                )
+            self._runs_completed += 1
+            self._total_rows_deleted += result.rows_deleted
+            self._last_run_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            self._last_result = result.to_dict()
+            self._last_error = None
+            return result
+        except Exception as exc:
+            self._runs_failed += 1
+            self._last_run_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            self._last_error = str(exc)
+            raise
+
+    async def maybe_prune(self) -> bool:
+        if not self._enabled:
+            return False
+        now = self._clock()
+        if now < self._next_due:
+            return False
+        self._next_due = now + self._interval_seconds
+        try:
+            result = await self.run_once()
+        except Exception:  # noqa: BLE001 - prune must never fail the projector tick
+            logger.exception("non-lifecycle receipt prune failed; retrying next interval")
+            return False
+        if result.rows_deleted > 0:
+            logger.info("non-lifecycle receipt prune batch: %s", result.to_dict())
+        return True
+
+    async def start(self) -> None:
+        if not self._enabled or self.is_running():
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._loop(), name="trade-journey-receipt-prune")
+
+    async def stop(self) -> None:
+        self._running = False
+        task = self._task
+        self._task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("NonLifecycleReceiptPruneJob stop observed error: %s", exc)
+
+    async def _loop(self) -> None:
+        while self._running:
+            try:
+                await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("NonLifecycleReceiptPruneJob pass failed: %s", exc)
+            try:
+                await asyncio.sleep(self._interval_seconds)
+            except asyncio.CancelledError:
+                break
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "enabled": self._enabled,
+            "running": self.is_running(),
+            "schema": self._schema,
+            "batch_size": self._batch_size,
+            "max_batches_per_run": self._max_batches_per_run,
+            "interval_seconds": self._interval_seconds,
+            "statement_timeout_ms": self._statement_timeout_ms,
+            "runs_completed": self._runs_completed,
+            "runs_failed": self._runs_failed,
+            "total_rows_deleted": self._total_rows_deleted,
+            "last_run_at": self._last_run_at,
+            "last_result": self._last_result,
+            "last_error": self._last_error,
+        }
+

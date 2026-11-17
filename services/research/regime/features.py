@@ -339,7 +339,9 @@ REGIME_INPUT_DATASETS: tuple[str, ...] = (
 
 
 def _normalized_rows(root: Path, dataset: str) -> Iterable[dict[str, Any]]:
-    base = root / "normalized" / dataset
+    from services.source_ingestion.market_data_storage import normalized_dataset_base
+
+    base = normalized_dataset_base(root, dataset)
     if not base.is_dir():
         return
     for path in sorted(base.rglob("*.jsonl*")):

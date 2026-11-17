@@ -74,9 +74,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     bf.add_argument("--holidays-file", default=None, help="JSON list of extra closure dates (YYYY-MM-DD)")
     bf.add_argument("--dry-run", action="store_true", help="Print request count and wall-clock only")
 
-    sub.add_parser(
+    cc_p = sub.add_parser(
         "capture-close",
         help="Capture today's TWSE+TPEx all-stock close (14:40-17:00 Taipei window; timer retries)",
+    )
+    cc_p.add_argument(
+        "--now",
+        default=None,
+        help="Explicit ISO-8601 timestamp override for close-window evaluation",
     )
 
     prune_p = sub.add_parser("prune", help="Prune bundles older than raw_retention_days (90 days)")
@@ -135,8 +140,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "capture-close":
         from .runner import capture_same_day_close
 
+        try:
+            now_dt = (
+                datetime.fromisoformat(args.now.replace("Z", "+00:00"))
+                if args.now
+                else datetime.now(timezone.utc)
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
         runner = CollectorRunner(config, root_dir=args.root_dir, hasher=AuthorHasher.from_file(args.salt_file))
-        result = capture_same_day_close(runner, now=datetime.now(timezone.utc))
+        result = capture_same_day_close(runner, now=now_dt)
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
         return 2 if result.retry_needed else 0
 

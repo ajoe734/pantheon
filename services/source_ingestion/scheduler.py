@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import shutil
 import threading
 import time
 import weakref
@@ -213,6 +215,16 @@ RECEIPT_LINE_BUDGET_BYTES = 16 * 1024
 JOURNAL_GROWTH_ALARM_BYTES_PER_HOUR = 5 * 1024 * 1024
 DEFAULT_RECEIPT_RETENTION_DAYS = 30
 RECEIPT_RETENTION_DAYS_ENV = "SOURCE_INGEST_RECEIPT_RETENTION_DAYS"
+# SOURCE-RECEIPT-SLIM-KEEPS-BACKUP: a rewrite keeps the previous journal 7 days as a hard link
+# named <journal>.pre-migrate.bak (the name scripts/migrate_ingest_receipts.py uses).
+RECEIPT_BACKUP_SUFFIX = ".pre-migrate.bak"
+DEFAULT_RECEIPT_BACKUP_KEEP_DAYS = 7
+RECEIPT_BACKUP_KEEP_DAYS_ENV = "SOURCE_INGEST_RECEIPT_BACKUP_KEEP_DAYS"
+# The rewrite writes up to the journal's size again; it is skipped unless that much plus this
+# margin is free on the journal's filesystem.
+DEFAULT_REWRITE_FREE_MARGIN_BYTES = 256 * 1024 * 1024
+REWRITE_FREE_MARGIN_BYTES_ENV = "SOURCE_INGEST_RECEIPT_REWRITE_FREE_MARGIN_BYTES"
+logger = logging.getLogger(__name__)
 _ID_LIST_COUNT_KEYS = {
     "source_ids": "source_id_count",
     "evidence_item_ids": "evidence_item_id_count",
@@ -328,6 +340,104 @@ def receipt_retention_days(default: int = DEFAULT_RECEIPT_RETENTION_DAYS) -> int
         return max(0, int(raw)) if raw not in (None, "") else default
     except ValueError:
         return default
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    raw = os.getenv(name)
+    try:
+        return max(minimum, int(raw)) if raw not in (None, "") else default
+    except ValueError:
+        return default
+
+
+def receipt_backup_keep_days() -> int:
+    return _env_int(RECEIPT_BACKUP_KEEP_DAYS_ENV, DEFAULT_RECEIPT_BACKUP_KEEP_DAYS, 1)
+
+
+def rewrite_free_margin_bytes() -> int:
+    return _env_int(REWRITE_FREE_MARGIN_BYTES_ENV, DEFAULT_REWRITE_FREE_MARGIN_BYTES, 0)
+
+
+def journal_backup_path(journal: Path) -> Path:
+    return journal.with_name(journal.name + RECEIPT_BACKUP_SUFFIX)
+
+
+def journal_backup_info(journal: Path, *, keep_days: int | None = None) -> dict[str, Any] | None:
+    """Size and expiry of the one backup next to ``journal`` (None when there is none).
+
+    The backup's mtime is stamped when it is made (see ``keep_journal_backup``), so expiry is
+    mtime plus the keep window.
+    """
+    backup = journal_backup_path(Path(journal))
+    try:
+        stat = backup.stat()
+    except OSError:
+        return None
+    days = receipt_backup_keep_days() if keep_days is None else keep_days
+    return {"path": str(backup), "bytes": stat.st_size, "keep_days": days,
+            "created_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            "expires_at": datetime.fromtimestamp(stat.st_mtime + days * 86400, timezone.utc).isoformat(),
+            "_expires_ts": stat.st_mtime + days * 86400}
+
+
+def public_backup_info(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    return None if info is None else {k: v for k, v in info.items() if not k.startswith("_")}
+
+
+def expire_journal_backup(journal: Path, *, now: datetime | None = None,
+                          keep_days: int | None = None) -> bool:
+    """Remove the backup only once its keep window has passed; True when it was removed."""
+    info = journal_backup_info(journal, keep_days=keep_days)
+    current = (now or datetime.now(timezone.utc)).timestamp()
+    if info is None or current < info["_expires_ts"]:
+        return False
+    try:
+        journal_backup_path(Path(journal)).unlink()
+    except OSError:
+        return False
+    return True
+
+
+def keep_journal_backup(journal: Path, *, bytes_needed: int, now: datetime | None = None,
+                        keep_days: int | None = None) -> dict[str, Any]:
+    """Hard-link ``journal`` as its backup before a rewrite replaces it (shared by service and script).
+
+    Returns ``{"ok": True, "created": bool, "backup": info}``; ``created`` is False when an
+    unexpired backup already exists, which is never replaced so the oldest complete copy
+    survives the window. Fails closed (``ok`` False, readable ``reason``) when free disk is under
+    ``bytes_needed`` plus the margin or the filesystem cannot hard link.
+    """
+    journal = Path(journal)
+    current = now or datetime.now(timezone.utc)
+    days = receipt_backup_keep_days() if keep_days is None else keep_days
+    expire_journal_backup(journal, now=current, keep_days=days)
+    try:
+        free = shutil.disk_usage(journal.parent).free
+    except OSError as exc:
+        return {"ok": False, "reason": f"cannot read free disk space: {exc}"}
+    margin = rewrite_free_margin_bytes()
+    if free < bytes_needed + margin:
+        return {"ok": False, "free_bytes": free, "reason": (
+            f"free disk {free} bytes is below the {bytes_needed} bytes the rewrite may write plus the "
+            f"{margin} byte margin; rewrite skipped, journal unchanged")}
+    existing = journal_backup_info(journal, keep_days=days)
+    if existing is not None:
+        return {"ok": True, "created": False, "backup": public_backup_info(existing)}
+    backup = journal_backup_path(journal)
+    try:
+        stamp = current.timestamp()
+        os.utime(journal, (stamp, stamp))  # shared inode: creation time recorded before the link
+        os.link(journal, backup)
+    except OSError as exc:
+        return {"ok": False, "reason": f"cannot keep a backup ({exc}); rewrite skipped, journal unchanged"}
+    return {"ok": True, "created": True, "backup": public_backup_info(journal_backup_info(journal, keep_days=days))}
+
+
+def discard_created_backup(journal: Path) -> None:
+    try:
+        journal_backup_path(Path(journal)).unlink()
+    except OSError:
+        pass
 
 
 def _line_identity(line: bytes) -> tuple[str, str] | None:
@@ -555,6 +665,7 @@ class JsonlIngestScheduleStore:
         # lineage (``pinned_run_ids``) still references them; 0 keeps every receipt.
         self.retention_days = receipt_retention_days() if retention_days is None else max(0, int(retention_days))
         self._pinned_run_ids = pinned_run_ids
+        self._pin_state: dict[str, Any] | None = None
         self._last_retention_check = time.monotonic()
         self._growth_samples: deque[tuple[float, int]] = deque(maxlen=512)
         self._max_receipt_line = 0
@@ -595,17 +706,42 @@ class JsonlIngestScheduleStore:
             tmp.unlink()
         except OSError:
             pass
+        current = now or datetime.now(timezone.utc)
+        expire_journal_backup(self.path, now=current)
         try:
             size = self.path.stat().st_size
         except OSError:
             return stats
         if size == 0:
             return stats
-        pins = tuple(self._pinned_run_ids() or ()) if self._pinned_run_ids else ()
-        scan = scan_journal(self.path, retention_days=self.retention_days, now=now, extra_pinned_run_ids=pins)
+        pins: tuple[str, ...] = ()
+        retention_days = self.retention_days
+        if self._pinned_run_ids:
+            try:
+                pins = tuple(self._pinned_run_ids() or ())
+                self._pin_state = {"resolved": True, "pinned_run_id_count": len(pins)}
+            except Exception as exc:  # noqa: BLE001 - unresolved pins: this run drops nothing (fail closed)
+                retention_days = 0
+                reason = f"{type(exc).__name__}: {exc}"[:300]
+                self._pin_state = {"resolved": False, "reason": reason, "retention_dropped_nothing": True}
+                stats["pin_source"] = self._pin_state
+                logger.warning("ingest receipt retention drops nothing this run: pin references unresolved (%s)", reason)
+        scan = scan_journal(self.path, retention_days=retention_days, now=now, extra_pinned_run_ids=pins)
         stats["bytes_before"] = size
         if not scan.needs_rewrite:
             return stats
+        # What this start will do, readable before anything is replaced (health payload and log).
+        plan = {"receipts_to_compact": scan.oversize_receipt_lines, "receipts_to_drop_by_retention": len(scan.drop_ids),
+                "bytes_before": size, "bytes_after": None}
+        stats["plan"] = plan
+        # Space needed: the new file (at most the old size); the backup is a hard link and adds none now.
+        gate = keep_journal_backup(self.path, bytes_needed=size, now=current)
+        if not gate["ok"]:
+            stats["skipped_reason"] = gate["reason"]
+            logger.warning("ingest receipt journal rewrite skipped: %s (plan=%s)", gate["reason"], plan)
+            self._last_slim = stats
+            return stats
+        created = bool(gate["created"])
         slimmed = expired = 0
         try:
             with self.path.open("rb") as src, tmp.open("wb") as dst:
@@ -620,6 +756,11 @@ class JsonlIngestScheduleStore:
                     stats["rows"] += 1
                 dst.flush()
                 os.fsync(dst.fileno())
+                plan["bytes_after"] = dst.tell()
+            logger.info(
+                "ingest receipt journal rewrite: compact %s receipts, drop %s by retention, %s -> %s bytes; "
+                "previous file kept as %s", plan["receipts_to_compact"], plan["receipts_to_drop_by_retention"],
+                size, plan["bytes_after"], journal_backup_path(self.path))
             os.replace(tmp, self.path)
             directory_fd = os.open(self.path.parent, os.O_RDONLY)
             try:
@@ -631,9 +772,11 @@ class JsonlIngestScheduleStore:
                 tmp.unlink()
             except OSError:
                 pass
+            if created and self.path.stat().st_size == size:
+                discard_created_backup(self.path)  # journal untouched: no need to hold a copy
             return stats
         stats.update(rewritten=True, slimmed_rows=slimmed, expired_rows=expired,
-                     bytes_after=self.path.stat().st_size)
+                     bytes_after=self.path.stat().st_size, backup_created=created)
         self._last_slim = stats
         self._growth_samples.clear()
         return stats
@@ -672,7 +815,8 @@ class JsonlIngestScheduleStore:
         return {"journal_bytes": size, "journal_lines": None, "receipt_count": None, "run_count": None,
                 "warn_bytes": JOURNAL_WARN_BYTES,
                 "warning": "ingest_schedule_journal_large" if size >= JOURNAL_WARN_BYTES else None,
-                "receipt_line_budget_bytes": RECEIPT_LINE_BUDGET_BYTES, "alarms": []}
+                "receipt_line_budget_bytes": RECEIPT_LINE_BUDGET_BYTES, "alarms": [],
+                "rewrite_backup": public_backup_info(journal_backup_info(Path(path)))}
 
     def journal_stats(self) -> dict[str, Any]:
         """Journal size and receipt count readback; no replay, no file scan."""
@@ -701,9 +845,12 @@ class JsonlIngestScheduleStore:
             "growth_alarm_bytes_per_hour": JOURNAL_GROWTH_ALARM_BYTES_PER_HOUR,
             "retention_days": self.retention_days,
             "alarms": alarms,
+            "rewrite_backup": public_backup_info(journal_backup_info(self.path)),
         }
         if self._last_slim:
             stats["last_slim_rewrite"] = dict(self._last_slim)
+        if self._pinned_run_ids is not None:
+            stats["receipt_pin_source"] = dict(self._pin_state or {"resolved": None, "reason": "not evaluated yet: no receipt journal to sweep"})
         return stats
 
     def _sample_growth(self, size: int) -> None:

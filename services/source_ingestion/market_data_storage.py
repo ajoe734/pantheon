@@ -13,6 +13,87 @@ from typing import Any, Mapping, Sequence
 from .connectors.base import SourceConnector, SourceRecord
 
 
+# SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: two named settings, both default to today's behaviour.
+DAILY_PRICE_READER_ENV = "PANTHEON_DAILY_PRICE_READER"  # run_files (default, old read) | daily_bars
+TW_PRICE_DAILY_RUN_FILES_ENV = "PANTHEON_TW_PRICE_DAILY_RUN_FILES"  # on (default) | off
+
+
+def daily_price_reader_mode(env: Mapping[str, str] | None = None) -> str:
+    """Which store the daily price readers use. An unknown value fails closed (no silent fallback)."""
+    import os
+
+    raw = str((env if env is not None else os.environ).get(DAILY_PRICE_READER_ENV, "") or "").strip().lower()
+    if raw in ("", "run_files"):
+        return "run_files"
+    if raw == "daily_bars":
+        return "daily_bars"
+    raise ValueError(f"{DAILY_PRICE_READER_ENV}={raw!r} is not one of run_files, daily_bars")
+
+
+def tw_price_daily_run_files_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """False stops the raw and normalized run files of tw_price_daily; other datasets are untouched."""
+    import os
+
+    raw = str((env if env is not None else os.environ).get(TW_PRICE_DAILY_RUN_FILES_ENV, "") or "").strip().lower()
+    if raw in ("", "on", "1", "true"):
+        return True
+    if raw in ("off", "0", "false"):
+        return False
+    raise ValueError(f"{TW_PRICE_DAILY_RUN_FILES_ENV}={raw!r} is not one of on, off")
+
+
+# SOURCE-DATASETS-KEYED-WRITE-20261119: three named settings, defaults keep today's reads working.
+KEYED_DATASETS_WRITE_ENV = "PANTHEON_KEYED_DATASETS_WRITE"  # dual (default) | keyed_only | run_files
+KEYED_DATASET_READER_ENV = "PANTHEON_KEYED_DATASET_READER"  # run_files (default, old read) | keyed
+FEATURE_FILES_ENV = "PANTHEON_FEATURE_FILES"  # off (default: derived on read, not stored) | on (old write)
+
+
+def _env_choice(name: str, allowed: Sequence[str], default: str, env: Mapping[str, str] | None) -> str:
+    import os
+
+    raw = str((env if env is not None else os.environ).get(name, "") or "").strip().lower()
+    if raw == "":
+        return default
+    if raw in allowed:
+        return raw
+    raise ValueError(f"{name}={raw!r} is not one of {', '.join(allowed)}")
+
+
+def keyed_datasets_write_mode(env: Mapping[str, str] | None = None) -> str:
+    """dual: run files and keyed store; keyed_only: keyed store only for declared datasets; run_files: old only."""
+    return _env_choice(KEYED_DATASETS_WRITE_ENV, ("dual", "keyed_only", "run_files"), "dual", env)
+
+
+def keyed_dataset_reader_mode(env: Mapping[str, str] | None = None) -> str:
+    return _env_choice(KEYED_DATASET_READER_ENV, ("run_files", "keyed"), "run_files", env)
+
+
+def feature_files_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Derived feature files stay written (dual-write step of the rollout) until the named setting is
+    ``off``; training-session authority still reads ``feature_refs``, so the stop is an explicit rollout step."""
+    return _env_choice(FEATURE_FILES_ENV, ("on", "off"), "on", env) == "on"
+
+
+def normalized_dataset_base(root: str | Path, dataset: str, *, env: Mapping[str, str] | None = None) -> Path:
+    """Directory a reader scans for ``date=*/<file>.jsonl[.gz]`` of a dataset. Declared 6A datasets
+    resolve to the keyed store when ``PANTHEON_KEYED_DATASET_READER=keyed``; everything else (and the
+    default) is the run-file tree. Both trees hold the same record shape."""
+    from .daily_bars_store import KEYED_DATASETS, keyed_dataset_dir
+
+    if keyed_dataset_reader_mode(env) == "keyed" and dataset in KEYED_DATASETS:
+        return keyed_dataset_dir(root, dataset)
+    return Path(root) / "normalized" / dataset
+
+
+def _run_observed_at(result: Any) -> str:
+    """Observation time of a run = its recorded finish time (stable across replays), else now."""
+    try:
+        finished = result.run.to_dict().get("finished_at")
+    except Exception:  # noqa: BLE001 - observation time is metadata only
+        finished = None
+    return str(finished) if finished else utc_now_iso()
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -181,6 +262,18 @@ class MarketDataStorageManifest:
         }
 
 
+def _compact_keyed_record(record: SourceRecord, dataset: str) -> dict[str, Any]:
+    """Record shape of the keyed store = the normalized run-file shape, minus what the run-file tree
+    already holds per run: ``content_ref`` (a per-run raw pointer) and metadata entries that repeat
+    the same value inside ``normalized_row``. Readers read ``metadata.normalized_row`` and fall back to
+    the row for ``available_time`` / ``ingest_time``, so values are unchanged."""
+    meta = dict(record.metadata)
+    nrow = meta.get("normalized_row")
+    if isinstance(nrow, Mapping):
+        meta = {k: v for k, v in meta.items() if k == "normalized_row" or k not in nrow or nrow[k] != v}
+    return {"source_id": record.source_id, "connector_id": record.connector_id, "dataset": dataset, "metadata": meta}
+
+
 class MarketDataStorageWriter:
     """Writes bounded JSONL dev artifacts and returns storage refs."""
 
@@ -190,16 +283,42 @@ class MarketDataStorageWriter:
         *,
         daily_bars_store: Any | None = None,
         listing_filter: Any | None = None,
+        listing_provider: Any | None = None,
     ) -> None:
         from .daily_bars_store import DailyBarsStore
 
         # SOURCE-WARRANT-LISTING-EXPIRY: defence in depth. A tw_price_daily record whose symbol is in
         # no current exchange listing (expired warrant, unknown code) is not stored. None = off.
         self.listing_filter = listing_filter
+        # SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118: ``HostedListing`` (security_listing). Builds one
+        # filter per run from the dated hosted state; mode shadow counts only, enforce skips, off reads nothing.
+        self.listing_provider = listing_provider
 
         self.root = Path(root)
         # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
         self.daily_bars_store = daily_bars_store if daily_bars_store is not None else DailyBarsStore(self.root)
+        self.keyed_errors: dict[str, str] = {}
+        self.keyed_counters: dict[str, int] = {"partitions_written": 0, "partitions_unchanged": 0, "rejected_no_key": 0}
+
+    def _write_keyed(self, dataset: str, run_date: str, dataset_records: Sequence[SourceRecord], *, ingest_run_id: str) -> None:
+        """Write one declared 6A dataset through the keyed partition writer. In dual mode a failure is
+        recorded in ``keyed_errors`` and does not fail the run; in keyed_only mode it raises (fail closed)."""
+        from .daily_bars_store import keyed_dataset_store
+
+        store = keyed_dataset_store(self.root, dataset)
+        if store is None:
+            return
+        rows = [_compact_keyed_record(r, dataset) for r in dataset_records]
+        try:
+            out = store.write_records(rows, ingest_run_id=ingest_run_id)
+        except Exception as exc:  # noqa: BLE001
+            if keyed_datasets_write_mode() == "keyed_only":
+                raise
+            self.keyed_errors[dataset] = f"{type(exc).__name__}: {exc}"[:300]
+            return
+        self.keyed_counters["partitions_written"] += len(out["partitions_written"])
+        self.keyed_counters["partitions_unchanged"] += len(out["partitions_unchanged"])
+        self.keyed_counters["rejected_no_key"] += out["rejected_no_key"]
 
     def _dual_write_daily_bars(self, grouped, *, result: Any, connector: SourceConnector) -> None:
         """Also write tw_price_daily records to daily_bars. Never changes the existing stores:
@@ -214,7 +333,7 @@ class MarketDataStorageWriter:
                 ingest_run_id=result.run.ingest_run_id,
                 default_market=str(market).strip() if market else None,
                 connector_id=connector.connector_id,
-                observed_at=utc_now_iso(),
+                observed_at=_run_observed_at(result),
             )
         except Exception as exc:  # noqa: BLE001 - dual write must not fail the run; health reports it
             self.daily_bars_store.record_dual_write_error(exc)
@@ -227,16 +346,25 @@ class MarketDataStorageWriter:
     ) -> MarketDataStorageManifest:
         records = [record for record in result.records if not record.is_rejected]
         skipped_not_listed = 0
-        if self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+        run_filter = self.listing_filter
+        provider_run = False
+        if run_filter is None and self.listing_provider is not None and any(
+            _slug(_dataset_for_record(r, connector)) == _slug(_DAILY_BAR_DATASET) for r in records
+        ):
+            provider_run = True
+            run_filter = self.listing_provider.filter_for_run()
+        if run_filter is not None and getattr(run_filter, "enabled", True):
             kept: list[SourceRecord] = []
             for record in records:
                 if _slug(_dataset_for_record(record, connector)) == _slug(_DAILY_BAR_DATASET):
                     sym = _record_symbol(record)
-                    if sym is not None and not self.listing_filter.admits(sym):
+                    if sym is not None and not run_filter.admits(sym):
                         skipped_not_listed += 1
                         continue
                 kept.append(record)
             records = kept
+        if provider_run:
+            self.listing_provider.record_run(result.run.ingest_run_id, run_filter)
         if not records:
             return MarketDataStorageManifest(
                 ingest_run_id=result.run.ingest_run_id, skipped_not_listed_count=skipped_not_listed
@@ -250,8 +378,18 @@ class MarketDataStorageWriter:
         normalized_refs: list[dict[str, Any]] = []
         feature_refs: list[dict[str, Any]] = []
         source = _slug(connector.connector_id)
+        skip_daily_run_files = not tw_price_daily_run_files_enabled()
         for (dataset, run_date), dataset_records in sorted(grouped.items()):
             dataset_slug = _slug(dataset)
+            if skip_daily_run_files and dataset_slug == _slug(_DAILY_BAR_DATASET):
+                continue  # daily_bars (dual write below) is the only store of this dataset
+            keyed_mode = keyed_datasets_write_mode()
+            from .daily_bars_store import KEYED_DATASETS
+
+            if keyed_mode != "run_files" and dataset_slug in KEYED_DATASETS:
+                self._write_keyed(dataset_slug, run_date, dataset_records, ingest_run_id=result.run.ingest_run_id)
+                if keyed_mode == "keyed_only":
+                    continue  # the keyed store is the only store of this dataset
             raw_policy = _raw_storage_policy(dataset_records, connector, dataset)
             raw_suffix = ".jsonl.gz" if raw_policy.get("compression") == "gzip" else ".jsonl"
             raw_path = self.root / "raw" / source / dataset_slug / f"date={run_date}" / f"{result.run.ingest_run_id}{raw_suffix}"
@@ -305,7 +443,7 @@ class MarketDataStorageWriter:
                 }
             )
             raw_only = {str(v) for v in (connector.metadata or {}).get("raw_only_datasets") or ()}
-            for feature_dataset in () if dataset in raw_only else _feature_targets(dataset_records, connector):
+            for feature_dataset in () if (dataset in raw_only or not feature_files_enabled()) else _feature_targets(dataset_records, connector):
                 feature_path = (
                     self.root
                     / "features"
@@ -398,6 +536,24 @@ def _depth_stats(dates: set[str]) -> dict[str, Any]:
     }
 
 
+def _stats_from_range(days: int, first: str, last: str) -> dict[str, Any]:
+    span = (datetime.fromisoformat(last) - datetime.fromisoformat(first)).days + 1
+    return {"distinct_event_dates": days, "first_event_date": first, "last_event_date": last, "span_days": span}
+
+
+def _bars_depth_entry(stats: Mapping[str, tuple[int, str, str]], dates: Sequence[str]) -> dict[str, Any]:
+    """Depth entry of the daily price dataset read from daily_bars (one row per symbol and day)."""
+    if not stats:
+        return {"row_count": 0, "rows_without_entity_or_event_time": 0, "entity_count": 0,
+                **_depth_stats(set()), "per_entity": {}}
+    rows = sum(v[0] for v in stats.values())
+    return {
+        "row_count": rows, "rows_without_entity_or_event_time": 0, "entity_count": len(stats),
+        **_stats_from_range(len(dates), min(dates), max(dates)),
+        "per_entity": {s: _stats_from_range(*v) for s, v in sorted(stats.items())},
+    }
+
+
 def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _DAILY_BAR_DATASET) -> dict[str, Any]:
     """Measure stored event-time history per normalized dataset and per symbol.
 
@@ -411,8 +567,19 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
     per_dataset: dict[str, dict[str, set[str]]] = {}
     row_counts: dict[str, int] = {}
     skipped: dict[str, int] = {}
+    bars_mode = daily_price_reader_mode() == "daily_bars"
+    bars_stats: dict[str, tuple[int, str, str]] = {}
+    bars_dates: list[str] = []
+    if bars_mode:
+        from .daily_bars_reader import DailyBarsReader
+
+        _reader = DailyBarsReader(root)
+        bars_stats = _reader.list_symbols()
+        bars_dates = _reader.trade_dates()
     if base.is_dir():
         for dataset_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+            if bars_mode and dataset_dir.name == _slug(daily_bar_dataset):
+                continue  # read from daily_bars below
             entities = per_dataset.setdefault(dataset_dir.name, {})
             for path in sorted(dataset_dir.glob("date=*/*.jsonl*")):
                 for row in _iter_normalized_rows(path):
@@ -426,9 +593,14 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
 
     for spec in dataset_specs():  # governed datasets with nothing stored are reported as zero
         per_dataset.setdefault(_slug(spec.normalized_dataset), {})
-    bar_symbols = sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
+    if bars_mode:
+        per_dataset.setdefault(_slug(daily_bar_dataset), {})
+    bar_symbols = sorted(bars_stats) if bars_mode else sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
     datasets: dict[str, Any] = {}
     for name, entities in sorted(per_dataset.items()):
+        if bars_mode and name == _slug(daily_bar_dataset):
+            datasets[name] = _bars_depth_entry(bars_stats, bars_dates)
+            continue
         all_dates = set().union(*entities.values()) if entities else set()
         entry: dict[str, Any] = {
             "row_count": row_counts.get(name, 0),

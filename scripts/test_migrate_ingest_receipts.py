@@ -401,3 +401,22 @@ if __name__ == "__main__":
     ap.add_argument("--gib", type=float, default=2.4)
     args = ap.parse_args()
     print(json.dumps(synthesize(args.synth, int(args.gib * 1024**3))))
+
+
+def test_script_and_service_share_one_backup_path_and_keep_the_oldest_copy(tmp_path):
+    from services.source_ingestion import scheduler as sched
+
+    path = tmp_path / "j.jsonl"
+    _hosted_like(path)
+    original = path.read_bytes()
+    assert mig.journal_backup_path is sched.journal_backup_path
+    assert mig.keep_journal_backup is sched.keep_journal_backup
+    assert mig.migrate(path, retention_days=30, now=NOW)["changed"]
+    backup = path.with_name(path.name + sched.RECEIPT_BACKUP_SUFFIX)
+    assert backup.read_bytes() == original
+    # A second rewrite inside the window does not replace the oldest complete copy.
+    write_legacy_journal(path.with_name("extra.jsonl"), [legacy_receipt(50, records=500, days_ago=1, connector="c9")])
+    with path.open("ab") as handle:
+        handle.write(path.with_name("extra.jsonl").read_bytes())
+    assert mig.migrate(path, retention_days=30, now=NOW)["changed"]
+    assert backup.read_bytes() == original

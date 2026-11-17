@@ -1,0 +1,17 @@
+{
+  "task": "DEV-AUTO-DEPLOY-NEWEST-GREEN-20261117",
+  "selection_rule": "per repository: newest commit with a successful dev push Branch CI run that is on dev (ancestor of tip or tip) and ahead of the served commit; else the served commit if still on dev; else waiting_for_ci",
+  "older_payload_sources": {
+    "workflow_definition": "dev tip the workflow was dispatched on (GITHUB_REF refs/heads/dev, GITHUB_SHA)",
+    "deploy_scripts": "the older payload checkout (.target/scripts/*, ref = inputs.ref)",
+    "lease_controller": "pinned revision 081075781d28a6563c731909667b98b7b5c153f9 (.lease-controller)"
+  },
+  "workflow_admission": "payload must be an ancestor of origin/dev and have a latest completed:success dev push Branch CI run; frontend likewise in execute-plans; off-dev or non-green payloads are refused",
+  "replay_20261117_0010Z_0055Z": "test_selects_newest_green_ancestor_when_tip_ci_is_cancelled_replay_20261117 dispatches aeb227ff3-style green non-tip commit",
+  "older_payload_test": "test_workflow_accepts_older_green_payload_on_dev_and_names_script_source",
+  "verification": "pytest scripts/test_auto_deploy_dev_pair.py scripts/test_dev_environment_lease_deploy_contract.py: 330 passed",
+  "residual_findings": [
+    "GITHUB_SHA-based workflow-source pinning is no longer equal to the payload; later jobs in the workflow that re-check origin/dev tip equality (isolated qualification, hosted all-12, restore baseline) were intentionally left unchanged as they are not the automatic dev deploy path.",
+    "Candidate ordering uses Branch CI run id, not commit topology; at most 30 recent green runs are examined."
+  ]
+}

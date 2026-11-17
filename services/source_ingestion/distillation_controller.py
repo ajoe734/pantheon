@@ -76,6 +76,28 @@ class DistillationControllerConfig:
     lease_seconds: int = 30
     retry_base_seconds: int = 5
     max_attempts: int = 3
+    max_lease_expiries: int = 5
+    # Consecutive hard-failed ticks after which the alive marker stops being
+    # refreshed so the container healthcheck turns unhealthy.
+    max_consecutive_failed_ticks: int = 5
+    terminal_retention_seconds: int = 7 * 86400
+    dead_letter_retention_seconds: int = 30 * 86400
+
+
+# Consecutive hard failures per alive path (process-local; a restart resets it
+# and the alive file then simply ages out while ticks keep failing).
+_HARD_FAILURES: dict[str, int] = {}
+# Pruned payload bytes since the last compaction (process-local).
+_PRUNED_BYTES: dict[str, int] = {}
+COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
+
+
+def _queue_for(config: "DistillationControllerConfig") -> DistillationJobQueue:
+    return DistillationJobQueue(
+        config.job_queue_path,
+        default_max_attempts=config.max_attempts,
+        max_lease_expiries=config.max_lease_expiries,
+    )
 
 
 def _env_int(name: str, default: int, minimum: int | None = None) -> int:
@@ -114,6 +136,16 @@ def config_from_env() -> DistillationControllerConfig:
         minimum=0,
     )
     max_attempts = _env_int("DISTILLATION_JOB_MAX_ATTEMPTS", 3, minimum=1)
+    max_lease_expiries = _env_int("DISTILLATION_JOB_MAX_LEASE_EXPIRIES", 5, minimum=1)
+    max_consecutive_failed_ticks = _env_int(
+        "DISTILLATION_CONTROLLER_MAX_CONSECUTIVE_FAILED_TICKS", 5, minimum=1,
+    )
+    terminal_retention_seconds = _env_int(
+        "DISTILLATION_QUEUE_TERMINAL_RETENTION_SECONDS", 7 * 86400, minimum=60,
+    )
+    dead_letter_retention_seconds = _env_int(
+        "DISTILLATION_QUEUE_DEAD_LETTER_RETENTION_SECONDS", 30 * 86400, minimum=60,
+    )
     
     source_dirs_env = os.getenv("STRATEGY_SPEC_DISTILLATION_SOURCE_DIRS")
     if source_dirs_env:
@@ -140,6 +172,10 @@ def config_from_env() -> DistillationControllerConfig:
         lease_seconds=lease_seconds,
         retry_base_seconds=retry_base_seconds,
         max_attempts=max_attempts,
+        max_lease_expiries=max_lease_expiries,
+        max_consecutive_failed_ticks=max_consecutive_failed_ticks,
+        terminal_retention_seconds=terminal_retention_seconds,
+        dead_letter_retention_seconds=dead_letter_retention_seconds,
     )
 
 
@@ -468,6 +504,9 @@ def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
     )
 
 
+TERMINAL_DRAFT_READBACK_LIMIT = 200
+
+
 def _controller_lease_seconds(config: DistillationControllerConfig) -> int:
     """Lease must outlive one steady-state interval plus one tick budget."""
     return int(config.interval_seconds) + max(30, int(config.lease_seconds))
@@ -493,6 +532,7 @@ def run_controller_tick(
     desired_meta: dict[str, Any] = {}
     reconcile_meta: dict[str, Any] = {}
     actual_meta: dict[str, Any] = {}
+    hard_failure = False
     
     try:
         # 1. Read desired state: normalized SourceRecords
@@ -517,9 +557,7 @@ def run_controller_tick(
         # A job is acknowledged only after Registry terminal readback.
         try:
             if queue is None:
-                queue = DistillationJobQueue(
-                    config.job_queue_path, default_max_attempts=config.max_attempts,
-                )
+                queue = _queue_for(config)
             worker = make_distillation_worker(
                 job_queue=queue,
                 seed_store_path=config.seed_store_path,
@@ -538,7 +576,7 @@ def run_controller_tick(
             # Re-drive dead letters from transient Registry outages, but only
             # once the Registry answers again (404 on a probe id is an answer).
             registry_reachable = False
-            if queue.list_dead_letters():
+            if queue.dead_letter_count():
                 try:
                     _get_registry_entry(config.registry_url, "distillation-redrive-probe")
                     registry_reachable = True
@@ -566,9 +604,35 @@ def run_controller_tick(
                 "registry_synced": run_result.registry_synced,
                 "retried": run_result.retried,
                 "dead_lettered": run_result.dead_lettered,
+                "lease_lost": len(run_result.lease_lost),
             }
         except Exception as exc:
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")
+
+        # Bounded growth: prune terminal payloads / resolved dead letters a
+        # fixed batch per tick. A prune failure must not fail distillation.
+        try:
+            pruned = queue.prune(
+                terminal_retention_seconds=config.terminal_retention_seconds,
+                dead_letter_retention_seconds=config.dead_letter_retention_seconds,
+            )
+            reconcile_meta["pruned"] = pruned
+            key = str(config.job_queue_path)
+            _PRUNED_BYTES[key] = _PRUNED_BYTES.get(key, 0) + int(pruned.get("bytes", 0))
+            if _PRUNED_BYTES[key] >= COMPACT_AFTER_PRUNED_BYTES:
+                queue.compact()
+                _PRUNED_BYTES[key] = 0
+                reconcile_meta["compacted"] = True
+        except Exception as exc:
+            reconcile_meta["prune_error"] = f"{type(exc).__name__}: {exc}"
+
+        if run_result.lease_lost:
+            raise DistillationControllerError(
+                "lease_lost",
+                "Distillation tick degraded: lease superseded for job(s) "
+                + ", ".join(run_result.lease_lost[:20]),
+                actual={"lease_lost_jobs": list(run_result.lease_lost[:20])},
+            )
 
         # 3. Read durable outbox/inbox/DLQ actual state.
         queue_metrics = queue.metrics()
@@ -581,17 +645,19 @@ def run_controller_tick(
                 "checksum": job.checksum,
                 "status": job.status.value if hasattr(job.status, "value") else str(job.status),
             }
-            for job in queue.list_all()
-            if (job.status.value if hasattr(job.status, "value") else str(job.status)) in ("done", "skipped")
-            and job.registry_id
-            and job.skip_reason != MARKET_SOURCE_SKIP_REASON
+            # Bounded: the most recent terminal drafts inside the retention
+            # window, never a scan of total history.
+            for job in queue.recent_terminal_drafts(
+                limit=TERMINAL_DRAFT_READBACK_LIMIT,
+                excluded_skip_reason=MARKET_SOURCE_SKIP_REASON,
+            )
         ]
         actual_meta = {
             "synced_count": run_result.registry_synced,
             "skipped_immutable_count": run_result.skipped,
             "sync_failures_count": run_result.failed,
             "outbox": queue_metrics,
-            "pending_dead_letter_count": len(queue.list_dead_letters()),
+            "pending_dead_letter_count": queue.dead_letter_count(),
             "terminal_drafts": terminal_drafts,
         }
 
@@ -665,6 +731,10 @@ def run_controller_tick(
     except Exception as exc:
         stage = getattr(exc, "stage", "reconcile")
         reason = str(exc)
+        # "registry_sync" means durable retry / DLQ remains (work is being
+        # tracked, the loop itself runs); every other stage means the loop
+        # could not do its job this tick.
+        hard_failure = stage != "registry_sync"
         state.record_failure(
             stage=stage,
             reason=reason,
@@ -698,8 +768,27 @@ def run_controller_tick(
             
         raise exc
     finally:
-        if config.alive_path:
-            _write_alive(config.alive_path)
+        _refresh_alive(config, hard_failure=hard_failure)
+
+
+def _refresh_alive(config: DistillationControllerConfig, *, hard_failure: bool) -> None:
+    """Refresh the healthcheck marker, unless the loop keeps failing.
+
+    The container healthcheck reads this file's mtime. Refreshing it on every
+    tick, failed or not, kept the container healthy for days while every tick
+    failed. After ``max_consecutive_failed_ticks`` hard failures in a row the
+    marker is left to age out so the container turns unhealthy.
+    """
+    if not config.alive_path:
+        return
+    key = str(config.alive_path)
+    if hard_failure:
+        _HARD_FAILURES[key] = _HARD_FAILURES.get(key, 0) + 1
+    else:
+        _HARD_FAILURES[key] = 0
+    if _HARD_FAILURES[key] >= max(1, int(config.max_consecutive_failed_ticks)):
+        return
+    _write_alive(config.alive_path)
 
 
 def _write_alive(path: Path) -> None:
@@ -767,9 +856,7 @@ def main() -> int:
     writer = build_loop_writer(dsn=config.database_url, state=state)
     # One queue per controller process, shared by admission, processing and
     # readback. Corrupt storage fails startup closed; no automatic replacement.
-    queue = DistillationJobQueue(
-        config.job_queue_path, default_max_attempts=config.max_attempts,
-    )
+    queue = _queue_for(config)
     tick = 0
     last_tick_failed = False
     

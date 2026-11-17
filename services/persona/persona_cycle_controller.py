@@ -40,6 +40,7 @@ from services.memory import mental_models
 from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
 from services.persona.lesson_cycle import LessonCycle, lesson_summary
+from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
@@ -377,6 +378,15 @@ class PersonaCycleController:
             cycle = packet["persona_cycle"]
             observe: dict[str, Any] = {}
             failure = None
+            ensure_failure = None
+            if run["status"] == "ok" and hasattr(self.owners, "ensure_agent"):
+                # One idempotent adapter call per eligible persona per cycle, before any turn.
+                try:
+                    cycle["agent_ensure"] = self.owners.ensure_agent(persona)
+                except Exception as exc:
+                    reason = str(getattr(exc, "reason", None) or type(exc).__name__)[:120]
+                    ensure_failure = "agent_ensure_unavailable:" + reason
+                    cycle["agent_ensure"] = {"status": "unavailable", "reason": reason}
             try:
                 prior = [p.get("persona_cycle", {}).get("observe_bundle", {}).get("human_feedback", {}).get("cursor")
                          for p in snapshots.values()
@@ -404,6 +414,8 @@ class PersonaCycleController:
                 cycle["risk_result"] = {"status": "unavailable", "reason": type(exc).__name__}
             if run["status"] != "ok":
                 failure = "cron_terminal_" + run["status"]
+            elif ensure_failure:
+                failure = ensure_failure
             elif not failure and observe.get("unavailable"):
                 failure = "observe_prerequisites_unavailable:" + ",".join(observe["unavailable"])
             cycle_case = None
@@ -771,6 +783,12 @@ class PersonaCycleController:
         return report
 
 
+class AgentEnsureError(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class CycleOwners:
     """Fixed product-owner ports. No caller/model-selected URLs or command routes."""
     def __init__(self, persona_owner: Any, pool_store: Any, env=None, *, telemetry_reader=None, feedback_owner=None,
@@ -895,6 +913,36 @@ class CycleOwners:
         return {"shortfall": shortfall, "families": sorted(families), "underlyings": sorted(underlyings),
                 "member_refs": live}
 
+    def ensure_agent(self, persona):
+        """Ensure this persona's own OpenClaw agent through the existing adapter route (idempotent)."""
+        persona_id = persona["persona_id"]
+        try:
+            base = self.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"].rstrip("/")
+            token = self.env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]
+        except KeyError as exc:
+            raise AgentEnsureError("adapter_unconfigured") from exc
+        profile = build_persona_runtime_profile(persona)
+        digest = hashlib.sha256(json.dumps(persona, sort_keys=True, default=str,
+                                           separators=(",", ":")).encode()).hexdigest()[:16]
+        request = Request(base + "/api/openclaw-adapter/agents/persona/ensure",
+            data=json.dumps({"persona": persona, "workspace_ref": profile.workspace_ref}, default=str).encode(),
+            headers={"Content-Type": "application/json", "X-Pantheon-Service-Token": token,
+                     "Idempotency-Key": str(uuid.uuid5(uuid.NAMESPACE_URL,
+                                                       f"pantheon:trading-persona-agent:{persona_id}:{digest}")),
+                     "X-Request-Id": str(uuid.uuid4())})
+        try:
+            with urlopen(request, timeout=135) as response:
+                payload = json.load(response)
+        except HTTPError as exc:
+            raise AgentEnsureError(f"http_{exc.code}") from exc
+        except Exception as exc:
+            raise AgentEnsureError(type(exc).__name__) from exc
+        agent = payload.get("agent") if isinstance(payload, dict) else None
+        if payload.get("status") != "ok" or not isinstance(agent, dict) or agent.get("agent_id") != persona_id:
+            raise AgentEnsureError("mismatched_agent")
+        return {"status": "ready", "agent_id": persona_id, "agent_status": agent.get("status"),
+                "workspace_ref": profile.workspace_ref}
+
     def _refresh_memory(self, persona, bundle):
         """Refresh the workspace memory cache with this cycle's own query, before the turn."""
         try:
@@ -909,7 +957,7 @@ class CycleOwners:
         try:
             base = self.env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"].rstrip("/")
             request = Request(base + "/api/openclaw-adapter/agents/persona/memory/materialize",
-                data=json.dumps({"persona_id": persona["persona_id"], "workspace_ref": persona["workspace_ref"],
+                data=json.dumps({"persona_id": persona["persona_id"], "workspace_ref": build_persona_runtime_profile(persona).workspace_ref,
                                  "query": subject["query"], "tags": subject["tags"]}).encode(),
                 headers={"Content-Type": "application/json", "X-Pantheon-Service-Token":
                          self.env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]})

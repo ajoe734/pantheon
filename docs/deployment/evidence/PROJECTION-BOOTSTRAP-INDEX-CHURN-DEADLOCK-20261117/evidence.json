@@ -1,0 +1,27 @@
+{
+  "task_id": "PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117",
+  "diagnosis": {
+    "hosted_failure": "Root 44049970156 (88cd3091f) projection_bootstrap: psycopg DeadlockDetected on trade_journey_projection.event_receipts (oid 17073, ~4.1 GB, ~1.06M rows)",
+    "cause": "bootstrap_schema runs every non-CONCURRENTLY migration in one transaction each deploy. 001 ran CREATE INDEX IF NOT EXISTS idx_event_receipts_ingested_seq (rebuild when absent, ShareLock on the table) and 002_drop_redundant_event_receipts_index then DROPped it (AccessExclusiveLock) while live projector writers queued on the same table. Additionally a bare CREATE INDEX IF NOT EXISTS takes ShareLock on the table before noticing the index exists, which blocks writers even when nothing is built.",
+    "fix": "001 no longer creates idx_event_receipts_ingested_seq (event_receipts_ingested_seq_key UNIQUE already indexes it); 001's idx_event_receipts_tenant_env_journey creation is guarded by to_regclass in a DO block so an existing index takes no table lock; 002 drop retained (no-op without table lock when absent; one-time drop bounded by migration lock_timeout on legacy DBs)."
+  },
+  "changed_files": [
+    "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
+    "services/trade_journey/migrations/002_drop_redundant_event_receipts_index.sql",
+    "services/trade_journey/test_projection_store.py",
+    "services/trade_journey/tests/test_projection_bootstrap_no_index_churn.py"
+  ],
+  "rollback_cost": {
+    "scenario": "Roll back to a release whose 001 still creates idx_event_receipts_ingested_seq, then bootstrap on a DB where it was dropped",
+    "measured_local": "postgres:16 container, 1.06M rows, 223 MB table (padding is TOASTed): CREATE INDEX 0.36 s, index 23 MB, DROP INDEX 5 ms. Not hosted hardware.",
+    "hosted_estimate": "NOT MEASURED on hosted. Build reads the whole 4.1 GB heap; assuming 100-200 MB/s sequential IO this is roughly 20-60 s, plus sort of 1.06M keys (sub-second). Throughout, a ShareLock is held on event_receipts, blocking all projector INSERT/UPDATE for that duration, and the old 002 then needs AccessExclusiveLock behind them. Needs the old 002 to be bounded by migration lock_timeout, or operators should DROP the index CONCURRENTLY after rollback."
+  },
+  "validation": {
+    "environment": "venv with pytest, psycopg[binary], jsonschema, pyyaml, asyncpg; docker postgres:16-alpine with TEST_DATABASE_URL and TEST_DATABASE_ADMIN_URL set",
+    "command": "pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_projection_migration.py services/trade_journey/tests/test_journey_search_migration.py services/trade_journey/tests/test_projection_bootstrap_no_index_churn.py",
+    "result": "110 passed, 21 skipped",
+    "skipped_note": "21 tests in test_projection_migration.py need TEST_PROJECTION_CONTAINER (init-db.sh plus docker compose profile 'root'); with that container and a docker shim adding --profile root they fail 21/21 identically on the unmodified HEAD migrations and tests, i.e. an environment limitation, not a regression. They were NOT validated by this task. The ddl_rollback case I edited lives in that set.",
+    "new_test_file": "3 passed (concurrent writer + two bootstraps with identical index oid/relfilenode; bootstrap with an open writer transaction and lock_timeout 1s; legacy DB loses the index once). The open-writer test fails on the old 001 with LockNotAvailable."
+  },
+  "known_residual": "Other CREATE INDEX IF NOT EXISTS statements in 001 (identity_links, journeys, journey_stages, loop_runs, quarantine) still take a brief ShareLock on those tables each bootstrap; out of scope for event_receipts. FOLLOW-UP REQUIRED: test_projection_migration.py (outside this task's artifact contract, so unchanged) line ~265 ddl_rollback does 'DROP INDEX trade_journey_projection.idx_event_receipts_ingested_seq'; since 001 no longer creates that index this will fail in the TEST_PROJECTION_CONTAINER-gated suite. Change it to drop idx_event_receipts_tenant_env_journey (verified only by reasoning; that suite could not run here)."
+}

@@ -157,7 +157,25 @@ class CollectorRunner:
     def refresh_security_listing(self, fetch_page: Callable[[str], str], *, listing_date: str) -> dict[str, Any]:
         sl = load_security_listing_module()
         state = sl.ListingState.load(self.listing_state_path)
-        return sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
+        result = sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
+        if result.get("ok"):
+            result["published"] = self.publish_security_listing()
+        return result
+
+    def publish_security_listing(self) -> dict[str, Any]:
+        """Publish the dated listing state in the bundle tree (``bundles/security-listing.json``) so hosted reads it
+        through the read only bundle server it already pulls from: one fetch (here), one dated listing, no exchange
+        fetch from hosted. The bytes are the state file's bytes, replaced in one step; never more than the size cap."""
+        sl = load_security_listing_module()
+        try:
+            data = self.listing_state_path.read_bytes()
+        except OSError as exc:
+            return {"ok": False, "reason": f"listing state not readable: {exc}"}
+        if len(data) > sl.MAX_STATE_BYTES:
+            return {"ok": False, "reason": f"listing state is {len(data)} bytes, over the {sl.MAX_STATE_BYTES} byte cap"}
+        target = self.root_dir / sl.BUNDLE_STATE_PATH
+        sl.write_state_bytes(target, data)
+        return {"ok": True, "path": sl.BUNDLE_STATE_PATH, "bytes": len(data)}
 
     def build_collector(self, policy: SourceFetchPolicy) -> Any:
         sid = policy.source_id
@@ -525,10 +543,27 @@ class CloseCaptureResult:
 
     @property
     def retry_needed(self) -> bool:
-        return any(v not in {"captured", "already_captured"} for v in self.sources.values())
+        return any(v not in {"captured", "already_captured", "disabled"} for v in self.sources.values())
 
     def to_dict(self) -> dict[str, Any]:
         return {"trade_date": self.trade_date, "state": self.state, "sources": dict(self.sources)}
+
+
+def _listing_unavailable_types() -> tuple[type[BaseException], ...]:
+    types: list[type[BaseException]] = []
+    try:
+        from services.source_ingestion.security_listing import ListingUnavailable
+
+        types.append(ListingUnavailable)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cls = load_security_listing_module().ListingUnavailable
+        if cls not in types:
+            types.append(cls)
+    except Exception:  # noqa: BLE001
+        pass
+    return tuple(types)
 
 
 def _ledger_path(root: Path, source_id: str) -> Path:
@@ -566,22 +601,34 @@ def capture_same_day_close(
 
     result = CloseCaptureResult(trade_date, "attempted")
     requested = False
+    listing_exc_types = _listing_unavailable_types()
     for source_id in sources:
         ledger = _ledger_path(runner.root_dir, source_id)
         if trade_date in _load(ledger):
             result.sources[source_id] = "already_captured"
             continue
-        interval = float(runner.config.get_source(source_id).min_interval_seconds)
-        if requested and interval > 0:
-            sleep_fn(interval)
-        requested = True
         run_id = f"close-{trade_date}-{local.strftime('%H%M')}"
         try:
+            policy = runner.config.get_source(source_id)
+            if policy.enabled:
+                interval = float(policy.min_interval_seconds)
+                if requested and interval > 0:
+                    sleep_fn(interval)
+                requested = True
             outcome = runner.run_source(
                 source_id, run_id=run_id, started_at=now, finished_at=now,
                 collect_kwargs={"dates": [trade_date]},
             )
-        except (SourcePausedError, FetchAccessBlockedError, FetchBackendUnavailableError) as exc:
+        except SourceDisabledError:
+            result.sources[source_id] = "disabled"
+            continue
+        except (
+            SourcePausedError,
+            FetchAccessBlockedError,
+            FetchBackendUnavailableError,
+            CollectorConfigError,
+            *listing_exc_types,
+        ) as exc:
             result.sources[source_id] = f"failed:{type(exc).__name__}"
             continue
         if outcome.status == "complete":

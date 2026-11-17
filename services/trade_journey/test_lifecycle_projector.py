@@ -212,6 +212,9 @@ class _RecordingRelationalStore:
         checkpoint = 0 if prior is None else prior.checkpoint_seq
         while any(receipt.ingested_seq == checkpoint + 1 for receipt in self.receipts.values()):
             checkpoint += 1
+        proven_frontier = int(getattr(mutation, "source_frontier_seq", 0) or 0)
+        if proven_frontier >= (0 if prior is None else prior.checkpoint_seq):
+            checkpoint = max(checkpoint, proven_frontier)
         revision = (0 if prior is None else prior.projection_revision) + bool(mutation.receipts)
         source_high = max(
             0 if prior is None else prior.source_high_watermark,
@@ -364,12 +367,74 @@ def test_relational_projector_has_no_legacy_snapshot_serialization_path(monkeypa
         lifecycle_projector_module._configured_relational_projector()
 
 
+@pytest.fixture(scope="module")
+def _ephemeral_pg_cluster() -> str:
+    explicit = os.getenv("TEST_DATABASE_URL")
+    if explicit:
+        yield explicit
+        return
+    import shutil
+    import socket
+    import subprocess
+    import time
+
+    if shutil.which("docker") is None:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker is not available")
+    probe = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker daemon is not reachable")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+    cname = f"pantheon-lc-proj-{uuid.uuid4().hex[:10]}"
+    started = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-d",
+            "--name",
+            cname,
+            "-e",
+            "POSTGRES_PASSWORD=postgres",
+            "-e",
+            "POSTGRES_USER=postgres",
+            "-e",
+            "POSTGRES_DB=postgres",
+            "-p",
+            f"127.0.0.1:{port}:5432",
+            "postgres:16-alpine",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if started.returncode != 0:
+        pytest.skip(f"Failed to start PostgreSQL container: {started.stderr}")
+    dsn = f"postgresql://postgres:postgres@127.0.0.1:{port}/postgres"
+    import psycopg  # type: ignore[import]
+
+    deadline = time.monotonic() + 15.0
+    connected = False
+    while time.monotonic() < deadline:
+        try:
+            with psycopg.connect(dsn, connect_timeout=1):
+                connected = True
+                break
+        except Exception:
+            time.sleep(0.2)
+    if not connected:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
+        pytest.skip("PostgreSQL container did not become healthy in time")
+    try:
+        yield dsn
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
+
+
 @pytest.fixture
-def relational_postgres_dsn() -> str:
-    dsn = os.getenv("TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("TEST_DATABASE_URL is not set")
-    return dsn
+def relational_postgres_dsn(_ephemeral_pg_cluster: str) -> str:
+    return os.getenv("TEST_DATABASE_URL") or _ephemeral_pg_cluster
 
 
 def test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts(
@@ -677,14 +742,20 @@ class _FakeRelationalProjector:
             "unresolved_quarantine_count": quarantine_count,
         }
 
-    def project_records(self, rows, mode="live", source_high_watermark=0):
+    def project_records(self, rows, mode="live", source_high_watermark=0, source_frontier_seq=0):
         if rows:
-            self.checkpoint = rows[-1]["ingested_seq"]
+            self.checkpoint = max(rows[-1]["ingested_seq"], int(source_frontier_seq or 0))
+            self.controller["checkpoint"] = self.checkpoint
+        elif source_frontier_seq:
+            self.checkpoint = max(self.checkpoint, int(source_frontier_seq))
             self.controller["checkpoint"] = self.checkpoint
         self.controller["source_high_watermark"] = source_high_watermark
         self.controller["mode"] = mode
 
-    def record_poll(self, source_high_watermark=0, backlog=0, mode="live"):
+    def record_poll(self, source_high_watermark=0, backlog=0, mode="live", source_frontier_seq=0):
+        if source_frontier_seq:
+            self.checkpoint = max(self.checkpoint, int(source_frontier_seq))
+            self.controller["checkpoint"] = self.checkpoint
         self.controller["source_high_watermark"] = source_high_watermark
         self.controller["backlog"] = backlog
         self.controller["mode"] = mode
@@ -2423,6 +2494,524 @@ def test_projector_retains_valid_requested_quantities_and_partial_fills() -> Non
     assert fill_stage["requested_quantity"] == 10
     assert fill_stage["fill_quantity"] == 4
     assert fill_stage["filled_quantity"] == 4
+
+
+def test_live_worker_skips_non_lifecycle_receipts_and_reaches_high_watermark_in_one_poll_across_holes(
+    relational_postgres_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC 1 & AC 2: In live worker, non-lifecycle rows produce no receipt row and checkpoint reaches high watermark with backlog 0 within one poll across skipped-type and heartbeat-retention holes."""
+    import psycopg  # type: ignore[import]
+    from services.telemetry.ingest_svc import build_postgres_write_fn
+
+    source_schema = f"test_src_lconly_{uuid.uuid4().hex[:8]}"
+    proj_schema = f"test_proj_lconly_{uuid.uuid4().hex[:8]}"
+    table = f"{source_schema}.telemetry_events"
+
+    with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA "{source_schema}"')
+        cur.execute(f'CREATE SEQUENCE "{source_schema}".telemetry_events_seq')
+        cur.execute(
+            f'''CREATE TABLE "{source_schema}".telemetry_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                payload JSONB NOT NULL,
+                ingested_seq BIGINT NOT NULL DEFAULT nextval('"{source_schema}".telemetry_events_seq'),
+                ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+            )'''
+        )
+
+    store = ProjectionStore(relational_postgres_dsn, schema=proj_schema, bootstrap=True)
+    projector = RelationalLifecycleProjector(
+        store,
+        deployment_sha="lifecycle-only-sha",
+        controller_id="canonical-lifecycle-projector",
+    )
+
+    try:
+        writer = build_postgres_write_fn(relational_postgres_dsn, table=table)
+        lc_rows = lifecycle_rows()
+
+        def _non_lifecycle_event(seq_idx: int, event_type: str) -> dict:
+            eid = f"evt-non-lc-{event_type}-{seq_idx}"
+            return {
+                "event_id": eid,
+                "event_type": event_type,
+                "created_at": NOW,
+                "runtime_id": "rt-49c1c3d1",
+                "metadata": {"tenant_id": "tenant-a", "runtime_id": "rt-49c1c3d1"},
+            }
+
+        # Seed initial lifecycle event at seq=1 so projector starts in live mode at checkpoint=1
+        assert asyncio.run(writer([lc_rows[0]["payload"]])).success
+        source = PostgresLifecycleSource(relational_postgres_dsn, table=table)
+        assert source.include_non_lifecycle is False
+
+        async def _initial_poll() -> None:
+            high = await source.high_watermark()
+            rows = await source.fetch_after(projector.checkpoint, limit=500)
+            projector.project_records(
+                rows,
+                mode="live",
+                source_high_watermark= max(high, source.last_frontier_seq),
+                source_frontier_seq=source.last_frontier_seq,
+            )
+
+        asyncio.run(_initial_poll())
+        assert projector.checkpoint == 1
+        assert projector.controller["mode"] == "live"
+        assert projector.controller["status"] == "ready"
+        assert projector.controller["backlog"] == 0
+
+        # Now insert mixed stream after seq=1:
+        # seq 2, 3: heartbeats (to be deleted by heartbeat retention -> sequence holes)
+        # seq 4: infrastructure_health (skipped non-lifecycle type)
+        # seq 5: lifecycle trade_decision (applied)
+        # seq 6: malformed lifecycle signal_generation (quarantined)
+        # seq 7, 8: superseded-retry lifecycle events (ignored, but lifecycle type!)
+        # seq 9, 10, 11: trailing heartbeats & infrastructure_health (skipped non-lifecycle types at tail)
+        retry_pair = _retry_rows(lc_rows, "tj-paper-superseded-retry", first_seq=7, count=2)
+        malformed_lc = {
+            "event_id": "evt-malformed-lc-6",
+            "event_type": "signal_generation",
+            "created_at": NOW,
+        }
+        stream = [
+            _non_lifecycle_event(2, "heartbeat"),
+            _non_lifecycle_event(3, "heartbeat"),
+            _non_lifecycle_event(4, "infrastructure_health"),
+            lc_rows[1]["payload"],
+            malformed_lc,
+            retry_pair[0]["payload"],
+            retry_pair[1]["payload"],
+            _non_lifecycle_event(9, "heartbeat"),
+            _non_lifecycle_event(10, "infrastructure_health"),
+            _non_lifecycle_event(11, "heartbeat"),
+        ]
+        # Run the live worker:
+        # Tick 1: startup at checkpoint=1, recovery_target=1 -> live ready at checkpoint=1.
+        # During wait() after Tick 1: stream (seq 2..11) is ingested and heartbeats 2, 3 are deleted by retention.
+        # Tick 2 (ONE live poll): worker polls across retention holes (2, 3), skipped type (4),
+        # applied lifecycle (5), superseded-retry lifecycle (7, 8), and trailing skipped types (9, 10, 11),
+        # reaching checkpoint=11, source_high_watermark=11, backlog=0 in ONE poll!
+        real_source_cls = PostgresLifecycleSource
+        constructed_sources: list[PostgresLifecycleSource] = []
+
+        def _insert_stream_with_holes() -> None:
+            assert asyncio.run(writer(stream)).success
+            with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM \"{source_schema}\".telemetry_events WHERE ingested_seq IN (2, 3) OR event_id = 'evt-malformed-lc-6'"
+                )
+                conn.commit()
+
+        class _LiveStreamSource(real_source_cls):
+            def __init__(self, dsn: str, **kwargs):
+                super().__init__(dsn, table=table, **kwargs)
+                self._waited = False
+
+            async def wait(self, timeout: float) -> None:
+                if not self._waited:
+                    self._waited = True
+                    await asyncio.to_thread(_insert_stream_with_holes)
+
+        def _build_scoped_source(dsn: str, **kwargs):
+            s = _LiveStreamSource(dsn, **kwargs)
+            constructed_sources.append(s)
+            return s
+
+        monkeypatch.setattr(
+            lifecycle_projector_module,
+            "_configured_relational_projector",
+            lambda: projector,
+        )
+        monkeypatch.setattr(
+            lifecycle_projector_module,
+            "PostgresLifecycleSource",
+            _build_scoped_source,
+        )
+        monkeypatch.setenv("TELEMETRY_DB_DSN", relational_postgres_dsn)
+        monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "2")
+        monkeypatch.setenv("LIFECYCLE_PROJECTOR_RECLASSIFY_ENABLED", "0")
+        monkeypatch.setenv("LIFECYCLE_PROJECTOR_RECEIPT_PRUNE_ENABLED", "0")
+
+        assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+        assert len(constructed_sources) == 1
+        assert constructed_sources[0].include_non_lifecycle is False
+
+        # Within ONE poll after the events & holes exist: checkpoint reaches the table high watermark (11) with backlog 0!
+        ctrl = projector.controller
+        assert ctrl["checkpoint"] == 11
+        assert ctrl["source_high_watermark"] == 11
+        assert ctrl["backlog"] == 0
+        assert ctrl["mode"] == "live"
+        assert ctrl["status"] == "ready"
+        assert ctrl["accepted_live"] is True
+
+        # Now insert malformed lifecycle event (seq 12) + trailing heartbeat (seq 13) to verify quarantined receipt retention
+        assert asyncio.run(
+            writer([malformed_lc, _non_lifecycle_event(13, "heartbeat")])
+        ).success
+
+        async def _second_poll() -> None:
+            high = await source.high_watermark()
+            rows = await source.fetch_after(projector.checkpoint, limit=500)
+            projector.project_records(
+                rows,
+                mode="live",
+                source_high_watermark=max(high, source.last_frontier_seq),
+                source_frontier_seq=source.last_frontier_seq,
+            )
+
+        asyncio.run(_second_poll())
+        assert projector.checkpoint == 13
+        assert projector.controller["backlog"] == 0
+
+        # Inspect event_receipts: ZERO non-lifecycle receipts were written;
+        # all lifecycle receipts (applied seq 1, 5; superseded-retry ignored seq 7, 8; quarantined seq 12) ARE present!
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT ingested_seq, event_id, source_event_type, disposition FROM {proj_schema}.event_receipts ORDER BY ingested_seq ASC"
+            )
+            receipt_rows = cur.fetchall()
+
+        assert [(r[0], r[2], r[3]) for r in receipt_rows] == [
+            (1, "signal_generation", "applied"),
+            (5, "trade_decision", "applied"),
+            (7, "signal_generation", "ignored"),
+            (8, "trade_decision", "ignored"),
+            (12, "signal_generation", "quarantined"),
+        ]
+        assert all(r[2] in LIFECYCLE_EVENT_TYPES for r in receipt_rows)
+
+        # AC 2: Running receipt prune keeps all 5 lifecycle receipts permanently,
+        # and replay/backfill stays idempotent while fingerprint conflicts still fail!
+        prune_res = store.prune_non_lifecycle_receipts(batch_size=10, max_batches=5)
+        assert prune_res.rows_deleted == 0
+
+        replay_res = projector.project_records(
+            [lc_rows[0], lc_rows[1], retry_pair[0], retry_pair[1]],
+            mode="replay",
+            source_high_watermark=13,
+            source_frontier_seq=13,
+        )
+        assert replay_res.accepted == 0
+        assert replay_res.duplicates == 4
+
+        tampered = json.loads(json.dumps(retry_pair[0]))
+        tampered["payload"]["metrics"] = {"action": "tampered-retry"}
+        with pytest.raises(ConflictingLifecycleEvent):
+            projector.project_records([tampered], mode="replay", source_high_watermark=13)
+    finally:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{source_schema}" CASCADE')
+            cur.execute(f"DROP SCHEMA IF EXISTS {proj_schema} CASCADE")
+
+
+def test_callers_without_frontier_keep_ignored_receipts_and_capacity_harness_supplies_frontier(
+    relational_postgres_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC 3: Backfill and replay CLI (no frontier) keep writing ignored receipts; capacity harness supplies a frontier."""
+    import psycopg  # type: ignore[import]
+    from services.trade_journey.lifecycle_projector_capacity import run_capacity_benchmark
+
+    schema_cli = f"test_cli_no_frontier_{uuid.uuid4().hex[:8]}"
+    schema_cap = f"test_cap_frontier_{uuid.uuid4().hex[:8]}"
+
+    try:
+        # Part A: Backfill & replay CLI pass no proven frontier -> keep writing ignored receipts so checkpoint advances.
+        store_cli = ProjectionStore(relational_postgres_dsn, schema=schema_cli, bootstrap=True)
+        projector_cli = RelationalLifecycleProjector(
+            store_cli, deployment_sha="cli-test", controller_id="ctrl-cli"
+        )
+        monkeypatch.setattr(
+            lifecycle_projector_module,
+            "_configured_relational_projector",
+            lambda: projector_cli,
+        )
+
+        lc_rows = lifecycle_rows()[:2]
+        ignored_row = {
+            "ingested_seq": 3,
+            "ingested_at": NOW,
+            "event_id": "cli-ignored-hb-3",
+            "event_type": "heartbeat",
+            "created_at": NOW,
+            "payload": {
+                "event_id": "cli-ignored-hb-3",
+                "event_type": "heartbeat",
+                "created_at": NOW,
+            },
+        }
+        input_file = tmp_path / "backfill_input.json"
+        input_file.write_text(
+            json.dumps({"records": [*lc_rows, ignored_row]}), encoding="utf-8"
+        )
+
+        rc_backfill = lifecycle_projector_module.main(
+            ["backfill", "--input", str(input_file)]
+        )
+        assert rc_backfill == 0
+        out_backfill = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out_backfill["checkpoint"] == 3
+        assert out_backfill["accepted"] == 2
+        assert out_backfill["ignored"] == 1
+        assert store_cli.get_receipt("cli-ignored-hb-3") is not None
+        assert store_cli.get_receipt("cli-ignored-hb-3").disposition == "ignored"
+
+        rc_replay = lifecycle_projector_module.main(
+            ["replay", "--input", str(input_file)]
+        )
+        assert rc_replay == 0
+        out_replay = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out_replay["checkpoint"] == 3
+        assert out_replay["duplicates"] == 3
+
+        # Part B: Capacity harness supplies source_frontier_seq=high_watermark
+        store_cap = ProjectionStore(relational_postgres_dsn, schema=schema_cap, bootstrap=True)
+        projector_cap = RelationalLifecycleProjector(
+            store_cap, deployment_sha="cap-test", controller_id="ctrl-cap"
+        )
+        report = run_capacity_benchmark(
+            projector_cap,
+            total_events=20,
+            total_loop_runs=4,
+            batch_size=10,
+            starting_seq=101,
+        )
+        # Even starting at seq 101 (after a 1..100 sequence hole), capacity harness supplies frontier and advances checkpoint to 120!
+        assert projector_cap.checkpoint == 120
+        assert len(report.samples) == 2
+        assert report.samples[-1].checkpoint == 120
+    finally:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_cli} CASCADE")
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_cap} CASCADE")
+
+
+def test_hosted_shape_growth_bound_and_rollback_with_previous_worker_mode(
+    relational_postgres_dsn: str,
+) -> None:
+    """AC 6 & AC 7: Hosted-shape growth bound (at most lifecycle events/day, 0 for heartbeats/infra_health) and rollback with include_non_lifecycle=True against pruned table and dropped index."""
+    import psycopg  # type: ignore[import]
+    from services.telemetry.ingest_svc import build_postgres_write_fn
+
+    source_schema = f"test_src_hosted_{uuid.uuid4().hex[:8]}"
+    proj_schema = f"test_proj_hosted_{uuid.uuid4().hex[:8]}"
+    table = f"{source_schema}.telemetry_events"
+
+    with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA "{source_schema}"')
+        cur.execute(
+            f'CREATE SEQUENCE "{source_schema}".telemetry_events_seq START WITH 13700001'
+        )
+        cur.execute(
+            f'''CREATE TABLE "{source_schema}".telemetry_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                payload JSONB NOT NULL,
+                ingested_seq BIGINT NOT NULL DEFAULT nextval('"{source_schema}".telemetry_events_seq'),
+                ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+            )'''
+        )
+
+    store = ProjectionStore(relational_postgres_dsn, schema=proj_schema, bootstrap=True)
+
+    try:
+        # 1. Seed existing historical receipts up to 13,700,000 (hosted baseline watermark)
+        # including historical applied lifecycle receipts and historical ignored heartbeat/infra_health receipts,
+        # then prune historical ignored non-lifecycle receipts.
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {proj_schema}.controller (
+                    controller_id, tenant_scope, environment_scope, checkpoint_seq,
+                    source_high_watermark, backlog_count, projection_revision,
+                    deployment_sha, mode, status, accepted_live
+                ) VALUES (
+                    'canonical-lifecycle-projector', '*', '*', 13700000,
+                    13700000, 0, 10, 'hosted-baseline-sha', 'live', 'ready', TRUE
+                );
+                INSERT INTO {proj_schema}.event_receipts (
+                    event_id, ingested_seq, fingerprint, tenant_id, environment,
+                    journey_id, loop_run_id, source_event_type, created_at, disposition, projection_revision
+                )
+                SELECT
+                    'hist-ig-' || s,
+                    s,
+                    repeat('b', 64),
+                    '',
+                    '',
+                    '',
+                    '',
+                    CASE WHEN s % 4 = 0 THEN 'infrastructure_health' ELSE 'heartbeat' END,
+                    clock_timestamp(),
+                    'ignored',
+                    1
+                FROM generate_series(13699501, 13700000) AS s;
+                """
+            )
+            conn.commit()
+
+        # Prune the 500 historical ignored receipts
+        pruned = store.prune_non_lifecycle_receipts(batch_size=200, max_batches=5)
+        assert pruned.safe_ingested_seq == 13700000
+        assert pruned.rows_deleted == 500
+
+        # 2. Simulate hosted 2026-11-16 daily telemetry shape:
+        # 8 lifecycle events interspersed with 400 non-lifecycle events (heartbeats & infrastructure_health)
+        writer = build_postgres_write_fn(relational_postgres_dsn, table=table)
+        lc_rows = lifecycle_rows()  # 8 lifecycle events for one full journey
+        daily_events: list[dict] = []
+        for idx, lc_row in enumerate(lc_rows):
+            for hb_idx in range(40):
+                daily_events.append(
+                    {
+                        "event_id": f"hosted-day-hb-{idx}-{hb_idx}",
+                        "event_type": "heartbeat",
+                        "created_at": NOW,
+                        "runtime_id": "rt-49c1c3d1",
+                        "metadata": {"tenant_id": "tenant-a"},
+                    }
+                )
+            for inf_idx in range(10):
+                daily_events.append(
+                    {
+                        "event_id": f"hosted-day-infra-{idx}-{inf_idx}",
+                        "event_type": "infrastructure_health",
+                        "created_at": NOW,
+                        "runtime_id": "rt-49c1c3d1",
+                        "metadata": {"tenant_id": "tenant-a"},
+                    }
+                )
+            daily_events.append(lc_row["payload"])
+        # Plus trailing non-lifecycle events at the end of the day
+        for tail_idx in range(20):
+            daily_events.append(
+                {
+                    "event_id": f"hosted-day-tail-hb-{tail_idx}",
+                    "event_type": "heartbeat",
+                    "created_at": NOW,
+                    "runtime_id": "rt-49c1c3d1",
+                    "metadata": {"tenant_id": "tenant-a"},
+                }
+            )
+        assert asyncio.run(writer(daily_events)).success
+
+        # Project with the new live worker mode (include_non_lifecycle=False)
+        projector = RelationalLifecycleProjector(
+            store,
+            deployment_sha="new-release-sha",
+            controller_id="canonical-lifecycle-projector",
+        )
+        new_source = PostgresLifecycleSource(
+            relational_postgres_dsn, table=table, include_non_lifecycle=False
+        )
+
+        async def _poll_new_worker() -> None:
+            high = await new_source.high_watermark()
+            rows = await new_source.fetch_after(projector.checkpoint, limit=500)
+            projector.project_records(
+                rows,
+                mode="live",
+                source_high_watermark=max(high, new_source.last_frontier_seq),
+                source_frontier_seq=new_source.last_frontier_seq,
+            )
+
+        asyncio.run(_poll_new_worker())
+        expected_watermark = 13700000 + len(daily_events)  # 13,700,428
+        assert projector.checkpoint == expected_watermark
+        assert projector.controller["backlog"] == 0
+        assert projector.controller["status"] == "ready"
+        assert projector.controller["accepted_live"] is True
+
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {proj_schema}.event_receipts")
+            receipts_written_for_day = int(cur.fetchone()[0])
+            # Also verify redundant index is dropped
+            cur.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = %s AND tablename = 'event_receipts'",
+                (proj_schema,),
+            )
+            index_names = {r[0] for r in cur.fetchall()}
+
+        # AC 6: Only 8 receipts written for the day (matching the 8 lifecycle events), 0 for the 420 non-lifecycle events!
+        assert receipts_written_for_day == 8
+        assert "idx_event_receipts_ingested_seq" not in index_names
+        assert "event_receipts_ingested_seq_key" in index_names
+
+        # 3. AC 7: Rollback to the previous accepted release (include_non_lifecycle=True)
+        # against the pruned table and dropped index:
+        rollback_rows = _retry_rows(
+            lc_rows, "tj-paper-rollback-001", first_seq=expected_watermark + 2, count=2
+        )
+        for r in rollback_rows:
+            r["payload"]["run_id"] = "run-paper-rb-001"
+            r["payload"]["signal_id"] = "sig-paper-rb-001"
+            r["payload"]["metadata"].update(
+                run_id="run-paper-rb-001",
+                signal_id="sig-paper-rb-001",
+                decision_id="dec-paper-rb-001",
+                client_order_id="coid-paper-rb-001",
+                order_id="oid-paper-rb-001",
+                reconciliation_id="rec-paper-rb-001",
+            )
+        rollback_stream = [
+            {
+                "event_id": "rb-hb-before",
+                "event_type": "heartbeat",
+                "created_at": NOW,
+                "runtime_id": "rt-49c1c3d1",
+            },
+            rollback_rows[0]["payload"],
+            rollback_rows[1]["payload"],
+            {
+                "event_id": "rb-infra-after",
+                "event_type": "infrastructure_health",
+                "created_at": NOW,
+                "runtime_id": "rt-49c1c3d1",
+            },
+        ]
+        assert asyncio.run(writer(rollback_stream)).success
+
+        prev_release_source = PostgresLifecycleSource(
+            relational_postgres_dsn, table=table, include_non_lifecycle=True
+        )
+        prev_release_projector = RelationalLifecycleProjector(
+            store,
+            deployment_sha="previous-release-sha",
+            controller_id="canonical-lifecycle-projector",
+            persist_non_lifecycle_receipts=True,
+        )
+
+        async def _poll_prev_release_worker() -> None:
+            high = await prev_release_source.high_watermark()
+            rows = await prev_release_source.fetch_after(
+                prev_release_projector.checkpoint, limit=500
+            )
+            assert len(rows) == 4
+            prev_release_projector.project_records(
+                rows,
+                mode="live",
+                source_high_watermark=max(high, prev_release_source.last_frontier_seq),
+                source_frontier_seq=prev_release_source.last_frontier_seq,
+            )
+
+        asyncio.run(_poll_prev_release_worker())
+        assert prev_release_projector.checkpoint == expected_watermark + 4
+        assert prev_release_projector.controller["backlog"] == 0
+        assert prev_release_projector.controller["status"] == "ready"
+        assert prev_release_projector.controller["accepted_live"] is True
+    finally:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{source_schema}" CASCADE')
+            cur.execute(f"DROP SCHEMA IF EXISTS {proj_schema} CASCADE")
+
 
 
 

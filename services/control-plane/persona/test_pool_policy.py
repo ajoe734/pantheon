@@ -130,3 +130,61 @@ def test_publication_change_membership_stage_weight_and_tolerance():
     history = {"published": {"1": {"status": "published", "pool_version": 1}, "3": {"status": "dispatched", "pool_version": 3},
                              "2": {"status": "published", "pool_version": 2}}}
     assert last_published(history)["pool_version"] == 2 and last_published({}) is None
+
+
+# ---- real runtime books feeding reweight (no field added by hand) --------------------------------
+def _runtime_books(days, *, joined_at="2026-01-01T00:00:00+00:00", first_day=2, drop_joined=False):
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    runtime = MemberVirtualBooks()
+    view = {"artifact_id": "a1", "version": "1.0.0", "checksum": "sum", "risk_weight": .5,
+            "virtual_only": False, "underlying_count": 1, "joined_at": joined_at}
+    if drop_joined:
+        view.pop("joined_at")
+    snapshot = []
+    for i in range(days):
+        price = 100 * (1 + .01 * ((i % 3) - 1)) + i
+        snapshot = runtime.observe(
+            binding_id="b", envelope_checksum="env", symbol="2330.TW",
+            event_time=(date(2026, 1, first_day) + timedelta(days=i)).isoformat() + "T05:30:00+00:00",
+            price=price, open_price=price, source_ref="recorded", bar_frequency="1d",
+            members={"m1": {**view, "view": {"direction": "LONG" if i % 2 else "SHORT", "strength": 1}}})
+    return snapshot
+
+
+def _as_controller_books(snapshot):
+    # persona_cycle_controller hands each book to the policy with its net-of-costs block merged in.
+    return {b["member_id"]: {**b, **b["net_of_costs"]} for b in snapshot}
+
+
+def test_runtime_book_since_inception_drives_reweight_with_history_and_refuses_without():
+    policy = load_policy()
+    live = [member("m1")]
+    stats = reweight(live, _as_controller_books(_runtime_books(25)), policy, "2026-02-01")[1]["m1"]
+    assert stats["days"] == 24 and stats["volatility"] > 0
+    with pytest.raises(ValueError, match="virtual_book_history_missing"):
+        reweight(live, _as_controller_books(_runtime_books(2)), policy, "2026-02-01")
+
+
+def test_runtime_book_not_since_inception_is_refused_by_the_existing_rule():
+    policy = load_policy()
+    for snapshot in (_runtime_books(25, drop_joined=True),                       # admission unknown
+                     _runtime_books(25, joined_at="2025-12-01T00:00:00+00:00")):  # history starts late
+        [only] = snapshot
+        assert only["since_inception"] is False
+        with pytest.raises(ValueError, match="virtual_book_high_water_history_missing"):
+            reweight([member("m1")], _as_controller_books(snapshot), policy, "2026-02-01")
+
+
+def test_legacy_book_without_the_field_reads_as_not_since_inception():
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    snapshot = _runtime_books(3)
+    legacy = MemberVirtualBooks()
+    legacy.observe(binding_id="b", envelope_checksum="env", symbol="2330.TW",
+                   event_time="2026-01-02T05:30:00+00:00", price=100, source_ref="r", bar_frequency="1d",
+                   members={"m1": {"artifact_id": "a1", "version": "1.0.0", "checksum": "sum", "virtual_only": False,
+                                   "view": {"direction": "LONG", "strength": 1}}})
+    for book in legacy.books.values():
+        book.pop("admitted_at", None)  # as written by the previous runtime version
+    [legacy_snapshot] = legacy.snapshot()
+    assert legacy_snapshot["since_inception"] is False and snapshot[0]["since_inception"] is True
+

@@ -1,0 +1,355 @@
+{
+ "acceptance_10_not_done_waits_for_the_operator": [
+  "G1: traded value, available time and trading status columns in daily bars (a persisted format change that needs the previous reader test against the hosted version read from /bff/version): not added. The volume weighted price still falls back to close and available_time stays derived (14:30 +08:00)",
+  "G2: all-market capture rows (collector.source_id, upstream_endpoint, trading_status): the survivorship attestation keeps reading run files and the guard lists it as unswitched, so cleanup of tw_price_daily is blocked until the capture evidence has a store",
+  "the reader setting default is not changed and nothing is deleted on hosted"
+ ],
+ "acceptance_1_behaviour_of_current_dev_before_this_task": {
+  "G3_reader_has_symbol_listing": false,
+  "G4_evaluator": {
+   "daily_bars_bare_1000": "TaiwanEvaluationDataError: no symbol in snapshot has >= 1 bars",
+   "daily_bars_canonical_1000.TW": "1 symbol",
+   "run_files_bare_1000": "1 symbol",
+   "run_files_canonical_1000.TW": "TaiwanEvaluationDataError: no symbol in snapshot has >= 1 bars"
+  },
+  "G5": {
+   "behaviour": "newest run wins silently, a conflicting price is not told apart from an identical re-capture",
+   "day_fields": [
+    "classes",
+    "duplicates",
+    "expected_rows",
+    "rejected",
+    "rows",
+    "run_files",
+    "unique"
+   ],
+   "duplicates_counted_in_total": 9960,
+   "report_has_conflict_fields": false
+  },
+  "G6_cold_read_2_years_1_symbol_new_process_25_runs": {
+   "max_s": 0.834,
+   "p50_s": 0.7955,
+   "p95_s": 0.8303,
+   "timer_after_imports": true
+  },
+  "G7_G8": "cleanup refused a whole file for one undated row and listed only the count inside the refusal string; no top level count, no flag; no dataset parameter (cli rejects --dataset, exit 2)",
+  "method": "scripts run against git archive of dev 57dcdd9d8 on the generated shape (30 write dates, 30 trade dates, 112710 rows)",
+  "unswitched_reader_collector_bundle": "stored_instrument_authority read 3400 tickers from run files in daily_bars mode and 0 after removal",
+  "unswitched_reader_intraday_reconcile": "OfficialDaily.from_snapshot read 102687 rows from run files in daily_bars mode and returned 0 rows without error after the run files were removed"
+ },
+ "acceptance_2_two_readers_switched": {
+  "authority": {
+   "mismatches_on_common_tickers": 0,
+   "only_in_run_files_are_expired_warrants": true,
+   "tickers_daily_bars": 2560,
+   "tickers_only_in_run_files": 840,
+   "tickers_run_files": 3400
+  },
+  "behind_setting": "PANTHEON_DAILY_PRICE_READER (default run_files); OfficialDaily.from_snapshot(reader=...) overrides",
+  "dates_present_equal": true,
+  "first_mismatches": [],
+  "keys_compared": 76800,
+  "keys_only_in_run_files": 25200,
+  "mismatches": 0,
+  "named_differences": [
+   "available_time is the 14:30 +08:00 publish time of the trade date (daily bars store none)",
+   "price and volume text: integral values print as integers (a stored float has no int/float spelling); numeric equality exact",
+   "market comes from the venue suffix of the stored symbol (.TWSE .TPEX .TWO) so the volume components keep matching; a .TW suffix gives None and the basis refuses readably",
+   "a row holding only volume_lots (TPEx monthly history) has no volume in daily bars: skipped and counted in OfficialDaily.skipped_without_volume",
+   "old read keeps every copy of a key; daily bars hold the newest"
+  ],
+  "only_in_run_files_are_expired_warrants": true,
+  "provenance_daily_bars": [
+   "content_digest",
+   "line",
+   "line_sha256",
+   "path",
+   "reader",
+   "source_id"
+  ],
+  "provenance_replacement": "run files: path, line, line_sha256, source_id. daily bars: reader=daily_bars, path=daily_bars/_manifest/date=D.json, line=None, line_sha256=sha256(market|symbol|date|row content hash) (changes when the stored bar changes, which the idempotence check compares), content_digest of the day, source_id=None",
+  "provenance_run_files": [
+   "line",
+   "line_sha256",
+   "path",
+   "source_id"
+  ],
+  "run_file_rows_without_trade_date_not_compared": 750
+ },
+ "acceptance_3_symbol_forms": {
+  "all_four_calls_equal": true,
+  "other_callers": "OfficialDaily.rows_for and components_for accept both forms; the feed and depth canonicalise symbols already",
+  "reader": "DailyBarsReader.read_range/read_close_window(any_form=True) expands a code to bare, .TW, .TWSE, .TWO, .TPEX; two stored forms with a bar on one day fail closed (ambiguous)",
+  "rows_per_call": {
+   "daily_bars:1000": 30,
+   "daily_bars:1000.TW": 30,
+   "run_files:1000": 30,
+   "run_files:1000.TW": 30
+  },
+  "rule": "a caller gets its result keyed by the symbol it passed (bare or canonical) in both modes; without symbols both modes key by the bare code"
+ },
+ "acceptance_4_duplicate_conflicts": {
+  "dates_blocked_by_default": 30,
+  "dates_blocked_with_the_flag": 0,
+  "dates_published_with_the_flag": 30,
+  "finding_for_the_operator": "on the generated shape every date is blocked by default because re-captured rows carry a larger final volume (7603 volume only keys). The old read kept the largest volume and failed only on price; the acceptance asks volume disagreement to block too, so it is built that way. Whether a volume only revision should instead resolve to the largest volume is a design decision, not made here.",
+  "injected_price_conflict_listed": true,
+  "price_conflict_keys": 1,
+  "rule": "keys whose copies disagree on open/high/low/close are price conflicts, on volume only are volume_only conflicts; both counted separately and listed (up to 500 keys per date, counts complete); a date holding one is not published unless --newest-run-on-conflict; apply with blocked dates exits 3",
+  "trade_dates": 30,
+  "volume_only_conflict_keys": 7603
+ },
+ "acceptance_5_listing_and_cold_bound": {
+  "cold_bound": {
+   "before_this_task_p95_s": 0.8303,
+   "bound_p95_s": 0.5,
+   "cpus": 12,
+   "evaluator_path_520_dates_p95_s": 0.48,
+   "host": "12 cpu, load average about 1.6 to 3.3 during the runs",
+   "loadavg_after": [
+    1.82568359375,
+    1.81591796875,
+    1.64013671875
+   ],
+   "max_s": 0.4463,
+   "method": "a new process per run, 25 runs, 2 years = 504 stored dates of 1 symbol (any_form, price columns), 3400 symbols per date, timer starts after importing pyarrow and the package (those cost the same before and after; the package import alone is about 0.44 s and with imports the whole process is about 1.0 s)",
+   "p50_s": 0.3953,
+   "p95_s": 0.4279,
+   "rows_per_run": 504,
+   "runs": 25,
+   "within_bound": true
+  },
+  "listing_on_shape": {
+   "seconds_cold_first_call": 0.069,
+   "symbols": 2560
+  },
+  "reader_listing": "DailyBarsReader.list_symbols(start,end) (symbol column only, per-date sets cached against manifest signature); the evaluator, feed, depth, collector_bundle and OfficialDaily use it; DailyBarsStore.symbol_stats is unused by every switched caller (tests monkeypatch it to raise)",
+  "what_changed": [
+   "one file open per partition on a cold read (footer parsed once)",
+   "only the price columns are decoded",
+   "row group decode without the inner thread pool",
+   "string array built from buffers: pa.array imports pandas on first use, about 0.19 s in a new process",
+   "4 reader threads (8 and 12 measured slower)"
+  ]
+ },
+ "acceptance_6_cleanup_guard": {
+  "false_positives_named": "six files in SCAN_FALSE_POSITIVES with reasons; a test fails if one stops looking like a reader",
+  "guard_on_the_shape": [
+   "services/source_ingestion/candidate_pool_market_feed.py::survivorship attestation (G2)",
+   "services/source_ingestion/pin_source.py::_run_file_dates",
+   "services/source_ingestion/snapshot_universe.py::_partition_dates (seed)"
+  ],
+  "interpretation": "switched means: with PANTHEON_DAILY_PRICE_READER=daily_bars the part reads daily bars only; a part that still opens run files has its own unswitched entry; the setting default itself stays run_files (acceptance 8)",
+  "known_readers": "KNOWN_RUN_FILE_READERS now lists every file that opens tw_price_daily run files: intraday_reconcile (switched), collector_bundle authority (switched), evaluator (switched), market_data_storage depth (switched), candidate_pool_market_feed bars (switched), candidate_pool_market_feed survivorship attestation (NOT switched, G2), snapshot_universe seed (NOT switched), pin_source run file names (NOT switched), and three tools that never block (backfill, cleanup, delete_expired_warrants)",
+  "tests": [
+   "test_every_run_file_reader_in_the_code_is_listed scans services/ and scripts/ and fails for an unlisted file",
+   "test_the_scan_fails_for_a_new_unlisted_reader",
+   "test_known_readers_list_matches_the_code (old read marker kept for rollback, new read marker present exactly when switched)",
+   "test_attestation_and_other_unswitched_readers_block_the_real_cleanup"
+  ]
+ },
+ "acceptance_7_keyed_cleanup": {
+  "parameter": "--dataset tw_price_daily (default) or one of the 13 keyed datasets; any other name is refused with the list",
+  "refusals": "keyed partition re-read against its manifest (files, sizes, row count, content digest), every key of the file present in the keyed store, reader evidence 5 trading days zero mismatches, 30 day write window, pinned dates, readers (KNOWN_KEYED_READERS all route through normalized_dataset_base), dry run by default, real run needs the digest of the report; execute refuses a path outside the chosen dataset",
+  "shape_tw_price_daily": {
+   "eligible_bytes_with_flag": 159818540,
+   "eligible_if_readers_were_switched_and_flag": 30,
+   "eligible_if_readers_were_switched_and_no_flag": 0,
+   "eligible_with_the_checked_in_reader_list": 0,
+   "files": 30,
+   "rows_without_trade_date": {
+    "files": 30,
+    "rows": 750
+   },
+   "total_bytes": 159818540,
+   "unswitched_readers_blocking": [
+    "services/source_ingestion/candidate_pool_market_feed.py::survivorship attestation (G2)",
+    "services/source_ingestion/pin_source.py::_run_file_dates",
+    "services/source_ingestion/snapshot_universe.py::_partition_dates (seed)"
+   ]
+  },
+  "test": "test_cleanup_of_each_of_the_13_datasets_after_a_real_dual_write (13 cases) deletes exactly that dataset's run files and leaves the keyed store and the neighbour dataset untouched",
+  "thirteen_datasets_real_dual_write_20_rows_each": {
+   "_run_files_left": 0,
+   "_total_deleted_files_on_the_copy": 26,
+   "collector_news": {
+    "bytes": 20720,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "collector_social_posts": {
+    "bytes": 22160,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "taifex_ssf_contracts": {
+    "bytes": 21680,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "taifex_tx_daily": {
+    "bytes": 20380,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_broker_branch_detail": {
+    "bytes": 23040,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_broker_top": {
+    "bytes": 20212,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_community_daily": {
+    "bytes": 21460,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_index_daily": {
+    "bytes": 20220,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_index_ohlc_daily": {
+    "bytes": 21120,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_institutional_flow": {
+    "bytes": 22320,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_macro_series": {
+    "bytes": 20280,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_margin_short_balance": {
+    "bytes": 21640,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   },
+   "tw_market_breadth_daily": {
+    "bytes": 21580,
+    "eligible_files": 2,
+    "files": 2,
+    "rows_without_key": {
+     "files": 0,
+     "rows": 0
+    },
+    "unswitched_readers": []
+   }
+  },
+  "undated_rows": "counted per file and in report.rows_without_trade_date; a file that holds them is deleted only with --delete-files-with-undated-rows, which is part of the digest"
+ },
+ "acceptance_8_defaults": "test_nothing_is_switched_or_deleted_by_default_and_dual_write_stays_on asserts PANTHEON_DAILY_PRICE_READER and PANTHEON_KEYED_DATASET_READER default run_files, keyed write mode dual, tw_price_daily run files on, feature files on, daily bars still dual written, cleanup without --execute and --report-digest deletes nothing",
+ "acceptance_9_runtime_budget": "no new store, no writer entry changed; docs/operations/storage-manifest.json not edited; check_storage_manifest.py passed:true; check_market_data_budget.py exit 0",
+ "contains_credentials": false,
+ "files_outside_artifact_list_changed": [],
+ "findings_outside_scope": [
+  "services/source_ingestion/snapshot_universe.py _partition_dates seeds a latest snapshot from raw/<source>/tw_price_daily run files: not switched, blocks cleanup (owner of the snapshot universe)",
+  "services/source_ingestion/pin_source.py _run_file_dates turns pinned run ids into dates from run file NAMES: after a cleanup a pinned run id no longer maps to a date, so the pinned date list must be produced before the cleanup (owner of the pin source)",
+  "volume only duplicate conflicts block every date by default on the generated shape (see acceptance 4)",
+  "OfficialDaily in daily bars mode reads the whole stored history (as the run file read does); a date window argument would bound it"
+ ],
+ "named_missing_files": "none; every file this task changed is in the artifact list (docs/operations/storage-manifest.json unchanged)",
+ "owner": "Claude",
+ "python": "/tmp/rv/bin/python (python 3.12, pyarrow 26.0.1, pytest 9.2.0); workers have no hosted access, data is generated locally with fixed seed 20261118 in the hosted shape (body.symbol bare, normalized_row.symbol_canonical venue qualified, 3400 symbols per date, 10 percent re-captured copies, 750 rows without trade date)",
+ "review_independence": "reviewer Antigravity2 is the assigned reviewer; whether it is a different model family from the owner is for the handoff to confirm (AGENTS.md Review Independence); no exception is claimed here",
+ "reviewer": "Antigravity2",
+ "scope": "finishes work already merged (RC3 market data stored once per key); adds no feature, no new store, no daily bars column; deletes and switches nothing by default",
+ "task_id": "SOURCE-DAILY-BARS-READERS-COMPLETE-20261118",
+ "validation": {
+  "commands": [
+   {
+    "cmd": "pytest scripts/test_backfill_daily_bars.py scripts/test_cleanup_market_run_files.py scripts/test_delete_expired_warrants.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py",
+    "result": "98 passed"
+   },
+   {
+    "cmd": "pytest services/source_ingestion/tests/test_daily_bars_reader.py test_daily_bars_store.py test_candidate_pool_market_feed.py test_market_data_storage.py test_datasets_keyed_write.py test_intraday_reconcile.py",
+    "result": "163 passed"
+   },
+   {
+    "cmd": "pytest services/research/tests/test_alpha_template_snapshot_loader.py test_alpha_template_evaluation.py services/source_ingestion/tests/test_collector_bundle_connector.py test_survivorship_attestation.py test_security_listing.py test_pin_source.py",
+    "result": "180 passed, 1 skipped"
+   },
+   {
+    "cmd": "python scripts/check_storage_manifest.py",
+    "result": "passed true"
+   },
+   {
+    "cmd": "python scripts/check_market_data_budget.py",
+    "result": "exit 0"
+   },
+   {
+    "cmd": "python -m scripts.test_backfill_daily_bars generate|complete|genbars|cold|keyed (seed 20261118)",
+    "result": "completed; numbers above"
+   }
+  ],
+  "python": "/tmp/rv/bin/python",
+  "tests_changed_not_weakened": "test_known_readers_list_matches_the_code now asserts both the old read marker and the new read marker (it asserted only the old marker before, which no longer fits a reader whose old read stays for rollback); the backfill and cleanup fixtures that rely on the newest run rule now pass the named flag newest_run_on_conflict=True because the default changed by acceptance 4; every earlier assertion is kept"
+ }
+}

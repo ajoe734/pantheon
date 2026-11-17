@@ -40,6 +40,9 @@ from services.source_ingestion.scheduler import (  # noqa: E402
     DEFAULT_RECEIPT_RETENTION_DAYS,
     RECEIPT_LINE_BUDGET_BYTES,
     _line_identity,
+    journal_backup_path,
+    keep_journal_backup,
+    discard_created_backup,
     rewrite_journal_line,
     scan_journal,
 )
@@ -131,7 +134,7 @@ def migrate(journal: Path, *, retention_days: int = DEFAULT_RECEIPT_RETENTION_DA
         raise MigrationError(f"journal not found: {journal}")
     tmp = journal.with_name(journal.name + ".migrate.tmp")
     state_path = journal.with_name(journal.name + ".migrate.state.json")
-    backup = journal.with_name(journal.name + ".pre-migrate.bak")
+    backup = journal_backup_path(journal)
     lock_path = journal.with_suffix(journal.suffix + ".lock")
     started = time.monotonic()
     ino = journal.stat().st_ino
@@ -196,13 +199,19 @@ def migrate(journal: Path, *, retention_days: int = DEFAULT_RECEIPT_RETENTION_DA
             after = journal_fingerprint(tmp)
             current = journal_fingerprint(journal)
             _verify(current, after, drop_ids)
+            created = False
             if keep_backup:
-                try:
-                    backup.unlink()
-                except OSError:
-                    pass
-                os.link(journal, backup)
-            os.replace(tmp, journal)
+                # Same code path as the service: hard link, kept 7 days, never replaces an existing one.
+                gate = keep_journal_backup(journal, bytes_needed=journal.stat().st_size, now=now)
+                if not gate["ok"]:
+                    raise MigrationError(gate["reason"])
+                created = gate["created"]
+            try:
+                os.replace(tmp, journal)
+            except OSError:
+                if created:
+                    discard_created_backup(journal)
+                raise
             _fsync_dir(journal)
     try:
         state_path.unlink()

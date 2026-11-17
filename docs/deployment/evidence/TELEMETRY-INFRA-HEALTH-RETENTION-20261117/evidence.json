@@ -1,0 +1,233 @@
+{
+  "task_id": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "source_base_sha": "6356e8523597c8c1a4296d2d54c952f01a8966af",
+  "hosted_context_measured_by_coordinator": {
+    "table": "public.telemetry_events",
+    "infrastructure_health_existing_rows": 2750000,
+    "infrastructure_health_existing_size_gb": 5.7,
+    "infrastructure_health_history_since": "2026-10-16",
+    "observed_rows_per_day_today": 88000,
+    "observed_payload_mb_per_day_today": 85,
+    "receipts_table": "trade_journey_projection.event_receipts",
+    "receipts_table_size_gb": 3.5
+  },
+  "runtime_budget": {
+    "job_name": "HeartbeatRetentionJob",
+    "module": "services/telemetry/heartbeat_retention.py",
+    "service_wiring": "services/telemetry/main.py",
+    "cadence_seconds": 300,
+    "bounded_batch_size_default": 5000,
+    "statement_timeout_ms_default": 15000,
+    "retention_days_env": "PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS",
+    "default_retention_days": 7,
+    "hosted_scale_today": {
+      "growth_rows_per_day": 88000,
+      "growth_mb_per_day": 85,
+      "retention_window_days": 7,
+      "cap_rows_in_7_days": 616000,
+      "cap_rows_ceiling_with_protected_refs": 620000,
+      "cap_mb_in_7_days": 595
+    },
+    "hosted_scale_after_BFF_DOWNSTREAM_HEALTH_STORAGE_BOUND_20261117": {
+      "growth_rows_per_day": 850,
+      "growth_mb_per_day": 0.85,
+      "retention_window_days": 7,
+      "cap_rows_in_7_days": 6000,
+      "cap_mb_in_7_days": 6
+    },
+    "cleanup_mechanism": "Recurring background job in services/telemetry/main.py runs every 300s (PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_INTERVAL_SECONDS) and deletes public.telemetry_events rows of event_type='infrastructure_health' older than PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS (default 7) in bounded 5,000-row batches under a 15,000ms statement timeout, subject to ingested_seq <= min_consumer_checkpoint_seq and excluding all event IDs referenced by incidents or postmortems."
+  },
+  "retention_job_contract": {
+    "module": "services/telemetry/heartbeat_retention.py",
+    "service_wiring": "services/telemetry/main.py",
+    "heartbeat_retention_days_env": "PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS",
+    "heartbeat_default_retention_days": 3,
+    "infra_health_retention_days_env": "PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS",
+    "infra_health_default_retention_days": 7,
+    "target_table": "public.telemetry_events",
+    "target_event_types": [
+      "heartbeat",
+      "infrastructure_health"
+    ],
+    "other_event_types_touched": false,
+    "heartbeat_behaviour_unchanged": true,
+    "safe_sequence_ceiling": "min(trade_journey_projection.controller.checkpoint_seq) across all registered controllers; refuses to delete when checkpoint is missing or <= 0",
+    "bounded_batch_size_default": 5000,
+    "statement_timeout_ms_default": 15000
+  },
+  "infrastructure_health_readers_and_reference_protection": {
+    "readers": [
+      {
+        "reader_id": "telemetry_event_lookup",
+        "module": "services/telemetry/main.py & services/telemetry/ingest_svc.py",
+        "endpoint": "GET /api/telemetry/events/<event_id>",
+        "oldest_unreferenced_infra_health_needed_seconds": 0,
+        "references_protected": true,
+        "rationale": "Point lookup by event_id via TelemetryIngestService.get_accepted_event (in-memory hot store + PostgreSQL fallback build_postgres_event_reader). Referenced incident/postmortem event IDs are excluded from deletion indefinitely."
+      },
+      {
+        "reader_id": "telemetry_lineage_trace",
+        "module": "services/telemetry/main.py & services/telemetry/lineage_read/service.py",
+        "endpoint": "GET /api/telemetry/lineage/events/<event_id>/trace",
+        "oldest_unreferenced_infra_health_needed_seconds": 0,
+        "references_protected": true,
+        "rationale": "LineageReadService.query('telemetry_event_trace') resolves event_id from in-memory admitted events, PostgreSQL event_reader, or _svc.get_accepted_event fallback in _lineage_query_response. Referenced incident/postmortem event IDs remain resolvable without conflict markers."
+      },
+      {
+        "reader_id": "incident_and_postmortem_reference_validator",
+        "module": "services/incident/reference_validation.py",
+        "symbol": "CanonicalReferenceValidator.validate_incident / validate_postmortem",
+        "oldest_unreferenced_infra_health_needed_seconds": 0,
+        "references_protected": true,
+        "rationale": "When is_infrastructure_health_incident(parent_incident) is true, validate_postmortem validates trace_id and telemetry_event_ids (stripping merged_event:<incident_id>: prefixes) against telemetry_service.get_accepted_event for event_type == 'infrastructure_health'. All event IDs referenced by any incident or postmortem record are protected from deletion."
+      },
+      {
+        "reader_id": "incident_infrastructure_health_consumer",
+        "module": "services/incidents/main.py & services/incidents/consumer.py",
+        "endpoint": "POST /api/incidents/consume-infrastructure-health",
+        "oldest_unreferenced_infra_health_needed_seconds": 86400,
+        "references_protected": true,
+        "rationale": "InfrastructureHealthIncidentConsumer consumes real-time/outbox infrastructure_health event payloads directly on emission without calling CanonicalReferenceValidator.validate_incident, and records source_event_id into trace_id and telemetry_event_ids on the resulting incident case."
+      },
+      {
+        "reader_id": "postmortem_resolved_incident_consumer",
+        "module": "services/postmortems/main.py & services/postmortems/consumer.py",
+        "endpoint": "POST /api/postmortems/consume-resolved-incident",
+        "oldest_unreferenced_infra_health_needed_seconds": 0,
+        "references_protected": true,
+        "rationale": "ResolvedIncidentPostmortemDraftConsumer creates/updates postmortem drafts from resolved incident envelopes without calling CanonicalReferenceValidator.validate_incident, copying trace_id and telemetry_event_ids into the postmortem record."
+      },
+      {
+        "reader_id": "bff_downstream_health_monitor",
+        "module": "services/control-plane/bff/downstream_health_monitor.py",
+        "symbol": "DownstreamHealthMonitor",
+        "oldest_unreferenced_infra_health_needed_seconds": 86400,
+        "references_protected": true,
+        "rationale": "Maintains local SQLite incident_mappings (opening_event_id, last_event_id) and delivery_outbox (source_event_id) and delivers real-time/outbox probes to telemetry and incidents."
+      },
+      {
+        "reader_id": "trade_journey_lifecycle_projector",
+        "module": "services/trade_journey/lifecycle_projector.py",
+        "symbol": "RelationalLifecycleProjector",
+        "oldest_unreferenced_infra_health_needed_seconds": 0,
+        "references_protected": true,
+        "rationale": "infrastructure_health is not in LIFECYCLE_EVENT_TYPES and is ignored once ingested_seq <= trade_journey_projection.controller.checkpoint_seq; retention never deletes rows above min(checkpoint_seq)."
+      }
+    ],
+    "reference_protection_mechanism": {
+      "function": "resolve_protected_infrastructure_health_event_ids",
+      "sources_inspected": [
+        "PostgreSQL incident.incident_cases (payload JSONB: trace_id, telemetry_event_ids including merged_event:<incident_id>:<event_id>, source_event_id, opening_event_id, last_event_id, and source_event_id=<id> in evidence_summary)",
+        "PostgreSQL incident.postmortems (payload JSONB: trace_id, telemetry_event_ids including merged_event:<incident_id>:<event_id>, source_event_id)",
+        "Optional JSON store at INCIDENT_STORE_PATH (incidents and postmortems dictionaries/lists)",
+        "Optional BFF SQLite state DB at PANTHEON_DOWNSTREAM_HEALTH_STATE_PATH (incident_mappings.opening_event_id, incident_mappings.last_event_id, delivery_outbox.source_event_id)"
+      ],
+      "why_payload_incident_ref_is_not_used_as_sole_filter": "In services/control-plane/bff/downstream_health_monitor.py (:3036-3055), _store.get_incident(target_name) returns the incident_mappings row even after its status is 'resolved', so every subsequent healthy probe for that target carries payload.incident_ref. Filtering on payload->>'incident_ref' IS NULL would retain all future healthy probes for that target forever. Protecting the exact event IDs referenced by incident/postmortem stores and active outbox/mappings retains all incident and postmortem evidence (~2-8 rows per incident) while allowing unreferenced probes older than 7 days to be deleted.",
+      "consume_infrastructure_health_validation_confirmation": "Confirmed: POST /api/incidents/consume-infrastructure-health (services/incidents/main.py:606) delegates to InfrastructureHealthIncidentConsumer.consume_infrastructure_health_event (services/incidents/consumer.py:482), which does not call CanonicalReferenceValidator.validate_incident. Similarly, POST /api/postmortems/consume-resolved-incident (services/postmortems/main.py:369) delegates to ResolvedIncidentPostmortemDraftConsumer (services/postmortems/consumer.py:216) without calling CanonicalReferenceValidator.validate_incident. Manual postmortem validation in CanonicalReferenceValidator.validate_postmortem (services/incident/reference_validation.py:345) checks is_infrastructure_health_incident(parent_incident) and resolves trace_id and telemetry_event_ids via telemetry_service.get_accepted_event."
+    }
+  },
+  "reclaim_script_allow_list_contract": {
+    "script": "scripts/telemetry_heartbeat_reclaim.py",
+    "allowed_tables": [
+      "public.telemetry_events",
+      "trade_journey_projection.event_receipts"
+    ],
+    "rejects_non_allowlisted_tables": true,
+    "dry_run_default": true,
+    "free_disk_floor_multiplier": 1.5,
+    "refuses_when_free_disk_below_floor": true,
+    "measures_lock_window_ms_per_table": true,
+    "postgres_reclaim_mechanism": [
+      "VACUUM (FULL, ANALYZE) public.telemetry_events",
+      "VACUUM (FULL, ANALYZE) trade_journey_projection.event_receipts"
+    ]
+  },
+  "dataset_275m_rows_measurement": {
+    "seed_duration_ms": 69383.89,
+    "dry_run_telemetry_events": {
+      "rows_total": 2750210,
+      "infra_health_rows_total": 2750000,
+      "infra_health_rows_to_delete": 2133996,
+      "infra_health_rows_to_retain": 616004,
+      "protected_infra_health_event_ids": [
+        "evt-infra-hosted-100",
+        "evt-infra-hosted-250",
+        "evt-infra-hosted-500",
+        "evt-infra-hosted-750"
+      ],
+      "heartbeat_rows_total": 200,
+      "heartbeat_rows_to_delete": 150,
+      "table_bytes_before": 1483137024,
+      "retained_table_bytes": 332798501,
+      "required_free_disk_bytes": 499197752
+    },
+    "dry_run_event_receipts": {
+      "rows_total": 500,
+      "dead_tuples_before": 49500,
+      "table_bytes_before": 14180352,
+      "retained_table_bytes": 141804,
+      "required_free_disk_bytes": 212706
+    },
+    "apply_telemetry_events": {
+      "infra_health_rows_deleted_actual": 2133996,
+      "heartbeat_rows_deleted_actual": 150,
+      "rows_deleted_actual": 2134146,
+      "infra_health_batches_executed": 43,
+      "retention_duration_ms": 29691.063,
+      "rows_after": 616064,
+      "infra_health_rows_after": 616004,
+      "heartbeat_rows_after": 50,
+      "summary_rows_after": 1,
+      "table_bytes_before": 1483137024,
+      "table_bytes_after": 312885248,
+      "actual_bytes_reclaimed": 1170251776,
+      "reclaim_lock_window_ms": 10023.763
+    },
+    "apply_event_receipts": {
+      "rows_after": 500,
+      "table_bytes_before": 14180352,
+      "table_bytes_after": 180224,
+      "actual_bytes_reclaimed": 14000128,
+      "reclaim_lock_window_ms": 34.588
+    },
+    "protected_event_ids_verified": {
+      "evt-infra-hosted-100": {
+        "event_lookup_resolved": true,
+        "lineage_trace_resolved": true
+      },
+      "evt-infra-hosted-250": {
+        "event_lookup_resolved": true,
+        "lineage_trace_resolved": true
+      },
+      "evt-infra-hosted-500": {
+        "event_lookup_resolved": true,
+        "lineage_trace_resolved": true
+      },
+      "evt-infra-hosted-750": {
+        "event_lookup_resolved": true,
+        "lineage_trace_resolved": true
+      }
+    }
+  },
+  "rollback_verification": {
+    "telemetry_events_ddl_unchanged": true,
+    "previous_accepted_release_ingests_and_reads_unchanged_after_job": true
+  },
+  "residual_findings": [
+    {
+      "finding_id": "POSTMORTEMS-MANUAL-CREATE-INFRA-INCIDENT-VALIDATION",
+      "location": "services/postmortems/main.py:335 & services/incident/reference_validation.py:242",
+      "description": "POST /api/postmortems (manual postmortem creation) calls reference_validator.validate_incident(parent_incident) unconditionally before validate_postmortem(record, parent_incident=parent_incident). Because validate_incident does not branch on is_infrastructure_health_incident(record) before checking RuntimeManager for runtime_id/deployment_id, manual POST /api/postmortems for a non-trading infrastructure incident (which uses synthetic runtime_id='infra-subject-...' and deployment_id='infra-deployment-...') fails RuntimeBinding validation. Automated postmortem creation via POST /api/postmortems/consume-resolved-incident is unaffected.",
+      "disposition": "Out of scope for TELEMETRY-INFRA-HEALTH-RETENTION-20261117 (scoped to services/telemetry/* and scripts/*); recorded as residual finding for coordinator attachment to problem register."
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_heartbeat_retention.py scripts/test_telemetry_heartbeat_reclaim.py services/telemetry/test_infrastructure_health_ingest.py",
+      "exit_code": 0,
+      "result": "66 passed"
+    }
+  ]
+}
