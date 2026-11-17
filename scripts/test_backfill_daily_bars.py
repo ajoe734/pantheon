@@ -10,6 +10,7 @@ pytest.importorskip("pyarrow")
 
 from scripts import backfill_daily_bars as bf
 from services.source_ingestion import daily_bars_store as dbs
+from services.source_ingestion.daily_bars_reader import DailyBarsReader
 from services.source_ingestion.daily_bars_store import DailyBarsStore
 from services.source_ingestion.security_listing import ListingState
 
@@ -33,6 +34,9 @@ def _state(today=TODAY):
 
 def _bf(root, state, **kw):
     kw.setdefault("today", TODAY)
+    # the fixture re-ingests 2330 on 11-13 with another close: these tests exercise the newest-run rule, which
+    # is now the named flag (the default blocks such a date, see the conflict tests below)
+    kw.setdefault("newest_run_on_conflict", True)
     return bf.backfill(root, state, **kw)
 
 
@@ -185,6 +189,65 @@ def test_cli_dry_run_writes_report(tmp_path):
     assert bf.main(["--root", str(tmp_path), "--listing-state", str(state_path), "--today", TODAY, "--report", str(out)]) == 0
     assert json.loads(out.read_text())["apply"] is False
     assert bf.main(["--root", str(tmp_path), "--listing-state", str(state_path), "--today", "2026-12-30"]) == 2
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: duplicate conflicts (gap G5) ---------------------------------
+def _conflict_root(root):
+    _write(root, "2026-11-15", "run-a", [
+        _line("2330", "2026-11-12", 100.0), _line("2317", "2026-11-12", 50.0),   # 11-12: clean
+        _line("2330", "2026-11-13", 101.0), _line("2317", "2026-11-13", 51.0),   # 11-13: price conflict (2330)
+        _line("2330", "2026-11-16", 120.0), _line("2317", "2026-11-16", 60.0),   # 11-16: volume only (2317)
+    ])
+    _write(root, "2026-11-16", "run-b", [
+        _line("2330", "2026-11-12", 100.0), _line("2330", "2026-11-13", 111.0, run="b"),
+        _line("2317", "2026-11-16", 60.0, volume=2000.0)])
+
+
+def test_conflicting_copies_are_counted_listed_and_the_date_is_not_published(tmp_path):
+    _conflict_root(tmp_path)
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=False)
+    assert report["conflicts"]["price_keys"] == 1 and report["conflicts"]["volume_only_keys"] == 1
+    assert report["conflicts"]["blocked_dates"] == ["2026-11-13", "2026-11-16"]
+    day = report["days"]["2026-11-13"]
+    assert day["conflicts"]["price"] == ["2330"] and day["conflicts"]["volume_only"] == []
+    assert day["published_blocked"] is True and day["written"] is False
+    assert report["days"]["2026-11-16"]["conflicts"]["volume_only"] == ["2317"]
+    assert report["days"]["2026-11-12"]["conflicts"]["price_keys"] == 0 and report["days"]["2026-11-12"]["written"] is True
+    store = DailyBarsStore(tmp_path)
+    assert store.read_manifest("2026-11-12") is not None
+    assert store.read_manifest("2026-11-13") is None and store.read_manifest("2026-11-16") is None
+    assert report["mismatches"] == []  # a blocked date is not a mismatch, it is not published
+
+
+def test_the_named_flag_publishes_the_newest_run_and_still_reports_the_keys(tmp_path):
+    _conflict_root(tmp_path)
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=True)
+    assert report["conflicts"]["blocked_dates"] == []
+    assert report["conflicts"]["published_with_flag"] == ["2026-11-13", "2026-11-16"]
+    assert report["days"]["2026-11-13"]["conflicts"]["price"] == ["2330"] and report["days"]["2026-11-13"]["written"] is True
+    bars = DailyBarsReader(tmp_path).read_range("2330", "2026-11-13", "2026-11-13")
+    assert [b["close"] for b in bars] == [111.0]  # the newest copy
+
+
+def test_identical_copies_are_not_conflicts(tmp_path):
+    _write(tmp_path, "2026-11-15", "a", [_line("2330", "2026-11-12", 100.0), _line("2317", "2026-11-12", 50.0)])
+    _write(tmp_path, "2026-11-16", "b", [_line("2330", "2026-11-12", 100.0)])
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=False)
+    assert report["days"]["2026-11-12"]["duplicates"] == 1
+    assert report["conflicts"] == {"price_keys": 0, "volume_only_keys": 0, "blocked_dates": [], "published_with_flag": []}
+
+
+def test_cli_reports_blocked_dates_and_exits_3_on_apply(tmp_path, capsys):
+    _conflict_root(tmp_path)
+    state_path = tmp_path / "listing.json"
+    _state().save(state_path)
+    base = ["--root", str(tmp_path), "--listing-state", str(state_path), "--today", TODAY]
+    assert bf.main(base + ["--report", str(tmp_path / "r.json")]) == 0  # dry run: report only
+    assert json.loads((tmp_path / "r.json").read_text())["conflicts"]["blocked_dates"] == ["2026-11-13", "2026-11-16"]
+    assert bf.main(base + ["--apply"]) == 3
+    assert "conflicting duplicates and were not published" in capsys.readouterr().err
+    assert bf.main(base + ["--apply", "--newest-run-on-conflict"]) == 0
+    assert DailyBarsStore(tmp_path).read_manifest("2026-11-13") is not None
 
 
 # ---------------------------------------------------------------------------------------------

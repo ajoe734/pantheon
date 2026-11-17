@@ -214,6 +214,13 @@ def _component_from_body(body: Mapping[str, Any], ref: Mapping[str, Any], defaul
         str(body.get("category") or ""), shares, unit, _parse_ts(body.get("available_time") or default_avail), ref)
 
 
+def _bare(symbol: str) -> str:
+    """Lookup key of a symbol: ``2330`` and ``2330.TW`` are the same instrument (gap G4)."""
+    from .security_listing import bare_symbol
+
+    return bare_symbol(str(symbol).upper()).upper()
+
+
 @dataclass(frozen=True)
 class OfficialRow:
     symbol: str
@@ -244,13 +251,24 @@ class OfficialDaily:
             if not comp.symbol:  # unparseable line: cannot be attributed to any stock
                 self._unattributable.append(comp)
                 continue
-            self._components.setdefault((comp.symbol, comp.date), []).append(comp)
+            self._components.setdefault((_bare(comp.symbol), comp.date), []).append(comp)
         for row in rows:
-            self._rows.setdefault((row.symbol, row.date), []).append(row)
+            self._rows.setdefault((_bare(row.symbol), row.date), []).append(row)
         self.dates_present = frozenset(dates_present)
+        self.skipped_without_volume = 0
 
     @classmethod
-    def from_snapshot(cls, root: str | Path) -> "OfficialDaily":
+    def from_snapshot(cls, root: str | Path, *, reader: str | None = None) -> "OfficialDaily":
+        """Official daily rows. ``reader`` is ``run_files`` (default) or ``daily_bars``; ``None`` takes the
+        named setting ``PANTHEON_DAILY_PRICE_READER`` like every other daily price reader."""
+        if reader is None:
+            from .market_data_storage import daily_price_reader_mode
+
+            reader = daily_price_reader_mode()
+        if reader == "daily_bars":
+            return cls._from_daily_bars(root)
+        if reader != "run_files":
+            raise ReconcileError(f"reader {reader!r} is not one of run_files, daily_bars")
         base = Path(root)
         snapshot_root = base
         if (base / "normalized" / "tw_price_daily").is_dir():
@@ -288,6 +306,66 @@ class OfficialDaily:
                 ))
         return cls(rows, dates, cls._load_components(snapshot_root))
 
+    @classmethod
+    def _from_daily_bars(cls, root: str | Path) -> "OfficialDaily":
+        """The same rows from ``DailyBarsReader``. Differences from the run file read, all named:
+
+        * ``available_time`` is not stored: it is the regular 14:30 Taipei publish time of the trade date
+          (the rule ``_parse_ts`` already applies to a date-only value);
+        * the line provenance (file, line, line sha256) does not exist: ``ref`` carries ``reader`` =
+          ``daily_bars``, the day manifest as ``path``, ``line`` None, ``line_sha256`` = sha256 of the stored
+          row identity and content hash (it changes when the stored bar changes, which is what the idempotence
+          check compares) and ``content_digest`` of the whole day;
+        * a row that holds only ``volume_lots`` (TPEx monthly history) has no volume in daily bars and is not an
+          official bar here (counted in ``skipped_without_volume``).
+        """
+        from .daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, DailyBarsReader
+        from .daily_bars_store import DailyBarsError
+        from .security_listing import bare_symbol
+
+        base = Path(root)
+        snapshot_root = base
+        if (base / "normalized" / "tw_price_daily").is_dir():
+            pass
+        elif base.name == "tw_price_daily" and base.parent.name == "normalized":
+            snapshot_root = base = base.parent.parent
+        if not (base / "daily_bars").is_dir():
+            raise ReconcileError(f"governed daily bars directory missing: {base / 'daily_bars'}")
+        try:
+            store = DailyBarsReader(base)
+            dates = store.trade_dates()
+            if not dates:
+                raise ReconcileError(f"daily bars hold no trading day under {base}")
+            names = sorted(store.list_symbols())
+            digests: dict[str, Any] = {}
+            rows: list[OfficialRow] = []
+            skipped = 0
+            for i in range(0, len(names), MAX_SYMBOLS):
+                for j in range(0, len(dates), MAX_RANGE_DAYS):
+                    window = dates[j:j + MAX_RANGE_DAYS]
+                    for _sym, bars in store.read_range(names[i:i + MAX_SYMBOLS], window[0], window[-1]).items():
+                        for bar in bars:
+                            day = bar["trade_date"]
+                            vals = [_dec(bar.get(k)) for k in (*PRICE_FIELDS, "volume")]
+                            if any(v is None for v in vals):
+                                skipped += 1
+                                continue
+                            if vals[-1] == vals[-1].to_integral_value():
+                                vals[-1] = vals[-1].quantize(Decimal(1))
+                            if day not in digests:
+                                digests[day] = store._manifest(day).get("content_digest")
+                            ident = f"{bar['market']}|{bar['symbol']}|{day}|{bar.get('content_hash')}"
+                            rows.append(OfficialRow(
+                                bare_symbol(bar["symbol"]).upper(), day, *vals, _parse_ts(day),
+                                {"reader": "daily_bars", "path": f"daily_bars/_manifest/date={day}.json", "line": None,
+                                 "line_sha256": _sha256(ident), "content_digest": digests[day], "source_id": None},
+                                None if not bar.get("market") else str(bar["market"]).upper()))
+        except DailyBarsError as exc:
+            raise ReconcileError(f"daily bars read refused: {exc}") from exc
+        out = cls(rows, dates, cls._load_components(snapshot_root))
+        out.skipped_without_volume = skipped
+        return out
+
     @staticmethod
     def _load_components(root: Path) -> list[VolumeComponent]:
         """Optional ``normalized/tw_price_daily_volume_components`` jsonl: one line per official
@@ -314,12 +392,12 @@ class OfficialDaily:
         return out
 
     def components_for(self, symbol: str, day: str) -> list[VolumeComponent]:
-        found = list(self._components.get((symbol.upper(), day), ()))
+        found = list(self._components.get((_bare(symbol), day), ()))
         # An unreadable component line could belong to this stock: its basis is then unavailable.
         return found + self._unattributable
 
     def rows_for(self, symbol: str, day: str) -> list[OfficialRow]:
-        return list(self._rows.get((symbol.upper(), day), ()))
+        return list(self._rows.get((_bare(symbol), day), ()))
 
 
 # ---------------------------------------------------------------- result

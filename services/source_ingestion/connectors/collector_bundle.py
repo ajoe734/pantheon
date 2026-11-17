@@ -2122,14 +2122,45 @@ def macro_feature_rows(
 SOCIAL_SYMBOL_AUTHORITY_DATASET = "tw_price_daily"
 
 
+_DAILY_BARS_READERS: dict[str, Any] = {}
+
+
+def _daily_bars_symbols(root: Path) -> list[str]:
+    """Every symbol with a stored daily bar, through ``DailyBarsReader.list_symbols`` (one reader per root:
+    its per-day symbol sets are cached against the day manifests, so a repeat call opens no file)."""
+    from ..daily_bars_reader import DailyBarsReader
+    from ..daily_bars_store import DailyBarsError
+
+    reader = _DAILY_BARS_READERS.get(str(root))
+    if reader is None:
+        if len(_DAILY_BARS_READERS) >= 8:
+            _DAILY_BARS_READERS.clear()
+        reader = _DAILY_BARS_READERS[str(root)] = DailyBarsReader(root)
+    try:
+        return sorted(reader.list_symbols())
+    except DailyBarsError:
+        return []  # an unreadable store gives no authority; an unknown symbol is then refused, never guessed
+
+
 def stored_instrument_authority(*roots: str | Path) -> dict[str, tuple[str, ...]]:
     """Governed instrument identities: venue-qualified symbols that have stored daily bars.
 
     Returns ``{ticker: (canonical, ...)}`` (e.g. ``{"2330": ("2330.TWSE",)}``) read from the
-    normalized ``tw_price_daily`` rows under each root.
+    normalized ``tw_price_daily`` rows under each root, or, with ``PANTHEON_DAILY_PRICE_READER=daily_bars``,
+    from the symbols of the daily bars store (``DailyBarsReader.list_symbols``).
     """
+    from ..market_data_storage import daily_price_reader_mode
+
     found: dict[str, set[str]] = {}
+    from_bars = daily_price_reader_mode() == "daily_bars"
     for root in roots:
+        if from_bars:
+            if (Path(root) / "daily_bars").is_dir():
+                for canonical in _daily_bars_symbols(Path(root)):
+                    canonical = canonical.upper()
+                    if "." in canonical:
+                        found.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+            continue
         base = Path(root) / "normalized" / _slug(SOCIAL_SYMBOL_AUTHORITY_DATASET)
         if not base.is_dir():
             continue
