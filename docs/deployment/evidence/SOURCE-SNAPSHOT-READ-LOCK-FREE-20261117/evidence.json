@@ -3,7 +3,7 @@
   "change": [
     "get (journal and the journal view in dual mode) and live_symbols read the published map without self._lock; docstring states the reference-assignment-only invariant",
     "journal_stats reads size/line count from the store's last-sync state (_consumed) instead of stat plus a full-file line scan; falls back to the scan only when nothing was synced yet",
-    "live_symbols memoizes the sorted list per published map object (tuple replaced whole)"
+    "the writer builds the sorted per-dataset symbol lists in _publish() before swapping the map, so live_symbols is an O(n) list copy with no walk/sort after publish (re-measured max 1.78 ms append, 1.90 ms compaction)"
   ],
   "before_reproduction": {
     "shape": "17500 keys, 537880200 bytes",
@@ -14,49 +14,49 @@
     "build_seconds": 36.4,
     "keys": 17500,
     "journal_bytes": 537880200,
-    "append_writer_seconds": 43.6,
+    "append_writer_seconds": 38.9,
     "append_bytes_written": 536975800,
     "append": {
       "get": {
-        "calls": 3883,
-        "longest_call_ms": 0.35
+        "calls": 3445,
+        "longest_call_ms": 1.14
       },
       "journal_stats": {
-        "calls": 3882,
-        "longest_call_ms": 0.12
+        "calls": 3458,
+        "longest_call_ms": 0.06
       },
       "live_symbols": {
-        "calls": 3797,
-        "longest_call_ms": 48.86
+        "calls": 3334,
+        "longest_call_ms": 1.78
       },
       "host_load_avg": [
-        4.37939453125,
-        4.08935546875,
-        4.20068359375
+        4.36181640625,
+        4.296875,
+        3.630859375
       ]
     },
-    "compaction_writer_seconds": 119.84,
+    "compaction_writer_seconds": 81.58,
     "compaction_bytes": {
       "before": 1074786000,
       "after": 536905800
     },
     "compaction": {
       "get": {
-        "calls": 6968,
-        "longest_call_ms": 0.43
+        "calls": 4536,
+        "longest_call_ms": 0.13
       },
       "journal_stats": {
-        "calls": 7109,
-        "longest_call_ms": 0.1
+        "calls": 4585,
+        "longest_call_ms": 0.06
       },
       "live_symbols": {
-        "calls": 6733,
-        "longest_call_ms": 20.39
+        "calls": 4299,
+        "longest_call_ms": 1.9
       },
       "host_load_avg": [
-        5.44482421875,
-        4.755859375,
-        4.44287109375
+        3.76318359375,
+        4.115234375,
+        3.67041015625
       ]
     },
     "partial_batch": {
@@ -80,7 +80,7 @@
     "semantic_change": "journal_stats journal_bytes/journal_lines now report the store's last synced view; a foreign writer appears after the next sync"
   },
   "residual_findings": [
-    "live_symbols first call after a publish still walks the map (max 48.9 ms in the append run, 11-20 ms otherwise); close to the 50 ms bound under host load",
+    "live_symbols no longer walks the map after a publish (writer pre-builds the sorted lists); max 1.78 ms append, 1.90 ms compaction on this host",
     "os.stat on the journal itself stalled 84-100 ms during compaction on this host (kernel), which is why journal_stats no longer stats the file",
     "runtime.py was not changed; no credential in this evidence"
   ]

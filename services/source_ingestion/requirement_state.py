@@ -1292,7 +1292,7 @@ class LatestMarketSnapshotStore:
         self.compact_min_bytes = compact_min_bytes
         self._lock = threading.RLock()
         self._latest_by_symbol: dict[tuple[str, str], LatestMarketSnapshot] = {}
-        self._live_symbols_cache: tuple[Any, str, tuple[str, ...]] | None = None
+        self._live_symbols_cache: tuple[Any, dict[str, tuple[str, ...]]] | None = None
         # (inode, size, mtime_ns) of the journal exactly as this store last
         # read or wrote it; None forces a full re-parse under the next lock.
         self._journal_signature: tuple[int, int, int] | None = None
@@ -1423,7 +1423,7 @@ class LatestMarketSnapshotStore:
             self._line_bytes = None
         self._mark_consumed(fd, end, count)
         self._journal_signature = self._signature(fd)
-        self._latest_by_symbol = dict(current)
+        self._publish(dict(current))
         return current
 
     def _current_locked(self, handle: Any) -> dict[tuple[str, str], LatestMarketSnapshot]:
@@ -1459,7 +1459,7 @@ class LatestMarketSnapshotStore:
         fd = handle.fileno()
         os.fsync(fd)
         previous = self._consumed
-        self._latest_by_symbol = current
+        self._publish(current)
         self._journal_signature = self._signature(fd)
         # _current_locked synced to EOF under this lock, so our appended lines are the
         # only new bytes and each ends with a newline.
@@ -1515,7 +1515,7 @@ class LatestMarketSnapshotStore:
                         self._journal_signature = self._signature(handle.fileno())
                         if after != before:
                             self._mark_consumed(handle.fileno(), after, len(kept))
-                        self._latest_by_symbol = dict(current)
+                        self._publish(dict(current))
                         if after < before:
                             self._last_compaction_at = (
                                 datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -1802,6 +1802,14 @@ class LatestMarketSnapshotStore:
             result["shadow_error"] = self._shadow_error
         return result
 
+    def _publish(self, current: dict[tuple[str, str], LatestMarketSnapshot]) -> None:
+        """Writer-side publish: build the sorted per-dataset symbol lists first, then swap the map."""
+        by_dataset: dict[str, list[str]] = {}
+        for sym, ds in current:
+            by_dataset.setdefault(ds, []).append(sym)
+        self._live_symbols_cache = (current, {ds: tuple(sorted(v)) for ds, v in by_dataset.items()})
+        self._latest_by_symbol = current
+
     def get(self, symbol: str, dataset: str = DAILY_SNAPSHOT_DATASET) -> LatestMarketSnapshot | None:
         """Latest snapshot for ``symbol`` in ``dataset`` (default: daily; never crosses datasets).
 
@@ -1895,7 +1903,7 @@ class LatestMarketSnapshotStore:
                         current = self._current_locked(handle)
                         prior = current.get((lookup, dataset))
                         if prior is None or not any(_session(pt) in days for pt in prior.points):
-                            self._latest_by_symbol = current
+                            self._publish(current)
                             return False
                         kept = tuple(pt for pt in prior.points if _session(pt) not in days)
                         if kept:
@@ -1947,12 +1955,10 @@ class LatestMarketSnapshotStore:
             with _sqlite_errors("read"):
                 return [symbol for symbol, _ds in self._backend.keys(key_dataset)]
         published = self._latest_by_symbol  # lock-free: published maps are never mutated in place
-        cached = self._live_symbols_cache  # (map, dataset, symbols): a tuple, replaced whole
-        if cached is not None and cached[0] is published and cached[1] == key_dataset:
-            return list(cached[2])  # the map is unchanged since it was last listed: no 17k-key walk under GIL contention
-        symbols = sorted(sym for (sym, ds) in published if ds == key_dataset)
-        self._live_symbols_cache = (published, key_dataset, tuple(symbols))
-        return symbols
+        cached = self._live_symbols_cache  # (map, {dataset: sorted symbols}): a tuple, replaced whole
+        if cached is not None and cached[0] is published:
+            return list(cached[1].get(key_dataset, ()))  # built by the writer at publish: O(n) copy, no walk
+        return sorted(sym for (sym, ds) in published if ds == key_dataset)  # error-path {} / unprimed map
 
     def withdraw_symbols(
         self,
