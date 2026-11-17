@@ -556,6 +556,34 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-finmind-datasets",
     ),
     ConnectorDefinition(
+        definition_id="tw-finmind-fundamentals",
+        adapter_token="FinMindTaiwanFundamentalsAdapter.records_from_rows",
+        adapter_version="1.0.0",
+        provider="FinMind",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("financial_fundamental",),
+        datasets=("tw_monthly_revenue", "tw_financial_statement", "tw_valuation_bwibbu"),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+                "dataset": {"type": "string"},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 500, "max_bytes": 4194304, "timeout_seconds": 20, "max_rate_per_second": 10.0},
+        allowed_host_patterns=("api.finmindtrade.com",),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://TW-FUNDAMENTAL-FEATURES-HOSTED-20261114",
+    ),
+    ConnectorDefinition(
         definition_id="tw-finmind-broker-daily-report",
         adapter_token="FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
         adapter_version="1.0.0",
@@ -1267,6 +1295,18 @@ TW_CHIP_REFRESH_PROFILES = {
         "schema_hash": "tw_taifex_tx_daily.v1",
         "contracts": ["TX", "MTX"],
     },
+    "tw-finmind-monthly-revenue": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_monthly_revenue",
+        "schema_hash": "tw_monthly_revenue.v1",
+    },
+    "tw-finmind-quarterly-statements": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_financial_statement",
+        "schema_hash": "tw_financial_statement.v1",
+    },
+    "tw-finmind-valuation": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_valuation_bwibbu",
+        "schema_hash": "tw_valuation_bwibbu.v1",
+    },
 }
 _BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
 _CANONICAL_DEFINITIONS += tuple(
@@ -1274,7 +1314,8 @@ _CANONICAL_DEFINITIONS += tuple(
             datasets=(profile["dataset"],),
             default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits, "max_records": 500},
             test_manifest_ref=(
-                "evidence://REGIME-DATA-TAIFEX-TX-DAILY-20261114" if profile["dataset"] == "taifex_tx_daily"
+                "evidence://TW-FUNDAMENTAL-FEATURES-HOSTED-20261114" if profile["base"] == "tw-finmind-fundamentals"
+                else "evidence://REGIME-DATA-TAIFEX-TX-DAILY-20261114" if profile["dataset"] == "taifex_tx_daily"
                 else "evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114"),
             metadata={**_BASE_DEFINITIONS[profile["base"]].metadata,
                       "refresh_profile": profile})
