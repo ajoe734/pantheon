@@ -31,6 +31,7 @@ import json
 import math
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date as _date
 from pathlib import Path
@@ -39,6 +40,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v1"
 PART_ROWS = 10_000
 ROW_GROUP_ROWS = 1_000
+SLICE_ROWS = 2_000  # retention sweep: rows converted per slice before the interpreter lock is released for a moment
 
 # Budget row of design section 6 (bytes). *_TARGET is the design bound, *_ALARM the alarm line.
 DAILY_BARS_DAY_TARGET_BYTES = 1_600_000
@@ -328,14 +330,42 @@ class DailyBarsStore:
         return out
 
     @staticmethod
-    def day_digest(rows: Iterable[Mapping[str, Any]]) -> str:
-        return _sha(sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows))
+    def day_digest(rows: Iterable[Mapping[str, Any]], *, yield_gil: bool = False) -> str:
+        """Digest of a date's rows. ``yield_gil`` hashes the same bytes in slices with a pause between them, so a
+        sweep of a 22,500 row date does not hold the interpreter lock for one long stretch (retention sweeper)."""
+        keyed = sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows)
+        if not yield_gil:
+            return _sha(keyed)
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        for start in range(0, len(keyed), SLICE_ROWS):
+            if start:
+                digest.update(b",")
+            digest.update(",".join(_canonical(list(k)) for k in keyed[start:start + SLICE_ROWS]).encode("utf-8"))
+            time.sleep(0.001)
+        digest.update(b"]")
+        return digest.hexdigest()
+
+    def _read_day_rows_sliced(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """``_read_day_rows`` in ``SLICE_ROWS`` slices with a pause between them (same result)."""
+        _, pq = _require_pyarrow()
+        out: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for entry in manifest.get("files", ()):
+            path = self.bars_dir / entry["path"]
+            if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=SLICE_ROWS):
+                for row in batch.to_pylist():
+                    out[(row["market"], row["symbol"], row["trade_date"])] = row
+                time.sleep(0.001)
+        return out
 
     def _hit(self, step: str) -> None:
         if self._fault is not None:
             self._fault(step)
 
-    def _write_parts(self, pa, pq, trade_date: str, generation: int, ordered: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[Path]]:
+    def _write_parts(self, pa, pq, trade_date: str, generation: int, ordered: Sequence[Mapping[str, Any]],
+                     *, yield_gil: bool = False) -> tuple[list[dict[str, Any]], list[Path]]:
         """Write one generation of part files for a date (temp write, fsync, rename). Nothing is visible until
         the manifest is swapped."""
         files: list[dict[str, Any]] = []
@@ -351,8 +381,15 @@ class DailyBarsStore:
                 chunk = market_rows[start:start + PART_ROWS]
                 final = part_dir / f"part-g{generation}-{n}.parquet"
                 tmp = final.with_name(final.name + ".tmp")
-                table = pa.Table.from_pylist(chunk, schema=schema)
-                pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
+                if yield_gil:  # same file layout (row groups of ROW_GROUP_ROWS), built in slices
+                    with pq.ParquetWriter(tmp, schema, compression="zstd") as writer:
+                        for lo in range(0, len(chunk), SLICE_ROWS):
+                            writer.write_table(pa.Table.from_pylist(chunk[lo:lo + SLICE_ROWS], schema=schema),
+                                               row_group_size=ROW_GROUP_ROWS)
+                            time.sleep(0.001)
+                else:
+                    table = pa.Table.from_pylist(chunk, schema=schema)
+                    pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
                 self._hit("after_temp_write")
                 with open(tmp, "rb") as handle:
                     os.fsync(handle.fileno())
@@ -504,9 +541,12 @@ class DailyBarsStore:
                     path = self.bars_dir / entry["path"]
                     if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
                         raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
-                    cols = pq.read_table(path, columns=["market", "symbol", "trade_date", "lineage_ref"]).to_pylist()
-                    total += len(cols)
-                    hit += sum(1 for r in cols if should_remove(r))
+                    for batch in pq.ParquetFile(path).iter_batches(
+                            batch_size=SLICE_ROWS, columns=["market", "symbol", "trade_date", "lineage_ref"]):
+                        cols = batch.to_pylist()
+                        total += len(cols)
+                        hit += sum(1 for r in cols if should_remove(r))
+                        time.sleep(0.001)
                 result = {**empty, "rows": total, "removed": hit, "remaining": total - hit, "bytes_before": bytes_before}
                 if hit == 0:
                     return result
@@ -517,7 +557,7 @@ class DailyBarsStore:
                     result["deleted_day"] = hit == total
                     result["lineage_bytes_freed"] = lineage_before if hit == total else 0
                     return result
-                rows = self._read_day_rows(manifest)
+                rows = self._read_day_rows_sliced(manifest)
                 kept = {k: v for k, v in rows.items() if not should_remove(v)}
                 if not kept:
                     self._delete_day_locked(trade_date, manifest)
@@ -526,7 +566,7 @@ class DailyBarsStore:
                     return result
                 generation = int(manifest.get("generation", 0)) + 1
                 ordered = sorted(kept.values(), key=lambda r: (r["market"], r["symbol"]))
-                files, new_paths = self._write_parts(*_require_pyarrow(), trade_date, generation, ordered)
+                files, new_paths = self._write_parts(*_require_pyarrow(), trade_date, generation, ordered, yield_gil=True)
                 self._write_lineage(trade_date, None, {}, None, None, ordered)
                 self._hit("after_lineage")
                 new_manifest = {
@@ -534,7 +574,7 @@ class DailyBarsStore:
                     "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
                     "generation": generation, "files": files, "row_count": len(ordered),
                     "symbol_count": len({r["symbol"] for r in ordered}),
-                    "bytes": sum(f["bytes"] for f in files), "content_digest": self.day_digest(ordered),
+                    "bytes": sum(f["bytes"] for f in files), "content_digest": self.day_digest(ordered, yield_gil=True),
                 }
                 manifest_path = self._manifest_path(trade_date)
                 tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")

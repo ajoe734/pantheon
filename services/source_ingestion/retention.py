@@ -52,7 +52,8 @@ MAX_DELETE_SHARE = 0.20  # one real run never deletes more than 20 % of a store 
 ALARM_AFTER_TRADING_DAYS = 2
 REPORT_FILENAME = "retention-last-run.jsonl"
 REPORT_MAX_BYTES = 64 * 1024  # one replaced file; asserted on write
-SNAPSHOT_BATCH = 100  # symbols per snapshot delete transaction: a short writer lock, never the whole sweep
+SWEEP_YIELD_SECONDS = 0.005  # pause after each rewritten date so a reader thread of the same process is not starved
+SNAPSHOT_BATCH = 20  # symbols per snapshot delete transaction: a short writer lock, never the whole sweep
 SAMPLE_LIMIT = 10
 DAILY_BARS_RETENTION_DAYS = 2555  # prices (design section 4.3)
 ORDINARY_CODE_RE = re.compile(r"^\d{4}$")
@@ -359,6 +360,7 @@ class RetentionSweeper:
             rule = self._removal_rule(day, past_retention=planned["past_retention"], pin_runs=pin_runs, expired=expired,
                                       keep_delisted=keep_delisted)
             res = self.bars.remove_rows(day, rule)
+            time.sleep(SWEEP_YIELD_SECONDS)
             bars["deleted_rows"] += res["removed"]
             bars["deleted_bytes"] += res["bytes_freed"]
             lineage["deleted_bytes"] += res["lineage_bytes_freed"]
