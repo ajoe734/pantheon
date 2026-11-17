@@ -1,0 +1,20 @@
+{
+  "task": "PERSONA-ADAPTER-MEMORY-CREDENTIAL-20261117",
+  "change": {
+    "issuer": "new read-only principal OPENCLAW_ADAPTER_MEMORY_TOKEN (sub openclaw-persona-sync, role persona_memory_reader, scope dev-owner-read) delivered to new volume dev-paper-openclaw-adapter-tokens mounted :ro at /run/pantheon-principals on openclaw-gateway-adapter (one extra token file)",
+    "adapter": "materialize and persona tool broker read PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE per request via services.service_token_file; configured-but-unreadable file fails closed with no env fallback",
+    "memory_authz": "persona_memory_reader added to memory read roles and governance authz institutional+persona read roles; not a write role",
+    "staging_production": "unchanged (docker-compose.yml dev baseline only; deploy_nonprod_vm.sh and nonprod-deploy.yml untouched)"
+  },
+  "tests": {
+    "strict_memory_materialize_ok": "services/openclaw-gateway-adapter/test_persona_memory_materialize_query.py::test_materialize_ok_with_file_credential_against_strict_memory",
+    "write_refused_and_fail_closed": "test_adapter_principal_is_refused_by_memory_writes_and_a_bad_file_fails_closed",
+    "compose_contract": "scripts/test_persona_cycle_owner_ports_compose_contract.py::test_adapter_requires_principal_file_mount_and_memory_credential",
+    "issuer": "scripts/test_issue_dev_paper_principals.py::test_openclaw_adapter_memory_principal_is_read_only_file_delivered_and_mounted",
+    "result": "936 passed, 19 skipped across issuer, adapter, memory, compose contract suites"
+  },
+  "acceptance_pending_hosted": [
+    "AC6: after next hosted deploy and after any compensation, record adapter materialize ok (not 401) for persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241",
+    "AC3 residual: PERSONA_TOOL_BROKER_TOKEN still reaches the adapter and gateway via deploy-time env from principals.env; it is not file-backed and no test proves it survives compensation. Closing needs deploy_nonprod_vm.sh or compose-level change outside this task's boundary (RC1 chain), so it is recorded here, not changed."
+  ]
+}

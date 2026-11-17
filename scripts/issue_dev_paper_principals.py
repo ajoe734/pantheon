@@ -88,6 +88,9 @@ READERS = {
         "pantheon-dev-persona-evaluator-bff-reader",
         ("viewer", "registry-reader"),
     ),
+    # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
+    # memory write role). The adapter's actor id must equal this subject in strict auth.
+    "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
@@ -253,6 +256,7 @@ CONSUMER_FILES = {
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
+    "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
     # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
     # reader principal, never the deployment volume's governance/registry files.
     "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),

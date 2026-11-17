@@ -615,3 +615,28 @@ def test_cli_output_env_enables_broker_without_printing_token(tmp_path, monkeypa
     token = (tmp_path / "t").read_text()
     assert "export PERSONA_TOOL_BROKER_ENABLED=true" in out and token in out
     assert token not in capsys.readouterr().out
+
+
+def test_openclaw_adapter_memory_principal_is_read_only_file_delivered_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "OPENCLAW_ADAPTER_MEMORY_TOKEN"
+    assert CONSUMER_FILES["openclaw-gateway-adapter"] == (variable,)
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items()
+               if consumer != "openclaw-gateway-adapter")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "openclaw-persona-sync" and claims["roles"] == ["persona_memory_reader"]
+    assert claims["scope"] == "pantheon:dev-owner-read" and claims["tenant_id"] == "tenant-dev"
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    adapter = compose["services"]["openclaw-gateway-adapter"]
+    assert "dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro" in adapter["volumes"]
+    env = adapter["environment"]
+    assert env["PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ID"].endswith(":-" + claims["sub"] + "}")
+    assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES"].endswith(":-persona_memory_reader}")
+    assert "dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"]
+    )
+    assert "dev-paper-openclaw-adapter-tokens" in compose["volumes"]

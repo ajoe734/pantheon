@@ -53,6 +53,8 @@ from integrations.openclaw.persona_agent_sync import (
     assert_persona_agent_tool_profile,
 )
 from integrations.openclaw.persona_memory_bridge import normalize_retrieval_hits
+from services.service_token_file import configured_service_token
+from services.service_token_file import configured_service_token
 from integrations.openclaw.persona_ooda_runtime import CycleProposal
 
 LOGGER = logging.getLogger("pantheon.persona_tool_broker")
@@ -83,6 +85,25 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def adapter_memory_credential() -> str:
+    """Host-issued principal file first (survives recreation); deploy env only as legacy fallback.
+
+    Read per call so the hourly-rotated file is always current. A configured but
+    unreadable file raises RuntimeError and never falls back to a stale env value.
+    """
+    if os.getenv("PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE", "").strip():
+        return configured_service_token("PANTHEON_OPENCLAW_MEMORY_TOKEN")
+    return os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", "")
+
+
+def adapter_memory_actor_id(default: str) -> str:
+    return (os.getenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ID") or "").strip() or default
+
+
+def adapter_memory_actor_roles(default: str) -> str:
+    return (os.getenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES") or "").strip() or default
+
+
 @dataclass(frozen=True)
 class BrokerConfig:
     enabled: bool
@@ -106,7 +127,7 @@ class BrokerConfig:
         roles = tuple(
             part.strip()
             for part in (os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ROLES")
-                         or os.getenv("PANTHEON_MEMORY_ACTOR_ROLES") or "operator").split(",")
+                         or adapter_memory_actor_roles(os.getenv("PANTHEON_MEMORY_ACTOR_ROLES") or "operator")).split(",")
             if part.strip()
         ) or ("operator",)
         return cls(
@@ -115,7 +136,7 @@ class BrokerConfig:
             memory_api_url=(os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or "").strip(),
             memory_auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", ""),
             memory_actor_id=(os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ID")
-                             or os.getenv("PANTHEON_MEMORY_ACTOR_ID") or "persona-tool-broker"),
+                             or adapter_memory_actor_id(os.getenv("PANTHEON_MEMORY_ACTOR_ID") or "persona-tool-broker")),
             memory_actor_roles=roles,
             run_ttl_seconds=max(60, _env_int("PERSONA_TOOL_BROKER_RUN_TTL_SECONDS", 3600)),
             registry_ttl_seconds=float(max(0, _env_int("PERSONA_TOOL_BROKER_REGISTRY_TTL_SECONDS", 10))),
@@ -534,8 +555,12 @@ def http_memory_get(config: BrokerConfig, *, timeout_seconds: float = 8.0) -> Me
             raise MemoryCallError(503, "memory_api_unconfigured")
         url = f"{config.memory_api_url.rstrip('/')}{path}?{urllib.parse.urlencode(dict(params), doseq=True)}"
         headers = {"Accept": "application/json"}
-        if config.memory_auth_token:
-            headers["Authorization"] = f"Bearer {config.memory_auth_token}"
+        try:
+            credential = config.memory_auth_token or adapter_memory_credential()
+        except RuntimeError:
+            raise MemoryCallError(503, "memory_credential_unavailable")
+        if credential:
+            headers["Authorization"] = f"Bearer {credential}"
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers, method="GET"), timeout=timeout_seconds) as resp:
                 return json.loads(resp.read().decode("utf-8") or "{}")
