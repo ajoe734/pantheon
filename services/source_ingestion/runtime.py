@@ -132,6 +132,7 @@ from .api_models import (
     TriggerIngestJobRequest,
 )
 from .pipeline import IngestDistillationJobQueue, IngestPipelineService
+from .snapshot_universe import SnapshotUniverse
 from .strategy_seed_store import StrategySpecSeedStore
 
 
@@ -341,6 +342,12 @@ class SourceIngestionRuntime:
             self.LATEST_MARKET_SNAPSHOT_PATH,
             max_closes=self.MARKET_SNAPSHOT_MAX_CLOSES,
         )
+        self.snapshot_universe = SnapshotUniverse(
+            self.latest_market_snapshot_store,
+            state_path=self.LATEST_MARKET_SNAPSHOT_PATH.with_name(self.LATEST_MARKET_SNAPSHOT_PATH.name + ".universe.json"),
+            storage_root=self.MARKET_DATA_STORAGE_ROOT,
+            connector_market=self._connector_market_for_snapshot,
+        )
         self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()
@@ -402,6 +409,13 @@ class SourceIngestionRuntime:
                 status_code=403,
                 detail=f"service authorization is invalid for {operation}",
             )
+    def _connector_market_for_snapshot(self, connector_id: str) -> str | None:
+        connector = self.manager.get_connector(connector_id)
+        meta = getattr(connector, "metadata", None)
+        if isinstance(meta, dict) and meta.get("market"):
+            return str(meta["market"]).strip()
+        return None
+
     def _is_controller_owned(self, connector: SourceConnector | None) -> bool:
         if connector is None:
             return False
