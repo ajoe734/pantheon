@@ -831,7 +831,7 @@
     "max_concurrent_per_account": {
       "claude1": 6,
       "claude2": 1,
-      "antigravity": 4,
+      "antigravity": 6,
       "antigravity2": 4,
       "codex1": 7,
       "lupinchen": 1,

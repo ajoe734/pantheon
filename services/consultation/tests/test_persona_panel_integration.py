@@ -123,7 +123,8 @@ class _ProviderHandler(BaseHTTPRequestHandler):
                 "event_type": "persona_contribution",
                 "event_content": {
                     "claims": [{"claim": f"{persona_id} position: {rec}", "evidence_refs": refs}],
-                    "summary_evidence_refs": refs},
+                    "summary_evidence_refs": refs,
+                    "interpretation": {"mode": "fallback", "reason": "broker_disabled", "citations": []}},
                 "evidence": [
                     {
                         "id": item_id,

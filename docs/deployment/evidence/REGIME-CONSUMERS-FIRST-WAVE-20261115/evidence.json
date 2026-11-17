@@ -1,0 +1,21 @@
+{
+  "task_id": "REGIME-CONSUMERS-FIRST-WAVE-20261115",
+  "design": "docs/04/pantheon_regime_state_2026-11-14/SD_REGIME_STATE_ENGINE_2026-11-14.md R13",
+  "base": "ba4fd998c (dev)",
+  "scope_note": "Source-only delivery. Tests run the real registry FastAPI app (TestClient) with its own strict JWT authentication and in-memory store; no hosted run.",
+  "commands": [
+    {"cmd": "pytest -q services/persona/test_persona_cycle_controller.py services/persona/test_consult_triggers.py services/persona/test_regime_reference_removal.py services/persona/test_cron_ooda_closure.py", "result": "84 passed"},
+    {"cmd": "pytest -q services/persona services/registry/regime (ignoring the two files above's controller and live smoke)", "result": "432 passed, 1 skipped"},
+    {"cmd": "PYTHONPATH=services/runtime_manager python -m unittest services/control-plane/ooda/test_paper_loop_packet.py", "result": "5 tests OK"}
+  ],
+  "acceptance": {
+    "1": "test_observe_evaluates_then_reads_active_record_and_case_file_carries_regime_tag: POST evaluate, GET active, orient.regime_state_ref == regime-state://<stored regime_id>",
+    "2": "same test: case file subject.regime_tag == record regime_class, lesson_query tags contain regime:<class>; unavailable cases keep the tag empty",
+    "3": "test_macro_regime_shift_* (consult_triggers) and test_cycle_requests_macro_regime_shift_consultation_only_on_a_change (fire and no fire)",
+    "4": "test_regime_reference_removal.py plus no-regime assertions in test_paper_loop_packet and test_cron_ooda_closure; ooda_cycle_runtime and the other two literals removed",
+    "5": "test_registry_refusal_or_missing_record_runs_the_cycle_with_an_explicit_reason and test_unconfigured_or_failing_registry_never_blocks_or_invents_a_regime",
+    "6": "cycle.regime_interpretation lives in the packet with written_to_regime_state=false; the consumer issues only the evaluate POST and the test checks the stored record is unchanged"
+  },
+  "known_environment_issue": "paper_loop_packet.py inserts services/execution/runtime-manager into sys.path, a directory that no longer exists on dev (runtime_binding is in services/runtime_manager), and the repo conftest strips sys.path, so that test file does not collect under pytest on dev before or after this change; it was run through unittest with PYTHONPATH. Not changed here.",
+  "credentials": "none recorded"
+}

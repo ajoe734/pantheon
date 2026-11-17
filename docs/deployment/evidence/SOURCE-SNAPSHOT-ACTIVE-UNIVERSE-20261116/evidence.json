@@ -1,0 +1,34 @@
+{
+  "task_id": "SOURCE-SNAPSHOT-ACTIVE-UNIVERSE-20261116",
+  "kind": "functional_only_no_hosted_access",
+  "design": {
+    "module": "services/source_ingestion/snapshot_universe.py (SnapshotUniverse); reuses UniverseTier, UniverseTransition, GOVERNED_ACTIVE_TW_PAPER_PERSONAS, SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS from active_universe.py",
+    "activation": "Opt-in and fail-safe: until POST /api/source-ingest/snapshots/universe/sweep creates the membership state file (<journal>.universe.json) the projection behaves exactly as today (all symbols admitted, journal_stats.snapshot_universe.state=missing, reason=membership_state_missing). Existing tests rely on the all-symbol projection, so default-on was rejected.",
+    "write_path": "LatestMarketSnapshotStore.admission hook filters the daily projection only; MarketDataStorageWriter and pipeline.py are untouched, so governed partitions are unchanged.",
+    "read_path": "GET /api/source-ingest/snapshots/latest (daily) -> SnapshotUniverse.snapshot_for_request: member hit refreshes last_requested_date; non-member is seeded from raw/*/tw_price_daily/date=*/ partitions through LatestMarketSnapshotStore._point_from_record and append_normalized_records (same merge path, per-record ingest_run_id from the partition file name, connector market via manager), observed_at = newest partition mtime.",
+    "removal": "withdraw_symbols appends the existing withdrawal tombstone (journal line encoding unchanged, deployed reader already understands it, no rollback ordering). UniverseTransition(candidate->archive) is recorded in the state file.",
+    "trading_day_measure": "weekdays (no exchange calendar in the repo); a holiday makes a member expire at most a few calendar days later than 10 exchange sessions never earlier than 10 weekdays.",
+    "operator_step": "After deploy the operator acceptance task must call POST /api/source-ingest/snapshots/universe/sweep once to adopt membership and shrink the journal; compaction then removes the tombstoned keys."
+  },
+  "acceptance_proof": {
+    "1_partitions_unchanged": "test_partitions_identical_and_projection_only_keeps_members (byte equal store tree with and without universe)",
+    "2_membership_and_restart": "test_membership_survives_restart_and_request_refreshes_it; test_governed_and_env_symbols_are_always_members",
+    "3_byte_identity": "test_first_request_seeds_byte_identical_snapshot_within_two_seconds (60 points incl. provisional collector_close points; to_public_dict JSON equals all-symbol projection)",
+    "4_first_request_time": {
+      "test_assert": "< 2.0 s with 60 daily partitions",
+      "measured_17430_rows_per_partition_60_partitions": {"first_request_seconds": 0.396, "points": 60, "files_read": 60},
+      "measured_1501_symbols": {"first_request_seconds": 0.057}
+    },
+    "5_idle_leave_and_reseed": "test_idle_member_leaves_with_transition_and_reseeds_identically",
+    "6_missing_or_unreadable_state": "test_missing_or_unreadable_state_never_drops_snapshots_and_reports_reason",
+    "7_always_members": "test_governed_and_env_symbols_are_always_members (2330/0050/2317 governed personas used by hosted_lifecycle_probe, agora readiness and persona runtimes; env symbols); sweep seeds them if absent",
+    "9_suite": "scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300: ran 2153 (skipped 22) of 2153 collected, all shards exit 0; new tests ~3 s total",
+    "10_existing_tests": "none changed, weakened or deleted"
+  },
+  "measurement_8_real_shaped_journal_local_not_hosted": {
+    "shape": "1,501 symbols x 60 daily points, collector_close lineage on the last 10 points, written by the real pipeline/writer; 3 governed statics absent from partitions",
+    "before": {"live_keys": 1501, "journal_bytes": 71587113, "journal_lines": 3002, "resident_bytes": 119209984},
+    "after_activation_and_compaction": {"live_keys": 0, "journal_bytes": 0, "journal_lines": 0, "resident_bytes": 117481472},
+    "note": "Only the single requested symbol is re-seeded on demand (60 points, one journal line ~71 KB). Hosted 17,430 keys / 466 MB / 6.6 GiB RSS must be measured by the operator acceptance task; resident bytes here are process RSS dominated by the Python/test harness, so the per-key projection is the meaningful figure (about 47.7 KB per key before)."
+  }
+}

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from services.control_plane.bff.tests.test_persona_pool_publish_route import world  # noqa: F401  (fixture)
+
 from services.control_plane.bff.persona_pool_publisher import (
     InMemoryPublishRecords,
     OwnerPoolReader,
@@ -98,3 +100,111 @@ def test_default_publish_records_are_durable_files_not_process_memory(tmp_path):
     first = build_publish_records(env)
     assert first.compare_and_set("t:p", None, {"published": {"1": {"status": "published"}}})[0]
     assert build_publish_records(env).get("t:p") == {"published": {"1": {"status": "published"}}}
+
+
+# ---------------------------------------------------------------------------
+# A pool with no live member keeps operating (POOL-EMPTY-POOL-OPERATION-20261116).
+# Real: pool store + decide, baseline resolver on gate-minted proofs, admission replay on recorded TWSE
+# bars, the publisher, coordinator and deployment dispatch. Registry reads are the World's owner boundary.
+# ---------------------------------------------------------------------------
+def _install_entry(world, entry):
+    import copy
+    world.entries[entry["registry_id"]] = entry
+    world.transport.objects[("registry", f"/api/registry/strategy-artifacts/{entry['registry_id']}")] = {
+        "entry": copy.deepcopy(entry), "deployment_stage": "none"}
+
+
+def _buy_candidate(base):
+    """A gate-minted entry whose strategy artifact is a distinct always-long variant of ``base``."""
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    entry = copy.deepcopy(base)
+    artifact = entry["metadata"]["strategy_artifact"]
+    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+    artifact["parameters"]["zero_momentum_action"] = "BUY"
+    artifact.update(artifact_id="artifact-buy-variant", strategy_id="strategy-buy-variant")
+    entry["checksum"] = strategy_artifact_checksum(artifact)
+    entry["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = entry["checksum"]
+    entry.update(registry_id=artifact["artifact_id"], version=artifact["version"])
+    return entry
+
+
+def test_empty_pool_end_to_end_remove_publish_demand_admit_publish(world, monkeypatch, tmp_path):
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import (
+        H, PATH, PERSONA, TENANT, _client, _genuine_trial_entry, _live)
+    from services.control_plane.persona.persona_strategy_pool import PoolDecisionRequest, PoolMember
+    from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+    from services.persona.pool_autonomy_cycle import decide as cycle_decide
+    from services.research.tests.test_pool_admission import recorded_dataset
+    import pool_policy
+
+    member_entry = _genuine_trial_entry()
+    candidate_entry = _buy_candidate(member_entry)
+    # The recorded momentum rule (the original member's own logic) does not clear admission on next-open fills.
+    import copy
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    weak_entry = copy.deepcopy(member_entry)
+    weak_entry["metadata"]["strategy_artifact"].update(artifact_id="artifact-weak", strategy_id="strategy-weak")
+    weak_entry["checksum"] = strategy_artifact_checksum(weak_entry["metadata"]["strategy_artifact"])
+    weak_entry["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = weak_entry["checksum"]
+    weak_entry.update(registry_id="artifact-weak", version=weak_entry["metadata"]["strategy_artifact"]["version"])
+    for entry in (member_entry, candidate_entry, weak_entry):
+        _install_entry(world, entry)
+    client = _client(world, monkeypatch, tmp_path)
+    ref, cand, weak = member_entry["registry_id"], candidate_entry["registry_id"], weak_entry["registry_id"]
+
+    # 1. one live member, published
+    live_member = PoolMember(artifact_ref=ref, checksum=member_entry["checksum"], stage="active", risk_weight=1.0,
+                             baseline_ref=member_entry["approval_decision_id"], joined_at="2026-10-01T00:00:00Z")
+    world.append([live_member], 0)
+    assert client.post(PATH, json={}, headers=H).status_code == 200
+    # 2. the only live member is removed; the empty version publishes through the existing path and keeps the runtime
+    removed = live_member.model_copy(update={"stage": "removed", "risk_weight": 0,
+        "removed_at": "2026-11-16T00:00:00Z", "removal_reason": "baseline_not_revalidated_next_open"})
+    world.append([removed], 1)
+    before = _live(world)[0]
+    empty = client.post(PATH, json={}, headers=H)
+    assert empty.status_code == 200 and empty.json()["data"]["status"] == "published", empty.text
+    assert _live(world)[0]["runtime_id"] == before["runtime_id"]
+    pool = world.pool.current(PERSONA, TENANT)
+    assert pool["pool_version"] == 2 and all(m["stage"] == "removed" for m in pool["members"])
+    # 3. idle observations are known and zero; health reports no live members, not an error
+    window = pool_policy.load_policy().health_window_days
+    days = [f"2026-10-{d:02d}" for d in range(1, 29)][-window:]
+    observations = idle_pool_observations(days, source_ref="test:paper-runtime-risk-owner", gross_limit=100, drawdown_limit=.1)
+    health = world.pool.health(PERSONA, TENANT, {}, observations)
+    assert health["gross_utilisation"] == {"status": "known", "value": 0.0, "reason": None}
+    assert health["drawdown_utilisation"]["value"] == 0.0 and health["idle_day_share"]["value"] == 1.0
+    assert health["effective_bets"]["reason"] == "no_live_members"
+    # 4. the daily cycle opens one demand, and not a second while it is open
+    first = cycle_decide(pool=pool, health=health, open_demands=[], candidates=[], tried=[], now_day="2026-11-16")
+    assert first["kind"] == "open_demand" and first["short_measure"] == "no_live_members"
+    again = cycle_decide(pool=pool, health=health, open_demands=[{"status": "open", "short_measure": "no_live_members"}],
+                         candidates=[], tried=[], now_day="2026-11-17")
+    assert again["kind"] == "no_action"
+    # 5. a candidate that does not clear the bar on its own is refused (nothing waived because the pool is idle)
+    books = {cand: _book(candidate_entry["checksum"]), weak: _book(weak_entry["checksum"])}
+    common = {"books": books, "dataset": recorded_dataset(), "observations": observations}
+    refused = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(expected_version=2, execution_context="paper",
+        action="admit", candidate={"artifact_ref": weak, "checksum": weak_entry["checksum"]}, **common), actor_id="op-1")
+    assert refused["decision"]["status"] == "refused", refused["decision"]
+    assert "candidate_oos_sharpe_below_persona_trial_threshold" in "; ".join(refused["decision"]["reasons"])
+    assert refused["decision"]["backtest"]["pool_idle"] is True
+    # 6. a gate-passing candidate inside the recorded universe is admitted as trial and published
+    admitted = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(expected_version=3, execution_context="paper",
+        action="admit", candidate={"artifact_ref": cand, "checksum": candidate_entry["checksum"]}, **common), actor_id="op-1")
+    assert admitted["decision"]["status"] == "applied", admitted["decision"]["reasons"]
+    trial = [m for m in admitted["members"] if m["stage"] != "removed"]
+    assert len(trial) == 1 and trial[0]["artifact_ref"] == cand and trial[0]["stage"] == "trial"
+    assert admitted["decision"]["approved_universe"] == ["2330"]
+    published = client.post(PATH, json={}, headers=H)
+    assert published.status_code == 200 and published.json()["data"]["pool_version"] == 4, published.text
+    assert _live(world)[0]["artifact_id"] == published.json()["data"]["envelope_artifact_id"]
+
+
+def _book(checksum):
+    from datetime import date, timedelta
+    return {"checksum": checksum, "source_ref": "test:virtual-book-owner", "since_inception": True,
+            "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional",
+            "dates": [(date(2026, 10, 1) + timedelta(days=i)).isoformat() for i in range(30)],
+            "returns": [.002, -.0005] * 15}

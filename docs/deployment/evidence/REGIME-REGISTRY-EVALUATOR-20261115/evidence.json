@@ -1,0 +1,42 @@
+{
+  "task_id": "REGIME-REGISTRY-EVALUATOR-20261115",
+  "hosted_behavior_claimed": false,
+  "scope": "Source and test change only: registry regime evaluator module, two tables, four routes, registry dependency lock, compose read-only governed mount. No deployment, no hosted run, no model fitted on Taiwan history.",
+  "captured_at": "2026-11-15T15:50:58.718586+00:00",
+  "decisions_recorded_before_coding": {
+    "C1_governed_data_read": "The registry reads governed rows itself, in process, through services.research.regime.features.load_governed_observations (every input passes feature_catalogue.read_feature_series, point in time), from the source-ingestion normalized store. docker-compose mounts the existing source-ingest-data volume read-only into the registry at /data/source-ingest (REGISTRY_REGIME_STORE_ROOT). The registry never writes that volume. Rejected: caller-supplied observations (the daily cycle would have to ship years of rows per call).",
+    "K5_dependencies": "Statistical dependencies run in the registry image, not a separate worker. Measured with venvs built from the lock files on python 3.12 (site-packages, du -sm): current registry lock 74 MB; registry lock plus numpy 2.4.6, pandas 3.0.6, scipy 1.17.1, scikit-learn 1.9.1, statsmodels 0.15.0 and their dependencies 485 MB; difference +411 MB (about 6.5x the site-packages). Reasons: one process boundary keeps idempotent evaluate, the lifecycle writes and the model reads in one place and testable without a queue; the registry image already COPYs the repo, so the vendored jumpmodels and the research features module are present. The separate-worker fallback stays open if the image size becomes a deployment problem. ruptures is not needed (audit use in research only).",
+    "dependency_lock": "dependencies/locks/services-registry.txt was edited by hand at the versions pinned in services-research.txt because uv is not available to the worker; the header says so. A venv installed with plain pip from that file imports services.registry.main and the evaluator, vendored jumpmodels included (checked)."
+  },
+  "acceptance": {
+    "1": "decisions above; measurement commands: python3 -m venv base/plus; pip install --no-deps -r services-registry.txt (+ extras); du -sm lib/python3.12/site-packages -> 74 and 485.",
+    "2": "regime/store.py: RegimeStore.postgres creates registry.market_state and registry.regime_states through PostgresJsonOwnerStore (verified on a real postgres:16-alpine container: test_postgres_backend_creates_both_tables_and_round_trips passed with REGIME_TEST_POSTGRES_DSN set; also evaluate/lifecycle over that Postgres store). Writes exist only as evaluator_commit and evaluator_invalidate. test_routes.test_only_the_evaluator_route_mutates_regime_tables: openapi shows exactly one mutating regime route; an AST scan of services/registry finds no caller of the write methods outside evaluator.py/store.py; test_store.test_write_surface_is_exactly_the_evaluator_methods.",
+    "3": "test_evaluate_is_idempotent_and_reads_governed_data_once, test_incomplete_session_stores_nothing, test_second_evaluate_returns_stored_result_and_gets_never_write (a second POST with the loader forbidden returns the stored result; stores are identical after every GET), test_get_before_evaluate_serves_nothing_and_does_not_compute.",
+    "4": "test_every_axis_reports_filtered_state_and_no_smoothed_value: each axis and horizon stores state, probability vector, sessions in state, expected durations, transition matrix, last switch session, model version; the stored JSON contains no 'smoothed'. Inference is the research models' filtered/online path.",
+    "5": "profiles.py + evaluator.derive_record implement R8 (axis-to-class map, confidence, regime_transition within 5 sessions, mixed below 0.5, schema low-confidence rule, regime_scores sum check, feature_snapshot layout with axes). Every record in every test is validated against services/registry-core/decision-domain/regime_state.schema.json (Draft7Validator) before it is stored, and again in the tests. test_axis_state_maps_to_regime_class (7 states), test_recent_switch_is_regime_transition_and_no_state_at_half_is_mixed, test_feature_snapshot_layout, test_invalid_scores_fail_the_record.",
+    "6": "test_candidate_records_are_proposed_and_never_served, test_candidate_models_store_proposed_and_serve_nothing (HTTP), test_approved_record_moves_validated_active_then_superseded (lifecycle history validated->active, then superseded with superseded_by), test_late_backfill_never_displaces_a_later_active_record, test_revised_inputs_invalidate_and_recompute_when_verified.",
+    "7": "test_missing_primary_axis_gives_no_record_and_missing_secondary_is_recorded, test_axis_without_model_is_recorded_unavailable (no probabilities key on an unavailable axis; trend_strength omitted rather than defaulted).",
+    "8": "routes use _authenticate_registry_write / _strategy_spec_read_scope / _authenticate_registry_read from service.py and the X-Tenant-Id rule; one mutating route only. test_routes.py: evaluate and read over real stored rows through TestClient in strict auth mode with real model_artifact and strategy_spec entries registered through the registry's own routes, tenant scoping, 401 anonymous, 403 reader on POST, 409/422 refusals store nothing.",
+    "9": "this file; no credential. Test JWT secrets are throwaway strings inside the test modules."
+  },
+  "commands": [
+    "/tmp/lock-venv/bin/python -m pytest services/registry/regime -q   (venv: research lock + pytest, python 3.11)",
+    "REGIME_TEST_POSTGRES_DSN=<local postgres:16-alpine> pytest services/registry/regime/tests/test_store.py -q",
+    "/tmp/lock-venv/bin/python -m pytest services/registry -q --ignore=regime --ignore=test_owner_durability_real_process.py --ignore=test_alpha_template_seed_postgres.py",
+    "pytest tests/deployment/test_production_release.py -k 'lock or registry or compose or crypto'"
+  ],
+  "results": {
+    "regime_tests": "40 passed, 1 skipped, 1 warning in 30.79s",
+    "postgres_store_tests": "7 passed with a real postgres:16-alpine container (container removed afterwards)",
+    "registry_suite_before_this_task_files": "526 passed, 22 skipped, 4 failed: test_deployment_view* x3 and test_registry_auth_wiring deployment_view_fails_closed_503 all fail with ModuleNotFoundError: No module named 'flask' (services/runtime-manager import) in the lock venv; unrelated to this change, not re-run in an environment that has flask.",
+    "release_checks": "tests/deployment/test_production_release.py -k 'lock or registry or compose or crypto': 7 passed"
+  },
+  "known_limits": [
+    "Model artifacts are read from synthetic-data fits in tests; no model has been fitted on Taiwan history (recorded history is too short, see REGIME-RESEARCH-CLASSIFIER-20261115 evidence), so no hosted record exists.",
+    "Finding for the research task: services/research/regime/registration.py approves with a caller-supplied 'approver', which the registry rejects with 400 'Caller-supplied approver is retired; use a Governance decision reference' when the real approval path is used. Registration of candidates works; approval needs a Governance decision reference. Not changed here (outside this task's scope); the HTTP tests here use the existing Governance approval transport double (advance_registry_http) for the approval step.",
+    "Revised-input detection runs only when the caller passes verify_inputs=true; the default call never re-reads governed data (acceptance 3).",
+    "Models are selected market-wide (not tenant-filtered); strategy records are tenant-scoped by the strategy spec's owner tenant.",
+    "The Postgres commit serialises concurrent evaluators with an advisory transaction lock; the individual puts are not one transaction.",
+    "All numeric thresholds (5-session transition window, 0.5 mixed, 0.3 low confidence, family defaults, 20-session short holding horizon) are design proposals to be calibrated."
+  ]
+}

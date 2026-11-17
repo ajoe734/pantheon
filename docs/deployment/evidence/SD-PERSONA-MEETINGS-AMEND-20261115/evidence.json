@@ -1,0 +1,29 @@
+{
+  "task_id": "SD-PERSONA-MEETINGS-AMEND-20261115",
+  "artifact": "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md",
+  "base": "32fc7da61",
+  "execute_plans_base": "87fc32ab8",
+  "hosted_behavior_claimed": false,
+  "design_only": true,
+  "verification": {
+    "operator_answer": "line 9711 uuid 186331cd-e73d-4208-b569-8e54c1c3bdf7 2026-11-15T12:55:17.032Z verified verbatim; line 9354 uuid ebb575da-43ce-483e-9c1f-f1fcf6ae684e verified",
+    "code_citations": "managementRouteManifest.ts :156 :179 :227, src/App.tsx :209 :260 :341 :344, HumanInboxPage in oversight/_core.tsx:1372, ConsultRulesPage.tsx, PersonaDetail.tsx tabs, CommitteePage.tsx resolved on execute-plans origin/dev 87fc32ab8",
+    "coordinator_draft_c010f5781": "not reachable from worker checkout or coordination root; section 11 authored from the task brief and transcript, not diffed against that draft",
+    "unverified": [
+      "crawl workflow name taken as the existing Management hosted acceptance workflow; no crawl run",
+      "Agora servant evidence taken from FE-AGORA-SERVANT-STATUS-001 summary only"
+    ]
+  },
+  "open_operator_decisions": "section 11.5: confirm Agora participation reading A1-A6",
+  "section_12_verification": {
+    "head_verified": "073d7a6c0 (fast-forwarded)",
+    "quotes": "lines 9900, 9948, 9997 (queued_command attachment, uuid 2d6e2176-8708-4fcd-a9af-4f8f15678733), 10088 verified verbatim with uuid and timestamp",
+    "citations_resolved": "A4, B2 (k >= 10 at line 65, opt-in), B3, services/agora/service.py (AgoraInsight), decisions.py, services/research/imitation (CorrectionTrace, PreferenceExample), services/evaluation exist on base; no human_actual/decision-lock code exists",
+    "corrected_in_place": [
+      "CANONICAL_DOCUMENT_MAP has no operator-outranks-design rule: wording corrected",
+      "2026-09-29 positioning had no source: marked uncited"
+    ],
+    "numbers": "all marked coordinator proposals",
+    "s11_5": "resolved by section 12"
+  }
+}

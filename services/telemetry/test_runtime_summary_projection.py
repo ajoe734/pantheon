@@ -4586,3 +4586,66 @@ def test_fill_rate_submission_cohort_excludes_cross_quarter_fills(tmp_path):
     assert result["fill_rate"] == 0.0
     assert result["fill_rate_details"]["denominator"] == 10
     assert all("paper_fill_simulated" not in event_id for event_id in result["fill_rate_details"]["sources"][0]["event_ids"])
+
+
+# --- runtime_state_snapshot (PAPER-RUNTIME-STATE-SNAPSHOT-ON-CHANGE-20261117) ---
+
+_STATE_SEQUENCE = [
+    ("2026-11-02T00:00:00Z", {"status": "marks_unavailable", "attempted_at": "2026-11-02T00:00:00Z", "fill_count": 1},
+     [{"member_id": "m1", "cash": 100.0}]),
+    ("2026-11-03T00:00:00Z", {"status": "valued", "attempted_at": "2026-11-03T00:00:00Z", "fill_count": 2},
+     [{"member_id": "m1", "cash": 90.0}]),
+    ("2026-11-04T00:00:00Z", {"status": "invalid_ledger", "attempted_at": "2026-11-04T00:00:00Z", "fill_count": 2},
+     [{"member_id": "m1", "cash": 90.0}, {"member_id": "m2", "cash": 5.0}]),
+]
+
+
+def _state_event(event_type, idx, created_at, perf, books):
+    event = _event(event_type, created_at=created_at)
+    event["event_id"] = f"evt-state-{idx}"
+    event["metadata"]["performance_telemetry"] = dict(perf)
+    event["metadata"]["member_virtual_books"] = [dict(b) for b in books]
+    return event
+
+
+def _fold(tmp_path, name, events):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / name))
+    summary = None
+    for event in events:
+        summary = store.project_event(event)
+    return summary
+
+
+_COMPARED_KEYS = ("quarter_equity_observations", "member_virtual_books", "ledger_fill_count")
+
+
+def _state_events(event_type):
+    return [_state_event(event_type, i, *row) for i, row in enumerate(_STATE_SEQUENCE)]
+
+
+def test_snapshot_and_legacy_heartbeat_shapes_produce_identical_summary(tmp_path):
+    old = _fold(tmp_path, "old.json", _state_events("heartbeat"))
+    new = _fold(tmp_path, "new.json", _state_events("runtime_state_snapshot"))
+    assert old["member_virtual_books"] == new["member_virtual_books"] and new["member_virtual_books"]
+    for key in _COMPARED_KEYS:
+        assert old.get(key) == new.get(key), key
+    assert [o["reason"] for o in new["quarter_equity_observations"]] == ["marks_unavailable", "invalid_ledger"]
+
+
+def test_summary_keeps_last_state_without_new_snapshot_and_survives_heartbeat_retention(tmp_path):
+    snapshots = _state_events("runtime_state_snapshot")
+    liveness = []
+    for i in range(5):
+        hb = _event("heartbeat", created_at=f"2026-11-0{i + 2}T12:00:00Z")
+        hb["event_id"] = f"evt-live-{i}"
+        liveness.append(hb)
+    full = sorted(snapshots + liveness, key=lambda e: e["created_at"])
+    # Retention removed every heartbeat; liveness-only heartbeats carry no state.
+    retained = [e for e in full if e["event_type"] != "heartbeat"]
+    with_hb = _fold(tmp_path, "full.json", full)
+    without_hb = _fold(tmp_path, "retained.json", retained)
+    for key in _COMPARED_KEYS:
+        assert with_hb.get(key) == without_hb.get(key), key
+    assert without_hb["member_virtual_books"][-1]["member_id"] == "m2"
+    # A later liveness-only heartbeat does not erase state.
+    assert with_hb["member_virtual_books"] == without_hb["member_virtual_books"]

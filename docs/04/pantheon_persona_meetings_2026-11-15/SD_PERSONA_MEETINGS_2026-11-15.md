@@ -1,6 +1,6 @@
 # SD-PERSONA-MEETINGS-20261115 — persona meetings beyond gate reviews: evolution direction, optimisation, new strategies, post-mortem, regime, quarterly review
 
-- Status: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 left open. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
+- Status: coordinator draft (d668c636a, base `f5e860882`), citations re-verified by Claude on `137ebeb20`; §4 licence/activity re-check via GitHub API was not performed (no network verification in this pass) and stays *(unverified)*; §9 answered 2026-11-15 (§11.1); §11 added by amendment. Original base `f5e860882` (origin/dev, 2026-11-15). Design only; `hosted_behavior_claimed: false`.
 - Every numeric value is a coordinator proposal unless a citation says otherwise.
 - Citation verification (Claude, base `137ebeb20`): line numbers in §2 and §3 re-resolved against the delivery base; corrections applied in place. Items not re-opened are marked *(unverified)* where noted.
 - Rows marked **plan** restate the original plan; rows marked **added** are coordinator additions filling what the plan left open.
@@ -162,3 +162,175 @@ The H10 interpretation turn (`PANEL-FULL-INTERPRETATIONS-R2-20261114`) is reused
 | K3 | Meetings bypass gates | M5: proposals only through existing entry points and gates |
 | K4 | Private memory leaks across personas | interpretation turn limited to `scope:committee`; rounds deny-all; only minutes are shared |
 | K5 | Too few enrolled personas | cross-persona meetings need at least 2 trading personas; otherwise recorded as `insufficient_participants` |
+
+## 11. Amendment 2026-11-15: operator answers, Agora participation, Management pages
+
+Design only; `hosted_behavior_claimed: false`. Citations in §11.2 and §11.3 were resolved against execute-plans `origin/dev` at `87fc32ab8`. The coordinator draft commit `c010f5781` named in the task brief was not reachable from the worker checkout or the coordination root, so this section was authored from the task brief and the transcript, not verified line-by-line against that draft.
+
+### 11.1 Operator answers (verbatim) and mapping
+
+Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl`, line 9711, 2026-11-15T12:55:17.032Z, uuid `186331cd-e73d-4208-b569-8e54c1c3bdf7`:
+
+> 1. 可以
+> 2. 可以
+> 3. 可以 還有agora的也要可以
+> 4. 可以
+> 5. 擬管理系統也要有相對應的管理頁面設計
+
+The origin request is line 9354 (uuid `ebb575da-43ce-483e-9c1f-f1fcf6ae684e`, quoted in §1).
+
+| Answer | Maps to | Effect on the design |
+|---|---|---|
+| 1. 可以 | §9 item 1 | Six meeting types and cadence of §6 accepted as written. |
+| 2. 可以 | §9 item 2 | Round 2 anonymised cross-visibility accepted for deliberative meetings; gate panels stay independent (M1, M3). |
+| 3. 可以 + Agora | §9 item 3 | Peer trading personas attend another persona's MT-1/MT-2 (M4 unchanged). The added clause is "Agora ones should also be allowed"; §11.2 gives the coordinator's reading of it. |
+| 4. 可以 | §9 item 4 | No vote; chair sponsors; dissent recorded (M4). |
+| 5. | new request | Management needs matching page design: §11.3. |
+
+No decision is added by this mapping; M1–M11 are unchanged.
+
+### 11.2 Agora participation (coordinator interpretation)
+
+**The operator wrote only 「還有agora的也要可以」. The rules below are a coordinator interpretation of that clause and need operator confirmation (§11.5).** Evidence for the Agora side: Agora has a committee page (`src/agora/pages/learning/CommitteePage.tsx`, route `committee`, `src/App.tsx:344`), a strategy workshop (`strategy-workshop`, `src/App.tsx:341`) and a per-user 交易僕人 servant status (`FE-AGORA-SERVANT-STATUS-001` evidence).
+
+| # | Rule |
+|---|---|
+| A1 | Agora advisor personas may attend institutional meetings (MT-1…MT-6) as participants, subject to the M9 budget of 5 participants. They write positions like any participant and are labelled by role and style in round 2. |
+| A2 | A trader in Agora may convene a meeting from the strategy workshop. The only private persona that may attend is that user's own private servant, and only in a meeting that user convened. A private servant never attends a meeting convened by another user or by an institution. |
+| A3 | Private memory of a servant never enters a round (K4); only `scope:committee` material reaches the interpretation turn, and the minutes are the only cross-persona carrier. |
+| A4 | A proposal with no trading-persona sponsor goes through Agora's existing candidate decision flow, not through a new route. A proposal with a trading-persona sponsor follows M5. |
+| A5 | Agora never trades, never moves capital, never writes canonical state from a meeting. A meeting executes nothing (M5). |
+| A6 | Missing roster, missing servant or missing data fails closed with a recorded reason (`insufficient_participants`, `servant_absent`, `data_unavailable`). |
+
+### 11.3 Management pages (design)
+
+Routes are `/management/...` per `src/management/navigation/managementRouteManifest.ts` on `origin/dev`. Existing anchors: sidebar group `groups.researchAndEvolution` (`:179`, items experiments, evolution-journal, evolution, alpha-factory); `human-inbox` (`:156`, `src/App.tsx:209`, page `src/management/pages/oversight/_core.tsx:1372`); `consult-rules` (`:227`, page `src/management/pages/governance/ConsultRulesPage.tsx`); persona detail route `personas/:id` (`src/App.tsx:260`) with tabs built in `src/management/pages/PersonaDetail.tsx` (values `dailyCycle`, `memory`, `tradeJournal`, `activity`, …). The BFF only forwards and shapes reads and keeps no meeting store; the meeting record lives in the consultation service.
+
+| Page | Route | Content |
+|---|---|---|
+| 會議中心 Meeting Center (new item in `researchAndEvolution`) | `/management/meetings` | Four tabs via `?tab=`: **upcoming/open** (triggered, convened, in round), **history** (closed, with outcome), **proposals** (every proposal with sponsor and downstream status link), **budget and refusals** (per-persona weekly count vs M9 limit, recorded refusals with reason). Read-only except 召開會議. |
+| 會議詳情 Meeting detail | `/management/meetings/:id` | Type (MT-1…MT-6 or gate panel), agenda, roster including Agora attendees and servant flag, case-file facts, round 1 positions with confidence, round 2 responses (names visible to operators, labels as seen by participants shown beside), chair synthesis, tally (non-binding), dissent memos, proposals with downstream status, per-participant writeback status. |
+| Persona 會議 tab | `/management/personas/:id?tab=meetings` | That persona's meetings as owner/participant/chair, its weekly count, its `consult_request` proposals and their outcome. Added to `PersonaDetail.tsx` tabs. |
+| 會診規則 Consult rules (existing page extended) | `/management/governance/consult` | Existing rule list plus a section for meeting types: enabled, weekly cadence day, roster rule, budget caps (all values coordinator proposals). Edits use the existing governed-action path. |
+| 人工收件匣 Human inbox (existing page extended) | `/management/human-inbox` | Meeting-derived items needing a human (a proposal needing sign-off, `REVIEW` synthesis, `insufficient_participants`) listed with a link to the meeting detail. |
+| 召開會議 Convene | action on `/management/meetings` | Operator picks type and topic and submits through the existing consultation route; no new privileged route. The operator reads and does not take part in rounds (M10). |
+
+Every page passes the existing Management hosted acceptance crawl (workflow `.github/workflows/pfg-mgmt-journey-e2e-hosted-acceptance.yml`) and defines explicit **empty** (no meetings yet) and **unavailable** (consultation service or BFF read failed, shown with reason, never a blank or fake zero) states. This is a design requirement; no crawl has been run.
+
+### 11.4 Delivery (replaces §8 table)
+
+| Task | Scope | Depends on |
+|---|---|---|
+| MEETING-PROTOCOL-ENGINE | as §8 | this design |
+| MEETING-TRIGGERS | as §8 | MEETING-PROTOCOL-ENGINE |
+| MEETING-OUTPUT-ROUTING | as §8 | MEETING-PROTOCOL-ENGINE |
+| MEETING-REGIME-TRIGGER | as §8 | MEETING-PROTOCOL-ENGINE, `REGIME-CONSUMERS-FIRST-WAVE-20261115` |
+| MEETING-AGORA-PARTICIPATION | A1–A6: Agora advisor attendance, servant-limited convening from the strategy workshop, candidate-flow routing, fail-closed reasons | MEETING-PROTOCOL-ENGINE, MEETING-OUTPUT-ROUTING |
+| MEETING-BFF-READS | forward and shape reads for list, detail, proposals, budget; no store | MEETING-PROTOCOL-ENGINE |
+| MEETING-MGMT-PAGES | §11.3 pages, persona tab, consult-rules and human-inbox extensions, empty and unavailable states, route manifest entries | MEETING-BFF-READS |
+| MEETING-AGORA-BOARD-FE | Agora committee board shows both classes, rounds, proposals, downstream status; strategy workshop convening | MEETING-BFF-READS, MEETING-AGORA-PARTICIPATION |
+| MEETING-HOSTED-ACCEPTANCE | natural meetings on hosted with real personas, Agora attendance, Management crawl over the new pages | all, plus enrolled personas |
+
+Production entry points of each task are exercised by integration tests.
+
+### 11.5 Open for the operator
+
+1. Confirm the A1–A6 reading of 「agora的也要可以」, in particular that a servant attends only meetings its own user convened.
+
+**Resolved 2026-11-15/16 by §12:** the operator corrected the purpose of Agora participation (learning exchange about trader habits, Tesla-style shadow mode, attribution of outstanding and under-performance) and confirmed the rest; A2 and A3 are revised in §12.8.
+
+## 12. Amendment 2026-11-16 — Agora shadow mode as a platform data source and performance attribution review
+
+Design only; `hosted_behavior_claimed: false`. Every numeric value is a coordinator proposal.
+
+### 12.1 Operator statements (verbatim)
+
+Transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/f4c32790-8a11-4908-abda-046d0a900ad2.jsonl`:
+
+| Line | Time (UTC) | uuid | Statement |
+|---|---|---|---|
+| 9900 | 2026-11-15T14:42:43.739Z | 6cadb6a2-e0cf-4157-8684-a2721ac23d00 | 「agora的修正，因為agora的persona會跟交易員互動時候，把交易員的交易習慣學習起來，因此會議是讓我們的persona跟agora這些perosna學習交流的時刻。同樣，agora的persona可能會需要從 mangement 的persona學習一些來告訴交易員系統修正的建議。因此這種類的會議比較像是學習分享? 這適合這樣做嗎? 或是應該用別的機制來完成?」 |
+| 9948 | 2026-11-15T15:18:18.510Z | e279b7fe-ad43-4386-9ed9-7eb27b0e9e54 | 「我覺得想法不太對，tesla的自動駕駛會有影子模式，看每一個車主的駕駛行為，因此agora助理歸納出來的內容，去識別化後，應該就能夠油平台直接引用做為資料來源才對。」 |
+| 9997 (queued message) | 2026-11-15T15:20:46.775Z | 2d6e2176-8708-4fcd-a9af-4f8f15678733 | 「而且其實有意義的事情應該是找出交易員或是機構persona做出outstanding 或是underperfrom的原因。並不是擬寫的這種泛泛的白癡分享」 |
+| 10088 | 2026-11-16T12:48:15.182Z | d309900c-5da4-45b7-ba23-001db3c8df99 | 「拿掉：身分、帳號、券商編號、原始文字 應該可以不用拿掉 其他沒什麼問題」 (answering the coordinator's preceding proposal, which listed identity, account, broker ids and raw text as fields to remove before platform use) |
+
+### 12.2 What this changes
+
+| Item | Change | Authority |
+|---|---|---|
+| Purpose of Agora in meetings | from "Agora personas attend" (§11.2) to two-way learning: Agora servants learn each trader's habits; the platform learns from them; servants learn validated findings from the institution and advise traders | operator 9900 |
+| Generic learning-sharing meeting | **not added** | operator 9997 |
+| MT-4 post-mortem | **replaced** by MT-4 績效歸因檢討 performance attribution review (§12.6), which also covers the former loss triggers | operator 9997 |
+| Agora data use | servant insights, decision journal and shadow records become a **platform data source with full fields, including trader identity, account, broker ids and raw text** | operator 9948, 10088 |
+| `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/B2_institutional_learning_privacy_model.md` (de-identification, k ≥ 10, opt-in default off) and B3 (alpha contribution governance) | **superseded for this path** by the operator decision; the operator's explicit decision is taken as authoritative for this path (`CANONICAL_DOCUMENT_MAP.md` has no rule ranking operator statements over L2 design, so B2 and B3 must be updated to cite this section; correction of an earlier uncited claim) | operator 9948, 10088 |
+| Memory rule (facts shared, interpretations private, exchanged in meetings) | **unchanged**: the Agora records are facts; a servant's and a persona's interpretations stay private and cross only through meeting minutes | operator 2026-11-13 (§1) |
+
+### 12.3 S1 Shadow mode (implements A4)
+
+`docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A4_shadow_human_actual_sourcing.md` (Design Frozen 2026-06-20, never implemented: no `human_actual` or decision-lock code on `origin/dev`) is the Tesla-style shadow mode. It is implemented as written, with the operator's field decision:
+
+- At every trader decision in the Trading Room (`services/control-plane/bff/agora/trading_room/routes/decisions.py`) the Agora owner (`services/agora`) writes an immutable decision lock: decision time, data cutoff, the trader's choice (`human_actual` with `execution_observation_kind` per A4 §1), the servant's suggestion (`private_servant`), the base strategy (`base_strategy`) and, when one exists, the institutional view (`committee_variant`).
+- Outcomes are settled by the attribution owner (§12.5) over the same cutoff, cost model and observation window for every arm (A4 §7). Paper proxy is never labelled as an actual fill (A4 §1).
+- Agora still never trades or moves capital (coordinator constraint carried from the Agora scope; no dated source found on the base, so it is not cited).
+
+### 12.4 S2 Agora as a platform data source
+
+- The Agora owner exposes, through an internal service-token read route (no cross-owner database read), its decision locks, settled arms, decision journal entries and servant insights (`AgoraInsight`, `services/agora/service.py`) with all fields.
+- Source ingestion registers one governed source for them (point-in-time, provenance `agora`), so they reach the knowledge base, L2 hypothesis extraction, the attribution owner, meeting case files, and the imitation contracts in `services/research/imitation/` (`CorrectionTrace`, `PreferenceExample`).
+- Records are facts. Nothing from them becomes a strategy, rule or lesson without the existing validation gates.
+
+### 12.5 S3 Outlier detection and decomposition (deterministic, attribution owner `services/evaluation`)
+
+- Weekly (no new scheduler: piggybacks the first enrolled persona's daily cycle of the ISO week, as MT-3) and on the former MT-4 loss events.
+- Subjects: each trader (from settled shadow arms and journal) and each institutional persona and pool member (from paper fills and member virtual books).
+- Outliers: risk-adjusted return over the window ranked against peers and against the subject's own baseline; top and bottom decile with a minimum sample (coordinator proposal: 10 decisions); plus **disagreement cases**: decisions where arms diverged and the outcome gap exceeds a threshold (coordinator proposal: 1 standard deviation of the subject's per-decision outcome).
+- Decomposition per outlier: selection, entry timing, sizing, exit, costs; regime context when a governed RegimeState exists. Each component carries sample size and a luck check (bootstrap interval; coordinator proposal: 1,000 resamples).
+- Output: an attribution record per outlier, stored by the owner, readable by meetings and Management. No language model computes any number.
+
+### 12.6 MT-4 績效歸因檢討 performance attribution review (replaces MT-4 in §6)
+
+| Field | Rule |
+|---|---|
+| Trigger | each new attribution record (§12.5), including the former loss events |
+| Chair / sponsor | the institutional persona closest to the finding (owner of the subject pool, or the persona whose view was overridden in a disagreement case) |
+| Participants | the subject (persona, or the trader's own servant), the party that decided the other way, peers of the same strategy family, risk persona, red-team persona; within the M9 cap |
+| Case file | attribution record with decomposition and luck check, decision-time data, all shadow arms, regime context |
+| Red team | fixed role: argue luck, small sample or a confounder for the leading explanation |
+| Protocol | §5 M3 rounds unchanged |
+| Output | **only testable causal hypotheses**, each with the component it explains and a test (e.g. 「高波動日提前停損，平均少虧 x%」 → research demand with a hypothesis card for validation); no lesson or rule before validation; a hypothesis that fails validation is recorded as `luck_or_unsupported` so it is never cited as a lesson |
+
+### 12.7 S4 Institution to Agora
+
+- Validated findings from §12.6, endorsed lessons and validated strategy facts are published as institutional facts.
+- Agora servants read them through their own recall scope (read-only) and present them to the trader as system suggestions with evidence, in the Trading Room, advice only.
+- A suggestion links back to the attribution record and the validation result.
+
+### 12.8 Agora participation (revises §11.2)
+
+- A1, A4, A5, A6 unchanged.
+- A2 revised: a trader's own servant also attends every MT-4 review whose subject is that trader, whoever convenes it; another user's servant still never attends a workshop meeting.
+- A3 revised: the servant answers from the case file, which now includes its trader's Agora records as facts (§12.4); its private interpretations (memory) still never enter a round.
+
+### 12.9 Management and Agora pages (adds to §11.3)
+
+| Page | Route | Content |
+|---|---|---|
+| 異常與歸因 Outliers and attribution | `/management/performance?tab=attribution` (existing center, extended) | outliers for traders and personas with decomposition, luck check, linked MT-4 review, hypotheses and their validation status |
+| 影子對照 Shadow comparison | `/management/performance?tab=shadow` | per decision: the four arms side by side with settlement source labels (A4 §1) and outcome |
+| Meeting detail (MT-4) | `/management/meetings/:id` | shows the attribution record above the rounds |
+| Agora Trading Room 系統建議 | Agora trading room | validated findings relevant to the trader's current decision, and the trader's own shadow comparisons |
+
+All pages follow §11.3: explicit empty and unavailable states, Management hosted acceptance crawl.
+
+### 12.10 Delivery (adds to and revises §11.4)
+
+| Task | Scope | Depends on |
+|---|---|---|
+| AGORA-SHADOW-MODE | §12.3 decision locks and arms in the Agora owner, written at each Trading Room decision | this amendment |
+| PERFORMANCE-OUTLIER-ATTRIBUTION | §12.5 in `services/evaluation`: settlement of arms, outliers, decomposition, luck check, attribution records and reads | AGORA-SHADOW-MODE |
+| AGORA-PLATFORM-SOURCE | §12.4 owner read route and governed source registration, full fields | AGORA-SHADOW-MODE |
+| MEETING-PROTOCOL-ENGINE (revised) | catalogue with MT-4 attribution review; roster rule A2 revised | this amendment |
+| MEETING-TRIGGERS (revised) | MT-4 from attribution records; others as §8 | engine, PERFORMANCE-OUTLIER-ATTRIBUTION |
+| AGORA-INSTITUTIONAL-KNOWLEDGE | §12.7 publication and servant read scope; Trading Room suggestions read | MEETING-OUTPUT-ROUTING |
+| BFF reads (revised) | meetings reads with trader identities visible to operators; attribution and shadow reads | engine, PERFORMANCE-OUTLIER-ATTRIBUTION |
+| FE pages | §12.9 Management tabs and Agora suggestions | BFF reads, AGORA-INSTITUTIONAL-KNOWLEDGE |

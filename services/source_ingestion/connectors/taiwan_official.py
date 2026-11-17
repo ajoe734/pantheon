@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -881,6 +881,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
     bundle_transport: BundleTransport | None = None
     bundle_root: str | Path | None = None
+    # SOURCE-WARRANT-LISTING-EXPIRY-20261117: a ListingFilter (security_listing). tw_price_daily rows whose symbol
+    # is in no current exchange listing (expired warrant, unknown code) are not turned into records; the count is
+    # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
+    listing_filter: Any | None = None
 
     def _resolve_bundle_transport(
         self,
@@ -1567,6 +1571,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         limit = max_records if max_records is not None else self.max_records
         records: list[SourceRecord] = []
+        if dataset == "tw_price_daily" and self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+            normalized_rows = [
+                r for r in normalized_rows if self.listing_filter.admits(r.get("symbol_canonical") or r.get("symbol") or "")
+            ]
         for row in normalized_rows[: limit]:
             normalized_row = dict(row)
             calendar_evidence = None
@@ -3604,6 +3612,14 @@ def normalize_monthly_revenue_rows(
     return tuple(out)
 
 
+def _statutory_quarter_lag_days(event_time: str, base_lag: int) -> int:
+    """Days from the quarter end to its statutory deadline (annual report: Mar 31, even in a leap year)."""
+    from ..feature_catalogue import statutory_available_date
+
+    deadline = statutory_available_date("tw_quarterly_statements", event_time)
+    return max(base_lag, (deadline - date.fromisoformat(event_time[:10])).days) if deadline else base_lag
+
+
 def normalize_financial_statement_rows(
     venue: str,
     income_payload: Any,
@@ -3632,10 +3648,9 @@ def normalize_financial_statement_rows(
         value = _float(_first(row, "歸屬於母公司業主之權益合計", "歸屬於母公司業主之權益", "權益總額", "權益總計"))
         if symbol and year and quarter in _QUARTER_END_MONTH_DAY and value:
             b_month, b_day = _QUARTER_END_MONTH_DAY[quarter]
-            b_lag = 90 if quarter == 4 else base_lag
-            b_available = _version_available_time(
-                row, f"{year:04d}-{b_month:02d}-{b_day:02d}", b_lag, ingested
-            )
+            b_event = f"{year:04d}-{b_month:02d}-{b_day:02d}"
+            b_lag = _statutory_quarter_lag_days(b_event, base_lag)
+            b_available = _version_available_time(row, b_event, b_lag, ingested)
             # Retain the balance version's own knowledge time (conservative first-seen
             # when it states no publication date); a later correction wins with its time.
             equity[(symbol, year, quarter)] = (value, b_available)
@@ -3648,7 +3663,7 @@ def normalize_financial_statement_rows(
             continue
         month, day = _QUARTER_END_MONTH_DAY[quarter]
         event_time = f"{year:04d}-{month:02d}-{day:02d}"
-        lag = 90 if quarter == 4 else base_lag
+        lag = _statutory_quarter_lag_days(event_time, base_lag)
         revenue = _float(_first(row, "營業收入", "Revenue", "OperatingRevenue"))
         gross = _float(_first(row, "營業毛利（毛損）淨額", "營業毛利（毛損）", "GrossProfit"))
         operating = _float(_first(row, "營業利益（損失）", "OperatingIncome"))

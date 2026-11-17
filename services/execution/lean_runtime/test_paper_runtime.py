@@ -420,6 +420,29 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         service._consumer.flush_rebalance(signal["run_id"], service._algo)
         return {event["event_type"]: event for event in telemetry.events}
 
+    def test_empty_pool_envelope_tick_holds_no_position_and_does_not_raise(self):
+        # A pool with no live member publishes a flat envelope: no member views, no virtual book write,
+        # no order, and the runtime keeps running (POOL-EMPTY-POOL-OPERATION-20261116).
+        binding = self._binding()
+        signal = self._expression_signal(
+            binding, "empty-pool", action="HOLD", direction="FLAT",
+            metadata={"strength": 0.0, "view_direction": "FLAT", "portfolio_member_views": {}},
+        )
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]), telemetry_emitter=telemetry,
+            poll_interval_seconds=3600, max_batch_size=10,
+        )
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+        events = {event["event_type"]: event for event in telemetry.events}
+        generation = events["signal_generation"]["metadata"]
+        self.assertEqual(generation["view_direction"], "FLAT")
+        self.assertNotIn("member_virtual_books", generation)
+        self.assertFalse(service._member_virtual_books.books)
+        self.assertEqual(service._algo.instrument_positions, {})
+
     def test_no_trade_expression_is_a_noop_with_view_and_record_metadata(self):
         binding = self._binding()
         record = {
@@ -641,9 +664,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
         self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
-        self.assertEqual(len(telemetry.events), 2)
-        self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
-        self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
+        self.assertEqual(
+            [e["event_type"] for e in telemetry.events],
+            ["paper_fill_simulated", "heartbeat", "runtime_state_snapshot"],
+        )
+        self.assertNotIn("performance_telemetry", telemetry.events[1]["metadata"])
+        self.assertNotIn("member_virtual_books", telemetry.events[1]["metadata"])
         self.assertEqual(
             snapshot["paper_state"]["performance_telemetry"]["code"],
             "missing_market_marks",
@@ -675,9 +701,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             self.assertEqual(diagnostic["status"], "invalid_ledger")
             self.assertEqual(diagnostic["code"], "performance_ledger_load_failed")
             self.assertIn("must be an object", diagnostic["detail"])
-            self.assertEqual([event["event_type"] for event in telemetry.events], ["heartbeat"])
             self.assertEqual(
-                telemetry.events[0]["metadata"]["performance_telemetry"]["code"],
+                [event["event_type"] for event in telemetry.events],
+                ["heartbeat", "runtime_state_snapshot"],
+            )
+            self.assertEqual(
+                telemetry.events[1]["metadata"]["performance_telemetry"]["code"],
                 "performance_ledger_load_failed",
             )
 
@@ -2325,6 +2354,105 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             service.stop()
 
         self.assertGreaterEqual(heartbeat_count, 2)
+
+    def _cadence_service(self, telemetry):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=1,
+            max_batch_size=10,
+        )
+        clock = {"t": 1000.0}
+        service._heartbeat_clock = lambda: clock["t"]
+        return service, clock
+
+    def test_heartbeat_cadence_follows_interval_not_poll(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        stamps = []
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for _ in range(301):  # five idle minutes, 1 s poll, first call at t=0
+                before = len(telemetry.events)
+                service._maybe_emit_heartbeat()
+                if len(telemetry.events) > before:
+                    stamps.append(clock["t"])
+                clock["t"] += 1.0
+        self.assertIn(len(stamps), (20, 21))
+        self.assertEqual(stamps[0], 1000.0)
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        self.assertLessEqual(max(gaps), 15.0 + 1.0)
+        # many callers in the same instant still emit once
+        n = len(telemetry.events)
+        service._maybe_emit_heartbeat()
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(telemetry.events), n)
+
+    def test_failed_heartbeat_emit_does_not_advance_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        calls = []
+
+        def emit_heartbeat(metadata=None, extra_metrics=None):
+            calls.append(clock["t"])
+            return results.pop(0)
+
+        telemetry.emit_heartbeat = emit_heartbeat
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(calls), 2)
+
+    def _types(self, telemetry):
+        return [e["event_type"] for e in telemetry.events]
+
+    def test_heartbeat_is_liveness_only_and_state_snapshot_sent_on_change(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry), ["heartbeat", "runtime_state_snapshot"])
+        hb = telemetry.events[0]["metadata"]
+        self.assertNotIn("performance_telemetry", hb)
+        self.assertNotIn("member_virtual_books", hb)
+        self.assertIn("runtime_heartbeat", hb)
+        # Unchanged state: heartbeat only.
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(
+            self._types(telemetry),
+            ["heartbeat", "runtime_state_snapshot", "heartbeat"],
+        )
+        # Changed state: one new snapshot carrying it.
+        service._performance_telemetry = {"status": "changed", "code": "x"}
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry)[-2:], ["heartbeat", "runtime_state_snapshot"])
+        self.assertEqual(
+            telemetry.events[-1]["metadata"]["performance_telemetry"]["status"], "changed"
+        )
+
+    def test_failed_state_snapshot_is_retried_next_tick(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        sent = []
+
+        def emit_snapshot(metadata=None):
+            sent.append(metadata["state_digest"])
+            return results.pop(0)
+
+        telemetry.emit_runtime_state_snapshot = emit_snapshot
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0], sent[1])
 
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):

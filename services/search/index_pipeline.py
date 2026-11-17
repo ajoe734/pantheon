@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,6 +24,12 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _now_iso_precise() -> str:
+    # Checkpoint time keeps microseconds: with second truncation, objects indexed by a bounded
+    # batch in the same second would satisfy "effective_time >= last_indexed_at" and be re-embedded.
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass
 class IndexPipelineSnapshot:
     """Immutable record of a single pipeline run."""
@@ -38,6 +46,7 @@ class IndexPipelineSnapshot:
     is_full_rebuild: bool
     freshness_sla_seconds: int
     indexed_object_ids: list[str] = field(default_factory=list)
+    backlog_remaining: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +62,7 @@ class IndexPipelineSnapshot:
             "is_full_rebuild": self.is_full_rebuild,
             "freshness_sla_seconds": self.freshness_sla_seconds,
             "indexed_object_ids": list(self.indexed_object_ids),
+            "backlog_remaining": self.backlog_remaining,
         }
 
     @classmethod
@@ -70,6 +80,7 @@ class IndexPipelineSnapshot:
             is_full_rebuild=bool(data.get("is_full_rebuild", False)),
             freshness_sla_seconds=int(data.get("freshness_sla_seconds") or 3600),
             indexed_object_ids=list(data.get("indexed_object_ids") or []),
+            backlog_remaining=int(data.get("backlog_remaining") or 0),
         )
 
 
@@ -206,8 +217,26 @@ def _desired_active(obj: Any) -> bool:
     return bool(dict(obj.metadata).get("is_active", True)) if obj.metadata else True
 
 
+DEFAULT_REFRESH_BATCH_SIZE = 16
+DEFAULT_REFRESH_CHUNK_SIZE = 4
+DEFAULT_REFRESH_TIME_BUDGET_SECONDS = 15.0
+
+
+def _env_number(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 class IncrementalIndexPipeline:
-    """Drives incremental or full index refresh against the evidence repository."""
+    """Drives incremental or full index refresh against the evidence repository.
+
+    One run embeds at most ``max_batch_size`` objects (and stops starting new chunks once
+    ``time_budget_seconds`` is spent), then records a checkpoint containing only what was
+    really indexed. Unprocessed objects stay absent from the checkpoint, so repeated runs drain
+    the backlog without embedding anything twice. ``backlog_remaining`` reports what is left.
+    """
 
     def __init__(
         self,
@@ -216,7 +245,13 @@ class IncrementalIndexPipeline:
         *,
         freshness_sla_seconds: int = 3600,
         retrieval_backend: Any | None = None,
+        max_batch_size: int | None = None,
+        chunk_size: int | None = None,
+        time_budget_seconds: float | None = None,
     ) -> None:
+        self.max_batch_size = max(1, int(max_batch_size if max_batch_size is not None else _env_number("SEARCH_INDEX_REFRESH_BATCH_SIZE", DEFAULT_REFRESH_BATCH_SIZE)))
+        self.chunk_size = max(1, int(chunk_size if chunk_size is not None else _env_number("SEARCH_INDEX_REFRESH_CHUNK_SIZE", DEFAULT_REFRESH_CHUNK_SIZE)))
+        self.time_budget_seconds = float(time_budget_seconds if time_budget_seconds is not None else _env_number("SEARCH_INDEX_REFRESH_TIME_BUDGET_SECONDS", DEFAULT_REFRESH_TIME_BUDGET_SECONDS))
         self.repository = repository
         self.pipeline_store = pipeline_store
         self.freshness_sla_seconds = freshness_sla_seconds
@@ -312,39 +347,73 @@ class IncrementalIndexPipeline:
         if not is_full_rebuild:
             new_objects.extend(self._objects_missing_from_backend(all_objects, new_objects))
 
+        # De-duplicate (backend-missing probe may repeat ids) and bound the batch.
+        seen: set[str] = set()
+        candidates: list[Any] = []
+        for obj in new_objects:
+            if obj.knowledge_object_id not in seen:
+                seen.add(obj.knowledge_object_id)
+                candidates.append(obj)
+
+        processed: list[Any] = []
+        deadline = time.monotonic() + self.time_budget_seconds
+        while len(processed) < self.max_batch_size and len(processed) < len(candidates):
+            if processed and time.monotonic() >= deadline:
+                break
+            take = min(self.chunk_size, self.max_batch_size - len(processed))
+            chunk = candidates[len(processed):len(processed) + take]
+            try:
+                if self.retrieval_backend is not None:
+                    self.retrieval_backend.index_documents(
+                        [_knowledge_object_to_retrieval_record(obj, self.repository) for obj in chunk]
+                    )
+            except Exception:  # noqa: BLE001 - keep progress already made, surface if none
+                if not processed:
+                    raise
+                break  # partial progress is checkpointed; the next run retries this chunk
+            processed.extend(chunk)
+
+        processed_ids = {obj.knowledge_object_id for obj in processed}
+        backlog_remaining = len(candidates) - len(processed)
+
         adapter = KeywordIndexAdapter(
             self.repository,
             source_watermarks=self._source_watermarks(),
             adapter_state="incremental" if not is_full_rebuild else "full_rebuild",
         )
-        # Build documents for all new/changed objects (validates adapter can process them)
-        adapter.documents_for(new_objects)
+        adapter.documents_for(processed)
 
-        if self.retrieval_backend is not None:
-            if new_objects:
-                records = [_knowledge_object_to_retrieval_record(obj, self.repository) for obj in new_objects]
-                self.retrieval_backend.index_documents(records)
-            if removed_count > 0:
-                for removed_id in (previous_ids - current_ids):
-                    try:
-                        self.retrieval_backend.delete_document(removed_id)
-                    except Exception:
-                        pass
+        if self.retrieval_backend is not None and removed_count > 0:
+            for removed_id in (previous_ids - current_ids):
+                try:
+                    self.retrieval_backend.delete_document(removed_id)
+                except Exception:
+                    pass
 
-        now = _now_iso()
+        if backlog_remaining > 0:
+            # Checkpoint = previously indexed, still-current ids that were NOT re-selected, plus
+            # what this run really indexed. Selected-but-unprocessed ids are left out so the next
+            # run selects them again even though indexed_at advanced.
+            pending_ids = {obj.knowledge_object_id for obj in candidates} - processed_ids
+            checkpoint_ids = ((previous_ids & current_ids) - pending_ids) | processed_ids
+        else:
+            checkpoint_ids = current_ids
+
+        now = _now_iso_precise()
         snapshot = IndexPipelineSnapshot(
             pipeline_run_id=str(uuid.uuid4()),
             schema_version=PIPELINE_SCHEMA_VERSION,
             triggered_by=triggered_by,
             trigger_ref=trigger_ref,
-            indexed_count=len(all_objects),
-            incremental_count=len(new_objects),
+            indexed_count=len(checkpoint_ids),
+            incremental_count=len(processed),
             removed_count=removed_count,
             indexed_watermarks=self._source_watermarks(),
             indexed_at=now,
             is_full_rebuild=is_full_rebuild,
             freshness_sla_seconds=self.freshness_sla_seconds,
-            indexed_object_ids=sorted(current_ids),
+            indexed_object_ids=sorted(checkpoint_ids),
+            backlog_remaining=backlog_remaining,
         )
         return self.pipeline_store.record_run(snapshot)
 

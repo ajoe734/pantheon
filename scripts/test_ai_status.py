@@ -16769,6 +16769,53 @@ class PortableStateRenderingTests(unittest.TestCase):
             {item["type"] for item in mismatches},
         )
 
+    def _active_tasks_without_workers(self, config: dict[str, Any]) -> set[str]:
+        tasks = [
+            {
+                "id": f"{owner.upper().replace('/', '-')}-ACTIVE-001",
+                "owner": owner,
+                "reviewer": "Claude",
+                "status": "in_progress",
+                "last_update": "2026-11-16T14:00:00Z",
+            }
+            for owner in ("Human/Ops", "Copilot", "Antigravity2")
+        ]
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+        with mock.patch.object(
+            status_projection._ai_status_module(), "load_config", return_value=config
+        ):
+            _workers, mismatches = ai_status.detect_truth_mismatches(
+                {"tasks": tasks}, [], [], {"pending": []}, resolver, {}
+            )
+        return {
+            item["task_id"]
+            for item in mismatches
+            if item["type"] == "active_task_without_worker"
+        }
+
+    def test_active_task_without_worker_skips_owners_that_never_get_auto_workers(self) -> None:
+        flagged = self._active_tasks_without_workers(
+            {
+                "agents": {
+                    "antigravity2": {"max_parallel": 4},
+                    "copilot": {"max_parallel": 0},
+                }
+            }
+        )
+
+        # Human/Ops is not an agent with worker capacity and Copilot has none,
+        # so their in-progress tasks are not missing a worker.
+        self.assertEqual(flagged, {"ANTIGRAVITY2-ACTIVE-001"})
+
+    def test_active_task_without_worker_keeps_flagging_without_a_capacity_table(self) -> None:
+        flagged = self._active_tasks_without_workers({})
+
+        self.assertEqual(
+            flagged,
+            {"HUMAN-OPS-ACTIVE-001", "COPILOT-ACTIVE-001", "ANTIGRAVITY2-ACTIVE-001"},
+        )
+
     def test_dashboard_flags_merged_delivery_that_still_needs_closeout(self) -> None:
         task = {
             "id": "L12-BFF-001",

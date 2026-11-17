@@ -132,7 +132,16 @@ from .api_models import (
     TriggerIngestJobRequest,
 )
 from .pipeline import IngestDistillationJobQueue, IngestPipelineService
+from .snapshot_universe import SnapshotUniverse
 from .strategy_seed_store import StrategySpecSeedStore
+
+
+def _ref_count(refs: Mapping[str, Any], listed_key: str, count_key: str) -> int:
+    """Count from the receipt's count field (refs-only form) or its embedded list (older rows)."""
+    value = refs.get(listed_key)
+    if value:
+        return len(value)
+    return int(refs.get(count_key) or 0)
 
 
 def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
@@ -162,14 +171,15 @@ def _receipt_summary(receipt: IngestReceipt) -> dict[str, Any]:
         "watermark": receipt.watermark,
         "evidence_refs": {
             "evidence_bundle_id": refs.get("evidence_bundle_id"),
-            "source_id_count": len(refs.get("source_ids") or ()),
-            "evidence_item_id_count": len(refs.get("evidence_item_ids") or ()),
-            "knowledge_object_id_count": len(refs.get("knowledge_object_ids") or ()),
-            "distillation_admission_count": len(refs.get("distillation_admissions") or {}),
+            "source_id_count": _ref_count(refs, "source_ids", "source_id_count"),
+            "evidence_item_id_count": _ref_count(refs, "evidence_item_ids", "evidence_item_id_count"),
+            "knowledge_object_id_count": _ref_count(refs, "knowledge_object_ids", "knowledge_object_id_count"),
+            "distillation_admission_count": _ref_count(
+                refs, "distillation_admissions", "distillation_admission_count"),
             "market_snapshots": {
                 "accepted_record_count": snapshots.get("accepted_record_count", 0),
                 "updated_snapshot_count": snapshots.get("updated_snapshot_count", 0),
-                "snapshot_count": len(snapshots.get("snapshots") or ()),
+                "snapshot_count": _ref_count(snapshots, "snapshots", "snapshot_count"),
             },
         },
     }
@@ -332,6 +342,12 @@ class SourceIngestionRuntime:
             self.LATEST_MARKET_SNAPSHOT_PATH,
             max_closes=self.MARKET_SNAPSHOT_MAX_CLOSES,
         )
+        self.snapshot_universe = SnapshotUniverse(
+            self.latest_market_snapshot_store,
+            state_path=self.LATEST_MARKET_SNAPSHOT_PATH.with_name(self.LATEST_MARKET_SNAPSHOT_PATH.name + ".universe.json"),
+            storage_root=self.MARKET_DATA_STORAGE_ROOT,
+            connector_market=self._connector_market_for_snapshot,
+        )
         self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()
@@ -393,6 +409,13 @@ class SourceIngestionRuntime:
                 status_code=403,
                 detail=f"service authorization is invalid for {operation}",
             )
+    def _connector_market_for_snapshot(self, connector_id: str) -> str | None:
+        connector = self.manager.get_connector(connector_id)
+        meta = getattr(connector, "metadata", None)
+        if isinstance(meta, dict) and meta.get("market"):
+            return str(meta["market"]).strip()
+        return None
+
     def _is_controller_owned(self, connector: SourceConnector | None) -> bool:
         if connector is None:
             return False
@@ -875,6 +898,7 @@ class SourceIngestionRuntime:
             "degraded_connector_count": readiness.get("degraded_connector_count", 0),
             "posture_alert_count": self.PRODUCTION_POSTURE.alert_count(),
             "latest_market_snapshot_journal": self.latest_market_snapshot_store.journal_stats(),
+            "ingest_schedule_journal": JsonlIngestScheduleStore.journal_stats_for_path(self.SCHEDULE_STORE_PATH),
         }
 
     def _connector_schema_hash(self, connector: SourceConnector, fetch: dict[str, Any] | None) -> str:

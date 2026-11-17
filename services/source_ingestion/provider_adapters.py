@@ -7,6 +7,8 @@ connector config cannot import arbitrary code.
 
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import math
 import os
@@ -29,6 +31,10 @@ from .connectors.finmind_taiwan import (
     fetch_kbar as _finmind_fetch_kbar,
     shared_kbar_budget as _finmind_shared_kbar_budget,
     FinMindTaiwanDatasetAdapter,
+    FinMindTaiwanFundamentalsAdapter,
+    FINMIND_FUNDAMENTAL_CATALOG,
+    finmind_fundamental_venues,
+    finmind_fundamental_windows,
 )
 from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorBundleAdapter, CollectorPullResult
 from .connectors.social import AdmittedSocialMediaAdapter
@@ -336,6 +342,87 @@ def _finmind_broker(
     )
 
 
+def _finmind_fundamentals(
+    adapter: FinMindTaiwanFundamentalsAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    """Governed FinMind revenue / statements / valuation for the resolved active symbols.
+
+    The result is complete or the run fails: a record cap that cannot hold every
+    resolved symbol's window raises instead of truncating, and a symbol with no rows
+    is recorded as missing coverage rather than counted as fresh.
+    """
+    dataset = str(_require(request.get("dataset"), "dataset"))
+    spec = next((item for item in FINMIND_FUNDAMENTAL_CATALOG if item["normalized_dataset"] == dataset), None)
+    if spec is None:
+        raise SourceEvidenceError(f"FinMind fundamentals does not admit dataset {dataset!r}")
+    symbols = list(dict.fromkeys(
+        item for item in (*_string_list(request.get("symbols")), *([_single_symbol(request)] if _single_symbol(request) else []))
+        if item
+    ))
+    if not symbols:
+        raise SourceEvidenceError("provider-owned adapter request.symbols is required")
+    venues = finmind_fundamental_venues(symbols)
+    run_date = str(_require(request.get("run_date") or request.get("date"), "run_date"))
+    windows = finmind_fundamental_windows(dataset, run_date)
+    start, end = min(w[0] for w in windows), max(w[1] for w in windows)
+    names = [spec["dataset"], *([spec["companion_dataset"]] if spec.get("companion_dataset") else [])]
+    supplied = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else None
+    fetcher = FinMindLiveFetcher(secret_ref_id=adapter.secret_ref_id)
+    if supplied is None and not fetcher.credential_status().get("available"):
+        raise FinMindCredentialError(f"missing credential at {adapter.secret_ref_id}")
+    rows: list[dict[str, Any]] = []
+    covered: list[str] = []
+    for code in venues:
+        if supplied is not None:
+            payloads = {name: [r for r in _rows_of(supplied.get(name)) if str(r.get("stock_id")) == code] for name in names}
+        else:
+            payloads = {}
+            for name in names:
+                merged: dict[str, Mapping[str, Any]] = {}
+                for w_start, w_end in windows:
+                    try:
+                        fetched, _ = fetcher.fetch_dataset(name, symbol=code, start_date=w_start, end_date=w_end)
+                    except FinMindCredentialError:
+                        raise
+                    except FinMindFetchError as exc:
+                        raise SourceEvidenceError(f"FinMind {name} fetch failed for {code}: {exc}") from exc
+                    for row in _rows_of(fetched):
+                        merged[json.dumps(row, sort_keys=True, default=str)] = row
+                payloads[name] = list(merged.values())
+        symbol_rows = adapter.rows_from_payloads(
+            dataset, payloads, symbols=[venues[code][1]], ingest_time=request.get("ingest_time"))
+        if symbol_rows:
+            rows.extend(symbol_rows)
+            covered.append(code)
+    max_records = int(request.get(EFFECTIVE_MAX_RECORDS_KEY) or adapter.max_records)
+    if len(rows) > max_records:
+        raise SourceEvidenceError(
+            f"FinMind {dataset}: max_records cannot hold the complete window; required={len(rows)} "
+            f"allowed={max_records}; no records emitted"
+        )
+    if not rows:
+        raise SourceEvidenceError(f"FinMind {dataset} returned no rows for any requested symbol: {','.join(venues)}")
+    missing = [code for code in venues if code not in covered]
+    coverage = {
+        "status": "partial" if missing else "complete",
+        "dataset": dataset, "window_start": start, "window_end": end,
+        "windows": [list(w) for w in windows],
+        "requested_symbols": list(venues), "covered_symbols": covered, "missing_symbols": missing,
+    }
+    return tuple(
+        replace(record, metadata={**dict(record.metadata), "refresh_coverage": coverage})
+        for record in adapter.records_from_rows(rows, trace_id=trace_id)
+    )
+
+
+def _rows_of(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        payload = payload.get("data")
+    return [row for row in (payload or ()) if isinstance(row, Mapping)]
+
+
 def _finmind_kbar(
     adapter: FinMindTaiwanKBarAdapter,
     request: Mapping[str, Any],
@@ -461,8 +548,12 @@ def _taiwan_official(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    request_listing_filter = request.get("listing_filter")
+    if request_listing_filter is not None and request_listing_filter is not adapter.listing_filter:
+        adapter = dataclasses.replace(adapter, listing_filter=request_listing_filter)
     if request.get("bundle_transport") is not None or request.get("bundle_root") not in (None, ""):
         adapter = TaiwanOfficialMarketDatasetAdapter(
+            listing_filter=adapter.listing_filter,
             connector_id=adapter.connector_id,
             max_records=adapter.max_records,
             source_metadata=adapter.source_metadata,
@@ -1110,6 +1201,56 @@ def _alpha_db(
     )
 
 
+_HELD_BINDING_STORE_DEFAULT = "/data/runtime/runtime_bindings.json"
+_HELD_MARKET_INPUT_PAUSE_PREFIX = "market_input_"
+
+
+def _live_paper_held_symbols(request: Mapping[str, Any]) -> tuple[tuple[str, ...], str | None]:
+    """Active paper binding symbols for this tenant, read on every pull (no cache).
+
+    Returns ``(symbols, typed_reason)``; a failed read yields no symbols and a reason so the
+    pull keeps its existing order. A binding that names another tenant never contributes.
+    """
+    tenant = str(
+        request.get("tenant_id")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or os.getenv("PANTHEON_BFF_TENANT_ID")
+        or "default"
+    ).strip()
+    path = Path(os.getenv("PANTHEON_RUNTIME_BINDING_STORE_PATH") or _HELD_BINDING_STORE_DEFAULT)
+    try:
+        if not path.exists():
+            return (), "binding_store_missing"
+        bindings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return (), "binding_store_unreadable"
+    if not isinstance(bindings, list):
+        return (), "binding_store_malformed"
+    symbols: list[str] = []
+    for binding in bindings:
+        if not isinstance(binding, Mapping):
+            continue
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+        mode = str(binding.get("deployment_mode") or binding.get("execution_mode") or "").strip().lower()
+        status = str(binding.get("status") or "").strip().lower()
+        if mode != "paper":
+            continue
+        if status == "paused":
+            session = metadata.get("session_admission")
+            reason = str(session.get("reason_code") or "") if isinstance(session, Mapping) else ""
+            if not reason.startswith(_HELD_MARKET_INPUT_PAUSE_PREFIX):
+                continue
+        elif status != "active":
+            continue
+        binding_tenant = str(binding.get("tenant_id") or metadata.get("tenant_id") or "default").strip()
+        if binding_tenant != tenant:
+            continue
+        symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip().upper()
+        if symbol and symbol.rsplit(".", 1)[-1] in {"TW", "TWSE", "TWO", "TPEX"} and symbol not in symbols:
+            symbols.append(symbol)
+    return tuple(symbols), None
+
+
 def _collector_bundle(
     adapter: CollectorBundleAdapter,
     request: Mapping[str, Any],
@@ -1121,8 +1262,10 @@ def _collector_bundle(
     # Tuple consumers still rely on adapter-owned partial resume. Configured scheduling
     # also retains the typed outcome and acknowledges its cursor through IngestBatch.
     cursor = explicit or adapter.load_resume_cursor()
-    # Held identities: same sources as the Taiwan official handler (active paper env + request).
+    # Held identities: live paper bindings read at pull time, plus the env list and the request.
+    live_held, held_read_reason = _live_paper_held_symbols(request)
     held_symbols = tuple(dict.fromkeys((
+        *live_held,
         *_string_list(os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",")),
         *_string_list(request.get("priority_symbols")),
     )))
@@ -1132,6 +1275,8 @@ def _collector_bundle(
         max_records=request[EFFECTIVE_MAX_RECORDS_KEY],
         priority_symbols=held_symbols,
     )
+    if held_read_reason:
+        result = replace(result, observed={**dict(result.observed), "held_symbols_unavailable": held_read_reason})
     if not explicit:
         adapter.save_resume_cursor(result)
     return result
@@ -1149,6 +1294,7 @@ PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
     "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
     "FinMindTaiwanKBarAdapter": "FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+    "FinMindTaiwanFundamentalsAdapter": "FinMindTaiwanFundamentalsAdapter.records_from_rows",
     "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
     "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
     "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
@@ -1188,6 +1334,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
         adapter_cls=FinMindTaiwanDatasetAdapter,
         handler=_finmind_dataset,
+        config_keys=("secret_ref_id", "max_records", "entitlement_tier"),
+    ),
+    "FinMindTaiwanFundamentalsAdapter.records_from_rows": ProviderAdapterSpec(
+        token="FinMindTaiwanFundamentalsAdapter.records_from_rows",
+        adapter_cls=FinMindTaiwanFundamentalsAdapter,
+        handler=_finmind_fundamentals,
         config_keys=("secret_ref_id", "max_records", "entitlement_tier"),
     ),
     "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload": ProviderAdapterSpec(

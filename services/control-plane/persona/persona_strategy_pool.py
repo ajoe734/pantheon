@@ -88,6 +88,7 @@ class PoolMember(BaseModel):
     demand_ref: str | None = None
     removed_at: str | None = None
     removal_reason: str | None = None
+    removal_verdict_ref: str | None = None
 
     @field_validator("stage")
     @classmethod
@@ -125,6 +126,7 @@ class AppendPoolVersionRequest(BaseModel):
     members: list[PoolMember]
     change_reason: str = Field(min_length=1)
     actor_id: str | None = None
+    decision: dict[str, Any] | None = None
 
 
 class PoolCandidate(BaseModel):
@@ -414,17 +416,23 @@ class PersonaStrategyPoolStore:
         except PoolMemberRefused as exc:
             self._record_refusal(persona_id, tenant_id, request, actor_id, exc)
             raise
+        def _dump_member(m: PoolMember) -> dict[str, Any]:
+            d = m.model_dump()
+            if d.get("removal_verdict_ref") is None:
+                d.pop("removal_verdict_ref", None)
+            return d
+
         body = {
             "schema_version": SCHEMA_VERSION,
             "persona_id": persona_id,
             "tenant_id": tenant_id,
             "pool_version": current_number + 1,
-            "members": [m.model_dump() for m in request.members],
+            "members": [_dump_member(m) for m in request.members],
             "change_reason": request.change_reason,
             "created_at": self._now(),
             "created_by": actor_id,
             "previous_digest": previous["digest"] if previous else None,
-            "decision": decision,
+            "decision": decision if decision is not None else request.decision,
         }
         body["digest"] = canonical_digest(body)
         for _ in range(8):
@@ -634,9 +642,45 @@ class PersonaStrategyPoolStore:
                     decision["consultation_memo_id"] = request.consultation_memo_id
                     decision["consultation_pool_version"] = bound
                     decision["evidence_refs"] = [{"ref_type": "consultation_memo", "ref_id": request.consultation_memo_id}]
-                live = [m for m in members if m["stage"] != "removed"]
+                base_members = [dict(m) for m in members]
                 if candidate.artifact_ref in {m["artifact_ref"] for m in members}:
                     raise ValueError("candidate_already_in_pool_history")
+                if candidate.parent_ref:
+                    legacy = next(
+                        (m for m in base_members if m["artifact_ref"] == candidate.parent_ref and m["stage"] != "removed"),
+                        None,
+                    )
+                    if legacy is None:
+                        raise ValueError("requalification_legacy_member_not_live")
+                    legacy_entry = self._reader(legacy["artifact_ref"], tenant_id)
+                    legacy_baseline = resolve_member_baseline(
+                        tenant_id=tenant_id,
+                        persona_id=persona_id,
+                        artifact_ref=legacy["artifact_ref"],
+                        checksum=legacy["checksum"],
+                        entry=legacy_entry,
+                    )
+                    if (
+                        legacy_baseline["status"] == "approved"
+                        or legacy_baseline.get("reason") != "baseline_computed_under_decision_close_fill"
+                    ):
+                        raise ValueError("requalification_target_baseline_not_legacy_close_fill")
+                    cand_entry_check = self._reader(candidate.artifact_ref, tenant_id)
+                    cand_artifact = (cand_entry_check.get("metadata") or {}).get("strategy_artifact") or {}
+                    parent_ids = list((cand_artifact.get("lineage") or {}).get("parent_registry_ids") or []) + list(
+                        (cand_entry_check.get("lineage") or {}).get("parent_registry_ids") or []
+                    )
+                    if legacy["artifact_ref"] not in parent_ids:
+                        raise ValueError("requalification_candidate_lineage_mismatch")
+                    legacy.update(
+                        stage="removed",
+                        risk_weight=0,
+                        removed_at=now,
+                        removal_reason="replaced_by_requalified_entry",
+                    )
+                    decision["health"] = pool_health(base_members, request.books, request.observations, policy)
+                    decision["replaced_artifact_ref"] = legacy["artifact_ref"]
+                live = [m for m in base_members if m["stage"] != "removed"]
                 entries, baselines = {}, {}
                 for ref, checksum in [(m["artifact_ref"], m["checksum"]) for m in live] + [(candidate.artifact_ref, candidate.checksum)]:
                     entries[ref] = self._reader(ref, tenant_id)
@@ -647,12 +691,18 @@ class PersonaStrategyPoolStore:
                     baselines[ref] = baseline
                 # Until a separate permitted-universe owner is available, do
                 # not infer authority to widen P: use the pool's approved universe.
-                symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                if live:
+                    symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                else:
+                    symbols = self._last_live_universe(persona_id, tenant_id)
+                    if not symbols:
+                        raise ValueError("empty_pool_approved_universe_unknown")
+                decision["approved_universe"] = sorted(symbols)
                 if not {s.split(".")[0] for s in baselines[candidate.artifact_ref]["validated_universe"]} <= symbols:
                     raise ValueError("candidate_outside_pool_approved_universe")
                 trial = PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
                     stage="trial", risk_weight=0, baseline_ref=entries[candidate.artifact_ref].get("approval_decision_id"),
-                    joined_at=now, demand_ref=candidate.demand_ref).model_dump()
+                    joined_at=now, parent_ref=candidate.parent_ref, demand_ref=candidate.demand_ref).model_dump()
                 if not trial["baseline_ref"]:
                     raise ValueError("candidate_gate_baseline_reference_missing")
                 stats = {m["artifact_ref"]: member_statistics(m, request.books.get(m["artifact_ref"]), policy)
@@ -671,7 +721,7 @@ class PersonaStrategyPoolStore:
                 full = max(sum(m["risk_weight"] for m in live),
                            health["gross_utilisation"]["value"], health["drawdown_utilisation"]["value"],
                            last["gross_notional"] / last["gross_limit"], last["drawdown"] / last["drawdown_limit"]) >= policy.budget_full - _WEIGHT_EPSILON
-                proposed = [dict(m) for m in members]
+                proposed = [dict(m) for m in base_members]
                 if full:
                     if not live:
                         raise ValueError("no_member_available_to_replace")
@@ -688,7 +738,7 @@ class PersonaStrategyPoolStore:
                 else:
                     trial["risk_weight"] = min(trial["risk_weight"], max(0, 1 - sum(m["risk_weight"] for m in live)))
                 proposed.append(trial)
-                evaluation = evaluate_admission(dataset=request.dataset, current=members, proposed=proposed,
+                evaluation = evaluate_admission(dataset=request.dataset, current=base_members, proposed=proposed,
                     candidate=trial, entries=entries, trial_count=count, policy=policy)
                 decision["backtest"] = evaluation
                 if not evaluation["admitted"]:
@@ -699,9 +749,10 @@ class PersonaStrategyPoolStore:
             raise
         except ValueError as exc:
             decision["reasons"] = [str(exc)]
-            for key in ("consultation_memo_id", "consultation_pool_version", "evidence_refs"):  # memo evidence only travels with an applied admission
+            for key in ("consultation_memo_id", "consultation_pool_version", "evidence_refs", "replaced_artifact_ref"):  # memo/replacement evidence only travels with an applied admission
                 decision.pop(key, None)
             members = [dict(m) for m in current["members"]]
+            decision["health"] = pool_health(members, request.books, request.observations, policy)
         # Registry unavailability is 503, not a market verdict. A refused
         # policy decision with unchanged members still passes normal CAS and
         # registry integrity checks in the existing append implementation.
@@ -709,6 +760,26 @@ class PersonaStrategyPoolStore:
             expected_version=request.expected_version, members=[PoolMember.model_validate(m) for m in members],
             change_reason=f"paper pool {request.action}: {decision['status']}; " + "; ".join(decision["reasons"])),
             actor_id=actor_id, decision=decision)
+
+    def _last_live_universe(self, persona_id, tenant_id):
+        """Approved universe of an empty pool: the one it had at its last version with live members.
+
+        Stopgap until the persona declares its permitted universe P (design section 4.3); it is never
+        wider than that version's universe. A version's recorded ``approved_universe`` wins; older
+        versions are read from their live members' registry artifacts (the symbols they were approved on).
+        """
+        for version in reversed(self.versions(persona_id, tenant_id)):
+            recorded = (version.get("decision") or {}).get("approved_universe")
+            live = [m for m in version["members"] if m["stage"] != "removed"]
+            if recorded and live:
+                return {str(s) for s in recorded}
+            if live:
+                symbols = set()
+                for member in live:
+                    artifact = ((self._reader(member["artifact_ref"], tenant_id) or {}).get("metadata") or {}).get("strategy_artifact") or {}
+                    symbols |= {str(s).split(".")[0] for s in (artifact.get("parameters") or {}).get("symbols") or []}
+                return symbols
+        return set()
 
     def _promote_trials(self, members, stats, policy, persona_id, tenant_id):
         """Trial -> active at a re-weight (coordinator-proposed condition in the policy file).

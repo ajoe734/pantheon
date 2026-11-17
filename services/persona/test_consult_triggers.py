@@ -224,3 +224,31 @@ def test_bootstrap_checks_conflicting_replica_winner_and_tenant():
     winner["tenant_id"] = "other"
     with pytest.raises(RuntimeError, match="tenant binding"):
         t.bootstrap_consult_personas(persona_url="http://p", tenant_id="ten", http=raced)
+
+
+def _macro(state, session):
+    return {"state": state, "session": session}
+
+
+def test_macro_regime_shift_fires_when_macro_state_changes_between_sessions():
+    from services.persona.consult_triggers import DECISION_MACRO_REGIME_SHIFT, macro_regime_shift_requirement
+    req = macro_regime_shift_requirement("persona-a", _macro("expansion", "2026-11-12"), _macro("slowdown", "2026-11-13"))
+    assert req is not None and req.decision_type == DECISION_MACRO_REGIME_SHIFT
+    assert _ids(req) and "persona-risk-officer" in _ids(req) and req.reasons[0].startswith("macro regime shifted expansion -> slowdown")
+    # Stable id for the same shift, different id for a different one.
+    again = macro_regime_shift_requirement("persona-a", _macro("expansion", "2026-11-12"), _macro("slowdown", "2026-11-13"))
+    other = macro_regime_shift_requirement("persona-a", _macro("expansion", "2026-11-12"), _macro("contraction", "2026-11-13"))
+    assert again.decision_id == req.decision_id != other.decision_id
+
+
+@pytest.mark.parametrize("previous,current", [
+    (_macro("slowdown", "2026-11-12"), _macro("slowdown", "2026-11-13")),   # unchanged
+    (None, _macro("slowdown", "2026-11-13")),                                # no earlier observation
+    (_macro("expansion", "2026-11-12"), None),                               # no current record
+    (_macro("expansion", "2026-11-13"), _macro("slowdown", "2026-11-13")),   # same session, not a later one
+    (_macro("expansion", "2026-11-14"), _macro("slowdown", "2026-11-13")),   # older current session
+    ({"state": "", "session": "2026-11-12"}, _macro("slowdown", "2026-11-13")),
+])
+def test_macro_regime_shift_does_not_fire_without_a_real_change(previous, current):
+    from services.persona.consult_triggers import macro_regime_shift_requirement
+    assert macro_regime_shift_requirement("persona-a", previous, current) is None

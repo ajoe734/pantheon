@@ -92,6 +92,22 @@ def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., 
     )
 
 
+def _default_decision_lock_owner() -> Optional[Any]:
+    """Agora owner for shadow-mode decision locks; None (fail closed) if unreachable."""
+    import logging
+    import os
+
+    if not (os.getenv("AGORA_STORE_DSN") or os.getenv("DATABASE_URL")):
+        return None
+    try:
+        from services.agora.service import build_agora_write_service
+
+        return build_agora_write_service()
+    except Exception:  # decisions then fail closed with 503
+        logging.getLogger(__name__).exception("agora decision-lock owner unavailable")
+        return None
+
+
 def create_agora_router(
     *,
     extract_identity: Callable[..., Any],
@@ -109,6 +125,7 @@ def create_agora_router(
     get_trade_journey_store: Callable[[], Any] = lambda: None,
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
+    decision_lock_owner: Optional[Any] = None,
     idempotency_store: Optional[Dict[str, Any]] = None,
     sse_buffers: Optional[Dict[str, Any]] = None,
     sse_subscribers: Optional[Dict[str, Any]] = None,
@@ -376,6 +393,11 @@ def create_agora_router(
         require_write_role=require_write_role,
         trading_room_store=trading_room_store,
         workshop_store=workshop_store,
+        decision_lock_owner=(
+            decision_lock_owner
+            if decision_lock_owner is not None
+            else _default_decision_lock_owner()
+        ),
     ))
     router.include_router(create_performance_router(
         **_kw,

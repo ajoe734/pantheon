@@ -62,3 +62,32 @@ def test_missing_dates_and_source_data_fail_closed():
         with pytest.raises(ValueError):
             evaluate_admission(dataset=dataset, current=[current], proposed=[current, candidate],
                 candidate=candidate, entries=entries, trial_count=1, policy=load_policy())
+
+
+def _always_long(entries, entry_ref):
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    changed = copy.deepcopy(entries[entry_ref])
+    artifact = changed["metadata"]["strategy_artifact"]
+    artifact["strategy_logic"].update(positive_action="BUY", non_positive_action="BUY")
+    artifact["parameters"]["zero_momentum_action"] = "BUY"
+    changed["checksum"] = strategy_artifact_checksum(artifact)
+    return changed
+
+
+def test_idle_pool_first_member_must_clear_every_criterion_on_its_own():
+    """Pool with no live member: its Sharpe is 0, so "combined better" means the candidate clears it alone."""
+    entries, one, _ = entries_and_members()
+    entries["long"] = _always_long(entries, one["artifact_ref"])
+    removed = {**one, "stage": "removed", "risk_weight": 0}
+    results = {}
+    for ref in ("long", one["artifact_ref"]):
+        trial = {**one, "artifact_ref": ref, "stage": "trial", "risk_weight": .1}
+        results[ref] = evaluate_admission(dataset=recorded_dataset(), current=[removed], proposed=[removed, trial],
+            candidate=trial, entries=entries, trial_count=1, policy=load_policy())
+    passing, failing = results["long"], results[one["artifact_ref"]]
+    assert passing["pool_idle"] and passing["pool_oos_sharpe"] == 0.0 and passing["correlations"] == {}
+    assert passing["admitted"] and passing["combined_oos_sharpe"] > load_policy().minimum_sharpe_improvement
+    assert not failing["admitted"]
+    assert set(failing["reasons"]) == {"combined_oos_sharpe_did_not_improve",
+                                       "candidate_oos_sharpe_below_persona_trial_threshold"}
+    assert failing["required_candidate_sharpe"] == passing["required_candidate_sharpe"]  # same deflated bar

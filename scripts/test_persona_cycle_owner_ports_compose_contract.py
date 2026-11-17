@@ -651,3 +651,71 @@ def test_enrollment_proposer_principal_is_wired_distinct_and_propose_only() -> N
     assert issued[variable] != issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
     compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert issued[variable] not in compose_text
+
+
+GOVERNANCE_BINDING_READER_SETTINGS = (
+    "GOVERNANCE_CAPITAL_BASE_URL",
+    "GOVERNANCE_CAPITAL_SERVICE_TOKEN",
+    "GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE",
+    "GOVERNANCE_RUNTIME_MANAGER_BASE_URL",
+    "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN",
+    "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE",
+)
+
+
+def scan_governance_binding_reader_contract(services: Mapping[str, Any]) -> list[str]:
+    environment = (services.get("governance") or {}).get("environment") or {}
+    failures = [f"governance missing {name}" for name in GOVERNANCE_BINDING_READER_SETTINGS if name not in environment]
+    # The deployed reader reads exactly these names from the real production module.
+    source = (ROOT / "services/governance/paper_approval_scope.py").read_text(encoding="utf-8")
+    failures += [f"paper_approval_scope does not read {name}" for name in
+                 ("GOVERNANCE_CAPITAL_BASE_URL", "GOVERNANCE_CAPITAL_SERVICE_TOKEN",
+                  "GOVERNANCE_RUNTIME_MANAGER_BASE_URL", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN")
+                 if name not in source]
+    return failures
+
+
+def test_governance_binding_readers_are_wired_and_each_missing_setting_fails_contract() -> None:
+    assert scan_governance_binding_reader_contract(SERVICES) == []
+    env = _env("governance")
+    for name in ("GOVERNANCE_CAPITAL_SERVICE_TOKEN", "GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE",
+                 "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE"):
+        assert _default(env[name]) == "", name  # no secret value committed
+    assert _default(env["GOVERNANCE_CAPITAL_BASE_URL"]) == "http://capital:8092"
+    assert _default(env["GOVERNANCE_RUNTIME_MANAGER_BASE_URL"]) == "http://runtime-manager:8081"
+    assert issuer.GOVERNANCE_CAPITAL_READER_SUBJECT in _default(
+        _env("capital")["CAPITAL_ALLOWED_READER_SERVICES"]).split(",")
+    for name in GOVERNANCE_BINDING_READER_SETTINGS:
+        mutated = copy.deepcopy(SERVICES)
+        del mutated["governance"]["environment"][name]
+        assert scan_governance_binding_reader_contract(mutated) == [f"governance missing {name}"]
+
+
+APPROVAL_USAGE_CONTEXT_SERVICES = {
+    "persona": "services/persona/write_owner.py",
+    "deployment": "services/deployment/service.py",
+    "governance": "services/governance/paper_approval_scope.py",
+    "runtime-manager": "services/runtime-manager/deploy_authority.py",
+}
+
+
+def scan_approval_usage_context_env_contract(services: Mapping[str, Any]) -> list[str]:
+    failures: list[str] = []
+    for service in APPROVAL_USAGE_CONTEXT_SERVICES:
+        env = (services[service].get("environment") or {})
+        value = env.get("PANTHEON_ENV")
+        if value != "${PANTHEON_ENV:-dev}":
+            failures.append(f"{service} missing PANTHEON_ENV")
+    return failures
+
+
+def test_approval_usage_context_services_all_wire_pantheon_env() -> None:
+    for service, path in APPROVAL_USAGE_CONTEXT_SERVICES.items():
+        assert "ApprovalUsageContext(" in (ROOT / path).read_text(encoding="utf-8"), service
+    assert scan_approval_usage_context_env_contract(SERVICES) == []
+    for service in APPROVAL_USAGE_CONTEXT_SERVICES:
+        mutated = copy.deepcopy(SERVICES)
+        del mutated[service]["environment"]["PANTHEON_ENV"]
+        assert scan_approval_usage_context_env_contract(mutated) == [
+            f"{service} missing PANTHEON_ENV"
+        ]

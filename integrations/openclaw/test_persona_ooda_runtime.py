@@ -60,3 +60,39 @@ def test_transport_failure_is_captured():
 
     turn = rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=fake_post)
     assert turn.status == "error" and "connection refused" in (turn.error or "")
+
+
+def test_brokered_prompt_names_the_tools_and_has_no_json_reply_contract():
+    p = rt.build_brokered_cycle_prompt({"persona_id": "persona-crypto", "mandate": "m"}, {"pool": {}})
+    for tool in ("persona_memory_recall", "persona_mental_model_read", "persona_proposal_submit"):
+        assert tool in p
+    assert "Return only JSON" not in p and "ignored" in p
+
+
+def test_session_user_is_sent_as_the_openresponses_user():
+    seen = {}
+
+    def fake_post(url, body, headers, timeout):
+        seen.update(json.loads(body))
+        return json.dumps({"output": [{"content": [{"type": "output_text", "text": "done"}]}]}).encode()
+
+    rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=fake_post, session_user="daily-cycle-1")
+    assert seen["user"] == "daily-cycle-1"
+    seen.clear()
+    rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=fake_post)
+    assert "user" not in seen
+
+
+def test_broker_client_registers_and_reads_the_run_record_with_the_service_token():
+    calls = []
+
+    def post(url, body, headers, timeout):
+        calls.append((url, json.loads(body), headers["X-Pantheon-Service-Token"]))
+        return json.dumps({"status": "ok", "run": {"run_ref": "ptr-1"}}).encode()
+
+    client = rt.AdapterToolBrokerClient("http://adapter:1/", "svc", post=post)
+    assert client.register_run("persona-crypto", "daily_cycle", "u-1") == {"run_ref": "ptr-1"}
+    assert calls == [("http://adapter:1/api/openclaw-adapter/agents/persona-tools/runs",
+                      {"persona_id": "persona-crypto", "purpose": "daily_cycle", "session_user": "u-1"}, "svc")]
+    with __import__("pytest").raises(rt.ToolBrokerUnavailable):
+        rt.AdapterToolBrokerClient("http://adapter:1", "", post=post).register_run("p", "daily_cycle", "u")

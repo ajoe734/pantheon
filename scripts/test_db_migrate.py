@@ -48,6 +48,8 @@ async def connect(dsn):
     assert _sql() == "\n".join(record["sql"]) + "\n"
     assert "CREATE TABLE IF NOT EXISTS loop_controller_records" in _sql()
     assert "CREATE TABLE IF NOT EXISTS source_ingest.data_source_instances" in _sql()
+    assert "CREATE TABLE IF NOT EXISTS telemetry_heartbeat_hourly_summaries" in _sql()
+    assert "CREATE INDEX IF NOT EXISTS idx_telemetry_heartbeat_hourly_summaries_hour_bucket" in _sql()
     assert record["dsn"] not in result.stdout + result.stderr
 
 
@@ -277,7 +279,6 @@ def test_fresh_database_migration_creates_ordered_index(pg_cluster: str) -> None
 
     asyncio.run(verify())
 
-
 def test_old_index_database_migration_upgrades_and_retains_data(pg_cluster: str) -> None:
     import asyncio
     import asyncpg
@@ -330,7 +331,6 @@ def test_old_index_database_migration_upgrades_and_retains_data(pg_cluster: str)
 
     asyncio.run(verify())
 
-
 def test_migration_idempotency_repeated_application(pg_cluster: str) -> None:
     import asyncio
     import asyncpg
@@ -357,7 +357,6 @@ def test_migration_idempotency_repeated_application(pg_cluster: str) -> None:
             await conn.close()
 
     asyncio.run(verify())
-
 
 def test_exact_index_ordering_and_deterministic_tie_behavior(pg_cluster: str) -> None:
     import asyncio
@@ -404,6 +403,66 @@ def test_exact_index_ordering_and_deterministic_tie_behavior(pg_cluster: str) ->
             """
             lim_rows = await conn.fetch(lim_query, "rb-tie-test")
             assert [r["event_id"] for r in lim_rows] == ["evt-tie-3", "evt-tie-2"]
+        finally:
+            await conn.close()
+
+    asyncio.run(verify())
+
+def test_heartbeat_hourly_summary_table_created_and_telemetry_events_unchanged(pg_cluster: str) -> None:
+    import asyncio
+    import asyncpg
+
+    db_dsn = asyncio.run(_create_isolated_db(pg_cluster, "test_hb_summary_db"))
+    res = _run_migration(db_dsn)
+    assert res.returncode == 0, res.stderr
+
+    async def verify():
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            cols = await conn.fetch(
+                """
+                SELECT column_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'telemetry_heartbeat_hourly_summaries'
+                """
+            )
+            col_map = {r["column_name"]: r["is_nullable"] for r in cols}
+            for required_col in (
+                "runtime_id",
+                "hour_bucket",
+                "heartbeat_count",
+                "first_heartbeat_at",
+                "last_heartbeat_at",
+                "largest_gap_seconds",
+                "last_connectivity_status",
+            ):
+                assert col_map.get(required_col) == "NO", f"Missing or nullable column: {required_col}"
+
+            idx_rows = await conn.fetch(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'telemetry_heartbeat_hourly_summaries'"
+            )
+            idx_names = {r["indexname"] for r in idx_rows}
+            assert "telemetry_heartbeat_hourly_summaries_pkey" in idx_names
+            assert "idx_telemetry_heartbeat_hourly_summaries_hour_bucket" in idx_names
+
+            # Verify telemetry_events columns are strictly unchanged for rollback safety
+            te_cols = await conn.fetch(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'telemetry_events'
+                ORDER BY ordinal_position
+                """
+            )
+            assert [r["column_name"] for r in te_cols] == [
+                "event_id",
+                "event_type",
+                "created_at",
+                "payload",
+                "ingested_seq",
+                "ingested_at",
+            ]
         finally:
             await conn.close()
 
