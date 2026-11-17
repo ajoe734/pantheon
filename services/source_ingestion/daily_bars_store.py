@@ -31,6 +31,7 @@ import json
 import math
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date as _date
 from pathlib import Path
@@ -39,6 +40,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v1"
 PART_ROWS = 10_000
 ROW_GROUP_ROWS = 1_000
+SLICE_ROWS = 2_000  # retention sweep: rows converted per slice before the interpreter lock is released for a moment
 
 # Budget row of design section 6 (bytes). *_TARGET is the design bound, *_ALARM the alarm line.
 DAILY_BARS_DAY_TARGET_BYTES = 1_600_000
@@ -328,12 +330,79 @@ class DailyBarsStore:
         return out
 
     @staticmethod
-    def day_digest(rows: Iterable[Mapping[str, Any]]) -> str:
-        return _sha(sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows))
+    def day_digest(rows: Iterable[Mapping[str, Any]], *, yield_gil: bool = False) -> str:
+        """Digest of a date's rows. ``yield_gil`` hashes the same bytes in slices with a pause between them, so a
+        sweep of a 22,500 row date does not hold the interpreter lock for one long stretch (retention sweeper)."""
+        keyed = sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows)
+        if not yield_gil:
+            return _sha(keyed)
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        for start in range(0, len(keyed), SLICE_ROWS):
+            if start:
+                digest.update(b",")
+            digest.update(",".join(_canonical(list(k)) for k in keyed[start:start + SLICE_ROWS]).encode("utf-8"))
+            time.sleep(0.001)
+        digest.update(b"]")
+        return digest.hexdigest()
+
+    def _read_day_rows_sliced(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """``_read_day_rows`` in ``SLICE_ROWS`` slices with a pause between them (same result)."""
+        _, pq = _require_pyarrow()
+        out: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for entry in manifest.get("files", ()):
+            path = self.bars_dir / entry["path"]
+            if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=SLICE_ROWS):
+                for row in batch.to_pylist():
+                    out[(row["market"], row["symbol"], row["trade_date"])] = row
+                time.sleep(0.001)
+        return out
 
     def _hit(self, step: str) -> None:
         if self._fault is not None:
             self._fault(step)
+
+    def _write_parts(self, pa, pq, trade_date: str, generation: int, ordered: Sequence[Mapping[str, Any]],
+                     *, yield_gil: bool = False) -> tuple[list[dict[str, Any]], list[Path]]:
+        """Write one generation of part files for a date (temp write, fsync, rename). Nothing is visible until
+        the manifest is swapped."""
+        files: list[dict[str, Any]] = []
+        new_paths: list[Path] = []
+        schema = _schema(pa)
+        by_market: dict[str, list[Mapping[str, Any]]] = {}
+        for row in ordered:
+            by_market.setdefault(row["market"], []).append(row)
+        for market, market_rows in sorted(by_market.items()):
+            part_dir = self.bars_dir / f"market={market}" / f"date={trade_date}"
+            part_dir.mkdir(parents=True, exist_ok=True)
+            for n, start in enumerate(range(0, len(market_rows), PART_ROWS)):
+                chunk = market_rows[start:start + PART_ROWS]
+                final = part_dir / f"part-g{generation}-{n}.parquet"
+                tmp = final.with_name(final.name + ".tmp")
+                if yield_gil:  # same file layout (row groups of ROW_GROUP_ROWS), built in slices
+                    with pq.ParquetWriter(tmp, schema, compression="zstd") as writer:
+                        for lo in range(0, len(chunk), SLICE_ROWS):
+                            writer.write_table(pa.Table.from_pylist(chunk[lo:lo + SLICE_ROWS], schema=schema),
+                                               row_group_size=ROW_GROUP_ROWS)
+                            time.sleep(0.001)
+                else:
+                    table = pa.Table.from_pylist(chunk, schema=schema)
+                    pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
+                self._hit("after_temp_write")
+                with open(tmp, "rb") as handle:
+                    os.fsync(handle.fileno())
+                self._hit("after_fsync")
+                os.replace(tmp, final)
+                new_paths.append(final)
+                files.append({
+                    "path": final.relative_to(self.bars_dir).as_posix(), "market": market,
+                    "rows": len(chunk), "bytes": final.stat().st_size,
+                    "min_symbol": chunk[0]["symbol"], "max_symbol": chunk[-1]["symbol"],
+                })
+            _fsync_dir(part_dir)
+        return files, new_paths
 
     def write_day(
         self,
@@ -371,33 +440,7 @@ class DailyBarsStore:
                     return False
                 generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
                 ordered = sorted(merged.values(), key=lambda r: (r["market"], r["symbol"]))
-                files: list[dict[str, Any]] = []
-                new_paths: list[Path] = []
-                schema = _schema(pa)
-                by_market: dict[str, list[dict[str, Any]]] = {}
-                for row in ordered:
-                    by_market.setdefault(row["market"], []).append(row)
-                for market, market_rows in sorted(by_market.items()):
-                    part_dir = self.bars_dir / f"market={market}" / f"date={trade_date}"
-                    part_dir.mkdir(parents=True, exist_ok=True)
-                    for n, start in enumerate(range(0, len(market_rows), PART_ROWS)):
-                        chunk = market_rows[start:start + PART_ROWS]
-                        final = part_dir / f"part-g{generation}-{n}.parquet"
-                        tmp = final.with_name(final.name + ".tmp")
-                        table = pa.Table.from_pylist(chunk, schema=schema)
-                        pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
-                        self._hit("after_temp_write")
-                        with open(tmp, "rb") as handle:
-                            os.fsync(handle.fileno())
-                        self._hit("after_fsync")
-                        os.replace(tmp, final)
-                        new_paths.append(final)
-                        files.append({
-                            "path": final.relative_to(self.bars_dir).as_posix(), "market": market,
-                            "rows": len(chunk), "bytes": final.stat().st_size,
-                            "min_symbol": chunk[0]["symbol"], "max_symbol": chunk[-1]["symbol"],
-                        })
-                    _fsync_dir(part_dir)
+                files, new_paths = self._write_parts(pa, pq, trade_date, generation, ordered)
                 self._write_lineage(
                     trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values())
                 self._hit("after_lineage")
@@ -431,7 +474,7 @@ class DailyBarsStore:
     def _write_lineage(
         self,
         trade_date: str,
-        ingest_run_id: str,
+        ingest_run_id: str | None,
         calendar_evidence: Mapping[str, Mapping[str, Any]],
         connector_id: str | None,
         observed_at: str | None,
@@ -445,8 +488,163 @@ class DailyBarsStore:
         doc["calendar_evidence"].update({k: dict(v) for k, v in calendar_evidence.items()})
         referenced = {r["lineage_ref"] for r in rows}
         doc["runs"] = {k: v for k, v in doc["runs"].items() if k in referenced}  # drop runs no row refers to
-        doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
+        if ingest_run_id is not None:  # None: a removal rewrite adds no run, it only drops runs no remaining row refers to
+            doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
         _atomic_write_bytes(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    # -- retention support (SOURCE-RETENTION-SWEEPER-20261118-R2) -----------------------------
+    def dates(self) -> list[str]:
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
+
+    def lineage_dates(self) -> list[str]:
+        if not self.lineage_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.lineage_dir.glob("date=*.json"))
+
+    def _lineage_size(self, trade_date: str) -> int:
+        try:
+            return (self.lineage_dir / f"date={trade_date}.json").stat().st_size
+        except OSError:
+            return 0
+
+    def remove_rows(
+        self,
+        trade_date: str,
+        should_remove: Callable[[Mapping[str, Any]], bool],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Remove the rows ``should_remove(row)`` selects from one date.
+
+        ``row`` has ``market``, ``symbol``, ``trade_date``, ``lineage_ref``. The rewrite is the normal write protocol:
+        new part files (temp write, fsync, rename), the lineage rewritten to the runs the kept rows refer to, then
+        the manifest swap LAST. A kill before the swap leaves the previous complete date; a reader sees the old
+        manifest or the new one, never a mixture. A date left with no row is deleted (``delete_day``).
+        ``dry_run`` measures and writes nothing.
+        """
+        _, pq = _require_pyarrow()
+        empty = {"trade_date": trade_date, "rows": 0, "removed": 0, "remaining": 0, "bytes_before": 0, "bytes_freed": 0,
+                 "lineage_bytes_freed": 0, "deleted_day": False}
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(trade_date)
+                if manifest is None:
+                    return empty
+                bytes_before = int(manifest.get("bytes", 0))
+                # Cheap pass: the three small columns only. A date without a hit is not rewritten.
+                hit = 0
+                total = 0
+                for entry in manifest.get("files", ()):
+                    path = self.bars_dir / entry["path"]
+                    if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                        raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
+                    for batch in pq.ParquetFile(path).iter_batches(
+                            batch_size=SLICE_ROWS, columns=["market", "symbol", "trade_date", "lineage_ref"]):
+                        cols = batch.to_pylist()
+                        total += len(cols)
+                        hit += sum(1 for r in cols if should_remove(r))
+                        time.sleep(0.001)
+                result = {**empty, "rows": total, "removed": hit, "remaining": total - hit, "bytes_before": bytes_before}
+                if hit == 0:
+                    return result
+                lineage_before = self._lineage_size(trade_date)
+                if dry_run:
+                    share = hit / total if total else 0
+                    result["bytes_freed"] = int(bytes_before * share)
+                    result["deleted_day"] = hit == total
+                    result["lineage_bytes_freed"] = lineage_before if hit == total else 0
+                    return result
+                rows = self._read_day_rows_sliced(manifest)
+                kept = {k: v for k, v in rows.items() if not should_remove(v)}
+                if not kept:
+                    self._delete_day_locked(trade_date, manifest)
+                    result.update(removed=total, remaining=0, bytes_freed=bytes_before, deleted_day=True,
+                                  lineage_bytes_freed=lineage_before)
+                    return result
+                generation = int(manifest.get("generation", 0)) + 1
+                ordered = sorted(kept.values(), key=lambda r: (r["market"], r["symbol"]))
+                files, new_paths = self._write_parts(*_require_pyarrow(), trade_date, generation, ordered, yield_gil=True)
+                self._write_lineage(trade_date, None, {}, None, None, ordered)
+                self._hit("after_lineage")
+                new_manifest = {
+                    "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
+                    "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
+                    "generation": generation, "files": files, "row_count": len(ordered),
+                    "symbol_count": len({r["symbol"] for r in ordered}),
+                    "bytes": sum(f["bytes"] for f in files), "content_digest": self.day_digest(ordered, yield_gil=True),
+                }
+                manifest_path = self._manifest_path(trade_date)
+                tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
+                with open(tmp_manifest, "wb") as handle:
+                    handle.write(json.dumps(new_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self._hit("before_manifest_rename")
+                os.replace(tmp_manifest, manifest_path)  # LAST: this makes the smaller set visible
+                _fsync_dir(self.manifest_dir)
+                self._hit("after_manifest_rename")
+                keep = {p.resolve() for p in new_paths}
+                for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
+                    if stale.resolve() not in keep:
+                        stale.unlink(missing_ok=True)
+                result.update(removed=hit, remaining=len(ordered), bytes_freed=bytes_before - new_manifest["bytes"],
+                              lineage_bytes_freed=max(0, lineage_before - self._lineage_size(trade_date)))
+                self.counters["days_written"] += 1
+                return result
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def _lock_path(self) -> Path:
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        return self.manifest_dir / ".lock"
+
+    def _delete_day_locked(self, trade_date: str, manifest: Mapping[str, Any] | None) -> None:
+        """Manifest first (the date stops existing for readers in one step), then parts, then lineage.
+        A kill after the first step leaves orphan files that ``delete_orphans`` / ``sweep_interrupted`` remove."""
+        manifest_path = self._manifest_path(trade_date)
+        manifest_path.unlink(missing_ok=True)
+        _fsync_dir(self.manifest_dir)
+        self._hit("after_manifest_unlink")
+        for entry in (manifest or {}).get("files", ()):
+            (self.bars_dir / entry["path"]).unlink(missing_ok=True)
+        for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
+            stale.unlink(missing_ok=True)
+        for part_dir in self.bars_dir.glob(f"market=*/date={trade_date}"):
+            try:
+                part_dir.rmdir()
+            except OSError:
+                pass
+        (self.lineage_dir / f"date={trade_date}.json").unlink(missing_ok=True)
+
+    def delete_day(self, trade_date: str) -> dict[str, Any]:
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(trade_date)
+                freed = int((manifest or {}).get("bytes", 0))
+                lineage = self._lineage_size(trade_date)
+                self._delete_day_locked(trade_date, manifest)
+                return {"trade_date": trade_date, "bytes_freed": freed, "lineage_bytes_freed": lineage}
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def delete_orphan_lineage(self) -> int:
+        """Lineage of a date that has no manifest (a delete killed after its manifest step). Returns bytes removed."""
+        freed = 0
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                have = set(self.dates())
+                for day in self.lineage_dates():
+                    if day not in have:
+                        freed += self._lineage_size(day)
+                        (self.lineage_dir / f"date={day}.json").unlink(missing_ok=True)
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+        return freed
 
     # -- backfill support ----------------------------------------------------------------------
     def sweep_interrupted(self) -> dict[str, int]:
@@ -848,6 +1046,37 @@ class KeyedDatasetStore:
                 return True
             finally:
                 fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def delete_partition(self, partition: str, *, dry_run: bool = False) -> dict[str, Any]:
+        """Delete one whole partition: manifest first (readers stop seeing it in one step), then its files."""
+        with self._lock, open(self._manifest_lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(partition)
+                if manifest is None:
+                    return {"partition": partition, "rows": 0, "bytes_freed": 0, "deleted": False}
+                out = {"partition": partition, "rows": int(manifest.get("row_count", 0)),
+                       "bytes_freed": int(manifest.get("bytes", 0)), "deleted": not dry_run}
+                if dry_run:
+                    return out
+                self._manifest_path(partition).unlink(missing_ok=True)
+                _fsync_dir(self.manifest_dir)
+                self._hit("after_manifest_unlink")
+                part_dir = self.base / f"date={partition}"
+                if part_dir.is_dir():
+                    for f in part_dir.iterdir():
+                        f.unlink(missing_ok=True)
+                    try:
+                        part_dir.rmdir()
+                    except OSError:
+                        pass
+                return out
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def _manifest_lock_path(self) -> Path:
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        return self.manifest_dir / ".lock"
 
     def budget_report(self) -> dict[str, Any]:
         sizes = []
