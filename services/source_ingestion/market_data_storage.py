@@ -42,6 +42,15 @@ def tw_price_daily_run_files_enabled(env: Mapping[str, str] | None = None) -> bo
     raise ValueError(f"{TW_PRICE_DAILY_RUN_FILES_ENV}={raw!r} is not one of on, off")
 
 
+def _run_observed_at(result: Any) -> str:
+    """Observation time of a run = its recorded finish time (stable across replays), else now."""
+    try:
+        finished = result.run.to_dict().get("finished_at")
+    except Exception:  # noqa: BLE001 - observation time is metadata only
+        finished = None
+    return str(finished) if finished else utc_now_iso()
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -243,7 +252,7 @@ class MarketDataStorageWriter:
                 ingest_run_id=result.run.ingest_run_id,
                 default_market=str(market).strip() if market else None,
                 connector_id=connector.connector_id,
-                observed_at=utc_now_iso(),
+                observed_at=_run_observed_at(result),
             )
         except Exception as exc:  # noqa: BLE001 - dual write must not fail the run; health reports it
             self.daily_bars_store.record_dual_write_error(exc)
