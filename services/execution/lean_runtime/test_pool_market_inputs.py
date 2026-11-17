@@ -63,3 +63,41 @@ def test_market_snapshots_carry_no_persona_position_state():
     [snap] = pmi.market_snapshots(market, "2026-11-02", "2026-11-02T04:00:00Z").values()
     assert snap["closes"] == [10.0]  # only bars strictly before the decision day
     assert not {"current_direction", "holding_bars"} & set(snap)  # member virtual holdings own that state
+
+
+def test_min_closes_passed_only_above_snapshot_window():
+    seen = []
+
+    def fetch(url, s, *extra):
+        seen.append((s, extra))
+        return snap(s)
+
+    pmi.obtain_envelope_market_inputs(["A.TW"], source_ingest_url="http://source", max_age_seconds=86400,
+                                      minimum_closes=120, now_iso=NOW, fetch=fetch, admit=_admit)
+    obtain(["A.TW"], fetch)  # minimum_closes=2: previous two-argument call shape, previous endpoint contract
+    assert seen == [("A.TW", (120,)), ("A.TW", ())]
+
+
+def test_history_insufficient_refuses_pool_with_reason():
+    short = {**snap("A.TW"), "closes": [], "reason": "history_insufficient", "requested": 120,
+             "available": 90, "first_available_date": "2026-03-02", "detail": "only 90 contiguous closes are stored"}
+    with pytest.raises(pmi.PoolMarketInputsUnavailable) as err:
+        pmi.obtain_envelope_market_inputs(["A.TW"], source_ingest_url="http://source", max_age_seconds=86400,
+                                          minimum_closes=120, now_iso=NOW, fetch=lambda *a: short, admit=_admit)
+    assert err.value.code == "market_input_insufficient" and "120" in err.value.detail and "90" in err.value.detail
+
+
+def test_fetch_url_carries_min_closes_only_above_60(monkeypatch):
+    urls = []
+
+    class R:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b"{}"
+
+    monkeypatch.setattr(pmi.urllib.request, "urlopen", lambda req, timeout=0: (urls.append(req.full_url), R())[1])
+    pmi.fetch_source_snapshot("http://s", "2330.TWSE")
+    pmi.fetch_source_snapshot("http://s", "2330.TWSE", 60)
+    pmi.fetch_source_snapshot("http://s", "2330.TWSE", 504)
+    assert urls[0] == urls[1] == "http://s/api/source-ingest/snapshots/latest?symbol=2330.TWSE"
+    assert urls[2].endswith("&min_closes=504")
