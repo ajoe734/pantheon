@@ -1,0 +1,232 @@
+{
+  "task_id": "TELEMETRY-HEARTBEAT-RETENTION-20261117",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "source_base_sha": "3ad3e4799",
+  "hosted_context_measured_by_coordinator": {
+    "measured_at": "2026-11-16T23:55:00Z",
+    "table": "public.telemetry_events",
+    "total_size_gb": 29.0,
+    "total_rows": 13700000,
+    "history_since": "2026-09-13",
+    "heartbeat_rows": 9700000,
+    "heartbeat_size_gb": 20.0,
+    "paper_runtimes": ["rt-49c1c3d1", "rt-3b65a843", "rt-ad81501b", "rt-3252fa75"],
+    "observed_heartbeat_rate_per_runtime_per_hour": 2970,
+    "observed_heartbeat_interval_seconds": 1.2,
+    "out_of_scope_infrastructure_health_growth": {
+      "event_type": "infrastructure_health",
+      "estimated_rows_per_day": 88000,
+      "estimated_payload_mb_per_day": 85,
+      "disposition": "Out of scope for TELEMETRY-HEARTBEAT-RETENTION-20261117; recorded for visibility only."
+    }
+  },
+  "summary_table_contract": {
+    "table": "public.telemetry_heartbeat_hourly_summaries",
+    "primary_key": ["runtime_id", "hour_bucket"],
+    "columns": [
+      "runtime_id",
+      "hour_bucket",
+      "heartbeat_count",
+      "first_heartbeat_at",
+      "last_heartbeat_at",
+      "largest_gap_seconds",
+      "last_connectivity_status",
+      "first_event_id",
+      "last_event_id",
+      "min_ingested_seq",
+      "max_ingested_seq",
+      "summarized_at"
+    ],
+    "indexes": [
+      "telemetry_heartbeat_hourly_summaries_pkey (runtime_id, hour_bucket)",
+      "idx_telemetry_heartbeat_hourly_summaries_hour_bucket (hour_bucket DESC)"
+    ],
+    "summarized_before_raw_delete": true,
+    "summary_rows_never_deleted": true,
+    "telemetry_events_ddl_unchanged": true
+  },
+  "retention_job_contract": {
+    "module": "services/telemetry/heartbeat_retention.py",
+    "service_wiring": "services/telemetry/main.py",
+    "retention_days_env": "PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS",
+    "default_retention_days": 3,
+    "target_table": "public.telemetry_events",
+    "target_event_type": "heartbeat",
+    "other_event_types_touched": false,
+    "bounded_batch_size_default": 5000,
+    "statement_timeout_ms_default": 15000
+  },
+  "ingested_seq_consumers": [
+    {
+      "consumer_id": "trade_journey_lifecycle_projector",
+      "module": "services/trade_journey/lifecycle_projector.py",
+      "symbol": "RelationalLifecycleProjector / PostgresLifecycleSource",
+      "checkpoint_location": "PostgreSQL trade_journey_projection.controller.checkpoint_seq (controller_id='canonical-lifecycle-projector')",
+      "gap_tolerance": "fetch_after uses WHERE ingested_seq > $1 ORDER BY ingested_seq ASC and records last_frontier_seq under _source_writer_fence; ProjectionStore advances target_checkpoint_seq = max(target_checkpoint_seq, proven_frontier) across sequence holes.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "trade_journey_incremental_materializer",
+      "module": "services/trade_journey/incremental_materializer.py",
+      "symbol": "IncrementalLifecycleMaterializer",
+      "checkpoint_location": "trade_journey_projection.journeys.last_ingested_seq and trade_journey_projection.loop_runs.last_ingested_seq (governed by trade_journey_projection.controller.checkpoint_seq)",
+      "gap_tolerance": "Folds LIFECYCLE_EVENT_TYPES only (ignores heartbeat) and updates agg.last_ingested_seq = max(agg.last_ingested_seq, seq) without requiring contiguous seq + 1.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "trade_journey_projection_store",
+      "module": "services/trade_journey/projection_store.py",
+      "symbol": "ProjectionStore",
+      "checkpoint_location": "PostgreSQL trade_journey_projection.controller (checkpoint_seq, source_high_watermark, backlog_count)",
+      "gap_tolerance": "Uses source_frontier_seq to advance target_checkpoint_seq across deleted heartbeat sequence holes and computes backlog_count = max(0, next_source_high_watermark - target_checkpoint_seq).",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "telemetry_runtime_summary",
+      "module": "services/telemetry/runtime_summary.py",
+      "symbol": "RuntimeSummaryProjectionStore",
+      "checkpoint_location": "TELEMETRY_RUNTIME_SUMMARY_STORE (runtime_summaries.json + runtime_summaries.json.delta.jsonl)",
+      "gap_tolerance": "Projects events in-process on ingest; startup backfill sorts _LIFECYCLE_IDENTITY_EVENT_TYPES by (created_at, sequence_no, ingested_seq) and never steps by contiguous ingested_seq.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "telemetry_ingest_service",
+      "module": "services/telemetry/ingest_svc.py",
+      "symbol": "TelemetryIngestService / build_postgres_write_fn / build_postgres_event_reader / CanonicalFillHistoryReader",
+      "checkpoint_location": "PostgreSQL sequence public.telemetry_events_ingested_seq_seq; dead_letter.jsonl; infrastructure_health_admissions.jsonl",
+      "gap_tolerance": "Sequence allocation via nextval is unaffected by row deletion; readers use ORDER BY created_at DESC, ingested_seq DESC LIMIT n or strict inequality.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "bff_trade_journey_projection_store",
+      "module": "services/control-plane/bff/trade_journey_projection_store.py",
+      "symbol": "PostgresTradeJourneyProjectionStore",
+      "checkpoint_location": "Reads trade_journey_projection.controller.checkpoint_seq and stateless keyset pagination tokens over trade_journey_projection.journey_stages.source_ingested_seq",
+      "gap_tolerance": "Queries derived trade_journey_projection tables using tuple > keyset comparisons.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "agora_operational_readiness",
+      "module": "services/control-plane/bff/agora/operational_readiness.py",
+      "symbol": "AgoraOperationalReadinessAssembler._read_canonical_telemetry",
+      "checkpoint_location": "Stateless on-demand query (no persistent checkpoint)",
+      "gap_tolerance": "Queries WHERE event_type = 'signal_generation' ORDER BY ingested_seq DESC LIMIT 200.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "hosted_lifecycle_probe",
+      "module": "services/trade_journey/hosted_lifecycle_probe.py",
+      "symbol": "AsyncpgTelemetrySource",
+      "checkpoint_location": "Ephemeral per-probe baseline_high_watermark compared against trade_journey_projection.controller.checkpoint_seq",
+      "gap_tolerance": "Queries WHERE ingested_seq > $1 AND event_type = ANY(LIFECYCLE_EVENT_TYPES) ORDER BY ingested_seq ASC and checks strict < monotonicity.",
+      "stalls_on_gaps": false
+    },
+    {
+      "consumer_id": "hosted_lifecycle_stimulus",
+      "module": "services/trade_journey/hosted_lifecycle_stimulus.py",
+      "symbol": "HostedLifecycleStimulus",
+      "checkpoint_location": "Stateless per-invocation query (no persistent checkpoint)",
+      "gap_tolerance": "Queries lifecycle event types with ORDER BY ingested_seq DESC LIMIT n.",
+      "stalls_on_gaps": false
+    }
+  ],
+  "heartbeat_readers": [
+    {
+      "reader_id": "telemetry_runtime_summary",
+      "module": "services/telemetry/runtime_summary.py & services/telemetry/heartbeat_service.py",
+      "oldest_heartbeat_needed_seconds": 90,
+      "rationale": "Uses latest heartbeat per runtime for 90s staleness threshold (TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS=90), connectivity_status, member_virtual_books, and monotonic ledger_fill_count."
+    },
+    {
+      "reader_id": "quarter_equity_and_rankings",
+      "module": "services/control-plane/bff/personas/service.py & scripts/project_console_data_rankings_to_bff_surfaces.py",
+      "oldest_heartbeat_needed_seconds": 0,
+      "rationale": "Known quarter_equity.v1 observations come exclusively from event_type='pnl_snapshot' (never deleted); rankings use pnl, sharpe_ratio, drawdown, fill_rate, avg_slippage_bps, total_trades."
+    },
+    {
+      "reader_id": "trade_journey_lifecycle_projector",
+      "module": "services/trade_journey/lifecycle_projector.py",
+      "oldest_heartbeat_needed_seconds": 0,
+      "rationale": "Heartbeats are not in LIFECYCLE_EVENT_TYPES and are marked ignored once ingested_seq <= controller.checkpoint_seq."
+    },
+    {
+      "reader_id": "incidents_and_threshold_sweep",
+      "module": "services/incidents/consumer.py & services/evolution/threshold_sweep_worker.py",
+      "oldest_heartbeat_needed_seconds": 90,
+      "rationale": "ThresholdSweepWorker checks current runtime summary last_heartbeat_at freshness (90s); IncidentConsumer consumes infrastructure_health and threshold breach payloads."
+    },
+    {
+      "reader_id": "reconciliation_drift",
+      "module": "services/reconciliation-drift/main.py & services/reconciliation-drift/consumer.py",
+      "oldest_heartbeat_needed_seconds": 90,
+      "rationale": "Reads current runtime summaries via /api/telemetry/runtime-summaries and evaluates bindings using lifecycle and position_snapshot events."
+    },
+    {
+      "reader_id": "management_read_models_and_bff",
+      "module": "services/control-plane/bff/management_read_models/router.py & services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+      "oldest_heartbeat_needed_seconds": 90,
+      "rationale": "Reads current runtime summaries and equity/drawdown metric events; paper_fleet_reconciler checks current runtime liveness."
+    },
+    {
+      "reader_id": "telemetry_lineage_binding_reader",
+      "module": "services/telemetry/ingest_svc.py & services/telemetry/lineage_read/service.py",
+      "oldest_heartbeat_needed_seconds": 3600,
+      "rationale": "Fetches most recent LIMIT 50..100 binding events (ORDER BY created_at DESC, ingested_seq DESC), well inside the 259200s (3-day) window."
+    }
+  ],
+  "growth_bound_and_hosted_shape_verification": {
+    "runtimes_count": 4,
+    "runtimes": ["rt-49c1c3d1", "rt-3b65a843", "rt-ad81501b", "rt-3252fa75"],
+    "retention_window_days": 3,
+    "summary_rows_per_day": 96,
+    "post_cadence_fix_bound": {
+      "max_raw_heartbeat_rows_in_3_days": 69120,
+      "approx_size_mb": 160
+    },
+    "pre_cadence_fix_bound": {
+      "max_raw_heartbeat_rows_in_3_days": 860000,
+      "approx_size_gb": 2.0
+    },
+    "hosted_shape_dataset_test_measurement": {
+      "old_days_summarized": 2,
+      "old_heartbeat_rows_deleted": 384,
+      "summary_rows_created": 192,
+      "summary_rows_per_day_measured": 96,
+      "runtime_summaries_identical_before_after_and_cold_rebuild": true,
+      "quarter_equity_observations_identical_before_after_and_cold_rebuild": true,
+      "rankings_identical_before_after_and_cold_rebuild": true
+    }
+  },
+  "reclaim_script_verification": {
+    "script": "scripts/telemetry_heartbeat_reclaim.py",
+    "dry_run_verified": true,
+    "free_disk_floor_multiplier": 1.5,
+    "refuses_when_free_disk_below_floor": true,
+    "postgres_reclaim_mechanism": "VACUUM (FULL, ANALYZE) public.telemetry_events",
+    "physical_table_bytes_reduced": true,
+    "ingest_available_and_dlq_replay_zero_loss_verified": true
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_db_migrate.py services/telemetry/test_heartbeat_retention.py scripts/test_telemetry_heartbeat_reclaim.py",
+      "exit_code": 0,
+      "result": "24 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_main_routes.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_capture.py services/telemetry/test_dead_letter_retention.py",
+      "exit_code": 0,
+      "result": "210 passed, 34 subtests passed in 20.90s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py scripts/test_capture_canonical_telemetry_baseline.py",
+      "exit_code": 0,
+      "result": "338 passed, 3 skipped in 11.67s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ]
+}
