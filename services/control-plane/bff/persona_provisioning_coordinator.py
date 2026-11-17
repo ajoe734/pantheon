@@ -285,6 +285,7 @@ class PersonaProvisioningCoordinator:
         persona_owner_provider: Callable[[], Any] | None = None,
         governance_proposer: OwnerTransport | None = None,
         governance_proposer_actor_id: str | None = None,
+        pool_publisher_factory: Callable[[], Any] | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -314,6 +315,7 @@ class PersonaProvisioningCoordinator:
         self.persona_owner_provider = persona_owner_provider or default_persona_owner
         self.governance_proposer = governance_proposer
         self.governance_proposer_actor_id = governance_proposer_actor_id
+        self.pool_publisher_factory = pool_publisher_factory
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -622,7 +624,53 @@ class PersonaProvisioningCoordinator:
             governance_actor_id=self.governance_actor_id,
             proposer=proposer,
             proposer_actor_id=proposer_id,
+            pool_publisher=self._first_publish_callable(record, owner),
         )
+
+    def _first_publish_callable(self, record: ProvisioningRecord, owner: Any) -> Callable[[int], Any]:
+        """Seeded-pool publish through the existing ``PersonaPoolPublisher`` (read-before-write)."""
+
+        def publish(pool_version: int) -> Any:
+            if self.pool_publisher_factory is not None:
+                publisher = self.pool_publisher_factory()
+            else:
+                from .persona_pool_publisher import (
+                    PersonaPoolPublisher,
+                    build_publish_records,
+                )
+
+                class _CurrentPool:
+                    """Seeded v1 is the owner's current pool; any other version is not this publish."""
+
+                    @staticmethod
+                    def current(persona_id: str, tenant_id: str) -> Any:
+                        value = owner.get_strategy_pool(persona_id, tenant_id=tenant_id)
+                        if value is None:
+                            from services.control_plane.persona.persona_strategy_pool import PoolNotFound
+
+                            raise PoolNotFound(f"no strategy pool for persona {persona_id!r}")
+                        return dict(value)
+
+                    @classmethod
+                    def version(cls, persona_id: str, tenant_id: str, number: int) -> Any:
+                        value = cls.current(persona_id, tenant_id)
+                        if int(value.get("pool_version") or 0) != int(number):
+                            from services.control_plane.persona.persona_strategy_pool import PoolNotFound
+
+                            raise PoolNotFound(f"pool version {number} is not the seeded version")
+                        return value
+
+                publisher = PersonaPoolPublisher(
+                    coordinator=self, pool_store=_CurrentPool(), records=build_publish_records()
+                )
+            return publisher.publish(
+                tenant_id=record.tenant_id,
+                persona_id=record.persona_id,
+                requested_by=self.actor_id,
+                pool_version=pool_version,
+            )
+
+        return publish
 
     def _enroll_in_place(self, record: ProvisioningRecord) -> ProvisioningRecord:
         """Enrol under the lease this coordinator already holds; readback on the ledger."""
