@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -111,6 +112,34 @@ def _digest(value: Any) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+HTTP_ERROR_DETAIL_LIMIT = 500
+
+
+def _http_error_detail(exc: urllib.error.HTTPError, *, bearer_token: str | None = None) -> str:
+    """The response's reason text, bounded; never a header, never the bearer token.
+
+    A JSON body's ``detail`` is used when present; any other body (not JSON, or JSON
+    without ``detail``) is used as text. Reading the body can fail; that is reported, not raised.
+    """
+
+    try:
+        raw = exc.read(HTTP_ERROR_DETAIL_LIMIT * 8).decode("utf-8", errors="replace")
+    except Exception as read_error:  # noqa: BLE001 - diagnosis must not mask the HTTP failure
+        return f"<response body unreadable: {type(read_error).__name__}>"
+    text = raw.strip()
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, Mapping) and "detail" in parsed:
+        detail = parsed["detail"]
+        text = detail if isinstance(detail, str) else _canonical_json(detail)
+    if bearer_token:
+        text = text.replace(bearer_token, "[redacted]")
+    text = " ".join(text.split()) or "<empty response body>"
+    return text[:HTTP_ERROR_DETAIL_LIMIT]
+
+
 def _request_json(
     url: str,
     *,
@@ -127,8 +156,15 @@ def _request_json(
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        raw = response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise ControllerTickError(
+            "controller",
+            f"HTTPError: {exc}: {_http_error_detail(exc, bearer_token=bearer_token)}",
+            http_status=exc.code,
+        ) from exc
     parsed = json.loads(raw) if raw else {}
     if allow_list:
         if not isinstance(parsed, (dict, list)):
