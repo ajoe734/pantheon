@@ -440,6 +440,74 @@ class DailyBarsStore:
         doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
         _atomic_write_bytes(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
+    # -- backfill support ----------------------------------------------------------------------
+    def sweep_interrupted(self) -> dict[str, int]:
+        """Remove what a killed writer left behind: temp files and part files no manifest references.
+
+        A writer only ever has one trade date in flight, so the residue of an interrupted run
+        belongs to one date. Published dates (manifest present) are never touched except for
+        their unreferenced generations."""
+        removed = {"temp_files": 0, "orphan_parts": 0}
+        with self._lock:
+            for base in (self.bars_dir, self.lineage_dir):
+                if base.is_dir():
+                    for path in list(base.rglob("*")):
+                        if path.is_file() and (path.name.endswith(".tmp") or ".tmp-" in path.name):
+                            path.unlink(missing_ok=True)
+                            removed["temp_files"] += 1
+            if self.bars_dir.is_dir():
+                for date_dir in list(self.bars_dir.glob("market=*/date=*")):
+                    trade_date = date_dir.name[5:]
+                    manifest = self.read_manifest(trade_date)
+                    keep = {self.bars_dir / e["path"] for e in (manifest or {}).get("files", ())}
+                    for part in list(date_dir.iterdir()):
+                        if part not in keep:
+                            part.unlink(missing_ok=True)
+                            removed["orphan_parts"] += 1
+                    if not any(date_dir.iterdir()):
+                        date_dir.rmdir()
+        return removed
+
+    def verify_day(self, trade_date: str) -> dict[str, Any]:
+        """Check one published day against its manifest (files, sizes, row and symbol counts)."""
+        manifest = self.read_manifest(trade_date)
+        if manifest is None:
+            return {"trade_date": trade_date, "verified": False, "reason": "no_manifest"}
+        try:
+            rows = self._read_day_rows(manifest)
+        except DailyBarsCorrupt as exc:
+            return {"trade_date": trade_date, "verified": False, "reason": str(exc)}
+        digest = self.day_digest(rows.values())
+        ok = (
+            len(rows) == manifest.get("row_count")
+            and len({r["symbol"] for r in rows.values()}) == manifest.get("symbol_count")
+            and digest == manifest.get("content_digest")
+        )
+        return {
+            "trade_date": trade_date, "verified": ok, "reason": None if ok else "manifest_mismatch",
+            "row_count": len(rows), "symbol_count": manifest.get("symbol_count"),
+            "content_digest": manifest.get("content_digest"),
+        }
+
+    def symbol_stats(self, start: str | None = None, end: str | None = None) -> dict[str, tuple[int, str, str]]:
+        """``{symbol: (days, first_date, last_date)}`` over stored days; reads the symbol column only."""
+        _, pq = _require_pyarrow()
+        stats: dict[str, tuple[int, str, str]] = {}
+        if not self.manifest_dir.is_dir():
+            return stats
+        for path in sorted(self.manifest_dir.glob("date=*.json")):
+            trade_date = path.name[5:-5]
+            if (start and trade_date < start) or (end and trade_date > end):
+                continue
+            manifest = self.read_manifest(trade_date) or {}
+            seen: set[str] = set()
+            for entry in manifest.get("files", ()):
+                seen.update(pq.read_table(self.bars_dir / entry["path"], columns=["symbol"])["symbol"].to_pylist())
+            for symbol in seen:
+                days, first, last = stats.get(symbol, (0, trade_date, trade_date))
+                stats[symbol] = (days + 1, min(first, trade_date), max(last, trade_date))
+        return stats
+
     # -- budget and health -------------------------------------------------------------------
     def budget_report(self) -> dict[str, Any]:
         """Measured bytes per day and total, with the alarm fields of design section 6."""

@@ -13,6 +13,35 @@ from typing import Any, Mapping, Sequence
 from .connectors.base import SourceConnector, SourceRecord
 
 
+# SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: two named settings, both default to today's behaviour.
+DAILY_PRICE_READER_ENV = "PANTHEON_DAILY_PRICE_READER"  # run_files (default, old read) | daily_bars
+TW_PRICE_DAILY_RUN_FILES_ENV = "PANTHEON_TW_PRICE_DAILY_RUN_FILES"  # on (default) | off
+
+
+def daily_price_reader_mode(env: Mapping[str, str] | None = None) -> str:
+    """Which store the daily price readers use. An unknown value fails closed (no silent fallback)."""
+    import os
+
+    raw = str((env if env is not None else os.environ).get(DAILY_PRICE_READER_ENV, "") or "").strip().lower()
+    if raw in ("", "run_files"):
+        return "run_files"
+    if raw == "daily_bars":
+        return "daily_bars"
+    raise ValueError(f"{DAILY_PRICE_READER_ENV}={raw!r} is not one of run_files, daily_bars")
+
+
+def tw_price_daily_run_files_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """False stops the raw and normalized run files of tw_price_daily; other datasets are untouched."""
+    import os
+
+    raw = str((env if env is not None else os.environ).get(TW_PRICE_DAILY_RUN_FILES_ENV, "") or "").strip().lower()
+    if raw in ("", "on", "1", "true"):
+        return True
+    if raw in ("off", "0", "false"):
+        return False
+    raise ValueError(f"{TW_PRICE_DAILY_RUN_FILES_ENV}={raw!r} is not one of on, off")
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -250,8 +279,11 @@ class MarketDataStorageWriter:
         normalized_refs: list[dict[str, Any]] = []
         feature_refs: list[dict[str, Any]] = []
         source = _slug(connector.connector_id)
+        skip_daily_run_files = not tw_price_daily_run_files_enabled()
         for (dataset, run_date), dataset_records in sorted(grouped.items()):
             dataset_slug = _slug(dataset)
+            if skip_daily_run_files and dataset_slug == _slug(_DAILY_BAR_DATASET):
+                continue  # daily_bars (dual write below) is the only store of this dataset
             raw_policy = _raw_storage_policy(dataset_records, connector, dataset)
             raw_suffix = ".jsonl.gz" if raw_policy.get("compression") == "gzip" else ".jsonl"
             raw_path = self.root / "raw" / source / dataset_slug / f"date={run_date}" / f"{result.run.ingest_run_id}{raw_suffix}"
@@ -398,6 +430,24 @@ def _depth_stats(dates: set[str]) -> dict[str, Any]:
     }
 
 
+def _stats_from_range(days: int, first: str, last: str) -> dict[str, Any]:
+    span = (datetime.fromisoformat(last) - datetime.fromisoformat(first)).days + 1
+    return {"distinct_event_dates": days, "first_event_date": first, "last_event_date": last, "span_days": span}
+
+
+def _bars_depth_entry(stats: Mapping[str, tuple[int, str, str]], dates: Sequence[str]) -> dict[str, Any]:
+    """Depth entry of the daily price dataset read from daily_bars (one row per symbol and day)."""
+    if not stats:
+        return {"row_count": 0, "rows_without_entity_or_event_time": 0, "entity_count": 0,
+                **_depth_stats(set()), "per_entity": {}}
+    rows = sum(v[0] for v in stats.values())
+    return {
+        "row_count": rows, "rows_without_entity_or_event_time": 0, "entity_count": len(stats),
+        **_stats_from_range(len(dates), min(dates), max(dates)),
+        "per_entity": {s: _stats_from_range(*v) for s, v in sorted(stats.items())},
+    }
+
+
 def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _DAILY_BAR_DATASET) -> dict[str, Any]:
     """Measure stored event-time history per normalized dataset and per symbol.
 
@@ -411,8 +461,19 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
     per_dataset: dict[str, dict[str, set[str]]] = {}
     row_counts: dict[str, int] = {}
     skipped: dict[str, int] = {}
+    bars_mode = daily_price_reader_mode() == "daily_bars"
+    bars_stats: dict[str, tuple[int, str, str]] = {}
+    bars_dates: list[str] = []
+    if bars_mode:
+        from .daily_bars_store import DailyBarsStore
+
+        _store = DailyBarsStore(root)
+        bars_stats = _store.symbol_stats()
+        bars_dates = sorted(p.name[5:-5] for p in _store.manifest_dir.glob("date=*.json")) if _store.manifest_dir.is_dir() else []
     if base.is_dir():
         for dataset_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+            if bars_mode and dataset_dir.name == _slug(daily_bar_dataset):
+                continue  # read from daily_bars below
             entities = per_dataset.setdefault(dataset_dir.name, {})
             for path in sorted(dataset_dir.glob("date=*/*.jsonl*")):
                 for row in _iter_normalized_rows(path):
@@ -426,9 +487,14 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
 
     for spec in dataset_specs():  # governed datasets with nothing stored are reported as zero
         per_dataset.setdefault(_slug(spec.normalized_dataset), {})
-    bar_symbols = sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
+    if bars_mode:
+        per_dataset.setdefault(_slug(daily_bar_dataset), {})
+    bar_symbols = sorted(bars_stats) if bars_mode else sorted(per_dataset.get(_slug(daily_bar_dataset), {}))
     datasets: dict[str, Any] = {}
     for name, entities in sorted(per_dataset.items()):
+        if bars_mode and name == _slug(daily_bar_dataset):
+            datasets[name] = _bars_depth_entry(bars_stats, bars_dates)
+            continue
         all_dates = set().union(*entities.values()) if entities else set()
         entry: dict[str, Any] = {
             "row_count": row_counts.get(name, 0),
