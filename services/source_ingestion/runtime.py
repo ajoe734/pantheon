@@ -877,6 +877,9 @@ class SourceIngestionRuntime:
         return {
             "status": "stale" if stale or controller_stale else ("degraded_data" if degraded else "ok"),
             "data_ready": not stale and not degraded and not controller_stale,
+            "controller_stale": controller_stale,
+            "reason": "controller_stale" if controller_stale else None,
+            "controller_max_age_seconds": self._SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS,
             "scheduled_connector_count": len(scheduled),
             "stale_connector_count": len(stale),
             "degraded_connector_count": len(degraded),
