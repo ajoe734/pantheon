@@ -244,6 +244,11 @@ from .auth import (
     require_infrastructure_health_authority,
     require_telemetry_authority,
 )
+from .heartbeat_retention import (
+    HeartbeatRetentionJob,
+    RAW_RETENTION_DAYS_ENV,
+    RETENTION_ENABLED_ENV,
+)
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
     build_telemetry_event_from_runtime_heartbeat,
@@ -378,6 +383,7 @@ class _RuntimeBindingAdapter:
 
 _svc: TelemetryIngestService | None = None
 _lineage_svc: LineageReadService | None = None
+_retention_job: HeartbeatRetentionJob | None = None
 
 _DEFAULT_SCHEMA_PATH = str(Path(__file__).resolve().parent / "telemetry_event.schema.json")
 _DEFAULT_STORAGE_DIR = "/tmp/pantheon/telemetry"
@@ -896,9 +902,32 @@ def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     return jsonify(result), 200
 
 
+def _build_retention_job() -> HeartbeatRetentionJob:
+    """Build the periodic raw heartbeat retention job for canonical Postgres."""
+    db_dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
+    enabled = _env_bool(RETENTION_ENABLED_ENV, default=True) and bool(db_dsn)
+    return HeartbeatRetentionJob(
+        db_dsn,
+        retention_days=os.getenv(RAW_RETENTION_DAYS_ENV) or None,
+        enabled=enabled,
+    )
+
+
+def _get_retention_job() -> HeartbeatRetentionJob | None:
+    return _retention_job
+
+
+def run_heartbeat_retention_once(*, now: Any = None, timeout: float = 60.0) -> dict[str, Any]:
+    """Execute one bounded heartbeat retention pass on the background loop."""
+    if _retention_job is None:
+        raise RuntimeError("Heartbeat retention job is not initialised; call startup() first")
+    result = _run_async(_retention_job.run_once(now=now), timeout=timeout)
+    return result.to_dict()
+
+
 def startup():
     """Start the background event loop and the ingest service."""
-    global _loop, _loop_thread, _svc, _lineage_svc
+    global _loop, _loop_thread, _svc, _lineage_svc, _retention_job
     _loop, _loop_thread = _start_background_loop()
     # LIN-003: build the lineage service first so _build_service() can wire
     # it as the ingest live-write target — accepted events become resolvable
@@ -907,12 +936,21 @@ def startup():
     _svc = _build_service(lineage_write_store=_lineage_svc)
     startup_timeout = _startup_timeout_seconds()
     _run_async(_svc.start(), timeout=startup_timeout)
+    _retention_job = _build_retention_job()
+    if _retention_job.enabled:
+        _run_async(_retention_job.start(), timeout=5.0)
     log.info("TelemetryIngestService started within %.0fs startup budget", startup_timeout)
 
 
 def shutdown():
     """Gracefully stop the ingest service."""
-    global _svc, _loop, _lineage_svc
+    global _svc, _loop, _lineage_svc, _retention_job
+    if _retention_job is not None:
+        try:
+            _run_async(_retention_job.stop(), timeout=5.0)
+        except Exception as exc:
+            log.error(f"Error stopping heartbeat retention job: {exc}")
+        _retention_job = None
     if _svc is not None:
         summary_store = getattr(_svc, "_runtime_summary_store", None)
         try:
@@ -1204,7 +1242,10 @@ def runtime_heartbeat_status(runtime_id: str):
 def stats():
     """Return TelemetryIngestService statistics."""
     svc = _get_service()
-    return jsonify(svc.stats()), 200
+    payload = dict(svc.stats())
+    if _retention_job is not None:
+        payload["heartbeat_retention"] = _retention_job.stats()
+    return jsonify(payload), 200
 
 
 @app.route("/api/telemetry/runtime-summaries", methods=["GET"])
