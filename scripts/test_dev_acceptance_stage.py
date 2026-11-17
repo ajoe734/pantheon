@@ -123,8 +123,15 @@ def test_detail_is_truncated_and_checks_capped(tmp_path):
     assert len(res) == stage.MAX_CHECKS
 
 
-def test_repo_probe_dir_is_valid():
+def test_missing_declarations_mean_no_extra_checks():
     root = Path(__file__).resolve().parent.parent / "acceptance"
-    probes = stage.discover_probes(root / "probes")
-    assert probes and all(p["owner"] and p["executable"] for p in probes)
-    assert stage.load_checks(root / "checks.json") == []
+    assert stage.discover_probes(root / "probes") == [] or all(p["owner"] and p["executable"] for p in stage.discover_probes(root / "probes"))
+    assert stage.load_checks(root / "no-such-checks.json") == []
+
+
+def test_readme_example_probe_satisfies_contract(tmp_path):
+    readme = (Path(__file__).resolve().parent.parent / "acceptance" / "README.md").read_text()
+    body = readme.split("```bash\n", 1)[1].split("```", 1)[0]
+    probe(tmp_path, "example", body)
+    found = stage.discover_probes(tmp_path)
+    assert found[0]["owner"] and found[0]["executable"]

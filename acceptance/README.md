@@ -22,9 +22,21 @@ One executable, **read-only** probe per feature chain, placed directly in
 | Output | stdout/stderr, last 2000 characters, are kept as the result `detail` |
 | Mutation | A probe must not mutate hosted state. State-mutating work is a declared check (below). |
 
+Example (a probe file such as `acceptance/probes/<chain>-bff-version`):
+
+```bash
+#!/usr/bin/env bash
+# acceptance-owner: SOME-TASK-OR-CHAIN-ID
+set -euo pipefail
+curl --fail --silent --show-error --max-time 30 "${ACCEPTANCE_BFF_URL%/}/bff/version" >/dev/null
+```
+
+The directory may be empty or absent; the stage then runs only the built-in check.
+Each feature task adds its own probe (remediation plan RC2); this task ships none.
+
 ## Declared checks
 
-`acceptance/checks.json`: `{"checks": [{"id", "owner", "argv": [...], "mutates": false, "timeout": 300}]}`.
+`acceptance/checks.json` (optional; absent means none): `{"checks": [{"id", "owner", "argv": [...], "mutates": false, "timeout": 300}]}`.
 A check with `"mutates": true` runs only while the job holds the qualification
 lease; otherwise it is `skipped` with `lease_required` and the verdict stays
 `pending` (a required check that did not run is not a pass).

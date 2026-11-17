@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# acceptance-owner: DEV-DEPLOY-ACCEPTANCE-STAGE-20261117
-# Trivial example probe: the deployed BFF answers its health endpoint. Read-only.
-set -euo pipefail
-curl --fail --silent --show-error --max-time 30 "${ACCEPTANCE_BFF_URL%/}/bff/version" >/dev/null
-echo "bff version endpoint reachable for backend ${ACCEPTANCE_BACKEND_SHA}"
