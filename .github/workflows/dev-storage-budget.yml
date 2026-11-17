@@ -1,0 +1,82 @@
+name: Dev Storage Budget Daily Measurement
+
+# RC3 WP3.3 (docs/operations/remediation-plan-20261117.md). Read-only: no lease-mutating step,
+# SELECT-only SQL, file names/sizes only. Nothing is written on hosted. One report per day is
+# kept by artifact retention. The run is red when a declared bound is exceeded.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dev-storage-budget
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Measure hosted storage against the manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    env:
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: scripts/dev_vm_ssh.sh prepare "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null
+
+      - name: Fetch previous report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p previous
+          run_id="$(gh run list --workflow dev-storage-budget.yml --repo "${GITHUB_REPOSITORY}" \
+            --status completed --limit 10 --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")][0].databaseId // empty')"
+          if [[ -n "${run_id}" ]]; then
+            gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" --name hosted-storage-report --dir previous || true
+          fi
+
+      - name: Collect hosted measurements (read-only)
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          mkdir -p out
+          python3 scripts/measure_hosted_storage.py collect --output out/raw.txt
+
+      - name: Build report
+        id: report
+        run: |
+          set +e
+          python3 scripts/measure_hosted_storage.py report --raw out/raw.txt --output out/report.json \
+            --previous previous/report.json
+          echo "exit=$?" >> "${GITHUB_OUTPUT}"
+          rm -f out/raw.txt
+          python3 -c "import json;r=json.load(open('out/report.json'));print(r['status'], r['red_count'])" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-storage-report
+          path: out/report.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Fail when a declared bound is exceeded
+        if: ${{ steps.report.outputs.exit != '0' }}
+        run: |
+          echo "::error::Hosted storage exceeds a declared bound; see hosted-storage-report artifact"
+          exit 1

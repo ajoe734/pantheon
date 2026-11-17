@@ -719,3 +719,22 @@ def test_approval_usage_context_services_all_wire_pantheon_env() -> None:
         assert scan_approval_usage_context_env_contract(mutated) == [
             f"{service} missing PANTHEON_ENV"
         ]
+
+
+def test_dev_persona_tool_broker_resolves_enabled_with_shared_token():
+    import re
+    env = issuer.broker_environment({
+        "PANTHEON_ENV": "dev",
+        "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": "/tmp/pantheon-broker-contract-token",
+    })
+    try:
+        adapter = SERVICES["openclaw-gateway-adapter"]["environment"]
+        gateway = SERVICES["openclaw-gateway"]["environment"]
+        def resolve(value):
+            m = re.fullmatch(r"\$\{(\w+)(?::-([^}]*))?\}", value)
+            return env.get(m.group(1), m.group(2) or "")
+        assert resolve(adapter["PERSONA_TOOL_BROKER_ENABLED"]) == "true"
+        assert resolve(adapter["PERSONA_TOOL_BROKER_TOKEN"]) == resolve(gateway["PERSONA_TOOL_BROKER_TOKEN"]) != ""
+        assert "PERSONA_TOOL_BROKER_TOKEN" in str(SERVICES["openclaw-gateway"]["command"])
+    finally:
+        Path("/tmp/pantheon-broker-contract-token").unlink(missing_ok=True)

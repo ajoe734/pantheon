@@ -1,0 +1,13 @@
+{
+  "task": "PERSONA-TOOL-BROKER-DEV-ENABLE-20261117",
+  "mechanism": "scripts/issue_dev_paper_principals.py --output-env (sourced by deploy_nonprod_vm.sh prepare_dev_paper_principals) now also exports PERSONA_TOOL_BROKER_ENABLED=true and PERSONA_TOOL_BROKER_TOKEN read from a host-persistent 0600 file (default ~/.pantheon-secrets/persona-tool-broker.token, created once, never overwritten). Token value is never printed.",
+  "unchanged": ["docker-compose defaults (false/empty)", "deploy_nonprod_vm.sh", ".github/workflows/nonprod-deploy.yml", "staging/prod compose and bootstrap"],
+  "pre_deploy_verification": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_dev_paper_principal_renewal.py: 111 passed; 1 env-only failure (flask not installed locally, telemetry test, unrelated)",
+  "post_deploy_verification": {
+    "status": "pending_next_hosted_deploy",
+    "checks": [
+      "adapter /internal/persona-tools/v1 no longer returns 404 PERSONA_TOOL_BROKER_DISABLED",
+      "gateway reports pantheon-persona-tools plugin loaded and enabled"
+    ]
+  }
+}
