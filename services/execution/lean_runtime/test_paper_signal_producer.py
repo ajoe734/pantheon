@@ -411,6 +411,32 @@ class TestPaperSignalProducer(unittest.TestCase):
             self.assertFalse(state["live_order_submission_enabled"])
 
     @patch("urllib.request.urlopen")
+    def test_min_closes_requested_and_history_insufficient_reason(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import (
+            SignalDecisionUnavailable, _market_input_for_binding,
+        )
+        policy = {"owner": "source-ingest", "contract": "latest_stored_normalized",
+                  "max_age_seconds": 300, "minimum_closes": 120}
+        binding = {"binding_id": "rb-120", "symbol": "AAPL.US", "market_data_policy": policy}
+        body = {"symbol": "AAPL.US", "closes": [], "reason": "history_insufficient", "requested": 120,
+                "available": 90, "first_available_date": "2026-03-02", "detail": "only 90 contiguous closes are stored"}
+        response = MagicMock()
+        response.read.return_value = json.dumps(body).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+        with patch.dict("os.environ", {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"}):
+            with self.assertRaises(SignalDecisionUnavailable) as err:
+                _market_input_for_binding(binding, {}, now_iso=_NOW)
+            self.assertEqual(err.exception.code if hasattr(err.exception, "code") else err.exception.args[0],
+                             "market_input_insufficient")
+            self.assertTrue(mock_urlopen.call_args.args[0].full_url.endswith("&min_closes=120"))
+            policy["minimum_closes"] = 60
+            with self.assertRaises(SignalDecisionUnavailable):
+                _market_input_for_binding(binding, {}, now_iso=_NOW)
+            self.assertNotIn("min_closes", mock_urlopen.call_args.args[0].full_url)
+
+    @patch("urllib.request.urlopen")
     def test_market_input_fetched_from_source_ingest_api(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
         from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding

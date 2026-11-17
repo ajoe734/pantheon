@@ -48,15 +48,19 @@ def envelope_symbols(artifact: Mapping[str, Any]) -> list[str]:
     return cleaned
 
 
-def fetch_source_snapshot(source_ingest_url: str, symbol: str) -> Mapping[str, Any] | None:
+def fetch_source_snapshot(
+    source_ingest_url: str, symbol: str, min_closes: int | None = None
+) -> Mapping[str, Any] | None:
     """One read of Source's stored snapshot; None only for Source's own 4xx 'no snapshot'."""
     url = (
         f"{source_ingest_url.rstrip('/')}/api/source-ingest/snapshots/latest"
         f"?symbol={urllib.parse.quote(symbol, safe='')}"
     )
+    if min_closes is not None and min_closes > 60:
+        url += f"&min_closes={int(min_closes)}"  # <=60 or absent: byte-identical URL as before
     request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS if not min_closes or min_closes <= 60 else 10) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if 400 <= exc.code < 500:
@@ -92,7 +96,10 @@ def obtain_envelope_market_inputs(
             "market_input_unavailable", "PANTHEON_SOURCE_INGEST_URL is required for pool market inputs"
         )
     read = fetch or fetch_source_snapshot
-    fetched = {symbol: read(source_ingest_url, symbol) for symbol in symbols}
+    if minimum_closes > 60:
+        fetched = {symbol: read(source_ingest_url, symbol, minimum_closes) for symbol in symbols}
+    else:
+        fetched = {symbol: read(source_ingest_url, symbol) for symbol in symbols}
     admitted: dict[str, dict[str, Any]] = {}
     for symbol in symbols:
         decision = admit(
@@ -103,6 +110,13 @@ def obtain_envelope_market_inputs(
             now_iso=now_iso,
             binding_id=binding_id,
         )
+        snap = fetched[symbol]
+        if isinstance(snap, Mapping) and snap.get("reason") == "history_insufficient":
+            raise PoolMarketInputsUnavailable(
+                "market_input_insufficient",
+                f"pool symbol {symbol} requires {snap.get('requested')} closes, Source has "
+                f"{snap.get('available')} from {snap.get('first_available_date')}: {snap.get('detail')}",
+            )
         if not decision.admitted:
             raise PoolMarketInputsUnavailable(
                 decision.reason_code or "market_input_invalid",
