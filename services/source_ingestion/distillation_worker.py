@@ -1933,7 +1933,7 @@ class DistillationJobQueue:
         cutoff = effective_now - float(terminal_retention_seconds)
         dl_cutoff = effective_now - float(dead_letter_retention_seconds)
         limit = max(1, int(batch))
-        counts = {"payloads": 0, "inbox": 0, "dead_letters": 0}
+        counts = {"payloads": 0, "inbox": 0, "dead_letters": 0, "bytes": 0}
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1946,6 +1946,12 @@ class DistillationJobQueue:
                     (cutoff, limit),
                 ).fetchall()
                 for row in rows:
+                    size = connection.execute(
+                        """SELECT length(payload_json) FROM distillation_source_versions
+                            WHERE source_id = ? AND source_digest = ? AND payload_json <> ?""",
+                        (str(row["source_id"]), str(row["source_digest"]), PRUNED_PAYLOAD_JSON),
+                    ).fetchone()
+                    counts["bytes"] += int(size[0]) if size else 0
                     changed = connection.execute(
                         """UPDATE distillation_source_versions SET payload_json = ?
                             WHERE source_id = ? AND source_digest = ?
@@ -1976,6 +1982,18 @@ class DistillationJobQueue:
                 connection.execute("ROLLBACK")
                 raise
         return counts
+
+    def compact(self) -> None:
+        """Return pruned space to the filesystem.
+
+        Replacing a payload with a marker leaves its leaf page sparse but
+        allocated, and rowid appends never refill it, so without compaction the
+        file would not shrink or stop growing. VACUUM rewrites the database;
+        callers invoke this only after a large amount of pruned payload.
+        """
+        with self._connect() as connection:
+            connection.execute("VACUUM")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def _evidence_metadata_without_recipe_authority(metadata: Mapping[str, Any]) -> dict[str, Any]:

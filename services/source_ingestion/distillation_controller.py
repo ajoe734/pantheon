@@ -87,6 +87,9 @@ class DistillationControllerConfig:
 # Consecutive hard failures per alive path (process-local; a restart resets it
 # and the alive file then simply ages out while ticks keep failing).
 _HARD_FAILURES: dict[str, int] = {}
+# Pruned payload bytes since the last compaction (process-local).
+_PRUNED_BYTES: dict[str, int] = {}
+COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
 
 
 def _queue_for(config: "DistillationControllerConfig") -> DistillationJobQueue:
@@ -609,10 +612,17 @@ def run_controller_tick(
         # Bounded growth: prune terminal payloads / resolved dead letters a
         # fixed batch per tick. A prune failure must not fail distillation.
         try:
-            reconcile_meta["pruned"] = queue.prune(
+            pruned = queue.prune(
                 terminal_retention_seconds=config.terminal_retention_seconds,
                 dead_letter_retention_seconds=config.dead_letter_retention_seconds,
             )
+            reconcile_meta["pruned"] = pruned
+            key = str(config.job_queue_path)
+            _PRUNED_BYTES[key] = _PRUNED_BYTES.get(key, 0) + int(pruned.get("bytes", 0))
+            if _PRUNED_BYTES[key] >= COMPACT_AFTER_PRUNED_BYTES:
+                queue.compact()
+                _PRUNED_BYTES[key] = 0
+                reconcile_meta["compacted"] = True
         except Exception as exc:
             reconcile_meta["prune_error"] = f"{type(exc).__name__}: {exc}"
 
