@@ -168,9 +168,14 @@ An already accepted hosted manifest and matching live BFF version produce
 `up_to_date`. Otherwise the checker explicitly dispatches `nonprod-deploy.yml`
 with both SHAs, strict auth, and the currently accepted persistent frontend
 profile (`read-only` or `operator-live`). Temporary proof profiles are never
-propagated. Automatic releases enable the existing canonical paper lifecycle
-probe, including fresh stimulus and authenticated BFF readback; historical rows
-alone cannot satisfy this acceptance. Missing or unaccepted baseline evidence requires recovery through
+propagated. Automatic releases are deploy-only: the checker no longer sends
+`run_loop_prod_tel_002_probe` (or any input that sets `PAPER_BOOTSTRAP_REQUESTED`),
+so the deploy job runs build, switch and stack health only, with no Taiwan market
+refresh, TAIFEX refresh, governed paper baseline or canonical paper lifecycle
+probe. Only an unhealthy stack rolls back. Their functional acceptance stays
+pending until the acceptance stage of
+`docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` exists. A manual
+dispatch that sets the input still runs the probe exactly as before. Missing or unaccepted baseline evidence requires recovery through
 the existing deployment flow. The checker can run without `--apply` to inspect
 its decision without dispatching.
 
