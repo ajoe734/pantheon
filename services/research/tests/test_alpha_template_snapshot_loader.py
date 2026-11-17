@@ -229,3 +229,92 @@ def test_cached_reader_sees_a_rewritten_day_and_one_reader_per_root(tmp_path, mo
     day.write_records([_Rec(metadata=effective_metadata(rec), source_id="x")], ingest_run_id="rewrite", default_market="TW")
     again = load_tw_price_daily_snapshot(root, symbols=["AAA"])
     assert first["AAA"]["closes"][-1] != 777.0 and again["AAA"]["closes"][-1] == 777.0  # not served stale
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: symbol forms (G4) and the reader side listing (G3) --------------
+def _hosted_shape(tmp_path, n=45):
+    """Rows as the hosted run files hold them: body.symbol is the bare code, the canonical symbol is only in
+    ``normalized_row.symbol_canonical`` (which is what daily bars store)."""
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    start = date(2026, 1, 5)
+    for i in range(n):
+        day = (start + timedelta(days=i)).isoformat()
+        recs = []
+        for code, close in (("2330", 600 + i), ("2317", 100 + i)):
+            rec = _rec(code, day, close)
+            rec["metadata"]["normalized_row"] = {**json.loads(rec["metadata"]["body"]), "symbol_canonical": f"{code}.TW",
+                                                 "trade_date": day, "market": "TW"}
+            recs.append(rec)
+        _write(tmp_path, day, recs)
+    state = ListingState(last_success_date="2026-11-17")
+    for code in ("2330", "2317"):
+        state.allowlist[code] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                                 "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    bf.backfill(tmp_path, state, today="2026-11-17", apply=True)
+    return tmp_path
+
+
+def test_bare_and_canonical_callers_get_the_same_rows_in_both_modes(tmp_path, monkeypatch):
+    root = _hosted_shape(tmp_path)
+    got = {}
+    for mode in ("run_files", "daily_bars"):
+        monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", mode)
+        for asked in (["2330"], ["2330.TW"], ["2330.TWSE"], ["2330", "2317.TW"]):
+            got[(mode, tuple(asked))] = load_tw_price_daily_snapshot(root, symbols=asked, min_bars=1)
+    for key, uni in got.items():
+        assert sorted(uni) == sorted(key[1]), key  # keyed by the symbol the caller asked for
+    reference = _ohlcv(got[("run_files", ("2330",))])["2330"]
+    assert len(reference["close"]) == 45
+    for key, uni in got.items():
+        for asked, series in _ohlcv(uni).items():
+            if asked.startswith("2330"):
+                assert series == reference, (key, asked)  # same rows, both forms, both modes (zero mismatches)
+    assert got[("daily_bars", ("2330.TW",))]["2330.TW"]["provenance"]["reader"] == "daily_bars"
+
+
+def test_without_symbols_both_modes_key_by_the_bare_code(tmp_path, monkeypatch):
+    root = _hosted_shape(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    old = load_tw_price_daily_snapshot(root, min_bars=1)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    new = load_tw_price_daily_snapshot(root, min_bars=1)
+    assert sorted(old) == sorted(new) == ["2317", "2330"]
+    assert _ohlcv(new) == _ohlcv(old)
+    assert snapshot_coverage(root) == {"2317": 45, "2330": 45}
+
+
+def test_the_switched_loader_lists_symbols_through_the_reader_not_the_store(tmp_path, monkeypatch):
+    from services.source_ingestion import daily_bars_store as dbs
+
+    root = _hosted_shape(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+
+    def boom(*a, **k):
+        raise AssertionError("DailyBarsStore.symbol_stats must not be used by the switched readers")
+
+    monkeypatch.setattr(dbs.DailyBarsStore, "symbol_stats", boom)
+    assert sorted(load_tw_price_daily_snapshot(root, min_bars=1)) == ["2317", "2330"]
+
+
+def test_two_stored_forms_of_one_code_are_ambiguous_and_fail_closed(tmp_path, monkeypatch):
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    root = _hosted_shape(tmp_path)
+    store = DailyBarsStore(root)
+    from services.source_ingestion.daily_bars_reader import DailyBarsReader
+
+    day = DailyBarsReader(root).trade_dates()[-1]
+    existing = DailyBarsReader(root).read_range("2330.TW", day, day)[0]
+    clash = {k: existing[k] for k in ("market", "trade_date", "open", "high", "low", "close", "volume", "adjusted", "content_hash")}
+    clash.update(symbol="2330.TWSE", source_id="x", ingest_run_id="x", lineage_ref="x")
+    others = [dict(r, source_id="o", ingest_run_id="o", lineage_ref="o")
+              for r in DailyBarsReader(root).read_range("2317.TW", day, day)]
+    store.write_day(day, [dict(existing, source_id="x", ingest_run_id="x", lineage_ref="x"), clash, *others], ingest_run_id="x")
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    with pytest.raises(TaiwanEvaluationDataError, match="ambiguous"):
+        load_tw_price_daily_snapshot(root, symbols=["2330"], min_bars=1)
+    with pytest.raises(TaiwanEvaluationDataError, match="ambiguous"):
+        load_tw_price_daily_snapshot(root, min_bars=1)

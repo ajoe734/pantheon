@@ -575,36 +575,71 @@ def _daily_bars_reader(root: Path):
 def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> dict[tuple[str, str], dict[str, Any]]:
     """``{(symbol, trade_date): bar}`` from DailyBarsReader, paged by symbol chunks and date windows
     within the reader caps. ``value`` is not stored in daily bars (None); ``ts`` is the regular 14:30
-    Taipei publish time of the trade date, the same rule the run-file read applies to date-only rows."""
-    from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS
-    from services.source_ingestion.daily_bars_store import DailyBarsError, DailyBarsStore
+    Taipei publish time of the trade date, the same rule the run-file read applies to date-only rows.
+
+    Symbol forms (gap G4): a caller that passes a symbol gets it back as the key whether it passed the bare
+    code (``2330``) or the canonical symbol (``2330.TW``); without ``symbols`` the key is the bare code, as
+    the run-file read keys by ``body.symbol``. Two stored forms of one code with a bar on the same trade date
+    are ambiguous and fail closed."""
+    from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, PRICE_COLUMNS
+    from services.source_ingestion.daily_bars_store import DailyBarsError
 
     reader = _daily_bars_reader(root)
     dates = reader.trade_dates()
     if not dates:
         raise TaiwanEvaluationDataError(f"daily bars hold no trading day under {root}")
     try:
-        names = sorted(set(map(str, symbols))) if symbols is not None else sorted(DailyBarsStore(root).symbol_stats())
+        by_request = symbols is not None
+        if not by_request:  # no symbols asked: key by the bare code, as the run-file read does
+            from services.source_ingestion.security_listing import bare_symbol
+        names = sorted(set(map(str, symbols))) if by_request else sorted(reader.list_symbols())
         rows: dict[tuple[str, str], dict[str, Any]] = {}
+        owner: dict[tuple[str, str], str] = {}
         stamps: dict[str, str] = {}  # one timestamp parse per trade date, not per row
         for i in range(0, len(names), MAX_SYMBOLS):
             chunk = names[i:i + MAX_SYMBOLS]
             for j in range(0, len(dates), MAX_RANGE_DAYS):
                 window = dates[j:j + MAX_RANGE_DAYS]
-                got = reader.read_range(chunk, window[0], window[-1])
-                for sym, bars in got.items():
+                got = reader.read_range(chunk, window[0], window[-1], any_form=by_request, columns=PRICE_COLUMNS)
+                for requested, bars in got.items():
+                    key_symbol = requested if by_request else bare_symbol(requested)
                     for bar in bars:
                         fields = {f: bar.get(f) for f in ("open", "high", "low", "close", "volume")}
                         if any(v is None for v in fields.values()):
                             raise TaiwanEvaluationDataError(
-                                f"daily bars row {sym} {bar['trade_date']} has no {sorted(k for k, v in fields.items() if v is None)}")
+                                f"daily bars row {bar['symbol']} {bar['trade_date']} has no {sorted(k for k, v in fields.items() if v is None)}")
                         day = bar["trade_date"]
+                        if (key_symbol, day) in owner and owner[(key_symbol, day)] != bar["symbol"]:
+                            raise TaiwanEvaluationDataError(
+                                f"{key_symbol}: both {owner[(key_symbol, day)]} and {bar['symbol']} have a bar on {day}; the symbol form is ambiguous")
+                        owner[(key_symbol, day)] = bar["symbol"]
                         if day not in stamps:
                             stamps[day] = _parse_timestamp_utc(f"{day}T14:30:00+08:00").isoformat().replace("+00:00", "Z")
-                        rows[(sym, day)] = {**{k: float(v) for k, v in fields.items()}, "value": None, "ts": stamps[day]}
+                        rows[(key_symbol, day)] = {**{k: float(v) for k, v in fields.items()}, "value": None, "ts": stamps[day]}
     except DailyBarsError as exc:
         raise TaiwanEvaluationDataError(f"daily bars read refused: {exc}") from exc
     return rows
+
+
+def _alias_run_file_rows(
+    rows: dict[tuple[str, str], dict[str, Any]], symbols: Sequence[str]
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Run-file read: rows are keyed by ``body.symbol`` (bare). A caller that asks for ``2330.TW`` gets the
+    same rows under the symbol it asked for, so both forms behave as in daily bars mode (gap G4)."""
+    from services.source_ingestion.security_listing import bare_symbol
+
+    asked: dict[str, list[str]] = {}
+    for name in map(str, symbols):
+        asked.setdefault(bare_symbol(name), []).append(name)
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    owner: dict[tuple[str, str], str] = {}
+    for (sym, day), bar in rows.items():
+        for name in asked.get(bare_symbol(sym), ()):
+            if owner.setdefault((name, day), sym) != sym:
+                raise TaiwanEvaluationDataError(
+                    f"{name}: both {owner[(name, day)]} and {sym} have a bar on {day}; the symbol form is ambiguous")
+            out[(name, day)] = bar
+    return out
 
 
 def snapshot_coverage(snapshot_dir: str | Path) -> dict[str, int]:
@@ -648,6 +683,8 @@ def load_tw_price_daily_snapshot(
         if file_count == 0:
             raise TaiwanEvaluationDataError(f"governed snapshot has no jsonl files: {root}")
         snapshot_rows = _read_snapshot_rows(root)
+        if symbols is not None:
+            snapshot_rows = _alias_run_file_rows(snapshot_rows, symbols)
     by_symbol: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for (sym, day), bar in snapshot_rows.items():
         by_symbol.setdefault(sym, []).append((day, bar))

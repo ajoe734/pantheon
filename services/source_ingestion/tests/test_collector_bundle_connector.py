@@ -1966,3 +1966,72 @@ def test_regime_rows_fail_closed_on_missing_key_close_or_breadth_counts():
                "whole_market": {"advancers": 1}, "stocks": {}}
     with pytest.raises(SourceEvidenceError):
         mapper("i", breadth, {})
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: stored_instrument_authority through DailyBarsReader -----------
+def _authority_roots(tmp_path):
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    roots = []
+    for name, symbols in (("a", (("2330", "2330.TWSE"), ("2317", "2317.TWSE"), ("6488", "6488.TWO"))),
+                          ("b", (("2330", "2330.TWSE"), ("1101", "1101.TWSE")))):
+        root = tmp_path / name
+        for day in ("2026-11-09", "2026-11-10"):
+            d = root / "normalized" / "tw_price_daily" / f"date={day}"
+            d.mkdir(parents=True)
+            lines = []
+            for code, canonical in symbols:
+                body = {"symbol": code, "date": day, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000,
+                        "market": "TWSE"}
+                lines.append(json.dumps({"source_id": f"{code}-{day}", "metadata": {
+                    "symbol_canonical": canonical, "normalized_row": {**body, "symbol_canonical": canonical}}}))
+            (d / "a.jsonl").write_text("\n".join(lines) + "\n")
+        state = ListingState(last_success_date="2026-11-17")
+        for code, _ in symbols:
+            state.allowlist[code] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                                     "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+        bf.backfill(root, state, today="2026-11-17", apply=True)
+        roots.append(root)
+    return roots
+
+
+def test_instrument_authority_from_daily_bars_equals_the_run_file_read(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors.collector_bundle import stored_instrument_authority
+
+    roots = _authority_roots(tmp_path)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    old = stored_instrument_authority(*roots)
+    assert old == {"2330": ("2330.TWSE",), "2317": ("2317.TWSE",), "6488": ("6488.TWO",), "1101": ("1101.TWSE",)}
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    assert stored_instrument_authority(*roots) == old  # zero mismatches
+    assert stored_instrument_authority(roots[0]) == {k: v for k, v in old.items() if k != "1101"}
+    assert stored_instrument_authority(tmp_path / "missing") == {}
+
+
+def test_instrument_authority_from_daily_bars_survives_run_file_deletion(tmp_path, monkeypatch):
+    import shutil
+
+    from services.source_ingestion.connectors.collector_bundle import resolve_social_symbol, stored_instrument_authority
+
+    roots = _authority_roots(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    for root in roots:
+        shutil.rmtree(root / "normalized")
+    authority = stored_instrument_authority(*roots)
+    assert resolve_social_symbol("2330", authority) == "2330.TWSE"
+    with pytest.raises(SourceEvidenceError):
+        resolve_social_symbol("9999", authority)  # unknown stays refused, never guessed
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    assert stored_instrument_authority(*roots) == {}  # the old read has nothing left: this is what the switch protects
+
+
+def test_instrument_authority_lists_symbols_through_the_reader_not_the_store(tmp_path, monkeypatch):
+    from services.source_ingestion import daily_bars_store as dbs
+    from services.source_ingestion.connectors.collector_bundle import stored_instrument_authority
+
+    roots = _authority_roots(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    monkeypatch.setattr(dbs.DailyBarsStore, "symbol_stats", lambda *a, **k: (_ for _ in ()).throw(AssertionError("store listing used")))
+    assert "2330" in stored_instrument_authority(*roots)

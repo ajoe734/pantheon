@@ -748,6 +748,24 @@ class KeyedDatasetStore:
             return []
         return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
 
+    def verify_partition(self, partition: str) -> dict[str, Any]:
+        """Re-read one partition against its manifest: files exist with the recorded size, every record has a
+        key, the row count and the content digest match. Writes nothing. ``keys`` is the set of key tuples."""
+        try:
+            manifest = self.read_manifest(partition)
+        except KeyedDatasetError as exc:
+            return {"partition": partition, "verified": False, "reason": str(exc), "keys": set()}
+        if manifest is None:
+            return {"partition": partition, "verified": False, "reason": "no_manifest", "keys": set()}
+        try:
+            merged = self._read_partition(manifest)
+        except (KeyedDatasetError, OSError, ValueError) as exc:
+            return {"partition": partition, "verified": False, "reason": str(exc)[:200], "keys": set()}
+        digest = _sha(sorted([list(k), v["_hash"]] for k, v in merged.items()))
+        ok = digest == manifest.get("content_digest") and len(merged) == manifest.get("row_count")
+        return {"partition": partition, "verified": ok, "reason": None if ok else "manifest_mismatch",
+                "row_count": len(merged), "content_digest": manifest.get("content_digest"), "keys": set(merged)}
+
     def _hit(self, step: str) -> None:
         if self._fault is not None:
             self._fault(step)

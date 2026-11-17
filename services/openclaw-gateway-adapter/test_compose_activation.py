@@ -52,7 +52,8 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
         "GOOGLE_GEMINI_CLI_NPM_VERSION": "0.51.0",
     }
     upstream_command = " ".join(upstream["command"])
-    assert "config set gateway.http.endpoints.responses.enabled true --json" in upstream_command
+    assert "config patch --stdin" in upstream_command
+    assert "gateway\":{\"http\":{\"endpoints\":{\"responses\":{\"enabled\":true" in " ".join(str(v) for v in upstream["environment"].values())
     assert 'exec node dist/index.js gateway --allow-unconfigured' in upstream_command
     assert '"$$OPENCLAW_GATEWAY_TOKEN"' in upstream_command
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"

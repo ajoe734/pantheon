@@ -133,3 +133,99 @@ def test_p95_60_closes_of_50_symbols_on_hosted_shaped_data(tmp_path):
     p95 = timings[int(len(timings) * 0.95) - 1]
     print(f"p95_ms={p95:.1f} median_ms={statistics.median(timings):.1f}")
     assert p95 <= 150, p95
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: symbol forms, listing, columns, cold read ------------------
+from services.source_ingestion.daily_bars_reader import PRICE_COLUMNS, symbol_forms  # noqa: E402
+
+
+def test_symbol_forms_are_the_same_for_the_bare_code_and_the_canonical_symbol():
+    expected = ["2330", "2330.TW", "2330.TWSE", "2330.TWO", "2330.TPEX"]
+    for given in ("2330", "2330.TW", "2330.twse", "2330.TWO", "2330.TPEX"):
+        assert symbol_forms(given) == expected
+    assert symbol_forms("030001") == ["030001", "030001.TW", "030001.TWSE", "030001.TWO", "030001.TPEX"]
+    assert symbol_forms("TX.FUT.X") == ["TX.FUT.X"]  # not a venue suffix: untouched
+
+
+def test_any_form_gives_the_bare_and_the_canonical_caller_the_same_rows(tmp_path):
+    ds = build(tmp_path, 6, 30)
+    reader = DailyBarsReader(tmp_path)
+    canonical = reader.read_range("1005.TW", ds[0], ds[-1])
+    assert len(canonical) == 6
+    for asked in ("1005", "1005.TW", "1005.TWSE"):
+        assert reader.read_range(asked, ds[0], ds[-1], any_form=True) == canonical, asked
+        assert reader.read_close_window(asked, ds[-1], 6, any_form=True) == canonical, asked
+    multi = reader.read_range(["1005", "1006.TW"], ds[0], ds[-1], any_form=True)
+    assert set(multi) == {"1005", "1006.TW"} and all(r["symbol"].endswith(".TW") for v in multi.values() for r in v)
+    assert reader.read_range("1005", ds[0], ds[-1]) == []  # without the flag the exact stored symbol is asked
+    assert reader.read_range("9999", ds[0], ds[-1], any_form=True) == []
+
+
+def test_two_stored_forms_with_a_bar_on_one_day_fail_closed(tmp_path):
+    ds = build(tmp_path, 3, 5)
+    rows = make_rows(5, trade_date=ds[-1], bump=100.0)
+    clash = dict(rows[0], symbol="1000.TWSE")  # the same code under another form, on a stored day
+    DailyBarsStore(tmp_path).write_day(ds[-1], rows + [clash], ingest_run_id="clash")
+    reader = DailyBarsReader(tmp_path)
+    with pytest.raises(DailyBarsCorrupt, match="1000.TW.*1000.TWSE.*ambiguous|1000.TWSE.*1000.TW.*ambiguous"):
+        reader.read_range("1000", ds[0], ds[-1], any_form=True)
+    assert len(reader.read_range("1000.TW", ds[0], ds[-1])) == 3  # the exact form is still readable
+
+
+def test_columns_limit_what_is_decoded_and_are_validated(tmp_path):
+    ds = build(tmp_path, 3, 10)
+    reader = DailyBarsReader(tmp_path)
+    rows = reader.read_range("1001.TW", ds[0], ds[-1], columns=PRICE_COLUMNS)
+    assert set(rows[0]) == set(PRICE_COLUMNS)
+    full = reader.read_range("1001.TW", ds[0], ds[-1])
+    assert [{k: r[k] for k in PRICE_COLUMNS} for r in full] == rows
+    for bad in (["symbol", "close"], ["symbol", "trade_date", "nope"], ["trade_date", "close"]):
+        with pytest.raises(DailyBarsReadLimit, match="columns must be stored columns"):
+            reader.read_range("1001.TW", ds[0], ds[-1], columns=bad)
+
+
+def test_list_symbols_matches_the_store_listing_and_a_repeat_opens_no_file(tmp_path, monkeypatch):
+    ds = build(tmp_path, 6, 40)
+    store = DailyBarsStore(tmp_path)
+    reader = DailyBarsReader(tmp_path)
+    assert reader.list_symbols() == store.symbol_stats()
+    assert reader.list_symbols(ds[1], ds[3]) == store.symbol_stats(ds[1], ds[3])
+    assert reader.list_symbols(ds[1], ds[3])["1005.TW"] == (3, ds[1], ds[3])
+    import pyarrow.parquet as pq
+
+    def boom(*a, **k):
+        raise AssertionError("a repeat listing must come from the manifest signature cache")
+
+    monkeypatch.setattr(pq, "read_table", boom)
+    assert reader.list_symbols(ds[1], ds[3])["1005.TW"] == (3, ds[1], ds[3])
+    with pytest.raises(DailyBarsReadLimit):
+        reader.list_symbols("2026-13-45", None)
+    with pytest.raises(DailyBarsReadLimit):
+        reader.list_symbols(ds[3], ds[1])
+    assert DailyBarsReader(tmp_path / "nothing").list_symbols() == {}
+
+
+def test_a_rewritten_day_changes_the_listing(tmp_path):
+    ds = build(tmp_path, 3, 10)
+    reader = DailyBarsReader(tmp_path)
+    assert "7777.TW" not in reader.list_symbols()
+    extra = make_rows(10, trade_date=ds[-1])
+    extra.append(dict(extra[0], symbol="7777.TW"))
+    DailyBarsStore(tmp_path).write_day(ds[-1], extra, ingest_run_id="more")
+    assert reader.list_symbols()["7777.TW"] == (1, ds[-1], ds[-1])
+
+
+def test_cold_process_read_of_one_symbol_two_years_returns_every_bar(tmp_path):
+    """A new process, no cache: correctness of the path the cold bound is measured on (the bound itself is
+    measured in the evidence run on the generated hosted shape: ``test_backfill_daily_bars cold``)."""
+    import subprocess
+    import sys
+
+    ds = build(tmp_path, 504, 4)
+    code = ("import sys,json;sys.path.insert(0,'.');"
+            "from services.source_ingestion.daily_bars_reader import DailyBarsReader as R,PRICE_COLUMNS as C;"
+            f"r=R({str(tmp_path)!r});d=r.trade_dates();rows=r.read_range('1001',d[-504],d[-1],any_form=True,columns=C);"
+            "print(json.dumps([len(rows),rows[0]['trade_date'],rows[-1]['trade_date']]))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
+                         cwd=str(__import__("pathlib").Path(__file__).resolve().parents[3]))
+    assert __import__("json").loads(out.stdout) == [504, ds[0], ds[-1]]

@@ -20,6 +20,7 @@ from services.research.adapters.taiwan_market_client import MopsRouteSpec, Taiwa
 
 from .connectors.alpha_db import ExternalAlphaDbAdapter
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
+from .security_listing import hosted_listing
 from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
     FinMindCredentialError,
@@ -544,6 +545,23 @@ _DEFAULT_FETCH_PRICE_HISTORY_RECORDS = TaiwanOfficialMarketDatasetAdapter.fetch_
 
 
 def _taiwan_official(
+    adapter: TaiwanOfficialMarketDatasetAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    """Hosted connector layer of the dated security listing: when nothing else supplies a filter, the hosted
+    listing (SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118) does. In shadow it only counts."""
+    hosted = hosted_listing() if request.get("listing_filter") is None and adapter.listing_filter is None else None
+    flt = hosted.filter_for_run(layer="connector") if hosted is not None else None
+    if flt is None:
+        return _taiwan_official_records(adapter, request, trace_id)
+    try:
+        return _taiwan_official_records(adapter, {**request, "listing_filter": flt}, trace_id)
+    finally:
+        hosted.record_run(str(request.get("ingest_run_id") or trace_id or ""), flt, layer="connector")
+
+
+def _taiwan_official_records(
     adapter: TaiwanOfficialMarketDatasetAdapter,
     request: Mapping[str, Any],
     trace_id: str,

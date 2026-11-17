@@ -183,6 +183,29 @@ def virtual_book_metrics(returns, *, periods_per_year=252, basis=GROSS_BASIS):
             "is_real_order": False}
 
 
+# since_inception rule.  A member book states ``since_inception: true`` only when its history starts at
+# the member's admission to the pool: the member view carried the pool admission time (``joined_at``)
+# when the book was created, and the first recorded mark falls on or after the admission date and
+# within ADMISSION_FIRST_MARK_GRACE_DAYS calendar days of it (a weekend/holiday gap to the next
+# session).  The admission time is stored on the book (``admitted_at``) and never rewritten; carried
+# books keep the original one.  A view without ``joined_at``, a first mark before admission or too long
+# after it, and a book written by an earlier runtime version (no ``admitted_at``) are all
+# ``since_inception: false`` -- unknown history is never presented as complete.
+ADMISSION_FIRST_MARK_GRACE_DAYS = 5
+
+
+def _since_inception(book):
+    joined, rows = book.get("admitted_at"), book.get("observations")
+    if not joined or not rows:
+        return False
+    try:
+        start = datetime.fromisoformat(str(joined).replace("Z", "+00:00")).date()
+        first = datetime.fromisoformat(rows[0]["event_time"].replace("Z", "+00:00")).date()
+    except (ValueError, TypeError, KeyError):
+        return False
+    return 0 <= (first - start).days <= ADMISSION_FIRST_MARK_GRACE_DAYS
+
+
 class MemberVirtualBooks:
     def __init__(self, path=None):
         self.path = Path(path) if path else None
@@ -243,7 +266,7 @@ class MemberVirtualBooks:
                 "artifact_id": member["artifact_id"], "version": member["version"],
                 "checksum": member["checksum"], "virtual_only": member["virtual_only"],
                 "symbol": symbol, "underlying_count": member.get("underlying_count", 1),
-                "observations": []})
+                "admitted_at": member.get("joined_at"), "observations": []})
             view = member["view"]
             strength = 1.0 if view["strength"] is None else view["strength"]
             if not isinstance(strength, (int, float)) or not math.isfinite(strength) or not 0 <= strength <= 1:
@@ -314,6 +337,7 @@ class MemberVirtualBooks:
             result.append({**{k: v for k, v in book.items()
                               if k not in {"observations", "symbol", "underlying_count"}},
                            **virtual_book_metrics(returns), "underlyings": underlyings,
+                           "since_inception": all(_since_inception(b) for b, _, _, _ in group),
                            "dates": [end[:10] for _, end in dates],
                            "returns": returns,
                            "source_ref": sorted({r["source_ref"] for b, _, _, _ in group for r in b["observations"]}),

@@ -1,0 +1,122 @@
+{
+ "task_id": "SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118",
+ "owner": "Claude2",
+ "reviewer": "Antigravity",
+ "reviewer_independence": "Reviewer is a different model family from the owner (Antigravity vs Claude).",
+ "reproduced_on_dev": {
+  "revision": "fe72f0f76",
+  "findings": [
+   {
+    "file": "services/source_ingestion/runtime.py",
+    "line": 362,
+    "what": "MarketDataStorageWriter built without a listing filter: the expired warrant skip never runs on hosted"
+   },
+   {
+    "file": "deploy/collector/collector_stack/runner.py",
+    "line": 160,
+    "what": "the only caller of refresh_listing outside tests (via refresh_security_listing): hosted never refreshes or reads a listing"
+   },
+   {
+    "file": "services/source_ingestion/runtime.py",
+    "line": 332,
+    "what": "JsonlIngestScheduleStore built without pinned_run_ids (callback exists at scheduler.py:661, default none): receipt retention has no pins"
+   }
+  ],
+  "commands": [
+   "git show fe72f0f76:services/source_ingestion/runtime.py | grep -n 'MarketDataStorageWriter(\\|JsonlIngestScheduleStore('",
+   "git grep -n 'refresh_listing\\|refresh_security_listing\\|pinned_run_ids' fe72f0f76 -- services deploy scripts"
+  ]
+ },
+ "pin_reference_fields": {
+  "recorded_data": "docs/deployment/evidence/S5-LOOPS-001/source-readbacks (paper job and snapshot readbacks): names ingest run ids (ingest_run_id, lineage.ingest_run_ids) and storage refs; no trade date field. Test: test_pin_source.py::test_recorded_paper_job_evidence_references_ingest_run_ids_and_trade_days",
+  "fields": [
+   {
+    "field": "audit.ingest_run_id",
+    "file": "services/governance/research_activation/production_data_proof.py",
+    "line": 268
+   },
+   {
+    "field": "audit.ingest_run_id (activation packet)",
+    "file": "services/research/qlib/adapter/production_activation.py",
+    "line": 171
+   },
+   {
+    "field": "ingest_run_id (dataset manifest)",
+    "file": "services/learning/qlib/activation/dataset_manifest.py",
+    "line": 246
+   },
+   {
+    "field": "lineage.ingest_run_ids",
+    "file": "services/source_ingestion/requirement_state.py",
+    "line": 732
+   },
+   {
+    "field": "source_ingest_run_id",
+    "file": "services/training-session/source_dataset_authority.py",
+    "line": 359
+   },
+   {
+    "field": "ingest_run_id (signal metadata)",
+    "file": "services/execution/lean_runtime/executor.py",
+    "line": 390
+   },
+   {
+    "field": "points[].event_time (trade day)",
+    "file": "services/source_ingestion/requirement_state.py",
+    "line": 562
+   }
+  ],
+  "dates": "explicit trade_date/trade_dates/points[].event_time/normalized_row.date, plus the date partitions that hold a pinned run's run files (--run-files-root)",
+  "digests": "storage.checksum is not read: no run file is named by a digest alone"
+ },
+ "delivered": {
+  "listing_state": "collector publishes bundles/security-listing.jsonl after each refresh (runner.py publish_security_listing); hosted HostedListing reads it through the existing bundle transport (no new provider egress), keeps one file (security-listing.jsonl in the source-ingest data dir) replaced per listing day, byte equal to the collector file",
+  "setting": "SOURCE_INGEST_SECURITY_LISTING_MODE = off | shadow (default) | enforce; unknown value = shadow and is reported",
+  "health": "/health metrics.security_listing (mode, status, listing_date, age_trading_days, reason, last_sync, last_run counts, per day totals); metrics.ingest_schedule_journal.receipt_pin_source",
+  "pin_source": "services/source_ingestion/pin_source.py PinSource (read only, no store): run_ids is the pinned_run_ids callable of JsonlIngestScheduleStore; trade_dates and the CLI --dates-out feed scripts/cleanup_market_run_files.py --pinned-dates and the retention sweeper. Evidence paths: SOURCE_INGEST_PIN_EVIDENCE_PATHS",
+  "fail_closed": "unreadable or too old listing -> no filter, nothing expired, health says why with the age; unresolvable pins (unset, missing, unreadable, over bounds) -> retention drops nothing that run, health says why"
+ },
+ "measurements": {
+  "live_shape_rows": 57531,
+  "synthetic_state_bytes_fixed_seed": 1637833,
+  "note": "generated locally, fixed seed 20261117; the brief's live figure is about 3.2 MB; the byte test asserts < 5 MB and the cap is 20 MB (enforced on save and load)",
+  "cap_bytes": 20971520,
+  "growth_per_day_bytes": 0
+ },
+ "previous_release_compat": {
+  "revision": "fe72f0f76",
+  "method": "scripts/previous_release_reader.py run_driver; test_listing_hosted_state.py::test_previous_release_starts_on_a_volume_that_holds_the_new_listing_state",
+  "result": "previous release starts on the volume; security-listing.jsonl is ignored (no reference to that name in its code) and left byte for byte unchanged. No connector record is added by this task."
+ },
+ "validation": [
+  {
+   "cmd": "pytest services/source_ingestion/tests/test_listing_hosted_state.py test_pin_source.py test_security_listing.py test_market_data_storage.py test_ingest_receipt_snapshot_refs_bounded.py test_taiwan_official_connectors.py deploy/collector/tests/test_bundle_and_manifest.py deploy/collector/tests/test_spiders_and_pollers.py",
+   "result": "202 passed, 3 skipped"
+  },
+  {
+   "cmd": "pytest services/source_ingestion/tests (whole directory, three batches)",
+   "result": "1 failed (test_finmind_broker_backfill: pyarrow not installed in the worker python, unrelated, fails the same way without this change), 734 + 685 + 808 passed, skips 16/6/4 (batch overlap: first batch stopped at the failure)"
+  },
+  {
+   "cmd": "pytest services/source_ingestion/test_service.py scripts/test_migrate_ingest_receipts.py scripts/test_cleanup_market_run_files.py scripts/test_previous_release_reader.py scripts/test_check_storage_manifest.py deploy/collector/tests",
+   "result": "339 passed, 9 skipped"
+  },
+  {
+   "cmd": "python3 scripts/check_storage_manifest.py",
+   "result": "passed, no failures (one entry added: security-listing.jsonl)"
+  }
+ ],
+ "not_part_of_this_task": [
+  "Collector host deploy (release and hosted operations owner): the collector image must ship services/source_ingestion/security_listing.py (Dockerfile is outside this artifact list) and the daily refresh_security_listing call must be scheduled.",
+  "Setting SOURCE_INGEST_PIN_EVIDENCE_PATHS on hosted to the gate proof and paper evidence paths (until then receipt retention drops nothing and health says pin_source_not_configured).",
+  "Switching SOURCE_INGEST_SECURITY_LISTING_MODE from shadow to enforce after three trading days of shadow counts (MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117)."
+ ],
+ "residual_findings": [
+  "shadow counts are in memory plus the per run log; they reset on restart, so the three day count must be read from health before a restart or from the run log.",
+  "scripts/cleanup_market_run_files.py and the retention sweeper take the pin source output as input; wiring the sweeper to PinSource belongs to SOURCE-RETENTION-SWEEPER-20261118-R2 (script not in this artifact list).",
+  "services/source_ingestion/test_finmind_broker_backfill needs pyarrow; the worker python has none, so daily-bar writer paths run against a stub in these tests."
+ ],
+ "files_missing_from_artifact_list": [
+  "deploy/collector/Dockerfile (needed to ship security_listing.py in the collector image)"
+ ]
+}

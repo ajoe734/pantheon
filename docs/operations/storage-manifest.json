@@ -5601,6 +5601,27 @@
     "services/execution/lean_runtime/instrument_candidates.py"
    ],
    "task": "SOURCE-DATASETS-KEYED-WRITE-20261119"
+  },
+  {
+   "bound_proof": {
+    "contains": "MAX_STATE_BYTES = 20 * 1024 * 1024",
+    "file": "services/source_ingestion/security_listing.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one file per location, 20 MB each (MAX_STATE_BYTES, enforced on save, on load and before the collector publishes); live shape 57,531 rows = about 3.2 MB",
+   "cleanup": "replaced as a whole by the next listing day (temp file then rename); no history kept. Locations: hosted source-ingest data dir security-listing.jsonl (HostedListing) and collector bundles/security-listing.jsonl (CollectorRunner.publish_security_listing, a file under bundles/ that bundle pruning skips)",
+   "growth_driver": "collector refreshes the listing once per trading day and publishes it; hosted reads it through the existing bundle transport at most once per listing day and replaces its file; an older remote state never replaces a newer one",
+   "growth_per_day": "0 bytes (one replaced file per location; size follows the listing, measured by services/source_ingestion/tests/test_listing_hosted_state.py)",
+   "kind": "jsonl",
+   "name": "security-listing.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/security_listing.py",
+    "services/source_ingestion/market_data_storage.py",
+    "services/source_ingestion/provider_adapters.py"
+   ],
+   "register_class": "RC3",
+   "task": "SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
