@@ -14,12 +14,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Sequence
 
-from .daily_bars_store import DailyBarsCorrupt, DailyBarsError, _require_pyarrow, validate_trade_date
+from .daily_bars_store import (
+    NEW_COLUMNS, STATUS_ONLY_KIND, DailyBarsCorrupt, DailyBarsError, _require_pyarrow, validate_trade_date)
 
 MAX_WINDOW_CLOSES = 504  # design 5.4 E1
 MAX_RANGE_DAYS = 800  # about 3 years of trading days
 MAX_SYMBOLS = 500
 _COLUMNS = ["market", "symbol", "trade_date", "open", "high", "low", "close", "volume", "adjusted", "content_hash"]
+EXTRA_COLUMNS = list(NEW_COLUMNS)  # traded_value, available_time, trading_status: read only when asked for
 PRICE_COLUMNS = ["symbol", "trade_date", "open", "high", "low", "close", "volume"]  # what the price readers use
 _VENUE_SUFFIXES = ("TW", "TWSE", "TWO", "TPEX")
 
@@ -130,7 +132,10 @@ class DailyBarsReader:
             try:
                 manifest = self._manifest(trade_date)
                 out: list[dict[str, Any]] = []
+                with_status = bool(columns) and "trading_status" in columns  # then the no-close rows are wanted too
                 for entry in manifest["files"]:
+                    if entry.get("kind") == STATUS_ONLY_KIND and not with_status:
+                        continue  # a security that did not trade has no bar
                     if wanted[0] > entry["max_symbol"] or wanted[-1] < entry["min_symbol"]:
                         continue  # whole file outside the requested symbols
                     path = self.bars_dir / entry["path"]
@@ -138,9 +143,18 @@ class DailyBarsReader:
                         raise DailyBarsCorrupt(f"daily bars file {entry['path']} has a different size than its manifest")
                     handle, groups = self._row_groups(path, wanted)
                     if groups:
-                        table = handle.read_row_groups(groups, columns=columns or _COLUMNS, use_threads=False)  # the date pool is the parallelism
+                        asked = columns or _COLUMNS
+                        names = set(handle.metadata.schema.names)
+                        table = handle.read_row_groups(  # a v1 partition has no new columns: they read as null
+                            groups, columns=[c for c in asked if c in names], use_threads=False)  # the date pool is the parallelism
                         table = table.filter(pc.is_in(table["symbol"], value_set=value_set))  # before any Python objects
-                        out.extend(table.to_pylist())
+                        rows = table.to_pylist()
+                        absent = [c for c in asked if c not in names]
+                        if absent:
+                            for r in rows:
+                                for c in absent:
+                                    r[c] = None
+                        out.extend(rows)
                 return out
             except FileNotFoundError:
                 self._manifest_cache.pop(trade_date, None)
@@ -167,6 +181,8 @@ class DailyBarsReader:
                 manifest = self._manifest(trade_date)
                 found: set[str] = set()
                 for entry in manifest["files"]:
+                    if entry.get("kind") == STATUS_ONLY_KIND:
+                        continue
                     if wanted[0] > entry["max_symbol"] or wanted[-1] < entry["min_symbol"]:
                         continue
                     path = self.bars_dir / entry["path"]
@@ -240,7 +256,7 @@ class DailyBarsReader:
         if columns is None:
             return None
         picked = list(dict.fromkeys(columns))
-        unknown = [c for c in picked if c not in _COLUMNS]
+        unknown = [c for c in picked if c not in _COLUMNS and c not in EXTRA_COLUMNS]
         if unknown or "symbol" not in picked or "trade_date" not in picked:
             raise DailyBarsReadLimit(f"columns must be stored columns and include symbol and trade_date, got {list(columns)!r}")
         return picked
@@ -322,6 +338,40 @@ class DailyBarsReader:
             items.sort(key=lambda r: r["trade_date"])
         return by_symbol[symbols[0]] if single else by_symbol
 
+    # -- survivorship evidence (status and lineage) ----------------------------------------------
+    def read_lineage(self, trade_date: str) -> dict[str, Any]:
+        """The day's lineage document (calendar evidence once per day, run refs once per run); ``{}`` when the
+        day has none. Reads one small file."""
+        path = self.bars_dir.parent / "lineage" / f"date={trade_date}.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except ValueError as exc:
+            raise DailyBarsCorrupt(f"lineage for {trade_date} is not valid JSON") from exc
+
+    def read_not_traded(self, trade_date: str) -> list[dict[str, Any]]:
+        """Rows with ``trading_status = not_traded`` of one day: symbol, source_id, lineage_ref only. Reads the
+        status only files of the day, never a price file."""
+        _, pq = _require_pyarrow()
+        for attempt in (0, 1):
+            try:
+                out: list[dict[str, Any]] = []
+                for entry in self._manifest(trade_date)["files"]:
+                    if entry.get("kind") != STATUS_ONLY_KIND:
+                        continue
+                    path = self.bars_dir / entry["path"]
+                    if os.path.getsize(path) != int(entry["bytes"]):
+                        raise DailyBarsCorrupt(f"daily bars file {entry['path']} has a different size than its manifest")
+                    table = pq.read_table(path, columns=["symbol", "source_id", "lineage_ref", "trading_status"])
+                    out.extend(r for r in table.to_pylist() if r["trading_status"] == "not_traded")
+                return out
+            except FileNotFoundError:
+                self._manifest_cache.pop(trade_date, None)
+                if attempt:
+                    raise DailyBarsCorrupt(f"daily bars partition {trade_date} lists a file that does not exist")
+        return []
+
     # -- symbol listing (reader side, symbol column only) --------------------------------------
     def list_symbols(self, start: str | None = None, end: str | None = None) -> dict[str, tuple[int, str, str]]:
         """``{symbol: (days, first_date, last_date)}`` over the stored trade dates inside ``[start, end]``.
@@ -354,6 +404,8 @@ class DailyBarsReader:
                 try:
                     seen: set[str] = set()
                     for entry in self._manifest(d)["files"]:
+                        if entry.get("kind") == STATUS_ONLY_KIND:
+                            continue
                         seen.update(pq.read_table(self.bars_dir / entry["path"], columns=["symbol"])["symbol"].to_pylist())
                     self._listing[d] = (sigs[d], frozenset(seen))
                     return
