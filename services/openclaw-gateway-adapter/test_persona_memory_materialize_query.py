@@ -90,3 +90,71 @@ def test_a_supplied_query_replaces_the_bootstrap_default(env):
         client.post(ROUTE, headers=HEADERS, json=body)
     assert "query=carry+2882" in seen[0] and DEFAULT_MEMORY_QUERY.split()[0] not in seen[0]
     assert "query=recent+lessons" in seen[1]
+
+
+def _strict_memory_app(tmp_path, monkeypatch):
+    from services.memory import main as memory_main
+    secret = "m" * 40
+    for key, value in {
+        "PANTHEON_MEMORY_STORE_PATH": str(tmp_path / "m.json"), "PANTHEON_MEMORY_STORE": str(tmp_path / "m.json"),
+        "PANTHEON_PERSONA_MEMORY_STORE_PATH": str(tmp_path / "p.json"),
+        "PANTHEON_PERSONA_MEMORY_STORE": str(tmp_path / "p.json"),
+        "PANTHEON_MEMORY_AUTHZ_MODE": "local", "PANTHEON_MEMORY_AUTH_MODE": "strict",
+        "PANTHEON_MEMORY_JWT_SECRET": secret,
+    }.items():
+        monkeypatch.setenv(key, value)
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+    return memory_main, TestClient(memory_main.app), secret
+
+
+def _persona_entry():
+    return {"memory_id": "pmem-1", "persona_id": "persona-a", "memory_type": "strategy_lesson",
+            "content": {"summary": "x", "tags": []}, "source_event_type": "postmortem_published",
+            "source_event_id": "PM-1", "written_at": "2026-06-09T01:00:00Z", "write_authority": "incident-svc",
+            "relevance_scope": "persona_private", "reuse_count": 0}
+
+
+def _jwt(secret, roles, sub="openclaw-persona-sync"):
+    import base64, hashlib, hmac, time
+    enc = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=")
+    now = int(time.time())
+    body = enc(b'{"alg":"HS256","typ":"JWT"}') + b"." + enc(json.dumps({
+        "sub": sub, "tenant_id": "tenant-dev", "roles": roles, "iat": now, "exp": now + 600}).encode())
+    return (body + b"." + enc(hmac.new(secret.encode(), body, hashlib.sha256).digest())).decode()
+
+
+def test_materialize_ok_with_file_credential_against_strict_memory(env, tmp_path, monkeypatch):
+    root, client = env
+    _memory_main, memory_client, secret = _strict_memory_app(tmp_path, monkeypatch)
+    token_file = tmp_path / "OPENCLAW_ADAPTER_MEMORY_TOKEN"
+    token_file.write_text(_jwt(secret, ["persona_memory_reader"]))
+    token_file.chmod(0o600)
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ID", "openclaw-persona-sync")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES", "persona_memory_reader")
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN", raising=False)
+
+    def via_memory(request, timeout):
+        path = request.full_url.split("memory.test", 1)[1]
+        reply = memory_client.get(path, headers={"Authorization": request.headers["Authorization"]})
+        assert reply.status_code == 200, reply.text
+        return _Memory(reply.json())
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", via_memory):
+        response = client.post(ROUTE, headers=HEADERS, json={
+            "persona_id": "persona-a", "workspace_ref": str(root / "persona-a")})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ok"
+
+
+def test_adapter_principal_is_refused_by_memory_writes_and_a_bad_file_fails_closed(env, tmp_path, monkeypatch):
+    root, client = env
+    _memory_main, memory_client, secret = _strict_memory_app(tmp_path, monkeypatch)
+    denied = memory_client.post("/api/memory/persona-entries", json=_persona_entry(),
+                                headers={"Authorization": "Bearer " + _jwt(secret, ["persona_memory_reader"])})
+    assert denied.status_code in {401, 403}
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(tmp_path / "missing"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "stale-env-token")
+    with pytest.raises(RuntimeError):
+        adapter_main.adapter_memory_credential()

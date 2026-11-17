@@ -888,7 +888,7 @@ def execute_restore_accepted_baseline(
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("fetch", "verify-preconditions", "restore-accepted-baseline"), default="fetch")
+    parser.add_argument("--mode", choices=("fetch", "verify-preconditions", "verify-steady-state", "restore-accepted-baseline"), default="fetch")
     parser.add_argument("--kind", choices=tuple(FILES))
     parser.add_argument("--artifact-id")
     parser.add_argument("--artifact-sha256")
@@ -911,6 +911,18 @@ def main(argv=None) -> int:
             result = fetch(kind=args.kind, artifact_id=args.artifact_id, expected_digest=args.artifact_sha256,
                            run_id=args.run_id, attempt=args.attempt, output_dir=args.output_dir)
             print(json.dumps(result, sort_keys=True))
+            return 0
+        if args.mode == "verify-steady-state":
+            # Completeness check run after a restore: every steady baseline
+            # service must be running on its baseline image. Drift exits non-zero.
+            if args.baseline_file is None or args.steady_state_file is None:
+                raise CaptureError("verify-steady-state requires --baseline-file and --steady-state-file")
+            baseline_manifest = json.loads(_read_regular_file(args.baseline_file, 1024 * 1024), object_pairs_hook=unique_object)
+            drift = steady_service_drift(baseline_manifest, _read_steady_state(args.steady_state_file))
+            print(json.dumps({"steady_service_drift": drift}, sort_keys=True))
+            if drift:
+                print("[dev-artifact-restore] ERROR: steady_service_incomplete: " + ", ".join(sorted(drift)), file=sys.stderr)
+                return 75
             return 0
         if args.mode == "verify-preconditions":
             if (args.baseline_file is None or args.deployment_json_file is None or

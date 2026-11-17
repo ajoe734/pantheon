@@ -738,3 +738,22 @@ def test_dev_persona_tool_broker_resolves_enabled_with_shared_token():
         assert "PERSONA_TOOL_BROKER_TOKEN" in str(SERVICES["openclaw-gateway"]["command"])
     finally:
         Path("/tmp/pantheon-broker-contract-token").unlink(missing_ok=True)
+
+
+def test_adapter_requires_principal_file_mount_and_memory_credential() -> None:
+    """The adapter must read its memory credential from the issuer-delivered read-only file."""
+    adapter = SERVICES["openclaw-gateway-adapter"]
+    env = adapter["environment"]
+    mount = "dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro"
+    assert mount in adapter["volumes"]
+    file_var = env["OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"]
+    assert "/run/pantheon-principals/OPENCLAW_ADAPTER_MEMORY_TOKEN" in file_var
+    assert "OPENCLAW_ADAPTER_MEMORY_TOKEN" in issuer.CONSUMER_FILES["openclaw-gateway-adapter"]
+    # Contract fails if either the mount or the credential variable is dropped.
+    for broken in (
+        {**adapter, "volumes": [v for v in adapter["volumes"] if v != mount]},
+        {**adapter, "environment": {k: v for k, v in env.items() if k != "OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"}},
+    ):
+        ok = (mount in broken["volumes"]
+              and "OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE" in broken["environment"])
+        assert not ok

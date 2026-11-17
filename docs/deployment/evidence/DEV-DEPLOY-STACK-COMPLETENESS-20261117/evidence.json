@@ -1,0 +1,25 @@
+{
+  "task": "DEV-DEPLOY-STACK-COMPLETENESS-20261117",
+  "tests": {
+    "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_fetch_dev_artifact_evidence.py scripts/test_compensation_restores_steady_services.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_nonprod_restore_accepted_baseline.py scripts/test_dev_environment_lease_deploy_contract.py",
+    "result": "6 failed, 644 passed, 2 skipped (after merging origin/dev 80d4cf2ca)",
+    "baseline_before_change": "23 failed in test_deploy_nonprod_vm.py, test_deploy_nonprod_artifact_restore.py, test_nonprod_restore_accepted_baseline.py (same 3 files, identical count at HEAD~1)",
+    "new_tests": "scripts/test_compensation_restores_steady_services.py (6 added, all pass)",
+    "ssh_transport_failures_identical_on_origin_dev": {
+      "note": "These fail identically on plain origin/dev (git archive snapshot, same sandbox): exit 75 failure_stage=transport at dev_remote_guarded_exec.py:76 (no ssh transport in worker sandbox). Not regressions. Coordinator brief said 7; 6 observed in both trees.",
+      "file": "scripts/test_deploy_nonprod_artifact_restore.py",
+      "tests": [
+        "test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
+        "test_full_cli_restore_final_executes_original_bff_chain",
+        "test_full_cli_restore_final_preserves_explicit_workflow_dispatch",
+        "test_original_chain_rejects_tampered_final_fe_seal_after_driver_readback",
+        "test_original_chain_rejects_missing_or_unsafe_fe_node_runtime",
+        "test_original_chain_rejects_unadmitted_fe_controller_before_fe_or_driver"
+      ]
+    }
+  },
+  "residual_findings": [
+    "23 pre-existing test failures in this environment (finmind prepare tests, artifact restore chain tests, whole-stack restore test: UnboundLocalError StrategyArtifactValidationError at services/source_ingestion/requirement_state.py:2108).",
+    "No live hosted run performed; workflow SSH collection and verify-steady-state are covered by contract tests only."
+  ]
+}
