@@ -5332,6 +5332,8 @@ class PaperRuntimeService:
         self._last_skipped_status: str | None = None
         self._last_error: str | None = None
         self._last_heartbeat_at: str | None = None
+        self._last_heartbeat_monotonic: float | None = None
+        self._heartbeat_clock = time.monotonic
         self._poll_count = 0
         self._processed_signal_count = 0
         self._execution_event_count = 0
@@ -6451,7 +6453,13 @@ class PaperRuntimeService:
         if not self._telemetry.enabled:
             return
         now = _iso_now()
-        if self._last_heartbeat_at == now:
+        mono_now = self._heartbeat_clock()
+        min_interval = max(
+            1.0,
+            _as_float(os.getenv("PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS"), 15.0),
+        )
+        last_mono = self._last_heartbeat_monotonic
+        if last_mono is not None and (mono_now - last_mono) < min_interval:
             return
         q_lag, d_lag = self._current_queue_lag_ms(), getattr(self._telemetry, "last_delivery_lag_ms", None)
         lags = {k: v for k, v in (("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)) if v is not None}
@@ -6473,6 +6481,7 @@ class PaperRuntimeService:
             emitted = self._telemetry.emit_heartbeat(metadata=hb_meta)
         if emitted:
             self._last_heartbeat_at = now
+            self._last_heartbeat_monotonic = mono_now
 
     def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:

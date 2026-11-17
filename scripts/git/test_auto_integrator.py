@@ -4,6 +4,7 @@ import ast
 import fcntl
 import io
 import json
+from datetime import datetime, timezone
 import os
 import subprocess
 import sys
@@ -90,6 +91,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.tag_payloads: dict[str, dict[str, Any]] = {}
         self.tag_objects: dict[str, dict[str, Any]] = {}
         self.dispatches: list[dict[str, Any]] = []
+        self.workflow_runs: list[dict[str, Any]] = []
         self._next_tag_sha = 200
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
@@ -271,9 +273,28 @@ class FakeRunner(auto_integrator.CommandRunner):
             self.tag_refs.discard(ref)
             self.tag_payloads.pop(ref, None)
             return completed(command, stdout="{}")
+        if (
+            command[:2] == ["gh", "api"]
+            and "/actions/workflows/123/runs" in joined
+            and "POST" not in command
+        ):
+            return completed(
+                command,
+                stdout=auto_integrator.json.dumps({"workflow_runs": self.workflow_runs}),
+            )
         if command[:2] == ["gh", "api"] and "/actions/workflows/" in joined and "POST" in command:
             if api_payload is not None:
                 self.dispatches.append(dict(api_payload))
+                # Dispatched runs sit queued, titled with the head sha.
+                self.workflow_runs.append(
+                    {
+                        "id": 9000 + len(self.dispatches),
+                        "status": "queued",
+                        "display_title": "Canonical Review Gate "
+                        + str(api_payload.get("inputs", {}).get("head_sha")),
+                        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                )
             return completed(command)
         if command[:3] == ["git", "fetch", "origin"]:
             return completed(command)
@@ -6091,6 +6112,59 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
         self.assertEqual(len(runner.dispatches), 1)
         self.assertEqual(runner.dispatches[0]["inputs"]["head_sha"], APPROVED_HEAD)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_queued_dispatched_gate_run_is_not_redispatched_every_tick(self) -> None:
+        """Livelock: a runner queue longer than a tick must not re-dispatch."""
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"].append(
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        )
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+        details = []
+        for _tick in range(5):
+            result = auto_integrator.integrate_candidate(
+                candidate, auto_integrator.Settings(), runner, execute=True,
+                gate=approved_gate(), config=self.REQUIRED_TRUE_REVIEW_POLICY,
+            )
+            self.assertEqual(result.action, "waiting")
+            details.append(result.detail)
+        self.assertEqual(len(runner.dispatches), 1)
+        self.assertIn("re-dispatched workflow", details[0])
+        for detail in details[1:]:
+            self.assertIn("not re-dispatching", detail)
+            self.assertIn("queued", detail)
+
+    def test_stale_gate_run_allows_one_more_dispatch(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"].append(
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        )
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+        runner.workflow_runs.append(
+            {
+                "id": 1, "status": "completed",
+                "display_title": f"Canonical Review Gate {APPROVED_HEAD}",
+                "created_at": "2020-01-01T00:00:00Z",
+            }
+        )
+        result = auto_integrator.integrate_candidate(
+            candidate, auto_integrator.Settings(), runner, execute=True,
+            gate=approved_gate(), config=self.REQUIRED_TRUE_REVIEW_POLICY,
+        )
+        self.assertIn("re-dispatched workflow", result.detail)
+        self.assertEqual(len(runner.dispatches), 1)
 
     def test_canonical_review_gate_absent_with_proof_tag_re_dispatches_and_waits(self) -> None:
         candidate = auto_integrator.TaskCandidate(
