@@ -571,11 +571,11 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
     bars_stats: dict[str, tuple[int, str, str]] = {}
     bars_dates: list[str] = []
     if bars_mode:
-        from .daily_bars_store import DailyBarsStore
+        from .daily_bars_reader import DailyBarsReader
 
-        _store = DailyBarsStore(root)
-        bars_stats = _store.symbol_stats()
-        bars_dates = sorted(p.name[5:-5] for p in _store.manifest_dir.glob("date=*.json")) if _store.manifest_dir.is_dir() else []
+        _reader = DailyBarsReader(root)
+        bars_stats = _reader.list_symbols()
+        bars_dates = _reader.trade_dates()
     if base.is_dir():
         for dataset_dir in sorted(p for p in base.iterdir() if p.is_dir()):
             if bars_mode and dataset_dir.name == _slug(daily_bar_dataset):

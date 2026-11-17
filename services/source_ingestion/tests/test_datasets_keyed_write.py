@@ -286,3 +286,39 @@ def test_crash_before_manifest_rename_leaves_the_previous_set_readable(tmp_path)
         KeyedDatasetStore(tmp_path, decl, fault=boom).write_records(changed, ingest_run_id="r2")
     rows = _keyed_rows(tmp_path, "tw_margin_short_balance")
     assert len(rows) == 5 and all(r["metadata"]["normalized_row"]["a"] != -1 for r in rows)
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: partition verification the cleanup of keyed datasets relies on ----
+def _flow_records():
+    return [{"source_id": f"s{i}", "metadata": {"normalized_row": {
+        "symbol": "2330", "trade_date": DAY, "investor_class": cls, "net": i}}} for i, cls in enumerate(("foreign", "trust"))]
+
+
+def test_verify_partition_confirms_digest_sizes_and_keys_and_detects_damage(tmp_path):
+    store = KeyedDatasetStore(tmp_path, KEYED_DATASETS["tw_institutional_flow"])
+    store.write_records(_flow_records())
+    ok = store.verify_partition(DAY)
+    assert ok["verified"] is True and ok["row_count"] == 2 and ok["keys"] == {(("2330", DAY, "foreign")[0], DAY, "foreign"), ("2330", DAY, "trust")}
+    assert store.verify_partition("2026-01-01") == {"partition": "2026-01-01", "verified": False, "reason": "no_manifest", "keys": set()}
+    manifest = store.manifest_dir / f"date={DAY}.json"
+    good = manifest.read_text()
+    manifest.write_text(good.replace('"row_count":2', '"row_count":3'))
+    bad = store.verify_partition(DAY)
+    assert bad["verified"] is False and bad["reason"] == "manifest_mismatch"
+    manifest.write_text(good.replace('"content_digest":"', '"content_digest":"0'))
+    assert store.verify_partition(DAY)["verified"] is False
+    manifest.write_text("{not json")
+    assert "not valid JSON" in store.verify_partition(DAY)["reason"]
+    manifest.write_text(good)
+    part = next((store.base / f"date={DAY}").glob("part-*.jsonl.gz"))
+    part.write_bytes(part.read_bytes() + b"x")
+    assert "different size" in store.verify_partition(DAY)["reason"]
+
+
+def test_every_keyed_dataset_reader_routes_through_the_named_reader_setting(tmp_path, monkeypatch):
+    """Acceptance 7: the readers behind the keyed cleanup are all switchable by the one setting; the default stays
+    run files."""
+    monkeypatch.delenv("PANTHEON_KEYED_DATASET_READER", raising=False)
+    for dataset in KEYED_DATASETS:
+        assert normalized_dataset_base(tmp_path, dataset) == tmp_path / "normalized" / dataset
+        assert normalized_dataset_base(tmp_path, dataset, env={"PANTHEON_KEYED_DATASET_READER": "keyed"}) == keyed_dataset_dir(tmp_path, dataset)

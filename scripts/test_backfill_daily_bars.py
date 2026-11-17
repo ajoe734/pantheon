@@ -10,6 +10,7 @@ pytest.importorskip("pyarrow")
 
 from scripts import backfill_daily_bars as bf
 from services.source_ingestion import daily_bars_store as dbs
+from services.source_ingestion.daily_bars_reader import DailyBarsReader
 from services.source_ingestion.daily_bars_store import DailyBarsStore
 from services.source_ingestion.security_listing import ListingState
 
@@ -33,6 +34,9 @@ def _state(today=TODAY):
 
 def _bf(root, state, **kw):
     kw.setdefault("today", TODAY)
+    # the fixture re-ingests 2330 on 11-13 with another close: these tests exercise the newest-run rule, which
+    # is now the named flag (the default blocks such a date, see the conflict tests below)
+    kw.setdefault("newest_run_on_conflict", True)
     return bf.backfill(root, state, **kw)
 
 
@@ -185,6 +189,65 @@ def test_cli_dry_run_writes_report(tmp_path):
     assert bf.main(["--root", str(tmp_path), "--listing-state", str(state_path), "--today", TODAY, "--report", str(out)]) == 0
     assert json.loads(out.read_text())["apply"] is False
     assert bf.main(["--root", str(tmp_path), "--listing-state", str(state_path), "--today", "2026-12-30"]) == 2
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: duplicate conflicts (gap G5) ---------------------------------
+def _conflict_root(root):
+    _write(root, "2026-11-15", "run-a", [
+        _line("2330", "2026-11-12", 100.0), _line("2317", "2026-11-12", 50.0),   # 11-12: clean
+        _line("2330", "2026-11-13", 101.0), _line("2317", "2026-11-13", 51.0),   # 11-13: price conflict (2330)
+        _line("2330", "2026-11-16", 120.0), _line("2317", "2026-11-16", 60.0),   # 11-16: volume only (2317)
+    ])
+    _write(root, "2026-11-16", "run-b", [
+        _line("2330", "2026-11-12", 100.0), _line("2330", "2026-11-13", 111.0, run="b"),
+        _line("2317", "2026-11-16", 60.0, volume=2000.0)])
+
+
+def test_conflicting_copies_are_counted_listed_and_the_date_is_not_published(tmp_path):
+    _conflict_root(tmp_path)
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=False)
+    assert report["conflicts"]["price_keys"] == 1 and report["conflicts"]["volume_only_keys"] == 1
+    assert report["conflicts"]["blocked_dates"] == ["2026-11-13", "2026-11-16"]
+    day = report["days"]["2026-11-13"]
+    assert day["conflicts"]["price"] == ["2330"] and day["conflicts"]["volume_only"] == []
+    assert day["published_blocked"] is True and day["written"] is False
+    assert report["days"]["2026-11-16"]["conflicts"]["volume_only"] == ["2317"]
+    assert report["days"]["2026-11-12"]["conflicts"]["price_keys"] == 0 and report["days"]["2026-11-12"]["written"] is True
+    store = DailyBarsStore(tmp_path)
+    assert store.read_manifest("2026-11-12") is not None
+    assert store.read_manifest("2026-11-13") is None and store.read_manifest("2026-11-16") is None
+    assert report["mismatches"] == []  # a blocked date is not a mismatch, it is not published
+
+
+def test_the_named_flag_publishes_the_newest_run_and_still_reports_the_keys(tmp_path):
+    _conflict_root(tmp_path)
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=True)
+    assert report["conflicts"]["blocked_dates"] == []
+    assert report["conflicts"]["published_with_flag"] == ["2026-11-13", "2026-11-16"]
+    assert report["days"]["2026-11-13"]["conflicts"]["price"] == ["2330"] and report["days"]["2026-11-13"]["written"] is True
+    bars = DailyBarsReader(tmp_path).read_range("2330", "2026-11-13", "2026-11-13")
+    assert [b["close"] for b in bars] == [111.0]  # the newest copy
+
+
+def test_identical_copies_are_not_conflicts(tmp_path):
+    _write(tmp_path, "2026-11-15", "a", [_line("2330", "2026-11-12", 100.0), _line("2317", "2026-11-12", 50.0)])
+    _write(tmp_path, "2026-11-16", "b", [_line("2330", "2026-11-12", 100.0)])
+    report = _bf(tmp_path, _state(), apply=True, newest_run_on_conflict=False)
+    assert report["days"]["2026-11-12"]["duplicates"] == 1
+    assert report["conflicts"] == {"price_keys": 0, "volume_only_keys": 0, "blocked_dates": [], "published_with_flag": []}
+
+
+def test_cli_reports_blocked_dates_and_exits_3_on_apply(tmp_path, capsys):
+    _conflict_root(tmp_path)
+    state_path = tmp_path / "listing.json"
+    _state().save(state_path)
+    base = ["--root", str(tmp_path), "--listing-state", str(state_path), "--today", TODAY]
+    assert bf.main(base + ["--report", str(tmp_path / "r.json")]) == 0  # dry run: report only
+    assert json.loads((tmp_path / "r.json").read_text())["conflicts"]["blocked_dates"] == ["2026-11-13", "2026-11-16"]
+    assert bf.main(base + ["--apply"]) == 3
+    assert "conflicting duplicates and were not published" in capsys.readouterr().err
+    assert bf.main(base + ["--apply", "--newest-run-on-conflict"]) == 0
+    assert DailyBarsStore(tmp_path).read_manifest("2026-11-13") is not None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -453,13 +516,210 @@ def measure_latency(root, reps=21):  # pragma: no cover - measurement driver
     return out
 
 
+def generate_bars_only(root, *, trade_dates=520, seed=SHAPE_SEED):  # pragma: no cover - measurement driver
+    """Daily bars of the generated shape (3400 symbols per date, ``<code>.TW``) written straight through
+    DailyBarsStore: for the cold bound, where only the reader side matters."""
+    import random
+
+    from services.source_ingestion.daily_bars_store import DailyBarsStore, _sha
+
+    rng, codes, store = random.Random(seed), _shape_codes(), DailyBarsStore(root)
+    for day in trading_days(trade_dates):
+        rows = []
+        for code in codes:
+            close = round(10 + rng.random() * 900, 2)
+            o = {"open": close, "high": round(close * 1.01, 2), "low": round(close * 0.99, 2), "close": close,
+                 "volume": float(rng.randrange(1000, 90000000)), "adjusted": False}
+            rows.append({"market": "TW", "symbol": f"{code}.TW", "trade_date": day, **o, "source_id": "gen",
+                         "ingest_run_id": "gen", "lineage_ref": "gen", "content_hash": _sha(o)})
+        store.write_day(day, rows, ingest_run_id="gen")
+    return {"trade_dates": trade_dates, "symbols_per_date": len(codes), "seed": seed}
+
+
+_COLD_CHILD = (
+    "import sys,time,json;sys.path.insert(0,'.');"
+    "from services.source_ingestion.daily_bars_reader import DailyBarsReader,PRICE_COLUMNS;"
+    "import pyarrow.parquet,pyarrow.compute;t=time.perf_counter();"
+    "r=DailyBarsReader(sys.argv[1]);d=r.trade_dates();"
+    "rows=r.read_range(sys.argv[2],d[-504],d[-1],any_form=True,columns=PRICE_COLUMNS);"
+    "print(round(time.perf_counter()-t,4),len(rows))")
+
+
+def measure_cold(root, symbol="1500", runs=25):  # pragma: no cover - measurement driver
+    """2 years (504 stored dates) of 1 symbol, a NEW process for every run (no footer, manifest or date cache).
+    The timer starts after the imports (pyarrow and the package import cost the same before and after this
+    task); the load average is recorded because the figure depends on the host."""
+    import os
+    import subprocess
+    import sys
+
+    times = []
+    for _ in range(runs):
+        out = subprocess.run([sys.executable, "-c", _COLD_CHILD, str(root), symbol], capture_output=True, text=True,
+                             check=True, cwd=str(Path(__file__).resolve().parents[1]))
+        t, n = out.stdout.split()
+        times.append(float(t))
+        assert int(n) == 504
+    return {"runs": runs, "rows_per_run": 504, "p50_s": _percentile(times, 0.5), "p95_s": _percentile(times, 0.95),
+            "max_s": max(times), "bound_p95_s": 0.5, "within_bound": _percentile(times, 0.95) <= 0.5,
+            "cpus": os.cpu_count(), "loadavg_after": os.getloadavg()}
+
+
+def measure_complete(root):  # pragma: no cover - measurement driver
+    """Acceptance 2, 3, 4, 7 on the generated shape: ``root`` holds generated run files and no daily bars yet."""
+    import copy
+    import os
+    import shutil
+    import tempfile
+
+    from scripts import cleanup_market_run_files as cl
+    from services.research.alpha_templates import evaluator as ev
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.daily_bars_reader import DailyBarsReader
+    from services.source_ingestion.intraday_reconcile import OfficialDaily
+    from services.source_ingestion.market_data_storage import DAILY_PRICE_READER_ENV
+
+    root = Path(root)
+    state = shaped_listing()
+    out = {"root_kind": "locally generated shaped copy (fixed seed)"}
+    # G5 first: the default backfill on data with re-captured volumes and an injected price conflict
+    probe = sorted((root / "normalized" / "tw_price_daily").glob("date=*/*.jsonl"))[-1]
+    first_line = json.loads(probe.read_text().splitlines()[0])
+    bad = copy.deepcopy(first_line)
+    for sect in (bad["metadata"], bad["metadata"]["normalized_row"]):
+        if "close" in sect:
+            sect["close"] = sect["close"] + 7.0
+    body = json.loads(bad["metadata"]["body"])
+    body["close"] += 7.0
+    bad["metadata"]["body"] = json.dumps(body)
+    extra = root / "normalized" / "tw_price_daily" / "date=2026-11-14"
+    extra.mkdir(exist_ok=True)
+    (extra / "run-conflict.jsonl").write_text(json.dumps(bad) + "\n")
+    default = bf.backfill(root, state, today=TODAY, apply=False)
+    flagged = bf.backfill(root, state, today=TODAY, apply=False, newest_run_on_conflict=True)
+    out["G5_duplicate_conflicts"] = {
+        "trade_dates": default["trade_dates"], "price_conflict_keys": default["conflicts"]["price_keys"],
+        "volume_only_conflict_keys": default["conflicts"]["volume_only_keys"],
+        "dates_blocked_by_default": len(default["conflicts"]["blocked_dates"]),
+        "dates_published_with_the_flag": len(flagged["conflicts"]["published_with_flag"]),
+        "dates_blocked_with_the_flag": len(flagged["conflicts"]["blocked_dates"]),
+        "injected_price_conflict_listed": any(
+            v["conflicts"]["price"] for v in default["days"].values())}
+    (extra / "run-conflict.jsonl").unlink()
+    extra.rmdir()
+    bf.backfill(root, state, today=TODAY, apply=True, newest_run_on_conflict=True)
+    # acceptance 2: the two readers, run files against daily bars
+    os.environ.pop(DAILY_PRICE_READER_ENV, None)
+    old = OfficialDaily.from_snapshot(root, reader="run_files")
+    new = OfficialDaily.from_snapshot(root, reader="daily_bars")
+    bad_keys, compared, only_old, undated = [], 0, 0, 0
+    for (sym, day), rows in old._rows.items():
+        if day == "None":
+            undated += len(rows)
+            continue
+        got = new._rows.get((sym, day))
+        if got is None:
+            only_old += 1
+            continue
+        compared += 1
+        last = rows[-1]  # the newest copy of the key
+        if (got[0].ohlcv(), got[0].available_at) != (last.ohlcv(), last.available_at):
+            bad_keys.append((sym, day))
+    out["intraday_reconcile_OfficialDaily"] = {
+        "keys_compared": compared, "mismatches": len(bad_keys), "first_mismatches": bad_keys[:3],
+        "keys_only_in_run_files": only_old,
+        "only_in_run_files_are_expired_warrants": all(
+            s in {f"{60000 + i:06d}" for i in range(840)} for (s, dd) in old._rows if (s, dd) not in new._rows and dd != "None"),
+        "run_file_rows_without_trade_date_not_compared": undated,
+        "provenance_run_files": sorted(next(iter(old._rows.values()))[0].ref),
+        "provenance_daily_bars": sorted(next(iter(new._rows.values()))[0].ref),
+        "dates_present_equal": old.dates_present - {"None"} == new.dates_present}
+    a_old = cb.stored_instrument_authority(root)
+    os.environ[DAILY_PRICE_READER_ENV] = "daily_bars"
+    a_new = cb.stored_instrument_authority(root)
+    os.environ.pop(DAILY_PRICE_READER_ENV, None)
+    diff = sorted(set(a_old) ^ set(a_new))
+    out["collector_bundle_stored_instrument_authority"] = {
+        "tickers_run_files": len(a_old), "tickers_daily_bars": len(a_new),
+        "mismatches_on_common_tickers": sum(1 for k in set(a_old) & set(a_new) if a_old[k] != a_new[k]),
+        "tickers_only_in_run_files": len(diff), "only_in_run_files_are_expired_warrants": all(
+            k in {f"{60000 + i:06d}" for i in range(840)} for k in diff)}
+    # acceptance 3: symbol forms on the evaluator, both modes
+    forms = {}
+    for mode in ("run_files", "daily_bars"):
+        os.environ[DAILY_PRICE_READER_ENV] = mode
+        for asked in ("1000", "1000.TW"):
+            uni = ev.load_tw_price_daily_snapshot(root, symbols=[asked], min_bars=1)
+            forms[f"{mode}:{asked}"] = {k: v["features"]["close"] for k, v in uni.items()}
+    os.environ.pop(DAILY_PRICE_READER_ENV, None)
+    ref = next(iter(forms["run_files:1000"].values()))
+    out["G4_symbol_forms"] = {"rows_per_call": {k: len(next(iter(v.values()))) for k, v in forms.items()},
+                              "all_four_calls_equal": all(next(iter(v.values())) == ref for v in forms.values())}
+    # acceptance 5: the reader listing
+    reader = DailyBarsReader(root)
+    import time
+
+    t = time.perf_counter()
+    listing = reader.list_symbols()
+    out["G3_reader_listing"] = {"symbols": len(listing), "seconds_cold_first_call": round(time.perf_counter() - t, 3)}
+    # acceptance 7 on the same copy: cleanup report of the generated shape, undated rows counted
+    tmp = Path(tempfile.mkdtemp())
+    report = bf.backfill(root, state, today=TODAY, apply=True, newest_run_on_conflict=True)
+    guard = cl.build_report(root, today="2027-06-01", backfill_report=report, reader_evidence={"trading_days": 5, "mismatches": 0})
+    open_ = cl.build_report(root, today="2027-06-01", backfill_report=report, reader_evidence={"trading_days": 5, "mismatches": 0},
+                            known_readers=())
+    flag = cl.build_report(root, today="2027-06-01", backfill_report=report, reader_evidence={"trading_days": 5, "mismatches": 0},
+                           known_readers=(), delete_files_with_undated_rows=True)
+    out["G7_G8_cleanup_on_the_shape"] = {
+        "files": guard["totals"]["files"], "eligible_with_the_checked_in_reader_list": guard["totals"]["eligible_files"],
+        "unswitched_readers_blocking": guard["unswitched_readers"],
+        "rows_without_trade_date": guard["rows_without_trade_date"],
+        "eligible_if_readers_were_switched_and_no_flag": open_["totals"]["eligible_files"],
+        "eligible_if_readers_were_switched_and_flag": flag["totals"]["eligible_files"],
+        "eligible_bytes_with_flag": flag["totals"]["eligible_bytes"], "total_bytes": flag["totals"]["bytes"]}
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def measure_keyed_cleanup(tmp_root):  # pragma: no cover - measurement driver
+    """Acceptance 7: the 13 datasets through the real writer (dual write), dry run and real run on a copy."""
+    from types import SimpleNamespace
+
+    from scripts import cleanup_market_run_files as cl
+    from services.source_ingestion.connectors import SourceConnector
+    from services.source_ingestion.daily_bars_store import KEYED_DATASETS
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    from services.source_ingestion.tests.test_datasets_keyed_write import _connector, _rec, _result
+
+    root = Path(tmp_root)
+    writer = MarketDataStorageWriter(root)
+    for dataset in sorted(KEYED_DATASETS):
+        writer.write_run(result=_result([_rec(dataset, i) for i in range(20)], "run-1"), connector=_connector())
+    out = {}
+    for dataset in sorted(KEYED_DATASETS):
+        report = cl.build_report(root, today=LATER_DAY, dataset=dataset, reader_evidence={"trading_days": 5, "mismatches": 0})
+        out[dataset] = {"files": report["totals"]["files"], "eligible_files": report["totals"]["eligible_files"],
+                        "bytes": report["totals"]["bytes"], "unswitched_readers": report["unswitched_readers"],
+                        "rows_without_key": report["rows_without_trade_date"]}
+    deleted = 0
+    for dataset in sorted(KEYED_DATASETS):
+        report = cl.build_report(root, today=LATER_DAY, dataset=dataset, reader_evidence={"trading_days": 5, "mismatches": 0})
+        deleted += cl.execute(root, report, expected_digest=report["digest"])["deleted_files"]
+    out["_total_deleted_files_on_the_copy"] = deleted
+    out["_run_files_left"] = len([p for p in root.rglob("*.jsonl*") if "keyed" not in p.parts])
+    return out
+
+
+LATER_DAY = "2026-12-30"
+
+
 def main(argv=None) -> int:  # pragma: no cover - measurement driver
     import argparse
     import os
     import time
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("step", choices=("generate", "backfill", "equiv", "latency"))
+    ap.add_argument("step", choices=("generate", "backfill", "equiv", "latency", "complete", "genbars", "cold", "keyed"))
     ap.add_argument("--root", required=True)
     ap.add_argument("--write-dates", type=int, default=150)
     ap.add_argument("--trade-dates", type=int, default=150)
@@ -472,6 +732,14 @@ def main(argv=None) -> int:  # pragma: no cover - measurement driver
         out = bf.backfill(a.root, shaped_listing(), today=TODAY, apply=True)
     elif a.step == "equiv":
         out = measure_equivalence(a.root)
+    elif a.step == "complete":
+        out = measure_complete(a.root)
+    elif a.step == "genbars":
+        out = generate_bars_only(a.root, trade_dates=a.trade_dates)
+    elif a.step == "cold":
+        out = measure_cold(a.root)
+    elif a.step == "keyed":
+        out = measure_keyed_cleanup(a.root)
     else:
         out = measure_latency(a.root)
     out["seconds"] = round(time.time() - t0, 1)

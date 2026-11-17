@@ -7,7 +7,10 @@ Design of record: SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16 sections 4.3 and 7
 * the trade date comes from the row (``trade_date``/``as_of_date``/``date``/``event_time``), never
   from the partition name (the write date) or the ingest day; a row without one is counted, not written;
 * copies of one (symbol, trade date) collapse to the newest run (partition write date, file mtime,
-  file name, then line order);
+  file name, then line order) when they agree on open, high, low, close and volume. Keys whose copies
+  disagree are counted separately (price conflicts: open/high/low/close; volume only) and listed in the
+  report, and a trade date that holds one is NOT published (the old read fails closed on conflicting
+  prices). ``--newest-run-on-conflict`` is the one flag that publishes such a date with the newest copy;
 * expired warrants (listing of SOURCE-WARRANT-LISTING-EXPIRY-20261117) are not carried; listed
   warrants and delisted ordinary shares are; an unreadable or stale listing stops the run;
 * resumable per trade date: a day whose content digest is unchanged is not rewritten, so a second
@@ -38,6 +41,7 @@ from services.source_ingestion.daily_bars_store import (  # noqa: E402
     DAILY_BARS_DAY_ALARM_BYTES,
     DailyBarsBudgetExceeded,
     DailyBarsStore,
+    _number,
     validate_trade_date,
 )
 from services.source_ingestion.security_listing import ListingState, bare_symbol  # noqa: E402
@@ -155,9 +159,23 @@ def _classify(symbol: str, state: ListingState) -> str:
     return classify(bare_symbol(symbol), state)
 
 
+CONFLICT_LIST_LIMIT = 500  # keys listed per trade date; the counts are always complete
+_PRICE_FIELDS = ("open", "high", "low", "close")
+
+
+def _ohlcv(row: Mapping[str, Any]) -> tuple[float | None, ...]:
+    meta = effective_metadata(row)
+    normalized = meta.get("normalized_row")
+    body = normalized if isinstance(normalized, Mapping) else meta
+    return tuple(
+        _number(body.get(k) if body.get(k) is not None else meta.get(k)) for k in (*_PRICE_FIELDS, "volume"))
+
+
 def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> dict[str, Any]:
     """Pass 2 for one trade date: newest copy per symbol, classified. Holds one date in memory."""
     newest: dict[str, Mapping[str, Any]] = {}
+    first_seen: dict[str, tuple[float | None, ...]] = {}
+    conflicts: dict[str, str] = {}  # symbol -> "price" | "volume"
     rows = 0
     for path in files:  # oldest first, so a later copy overwrites
         for row in _iter_rows(path):
@@ -165,6 +183,13 @@ def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> 
             if day != trade_date or symbol is None:
                 continue
             rows += 1
+            values = _ohlcv(row)
+            held = first_seen.setdefault(symbol, values)
+            if held != values:
+                if held[:4] != values[:4]:
+                    conflicts[symbol] = "price"
+                elif conflicts.get(symbol) != "price":
+                    conflicts[symbol] = "volume"
             newest[symbol] = row
     classes = {"keep_listed": 0, "keep_delisted_share": 0, "review": 0, "delete": 0}
     carried: list[_Rec] = []
@@ -176,9 +201,10 @@ def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> 
         carried.append(_Rec(
             metadata=effective_metadata(row), source_id=str(row.get("source_id") or ""),
             is_rejected=False))
+    conflicts = {k: v for k, v in conflicts.items() if _classify(k, state) != "delete"}
     return {
         "rows": rows, "unique": len(newest), "duplicates": rows - len(newest),
-        "classes": classes, "records": carried,
+        "classes": classes, "records": carried, "conflicts": conflicts,
     }
 
 
@@ -198,6 +224,7 @@ def backfill(
     apply: bool = False,
     store: DailyBarsStore | None = None,
     only_dates: Sequence[str] | None = None,
+    newest_run_on_conflict: bool = False,
 ) -> dict[str, Any]:
     root = Path(root)
     _check_listing(state, today)
@@ -207,7 +234,8 @@ def backfill(
     report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA, "root": root.as_posix(), "apply": apply,
         "listing_date": state.last_success_date, "source": totals, "swept": swept,
-        "days": {}, "mismatches": [],
+        "days": {}, "mismatches": [], "newest_run_on_conflict": newest_run_on_conflict,
+        "conflicts": {"price_keys": 0, "volume_only_keys": 0, "blocked_dates": [], "published_with_flag": []},
     }
     class_totals = {"keep_listed": 0, "keep_delisted_share": 0, "review": 0, "delete": 0}
     wanted = set(only_dates) if only_dates else None
@@ -225,7 +253,25 @@ def backfill(
             day["records"], ingest_run_id=f"backfill-{trade_date}", default_market="TW")
         entry["expected_rows"] = len(rows)
         entry["rejected"] = rejected
-        if apply:
+        found = day["conflicts"]
+        price = sorted(k for k, v in found.items() if v == "price")
+        volume = sorted(k for k, v in found.items() if v == "volume")
+        entry["conflicts"] = {
+            "price_keys": len(price), "volume_only_keys": len(volume),
+            "price": price[:CONFLICT_LIST_LIMIT], "volume_only": volume[:CONFLICT_LIST_LIMIT],
+            "listed_truncated": len(price) > CONFLICT_LIST_LIMIT or len(volume) > CONFLICT_LIST_LIMIT}
+        report["conflicts"]["price_keys"] += len(price)
+        report["conflicts"]["volume_only_keys"] += len(volume)
+        blocked = bool(found) and not newest_run_on_conflict
+        entry["published_blocked"] = blocked
+        if found and newest_run_on_conflict:
+            report["conflicts"]["published_with_flag"].append(trade_date)
+        if blocked:
+            report["conflicts"]["blocked_dates"].append(trade_date)
+        if apply and blocked:
+            entry["written"] = False
+            entry["verified"] = None  # not published: nothing to verify, and the date stays unpublished
+        elif apply:
             changed = store.write_records(
                 day["records"], ingest_run_id=f"backfill-{trade_date}", default_market="TW")
             entry["written"] = trade_date in changed["days_written"]
@@ -260,10 +306,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--apply", action="store_true", help="write daily bars (default: report only)")
     ap.add_argument("--report", help="write the report JSON here")
     ap.add_argument("--date", action="append", help="limit to this trade date (repeatable)")
+    ap.add_argument("--newest-run-on-conflict", action="store_true",
+                    help="publish a trade date whose copies of a key disagree, with the newest run "
+                         "(default: such a date is not published and is listed in the report)")
     args = ap.parse_args(argv)
     try:
         state = ListingState.load(args.listing_state)
-        report = backfill(args.root, state, today=args.today, apply=args.apply, only_dates=args.date)
+        report = backfill(args.root, state, today=args.today, apply=args.apply, only_dates=args.date,
+                         newest_run_on_conflict=args.newest_run_on_conflict)
     except (BackfillRefused, BackfillMismatch, DailyBarsBudgetExceeded) as exc:
         print(f"backfill stopped: {exc}", file=sys.stderr)
         return 2
@@ -273,6 +323,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(args.report).write_text(text + "\n", encoding="utf-8")
     else:
         print(text)
+    blocked = report["conflicts"]["blocked_dates"]
+    if blocked:
+        print(f"backfill: {len(blocked)} trade date(s) hold conflicting duplicates and were not published: "
+              f"{', '.join(blocked[:10])}{' ...' if len(blocked) > 10 else ''}; see report conflicts", file=sys.stderr)
+        return 3 if args.apply else 0
     return 0
 
 
