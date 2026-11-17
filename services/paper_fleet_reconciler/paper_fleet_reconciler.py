@@ -70,6 +70,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import fcntl
 
 from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
+from services.foundation.reliable_delivery import atomic_write_text, sweep_stale_temp_siblings
 
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
@@ -457,6 +458,7 @@ class FileFencedLeaderStore:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._lock_path = self._path.with_name(f"{self._path.name}.lock")
+        sweep_stale_temp_siblings(self._path)
 
     def _read(self) -> Dict[str, Any]:
         try:
@@ -467,14 +469,7 @@ class FileFencedLeaderStore:
 
     def _write(self, payload: Dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_name(
-            f".{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-        )
-        with temporary.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self._path)
+        atomic_write_text(self._path, json.dumps(payload, sort_keys=True))
 
     def _locked(self):
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -775,6 +770,8 @@ class PaperFleetReconciler:
             or os.getenv("PAPER_RUNTIME_MONITORING_SESSION_STORE", "")
         )
         self._monitoring_session_store_path = Path(store_path) if store_path else None
+        if self._monitoring_session_store_path is not None:
+            sweep_stale_temp_siblings(self._monitoring_session_store_path)
         stale_after = (
             monitoring_heartbeat_stale_after_seconds
             if monitoring_heartbeat_stale_after_seconds is not None
@@ -1266,12 +1263,77 @@ class PaperFleetReconciler:
                             reason="binding no longer in fleet desired state",
                         )
 
+                self._cleanup_retired_state_files(
+                    raw_excluded, desired_ids=set(desired), active_ids={
+                        bid for bid, w in self._workers.items()
+                        if w.status != "stopped"
+                        and (w.process is None or w.process.poll() is None)
+                    },
+                )
                 self._last_error = None
                 self._publish_loop_truth(desired)
 
             self._cycle_count += 1
             self._last_reconcile_at = _iso_now()
             return self._snapshot()
+
+    @staticmethod
+    def _json_file_has_pending(path: Path, keys: tuple[str, ...]) -> bool:
+        """True when the file is absent-of-pending proof is impossible (unreadable)
+        or any of ``keys`` holds work; a missing file has nothing pending."""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            return True
+        if not isinstance(payload, dict):
+            return True
+        return any(payload.get(key) for key in keys)
+
+    def _cleanup_retired_state_files(
+        self,
+        excluded: List[Dict[str, Any]],
+        *,
+        desired_ids: Set[str],
+        active_ids: Set[str],
+    ) -> List[str]:
+        """Remove state/outbox/temp files of retired bindings with nothing pending.
+
+        Only bindings the runtime-manager reports as ``retired`` (the retirement
+        acknowledgement) whose worker is gone are touched; a binding that is
+        desired or still has a worker keeps every file, and unreadable or
+        non-empty pending state keeps the files for diagnosis.
+        """
+        removed_for: List[str] = []
+        root = self._performance_state_root
+        for binding in excluded or []:
+            if not isinstance(binding, dict) or binding.get("status") != "retired":
+                continue
+            binding_id = str(binding.get("binding_id") or "")
+            if not binding_id or binding_id in desired_ids or binding_id in active_ids:
+                continue
+            state = root / _binding_state_filename(binding_id)
+            outbox = state.with_name(f"{state.name}.lifecycle-outbox.json")
+            books = outbox.with_name(f"{outbox.name}.member-books.json")
+            if self._json_file_has_pending(
+                state, ("pending_fill_publications", "pending_performance_pair")
+            ) or self._json_file_has_pending(outbox, ("pending",)):
+                continue
+            targets = [state, outbox, books]
+            for target in targets:
+                sweep_stale_temp_siblings(target)
+                for extra in (
+                    target,
+                    target.with_name(f".{target.name}.lock"),
+                    target.with_name(f"{target.name}.lock"),
+                ):
+                    try:
+                        extra.unlink(missing_ok=True)
+                    except OSError:
+                        log.warning("retired state cleanup failed for %s", extra)
+            removed_for.append(binding_id)
+        return removed_for
 
     def _run_loop(self) -> None:
         while not self._shutdown.is_set():
@@ -1543,9 +1605,7 @@ class PaperFleetReconciler:
             ),
         )
         payload = {"monitoring_sessions": records}
-        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_path, path)
+        atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
 
     def _prune_ended_monitoring_sessions(self, max_ended: int = 20) -> None:
         ended = [

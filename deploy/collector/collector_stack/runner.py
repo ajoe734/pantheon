@@ -525,10 +525,27 @@ class CloseCaptureResult:
 
     @property
     def retry_needed(self) -> bool:
-        return any(v not in {"captured", "already_captured"} for v in self.sources.values())
+        return any(v not in {"captured", "already_captured", "disabled"} for v in self.sources.values())
 
     def to_dict(self) -> dict[str, Any]:
         return {"trade_date": self.trade_date, "state": self.state, "sources": dict(self.sources)}
+
+
+def _listing_unavailable_types() -> tuple[type[BaseException], ...]:
+    types: list[type[BaseException]] = []
+    try:
+        from services.source_ingestion.security_listing import ListingUnavailable
+
+        types.append(ListingUnavailable)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cls = load_security_listing_module().ListingUnavailable
+        if cls not in types:
+            types.append(cls)
+    except Exception:  # noqa: BLE001
+        pass
+    return tuple(types)
 
 
 def _ledger_path(root: Path, source_id: str) -> Path:
@@ -566,22 +583,34 @@ def capture_same_day_close(
 
     result = CloseCaptureResult(trade_date, "attempted")
     requested = False
+    listing_exc_types = _listing_unavailable_types()
     for source_id in sources:
         ledger = _ledger_path(runner.root_dir, source_id)
         if trade_date in _load(ledger):
             result.sources[source_id] = "already_captured"
             continue
-        interval = float(runner.config.get_source(source_id).min_interval_seconds)
-        if requested and interval > 0:
-            sleep_fn(interval)
-        requested = True
         run_id = f"close-{trade_date}-{local.strftime('%H%M')}"
         try:
+            policy = runner.config.get_source(source_id)
+            if policy.enabled:
+                interval = float(policy.min_interval_seconds)
+                if requested and interval > 0:
+                    sleep_fn(interval)
+                requested = True
             outcome = runner.run_source(
                 source_id, run_id=run_id, started_at=now, finished_at=now,
                 collect_kwargs={"dates": [trade_date]},
             )
-        except (SourcePausedError, FetchAccessBlockedError, FetchBackendUnavailableError) as exc:
+        except SourceDisabledError:
+            result.sources[source_id] = "disabled"
+            continue
+        except (
+            SourcePausedError,
+            FetchAccessBlockedError,
+            FetchBackendUnavailableError,
+            CollectorConfigError,
+            *listing_exc_types,
+        ) as exc:
             result.sources[source_id] = f"failed:{type(exc).__name__}"
             continue
         if outcome.status == "complete":

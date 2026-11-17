@@ -444,6 +444,53 @@ class TestPaperFleetReconcilerEnvBuilder(unittest.TestCase):
         self.assertTrue(state_path.name.startswith("binding-safe-001-"))
         self.assertEqual(state_path.suffix, ".json")
 
+    def test_retired_binding_state_removed_only_when_nothing_pending(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler, _binding_state_filename
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            recon = PaperFleetReconciler(
+                performance_state_root=str(root), poll_interval_seconds=999
+            )
+
+            def files(binding_id: str, pending: bool = False):
+                state = root / _binding_state_filename(binding_id)
+                outbox = state.with_name(state.name + ".lifecycle-outbox.json")
+                books = outbox.with_name(outbox.name + ".member-books.json")
+                state.write_text(json.dumps({"pending_fill_publications": []}))
+                outbox.write_text(json.dumps({"pending": [{"x": 1}] if pending else []}))
+                books.write_text("{}")
+                tmp = state.with_name(f"{state.name}.{uuid.uuid4().hex}.tmp")
+                tmp.write_text("orphan")
+                return [state, outbox, books, tmp]
+
+            retired = files("retired-clean")
+            retired_pending = files("retired-pending", pending=True)
+            active = files("active-one")
+            paused = files("paused-one")
+            excluded = [
+                _make_binding("retired-clean", status="retired"),
+                _make_binding("retired-pending", status="retired"),
+                _make_binding("paused-one", status="paused"),
+            ]
+            removed = recon._cleanup_retired_state_files(
+                excluded, desired_ids={"active-one"}, active_ids=set()
+            )
+            self.assertEqual(removed, ["retired-clean"])
+            self.assertFalse(any(p.exists() for p in retired))
+            self.assertTrue(all(p.exists() for p in retired_pending))
+            self.assertTrue(all(p.exists() for p in active))
+            self.assertTrue(all(p.exists() for p in paused))
+            # A retired binding that still has a live worker keeps its files.
+            again = files("retired-clean")
+            self.assertEqual(
+                recon._cleanup_retired_state_files(
+                    excluded[:1], desired_ids=set(), active_ids={"retired-clean"}
+                ),
+                [],
+            )
+            self.assertTrue(all(p.exists() for p in again))
+
     def test_binding_id_cannot_escape_performance_state_root(self) -> None:
         from paper_fleet_reconciler import PaperFleetReconciler
 

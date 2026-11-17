@@ -15,6 +15,7 @@ GROSS_BASIS = "underlying_gross_virtual"
 # Exposure-fraction returns with Taiwan statutory costs on every exposure change.
 # Not the gate's share-sized/cash-fill basis, so never labelled as it.
 NET_BASIS = "underlying_exposure_fraction_net_taiwan_costs_equal_notional"
+from services.foundation.reliable_delivery import atomic_write_text, sweep_stale_temp_siblings
 from services.execution.lean_runtime.taiwan_cash_costs import (
     COMMISSION_RATE as _COMMISSION_RATE,
     EQUITY_TAX_RATE as _EQUITY_TAX_RATE,
@@ -185,6 +186,8 @@ def virtual_book_metrics(returns, *, periods_per_year=252, basis=GROSS_BASIS):
 class MemberVirtualBooks:
     def __init__(self, path=None):
         self.path = Path(path) if path else None
+        if self.path:
+            sweep_stale_temp_siblings(self.path)
         self.books = {}
         if self.path and self.path.exists():
             state = json.loads(self.path.read_text())
@@ -262,21 +265,8 @@ class MemberVirtualBooks:
             rows.append(observation)
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
-            try:
-                with temporary.open("w") as handle:
-                    json.dump({"schema_version": "member_virtual_books.v1", "books": candidate},
-                              handle, allow_nan=False)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary, self.path)
-                directory_fd = os.open(self.path.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            finally:
-                temporary.unlink(missing_ok=True)
+            atomic_write_text(self.path, json.dumps(
+                {"schema_version": "member_virtual_books.v1", "books": candidate}, allow_nan=False))
         self.books = candidate
         return self.snapshot(binding_id=binding_id, envelope_checksum=envelope_checksum)
 
