@@ -53,10 +53,11 @@ compensation 11/16 19:19Z and again by Root 43999942722 (02:42Z); restore check
 compares only `/bff/version`; deployer window of about 3 minutes after a green
 tip. 2026-11-17: a 26th `workflow_dispatch` input invalidated the deploy
 workflow from 04:00Z to 05:04Z with every required check green; Root
-44023618158 passed the backend job, was rejected by the frontend gate on a red
-`npm run test` at the frontend tip (a manual dispatch skipped the green-CI
-rule), and its compensation failed in restore readback, leaving the lease
-quarantined; the baseline record of that run has no source-ingest-scheduler
+44023618158 passed the backend job and was rejected by the frontend gate on
+`npm run test`, although Branch CI was green for the same frontend commit: a
+test added the day before fails only inside the gate checkout (fixed by
+FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117); its compensation then failed
+in restore readback, leaving the lease quarantined; the baseline record of that run has no source-ingest-scheduler
 entry; the candidates rewrote `ingest_schedule.jsonl` on hosted before being
 compensated, and the baseline reconcile then failed every tick with HTTP 400 on
 connector records it does not define, so restarting the baseline scheduler did
