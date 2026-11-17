@@ -1134,6 +1134,22 @@ class SourceIngestionRuntime:
             if action.connector_action in UNDEFINED_BY_RELEASE_ACTIONS
         ]
 
+    def _undefined_stored_records(self, reconciler: SourceProvisioningReconciler) -> list[dict[str, str]]:
+        """Stored connector and schedule records this release cannot interpret (read-only)."""
+
+        items: list[dict[str, str]] = []
+        for config in sorted(self.connector_store.list_configs(), key=lambda item: item.connector.connector_id):
+            reason = reconciler.undefined_reason(config)
+            if reason is None:
+                continue
+            connector_id = config.connector.connector_id
+            items.append({"kind": "connector_record", "id": connector_id, "reason": reason})
+            if self.schedule_config_store.get_schedule(connector_id) is not None:
+                items.append(
+                    {"kind": "schedule_record", "id": connector_id, "reason": "connector-not-defined-by-this-release"}
+                )
+        return items
+
     @staticmethod
     def _dedupe_skipped(items: list[dict[str, str]]) -> list[dict[str, str]]:
         seen: set[tuple[str, str]] = set()
@@ -1212,11 +1228,6 @@ class SourceIngestionRuntime:
             if undefined is not None:
                 # Written by a newer release: this release cannot interpret it, so it must not
                 # disable it, rewrite it or fail the tick over it. Stored bytes stay untouched.
-                skipped.append({"kind": "connector_record", "id": connector_id, "reason": undefined})
-                if self.schedule_config_store.get_schedule(connector_id) is not None:
-                    skipped.append(
-                        {"kind": "schedule_record", "id": connector_id, "reason": "connector-not-defined-by-this-release"}
-                    )
                 actions.append({"connector_id": connector_id, "action": "left_alone_not_defined_by_release"})
                 continue
             schedule = self.schedule_config_store.get_schedule(connector_id)
@@ -1431,7 +1442,17 @@ class SourceIngestionRuntime:
         )
         documents: dict[str, Any] = {}
         offerings = {}
+        reconciler = self._source_provisioning_reconciler()
         for config in configs:
+            undefined = reconciler.undefined_reason(config)
+            if undefined is not None:
+                # A record a newer release wrote: not offered by this release, so the scheduler
+                # skips it instead of failing the pull stage on an adapter it does not define.
+                offerings[config.connector.connector_id] = {
+                    "offered": False,
+                    "reason": f"not-defined-by-this-release: {undefined}",
+                }
+                continue
             fetch = getattr(config, "fetch", None) or {}
             if fetch.get("mode") != "provider_owned_adapter" or fetch.get("adapter") != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
                 continue
@@ -1633,7 +1654,7 @@ class SourceIngestionRuntime:
             summary = self._provisioning_summary(results)
             bindings = self._requirement_bindings(results)
         skipped_items = self._dedupe_skipped(
-            [*self._skipped_requirements(results), *skipped_items]
+            [*self._skipped_requirements(results), *skipped_items, *self._undefined_stored_records(reconciler)]
         )
         return {
             "schema_version": "persona_source_provisioning_response.v1",
