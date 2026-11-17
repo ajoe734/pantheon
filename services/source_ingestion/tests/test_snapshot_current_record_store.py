@@ -274,12 +274,13 @@ _READER_SCRIPT = textwrap.dedent(
     from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
     store = LatestMarketSnapshotStore({path!r}, store_mode="sqlite")
-    stop, rng, ms = Path({stop!r}), random.Random(11), []
+    stop, go, rng, ms = Path({stop!r}), Path({go!r}), random.Random(11), []
     print("ready", flush=True)
     while not stop.exists():
         began = time.perf_counter()
         assert store.get("%05d.TWSE" % rng.randrange({keys})) is not None
-        ms.append((time.perf_counter() - began) * 1000)
+        if go.exists():  # calls before the replacement starts are warm-up (page cache, imports), not measured
+            ms.append((time.perf_counter() - began) * 1000)
         time.sleep(0.001)  # a poller, not a spin loop: at most ~1,000 reads per second
     ms.sort()
     print(json.dumps({{"calls": len(ms), "max_ms": ms[-1], "p99_ms": ms[int(len(ms) * 0.99) - 1]}}))
@@ -294,9 +295,9 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
 
     store, backend = sqlite_copy.store, sqlite_copy.store._backend
     symbols = [_symbol(i) for i in range(HOSTED_KEYS)]
-    stop_file = tmp_path / "stop"
+    stop_file, go_file = tmp_path / "stop", tmp_path / "go"
     reader = subprocess.Popen(
-        [sys.executable, "-c", _READER_SCRIPT.format(root=str(REPO_ROOT), path=str(sqlite_copy.path), stop=str(stop_file), keys=HOSTED_KEYS)],
+        [sys.executable, "-c", _READER_SCRIPT.format(root=str(REPO_ROOT), path=str(sqlite_copy.path), stop=str(stop_file), go=str(go_file), keys=HOSTED_KEYS)],
         stdout=subprocess.PIPE, text=True, cwd=REPO_ROOT,
     )
     assert reader.stdout.readline().strip() == "ready"
@@ -350,6 +351,8 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
     assert warm.wait(timeout=30)
     updated = 0
     call_seconds: list[float] = []
+    go_file.write_text("go")
+    time.sleep(0.2)  # let the process reader record its first measured calls before the first write
     try:
         for batch in _new_day_batches(CLOSES):
             began = time.perf_counter()
