@@ -1,0 +1,30 @@
+{
+  "task": "COLLECTOR-INDEX-ROW-EVENT-TIME-BOUND-20261118",
+  "cause": {
+    "confirmed_in": "reproduce-first tests with bundle rows in the recorded shape (collector host rows themselves were not inspected)",
+    "statement": "_market_event_time gave a row without a stated publish time the label event time (06:30Z default, 08:30Z tw_institutional_flow) and bounded it by the fetch time only for tw_price_daily. An index/breadth/flow row fetched on its trade date before the label got event_time > available_time; validate_external_source_record raised and failed the whole run.",
+    "reproduction": "on the pre-change code 26 of the new tests fail (11 pass: assertions that do not depend on the change)"
+  },
+  "label_datasets": {
+    "default_label_0630Z": ["tw_index_daily", "tw_index_ohlc_daily", "tw_market_breadth_daily", "any other market dataset with trade_date and no published_at (e.g. tw_margin_short_balance), via the same generic path"],
+    "_MARKET_EVENT_CLOSE_UTC": {"tw_institutional_flow": "08:30Z"},
+    "not_label_datasets": ["tw_price_daily (already bounded, unchanged)", "tw_trading_holidays / tw_trading_suspension (stated publish time, own branch)"],
+    "official_page_before_after_close": "No recorded fixture shows the page content for the current trade date before versus after 13:30 Taipei (fixtures twse_mi_index_20261110.json, twse_t86_20261110.json, twse_mi_5mins_hist_201201.json are post-close captures). Not stated from memory; the rule therefore treats any row fetched before the session close as not final."
+  },
+  "rule": "label later than fetch, fetch on trade date (Taipei) and >= 05:30Z: event_time = fetched_at, available_time = fetched_at. Event never after available, never before the session close. Fetch before the close, or on a day other than the trade date, with label after fetch: that item is rejected with reason market_row_not_final; remaining items are ingested. Rejections are reported in observed.rejected_items (item id, trade date, fetched_at, detail with event label and fetch time) with observed.rejected_item_count.",
+  "residual_findings": [
+    "A rejected item is not retried from the same bundle: its bundle cursor advances, so the row returns only if the collector fetches it again after the close.",
+    "A stated published_at off the trade date still raises SourceEvidenceError for the whole run (unchanged, out of scope)."
+  ],
+  "dedup": "The record key is collector:<source_id>:<item_id>:<content sha12>; event_time is not in it, nor in the normalized row identity (dataset, series_id, date). Ingesting a trade date first late then same day, and the reverse, gives the same source_id for every dataset (tests test_same_trade_date_late_and_same_day_fetch_share_one_key, 8 cases). Known markers apply only to derived macro/community rows and are not involved.",
+  "pit_error": "external_sources.py message now names source_id, connector_id, event_time and available_time (bounded to 160 chars each); test_external_sources.py and test_validation_error_names_source_item_and_both_times.",
+  "no_persistent_writer": "No persistent writer added or changed; nothing already ingested is rewritten. Changes are mapping-time (collector_bundle.py) and an error message (external_sources.py). The PIT rule itself is unchanged.",
+  "hosted_statement": "Not yet verified on hosted. After this is served, collector-tw-twse-taiex-history should complete its pull and its pending dead letter count (10 on 2026-11-17, seen on 80d4cf2ca and 9ab80dd25) should stop growing; the check belongs to REGIME-DATA-HOSTED-ACCEPTANCE-20261114 and MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117.",
+  "missing_artifact_at_start": "services/source_ingestion/tests/test_external_sources.py did not exist; created.",
+  "validation": [
+    {"command": "python -m pytest test_collector_market_early_fetch_pit.py test_collector_bundle_connector.py test_collector_index_row_event_time.py test_external_sources.py test_external_source_connectors.py test_collector_newest_session_progress.py", "result": "178 passed, 4 skipped"},
+    {"command": "pytest test_collector_index_row_event_time.py test_external_sources.py (post-change)", "result": "38 passed"},
+    {"command": "pytest test_collector_index_row_event_time.py on pre-change code", "result": "26 failed, 11 passed"},
+    {"command": "test_collector_market_early_fetch_pit.py", "result": "passes with no change to its assertions (file unmodified)"}
+  ]
+}
