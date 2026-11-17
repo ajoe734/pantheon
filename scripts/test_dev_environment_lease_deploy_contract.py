@@ -279,7 +279,7 @@ def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
     assert "OPENCLAW_OUTCOME" not in dev
     cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
     assert cleanup["env"]["PAPER_BOOTSTRAP_REQUESTED"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
-    assert "success:success:${expected_gate}:success:success" in cleanup["run"]
+    assert "success:success:${expected_gate}:success:success:success" in cleanup["run"]
 
 
 @pytest.mark.parametrize(("component", "paper_requested"), [
@@ -287,7 +287,8 @@ def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
 ])
 @pytest.mark.parametrize("failed_step", [None, "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
                                       "PUBLIC_SMOKE_OUTCOME",
-                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME"])
+                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME",
+                                      "STEADY_RESTART_LOOP_OUTCOME"])
 def test_deployment_completion_retains_real_checks_without_provider_gate(
     component: str, failed_step: str | None, paper_requested: bool,
 ) -> None:
@@ -298,6 +299,7 @@ def test_deployment_completion_retains_real_checks_without_provider_gate(
     outcomes = {name: "success" for name in (
         "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
         "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME",
+        "STEADY_RESTART_LOOP_OUTCOME",
     )}
     # Advisory (non-strict) run: the functional gate step is skipped.
     outcomes["FUNCTIONAL_GATE_OUTCOME"] = "skipped"
@@ -1393,7 +1395,7 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
                 "steps": {name: {"outcome": "success"} for name in (
                     "lease", "artifact_baseline", "heartbeat", "deploy", "artifact_baseline_upload",
                     "artifact_candidate_seal", "artifact_candidate_upload", "public_smoke",
-                    "deploy-posture-evidence", "agora",
+                    "deploy-posture-evidence", "agora", "steady_restart_loop",
                 )},
             }
             context["steps"]["paper_bootstrap"] = {"outcome": "success" if requested else "skipped"}
@@ -1671,7 +1673,7 @@ def test_dev_deploy_compensation_condition_truth_table(
         "steps": {
             **{name: {"outcome": "success"} for name in (
                 "heartbeat", "artifact_baseline_upload", "artifact_candidate_seal",
-                "artifact_candidate_upload", "deploy-posture-evidence", "agora",
+                "artifact_candidate_upload", "deploy-posture-evidence", "agora", "steady_restart_loop",
             )},
             "artifact_baseline": {"outcome": "success" if rollback_sha else "failure"},
             "lease": {

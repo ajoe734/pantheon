@@ -355,3 +355,34 @@ services that were running at capture.
   matches the accepted backend but whose steady service is stopped is restored
   instead of refused. After the restore, `--mode verify-steady-state` re-checks
   the stack and exits non-zero on any drift.
+
+### Steady-state restart-loop check (DEV-DEPLOY-STEADY-STATE-RESTART-LOOP-20261117)
+
+Recorded incident: deploy run 44097697049 concluded success while
+`pantheon-openclaw-gateway-adapter-1` was OOM-killed about every 45 seconds
+(54 restarts); each sampled instant showed `running`. A restart loop is an
+unhealthy stack.
+
+- **When.** Step `steady_restart_loop` after the deploy switch (before
+  compensation is decided) and, in the restore job, after the restored stack is
+  verified.
+- **How.** Two read-only `docker inspect` samples of every non-one-off Compose
+  container at least 90 s apart (`--mode verify-restart-loop`, which refuses a
+  gap under 90 s). A service is restart-looping when its restart count grew
+  between the samples, either sample reports `OOMKilled`, or either state is
+  `restarting`. One restart during start-up that ended before the first sample
+  (same count in both) is not a failure. Services that are neither running nor
+  restarting (exited one-shots) are ignored.
+- **Outcome.** `steady_service_restart_loop: <service,...>` (exit 76), the same
+  path as a steady service that is not running: rollback after a switch;
+  incomplete after a restore. The release-completion gate also requires the step
+  to have succeeded.
+- **Not criteria.** No functional gate: container healthcheck status and readiness
+  contents are not inputs. The source-ingest scheduler healthcheck reports
+  functional tick failures and must not roll a release back through this check.
+- **Evidence and budget.** `steady-restart/sample-{1,2}.json` and `result.json`
+  (restart count and OOMKilled per service, both samples) are uploaded as
+  `pantheon-dev-steady-restart-<run>-<attempt>`; about 1-2 KB per sample on the
+  current stack (~4 KB per release). Nothing is written on the host. Added
+  runtime about 92 s per deploy and per restore (limit 100 s). No recurring job;
+  no new workflow_dispatch input.
