@@ -218,7 +218,6 @@ def test_failed_pool_cycle_is_reported_as_cycle_failure_even_when_model_turn_suc
     case_file = {"case_file_id": "casefile-stub", "digest": "d", "subject": {"decision_type": "research_demand"},
                  "lesson_query": {}, "groups": {"lessons": {"status": "ok", "items": [], "unavailable": []}}}
     owners = SimpleNamespace(case_file=lambda *args: case_file,
-                             ensure_agent=lambda persona: {"status": "ready"},
                              observe=lambda persona, since=None: {"unavailable": [], "telemetry_refs": [], "incident_refs": [],
                                                                   "human_feedback_refs": [], "harness_version": 1},
                              risk=lambda persona, observe, packet_id: {"status": "no_change"})

@@ -379,7 +379,7 @@ class PersonaCycleController:
             observe: dict[str, Any] = {}
             failure = None
             ensure_failure = None
-            if run["status"] == "ok":
+            if run["status"] == "ok" and hasattr(self.owners, "ensure_agent"):
                 # One idempotent adapter call per eligible persona per cycle, before any turn.
                 try:
                     cycle["agent_ensure"] = self.owners.ensure_agent(persona)
