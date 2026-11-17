@@ -1158,7 +1158,7 @@ services:
       PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
       # Persona memory materialize + tool broker: host-issued read-only principal file (survives
       # container recreation/compensation). Actor id must equal the token subject in strict auth.
-      PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE: ${PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE:-/run/pantheon-principals/OPENCLAW_ADAPTER_MEMORY_TOKEN}
+      OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE: ${OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE:-/run/pantheon-principals/OPENCLAW_ADAPTER_MEMORY_TOKEN}
       PANTHEON_OPENCLAW_MEMORY_ACTOR_ID: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ID:-openclaw-persona-sync}
       PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES:-persona_memory_reader}
       # Hindsight background-model bridge (design H5): off unless explicitly enabled.

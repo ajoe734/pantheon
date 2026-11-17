@@ -130,7 +130,7 @@ def test_materialize_ok_with_file_credential_against_strict_memory(env, tmp_path
     token_file = tmp_path / "OPENCLAW_ADAPTER_MEMORY_TOKEN"
     token_file.write_text(_jwt(secret, ["persona_memory_reader"]))
     token_file.chmod(0o600)
-    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(token_file))
     monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ID", "openclaw-persona-sync")
     monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES", "persona_memory_reader")
     monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN", raising=False)
@@ -154,7 +154,7 @@ def test_adapter_principal_is_refused_by_memory_writes_and_a_bad_file_fails_clos
     denied = memory_client.post("/api/memory/persona-entries", json=_persona_entry(),
                                 headers={"Authorization": "Bearer " + _jwt(secret, ["persona_memory_reader"])})
     assert denied.status_code in {401, 403}
-    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE", str(tmp_path / "missing"))
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(tmp_path / "missing"))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "stale-env-token")
     with pytest.raises(RuntimeError):
         adapter_main.adapter_memory_credential()

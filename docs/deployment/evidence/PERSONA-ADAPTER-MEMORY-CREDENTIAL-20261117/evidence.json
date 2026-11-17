@@ -2,7 +2,7 @@
   "task": "PERSONA-ADAPTER-MEMORY-CREDENTIAL-20261117",
   "change": {
     "issuer": "new read-only principal OPENCLAW_ADAPTER_MEMORY_TOKEN (sub openclaw-persona-sync, role persona_memory_reader, scope dev-owner-read) delivered to new volume dev-paper-openclaw-adapter-tokens mounted :ro at /run/pantheon-principals on openclaw-gateway-adapter (one extra token file)",
-    "adapter": "materialize and persona tool broker read PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE per request via services.service_token_file; configured-but-unreadable file fails closed with no env fallback",
+    "adapter": "materialize and persona tool broker read OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE per request via services.service_token_file; configured-but-unreadable file fails closed with no env fallback",
     "memory_authz": "persona_memory_reader added to memory read roles and governance authz institutional+persona read roles; not a write role",
     "staging_production": "unchanged (docker-compose.yml dev baseline only; deploy_nonprod_vm.sh and nonprod-deploy.yml untouched)"
   },

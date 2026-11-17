@@ -90,8 +90,8 @@ def adapter_memory_credential() -> str:
     Read per call so the hourly-rotated file is always current. A configured but
     unreadable file raises RuntimeError and never falls back to a stale env value.
     """
-    if os.getenv("PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE", "").strip():
-        return configured_service_token("PANTHEON_OPENCLAW_MEMORY_TOKEN")
+    if os.getenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", "").strip():
+        return configured_service_token("OPENCLAW_ADAPTER_MEMORY_TOKEN")
     return os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", "")
 
 

@@ -633,7 +633,7 @@ def test_openclaw_adapter_memory_principal_is_read_only_file_delivered_and_mount
     adapter = compose["services"]["openclaw-gateway-adapter"]
     assert "dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro" in adapter["volumes"]
     env = adapter["environment"]
-    assert env["PANTHEON_OPENCLAW_MEMORY_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert env["OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
     assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ID"].endswith(":-" + claims["sub"] + "}")
     assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES"].endswith(":-persona_memory_reader}")
     assert "dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter" in (
