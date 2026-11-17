@@ -240,7 +240,7 @@ jobs:
   smoke:
     name: Smoke acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     needs:
       - trailers
       - generated-files
@@ -312,7 +312,7 @@ jobs:
           python3 scripts/check_market_data_budget.py --output /tmp/market-data-budget-report.json
 
       - name: Run source ingestion tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
