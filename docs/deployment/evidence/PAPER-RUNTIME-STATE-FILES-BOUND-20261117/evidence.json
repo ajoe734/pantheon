@@ -1,0 +1,28 @@
+{
+  "task_id": "PAPER-RUNTIME-STATE-FILES-BOUND-20261117",
+  "shared_helper": "services/foundation/reliable_delivery.py: atomic_write_text, atomic_temp_path, sweep_stale_temp_siblings",
+  "writers_converted": [
+    "LifecycleTelemetryOutbox._write_state",
+    "PaperExecutionAlgorithm._persist_state",
+    "MemberVirtualBooks._observe",
+    "FileFencedLeaderStore._write (reconciler)",
+    "reconciler monitoring-session store"
+  ],
+  "temp_bound": "one deterministic '<target>.tmp' per target; removed on every exit path; a kill leaves at most that one file; each owner sweeps '<target>.tmp' and legacy '<target>[.<pid>].<32hex>.tmp' / '.<target>...' siblings at construction, before its first write; only exact-name siblings match, never the target or other targets",
+  "chain_removal": {
+    "signal": "No event type reliably ends a journey: a duplicate/redelivered signal re-enters the same journey (paper_order_simulated noop) while its 30-day execution decision exists, and test_lifecycle_outbox_ambiguous_send_replays_exact_payloads_and_chain proves a chain must continue after a fill. A chain is therefore removed only when the journey has nothing pending AND its last event_time is older than PANTHEON_LIFECYCLE_CHAIN_RETENTION_SECONDS (default 35 days > 30 day decision TTL).",
+    "open_journeys": "journeys with pending events or events inside the window keep their exact sequence_no/causal checkpoint (unit-tested)",
+    "pruned_at": "load, admit, admit_many, acknowledge_many"
+  },
+  "growth_bound": "outbox bytes ~= (journeys in the 35-day window) x ~0.6 KB checkpoint + pending; tested on 20000 chains (15000 older than window -> 15000 removed, 5000 kept)",
+  "write_cost": "Full-file rewrite per admit/ack is NOT removed; the cost is bounded by pruning the file to the window instead of growing forever. Not measured on a real 41 MB file.",
+  "retired_binding_cleanup": "reconciler _cleanup_retired_state_files: only status=retired bindings reported by the runtime-manager, not desired, no live worker, ledger pending_fill_publications/pending_performance_pair empty and outbox pending empty; unreadable files are kept; removes state, outbox, member-books, locks and temps",
+  "rollback": "No persisted schema change: same keys, same file names; the previous release reads state files unchanged and ignores the (now absent) pruned chains; legacy tmp names are not read by anyone.",
+  "tests": "273 passed, 2 skipped: test_paper_runtime.py, test_paper_runtime_smoke.py, test_member_virtual_book.py, services/paper_fleet_reconciler, services/foundation/tests/test_reliable_delivery.py",
+  "residual_findings": [
+    "Hosted-shape one-time cleanup (156 outbox files, 563 orphan tmp = 4.85 GB) is by design on first start / retirement; not run against the real host in this task.",
+    "Member-books file is persona-scoped and may be shared by concurrent runtimes across a replacement; the deterministic temp name can collide for two simultaneous writers and a startup sweep may delete a peer's in-flight temp (previously random names). Concurrent writers already lose updates in read-modify-write.",
+    "Per-event full-file rewrite of the outbox remains O(file); an append log or SQLite store would remove it.",
+    "AtomicJsonRecordStore._write_unlocked still uses its own random temp naming."
+  ]
+}

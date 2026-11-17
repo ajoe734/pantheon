@@ -1,0 +1,99 @@
+{
+  "task": "DEV-AUTO-DEPLOY-NO-FUNCTIONAL-PROBE-INPUT-20261117",
+  "change": "scripts/auto_deploy_dev_pair.py no longer sends run_loop_prod_tel_002_probe; remaining dispatch inputs unchanged and pinned by exact-dict test.",
+  "automatic_dispatch_inputs": {
+    "environment": "dev",
+    "component": "root",
+    "ref": "<backend_sha>",
+    "frontend_sha": "<frontend_sha>",
+    "frontend_ref": "dev",
+    "frontend_profile": "<accepted profile>",
+    "dev_auth_profile": "strict",
+    "allow_dirty": "false"
+  },
+  "input_defaults_when_omitted": "run_loop_prod_tel_002_probe, run_evolution_dispatch_probe, run_bounded_source_refresh, ppl_alloc_009_dev_proof_enabled, bootstrap_empty_host all default false, so PAPER_BOOTSTRAP_REQUESTED evaluates to 'false'.",
+  "consumers_in_workflow": [
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:73",
+      "what": "input definition, default false",
+      "when_false": "no effect"
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:186",
+      "what": "deploy-dev output paper_bootstrap_requested",
+      "when_false": "'false'; downstream jobs' paper-only steps skip",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:204",
+      "what": "env PAPER_BOOTSTRAP_REQUESTED expression",
+      "when_false": "'false'",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:252,288,305,316",
+      "what": "payload validation: probe true requires root+strict; other proofs require probe false",
+      "when_false": "checks pass trivially",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:2834",
+      "what": "complete-success gate expects paper_bootstrap outcome 'skipped' when not requested",
+      "when_false": "expected_paper=skipped, release proceeds on heartbeat/deploy/public_smoke/posture/agora success",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:2258,2297",
+      "what": "compensation conditions reference paper_bootstrap outcome only inside (PAPER_BOOTSTRAP_REQUESTED=='true' && ...)",
+      "when_false": "clause is false; compensation still fires on deploy/smoke/posture/agora failure",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:2002,2064",
+      "what": "probe step and artifact upload gated on inputs.run_loop_prod_tel_002_probe",
+      "when_false": "skipped",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:4897,4945",
+      "what": "coordinate-dev-release exact-roundtrip admission requires probe false among other flags",
+      "when_false": "satisfied",
+      "required_for_healthy_stack": false
+    },
+    {
+      "where": ".github/workflows/nonprod-deploy.yml:3135,3436,3570",
+      "what": "coordinate-dev-release retire-case steps gated on needs.deploy-dev.outputs.paper_bootstrap_requested == 'true'",
+      "when_false": "skipped (no case was created)",
+      "required_for_healthy_stack": false
+    }
+  ],
+  "consumers_in_scripts/deploy_nonprod_vm.sh": "none (grep for run_loop_prod_tel_002_probe, PAPER_BOOTSTRAP, LOOP_PROD_TEL finds nothing).",
+  "steps_skipped_for_automatic_release": {
+    "deploy-dev": [
+      "Refresh Taiwan market session under lease after candidate stack deploy",
+      "Upload Taiwan market refresh evidence (conclusion skipped)",
+      "Refresh TAIFEX contract dataset under lease after candidate stack deploy",
+      "Upload TAIFEX contract refresh evidence (both producers skipped)",
+      "Ensure governed dev paper baseline under lease",
+      "Upload dev paper failure diagnostics",
+      "Dev canonical paper lifecycle hosted probe",
+      "Upload canonical paper lifecycle hosted evidence",
+      "Retire this run's dev paper release case before deploy compensation"
+    ],
+    "coordinate-dev-release": [
+      "Retire this run's dev paper release case before roundtrip baseline restore",
+      "Retire this run's dev paper release case before rollback compensation",
+      "Retire non-served dev paper release cases"
+    ],
+    "already_skipped_before_this_change": [
+      "Execute bounded TAIFEX contract refresh under lease (and other bounded-refresh steps)"
+    ]
+  },
+  "manual_dispatch": "Unchanged: input still defined (default false); setting it true turns on PAPER_BOOTSTRAP_REQUESTED and the steps above exactly as before. Workflow and deploy script not edited.",
+  "blockers": "none",
+  "tests": "uv run --no-project --with pytest --with pyyaml python -m pytest -q scripts/test_auto_deploy_dev_pair.py scripts/test_loop_prod_tel_002_hosted_workflow.py scripts/test_nonprod_dev_artifact_workflow.py -> 243 passed",
+  "residual_findings": [
+    "Step names in the 'Upload ... evidence' rows show conclusion-skipped behaviour via always() guards; verified from conditions, not from a live run.",
+    "docs/deployment/nonprod-ci-cd.md lines ~508 and other sections may still describe the lifecycle probe/market-refresh as part of automatic acceptance; not changed in this step (later steps own them)."
+  ]
+}

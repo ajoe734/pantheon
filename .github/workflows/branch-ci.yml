@@ -284,6 +284,14 @@ jobs:
         run: |
           python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision
 
+      # RC3 WP3.2: a persistent writer in code with no entry in docs/operations/storage-manifest.json
+      # (or a manifest entry the code no longer has) fails the pull request.
+      - name: Storage manifest check
+        timeout-minutes: 5
+        run: |
+          python3 -m unittest scripts.test_check_storage_manifest
+          python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report.json
+
       # Unconditional (no path filter): source_ingestion reds came from changes
       # in other services. Fresh data dir avoids incompatible shared state; the
       # directory runs alone so no repo-wide conftest masks failures.
