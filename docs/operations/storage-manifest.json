@@ -2748,6 +2748,17 @@
    "kind": "compose_path",
    "name": "/data/source-ingest/controller_state.json",
    "owner": "compose:source-ingest",
+   "changed_fields": {
+    "cadence": "rewritten in place once per controller tick (one file, atomic replace, no append)",
+    "cap": "reconcile.skipped_ids holds at most 50 entries of at most 128 characters each (MAX_SKIPPED_IDS, MAX_SKIPPED_ID_LENGTH in services/source_ingestion/controller_state.py); reconcile.skipped_count is one integer",
+    "cleanup": "overwritten by the next tick; zero and empty when nothing is skipped; no history is kept",
+    "fields": [
+     "reconcile.skipped_count",
+     "reconcile.skipped_ids"
+    ],
+    "size": "at most about 6.7 KB added with 50 ids (50 x (128 + 4) bytes); whole file asserted below 64 KiB in services/source_ingestion/tests/test_reconcile_tolerates_newer_state.py",
+    "task": "SOURCE-RECONCILE-TOLERATES-NEWER-STATE-20261117"
+   },
    "readers": [
     "docker-compose.yml"
    ],
@@ -5550,6 +5561,46 @@
    "readers": [
     "services/source_ingestion/snapshot_current_store.py"
    ]
+  },
+  {
+   "bound_proof": {
+    "contains": "?mode=ro",
+    "file": "services/telemetry/heartbeat_retention.py"
+   },
+   "bound_status": "bounded",
+   "cap": "none: read-only connection (mode=ro); writes no data",
+   "cleanup": "not applicable: opens the BFF downstream-health SQLite file read-only to collect incident-referenced event ids",
+   "growth_driver": "opens a SQLite database read-only with sqlite3.connect (no writes)",
+   "growth_per_day": "0 bytes (read-only)",
+   "kind": "sqlite_connect",
+   "name": "services/telemetry/heartbeat_retention.py",
+   "owner": "telemetry",
+   "readers": [
+    "services/telemetry/heartbeat_retention.py"
+   ],
+   "register_class": "RC3",
+   "task": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117"
+  },
+  {
+   "bound_proof": {
+    "contains": "day_budget_bytes is not None and size > decl.day_budget_bytes",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days",
+   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none) and read by SOURCE-RETENTION-SWEEPER-20261118-R2; superseded generation file deleted after each manifest swap",
+   "growth_driver": "keyed partition writer (one record per key per date partition, replaced in place; unchanged re-run writes nothing)",
+   "growth_per_day": "measured on hosted-shaped rows (SOURCE-DATASETS-KEYED-WRITE-20261119 evidence): institutional 0.114 MB, margin 0.038 MB, broker_top 0.058 MB, broker_branch 0.175 MB, community 0.075 MB, ssf 0.012 MB, index 0.001 MB each",
+   "kind": "jsonl",
+   "name": "part-g{generation}.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/market_data_storage.py",
+    "services/source_ingestion/candidate_pool_market_feed.py",
+    "services/research/regime/features.py",
+    "services/execution/lean_runtime/instrument_candidates.py"
+   ],
+   "task": "SOURCE-DATASETS-KEYED-WRITE-20261119"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",

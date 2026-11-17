@@ -33,6 +33,7 @@ class DailyBarsReader:
         self._manifest_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
         self._dates_cache: tuple[int, list[str]] | None = None
         self._meta_cache: dict[Path, tuple[tuple[int, int], Any, list[Any]]] = {}
+        self._presence: dict[str, tuple[tuple[int, int], dict[str, bool]]] = {}
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="daily-bars-read")
 
     # -- manifests ---------------------------------------------------------------------------
@@ -124,6 +125,75 @@ class DailyBarsReader:
             parts = list(self._pool.map(lambda d: self._read_one_date(d, wanted), dates))
         return [row for part in parts for row in part]
 
+    def _present_one_date(self, trade_date: str, wanted: list[str]) -> set[str]:
+        """Which of ``wanted`` (sorted) have a bar on the date: symbol column only, row groups pruned."""
+        pa, _ = _require_pyarrow()
+        import pyarrow.compute as pc
+
+        value_set = pa.array(wanted, type=pa.string())
+        for attempt in (0, 1):
+            try:
+                manifest = self._manifest(trade_date)
+                found: set[str] = set()
+                for entry in manifest["files"]:
+                    if wanted[0] > entry["max_symbol"] or wanted[-1] < entry["min_symbol"]:
+                        continue
+                    path = self.bars_dir / entry["path"]
+                    handle, groups = self._row_groups(path, wanted)
+                    if groups:
+                        column = handle.read_row_groups(groups, columns=["symbol"])["symbol"]
+                        hits = column.filter(pc.is_in(column, value_set=value_set))
+                        found.update(hits.to_pylist())
+                return found
+            except FileNotFoundError:
+                self._manifest_cache.pop(trade_date, None)
+                self._presence.pop(trade_date, None)
+                if attempt:
+                    raise DailyBarsCorrupt(f"daily bars partition {trade_date} lists a file that does not exist")
+        return set()
+
+    def availability(self, symbols: str | Sequence[str]) -> dict[str, dict[str, Any]]:
+        """``{symbol: {first_date, last_date, count}}`` over the stored trading calendar.
+
+        Resolved through the per-date manifests (symbol range per file) and the symbol column of the
+        row groups that can hold the symbol; no other column is decoded and nothing is written. Per
+        date presence is cached against the manifest signature, so a repeat call opens no file.
+        A symbol with no stored bar reports ``count`` 0 and null dates.
+        """
+        wanted = sorted(set(self._symbols(symbols)))
+        dates = self.trade_dates()
+        sigs: dict[str, tuple[int, int]] = {}
+        todo: list[str] = []
+        for d in dates:
+            st = (self.manifest_dir / f"date={d}.json").stat()
+            sigs[d] = (st.st_mtime_ns, st.st_size)
+            hit = self._presence.get(d)
+            if hit is None or hit[0] != sigs[d]:
+                self._presence[d] = hit = (sigs[d], {})
+            if any(s not in hit[1] for s in wanted):
+                todo.append(d)
+
+        def fill(d: str) -> None:
+            known = self._presence[d][1]
+            missing = [s for s in wanted if s not in known]
+            found = self._present_one_date(d, missing)
+            for s in missing:
+                known[s] = s in found
+
+        if len(todo) <= 1:
+            for d in todo:
+                fill(d)
+        else:
+            list(self._pool.map(fill, todo))
+        out: dict[str, dict[str, Any]] = {}
+        for s in wanted:
+            have = [d for d in dates if self._presence[d][1].get(s)]
+            out[s] = {"first_date": have[0] if have else None, "last_date": have[-1] if have else None,
+                      "count": len(have)}
+        if len(self._presence) > 2000:
+            self._presence.clear()
+        return out
+
     @staticmethod
     def _symbols(symbols: str | Sequence[str]) -> list[str]:
         items = [symbols] if isinstance(symbols, str) else list(symbols)
@@ -177,3 +247,66 @@ class DailyBarsReader:
         for items in by_symbol.values():
             items.sort(key=lambda r: r["trade_date"])
         return by_symbol[symbols[0]] if single else by_symbol
+
+
+# -- SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW-20261120: snapshot (newest 60) + daily bars (older) ---------
+SNAPSHOT_CLOSES = 60  # the stored current record keeps 60 closes; it is never enlarged (design 5.4 E1)
+
+
+def join_snapshot_with_daily_bars(
+    reader: "DailyBarsReader | None", symbol: str, points: Sequence[tuple[str, float]], min_closes: int
+) -> dict[str, Any]:
+    """Return exactly ``min_closes`` closes: the record's points plus the older part from daily bars.
+
+    ``points`` are the record's ``(trade_date, close)`` oldest first. Result keys: ``closes`` (list or
+    None), ``window_source`` and, when the history is not there, ``reason='history_insufficient'`` with
+    ``requested``, ``available``, ``first_available_date`` and ``detail``. Nothing is filled or
+    carried forward; the older part is joined on trade date and must be contiguous in the stored
+    trading calendar. Writes nothing.
+    """
+    own = list(points)[-min_closes:]
+    need = min_closes - len(own)
+    source = {"snapshot": len(own), "daily_bars": 0}
+    first_own = own[0][0] if own else None
+
+    def short(available: list[tuple[str, float]], detail: str) -> dict[str, Any]:
+        return {
+            "closes": None, "reason": "history_insufficient", "requested": min_closes,
+            "available": len(available), "first_available_date": available[0][0] if available else None,
+            "detail": detail, "window_source": {"snapshot": len(own), "daily_bars": len(available) - len(own)},
+        }
+
+    if need <= 0:
+        return {"closes": [c for _, c in own], "window_source": source}
+    if reader is None or first_own is None:
+        return short(own, "daily bars store is not available")
+    try:
+        calendar = reader.trade_dates()
+        older_dates = [d for d in calendar if d < first_own]
+        if first_own not in calendar:
+            return short(own, f"snapshot start {first_own} is not a stored trading day; the join cannot be verified")
+        if not older_dates:
+            return short(own, "daily bars hold no trading day before the snapshot window")
+        rows = reader.read_close_window(symbol, older_dates[-1], min(need, MAX_WINDOW_CLOSES))
+    except DailyBarsError as exc:
+        return short(own, f"daily bars read refused: {exc}")
+    older = [(r["trade_date"], float(r["close"])) for r in rows]
+    joined = older + own
+    # contiguity against the trading calendar: the joined dates must be one unbroken calendar slice
+    index = {d: i for i, d in enumerate(calendar)}
+    positions = [index.get(d) for d, _ in joined]
+    if None in positions or any(b - a != 1 for a, b in zip(positions, positions[1:])):
+        gap = next((f"{a[0]}..{b[0]}" for a, b, pa, pb in zip(joined, joined[1:], positions, positions[1:])
+                    if pa is None or pb is None or pb - pa != 1), "unknown")
+        # the longest unbroken tail is what is really available
+        tail = [joined[-1]]
+        for i in range(len(joined) - 2, -1, -1):
+            if positions[i] is not None and positions[i + 1] is not None and positions[i + 1] - positions[i] == 1:
+                tail.insert(0, joined[i])
+            else:
+                break
+        return short(tail, f"daily bars and snapshot are not contiguous in the trading calendar at {gap}; not filled")
+    if len(joined) < min_closes:
+        return short(joined, f"only {len(joined)} contiguous closes are stored")
+    source["daily_bars"] = len(older)
+    return {"closes": [c for _, c in joined], "window_source": source}

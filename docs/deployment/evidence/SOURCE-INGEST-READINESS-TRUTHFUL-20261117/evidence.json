@@ -1,0 +1,9 @@
+{
+  "task": "SOURCE-INGEST-READINESS-TRUTHFUL-20261117",
+  "change": "source-ingest /readyz returns 503 (controller_stale) when controller heartbeat exceeds SOURCE_INGEST_READINESS_MAX_CONTROLLER_AGE_SECONDS; compose healthcheck uses /livez; services/foundation/health.py unchanged",
+  "growth_per_day": "none: no new persisted state; readiness adds three scalar keys to an in-memory response",
+  "cap_at_hosted_scale": "readiness stays fixed-cost over the bounded controller snapshot (existing 260-connector test passes)",
+  "backward_compatibility": "previous release reads the same controller_state.json; only response fields were added",
+  "tests": "126 passed, 2 skipped: test_source_readiness_bounded, test_service, test_scheduled_connector, test_compose_activation, test_product_functional_compose_contract",
+  "residual_findings": ["BFF monitor and deploy scripts keep polling /readyz, so they will now correctly report source-ingest not ready while the scheduler is dead; requiring the scheduler in deploy acceptance stays with DEV-DEPLOY-STACK-COMPLETENESS-20261117"]
+}

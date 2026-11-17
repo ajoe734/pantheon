@@ -148,9 +148,20 @@ Emergency flags:
 The hourly workflow has two independent jobs: creating immutable `publish/v*`
 snapshots and reconciling the dev FE/BFF pair. `scripts/auto_deploy_dev_pair.py`
 checks both protected `dev` tips every tick, including frontend-only updates
-and ticks with no new snapshot. Both exact commits must have a successful latest
-dev-push Branch CI Gate. An active backend or frontend deployment defers the
-check without cancelling it.
+and ticks with no new snapshot. For each repository it selects the newest commit
+that has a successful dev-push Branch CI Gate run, is an ancestor of (or equal
+to) the `dev` tip, and is ahead of the commit the host serves; the tip itself
+need not be green, because `dev` merges every 5 to 10 minutes and cancels the
+previous tip's run. A repository with no such commit keeps its served commit
+while the other moves; `waiting_for_ci` is reported only when no green commit
+ahead of the host exists. `up_to_date`, `report_only_no_deploy`,
+`failed_pair_not_retried` and `superseded_before_dispatch` are evaluated against
+the selected pair, not the tips. The Nonprod Deploy workflow accepts such an
+older payload only if it is on `dev` and has a successful dev-push Branch CI run
+(a commit off `dev` or without one is refused); the workflow definition comes
+from the `dev` tip it was dispatched on, the deploy scripts from the payload
+checkout, and the lease controller from its pinned revision. An active backend
+or frontend deployment defers the check without cancelling it.
 
 A pair whose latest completed Nonprod Deploy attempt failed or timed out is not
 dispatched again; the tick reports `failed_pair_not_retried` with that run URL.

@@ -36,6 +36,7 @@ from .connectors.collector_bundle import (
     CollectorBundleAdapter,
 )
 from .ingest_manager import IngestManager
+from .provider_adapters import is_provider_adapter_allowed
 
 
 class _RequirementLike(Protocol):
@@ -67,6 +68,12 @@ SUPPORTED_POLICY_GATES = frozenset(
         "require_source_health_ok",
     }
 )
+
+# Actions that mean "a record or requirement written by a newer release was left alone".
+# They are status "skipped" (never conflict/unsupported), carry the reason in details, and are
+# reported by the runtime as skipped items instead of failing the whole reconcile tick.
+CONNECTOR_NOT_DEFINED_ACTION = "connector_not_defined_by_release"
+UNDEFINED_BY_RELEASE_ACTIONS = frozenset({CONNECTOR_NOT_DEFINED_ACTION})
 
 CADENCE_INTERVAL_SECONDS: dict[str, int] = {
     "realtime": 60,
@@ -330,6 +337,44 @@ class SourceProvisioningReconciler:
         if provider_factories:
             self.provider_factories.update(provider_factories)
 
+    def undefined_reason(self, config: Any) -> str | None:
+        """Why this release cannot interpret a stored connector record, else None.
+
+        A record is undefined when its provider-owned adapter, its connector definition or its
+        dataset is not something this release defines (state written by a newer release).
+        A record that this release defines but that is malformed is NOT undefined here: it keeps
+        failing closed through the existing validation.
+        """
+
+        connector = config.connector
+        connector_id = connector.connector_id
+        fetch = getattr(config, "fetch", None)
+        fetch = fetch if isinstance(fetch, Mapping) else {}
+        metadata = getattr(connector, "metadata", None)
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if str(fetch.get("mode") or "") == "provider_owned_adapter":
+            token = str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "").strip()
+            if token and not is_provider_adapter_allowed(token):
+                return f"adapter-not-defined: {token}"
+        factory_known = connector_id in self.provider_factories
+        definition_id = str(metadata.get("definition_id") or "").strip()
+        if definition_id and not factory_known and get_connector_definition(definition_id) is None:
+            return f"connector-definition-not-defined: {definition_id}"
+        marker = metadata.get(RECONCILIATION_METADATA_KEY)
+        desired = marker.get("desired_state") if isinstance(marker, Mapping) else None
+        dataset = str(desired.get("dataset") or "").strip() if isinstance(desired, Mapping) else ""
+        cadence = str(desired.get("cadence") or "").strip() if isinstance(desired, Mapping) else ""
+        if cadence and cadence not in CADENCE_INTERVAL_SECONDS:
+            return f"cadence-not-defined: {cadence}"
+        if dataset:
+            definition = collector_definition(connector_id)
+            profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+            if definition is not None and dataset not in definition.datasets:
+                return f"dataset-not-defined: {dataset}"
+            if profile is not None and profile.get("dataset") and dataset != profile["dataset"]:
+                return f"dataset-not-defined: {dataset}"
+        return None
+
     def reconcile_persona(self, persona: Mapping[str, Any] | Any, *, dry_run: bool = False) -> SourceProvisioningResult:
         persona_id = _persona_id(persona)
         actions = tuple(self._reconcile_requirement(requirement, dry_run=dry_run) for requirement in _requirements(persona))
@@ -442,6 +487,19 @@ class SourceProvisioningReconciler:
         plan = self._build_plan(connector_id, requirement)
         if plan is None:
             existing = self.connector_store.get_config(connector_id)
+            undefined = self.undefined_reason(existing) if existing is not None else None
+            if undefined is not None:
+                # Written by a newer release: leave the record alone, never adopt or retire it.
+                return SourceProvisioningAction(
+                    persona_id=requirement.persona_id,
+                    dataset=requirement.dataset,
+                    connector_id=connector_id,
+                    status="skipped",
+                    connector_action=CONNECTOR_NOT_DEFINED_ACTION,
+                    schedule_action="not_attempted",
+                    idempotency_key=requirement.idempotency_key,
+                    details={"reason": undefined, "skipped_kind": "requirement"},
+                )
             if existing is not None:
                 gate_results = self._policy_gate_results(existing.connector, requirement)
                 failed_gates = sorted(gate for gate, result in gate_results.items() if not result["passed"])
@@ -558,6 +616,8 @@ class SourceProvisioningReconciler:
                 continue
             existing = self.connector_store.get_config(candidate)
             factory = self.provider_factories.get(candidate)
+            if existing is not None and len(candidates) > 1 and self.undefined_reason(existing) is not None:
+                continue  # prefer a candidate this release can interpret
             if existing is not None:
                 connector = existing.connector
             elif factory is not None:

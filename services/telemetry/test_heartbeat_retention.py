@@ -31,20 +31,29 @@ from services.trade_journey.correlation_envelope import (
 from services.telemetry.heartbeat_retention import (
     HEARTBEAT_READERS,
     HEARTBEAT_SUMMARY_TABLE,
+    INFRASTRUCTURE_HEALTH_READERS,
+    INFRA_HEALTH_RETENTION_DAYS_ENV,
     INGESTED_SEQ_CONSUMERS,
     HeartbeatRetentionJob,
     HeartbeatRetentionReaderBlocker,
+    check_infra_health_readers_against_retention_window,
     check_readers_against_retention_window,
     compute_hourly_summaries_from_rows,
+    extract_referenced_event_ids_from_record,
+    parse_infra_health_retention_days,
     parse_retention_days,
     rebuild_runtime_summaries_from_db,
+    resolve_protected_infrastructure_health_event_ids,
     run_heartbeat_retention,
     truncate_utc_hour,
 )
 from services.telemetry.ingest_svc import (
+    INFRASTRUCTURE_HEALTH_SCHEMA_VERSION,
     build_postgres_event_reader,
     build_postgres_write_fn,
 )
+from services.telemetry.lineage_read import LineageReadService
+import services.telemetry.main as telemetry_main
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.trade_journey.lifecycle_projector import (
     PostgresLifecycleSource,
@@ -1028,6 +1037,514 @@ def test_hosted_shape_runtime_summaries_quarter_equity_and_rankings_identical_be
         "owner_store_dirs": list(OWNER_STORE_PATHS),
     }
     assert verify_backup_restore_readability(backup_record)["backup_restore_verified"] is True
+
+
+def _build_infra_health_event(
+    *,
+    event_id: str,
+    created_at: datetime,
+    service_name: str = "runtime-manager",
+    health_status: str = "ok",
+    severity: str = "info",
+    probe_kind: str = "interval_probe",
+    tenant_id: str = "tenant-dev",
+    producer: str = "control-plane-bff",
+    incident_ref: str | None = None,
+) -> dict[str, Any]:
+    iso_ts = created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    ev: dict[str, Any] = {
+        "schema_version": INFRASTRUCTURE_HEALTH_SCHEMA_VERSION,
+        "event_id": event_id,
+        "event_type": "infrastructure_health",
+        "created_at": iso_ts,
+        "tenant_id": tenant_id,
+        "producer": producer,
+        "component": {
+            "service_name": service_name,
+            "component_kind": "http_service",
+            "endpoint": f"http://{service_name}:8081/__health__",
+        },
+        "health_status": health_status,
+        "severity": severity,
+        "observation": {
+            "probe_kind": probe_kind,
+            "observed_at": iso_ts,
+            "window_seconds": 60,
+            "sample_count": 4,
+            "failure_count": 0 if health_status == "ok" else 3,
+            "consecutive_failures": 0 if health_status == "ok" else 3,
+            "error_rate": 0.0 if health_status == "ok" else 0.75,
+            "latency_ms": 12.5,
+            "status_code": 200 if health_status == "ok" else 503,
+        },
+        "metadata": {
+            "controller": "bff-downstream-health-monitor",
+            "target_registry_source": "default",
+            "configured_component_kind": "http_service",
+        },
+    }
+    if incident_ref:
+        ev["incident_ref"] = incident_ref
+    return ev
+
+
+def test_infra_health_retention_days_parsing_and_readers_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS default=7 and reader inventory."""
+    monkeypatch.delenv(INFRA_HEALTH_RETENTION_DAYS_ENV, raising=False)
+    assert parse_infra_health_retention_days() == 7.0
+    assert parse_infra_health_retention_days("14") == 14.0
+    monkeypatch.setenv(INFRA_HEALTH_RETENTION_DAYS_ENV, "5.5")
+    assert parse_infra_health_retention_days() == 5.5
+    with pytest.raises(ValueError):
+        parse_infra_health_retention_days(0)
+    with pytest.raises(ValueError):
+        parse_infra_health_retention_days(-1)
+    with pytest.raises(ValueError):
+        parse_infra_health_retention_days(True)
+
+    reader_ids = {r["reader_id"] for r in INFRASTRUCTURE_HEALTH_READERS}
+    assert {
+        "telemetry_accepted_event_lookup",
+        "telemetry_lineage_event_trace",
+        "incident_and_postmortem_reference_validation",
+        "incidents_consume_infrastructure_health",
+        "bff_downstream_health_monitor",
+        "trade_journey_lifecycle_projector",
+    } <= reader_ids
+
+    check = check_infra_health_readers_against_retention_window(7.0)
+    assert check["all_readers_within_window"] is True
+    assert check["max_reader_required_age_seconds"] <= 7 * 86400
+
+    with pytest.raises(HeartbeatRetentionReaderBlocker):
+        check_infra_health_readers_against_retention_window(
+            7.0,
+            readers=[
+                *INFRASTRUCTURE_HEALTH_READERS,
+                {
+                    "reader_id": "hypothetical_10d_infra_reader",
+                    "module": "services/hypothetical/infra_reader.py",
+                    "oldest_infra_health_needed_seconds": 10 * 86400,
+                },
+            ],
+        )
+
+    extracted = extract_referenced_event_ids_from_record(
+        {
+            "incident_id": "inc-infra-1",
+            "trace_id": "evt-infra-open-1",
+            "telemetry_event_ids": [
+                "evt-infra-open-1",
+                "evt-infra-resolve-1",
+                "merged_incident_id:inc-infra-dup",
+                "merged_event:inc-infra-dup:evt-infra-merged-1",
+                "resolution_reason:orphan_recovered",
+            ],
+            "evidence_summary": "non_trading_infrastructure_incident=true; source_event_id=evt-infra-summary-1",
+        }
+    )
+    assert extracted == {
+        "evt-infra-open-1",
+        "evt-infra-resolve-1",
+        "evt-infra-merged-1",
+        "evt-infra-summary-1",
+    }
+
+
+def test_infra_health_retention_deletes_expired_in_bounded_batches_respects_ceiling_and_protects_referenced_ids(
+    pg_cluster: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC 1, AC 2, AC 3, AC 6: Deletes expired unreferenced infrastructure_health rows (>7d) in bounded batches under statement_timeout and safe_ingested_seq while keeping incident/postmortem-referenced IDs resolvable via GET /api/telemetry/events/<id> and lineage trace."""
+    import sqlite3
+    import types
+    import asyncpg  # type: ignore[import]
+
+    db_dsn = asyncio.run(
+        _create_migrated_db(pg_cluster, "test_infra_health_ret", with_trade_journey=False)
+    )
+    now = datetime(2026, 11, 17, 0, 0, 0, tzinfo=timezone.utc)
+    # 10 days old (> 7-day default infra_health retention window)
+    old_infra_t0 = datetime(2026, 11, 7, 0, 0, 0, tzinfo=timezone.utc)
+    # 5 days old (< 7-day infra_health window, but > 3-day heartbeat window)
+    mid_t0 = datetime(2026, 11, 12, 0, 0, 0, tzinfo=timezone.utc)
+    # 1 day old (within both windows)
+    recent_t0 = datetime(2026, 11, 16, 0, 0, 0, tzinfo=timezone.utc)
+
+    write_fn = build_postgres_write_fn(db_dsn)
+
+    # 12 old unreferenced infrastructure_health events (10 days old -> must be deleted)
+    unreferenced_old_infra = [
+        _build_infra_health_event(
+            event_id=f"evt-infra-unref-old-{i}",
+            created_at=old_infra_t0 + timedelta(minutes=i),
+            incident_ref="inc-historical-resolved" if i % 2 == 0 else None,
+        )
+        for i in range(12)
+    ]
+
+    # 6 old referenced infrastructure_health events (10 days old -> must be PROTECTED!)
+    # 1. Referenced by incident.incident_cases telemetry_event_ids (opening event)
+    # 2. Referenced by incident.incident_cases telemetry_event_ids (resolving event)
+    # 3. Referenced by incident.incident_cases merged_event:<inc_id>:<event_id>
+    # 4. Referenced by incident.postmortems telemetry_event_ids / trace_id
+    # 5. Referenced by on-disk incidents.json store
+    # 6. Referenced by BFF downstream_health.sqlite3 incident_mappings / delivery_outbox
+    protected_ids_expected = [
+        "evt-infra-ref-inc-open",
+        "evt-infra-ref-inc-resolve",
+        "evt-infra-ref-inc-merged",
+        "evt-infra-ref-postmortem",
+        "evt-infra-ref-json-store",
+        "evt-infra-ref-bff-sqlite",
+    ]
+    referenced_old_infra = [
+        _build_infra_health_event(
+            event_id=eid,
+            created_at=old_infra_t0 + timedelta(seconds=30 + idx * 10),
+            health_status="degraded",
+            severity="critical",
+            incident_ref=f"inc-ref-{idx}",
+        )
+        for idx, eid in enumerate(protected_ids_expected)
+    ]
+
+    # 4 infrastructure_health events at 5 days old (within 7-day window -> must be retained!)
+    mid_infra = [
+        _build_infra_health_event(
+            event_id=f"evt-infra-5d-keep-{i}",
+            created_at=mid_t0 + timedelta(minutes=i),
+        )
+        for i in range(4)
+    ]
+
+    # 3 recent infrastructure_health events at 1 day old (within 7-day window -> must be retained!)
+    recent_infra = [
+        _build_infra_health_event(
+            event_id=f"evt-infra-1d-keep-{i}",
+            created_at=recent_t0 + timedelta(minutes=i),
+        )
+        for i in range(3)
+    ]
+
+    # 4 heartbeats at 5 days old (> 3-day heartbeat window -> must be summarized and deleted!)
+    old_hbs = [
+        _build_hosted_event(
+            "heartbeat",
+            runtime_id="rt-49c1c3d1",
+            created_at=mid_t0 + timedelta(seconds=i * 15),
+            event_id=f"evt-hb-5d-del-{i}",
+        )
+        for i in range(4)
+    ]
+
+    # 2 recent heartbeats at 1 day old (< 3-day window -> must be retained!)
+    recent_hbs = [
+        _build_hosted_event(
+            "heartbeat",
+            runtime_id="rt-49c1c3d1",
+            created_at=recent_t0 + timedelta(seconds=i * 15),
+            event_id=f"evt-hb-1d-keep-{i}",
+        )
+        for i in range(2)
+    ]
+
+    # 2 old trading / deployment events at 10 days old (must NEVER be touched!)
+    other_events = [
+        _build_hosted_event(
+            "deploy_started",
+            runtime_id="rt-49c1c3d1",
+            created_at=old_infra_t0,
+            event_id="evt-deploy-10d-keep",
+        ),
+        _build_hosted_event(
+            "pnl_snapshot",
+            runtime_id="rt-49c1c3d1",
+            created_at=old_infra_t0 + timedelta(minutes=5),
+            event_id="evt-pnl-10d-keep",
+            metrics={"pnl": 2500.0},
+        ),
+    ]
+
+    all_seed = [
+        *unreferenced_old_infra[:6],
+        *referenced_old_infra,
+        *unreferenced_old_infra[6:],
+        *other_events,
+        *old_hbs,
+        *mid_infra,
+        *recent_infra,
+        *recent_hbs,
+    ]
+    assert asyncio.run(write_fn(all_seed)).success
+
+    # Create incident.incident_cases and incident.postmortems tables in Postgres
+    async def _seed_incident_and_postmortem_stores() -> int:
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS incident")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incident.incident_cases (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incident.postmortems (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            inc_payload = {
+                "incident_id": "inc-infra-001",
+                "title": "BFF downstream degradation: runtime-manager",
+                "status": "resolved",
+                "severity": "high",
+                "created_at": "2026-11-07T00:00:30Z",
+                "resolved_at": "2026-11-07T00:05:00Z",
+                "binding_id": "infra-subject-tenant-dev-control-plane-bff-runtime-manager",
+                "deployment_stage": "paper",
+                "deployment_plan_id": "infra-plan-control-plane-bff",
+                "capital_pool_id": "infra-tenant-tenant-dev",
+                "persona_capital_binding_id": "infra-authority-control-plane-bff",
+                "artifact_id": "infra-component-runtime-manager",
+                "artifact_version": "endpoint-123456789abc",
+                "runtime_id": "infra-endpoint-123456789abc",
+                "trace_id": "evt-infra-ref-inc-open",
+                "telemetry_event_ids": [
+                    "evt-infra-ref-inc-open",
+                    "evt-infra-ref-inc-resolve",
+                    "merged_incident_id:inc-infra-dup-002",
+                    "merged_event:inc-infra-dup-002:evt-infra-ref-inc-merged",
+                    "resolution_reason:orphan_recovered",
+                ],
+                "evidence_summary": (
+                    "non_trading_infrastructure_incident=true; "
+                    "source_event_id=evt-infra-ref-inc-open"
+                ),
+            }
+            pm_payload = {
+                "postmortem_id": "pm-inc-infra-002",
+                "incident_id": "inc-infra-002",
+                "title": "Postmortem draft: BFF downstream degradation",
+                "status": "draft",
+                "created_at": "2026-11-07T00:10:00Z",
+                "binding_id": "infra-subject-tenant-dev-control-plane-bff-runtime-manager",
+                "deployment_stage": "paper",
+                "deployment_plan_id": "infra-plan-control-plane-bff",
+                "capital_pool_id": "infra-tenant-tenant-dev",
+                "persona_capital_binding_id": "infra-authority-control-plane-bff",
+                "artifact_id": "infra-component-runtime-manager",
+                "artifact_version": "endpoint-123456789abc",
+                "runtime_id": "infra-endpoint-123456789abc",
+                "trace_id": "evt-infra-ref-postmortem",
+                "root_cause": "Transient restart",
+                "telemetry_event_ids": ["evt-infra-ref-postmortem"],
+                "incident_evidence_summary": "source_event_id=evt-infra-ref-postmortem",
+            }
+            await conn.execute(
+                "INSERT INTO incident.incident_cases (record_id, payload) VALUES ($1, $2::jsonb)",
+                "inc-infra-001",
+                json.dumps(inc_payload),
+            )
+            await conn.execute(
+                "INSERT INTO incident.postmortems (record_id, payload) VALUES ($1, $2::jsonb)",
+                "pm-inc-infra-002",
+                json.dumps(pm_payload),
+            )
+            # Return the ingested_seq of the 4th unreferenced old infra event for checkpoint ceiling test
+            seq_4 = await conn.fetchval(
+                "SELECT ingested_seq FROM public.telemetry_events WHERE event_id = 'evt-infra-unref-old-3'"
+            )
+            return int(seq_4)
+        finally:
+            await conn.close()
+
+    partial_seq = asyncio.run(_seed_incident_and_postmortem_stores())
+
+    # Also seed on-disk JSON incident store and BFF SQLite store
+    json_store_path = tmp_path / "incidents.json"
+    json_store_path.write_text(
+        json.dumps(
+            {
+                "incidents": [
+                    {
+                        "incident_id": "inc-json-001",
+                        "trace_id": "evt-infra-ref-json-store",
+                        "telemetry_event_ids": ["evt-infra-ref-json-store"],
+                    }
+                ],
+                "postmortems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    bff_sqlite_path = tmp_path / "downstream_health.sqlite3"
+    with sqlite3.connect(str(bff_sqlite_path)) as sq_conn:
+        sq_conn.execute(
+            "CREATE TABLE incident_mappings (target_name TEXT PRIMARY KEY, opening_event_id TEXT, last_event_id TEXT)"
+        )
+        sq_conn.execute(
+            "CREATE TABLE delivery_outbox (delivery_id TEXT PRIMARY KEY, channel TEXT, event_id TEXT)"
+        )
+        sq_conn.execute(
+            "INSERT INTO incident_mappings VALUES ('runtime-manager', 'evt-infra-ref-bff-sqlite', 'evt-infra-ref-bff-sqlite')"
+        )
+        sq_conn.commit()
+
+    # 1. Test safe_ingested_seq ceiling: hold consumer checkpoint at partial_seq (4th row)
+    res_ceiling = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            batch_size=2,
+            max_batches=10,
+            extra_consumer_checkpoints={"test_consumer": partial_seq},
+            incident_store_paths=[json_store_path],
+            bff_health_sqlite_path=bff_sqlite_path,
+        )
+    )
+    assert res_ceiling.status == "ok"
+    assert res_ceiling.safe_ingested_seq == partial_seq
+    assert res_ceiling.heartbeat_rows_deleted == 0  # heartbeats are after partial_seq
+    assert res_ceiling.infra_health_rows_deleted == 4  # only the 4 unreferenced rows <= partial_seq
+    assert res_ceiling.protected_infra_health_event_ids_count == 6
+
+    # 2. Release checkpoint ceiling and run with bounded batch_size=3, max_batches=2 first
+    res_batch1 = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            batch_size=3,
+            max_batches=2,
+            statement_timeout_ms=10000,
+            incident_store_paths=[json_store_path],
+            bff_health_sqlite_path=bff_sqlite_path,
+        )
+    )
+    assert res_batch1.status == "ok"
+    assert res_batch1.heartbeat_rows_deleted == 4  # 4 old heartbeats deleted in 2 batches (3 + 1)
+    assert res_batch1.hours_summarized == 1
+    assert res_batch1.infra_health_batches_executed == 2
+    assert res_batch1.infra_health_rows_deleted == 6  # 2 batches * 3 rows = 6 deleted
+
+    # 3. Finish remaining expired unreferenced infrastructure_health rows (2 left out of 12)
+    res_batch2 = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            batch_size=3,
+            max_batches=10,
+            statement_timeout_ms=10000,
+            incident_store_paths=[json_store_path],
+            bff_health_sqlite_path=bff_sqlite_path,
+        )
+    )
+    assert res_batch2.status == "ok"
+    assert res_batch2.heartbeat_rows_deleted == 0
+    assert res_batch2.infra_health_rows_deleted == 2
+
+    # 4. Verify database state after retention
+    async def _verify_db() -> set[str]:
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            rows = await conn.fetch("SELECT event_id, event_type FROM public.telemetry_events")
+            return {str(r["event_id"]) for r in rows}
+        finally:
+            await conn.close()
+
+    remaining_ids = asyncio.run(_verify_db())
+    # All 12 unreferenced old infra_health events and 4 old heartbeats must be gone
+    for i in range(12):
+        assert f"evt-infra-unref-old-{i}" not in remaining_ids
+    for i in range(4):
+        assert f"evt-hb-5d-del-{i}" not in remaining_ids
+
+    # All 6 referenced old infra_health events must still exist!
+    for eid in protected_ids_expected:
+        assert eid in remaining_ids
+
+    # All 5d and 1d infra_health events, recent heartbeats, and other event types must still exist!
+    for i in range(4):
+        assert f"evt-infra-5d-keep-{i}" in remaining_ids
+    for i in range(3):
+        assert f"evt-infra-1d-keep-{i}" in remaining_ids
+    for i in range(2):
+        assert f"evt-hb-1d-keep-{i}" in remaining_ids
+    assert "evt-deploy-10d-keep" in remaining_ids
+    assert "evt-pnl-10d-keep" in remaining_ids
+
+    # 5. AC 2: Verify every referenced infrastructure_health event ID resolves through
+    # GET /api/telemetry/events/<event_id> AND GET /api/telemetry/lineage/events/<event_id>/trace
+    fetch_ev, fetch_b = build_postgres_event_reader(db_dsn, table="telemetry_events")
+    prev_svc = telemetry_main._svc
+    prev_lineage = telemetry_main._lineage_svc
+    monkeypatch.setenv("PANTHEON_TELEMETRY_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TENANTS", "tenant-dev")
+    try:
+        telemetry_main._lineage_svc = LineageReadService(
+            event_reader=fetch_ev,
+            binding_events_reader=fetch_b,
+        )
+        telemetry_main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid, tenant_id=tenant_id)
+        )
+        client = telemetry_main.app.test_client()
+        headers = {
+            "Authorization": "Bearer test-service-token",
+            "X-Tenant-Id": "tenant-dev",
+        }
+        for eid in protected_ids_expected:
+            r_ev = client.get(f"/api/telemetry/events/{eid}", headers=headers)
+            assert r_ev.status_code == 200, f"GET /api/telemetry/events/{eid} failed: {r_ev.data}"
+            ev_body = r_ev.get_json()
+            assert ev_body["event_id"] == eid
+            assert ev_body["event_type"] == "infrastructure_health"
+
+            r_tr = client.get(f"/api/telemetry/lineage/events/{eid}/trace", headers=headers)
+            assert r_tr.status_code == 200, f"GET /api/telemetry/lineage/events/{eid}/trace failed: {r_tr.data}"
+            tr_body = r_tr.get_json()
+            assert tr_body["target_id"] == eid
+            assert tr_body["event_type"] == "infrastructure_health"
+            assert tr_body["conflict_markers"] == []
+
+        # Deleted unreferenced old event returns 404 on both routes
+        r_gone_ev = client.get("/api/telemetry/events/evt-infra-unref-old-0", headers=headers)
+        assert r_gone_ev.status_code == 404
+        r_gone_tr = client.get(
+            "/api/telemetry/lineage/events/evt-infra-unref-old-0/trace",
+            headers=headers,
+        )
+        assert r_gone_tr.status_code == 404
+    finally:
+        telemetry_main._svc = prev_svc
+        telemetry_main._lineage_svc = prev_lineage
+
+    # 6. AC 6 Rollback: previous accepted release write_fn and event_reader ingest and read unchanged
+    post_job_infra = _build_infra_health_event(
+        event_id="evt-infra-post-rollback-check",
+        created_at=now - timedelta(seconds=5),
+    )
+    assert asyncio.run(write_fn([post_job_infra])).success
+    fetched_post = fetch_ev("evt-infra-post-rollback-check", tenant_id="tenant-dev")
+    assert fetched_post is not None
+    assert fetched_post["event_id"] == "evt-infra-post-rollback-check"
 
 
 def test_heartbeat_retention_job_lifecycle_and_main_wiring(pg_cluster: str, monkeypatch: pytest.MonkeyPatch) -> None:

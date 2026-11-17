@@ -246,6 +246,7 @@ from .auth import (
 )
 from .heartbeat_retention import (
     HeartbeatRetentionJob,
+    INFRA_HEALTH_RETENTION_DAYS_ENV,
     RAW_RETENTION_DAYS_ENV,
     RETENTION_ENABLED_ENV,
 )
@@ -872,7 +873,21 @@ register_flask_health_routes(
 def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     """Execute a lineage query family and map service-level errors to HTTP."""
     try:
-        result = _get_lineage_service().query(
+        lineage_svc = _get_lineage_service()
+        if (
+            query_family == "telemetry_event_trace"
+            and _svc is not None
+            and getattr(lineage_svc, "_event_reader", None) is None
+        ):
+            target_eid = str(params.get("event_id") or "").strip()
+            if target_eid and lineage_svc.graph.get_node("telemetry_event", target_eid) is None:
+                try:
+                    accepted = _svc.get_accepted_event(target_eid, tenant_id=tenant_id)
+                except Exception:  # noqa: BLE001
+                    accepted = None
+                if isinstance(accepted, dict) and accepted.get("event_type") == "infrastructure_health":
+                    lineage_svc.admit_telemetry_event(accepted, None)
+        result = lineage_svc.query(
             query_family,
             tenant_id=tenant_id,
             **params,
@@ -903,12 +918,13 @@ def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
 
 
 def _build_retention_job() -> HeartbeatRetentionJob:
-    """Build the periodic raw heartbeat retention job for canonical Postgres."""
+    """Build the periodic raw heartbeat and infrastructure_health retention job for canonical Postgres."""
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     enabled = _env_bool(RETENTION_ENABLED_ENV, default=True) and bool(db_dsn)
     return HeartbeatRetentionJob(
         db_dsn,
         retention_days=os.getenv(RAW_RETENTION_DAYS_ENV) or None,
+        infra_health_retention_days=os.getenv(INFRA_HEALTH_RETENTION_DAYS_ENV) or None,
         enabled=enabled,
     )
 
@@ -1138,6 +1154,22 @@ def ingest_infrastructure_health():
 
     status = result.get("status")
     if status in ("accepted", "duplicate"):
+        if _lineage_svc is not None:
+            try:
+                admitted_event = (
+                    svc.get_accepted_event(
+                        str(result.get("event_id") or ""),
+                        tenant_id=event.get("tenant_id"),
+                    )
+                    or event
+                )
+                _lineage_svc.admit_telemetry_event(admitted_event, None)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "Lineage live-write admission failed for infrastructure_health event %s: %s",
+                    result.get("event_id"),
+                    exc,
+                )
         return jsonify({
             "status": "accepted",
             "duplicate": status == "duplicate",
