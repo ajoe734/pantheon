@@ -1098,6 +1098,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
@@ -4750,6 +4751,7 @@ retire_dormant_and_one_off_profile_containers() {
     COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
       docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
   fi
+  if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
 }
 
 verify_dev_paper_fleet() {
@@ -5616,6 +5618,145 @@ prune_dev_docker_storage_for_build() {
   run_bounded_docker_prune "unused images" docker image prune -af
   run_bounded_docker_prune "system cache" docker system prune -f --filter "label!=com.docker.compose.project=pantheon"
   docker_storage_diagnostics "after prune"
+}
+
+# Build cache size in bytes from `docker system df` ("Build Cache" row), or
+# "unknown". Docker prints decimal units (kB/MB/GB); the cap is parsed the way
+# Docker parses --reserved-space (binary), so the comparison errs permissive.
+dev_docker_builder_cache_bytes() {
+  local row
+  row="$(docker system df --format '{{.Type}}|{{.Size}}' 2>/dev/null | grep -i '^Build Cache|' | head -n1 || true)"
+  python3 -c '
+import re, sys
+m = re.match(r"^[^|]*\|\s*([0-9.]+)\s*([kKmMgGtTpP]?)[bB]?\s*$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1000, "m": 1000**2, "g": 1000**3, "t": 1000**4, "p": 1000**5}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "${row}"
+}
+
+dev_docker_size_to_bytes() {
+  python3 -c '
+import re, sys
+m = re.match(r"^([0-9.]+)\s*([kKmMgGtT]?)(?:[iI]?[bB])?$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "$1"
+}
+
+# Brings the Docker build cache back under the cap after a build, on both the
+# root and bff component paths. Protection of every compose container image is
+# a precondition (skip when it fails); no `-a`/`-af` builder prune is ever used.
+# Never fails the deploy, but a skipped/timed-out/failed/over-cap prune is
+# reported as not done (with cache size before/after) in the log and, through an
+# ADVISORY_CHECK_RESULT line, in the workflow deploy summary.
+cap_dev_docker_builder_cache_after_build() {
+  local phase="${1:-after_build}"
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return 0
+  fi
+  local keep="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+  local status="" reason="" flag="" before="unknown" after="unknown" cap_bytes="unknown" rc=0
+
+  if [[ ! "${keep}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]] || [[ "${keep}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+    status="not_done"; reason="invalid_keep_storage"
+  elif [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" == "false" ]]; then
+    status="not_done"; reason="builder_prune_disabled"
+  elif ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+    status="not_done"; reason="invalid_timeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    status="not_done"; reason="timeout_utility_unavailable"
+  fi
+  cap_bytes="$(dev_docker_size_to_bytes "${keep}" 2>/dev/null || echo unknown)"
+  before="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+
+  if [[ -z "${status}" ]]; then
+    local help_text
+    help_text="$(docker builder prune --help 2>&1 || true)"
+    if grep -q -- '--reserved-space' <<<"${help_text}"; then
+      flag="--reserved-space"
+    elif grep -q -- '--keep-storage' <<<"${help_text}"; then
+      flag="--keep-storage"
+    else
+      status="not_done"; reason="no_supported_cap_flag"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    if ! protect_dev_compose_container_images_for_builder_prune; then
+      status="not_done"; reason="image_protection_incomplete"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    info "capping dev Docker build cache ${phase} (${flag}=${keep}, timeout=${timeout_seconds}s, before=${before}B)"
+    timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" docker builder prune -f "${flag}" "${keep}" || rc=$?
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+    if (( rc == 124 || rc == 137 )); then
+      status="not_done"; reason="prune_timeout_${timeout_seconds}s"
+    elif (( rc != 0 )); then
+      status="not_done"; reason="prune_exit_${rc}"
+    elif [[ "${after}" == "unknown" || "${cap_bytes}" == "unknown" ]]; then
+      status="not_done"; reason="cache_size_unverifiable"
+    elif (( after > cap_bytes )); then
+      status="not_done"; reason="still_over_cap"
+    else
+      status="done"
+    fi
+  else
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+  fi
+
+  DEV_BUILDER_CACHE_CAP_STATUS="${status}"
+  info "dev_builder_cache_cap phase=${phase} status=${status} reason=${reason:-none} cap=${keep} before_bytes=${before} after_bytes=${after}"
+  python3 - "${status}" "${reason}" "${phase}" "${keep}" "${before}" "${after}" <<'CAP_PY' || true
+import json, sys
+status, reason, phase, cap, before, after = sys.argv[1:7]
+print("ADVISORY_CHECK_RESULT " + json.dumps({
+    "check": "docker_build_cache_cap",
+    "status": "passed" if status == "done" else "failed",
+    "reason": "" if status == "done" else f"{reason} cap={cap} before_bytes={before} after_bytes={after}",
+    "mode": "advisory",
+    "scope": "deploy_script",
+    "phase": phase,
+}, sort_keys=True), flush=True)
+CAP_PY
+  return 0
+}
+
+# One-shot compose services (restart: "no") whose profiles were not selected by
+# this deploy: remove their non-running containers (e.g. a Created container
+# left from an earlier attempt). Plain `docker rm` without -f so a running
+# container is never removed; running/restarting states are also skipped.
+# Entries: service:profile[,profile...]
+DEV_ONE_SHOT_PROFILE_SERVICES=(
+  "source-ingest-agora-projector:source-ingest-scheduler,workers"
+)
+retire_unselected_one_shot_service_containers() {
+  local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
+  local entry service profiles profile selected rows cid cstate cname
+  for entry in "${DEV_ONE_SHOT_PROFILE_SERVICES[@]}"; do
+    service="${entry%%:*}"
+    profiles="${entry#*:}"
+    selected=false
+    for profile in ${profiles//,/ }; do
+      [[ "${active_profiles}" == *",${profile},"* ]] && selected=true
+    done
+    [[ "${selected}" == "true" ]] && continue
+    rows="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=${service}" --format '{{.ID}}|{{.State}}|{{.Names}}' 2>/dev/null || true)"
+    [[ -z "${rows}" ]] && continue
+    while IFS='|' read -r cid cstate cname; do
+      [[ -z "${cid}" ]] && continue
+      if [[ "${cstate}" == "running" || "${cstate}" == "restarting" || "${cstate}" == "paused" ]]; then
+        continue
+      fi
+      info "removing non-running container of unselected one-shot service ${service}: ${cname} (id=${cid}, state=${cstate})"
+      docker rm "${cid}" >/dev/null 2>&1 || info "warning: failed to remove ${cname} (id=${cid})"
+    done <<< "${rows}"
+  done
+  return 0
 }
 
 check_dev_deploy_disk_preflight() {
@@ -6669,6 +6810,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
@@ -6759,12 +6902,15 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     cleanup_stale_compose_replacement_containers
+    if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
