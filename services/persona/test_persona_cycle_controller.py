@@ -27,6 +27,7 @@ from services.persona import persona_cycle_controller as regime_consumer
 from services.persona.cron_ooda_closure import append_ooda_packet
 from services.persona.harness import HarnessSurface, PersistentHarnessOwner
 from services.persona.persona_cycle_controller import (
+    CaseFileProposal,
     CycleOwners, PersonaCycleController, packet_identity, read_packets,
 )
 from services.persona.write_owner import CreatePersonaRequest, PersistentPersonaOwner
@@ -127,17 +128,41 @@ def memory_service(tmp_path_factory):
 @pytest.fixture
 def system(tmp_path, monkeypatch, memory_service):
     state = {"jobs": [], "runs": {}, "turns": 0, "outage": False, "paths": [], "answer": OUTPUT,
-             "answer_fn": None, "materialize": [], "prompts": {}, "obs": {}, "workspaces": tmp_path / "ws"}
+             "answer_fn": None, "materialize": [], "prompts": {}, "obs": {}, "workspaces": tmp_path / "ws",
+             "broker_runs": {}, "users": [], "memory_ids": [], "record_override": None}
+    broker_path = "/api/openclaw-adapter/agents/persona-tools/runs"
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
+        def do_GET(self):
+            # Test double of the adapter's per-run record route (the real broker is exercised by the integration test).
+            assert self.headers.get("X-Pantheon-Service-Token") == "fixture-adapter-token"
+            assert self.path.startswith(broker_path + "/")
+            run = state["broker_runs"].get(self.path.rsplit("/", 1)[1])
+            override = state["record_override"]
+            if override is not None:
+                run = override(run)
+            status, result = (200, {"status": "ok", "record": run}) if run is not None else (404, {"status": "not_found"})
+            raw = json.dumps(result).encode()
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             state["paths"].append(self.path)
             status = 200
-            if self.path == "/api/openclaw-adapter/gateway/cron":
+            if self.path == broker_path:
+                assert self.headers.get("X-Pantheon-Service-Token") == "fixture-adapter-token"
+                assert body["purpose"] == "daily_cycle"
+                ref = f"ptr-{len(state['broker_runs']) + 1}"
+                state["broker_runs"][ref] = {"run_ref": ref, "persona_id": body["persona_id"], "purpose": body["purpose"],
+                                             "session_user": body["session_user"], "run_id": None, "calls": [], "proposals": []}
+                status, result = 201, {"status": "ok", "run": {"run_ref": ref}}
+            elif self.path == "/api/openclaw-adapter/gateway/cron":
                 assert self.headers.get("X-Pantheon-Service-Token") == "fixture-adapter-token"
                 method, params = body["method"], body["params"]
                 if method == "cron.list":
@@ -171,7 +196,25 @@ def system(tmp_path, monkeypatch, memory_service):
                 state["prompts"][pid] = body["input"]
                 status = 503 if state["outage"] else 200
                 answer = state["answer_fn"](pid, body["input"]) if state["answer_fn"] else state["answer"]
-                result = {"output": [{"content": [{"type": "output_text", "text": json.dumps(answer)}]}]}
+                state["users"].append(body.get("user"))
+                reg = next((r for r in state["broker_runs"].values() if r["session_user"] == body.get("user")), None)
+                if reg is not None and not state["outage"] and answer is not None:
+                    # What the gateway plugin and broker would record: memory reads, then one call per proposal.
+                    reg["run_id"] = f"gw-run-{state['turns']}"
+                    if state["memory_ids"]:
+                        reg["calls"].append({"tool": "persona_memory_recall", "outcome": "ok",
+                                             "canonical_ids": list(state["memory_ids"])})
+                    for proposal in answer.get("proposals", []):
+                        try:
+                            CaseFileProposal.model_validate(proposal)
+                            assert bool(proposal.get("case_file_item_ids")) != bool(proposal.get("none_applicable_reason"))
+                        except Exception:  # the broker refuses it; nothing is recorded as a proposal
+                            reg["calls"].append({"tool": "persona_proposal_submit", "outcome": "refused", "canonical_ids": []})
+                            continue
+                        reg["calls"].append({"tool": "persona_proposal_submit", "outcome": "recorded", "canonical_ids": []})
+                        reg["proposals"].append(proposal)
+                # The text reply is deliberately not the proposal channel any more.
+                result = {"output": [{"content": [{"type": "output_text", "text": "Cycle done."}]}]}
             else:
                 raise AssertionError(self.path)
             raw = json.dumps(result).encode()
@@ -309,7 +352,7 @@ def test_restart_does_not_retry_an_uncertain_provider_or_risk_attempt(system):
     class ProcessDeath(BaseException):
         pass
 
-    def interrupted(*args):
+    def interrupted(*args, **kwargs):
         raise ProcessDeath()
 
     controller.turn_runner = interrupted
@@ -327,7 +370,9 @@ def test_schema_failure_stops_at_observing_and_never_executes_model_commands(sys
     state["answer"] = {**OUTPUT, "proposals": [{"kind": "broker_order", "parameters": {"symbol": "2330"}}]}
     packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
     assert packet["status"] == "observing"
-    assert "ValidationError" in packet["persona_cycle"]["failure_reason"]
+    # The broker refuses the invalid proposal; with nothing recorded there is no proposal and no retry from text.
+    assert packet["persona_cycle"]["failure_reason"] == "tool_record_unavailable:no_proposal_submitted"
+    assert state["turns"] == 1 and "decisions" not in packet["persona_cycle"]
 
 
 def test_trading_pool_risk_owner_runs_when_observe_and_agent_are_unavailable(system):
@@ -648,7 +693,10 @@ def test_two_personas_with_different_shortfalls_get_different_lessons_and_never_
     assert "TWO-" not in state["prompts"]["persona-cycle-test"]
     assert "ONE-" not in state["prompts"]["persona-cycle-two"]
     assert "CaseFile" in state["prompts"]["persona-cycle-test"]
-    assert '"none_applicable_reason"' in state["prompts"]["persona-cycle-test"]  # the schema the turn must follow
+    prompt = state["prompts"]["persona-cycle-test"]
+    assert "persona_memory_recall" in prompt and "persona_mental_model_read" in prompt
+    assert "persona_proposal_submit" in prompt and "none_applicable_reason" in prompt
+    assert "Return only JSON" not in prompt
 
     # The OODA packet records the case file id and digest, for the cycle and for each proposal.
     for packet in (one_packet, two_packet):
@@ -679,18 +727,64 @@ def test_each_proposal_gets_its_own_case_file_composed_for_its_decision(system):
     assert removal["case_file_scope"] == demand["case_file_scope"] == "proposal"
 
 
-@pytest.mark.parametrize("proposal,reason", [
-    ({"kind": "no_action", "reason": "x", "evidence_refs": []}, "neither"),
-    ({"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": ["lessons:memory_x:not-there"]}, "stranger"),
+@pytest.mark.parametrize("proposal,failure", [
+    # neither / both: the broker refuses the submission, so the record holds no proposal
+    ({"kind": "no_action", "reason": "x", "evidence_refs": []}, "tool_record_unavailable:no_proposal_submitted"),
+    ({"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": ["lessons:memory_x:not-there"]},
+     "case_file_citation_invalid"),
     ({"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": ["facts:strategy_pool:p"],
-      "none_applicable_reason": "both"}, "both"),
+      "none_applicable_reason": "both"}, "tool_record_unavailable:no_proposal_submitted"),
 ])
-def test_proposal_must_cite_case_file_items_or_state_none_applicable(system, proposal, reason):
+def test_proposal_must_cite_case_file_items_or_state_none_applicable(system, proposal, failure):
     controller, state, owner, _ = system
-    state["answer"] = {"orient": "o", "memory_candidates": [], "proposals": [proposal]}
+    state["answer"] = {"proposals": [proposal]}
     packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
-    assert packet["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert packet["persona_cycle"]["failure_reason"] == failure
     assert packet["status"] == "observing"
+
+
+def test_citation_accepts_a_canonical_id_returned_to_this_run_and_rejects_a_stranger(system):
+    controller, state, owner, _ = system
+    returned = "pmem-00000001-1111-1111-1111-111111111111"
+    state["memory_ids"] = [returned]
+    proposal = {"kind": "no_action", "reason": "x", "evidence_refs": [], "case_file_item_ids": [returned]}
+    state["answer"] = {"proposals": [proposal]}
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["failure_reason"] is None and cycle["decisions"][0]["cited_case_file_item_ids"] == [returned]
+    state["answer"] = {"proposals": [{**proposal, "case_file_item_ids": ["pmem-99999999-1111-1111-1111-111111111111"]}]}
+    stranger = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert stranger["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+
+
+def test_the_run_is_registered_as_a_daily_cycle_before_dispatch_and_text_proposals_are_ignored(system):
+    controller, state, owner, _ = system
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] is None
+    paths = state["paths"]
+    assert paths.index("/api/openclaw-adapter/agents/persona-tools/runs") < paths.index("/v1/responses")
+    registration = next(iter(state["broker_runs"].values()))
+    assert registration["purpose"] == "daily_cycle" and state["users"] == [registration["session_user"]]
+    # A reply whose text carries a valid proposal but whose tool record holds none yields no proposal.
+    state["answer"] = None
+    text_only = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert text_only["persona_cycle"]["failure_reason"] == "tool_record_unavailable:tool_record_no_calls"
+    assert "decisions" not in text_only["persona_cycle"] and state["turns"] == 2
+
+
+@pytest.mark.parametrize("override,reason", [
+    (lambda run: None, "tool_record_missing"),
+    (lambda run: {**run, "persona_id": "someone-else"}, "tool_record_ambiguous"),
+    (lambda run: {**run, "purpose": "panel_interpretation"}, "tool_record_ambiguous"),
+    (lambda run: {**run, "proposals": run["proposals"] + run["proposals"]}, "tool_record_ambiguous"),
+])
+def test_missing_or_ambiguous_tool_record_records_the_reason_and_makes_no_proposal(system, override, reason):
+    controller, state, owner, _ = system
+    state["record_override"] = override
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == "tool_record_unavailable:" + reason
+    assert packet["status"] == "observing" and "decisions" not in packet["persona_cycle"]
+    assert state["turns"] == 1  # never retried
 
 
 def test_no_family_or_underlying_fails_closed_with_reason_and_buys_no_turn_or_default_query(system):
@@ -842,7 +936,7 @@ class _LessonRegistrar:
         return {"registered": [c["lesson_candidate_id"] for c in candidates], "already_registered": []}
 
 
-def test_daily_cycle_stages_memory_candidates_as_lesson_candidates_and_runs_lesson_governance(system, monkeypatch):
+def test_daily_cycle_runs_lesson_governance_and_stages_nothing_from_reply_text(system, monkeypatch):
     """Real entry: consume the cron run. The default controller builds the lesson cycle itself."""
     from services.persona.lesson_cycle import LessonCycle
     controller, gateway, owner, _ = system
@@ -857,35 +951,29 @@ def test_daily_cycle_stages_memory_candidates_as_lesson_candidates_and_runs_less
     monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.test")
     assert controller.lesson_cycle is None
     controller.lesson_cycle = LessonCycle(turn_runner=controller.turn_runner, registrar=registrar, http=memory)
-    gateway["answer"] = {**OUTPUT, "memory_candidates": [
-        {"scope": "pattern", "proposed_change": "wait for the second confirmation", "confidence": 0.6}]}
     controller.reconcile_once()
     gateway["runs"]["job-1"] = [run(1)]
     result = controller.reconcile_once()
     packet = next(iter(read_packets(controller.path).values()))
     cycle = packet["persona_cycle"]
     assert cycle["failure_reason"] is None
-    assert [r["status"] for r in cycle["lesson_staging"]] == ["registered"]
-    staged = registrar.sent[0][0]
-    assert staged["review_state"] == "proposed" and staged["target_env"] == "paper" and staged["trade_episode_ids"] == []
+    # Memory candidates were a text-reply field; with no text parsing nothing is staged from the cycle turn.
+    assert cycle["lesson_staging"] == [] and registrar.sent == []
     assert cycle["lesson_governance"] == {"status": "completed", "results": []}
     assert any("review_state=proposed" in url for url in listed)
     health = result["personas"]["persona-cycle-test"]["lessons"]
-    assert health["staged"] == 1 and health["governance"] == "completed"
+    assert health["staged"] == 0 and health["governance"] == "completed"
 
 
 def test_lesson_steps_that_cannot_run_are_recorded_and_never_fail_the_cycle(system, monkeypatch):
     controller, gateway, owner, _ = system
     monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
-    gateway["answer"] = {**OUTPUT, "memory_candidates": [
-        {"scope": "pattern", "proposed_change": "wait for the second confirmation", "confidence": 0.6}]}
     controller.reconcile_once()
     gateway["runs"]["job-1"] = [run(1)]
     result = controller.reconcile_once()
     cycle = next(iter(read_packets(controller.path).values()))["persona_cycle"]
     assert cycle["failure_reason"] is None and cycle["decisions"][0]["status"] == "no_action"
     assert cycle["lesson_governance"]["status"] == "unavailable" and cycle["lesson_governance"]["reason"]
-    assert cycle["lesson_staging"][0]["status"] == "not_staged" and cycle["lesson_staging"][0]["reason"]
     assert result["personas"]["persona-cycle-test"]["lessons"]["governance"] == "unavailable"
 
 
@@ -947,6 +1035,178 @@ def test_standing_questions_not_declared_without_pool_families(system):
     assert controller.standing_questions([]) == [q for q in controller.standing_questions([]) if q["key"] == "risk_lessons"]
     assert [q["key"] for q in controller.standing_questions(["Momentum", "momentum", " "])] == ["family:momentum", "risk_lessons"]
 
+
+# --- Integration: a cron-dispatched cycle turn through the gateway plugin and the real broker ---------------
+# Real here: the compiled pantheon-persona-tools plugin (run by node: its before_tool_call hook, then execute),
+# the real adapter app with the real PersonaToolBroker (sqlite per-run record), the real Memory Plane over HTTP,
+# the controller's production consume_run path and AdapterToolBrokerClient. The gateway process that would load
+# the plugin and call the model is the fixture server's /v1/responses, which executes the agent's scripted tool
+# calls through the plugin exactly as the gateway would (registry fixture = governed persona tool policy).
+
+_PLUGIN_DIR = Path(__file__).resolve().parents[2] / "integrations" / "openclaw" / "plugins" / "pantheon-persona-tools"
+_ADAPTER_DIR = Path(__file__).resolve().parents[2] / "services" / "openclaw-gateway-adapter"
+_DRIVER = """
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const { config, pluginPath, steps } = JSON.parse(readFileSync(0, "utf8"));
+const plugin = (await import(pathToFileURL(pluginPath).href)).default;
+let hook, factory;
+plugin.register({ pluginConfig: config, registerTool(f) { factory = f; }, on(_n, h) { hook = h; } });
+const out = [];
+let i = 0;
+for (const step of steps) {
+  i += 1;
+  const ctx = { agentId: step.agentId, sessionKey: step.sessionKey, runId: step.runId };
+  const event = { toolName: step.tool, params: step.params ?? {}, runId: step.runId, toolCallId: `tc-${i}` };
+  const verdict = await hook(event, ctx);
+  if (verdict && verdict.block) { out.push({ blocked: true, reason: verdict.blockReason }); continue; }
+  const tool = (factory({ agentId: step.agentId, sessionKey: step.sessionKey }) ?? []).find((t) => t.name === step.tool);
+  if (!tool) { out.push({ passed: true, exposed: false }); continue; }
+  try {
+    const result = await tool.execute(event.toolCallId, event.params);
+    out.push({ ok: true, details: result.details });
+  } catch (error) { out.push({ error: String(error.message) }); }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.fixture
+def brokered(system, memory_service, monkeypatch, tmp_path):
+    import shutil
+    import socket
+    import subprocess
+    import sys
+    import time
+    import uvicorn
+    if not shutil.which("node") or not shutil.which("npm"):
+        pytest.fail("node and npm are required for the plugin leg of this integration test")
+    if not (_PLUGIN_DIR / "node_modules" / ".bin" / "tsc").exists():
+        subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd=_PLUGIN_DIR, check=True, capture_output=True, text=True)
+    subprocess.run(["npm", "run", "build"], cwd=_PLUGIN_DIR, check=True, capture_output=True, text=True)
+    monkeypatch.syspath_prepend(str(_ADAPTER_DIR))
+    monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(tmp_path / "registry.lock"))
+    import main as adapter
+    from persona_tool_broker import BrokerConfig, PersonaToolBroker, http_memory_get
+    from integrations.openclaw.persona_agent_sync import persona_agent_runtime_policy
+    from integrations.openclaw.persona_ooda_runtime import AdapterToolBrokerClient
+    controller, state, owner, _ = system
+    config = BrokerConfig(enabled=True, token="it-broker-secret", memory_api_url=memory_service,
+                          registry_ttl_seconds=0.0, state_path=str(tmp_path / "broker.sqlite3"))
+    tools = persona_agent_runtime_policy()["tools"]
+    registry = {"persona-cycle-test": {"id": "persona-cycle-test", "tools": tools}, "main": {"id": "main"}}
+    broker = PersonaToolBroker(config, agent_lookup=registry.get, memory_get=http_memory_get(config))
+    monkeypatch.setattr(adapter, "_PERSONA_TOOL_BROKER_CONFIG", config)
+    monkeypatch.setattr(adapter, "_PERSONA_TOOL_BROKER", broker)
+    monkeypatch.setattr(adapter, "_ASSISTANT_SERVICE_TOKEN", "fixture-adapter-token")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(adapter.app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started
+    controller.tool_broker = AdapterToolBrokerClient(f"http://127.0.0.1:{port}", "fixture-adapter-token")
+    driver = tmp_path / "driver.mjs"
+    driver.write_text(_DRIVER)
+    plugin_path = _PLUGIN_DIR / "dist" / "src" / "index.js"
+    steps_log = []
+
+    def agent_turn(user, script):
+        """The gateway session for this OpenResponses `user`: the agent's tool calls go through the plugin."""
+        session = f"agent:persona-cycle-test:openresponses-user:{user}"
+        steps = [{"agentId": "persona-cycle-test", "sessionKey": session, "runId": "gw-run-1", "tool": tool,
+                  "params": params} for tool, params in script]
+        payload = {"config": {"brokerUrl": f"http://127.0.0.1:{port}/internal/persona-tools/v1", "brokerToken": "it-broker-secret"},
+                   "pluginPath": str(plugin_path), "steps": steps}
+        done = subprocess.run(["node", str(driver)], input=json.dumps(payload), text=True, capture_output=True, timeout=120)
+        assert done.returncode == 0, done.stderr
+        results = json.loads(done.stdout)
+        steps_log.append(results)
+        return results
+
+    state["agent_turn"] = agent_turn
+    state["steps_log"] = steps_log
+    state["broker"] = broker
+    try:
+        yield controller, state, owner
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+def _proposal(item_ids=None, none_reason=None):
+    p = {"kind": "no_action", "reason": "Nothing to change today.", "evidence_refs": []}
+    if item_ids:
+        p["case_file_item_ids"] = item_ids
+    if none_reason:
+        p["none_applicable_reason"] = none_reason
+    return p
+
+
+def test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker(brokered):
+    controller, state, owner = brokered
+    seen = {}
+
+    def answer(pid, prompt):
+        return None  # the fixture's own recorder is bypassed; tool calls come from agent_turn below
+
+    state["answer_fn"] = answer
+    original_turn = controller.turn_runner
+
+    def dispatch(persona_id, prompt, *, session_user):
+        # The OpenResponses user is the registered session identity; the gateway then runs the agent's tool calls.
+        results = state["agent_turn"](session_user, state["script"](seen))
+        seen["results"] = results
+        return original_turn(persona_id, prompt, session_user=session_user)
+
+    controller.turn_runner = dispatch
+    persona = owner.list_json()[0]
+
+    # Cycle 1: own-bank recall + standing-question read + a proposal citing a canonical id the recall returned.
+    def script_valid(seen_):
+        return [("persona_memory_recall", {"query": "momentum 2330 sizing"}),
+                ("persona_memory_recall", {"query": "momentum 2330 sizing", "bank": "facts"}),
+                ("persona_mental_model_read", {}),
+                ("persona_proposal_submit", _proposal(none_reason="No case-file item bears on staying flat."))]
+    state["script"] = script_valid
+    first = controller.consume_run(persona, "job-1", run(1))
+    results = seen["results"]
+    assert results[0].get("ok"), results[0]
+    own_ids = [h["canonical_ref"] for h in results[0]["details"]["hits"]]
+    assert own_ids and all(i.startswith("persona_memory:pmem-") for i in own_ids)
+    assert not any("TWO-" in json.dumps(r) for r in results)  # nothing of another persona's bank
+    assert results[3]["details"]["recorded"] is True
+    assert first["persona_cycle"]["failure_reason"] is None and first["status"] == "closed"
+    assert first["persona_cycle"]["decisions"][0]["status"] == "no_action"
+
+    # Cycle 2: cites a canonical id returned to THIS run -> accepted.
+    def script_returned(seen_):
+        return [("persona_memory_recall", {"query": "momentum 2330 sizing"}),
+                ("persona_proposal_submit", _proposal(item_ids=own_ids[:1]))]
+    state["script"] = script_returned
+    second = controller.consume_run(persona, "job-1", run(2))
+    assert second["persona_cycle"]["failure_reason"] is None
+    assert second["persona_cycle"]["decisions"][0]["cited_case_file_item_ids"] == own_ids[:1]
+
+    # Cycle 3: cites an id nobody returned (a stranger, even a well-formed one) -> rejected, no decisions.
+    def script_stranger(seen_):
+        return [("persona_proposal_submit", _proposal(item_ids=["persona_memory:pmem-99999999-1111-1111-1111-111111111111"]))]
+    state["script"] = script_stranger
+    third = controller.consume_run(persona, "job-1", run(3))
+    assert third["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"
+    assert third["status"] == "observing" and "decisions" not in third["persona_cycle"]
+
+    # The broker's per-run records are the only proposal source: three registered daily-cycle runs.
+    records = [state["broker"].run_record(ref) for ref in sorted(
+        r["run_ref"] for r in (state["broker"]._store._db.execute("SELECT run_ref FROM runs").fetchall()))]
+    assert [r["purpose"] for r in records] == ["daily_cycle"] * 3
+    assert [len(r["proposals"]) for r in records] == [1, 1, 1]
+    assert state["turns"] == 3
 
 # --- SD-REGIME-STATE-ENGINE R13: first-wave regime consumers (real registry routes over HTTP) ---
 
@@ -1010,7 +1270,8 @@ def test_observe_evaluates_then_reads_active_record_and_case_file_carries_regime
     assert f"regime:{record['regime_class']}" in case_file["lesson_query"]["tags"]
     # The persona's interpretation stays in the packet; the registry record is untouched.
     assert cycle["regime_interpretation"]["written_to_regime_state"] is False
-    assert cycle["regime_interpretation"]["text"] == OUTPUT["orient"]
+    # Free-text replies are no longer parsed; the brokered tool record carries no orient narrative.
+    assert cycle["regime_interpretation"]["text"] is None
     assert get_regime_store().list_regimes(strategy_id="momentum", states=("active",))[0]["record"] == record
 
 
