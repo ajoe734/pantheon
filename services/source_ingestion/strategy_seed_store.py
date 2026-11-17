@@ -15,7 +15,11 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from services.source_ingestion.registry.jsonl_store import JsonlRegistryStore
+from services.source_ingestion.registry.jsonl_store import (
+    JsonlRegistryStore,
+    _local_lock_for,
+    _resolved_key,
+)
 from services.source_ingestion.negative_memory import (
     is_blocking_negative_memory_match,
     negative_memory_record_from_seed,
@@ -26,6 +30,29 @@ from services.source_ingestion.strategy_seed_builder import (
 )
 
 _IDS_AUDIT_OPTIONAL = True  # lazy import to avoid circular dependency
+
+DEFAULT_MAX_SEEDS_PER_SOURCE = 50
+DEFAULT_MAX_TOTAL_SEEDS = 10_000
+DEFAULT_MAX_PRUNED_BUNDLES = 20_000
+
+_MUTABLE_PRUNE_STATUSES = frozenset(
+    {
+        StrategySpecSeedStatus.DRAFT.value,
+        StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
+    }
+)
+_NEGATIVE_MEMORY_STATUSES = frozenset(
+    {
+        StrategySpecSeedStatus.REJECTED.value,
+        StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
+    }
+)
+_GOVERNED_PROTECTED_STATUSES = frozenset(
+    {
+        StrategySpecSeedStatus.ACCEPTED.value,
+        StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC.value,
+    }
+)
 
 _FORBIDDEN_EXECUTION_HINTS = frozenset(
     [
@@ -200,6 +227,175 @@ _REVIEW_TRANSITIONS: dict[str, dict[SeedReviewDecisionAction, str]] = {
 }
 
 
+@dataclass
+class _SeedStoreIndex:
+    synced_generation: int = -1
+    seeds_cache: dict[str, StrategySpecSeed] = None  # type: ignore[assignment]
+    seed_ids_by_bundle: dict[str, list[str]] = None  # type: ignore[assignment]
+    seed_ids_by_source: dict[str, list[str]] = None  # type: ignore[assignment]
+    negative_memory_by_id: dict[str, dict[str, Any]] = None  # type: ignore[assignment]
+    insertion_order: dict[str, int] = None  # type: ignore[assignment]
+    next_seq: int = 0
+    pruned_by_bundle: dict[tuple[str, frozenset[str]], StrategySpecSeed] = None  # type: ignore[assignment]
+    pruned_by_seed_id: dict[str, StrategySpecSeed] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.seeds_cache = {}
+        self.seed_ids_by_bundle = {}
+        self.seed_ids_by_source = {}
+        self.negative_memory_by_id = {}
+        self.insertion_order = {}
+        self.pruned_by_bundle = {}
+        self.pruned_by_seed_id = {}
+
+    def record_pruned(self, seed: StrategySpecSeed) -> None:
+        bundle_key = (seed.evidence_bundle_id, frozenset(seed.source_ids))
+        self.pruned_by_bundle.pop(bundle_key, None)
+        self.pruned_by_bundle[bundle_key] = seed
+        while len(self.pruned_by_bundle) > DEFAULT_MAX_PRUNED_BUNDLES:
+            oldest_key = next(iter(self.pruned_by_bundle))
+            self.pruned_by_bundle.pop(oldest_key, None)
+        self.pruned_by_seed_id.pop(seed.seed_id, None)
+        self.pruned_by_seed_id[seed.seed_id] = seed
+        while len(self.pruned_by_seed_id) > DEFAULT_MAX_PRUNED_BUNDLES:
+            oldest_sid = next(iter(self.pruned_by_seed_id))
+            self.pruned_by_seed_id.pop(oldest_sid, None)
+
+    def remove_active_seed(self, seed_id: str, raw: Mapping[str, Any] | None = None) -> None:
+        cached = self.seeds_cache.pop(seed_id, None)
+        self.negative_memory_by_id.pop(seed_id, None)
+        self.insertion_order.pop(seed_id, None)
+        bundle_id = (
+            cached.evidence_bundle_id
+            if cached is not None
+            else str((raw or {}).get("evidence_bundle_id") or "")
+        )
+        if bundle_id and bundle_id in self.seed_ids_by_bundle:
+            lst = self.seed_ids_by_bundle[bundle_id]
+            if seed_id in lst:
+                lst.remove(seed_id)
+            if not lst:
+                self.seed_ids_by_bundle.pop(bundle_id, None)
+        source_id = (
+            cached.source_id
+            if cached is not None
+            else str((raw or {}).get("source_id") or "")
+        )
+        if source_id and source_id in self.seed_ids_by_source:
+            lst = self.seed_ids_by_source[source_id]
+            if seed_id in lst:
+                lst.remove(seed_id)
+            if not lst:
+                self.seed_ids_by_source.pop(source_id, None)
+
+    def upsert_active_seed(self, seed: StrategySpecSeed, record: dict[str, Any]) -> None:
+        sid = seed.seed_id
+        self.seeds_cache[sid] = seed
+        if sid not in self.insertion_order:
+            self.next_seq += 1
+            self.insertion_order[sid] = self.next_seq
+
+        bundle_list = self.seed_ids_by_bundle.setdefault(seed.evidence_bundle_id, [])
+        if sid not in bundle_list:
+            bundle_list.append(sid)
+
+        source_list = self.seed_ids_by_source.setdefault(seed.source_id, [])
+        if sid not in source_list:
+            source_list.append(sid)
+
+        neg = negative_memory_record_from_seed(record)
+        if neg is not None:
+            self.negative_memory_by_id[sid] = neg
+        else:
+            self.negative_memory_by_id.pop(sid, None)
+
+        self.pruned_by_seed_id.pop(sid, None)
+        bundle_key = (seed.evidence_bundle_id, frozenset(seed.source_ids))
+        existing_pruned = self.pruned_by_bundle.get(bundle_key)
+        if existing_pruned is not None and existing_pruned.seed_id == sid:
+            self.pruned_by_bundle.pop(bundle_key, None)
+
+
+_SEED_INDEXES: dict[str, _SeedStoreIndex] = {}
+
+
+def _seed_index_for(path: Path) -> _SeedStoreIndex:
+    key = _resolved_key(path)
+    idx = _SEED_INDEXES.get(key)
+    if idx is None:
+        idx = _SeedStoreIndex()
+        _SEED_INDEXES[key] = idx
+    return idx
+
+
+def _prune_priority_tier(status: str) -> int:
+    if status in _MUTABLE_PRUNE_STATUSES:
+        return 0
+    if status not in _NEGATIVE_MEMORY_STATUSES and status not in _GOVERNED_PROTECTED_STATUSES:
+        return 1
+    if status not in _NEGATIVE_MEMORY_STATUSES:
+        return 2
+    return 3
+
+
+def _select_prune_candidates(
+    candidate_ids: Sequence[str],
+    raw_records: Mapping[str, dict[str, Any]],
+    insertion_order: Mapping[str, int],
+    count: int,
+) -> list[str]:
+    if count <= 0 or not candidate_ids:
+        return []
+
+    def _sort_key(sid: str) -> tuple[int, str, int]:
+        raw = raw_records.get(sid) or {}
+        status = str(raw.get("status") or StrategySpecSeedStatus.DRAFT.value)
+        created_at = str(raw.get("created_at") or "")
+        seq = insertion_order.get(sid, 0)
+        return (_prune_priority_tier(status), created_at, seq)
+
+    ordered = sorted(candidate_ids, key=_sort_key)
+    return ordered[:count]
+
+
+def _seed_records_replay_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    if left == right:
+        return True
+    if left.get("seed_id") != right.get("seed_id"):
+        return False
+    for key in set(left.keys()) | set(right.keys()):
+        if key == "metadata":
+            l_meta = dict(left.get("metadata") or {})
+            r_meta = dict(right.get("metadata") or {})
+            l_meta.pop("materialization_mode", None)
+            r_meta.pop("materialization_mode", None)
+            if l_meta != r_meta:
+                return False
+            continue
+        if left.get(key) != right.get(key):
+            return False
+    return True
+
+
+def _seeds_replay_equal(left: StrategySpecSeed, right: StrategySpecSeed) -> bool:
+    return _seed_records_replay_equal(left.to_dict(), right.to_dict())
+
+
+def _resolve_positive_int(
+    explicit: int | None,
+    env_name: str,
+    default: int,
+) -> int:
+    if explicit is not None:
+        val = int(explicit)
+    else:
+        raw = os.environ.get(env_name, "").strip()
+        val = int(raw) if raw else default
+    if val < 1:
+        raise StrategySpecSeedStoreError(f"{env_name} must be >= 1; got {val}")
+    return val
+
+
 class StrategySpecSeedStore:
     """JSONL-backed store for StrategySpecSeed persistence.
 
@@ -207,9 +403,21 @@ class StrategySpecSeedStore:
     derives seed_id from a stable hash of evidence_bundle_id + source_ids +
     hypothesis, so re-materializing the same evidence produces the same key
     and upserts rather than duplicates.
+
+    Growth bounds:
+    - ``max_seeds_per_source`` (default 50): bounds active seeds per ``source_id``,
+      pruning superseded mutable bundle versions while retaining replay idempotency.
+    - ``max_total_seeds`` (default 10,000): bounds total active seeds in the store.
     """
 
-    def __init__(self, path: str | Path | None = None, *, audit_store: Any = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        audit_store: Any = None,
+        max_seeds_per_source: int | None = None,
+        max_total_seeds: int | None = None,
+    ) -> None:
         resolved = (
             Path(path)
             if path
@@ -220,6 +428,16 @@ class StrategySpecSeedStore:
                 )
             )
         )
+        self._max_seeds_per_source = _resolve_positive_int(
+            max_seeds_per_source,
+            "STRATEGY_SEED_MAX_PER_SOURCE",
+            DEFAULT_MAX_SEEDS_PER_SOURCE,
+        )
+        self._max_total_seeds = _resolve_positive_int(
+            max_total_seeds,
+            "STRATEGY_SEED_MAX_TOTAL",
+            DEFAULT_MAX_TOTAL_SEEDS,
+        )
         self._store = JsonlRegistryStore(resolved, id_field="seed_id")
         self._audit_store = audit_store
 
@@ -227,48 +445,188 @@ class StrategySpecSeedStore:
     def path(self) -> Path:
         return self._store.path
 
-    def save(self, seed: StrategySpecSeed) -> None:
-        """Persist seed (upsert).  Validates governance invariants before writing."""
+    @property
+    def max_seeds_per_source(self) -> int:
+        return self._max_seeds_per_source
+
+    @property
+    def max_total_seeds(self) -> int:
+        return self._max_total_seeds
+
+    def _ensure_index_locked(self) -> tuple[_SeedStoreIndex, dict[str, dict[str, Any]]]:
+        gen, raw_records = self._store._raw_records_snapshot_locked()
+        index = _seed_index_for(self._store.path)
+        if index.synced_generation == gen:
+            return index, raw_records
+
+        if not raw_records and index.synced_generation != -1:
+            index.pruned_by_bundle.clear()
+            index.pruned_by_seed_id.clear()
+
+        old_cache = index.seeds_cache
+        index.seeds_cache = {sid: old_cache[sid] for sid in raw_records if sid in old_cache}
+        index.seed_ids_by_bundle.clear()
+        index.seed_ids_by_source.clear()
+        index.negative_memory_by_id.clear()
+        index.insertion_order.clear()
+        index.next_seq = 0
+
+        for sid, raw in raw_records.items():
+            index.next_seq += 1
+            index.insertion_order[sid] = index.next_seq
+            bundle_id = str(raw.get("evidence_bundle_id") or "")
+            if bundle_id:
+                index.seed_ids_by_bundle.setdefault(bundle_id, []).append(sid)
+            source_id = str(raw.get("source_id") or "")
+            if source_id:
+                index.seed_ids_by_source.setdefault(source_id, []).append(sid)
+            neg = negative_memory_record_from_seed(raw)
+            if neg is not None:
+                index.negative_memory_by_id[sid] = neg
+            index.pruned_by_seed_id.pop(sid, None)
+
+        index.synced_generation = gen
+        return index, raw_records
+
+    def _get_or_build_seed_locked(
+        self,
+        seed_id: str,
+        raw_records: Mapping[str, dict[str, Any]],
+        index: _SeedStoreIndex,
+    ) -> StrategySpecSeed | None:
+        cached = index.seeds_cache.get(seed_id)
+        if cached is not None:
+            return cached
+        raw = raw_records.get(seed_id)
+        if raw is None:
+            return None
+        seed = StrategySpecSeed.from_dict(raw)
+        index.seeds_cache[seed_id] = seed
+        return seed
+
+    def is_active_seed(self, seed_id: str) -> bool:
+        with _local_lock_for(self._store.path):
+            _, raw_records = self._ensure_index_locked()
+            return str(seed_id) in raw_records
+
+    def save(self, seed: StrategySpecSeed) -> bool:
+        """Persist seed (upsert).  Validates governance invariants before writing.
+
+        Returns True when a durable write was performed, or False when the call
+        was an idempotent replay.
+        """
         _assert_no_direct_execution_route(seed)
         _assert_no_blocking_negative_memory(seed)
         record = seed.to_dict()
         # Promote license_scope and allowed_use to top-level queryable fields.
         record.setdefault("license_scope", seed.metadata.get("source_license_scope", ""))
         record.setdefault("allowed_use", list(seed.metadata.get("access_scope") or []))
-        self._store.upsert(record)
+
+        with self._store._mutation_lease():
+            index, raw_records = self._ensure_index_locked()
+            existing_raw = raw_records.get(seed.seed_id)
+            if existing_raw is not None and _seed_records_replay_equal(existing_raw, record):
+                return False
+
+            pruned_existing = index.pruned_by_seed_id.get(seed.seed_id)
+            if pruned_existing is not None and _seeds_replay_equal(pruned_existing, seed):
+                return False
+
+            pruned_ids: list[str] = []
+            src_candidates = [
+                sid
+                for sid in index.seed_ids_by_source.get(seed.source_id, ())
+                if sid != seed.seed_id and sid not in pruned_ids and sid in raw_records
+            ]
+            max_other_for_source = max(0, self._max_seeds_per_source - 1)
+            if len(src_candidates) > max_other_for_source:
+                excess_src = len(src_candidates) - max_other_for_source
+                pruned_ids.extend(
+                    _select_prune_candidates(
+                        src_candidates,
+                        raw_records,
+                        index.insertion_order,
+                        excess_src,
+                    )
+                )
+
+            pruned_set = set(pruned_ids)
+            active_other_count = sum(
+                1 for sid in raw_records if sid != seed.seed_id and sid not in pruned_set
+            )
+            max_other_total = max(0, self._max_total_seeds - 1)
+            if active_other_count > max_other_total:
+                excess_total = active_other_count - max_other_total
+                total_candidates = [
+                    sid
+                    for sid in raw_records
+                    if sid != seed.seed_id and sid not in pruned_set
+                ]
+                pruned_ids.extend(
+                    _select_prune_candidates(
+                        total_candidates,
+                        raw_records,
+                        index.insertion_order,
+                        excess_total,
+                    )
+                )
+
+            for pid in pruned_ids:
+                pruned_raw = raw_records.get(pid)
+                pruned_seed = self._get_or_build_seed_locked(pid, raw_records, index)
+                if pruned_seed is not None:
+                    index.record_pruned(pruned_seed)
+                index.remove_active_seed(pid, pruned_raw)
+
+            wrote = self._store.upsert_and_delete(record, delete_ids=pruned_ids)
+            index.upsert_active_seed(seed, record)
+            index.synced_generation = self._store.generation
+            return wrote
 
     def get(self, seed_id: str) -> StrategySpecSeed | None:
-        record = self._store.read_by_id(seed_id)
-        if record is None:
-            return None
-        return StrategySpecSeed.from_dict(record)
+        key = str(seed_id)
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            return self._get_or_build_seed_locked(key, raw_records, index)
 
     def list_all(self) -> list[StrategySpecSeed]:
-        return [StrategySpecSeed.from_dict(r) for r in self._store.read_all()]
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            out: list[StrategySpecSeed] = []
+            for sid in raw_records:
+                seed = self._get_or_build_seed_locked(sid, raw_records, index)
+                if seed is not None:
+                    out.append(seed)
+            return out
 
     def list_by_status(self, status: str | StrategySpecSeedStatus) -> list[StrategySpecSeed]:
         target = status.value if isinstance(status, StrategySpecSeedStatus) else str(status)
-        return [
-            StrategySpecSeed.from_dict(r)
-            for r in self._store.read_all()
-            if r.get("status") == target
-        ]
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            out: list[StrategySpecSeed] = []
+            for sid, raw in raw_records.items():
+                if raw.get("status") != target:
+                    continue
+                seed = self._get_or_build_seed_locked(sid, raw_records, index)
+                if seed is not None:
+                    out.append(seed)
+            return out
 
     def list_by_bundle(self, evidence_bundle_id: str) -> list[StrategySpecSeed]:
-        return [
-            StrategySpecSeed.from_dict(r)
-            for r in self._store.read_all()
-            if r.get("evidence_bundle_id") == evidence_bundle_id
-        ]
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            out: list[StrategySpecSeed] = []
+            for sid in index.seed_ids_by_bundle.get(evidence_bundle_id, ()):
+                seed = self._get_or_build_seed_locked(sid, raw_records, index)
+                if seed is not None:
+                    out.append(seed)
+            return out
 
     def list_negative_memory_records(self) -> list[dict[str, Any]]:
         """Return rejected/retired/failed seed records as matcher inputs."""
-        records: list[dict[str, Any]] = []
-        for raw in self._store.read_all():
-            record = negative_memory_record_from_seed(raw)
-            if record is not None:
-                records.append(record)
-        return records
+        with _local_lock_for(self._store.path):
+            index, _ = self._ensure_index_locked()
+            return [dict(record) for record in index.negative_memory_by_id.values()]
 
     def record_review_decision(
         self,
@@ -525,19 +883,28 @@ class StrategySpecSeedStore:
         """Return an existing seed for this bundle+sources if one exists.
 
         Used by the materializer to detect idempotent re-runs without
-        re-building the full seed payload.
+        re-building the full seed payload, including when an older version of a
+        bundle was superseded and pruned from active seeds.
         """
-        source_set = set(source_ids)
-        for r in self._store.read_all():
-            if r.get("evidence_bundle_id") != evidence_bundle_id:
-                continue
-            stored_sources = set(r.get("source_ids") or [])
-            if stored_sources == source_set:
-                return StrategySpecSeed.from_dict(r)
+        source_set = frozenset(source_ids)
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            for sid in index.seed_ids_by_bundle.get(evidence_bundle_id, ()):
+                raw = raw_records.get(sid)
+                if raw is None:
+                    continue
+                stored_sources = frozenset(raw.get("source_ids") or ())
+                if stored_sources == source_set:
+                    return self._get_or_build_seed_locked(sid, raw_records, index)
+            pruned = index.pruned_by_bundle.get((evidence_bundle_id, source_set))
+            if pruned is not None:
+                return pruned
         return None
 
     def count(self) -> int:
-        return len(self._store.read_all())
+        with _local_lock_for(self._store.path):
+            _, raw_records = self._ensure_index_locked()
+            return len(raw_records)
 
 
 def _require_text(value: Any, field_name: str) -> str:
