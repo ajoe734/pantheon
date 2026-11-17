@@ -176,6 +176,7 @@ def test_ssf_reader_returns_the_same_rows_from_run_files_and_from_keyed_store(tm
 
 
 def test_regime_observations_equal_from_run_files_and_keyed_store(tmp_path, monkeypatch):
+    pytest.importorskip("numpy")
     from services.research.regime.features import load_governed_observations
 
     rows = [{"dataset": "tw_index_daily", "index_code": "TAIEX", "date": f"2026-11-{d:02d}", "event_time": f"2026-11-{d:02d}T00:00:00Z",
