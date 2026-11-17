@@ -12173,6 +12173,137 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_timestamp="2026-07-20T00:00:00+00:00",
                 )
 
+    # --- SUP-REVIEWER-REASSIGNMENT-RECORD-AND-DONE-GATE-20261117 ---
+    def _post_reassignment_task(self, *, status: str = "review_approved", head: str = "a" * 40, approved: str | None = None) -> dict[str, Any]:
+        return {
+            "id": "REG-002",
+            "owner": "Claude",
+            "reviewer": "Claude2",
+            "status": status,
+            "review_binding": {"head_sha": approved if approved is not None else head},
+        }
+
+    def _reassigned_before_commit_log(self, tmpdir: str) -> Path:
+        event = audited_reassignment_event(
+            task_id="REG-002", old_owner="Claude", new_owner="Claude",
+            old_reviewer="Antigravity2", new_reviewer="Claude2",
+            timestamp="2026-11-17T06:00:00Z",
+        )
+        log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+        log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        return log_file
+
+    def test_done_accepts_reassignment_before_commit_with_exact_head_approval(self) -> None:
+        head = "a" * 40
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                result = ai_status._verified_done_reviewer_reassignment(
+                    self._post_reassignment_task(head=head),
+                    commit_reviewer="Antigravity2",
+                    current_reviewer="Claude2",
+                    commit_timestamp="2026-11-17T07:00:00+00:00",
+                    delivered_head=head,
+                )
+        self.assertTrue(result["approved_head_binding"])
+        self.assertEqual(result["new_reviewer"], "Claude2")
+
+    def test_done_refuses_reassignment_before_commit_without_matching_approval(self) -> None:
+        head = "a" * 40
+        cases = {
+            "mismatching head": self._post_reassignment_task(head=head, approved="b" * 40),
+            "missing approval": {**self._post_reassignment_task(head=head), "review_binding": {}},
+            "not approved": self._post_reassignment_task(head=head, status="review"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            for label, task in cases.items():
+                with self.subTest(label), mock.patch.object(ai_status, "LOG_FILE", log_file):
+                    with self.assertRaisesRegex(
+                        SystemExit, "reviewer reassignment must follow the delivered commit"
+                    ):
+                        ai_status._verified_done_reviewer_reassignment(
+                            task,
+                            commit_reviewer="Antigravity2",
+                            current_reviewer="Claude2",
+                            commit_timestamp="2026-11-17T07:00:00+00:00",
+                            delivered_head=head,
+                        )
+
+    def test_done_still_refuses_trailer_that_was_never_reviewer_even_with_approval(self) -> None:
+        head = "a" * 40
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                with self.assertRaisesRegex(SystemExit, "does not bind the commit reviewer"):
+                    ai_status._verified_done_reviewer_reassignment(
+                        self._post_reassignment_task(head=head),
+                        commit_reviewer="Codex",
+                        current_reviewer="Claude2",
+                        commit_timestamp="2026-11-17T07:00:00+00:00",
+                        delivered_head=head,
+                    )
+
+    def test_handoff_rejects_head_trailer_naming_replaced_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            def git(*a: str) -> str:
+                return subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                "REG-002: x\n\nLLM-Agent: Claude\nTask-ID: REG-002\nReviewer: Antigravity2")
+            head = git("rev-parse", "HEAD")
+            task = {"id": "REG-002", "owner": "Claude", "reviewer": "Claude2"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(SystemExit, rf"commit {head}.*Reviewer trailer is `Claude2`"):
+                    ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": head})
+                # Trailer naming an agent that never was the reviewer is left to done-time.
+                git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                    "REG-002: y\n\nReviewer: Codex")
+                ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
+                git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                    "REG-002: z\n\nReviewer: Claude2")
+                ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
+
+    def test_same_family_reassignment_records_independence_exception(self) -> None:
+        event = audited_reassignment_event(
+            task_id="REG-002", old_owner="Claude", new_owner="Claude",
+            old_reviewer="Antigravity2", new_reviewer="Claude2",
+        )
+        record = event["review_independence_exception"]
+        self.assertEqual(record["owner_family"], "claude")
+        self.assertEqual({c["family"] for c in record["considered"]}, {"antigravity", "codex", "copilot", "piastra"})
+        self.assertLess(len(json.dumps(record)), 1024)
+        # Still a valid canonical event after archive: the audit reader keeps it.
+        self.assertIsNotNone(task_machine.validate_assignment_activity_event(event))
+        with_evidence = task_machine.build_assignment_activity_event(
+            task_id="REG-002", timestamp="2026-11-17T06:00:00Z",
+            assignment=task_machine.assignment_transition(
+                "Claude", "Antigravity2", "Claude", "Claude2", actor="Orchestrator", reason="r"),
+            old_generation=1, new_generation=2,
+            capacity_evidence={"codex": "Codex2:terminal_quota:codex"},
+        )
+        reasons = {c["family"]: c["reason"] for c in with_evidence["review_independence_exception"]["considered"]}
+        self.assertEqual(reasons["codex"], "Codex2:terminal_quota:codex")
+
+    def test_cross_family_reassignment_records_no_exception(self) -> None:
+        event = audited_reassignment_event(
+            task_id="REG-002", old_owner="Claude", new_owner="Claude",
+            old_reviewer="Claude2", new_reviewer="Codex",
+        )
+        self.assertNotIn("review_independence_exception", event)
+
+    def test_every_configured_agent_has_a_model_family(self) -> None:
+        config = json.loads((Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json").read_text())
+        names = set(config.get("agents", {})) | set(ai_status.KNOWN_AGENTS)
+        missing = sorted(n for n in names if n != "Human/Ops" and task_machine.agent_family(n) is None)
+        self.assertEqual(missing, [])
+
     def test_done_reviewer_reassignment_ignores_pre_delivery_cycle(self) -> None:
         pre_cycle_one = audited_reassignment_event(
             task_id="REG-002", old_owner="Antigravity", new_owner="Antigravity",
@@ -13362,7 +13493,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["commit_metadata_ref"], "b" * 40)
         self.assertEqual(delivery["commit_timestamp_ref"], "b" * 40)
 
-    def test_collect_done_reviewer_reassignment_before_metadata_commit_refused(self) -> None:
+    def test_collect_done_reviewer_reassignment_before_metadata_commit_bound_by_approval(self) -> None:
         event = audited_reassignment_event(
             old_owner="Codex",
             new_owner="Codex",
@@ -13370,13 +13501,17 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             new_reviewer="Claude2",
             timestamp="2026-11-15T15:48:00Z",
         )
-        with self.assertRaisesRegex(SystemExit, "must follow the delivered commit"):
-            self._multi_refresh_closeout(
-                trailer_owner="Codex",
-                trailer_reviewer="Claude",
-                event=event,
-                authored_at="2026-11-15T16:22:00+00:00",
-            )
+        # SUP-REVIEWER-REASSIGNMENT-RECORD-AND-DONE-GATE-20261117: the reassignment
+        # precedes the commit, but the current reviewer's canonical approval binds
+        # the exact delivered head, so the audited chain is accepted. Refusals for
+        # a missing/mismatching approval are covered in the focused unit tests.
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex",
+            trailer_reviewer="Claude",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        self.assertTrue(delivery["commit_reviewer_reassignment"]["approved_head_binding"])
 
     def test_collect_done_reviewer_stale_trailer_without_event_refused(self) -> None:
         with self.assertRaises(SystemExit):

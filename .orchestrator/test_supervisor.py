@@ -14544,6 +14544,28 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         self.assertEqual(counts_stale, {})
 
 
+class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
+    CONFIG = {"agents": {"claude": {}, "claude2": {}, "codex": {}, "antigravity": {}}}
+
+    def test_cross_family_pair_yields_no_evidence(self) -> None:
+        self.assertEqual(
+            supervisor._review_exception_capacity_evidence(self.CONFIG, "Claude", "Codex"), {}
+        )
+
+    def test_same_family_evidence_lists_only_unavailable_families(self) -> None:
+        def fake_unavailable(config: Any, state: Any, agent: str) -> str | None:
+            return {"codex": "terminal_quota:codex", "antigravity": None}.get(agent, None)
+
+        with (
+            mock.patch.object(supervisor, "load_runtime_state", return_value={}),
+            mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.CONFIG, "Claude", "Claude2"
+            )
+        self.assertEqual(evidence, {"codex": "codex:terminal_quota:codex"})
+
+
 class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()

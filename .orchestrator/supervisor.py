@@ -10233,6 +10233,40 @@ def resolve_obsolete_worker_recovery_receipt(
     return True
 
 
+def _review_exception_capacity_evidence(
+    config: dict[str, Any], owner: str, reviewer: str
+) -> dict[str, str]:
+    """Per-family unavailability evidence for a same-family reviewer pick.
+
+    Only computed when owner and reviewer share a family; best effort and
+    bounded (one health lookup per configured agent, once per reassignment).
+    """
+
+    owner_family = rewrite_task_machine.agent_family(owner)
+    if owner_family is None or owner_family != rewrite_task_machine.agent_family(reviewer):
+        return {}
+    try:
+        state = load_runtime_state(config)
+    except Exception:  # noqa: BLE001 - evidence is advisory, never blocks assignment
+        return {}
+    evidence: dict[str, str] = {}
+    viable: set[str] = set()
+    for agent_id in sorted(config.get("agents", {}) or {}):
+        family = rewrite_task_machine.agent_family(agent_id)
+        if family is None or family == owner_family:
+            continue
+        try:
+            reason = assignment_terminal_unavailability(config, state, agent_id)
+        except Exception:  # noqa: BLE001
+            reason = "health_unreadable"
+        if reason:
+            evidence.setdefault(family, f"{agent_id}:{reason}")
+        else:
+            viable.add(family)
+    # A family with any viable agent has capacity: it carries no evidence.
+    return {family: why for family, why in evidence.items() if family not in viable}
+
+
 def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
@@ -10403,6 +10437,9 @@ def _persist_task_reassignment_locked(
         assignment=assignment,
         old_generation=old_generation,
         new_generation=old_generation + 1,
+        capacity_evidence=_review_exception_capacity_evidence(
+            config, assignment.new_owner, assignment.new_reviewer
+        ),
     )
     if recovery_receipt is not None:
         event["recovery_receipt_id"] = recovery_receipt["receipt_id"]
