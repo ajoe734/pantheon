@@ -56,6 +56,7 @@ TELEMETRY_EVENT_TYPES = {
     "manual_override",
     "kill_switch_action",
     "heartbeat",
+    "runtime_state_snapshot",
     "telemetry_mirror_mismatch",
 }
 
