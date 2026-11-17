@@ -1,0 +1,14 @@
+{
+  "task_id": "COLLECTOR-LISTING-MODULE-SHIPPED-20261117",
+  "diagnosis": "Collector rebuilt from 13a08deaa at 2026-11-17T23:38Z crashed in collector-tw-trading-suspension: load_security_listing_module computed Path(__file__).resolve().parents[3] and the image (/app/collector_stack/runner.py, only collector_stack/ copied) has no such parent -> IndexError 3. Same loader runs for T86 and both price-history sources in warrants listed_only mode. Host-local Dockerfile COPY (23:39Z, recorded in /opt/pantheon-collector/RELEASE) was the temporary repair.",
+  "fix": {
+    "image": "docker-compose.yml build context ../.. with dockerfile deploy/collector/Dockerfile; Dockerfile COPYs services/source_ingestion/security_listing.py to /app/services/source_ingestion/security_listing.py (documented command `docker compose build collector-worker` unchanged).",
+    "loader": "runner.py _security_listing_candidates tries <app>/services/... then repo layout, bounds-checked; missing module raises CollectorConfigError naming every path looked for.",
+    "readme": "Deployment note no longer lists shipping the module as a manual step; scheduling daily refresh_security_listing named as the remaining step."
+  },
+  "validation": [
+    {"command": "cd deploy/collector && python -m pytest tests/test_security_listing_module_shipped.py -q", "result": "5 passed"},
+    {"command": "cd deploy/collector && python -m pytest tests/test_security_listing_module_shipped.py tests/test_compose_and_docs.py tests/test_real_source_repair.py -q", "result": "44 passed"}
+  ],
+  "not_verified": "No docker daemon build was run in this worker; image content is verified by test of Dockerfile COPY source/dest and the repo-root context."
+}

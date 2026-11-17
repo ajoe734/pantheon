@@ -78,6 +78,17 @@ LISTING_FILTERED_SOURCES = frozenset(
 )
 
 
+_LISTING_REL = Path("services") / "source_ingestion" / "security_listing.py"
+
+
+def _security_listing_candidates(runner_file: Path) -> list[Path]:
+    """Where the shared module lives: the image layout (runner at <app>/collector_stack/runner.py, module copied
+    to <app>/services/source_ingestion/) first, then the repo checkout (runner at deploy/collector/collector_stack/).
+    Never indexes past the filesystem root (a shallow path used to raise IndexError)."""
+    parents = runner_file.parents
+    return [parents[n] / _LISTING_REL for n in (1, 3) if n < len(parents)]
+
+
 def load_security_listing_module() -> Any:
     """Load the ONE shared parser (services/source_ingestion/security_listing.py, stdlib only) by path, so the
     collector host and hosted run the same code. Override with PANTHEON_SECURITY_LISTING_MODULE."""
@@ -89,12 +100,12 @@ def load_security_listing_module() -> Any:
             return importlib.import_module("services.source_ingestion.security_listing")
         except ImportError:
             pass
-    path = Path(
-        os.environ.get("PANTHEON_SECURITY_LISTING_MODULE")
-        or Path(__file__).resolve().parents[3] / "services" / "source_ingestion" / "security_listing.py"
-    )
-    if not path.is_file():
-        raise CollectorConfigError(f"security_listing module not found at {path}")
+    override = os.environ.get("PANTHEON_SECURITY_LISTING_MODULE")
+    candidates = [Path(override)] if override else _security_listing_candidates(Path(__file__).resolve())
+    path = next((c for c in candidates if c.is_file()), None)
+    if path is None:
+        looked = ", ".join(str(c) for c in candidates)
+        raise CollectorConfigError(f"security_listing module not found at {looked}")
     spec = importlib.util.spec_from_file_location("security_listing", path)
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     import sys
