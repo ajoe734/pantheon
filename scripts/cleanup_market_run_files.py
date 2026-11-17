@@ -15,7 +15,8 @@ A run file is eligible only when ALL of these hold:
 3. the readers have been on daily bars for at least 5 trading days with zero mismatches
    (``--reader-evidence``: ``{"trading_days": n, "mismatches": 0}``);
 4. its write-date partition is older than the verification window (``--window-days``, default 30);
-5. none of its trade dates is pinned by a gate proof or paper evidence (``--pinned-dates``).
+5. none of its trade dates is pinned by a gate proof or paper evidence (``--pinned-dates``);
+6. every reader in ``KNOWN_RUN_FILE_READERS`` is switched (otherwise nothing is deleted).
 
 Only ``raw/<source>/tw_price_daily`` and ``normalized/tw_price_daily`` are touched; no other dataset.
 """
@@ -42,6 +43,22 @@ REPORT_SCHEMA = "cleanup_market_run_files_report.v1"
 DATASET = "tw_price_daily"
 MIN_READER_DAYS = 5
 DEFAULT_WINDOW_DAYS = 30
+
+
+# Readers of normalized ``tw_price_daily`` run files that exist in the repository. While any entry is not
+# ``switched`` no run file may be deleted: that reader would stop working. Switching a reader means
+# editing it AND setting ``switched`` here (``test_known_readers_list_matches_the_code`` fails when the
+# list and the code disagree). ``marker`` is the text the unswitched reader still contains.
+KNOWN_RUN_FILE_READERS: tuple[dict[str, Any], ...] = (
+    {"file": "services/source_ingestion/intraday_reconcile.py", "lines": "255-290",
+     "reads": "OfficialDaily.from_snapshot: rglob normalized/tw_price_daily/*.jsonl for official daily "
+              "close/volume with line provenance (path, line, sha256) and available_time",
+     "marker": '"normalized" / "tw_price_daily"', "switched": False},
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "lines": "2124-2147",
+     "reads": "stored_instrument_authority: symbol_canonical of normalized tw_price_daily rows, to resolve "
+              "social symbols",
+     "marker": "SOCIAL_SYMBOL_AUTHORITY_DATASET", "switched": False},
+)
 
 
 class CleanupRefused(RuntimeError):
@@ -103,9 +120,12 @@ def build_report(
     pinned_dates: Sequence[str] = (),
     window_days: int = DEFAULT_WINDOW_DAYS,
     store: DailyBarsStore | None = None,
+    known_readers: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = Path(root)
     store = store or DailyBarsStore(root)
+    readers = KNOWN_RUN_FILE_READERS if known_readers is None else known_readers
+    unswitched = [str(r["file"]) for r in readers if not r.get("switched")]
     cutoff = (date.fromisoformat(today) - timedelta(days=window_days)).isoformat()
     pinned = set(pinned_dates)
     gate = _reader_gate(reader_evidence)
@@ -130,7 +150,7 @@ def build_report(
         write_date = path.parent.name[5:]
         size = path.stat().st_size
         trade_dates, without = _file_dates(path)
-        reasons: list[str] = []
+        reasons: list[str] = [f"unswitched_reader:{f}" for f in unswitched]
         if gate:
             reasons.append(gate)
         if write_date > cutoff:
@@ -165,6 +185,7 @@ def build_report(
     report = {
         "schema_version": REPORT_SCHEMA, "root": root.as_posix(), "today": today,
         "window_days": window_days, "cutoff_write_date": cutoff, "reader_gate": gate or "ok",
+        "unswitched_readers": unswitched,
         "partitions": dict(sorted(partitions.items())), "totals": totals,
     }
     report["digest"] = _digest(report)
@@ -224,7 +245,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if not args.execute:
         print(json.dumps({"dry_run": True, "digest": report["digest"], "totals": report["totals"],
-                          "reader_gate": report["reader_gate"]}, sort_keys=True))
+                          "reader_gate": report["reader_gate"],
+                          "unswitched_readers": report["unswitched_readers"]}, sort_keys=True))
         return 0
     try:
         result = execute(args.root, report, expected_digest=args.report_digest,

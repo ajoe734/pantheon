@@ -32,6 +32,7 @@ def _prepared(tmp_path):
 def _report(tmp_path, backfill, **kw):
     kw.setdefault("today", LATER)
     kw.setdefault("reader_evidence", OK_READERS)
+    kw.setdefault("known_readers", ())
     return cl.build_report(tmp_path, backfill_report=backfill, **kw)
 
 
@@ -130,7 +131,8 @@ def test_other_datasets_are_untouched(tmp_path):
     assert (other / "r.jsonl").exists()
 
 
-def test_cli_execute_requires_digest_and_then_deletes(tmp_path):
+def test_cli_execute_requires_digest_and_then_deletes(tmp_path, monkeypatch):
+    monkeypatch.setattr(cl, "KNOWN_RUN_FILE_READERS", ())
     backfill = _prepared(tmp_path)
     (tmp_path / "bf.json").write_text(json.dumps(backfill))
     (tmp_path / "ev.json").write_text(json.dumps(OK_READERS))
@@ -140,3 +142,41 @@ def test_cli_execute_requires_digest_and_then_deletes(tmp_path):
     report = _report(tmp_path, backfill)
     assert cl.main(base + ["--execute", "--report-digest", report["digest"]]) == 0
     assert not list(tmp_path.rglob("*.jsonl*"))
+
+
+def test_refuses_every_file_while_a_known_reader_is_not_switched(tmp_path):
+    backfill = _prepared(tmp_path)
+    assert _report(tmp_path, backfill)["totals"]["eligible_files"] == 3  # all else satisfied
+    readers = [dict(r) for r in cl.KNOWN_RUN_FILE_READERS]
+    assert readers and any(not r["switched"] for r in readers)
+    report = _report(tmp_path, backfill, known_readers=readers)  # the checked in list
+    assert report["totals"]["eligible_files"] == 0 and report["totals"]["eligible_bytes"] == 0
+    for r in readers:
+        if not r["switched"]:
+            assert all(f"unswitched_reader:{r['file']}" in x for x in _reasons(report).values())
+    assert sorted(report["unswitched_readers"]) == sorted(r["file"] for r in readers if not r["switched"])
+    log = tmp_path / "deleted.log"
+    result = cl.execute(tmp_path, report, expected_digest=report["digest"], log=log)
+    assert result["deleted_files"] == 0 and len(list(tmp_path.rglob("*.jsonl*"))) == 3
+    # the real CLI with the checked in list refuses too
+    (tmp_path / "bf.json").write_text(json.dumps(backfill))
+    (tmp_path / "ev.json").write_text(json.dumps(OK_READERS))
+    base = ["--root", str(tmp_path), "--today", LATER, "--backfill-report", str(tmp_path / "bf.json"),
+            "--reader-evidence", str(tmp_path / "ev.json")]
+    dry = _report(tmp_path, backfill, known_readers=None)
+    assert cl.main(base + ["--execute", "--report-digest", dry["digest"]]) == 0
+    assert len(list(tmp_path.rglob("*.jsonl*"))) == 3  # nothing deleted
+
+
+def test_switching_the_last_reader_lifts_the_refusal(tmp_path):
+    backfill = _prepared(tmp_path)
+    switched = [dict(r, switched=True) for r in cl.KNOWN_RUN_FILE_READERS]
+    assert _report(tmp_path, backfill, known_readers=switched)["totals"]["eligible_files"] == 3
+
+
+def test_known_readers_list_matches_the_code():
+    root = Path(__file__).resolve().parents[1]
+    for r in cl.KNOWN_RUN_FILE_READERS:
+        text = (root / r["file"]).read_text(encoding="utf-8")
+        # an unswitched reader still reads run files; a switched one must have dropped the marker
+        assert (r["marker"] in text) is (not r["switched"]), r["file"]
