@@ -2349,6 +2349,74 @@ class PaperRuntimeServiceTest(unittest.TestCase):
 
         self.assertGreaterEqual(heartbeat_count, 2)
 
+    def _cadence_service(self, telemetry):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=1,
+            max_batch_size=10,
+        )
+        clock = {"t": 1000.0}
+        service._heartbeat_clock = lambda: clock["t"]
+        return service, clock
+
+    def test_heartbeat_cadence_follows_interval_not_poll(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        stamps = []
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for _ in range(301):  # five idle minutes, 1 s poll, first call at t=0
+                before = len(telemetry.events)
+                service._maybe_emit_heartbeat()
+                if len(telemetry.events) > before:
+                    stamps.append(clock["t"])
+                clock["t"] += 1.0
+        self.assertIn(len(stamps), (20, 21))
+        self.assertEqual(stamps[0], 1000.0)
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        self.assertLessEqual(max(gaps), 15.0 + 1.0)
+        # many callers in the same instant still emit once
+        n = len(telemetry.events)
+        service._maybe_emit_heartbeat()
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(telemetry.events), n)
+
+    def test_failed_heartbeat_emit_does_not_advance_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        calls = []
+
+        def emit_heartbeat(metadata=None, extra_metrics=None):
+            calls.append(clock["t"])
+            return results.pop(0)
+
+        telemetry.emit_heartbeat = emit_heartbeat
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(calls), 2)
+
+    def test_heartbeat_carries_changed_state_within_one_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._maybe_emit_heartbeat()
+        service._performance_telemetry = {"status": "changed", "code": "x"}
+        clock["t"] += 5.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(telemetry.events), 1)
+        clock["t"] += 10.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(telemetry.events), 2)
+        self.assertEqual(
+            telemetry.events[-1]["metadata"]["performance_telemetry"]["status"],
+            "changed",
+        )
+
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):
