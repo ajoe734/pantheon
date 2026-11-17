@@ -390,7 +390,7 @@ from ..persona_provisioning import (
 
 
 # --- deterministic_provisioning_ids ---
-from ..persona_paper_enrollment import retry_due
+from ..persona_paper_enrollment import enrollment_settled, retry_due
 from ..persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
@@ -4595,7 +4595,7 @@ def _reconcile_paper_enrollment_once() -> int:
         if record.state not in {"provisioning", "succeeded"}:
             continue
         existing = (record.references or {}).get("paper_enrollment")
-        if isinstance(existing, Mapping) and existing.get("status") == "enrolled":
+        if enrollment_settled(existing):
             continue
         if not retry_due(
             existing,
