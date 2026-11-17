@@ -210,3 +210,22 @@ def test_daily_bars_read_pages_symbols_and_dates_within_reader_caps(tmp_path, mo
     bf.backfill(tmp_path, state, today="2026-11-17", apply=True)
     monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
     assert snapshot_coverage(tmp_path) == {s: 3 for s in sorted(syms)}
+
+
+def test_cached_reader_sees_a_rewritten_day_and_one_reader_per_root(tmp_path, monkeypatch):
+    from services.research.alpha_templates import evaluator as ev
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    root = _backfilled(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    first = load_tw_price_daily_snapshot(root, symbols=["AAA"])
+    assert ev._daily_bars_reader(root) is ev._daily_bars_reader(root)
+    day = DailyBarsStore(root)
+    manifest_dates = sorted(p.name[5:-5] for p in day.manifest_dir.glob("date=*.json"))
+    target = manifest_dates[-1]
+    rec = _rec("AAA", target, 777.0)
+    from scripts.backfill_daily_bars import _Rec, effective_metadata
+
+    day.write_records([_Rec(metadata=effective_metadata(rec), source_id="x")], ingest_run_id="rewrite", default_market="TW")
+    again = load_tw_price_daily_snapshot(root, symbols=["AAA"])
+    assert first["AAA"]["closes"][-1] != 777.0 and again["AAA"]["closes"][-1] == 777.0  # not served stale

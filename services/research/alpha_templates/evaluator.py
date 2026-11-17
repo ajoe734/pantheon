@@ -553,14 +553,33 @@ def _daily_bars_snapshot_id(root: Path) -> tuple[str, int]:
     return "sha256:" + hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest(), len(lines)
 
 
+_DAILY_BARS_READERS: dict[str, Any] = {}
+
+
+def _daily_bars_reader(root: Path):
+    """One reader per store root for the process: its manifest, date list and parquet footer caches are
+    keyed by file size and mtime, so a rewritten day is re-read, and a repeated read does not reopen every
+    partition (a measured 0.2 s of a 2 year, 1 symbol read). Caller side only; ``daily_bars_reader.py`` is
+    unchanged."""
+    from services.source_ingestion.daily_bars_reader import DailyBarsReader
+
+    key = str(root)
+    reader = _DAILY_BARS_READERS.get(key)
+    if reader is None:
+        if len(_DAILY_BARS_READERS) >= 8:
+            _DAILY_BARS_READERS.clear()
+        reader = _DAILY_BARS_READERS[key] = DailyBarsReader(root)
+    return reader
+
+
 def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> dict[tuple[str, str], dict[str, Any]]:
     """``{(symbol, trade_date): bar}`` from DailyBarsReader, paged by symbol chunks and date windows
     within the reader caps. ``value`` is not stored in daily bars (None); ``ts`` is the regular 14:30
     Taipei publish time of the trade date, the same rule the run-file read applies to date-only rows."""
-    from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, DailyBarsReader
+    from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS
     from services.source_ingestion.daily_bars_store import DailyBarsError, DailyBarsStore
 
-    reader = DailyBarsReader(root)
+    reader = _daily_bars_reader(root)
     dates = reader.trade_dates()
     if not dates:
         raise TaiwanEvaluationDataError(f"daily bars hold no trading day under {root}")
