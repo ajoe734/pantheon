@@ -2510,6 +2510,36 @@ if now_t.weekday() >= 5:
     emit("skipped", reason="weekend", checked_at=now_u.isoformat())
 if d_str in holidays:
     emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+# TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117: a session covered only by provisional collector
+# closes still lacks its official OpenAPI rows. Once the official next-morning publication time has
+# passed, proceed so the existing bounded official refresh ingests them and the snapshot store
+# reconciles collector vs official (official wins). A collector_close lineage entry exists only
+# while no official row replaced it, so a session already holding official rows never matches.
+OFFICIAL_PUBLISH_TIME = time(7, 0)  # Taipei, morning after the session; 07:30 refresh is past it
+OFFICIAL_PENDING_LOOKBACK_DAYS = 7
+pending_official = {}
+for symbol, snap in snaps:
+    for entry in ((snap.get("lineage") or {}).get("collector_close") or []):
+        try:
+            entry_date = date.fromisoformat(str(entry.get("trade_date"))[:10])
+        except (AttributeError, ValueError):
+            continue
+        published_at = datetime.combine(entry_date + timedelta(days=1), OFFICIAL_PUBLISH_TIME, tzinfo=tz)
+        if (
+            entry_date <= session_date
+            and (session_date - entry_date).days <= OFFICIAL_PENDING_LOOKBACK_DAYS
+            and now_u >= published_at.astimezone(timezone.utc)
+        ):
+            pending_official.setdefault(str(entry_date), set()).add(symbol)
+if pending_official:
+    emit(
+        "proceed",
+        reason="official_rows_missing_collector_only",
+        session_date=str(session_date),
+        pending_trade_dates=sorted(pending_official),
+        symbols=sorted({sym for syms in pending_official.values() for sym in syms}),
+        checked_at=now_u.isoformat(),
+    )
 if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
