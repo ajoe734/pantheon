@@ -1,0 +1,15 @@
+{
+  "task_id": "AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117",
+  "diagnosis": "2026-11-16 ~15:00Z-16:30Z: runner queue wait ~20 min; auto_integrator re-dispatched canonical-review-gate.yml every 5-min tick with no in-flight check; concurrency group keyed on head sha with cancel-in-progress cancelled the queued run each time (412 re-dispatch log lines), leaving #7438/#7454/#7455 red.",
+  "change": {
+    "scripts/git/auto_integrator.py": "outstanding_gate_dispatch_wait(): lists workflow_dispatch runs, skips dispatch when a run titled with the head sha is queued/in_progress (<60m) or any run was created <10m ago; otherwise dispatches once and names the wait in detail. Lookup errors fail open. No new service/endpoint.",
+    ".github/workflows/canonical-review-gate.yml": "run-name carries head sha so runs are attributable to a head."
+  },
+  "tests": {
+    "added": ["test_queued_dispatched_gate_run_is_not_redispatched_every_tick", "test_stale_gate_run_allows_one_more_dispatch"],
+    "before_change": "with the check disabled, 5 ticks produce 5 dispatches (AssertionError: 5 != 1)",
+    "after_change": "5 ticks produce exactly 1 dispatch; later ticks report 'not re-dispatching ... queued'",
+    "command": "python3 -m unittest scripts.git.test_auto_integrator",
+    "result": "Ran 183 tests (includes the 2 new), OK (pytest is not installed in this environment and could not be installed under PEP 668, so unittest was used instead of pytest)"
+  }
+}

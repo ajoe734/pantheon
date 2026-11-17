@@ -76,6 +76,11 @@ on:
         required: true
         type: string
 
+# AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117: the run title carries the
+# head sha so the integrator can find an in-flight dispatched run and avoid
+# re-dispatching (which the concurrency group below would turn into a cancel).
+run-name: ${{ github.workflow }} ${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}
+
 permissions:
   contents: read
   statuses: write
