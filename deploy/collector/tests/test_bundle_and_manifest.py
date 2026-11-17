@@ -172,3 +172,79 @@ def test_bundle_pruner_and_read_only_bundle_server(tmp_path: Path) -> None:
     index_resp = server.handle_request(method="GET", path="/bundles/index.json", headers=auth)
     assert index_resp.status_code == 200
     assert len(json.loads(index_resp.body)["bundles"]) == 2
+
+
+# ---- SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118: the dated listing is published in the bundle tree ----
+
+_LISTING_FIXTURES = Path(__file__).resolve().parents[3] / "services" / "source_ingestion" / "tests" / "fixtures" / "security_listing"
+
+
+def _listing_pages():
+    from collector_stack.runner import load_security_listing_module
+
+    sl = load_security_listing_module()
+    pages = {
+        sl.TWSE_LISTED_URL: (_LISTING_FIXTURES / "twse_isin_strmode2_excerpt.html").read_text(encoding="utf-8"),
+        sl.TPEX_URL: (_LISTING_FIXTURES / "tpex_isin_strmode4_excerpt.html").read_text(encoding="utf-8"),
+    }
+    return sl, pages
+
+
+def _runner(tmp_path, test_hasher):
+    from collector_stack.runner import CollectorRunner
+
+    return CollectorRunner(load_collector_config(DEFAULT_POLICY_PATH, env={}), root_dir=tmp_path, hasher=test_hasher)
+
+
+def test_refresh_publishes_the_listing_state_in_the_bundle_tree_and_hosted_reads_the_same_bytes(tmp_path, test_hasher) -> None:
+    sl, pages = _listing_pages()
+    runner = _runner(tmp_path / "collector", test_hasher)
+    result = runner.refresh_security_listing(pages.__getitem__, listing_date="2026-11-16")
+    assert result["ok"] and result["published"] == {
+        "ok": True, "path": "bundles/security-listing.jsonl", "bytes": runner.listing_state_path.stat().st_size}
+    published = (tmp_path / "collector" / "bundles" / "security-listing.jsonl")
+    assert published.read_bytes() == runner.listing_state_path.read_bytes()
+    assert len(published.read_bytes()) < sl.MAX_STATE_BYTES
+
+    # served by the read only bundle server hosted already pulls from
+    token = "x" * 32
+    served = ReadOnlyBundleServer(tmp_path / "collector", bearer_token=token).handle_request(
+        method="GET", path="/bundles/security-listing.jsonl", headers={"Authorization": f"Bearer {token}"})
+    assert served.status_code == 200 and served.body == published.read_bytes()
+
+    # hosted: same bytes through the bundle transport, one file
+    from services.source_ingestion.connectors.collector_bundle import LocalDirectoryBundleTransport
+
+    hosted = sl.HostedListing(tmp_path / "hosted" / sl.HOSTED_STATE_FILENAME,
+                              transport=LocalDirectoryBundleTransport(tmp_path / "collector"),
+                              mode="shadow", today=lambda: "2026-11-17")
+    assert hosted.sync()["ok"]
+    assert (tmp_path / "hosted" / sl.HOSTED_STATE_FILENAME).read_bytes() == published.read_bytes()
+
+
+def test_a_failed_refresh_publishes_nothing_new_and_pruning_never_touches_the_state(tmp_path, test_hasher) -> None:
+    sl, pages = _listing_pages()
+    runner = _runner(tmp_path, test_hasher)
+    runner.refresh_security_listing(pages.__getitem__, listing_date="2026-11-16")
+    published = tmp_path / "bundles" / "security-listing.jsonl"
+    before = published.read_bytes()
+
+    def broken(url: str) -> str:
+        raise OSError("exchange unreachable")
+
+    failed = runner.refresh_security_listing(broken, listing_date="2026-11-17")
+    assert failed["ok"] is False and "published" not in failed
+    assert published.read_bytes() == before  # the previous dated state stays
+    prune_expired_bundles(tmp_path, max_age_days=0, now=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    assert published.read_bytes() == before
+
+
+def test_a_state_over_the_cap_is_not_published(tmp_path, test_hasher, monkeypatch) -> None:
+    sl, pages = _listing_pages()
+    runner = _runner(tmp_path, test_hasher)
+    runner.refresh_security_listing(pages.__getitem__, listing_date="2026-11-16")
+    (tmp_path / "bundles" / "security-listing.jsonl").unlink()
+    monkeypatch.setattr(sl, "MAX_STATE_BYTES", 10)
+    out = runner.publish_security_listing()
+    assert out["ok"] is False and "byte cap" in out["reason"]
+    assert not (tmp_path / "bundles" / "security-listing.jsonl").exists()

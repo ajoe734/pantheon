@@ -25,8 +25,13 @@ field                                  written by                               
 ``ingest_run_id`` (signal metadata)    paper signal context, services/execution/lean_runtime/        run id
                                        executor.py:390
 ``points[].event_time``                snapshot points (requirement_state.py:562, the trade day)    date
+``normalized_row.date``                the normalized row a source record carries (recorded paper    date
+                                       job evidence: S5-LOOPS-001 source readbacks)
 ``trade_date`` / ``trade_dates``       source records and proofs that name a session               date(s)
 =====================================  ==========================================================  ==========
+
+Recorded paper job evidence (S5-LOOPS-001) names run ids and storage refs, and no trade date field; so the date
+partitions that hold a pinned run's run files (``--run-files-root``) are pinned dates as well.
 
 Dataset digests (``storage.checksum``) are not read: no file under the run tree is named by a digest alone.
 
@@ -87,6 +92,10 @@ def _walk(node: Any, runs: set[str], dates: set[str], depth: int = 0) -> None:
                 dates.add(value.strip()[:10])
             elif key in DATE_LIST_KEYS and isinstance(value, list):
                 dates.update(v.strip()[:10] for v in value if isinstance(v, str) and _DATE_RE.match(v.strip()))
+            elif key == "normalized_row" and isinstance(value, dict):
+                d = value.get("trade_date") or value.get("date")
+                if isinstance(d, str) and _DATE_RE.match(d.strip()):
+                    dates.add(d.strip()[:10])
             elif key == "points" and isinstance(value, list):
                 for point in value:
                     ev = point.get("event_time") if isinstance(point, dict) else None
@@ -122,13 +131,40 @@ def _documents(path: Path) -> Iterator[Any]:
 class PinSource:
     """Read only. One call = one scan; nothing is cached or written."""
 
-    def __init__(self, paths: Iterable[str | Path]) -> None:
+    def __init__(self, paths: Iterable[str | Path], *, run_files_root: str | Path | None = None) -> None:
         self.paths = tuple(Path(p) for p in paths if str(p).strip())
+        # Market data store root: the date partitions that hold a pinned run's ``tw_price_daily`` run files are
+        # pinned dates too (the recorded evidence names runs, rarely dates).
+        self.run_files_root = Path(run_files_root) if run_files_root else None
 
     @classmethod
-    def from_env(cls, environ: Any = None) -> "PinSource":
+    def from_env(cls, environ: Any = None, *, run_files_root: str | Path | None = None) -> "PinSource":
         raw = str((environ if environ is not None else os.environ).get(PIN_PATHS_ENV, "") or "")
-        return cls(p for p in raw.split(os.pathsep) if p.strip())
+        return cls((p for p in raw.split(os.pathsep) if p.strip()), run_files_root=run_files_root)
+
+    def _run_file_dates(self, run_ids: frozenset[str]) -> set[str]:
+        root = self.run_files_root
+        if root is None or not run_ids:
+            return set()
+        dirs: list[Path] = []
+        norm = root / "normalized" / "tw_price_daily"
+        if norm.is_dir():
+            dirs += [d for d in norm.glob("date=*") if d.is_dir()]
+        raw = root / "raw"
+        if raw.is_dir():
+            dirs += [d for d in raw.glob("*/tw_price_daily/date=*") if d.is_dir()]
+        out: set[str] = set()
+        for d in dirs:
+            day = d.name[len("date="):]
+            if not _DATE_RE.match(day):
+                continue
+            try:
+                names = {n.split(".", 1)[0] for n in os.listdir(d)}
+            except OSError as exc:
+                raise PinSourceUnavailable(f"run file partition unreadable: {d}: {exc}") from exc
+            if names & run_ids:
+                out.add(day[:10])
+        return out
 
     def _files(self) -> list[Path]:
         files: list[Path] = []
@@ -143,7 +179,7 @@ class PinSource:
                 raise PinSourceUnavailable(f"pin evidence has more than {MAX_FILES} files")
         return files
 
-    def read(self) -> PinSet:
+    def read(self, *, with_dates: bool = True) -> PinSet:
         if not self.paths:
             raise PinSourceUnavailable(f"pin_source_not_configured: set {PIN_PATHS_ENV} to the gate proof and paper evidence paths")
         files = self._files()
@@ -152,11 +188,13 @@ class PinSource:
         for f in files:
             for doc in _documents(f):
                 _walk(doc, runs, dates)
+        if with_dates:
+            dates |= self._run_file_dates(frozenset(runs))
         return PinSet(frozenset(runs), frozenset(dates), len(files), tuple(str(p) for p in self.paths))
 
     # The callable ``JsonlIngestScheduleStore(pinned_run_ids=...)`` takes; it raises when unresolved.
     def run_ids(self) -> frozenset[str]:
-        return self.read().run_ids
+        return self.read(with_dates=False).run_ids
 
     def trade_dates(self) -> frozenset[str]:
         return self.read().trade_dates
@@ -173,10 +211,12 @@ class PinSource:
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Print the pinned ingest run ids and trade dates (read only).")
     ap.add_argument("--path", action="append", default=[], help="evidence file or directory (default: $%s)" % PIN_PATHS_ENV)
+    ap.add_argument("--run-files-root", help="market data store root: date partitions of pinned runs' run files are pinned dates")
     ap.add_argument("--dates-out", help="write the JSON list of pinned trade dates (input of cleanup_market_run_files --pinned-dates)")
     ap.add_argument("--run-ids-out", help="write the JSON list of pinned ingest run ids")
     args = ap.parse_args(argv)
-    source = PinSource(args.path) if args.path else PinSource.from_env()
+    source = (PinSource(args.path, run_files_root=args.run_files_root) if args.path
+              else PinSource.from_env(run_files_root=args.run_files_root))
     try:
         pins = source.read()
     except PinSourceUnavailable as exc:

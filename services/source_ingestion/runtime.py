@@ -333,7 +333,7 @@ class SourceIngestionRuntime:
         self.llm_proposal_adapter = LLMSourceProposalAdapter(self.proposal_store)
         # Receipts that a gate proof or paper evidence references are kept past retention; when the evidence
         # cannot be read (or SOURCE_INGEST_PIN_EVIDENCE_PATHS is unset) retention drops nothing and health says why.
-        self.pin_source = PinSource.from_env()
+        self.pin_source = PinSource.from_env(run_files_root=self.MARKET_DATA_STORAGE_ROOT)
         self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH, pinned_run_ids=self.pin_source.run_ids)
         self.connector_store = JsonlConfiguredConnectorStore(self.CONNECTOR_STORE_PATH)
         self.schedule_config_store = JsonlConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)

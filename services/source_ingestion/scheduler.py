@@ -849,8 +849,8 @@ class JsonlIngestScheduleStore:
         }
         if self._last_slim:
             stats["last_slim_rewrite"] = dict(self._last_slim)
-        if self._pin_state is not None:
-            stats["receipt_pin_source"] = dict(self._pin_state)
+        if self._pinned_run_ids is not None:
+            stats["receipt_pin_source"] = dict(self._pin_state or {"resolved": None, "reason": "not evaluated yet: no receipt journal to sweep"})
         return stats
 
     def _sample_growth(self, size: int) -> None:
