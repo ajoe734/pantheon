@@ -235,3 +235,14 @@ def test_restore_workflow_passes_steady_state_file():
     job = wf[wf.index("  restore-accepted-baseline:"):]
     assert job.count("--steady-state-file") >= 3
     assert "--mode verify-steady-state" in job
+
+
+def test_restart_loop_after_restore_is_unhealthy_and_named():
+    """Restore path: the post-restore second sample reports the loop (exit 76)."""
+    def r(n):
+        return {"service": "openclaw-gateway-adapter", "state": "running", "restart_count": n, "oom_killed": False}
+    loops = evidence.steady_service_restart_loop([r(54)], [r(55)])
+    assert loops and "openclaw-gateway-adapter" in loops
+    body = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    restore = body[body.index("--mode verify-steady-state"):]
+    assert "--mode verify-restart-loop" in restore[:2500]
