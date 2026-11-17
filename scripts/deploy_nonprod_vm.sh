@@ -30,6 +30,9 @@ DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTE
 DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-7200}}"
 DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
+# Dev functional checks are advisory by default (DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117);
+# --strict-functional-checks restores the legacy blocking/rollback behaviour.
+STRICT_FUNCTIONAL_CHECKS="${STRICT_FUNCTIONAL_CHECKS:-false}"
 PANTHEON_DEV_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER-${DEV_PAPER_EXPRESSION_LAYER-off}}"
 DEV_EVOLUTION_AUTO_CONSUMER_ENABLED="${DEV_EVOLUTION_AUTO_CONSUMER_ENABLED:-${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}}"
 DEV_L2_EXTRACTION_ENABLED="${DEV_L2_EXTRACTION_ENABLED:-false}"
@@ -417,6 +420,10 @@ Options:
   --output <path>        With --refresh-only: write JSON execution outcome to path.
   --preflight-only       With --refresh-only: run only the Taiwan closed-session preflight (no
                          refresh, no stack change) and write its JSON outcome to --output.
+  --strict-functional-checks
+                         dev root only: keep the in-script functional checks (paper fleet,
+                         evolution daily sweep, trade journey residual, bounded refresh
+                         readback) blocking with in-script rollback. Default: advisory.
   --help                 Show this message.
 
 Environment overrides:
@@ -631,6 +638,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --refresh-only) REFRESH_ONLY=true; shift ;;
     --non-blocking) NON_BLOCKING_REFRESH=true; shift ;;
+    --strict-functional-checks) STRICT_FUNCTIONAL_CHECKS=true; shift ;;
     --force) FORCE_REFRESH=true; shift ;;
     --preflight-only) PREFLIGHT_ONLY=true; shift ;;
     --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
@@ -1011,6 +1019,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "${DEV_FE_STATIC_ROOT:-}")"
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=$(shell_quote "${STRICT_FUNCTIONAL_CHECKS:-false}")"
   command_prefix+=" PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED=$(shell_quote "$DEV_PAPER_PRINCIPALS_AUTHORIZED")"
   command_prefix+=" PANTHEON_DEV_CAPITAL_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
@@ -6252,6 +6261,36 @@ verify_steady_services_restored() {
   return 1
 }
 
+# Advisory functional check (DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117).
+# Runs the check, prints one ADVISORY_CHECK_RESULT line with the real result for
+# the workflow to collect, and returns 0 so a failed functional check neither
+# rolls back nor makes the lease guard quarantine the lease. With
+# PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=true a failure rolls back as before.
+run_dev_advisory_check() {
+  local check="$1" rollback_stage="$2" rc=0 strict=false
+  shift 2
+  "$@" || rc=$?
+  [[ "${PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS:-false}" == "true" ]] && strict=true
+  python3 - "${check}" "${rc}" "${strict}" <<'ADVISORY_PY' || true
+import json, sys
+check, rc, strict = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "true"
+print("ADVISORY_CHECK_RESULT " + json.dumps({
+    "check": check,
+    "status": "passed" if rc == 0 else "failed",
+    "reason": "" if rc == 0 else f"exit_{rc}",
+    "mode": "strict" if strict else "advisory",
+    "scope": "deploy_script",
+}, sort_keys=True), flush=True)
+ADVISORY_PY
+  if (( rc != 0 )); then
+    if [[ "${strict}" == "true" ]]; then
+      rollback_dev_bff_on_failure "${rollback_stage}"
+    fi
+    info "advisory check ${check} failed (exit ${rc}); recorded, deploy continues"
+  fi
+  return 0
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
   dump_dev_root_failure_diagnostics
@@ -6613,15 +6652,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
     # Phase 4: Post-Deploy Bounded Verification
-    verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
-      || rollback_dev_bff_on_failure "source_refresh_readback"
+    run_dev_advisory_check bounded_source_refresh_readback source_refresh_readback \
+      verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}"
     PANTHEON_DEV_REPO="$(pwd)" \
       bash scripts/openclaw-configure-shared-model-pool.sh \
       || rollback_dev_bff_on_failure "shared_model_pool"
     retire_dormant_and_one_off_profile_containers \
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
-    verify_dev_paper_fleet \
-      || rollback_dev_bff_on_failure "paper_fleet"
+    run_dev_advisory_check dev_paper_fleet paper_fleet verify_dev_paper_fleet
     # Root deployment replaces the lifecycle projector and BFF together. The
     # BFF can become HTTP-ready while /readyz still reports the prior projector
     # identity, so use the same exact-deployment, bounded recovery gate as the
@@ -6638,14 +6676,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
       || rollback_dev_bff_on_failure "caddy_ingress"
-    verify_dev_evolution_daily_sweep \
-      || rollback_dev_bff_on_failure "evolution_daily_sweep"
+    run_dev_advisory_check evolution_daily_sweep evolution_daily_sweep verify_dev_evolution_daily_sweep
     # Prove the Trade Journey action ledger is genuinely durable on the dev
     # PostgreSQL instance and that clock-drift diagnostics survive the built
     # runtime image. This intentionally restarts operator-bff and verifies
     # receipt replay before the workflow's public smokes run.
-    PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
-      || rollback_dev_bff_on_failure "trade_journey_residual"
+    run_dev_advisory_check trade_journey_residual trade_journey_residual \
+      env PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh
     verify_exact_component_deployment \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;

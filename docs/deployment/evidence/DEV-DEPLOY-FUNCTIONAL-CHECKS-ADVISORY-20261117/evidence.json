@@ -1,0 +1,37 @@
+{
+  "task": "DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117",
+  "design": "docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md sections 3.1, 3.2, delivery step 2",
+  "advisory_workflow_steps": [
+    "market_refresh",
+    "paper_bootstrap",
+    "evolution-dispatch-probe",
+    "loop-prod-tel-002-probe",
+    "agora"
+  ],
+  "advisory_script_checks": [
+    "dev_paper_fleet",
+    "evolution_daily_sweep",
+    "trade_journey_residual",
+    "bounded_source_refresh_readback"
+  ],
+  "mechanism": {
+    "lease_guarded_steps": "guarded_advisory wraps the guarded child so the lease guard sees exit 0; real code returned from a result file; result written to advisory/<check>.json",
+    "unguarded_probes": "continue-on-error when strict_functional_checks is false; outcome read by advisory_summary",
+    "script_checks": "run_dev_advisory_check prints ADVISORY_CHECK_RESULT and returns 0; strict maps to rollback_dev_bff_on_failure",
+    "evidence": "pantheon-dev-advisory-checks-<run>-<attempt> artifact with summary.json (deployment=deployed, acceptance=passed|failed|pending)"
+  },
+  "strict_input": "strict_functional_checks (workflow_dispatch, default false); forwarded as --strict-functional-checks; not set by auto_deploy_dev_pair.py",
+  "compensation_condition": "names steps.functional_gate.outcome == 'failure' instead of paper_bootstrap, market_refresh, agora",
+  "complete_success": "HEARTBEAT:DEPLOY:FUNCTIONAL_GATE(skipped unless strict):PUBLIC_SMOKE:DEPLOY_POSTURE_EVIDENCE",
+  "blocking_set": "unchanged per design 3.1",
+  "tests": [
+    "scripts/test_dev_environment_lease_deploy_contract.py",
+    "scripts/test_nonprod_dev_artifact_workflow.py",
+    "scripts/test_deploy_nonprod_vm.py"
+  ],
+  "residual_findings": [
+    "16 tests in scripts/test_deploy_nonprod_vm.py and others already fail on dev HEAD before this change (finmind and paper-signal-producer groups); unchanged by this task.",
+    "Advisory evidence for in-script checks depends on remote stdout reaching the runner log; verify on first hosted run.",
+    "A guard-level failure (lease lost) inside an advisory lease-guarded step is recorded and the step exits 0; the lease failure file still blocks complete_success."
+  ]
+}
