@@ -32,10 +32,17 @@ doing and by the first eight characters of its session id.
 
 | Work package | Task | State |
 |---|---|---|
-| WP1.1 deploy is build, switch, stack health | to be opened after the pipeline map | open |
-| WP1.2 functional checks after the switch, no rollback | to be opened after the pipeline map | open |
-| WP1.3 steady-service verification after deploy and rollback | ROOT-COMPENSATION-STEADY-SERVICES-20261117 | review approved |
-| WP1.4 deploy the newest green commit | to be opened | open |
+| Design | `docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` (PR #7484) | written |
+| WP1.1 automatic releases stop turning on functional gates | DEV-AUTO-DEPLOY-NO-FUNCTIONAL-PROBE-INPUT-20261117 | open |
+| WP1.1 in-deploy functional checks become advisory | DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117 | open |
+| WP1.2 acceptance stage and verdict | DEV-DEPLOY-ACCEPTANCE-STAGE-20261117 | open |
+| WP1.2 frontend gate hosted checks advisory (execute-plans) | FE-GATE-HOSTED-CHECKS-ADVISORY-DEV-20261117 | open |
+| WP1.3 steady-service helpers | ROOT-COMPENSATION-STEADY-SERVICES-20261117 (PR #7481) | merged; workflow not wired |
+| WP1.3 stack completeness from compose, wired into deploy, compensation and restore | DEV-DEPLOY-STACK-COMPLETENESS-20261117 | open |
+| WP1.4 deploy the newest green commit | DEV-AUTO-DEPLOY-NEWEST-GREEN-20261117 | open |
+
+The workflow and deploy-script tasks are serialised in this order: no probe
+input, advisory checks, stack completeness, newest green, acceptance stage.
 
 Instances: 40 failed dev deploys 11/10 to 11/17; scheduler left stopped by
 compensation 11/16 19:19Z; restore check compares only `/bff/version`; deployer
@@ -45,9 +52,11 @@ window of about 3 minutes after a green tip.
 
 | Work package | Task | State |
 |---|---|---|
-| WP2.1 acceptance probes shipped with each chain | to be opened | open |
+| WP2.1 probe runner and contract | DEV-DEPLOY-ACCEPTANCE-STAGE-20261117 | open |
+| WP2.1 probes for chains already merged (replace the manual hosted acceptance tasks) | to be opened once the probe contract exists | open |
 | WP2.2 three delivery states in reporting | rule in AGENTS.md | in force |
-| WP2.3 daily probe "a persona's day" | to be opened | open |
+| WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 | open |
+| Health that lies: source-ingest readiness | SOURCE-INGEST-READINESS-TRUTHFUL-20261117 | open |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
@@ -61,10 +70,21 @@ consultation since 11/01; pools with one member.
 | WP3.1 heartbeat state on change only | PAPER-RUNTIME-STATE-SNAPSHOT-ON-CHANGE-20261117 | review approved |
 | WP3.1 raw heartbeat retention and reclaim | TELEMETRY-HEARTBEAT-RETENTION-20261117 | review approved |
 | WP3.1 untagged image enumeration | DEV-UNTAGGED-IMAGE-ENUMERATION-ALL-20261117 | see task |
-| WP3.1 remaining writers (distillation queue, event receipts, infrastructure_health, work claims, orphan tmp, health sqlite, pre-compact backups, build cache) | to be opened | open |
-| WP3.2 storage manifest and test | to be opened | open |
-| WP3.3 daily hosted measurement | to be opened | open |
-| WP3.4 container memory limits | to be opened | open |
+| WP3.1 distillation stuck lease and unbounded claim | DISTILLATION-LEASE-PER-JOB-AND-BOUNDED-CLAIM-20261117 | open |
+| WP3.1 distillation seed store rewrite and temp files | DISTILLATION-SEED-STORE-BOUNDED-WRITE-20261117 | open |
+| WP3.1 lifecycle receipts for non-lifecycle events | TRADE-JOURNEY-RECEIPTS-LIFECYCLE-ONLY-20261117 | open |
+| WP3.1 infrastructure_health emission and BFF health database | BFF-DOWNSTREAM-HEALTH-STORAGE-BOUND-20261117 | open |
+| WP3.1 infrastructure_health retention and reclaim of receipts | TELEMETRY-INFRA-HEALTH-RETENTION-20261117 | open |
+| WP3.1 reconciliation drift work claims | RECON-DRIFT-WORK-CLAIMS-RETENTION-20261117 | open |
+| WP3.1 paper runtime temp files and lifecycle outbox | PAPER-RUNTIME-STATE-FILES-BOUND-20261117 | open |
+| WP3.1 search-svc full-table reloads and history | SEARCH-SVC-MEMORY-BOUND-20261117 | open |
+| WP3.1 build cache after build, stale one-shot containers | DEV-DEPLOY-DOCKER-MAINTENANCE-BOUNDS-20261117 | open |
+| WP3.1 collector close capture with a disabled source | COLLECTOR-CLOSE-CAPTURE-DISABLED-SOURCE-20261117 | open |
+| WP3.1 hosted reclaim of deleted rows (coordinator) | TELEMETRY-HEARTBEAT-HOSTED-ACCEPTANCE-20261117 | open |
+| WP3.1 two snapshot pre-compact backup files on hosted (988 MB, created by hand) | release and hosted operations owner | open |
+| WP3.2 storage manifest and test | STORAGE-MANIFEST-AND-GUARD-20261117 | open |
+| WP3.3 daily hosted measurement | DEV-STORAGE-BUDGET-DAILY-MEASUREMENT-20261117 | open |
+| WP3.4 container memory limits | DEV-COMPOSE-MEMORY-LIMITS-20261117 | open |
 
 Instances: see section 2 of the plan.
 
