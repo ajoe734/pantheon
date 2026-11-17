@@ -459,3 +459,10 @@ def test_workflow_accepts_older_green_payload_on_dev_and_names_script_source():
     assert '"${sha}" != "${trusted_ref}"' not in workflow.split("Compensation drill is a dev root only drill")[1].split("docker compose")[0]
     # Older payload: deploy scripts run from .target (the payload), workflow from dev tip.
     assert "Deploy scripts under .target/ come from that payload" in workflow
+
+
+def test_summary_reports_deployed_and_acceptance_separately():
+    from scripts.auto_deploy_dev_pair import summary_lines
+    text = summary_lines({"state": "dispatched", "run_url": "u"})
+    assert "- deployed: pending" in text and "- acceptance: pending" in text
+    assert summary_lines({"state": "up_to_date"}) == ""
