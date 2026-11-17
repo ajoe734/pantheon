@@ -99,6 +99,20 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 The recorded peaks cover about one hour (evening) on release 80d4cf2ca without a persona daily cycle (10:00Z). They are not a daily maximum. The daily hosted measurement is the place where limits are re-checked: after each daily cycle, read `memory.peak` and `memory.events` per container and update the evidence file; any service whose limit falls below 1.5x its peak, or whose `max` event count is above 0, is raised.
 
+## Daily re-check and how to re-size from it
+
+`.github/workflows/dev-storage-budget.yml` (daily 03:17Z, `scripts/measure_hosted_storage.py`) reads, for every running container, the cgroup `memory.max`, `memory.peak`, `memory.events` (`max`, `oom_kill`) and the docker restart count, and puts them in the `memory_table` of the `hosted-storage-report` artifact (columns: service, limit, peak, percent, max_events, oom_kill, restarts). To re-size a limit: download the latest report (or several days), take `peak` per service, and set the new limit to at least 1.5x the highest peak seen, except for cache-bound services (postgres) where the peak only shows page cache. Then update the table above and the `DEV_MEM_LIMIT_<SERVICE>` default.
+
+| finding | severity | meaning |
+|---|---|---|
+| `container_oom_killed` | red (RC3) | `oom_kill` above zero: raise the limit or fix the leak |
+| `container_restarts_grew` | red (RC3) | restart count grew since the previous report |
+| `memory_limit_reached` | warning | `max` counter grew since the previous report |
+| `memory_peak_near_limit` | warning | peak is at or above 90 percent of the limit (a page-cache-bound container reaches this without harm) |
+| `memory_limit_missing` | warning | container has no limit |
+
+Counters reset when a container is recreated; a counter lower than in the previous report is treated as a reset and reports nothing. Collection is read-only: `docker ps`, `docker inspect` (needs docker socket access, which the transport user already has) and reads of world-readable files under `/sys/fs/cgroup/system.slice/docker-<id>.scope/`. Nothing is written on hosted.
+
 ## Rollback
 
 Limits live only in the dev compose file. Revert the commit (or set `DEV_MEM_LIMIT_<SERVICE>` to a larger value) to roll back; the previous accepted release is unaffected. Staging and production compose files are untouched (tested).

@@ -1,0 +1,25 @@
+{
+  "task": "DEV-MEMORY-BUDGET-DAILY-MEASUREMENT-20261117",
+  "register_class": "RC3",
+  "collection": {
+    "per_container": ["memory.max", "memory.peak", "memory.events max", "memory.events oom_kill", "docker RestartCount"],
+    "commands": {
+      "docker ps -q --no-trunc / docker inspect -f": "needs docker socket access (the existing transport user already runs docker ps/exec)",
+      "read of /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.{max,peak,events}": "world-readable, no privilege beyond the transport user"
+    },
+    "read_only": true,
+    "writes_on_hosted": "none",
+    "hosted_workflow_run": "not run from this worktree; the collection was executed locally against 4 containers (service label empty, limit max, counters 0) and parsed by the report"
+  },
+  "runtime_budget": {
+    "reports_per_day": 1,
+    "added_bytes_per_report_at_60_containers": "about 24 KB in report.json (container_memory ~15 KB plus memory_table ~9 KB); raw collection adds about 7 KB, deleted before upload",
+    "retention": "existing 30 day artifact retention",
+    "new_files_on_hosted": 0
+  },
+  "tests": "python3 -m unittest scripts.test_measure_hosted_storage scripts.test_dev_storage_budget_workflow: 21 tests OK",
+  "residual_findings": [
+    "Warnings memory_peak_near_limit will appear daily for page-cache-bound containers (postgres, hindsight, search-svc); by design they stay warnings.",
+    "oom_kill stays above zero until the container is recreated, so a past OOM keeps the report red until the restart that resets counters."
+  ]
+}
