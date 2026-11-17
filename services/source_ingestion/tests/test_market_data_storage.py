@@ -150,3 +150,43 @@ def test_measure_stored_history_depth_reads_daily_bars_when_switched(tmp_path, m
 
     shutil.rmtree(tmp_path / "normalized")
     assert measure_stored_history_depth(tmp_path)["datasets"]["tw_price_daily"]["entity_count"] == 2
+
+
+def test_switched_depth_lists_symbols_through_the_reader_not_the_store(tmp_path, monkeypatch):
+    from services.source_ingestion import daily_bars_store as dbs
+    from services.source_ingestion.market_data_storage import measure_stored_history_depth
+
+    writer = MarketDataStorageWriter(tmp_path)
+    for i, day in enumerate(["2026-11-11", "2026-11-12"]):
+        writer.write_run(result=_result([_rec("2330.TW", day), _rec("2317.TW", day)], f"r{i}"), connector=_connector())
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    monkeypatch.setattr(dbs.DailyBarsStore, "symbol_stats",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("DailyBarsStore.symbol_stats used")))
+    depth = measure_stored_history_depth(tmp_path)
+    assert depth["datasets"]["tw_price_daily"]["entity_count"] == 2 and depth["daily_bar_symbol_count"] == 2
+
+
+def test_nothing_is_switched_or_deleted_by_default_and_dual_write_stays_on(tmp_path, monkeypatch):
+    """Acceptance 8: every setting default keeps today's behaviour."""
+    from services.source_ingestion.market_data_storage import (
+        daily_price_reader_mode, feature_files_enabled, keyed_dataset_reader_mode, keyed_datasets_write_mode,
+        tw_price_daily_run_files_enabled,
+    )
+
+    for name in ("PANTHEON_DAILY_PRICE_READER", "PANTHEON_KEYED_DATASET_READER", "PANTHEON_KEYED_DATASETS_WRITE",
+                 "PANTHEON_TW_PRICE_DAILY_RUN_FILES", "PANTHEON_FEATURE_FILES"):
+        monkeypatch.delenv(name, raising=False)
+    assert daily_price_reader_mode() == "run_files" and keyed_dataset_reader_mode() == "run_files"
+    assert tw_price_daily_run_files_enabled() is True and keyed_datasets_write_mode() == "dual"
+    assert feature_files_enabled() is True
+    writer = MarketDataStorageWriter(tmp_path)  # a default writer: run files AND daily bars (dual write)
+    writer.write_run(result=_result([_rec("2330.TW", "2026-11-12")]), connector=_connector())
+    assert list((tmp_path / "normalized" / "tw_price_daily").glob("date=*/*.jsonl"))
+    assert DailyBarsReader(tmp_path).trade_dates() == ["2026-11-12"]
+    # and the cleanup tool deletes nothing without --execute and the report digest, whatever is eligible
+    from scripts import cleanup_market_run_files as cl
+
+    before = sorted(p for p in tmp_path.rglob("*") if p.is_file())
+    assert cl.main(["--root", str(tmp_path), "--today", "2027-06-01"]) == 0
+    assert cl.main(["--root", str(tmp_path), "--today", "2027-06-01", "--execute"]) == 2
+    assert sorted(p for p in tmp_path.rglob("*") if p.is_file()) == before

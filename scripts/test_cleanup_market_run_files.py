@@ -365,3 +365,34 @@ def test_execute_refuses_a_path_outside_the_chosen_dataset(tmp_path):
     with pytest.raises(cl.CleanupRefused, match="is not a run file of tw_tw|is not a run file of tw_institutional_flow"):
         cl.execute(tmp_path, report, expected_digest=report["digest"])
     assert (victim / "run-a.jsonl").exists()
+
+
+@pytest.mark.parametrize("dataset", sorted(__import__("services.source_ingestion.daily_bars_store", fromlist=["K"]).KEYED_DATASETS))
+def test_cleanup_of_each_of_the_13_datasets_after_a_real_dual_write(tmp_path, dataset, monkeypatch):
+    """The generated rows go through the real writer (dual write is the default), the dry run finds the run files of
+    that dataset only, the real run deletes exactly them, and the keyed store still gives every reader the rows."""
+    from services.source_ingestion.daily_bars_store import KeyedDatasetStore, KEYED_DATASETS, keyed_dataset_dir
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter, normalized_dataset_base
+    from services.source_ingestion.tests.test_datasets_keyed_write import _connector, _rec, _result
+
+    monkeypatch.delenv("PANTHEON_KEYED_DATASETS_WRITE", raising=False)  # default: dual
+    writer = MarketDataStorageWriter(tmp_path)
+    writer.write_run(result=_result([_rec(dataset, i) for i in range(6)], "run-1"), connector=_connector())
+    for other in sorted(KEYED_DATASETS):
+        if other != dataset:  # a neighbour that must stay untouched
+            writer.write_run(result=_result([_rec(other, 0)], "run-n"), connector=_connector())
+            break
+    run_files = [p for p in tmp_path.rglob("*.jsonl*") if dataset in p.parts and "keyed" not in p.parts]
+    assert run_files and any("raw" in p.parts for p in run_files) and any("normalized" in p.parts for p in run_files)
+    report = cl.build_report(tmp_path, today=LATER, dataset=dataset, reader_evidence=OK_READERS)
+    assert report["totals"]["files"] == len(run_files) and report["totals"]["eligible_files"] == len(run_files), _reasons(report)
+    assert report["unswitched_readers"] == [] and report["rows_without_trade_date"] == {"files": 0, "rows": 0}
+    before_keyed = sorted(p.read_bytes() for p in keyed_dataset_dir(tmp_path, dataset).rglob("part-*"))
+    res = cl.execute(tmp_path, report, expected_digest=report["digest"])
+    assert sorted(res["deleted"]) == sorted(p.relative_to(tmp_path).as_posix() for p in run_files)
+    assert not [p for p in tmp_path.rglob("*.jsonl*") if dataset in p.parts and "keyed" not in p.parts]
+    assert [p for p in tmp_path.rglob("*.jsonl*") if "normalized" in p.parts and dataset not in p.parts]  # neighbour kept
+    assert sorted(p.read_bytes() for p in keyed_dataset_dir(tmp_path, dataset).rglob("part-*")) == before_keyed
+    store = KeyedDatasetStore(tmp_path, KEYED_DATASETS[dataset])
+    assert sum(len(store.records(p)) for p in store.partitions()) == 6
+    assert normalized_dataset_base(tmp_path, dataset, env={"PANTHEON_KEYED_DATASET_READER": "keyed"}).is_dir()

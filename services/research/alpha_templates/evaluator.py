@@ -583,7 +583,6 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
     are ambiguous and fail closed."""
     from services.source_ingestion.daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, PRICE_COLUMNS
     from services.source_ingestion.daily_bars_store import DailyBarsError
-    from services.source_ingestion.security_listing import bare_symbol
 
     reader = _daily_bars_reader(root)
     dates = reader.trade_dates()
@@ -591,6 +590,8 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
         raise TaiwanEvaluationDataError(f"daily bars hold no trading day under {root}")
     try:
         by_request = symbols is not None
+        if not by_request:  # no symbols asked: key by the bare code, as the run-file read does
+            from services.source_ingestion.security_listing import bare_symbol
         names = sorted(set(map(str, symbols))) if by_request else sorted(reader.list_symbols())
         rows: dict[tuple[str, str], dict[str, Any]] = {}
         owner: dict[tuple[str, str], str] = {}

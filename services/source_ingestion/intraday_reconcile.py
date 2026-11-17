@@ -214,6 +214,15 @@ def _component_from_body(body: Mapping[str, Any], ref: Mapping[str, Any], defaul
         str(body.get("category") or ""), shares, unit, _parse_ts(body.get("available_time") or default_avail), ref)
 
 
+def _venue_market(symbol: str) -> str | None:
+    """Market of a stored daily bar: daily bars hold the coarse ``TW``, the volume components carry ``TWSE`` or
+    ``TPEX`` like the run file ``body.market``. The venue suffix of the stored symbol gives the same value
+    (``.TWSE`` -> TWSE, ``.TPEX`` / ``.TWO`` -> TPEX); a suffix that does not name a venue gives None, which the
+    volume basis refuses with a readable reason (never guessed)."""
+    suffix = str(symbol).rpartition(".")[2].upper() if "." in str(symbol) else ""
+    return {"TWSE": "TWSE", "TPEX": "TPEX", "TWO": "TPEX"}.get(suffix)
+
+
 def _bare(symbol: str) -> str:
     """Lookup key of a symbol: ``2330`` and ``2330.TW`` are the same instrument (gap G4)."""
     from .security_listing import bare_symbol
@@ -316,6 +325,8 @@ class OfficialDaily:
           ``daily_bars``, the day manifest as ``path``, ``line`` None, ``line_sha256`` = sha256 of the stored
           row identity and content hash (it changes when the stored bar changes, which is what the idempotence
           check compares) and ``content_digest`` of the whole day;
+        * ``market`` comes from the venue suffix of the stored symbol (``.TWSE``/``.TPEX``/``.TWO``), because the
+          stored market is the coarse ``TW`` and the volume components carry ``TWSE``/``TPEX``;
         * a row that holds only ``volume_lots`` (TPEx monthly history) has no volume in daily bars and is not an
           official bar here (counted in ``skipped_without_volume``).
         """
@@ -350,8 +361,9 @@ class OfficialDaily:
                             if any(v is None for v in vals):
                                 skipped += 1
                                 continue
-                            if vals[-1] == vals[-1].to_integral_value():
-                                vals[-1] = vals[-1].quantize(Decimal(1))
+                            # a stored float has no int/float spelling: integral values print as integers, as a JSON
+                            # integer does in the run file (numeric equality is exact either way)
+                            vals = [v.quantize(Decimal(1)) if v == v.to_integral_value() else v for v in vals]
                             if day not in digests:
                                 digests[day] = store._manifest(day).get("content_digest")
                             ident = f"{bar['market']}|{bar['symbol']}|{day}|{bar.get('content_hash')}"
@@ -359,7 +371,7 @@ class OfficialDaily:
                                 bare_symbol(bar["symbol"]).upper(), day, *vals, _parse_ts(day),
                                 {"reader": "daily_bars", "path": f"daily_bars/_manifest/date={day}.json", "line": None,
                                  "line_sha256": _sha256(ident), "content_digest": digests[day], "source_id": None},
-                                None if not bar.get("market") else str(bar["market"]).upper()))
+                                _venue_market(bar["symbol"])))
         except DailyBarsError as exc:
             raise ReconcileError(f"daily bars read refused: {exc}") from exc
         out = cls(rows, dates, cls._load_components(snapshot_root))
