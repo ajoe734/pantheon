@@ -1322,6 +1322,27 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
                 )
                 continue
             report["tenant_id"] = event_tenant_id
+            report_id = str(report.get("drift_report_id") or "").strip()
+            existing_report = (
+                store.get_drift_report(report_id, tenant_id=event_tenant_id)
+                if report_id and claim_result.get("reason") != "recovered"
+                else None
+            )
+            if existing_report is not None:
+                duplicate_event_ids.append(event_id)
+                drift_reports.append(existing_report)
+                work_result = {
+                    "status": "ok",
+                    "event_id": event_id,
+                    "drift_report_id": existing_report.get("drift_report_id"),
+                    "incident_id": existing_report.get("incident_id"),
+                }
+                store.complete_work(
+                    claim_id=str(claim["claim_id"]),
+                    lease_token=str(claim["lease_token"]),
+                    result=work_result,
+                )
+                continue
             stored = store.put_drift_report(report)
             existing_report_ids.add(str(stored.get("drift_report_id") or ""))
             drift_reports.append(stored)
@@ -3255,7 +3276,9 @@ def _execute_scheduled_reconcile(
     tenant_id: str,
     timestamp: str,
     tick_id: str,
+    window_id: Optional[str] = None,
     started: Optional[float] = None,
+    fetched_summaries_out: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Run a scheduled reconciliation pass over all active bindings visible in telemetry.
 
@@ -3263,6 +3286,7 @@ def _execute_scheduled_reconcile(
     have an evaluation record for that tick, so duplicate scheduler ticks do not
     create duplicate ReconciliationRecords.
     """
+    effective_window_id = str(window_id or body.window_id or tick_id).strip()
     tick_start = started if started is not None else time.monotonic()
     tick_deadline = tick_start + max(1.0, float(body.sla_seconds or 60.0) - 5.0)
 
@@ -3297,6 +3321,11 @@ def _execute_scheduled_reconcile(
         if body.lifecycle_only:
             err_result["lifecycle_only"] = True
         return err_result
+
+    if fetched_summaries_out is not None and isinstance(summaries, list):
+        fetched_summaries_out.extend(
+            item for item in summaries if isinstance(item, dict)
+        )
 
     scoped_summaries: List[Dict[str, Any]] = []
     for summary in summaries:
@@ -3458,12 +3487,15 @@ def _execute_scheduled_reconcile(
                 binding_lookup_failed = True
 
         existing_evaluation = None
+        prior_incident_delivery = None
         if evaluation_id in existing_evaluation_ids:
             cached_eval = store.get_evaluation(
                 evaluation_id,
                 tenant_id=tenant_id,
             )
             if cached_eval is not None:
+                if isinstance(cached_eval.get("incident_delivery"), dict):
+                    prior_incident_delivery = dict(cached_eval["incident_delivery"])
                 cached_append = cached_eval.get("lifecycle_append")
                 has_created_event = isinstance(cached_append, dict) and bool(
                     cached_append.get("event") or cached_append.get("event_id")
@@ -3488,6 +3520,14 @@ def _execute_scheduled_reconcile(
                     skipped_binding_ids.append(binding_id)
                     evaluation_statuses.append(str(existing_evaluation.get("status") or status))
                     target_evaluation = existing_evaluation
+        if existing_evaluation is None and prior_incident_delivery is None and effective_window_id != tick_id:
+            window_eval_id = _tick_evaluation_id(effective_window_id, binding_id)
+            if window_eval_id in existing_evaluation_ids:
+                window_eval = store.get_evaluation(window_eval_id, tenant_id=tenant_id)
+                if isinstance(window_eval, dict) and isinstance(
+                    window_eval.get("incident_delivery"), dict
+                ):
+                    prior_incident_delivery = dict(window_eval["incident_delivery"])
         if existing_evaluation is None:
             evaluation = {
                 "id": evaluation_id,
@@ -3525,7 +3565,13 @@ def _execute_scheduled_reconcile(
                     ],
                 ],
                 "tick_id": tick_id,
+                "window_id": effective_window_id,
                 "trigger": "scheduled",
+                **(
+                    {"incident_delivery": prior_incident_delivery}
+                    if prior_incident_delivery is not None
+                    else {}
+                ),
                 "source_contract": {
                     "telemetry_truth_owner": "telemetry-ingest",
                     "lineage_truth_owner": "lineage-read",
@@ -3666,6 +3712,77 @@ def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
     return cached
 
 
+def _consumer_worker_state_path() -> Optional[Path]:
+    configured = os.getenv(
+        "RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH", ""
+    ).strip()
+    if configured:
+        return Path(configured)
+    candidate = Path(_data_dir()) / "consumer-worker-state.json"
+    return candidate if candidate.exists() else None
+
+
+def prune_work_claims(
+    *,
+    now: datetime | str | None = None,
+    runtime_summaries: Optional[List[Dict[str, Any]]] = None,
+    consumer_state: Any = None,
+    protected_window_ids: Optional[List[str]] = None,
+    scheduled_reconcile_max_age_seconds: Optional[float] = None,
+    telemetry_consume_max_age_seconds: Optional[float] = None,
+    batch_size: Optional[int] = None,
+    max_batches: Optional[int] = None,
+    include_scheduled_reconcile: bool = True,
+    include_telemetry_consume: bool = True,
+) -> Dict[str, Any]:
+    effective_include_consume = include_telemetry_consume
+    effective_summaries = runtime_summaries
+    if effective_summaries is None and effective_include_consume:
+        telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
+        if telemetry_url:
+            try:
+                effective_summaries = fetch_runtime_summaries(
+                    telemetry_url,
+                    tenant_id=_current_tenant_id(),
+                    timeout_seconds=5.0,
+                )
+            except Exception:
+                effective_include_consume = False
+    effective_consumer_state = (
+        consumer_state
+        if consumer_state is not None
+        else _consumer_worker_state_path()
+    )
+    try:
+        return store.prune_work_claims(
+            now=now,
+            runtime_summaries=effective_summaries,
+            consumer_state=effective_consumer_state,
+            protected_window_ids=protected_window_ids,
+            scheduled_reconcile_max_age_seconds=scheduled_reconcile_max_age_seconds,
+            telemetry_consume_max_age_seconds=telemetry_consume_max_age_seconds,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            include_scheduled_reconcile=include_scheduled_reconcile,
+            include_telemetry_consume=effective_include_consume,
+        )
+    except Exception:
+        if effective_include_consume and include_scheduled_reconcile:
+            return store.prune_work_claims(
+                now=now,
+                runtime_summaries=None,
+                consumer_state=None,
+                protected_window_ids=protected_window_ids,
+                scheduled_reconcile_max_age_seconds=scheduled_reconcile_max_age_seconds,
+                telemetry_consume_max_age_seconds=telemetry_consume_max_age_seconds,
+                batch_size=batch_size,
+                max_batches=max_batches,
+                include_scheduled_reconcile=True,
+                include_telemetry_consume=False,
+            )
+        raise
+
+
 @app.post("/api/reconciliation-drift/scheduled-reconcile", status_code=201)
 def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     """Claim and execute one deterministic tenant-scoped observation window."""
@@ -3750,13 +3867,16 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
 
     started = _monotonic()
     claim_finalized = False
+    fetched_summaries: List[Dict[str, Any]] = []
     try:
         result = _execute_scheduled_reconcile(
             body,
             tenant_id=tenant_id,
             timestamp=timestamp,
             tick_id=tick_id,
+            window_id=window_id,
             started=started,
+            fetched_summaries_out=fetched_summaries,
         )
         duration_seconds = max(0.0, _monotonic() - started)
         result.update(
@@ -3804,6 +3924,25 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             result=result,
             updated_at=utc_now(),
         )
+        if hasattr(store, "prune_work_claims"):
+            summaries_fetched_ok = result.get("failure_code") not in {
+                "telemetry_auth_failed",
+                "telemetry_unavailable",
+            }
+            default_max_batches = int(
+                os.getenv("RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_MAX_BATCHES", "10")
+            )
+            try:
+                prune_work_claims(
+                    now=timestamp,
+                    runtime_summaries=fetched_summaries if summaries_fetched_ok else None,
+                    max_batches=default_max_batches,
+                    include_telemetry_consume=summaries_fetched_ok,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "scheduled work claim prune failed", exc_info=True
+                )
         return result
     except Exception as exc:
         if not claim_finalized:

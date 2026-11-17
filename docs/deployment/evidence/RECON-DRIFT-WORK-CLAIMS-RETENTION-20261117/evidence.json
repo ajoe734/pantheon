@@ -1,0 +1,116 @@
+{
+  "task_id": "RECON-DRIFT-WORK-CLAIMS-RETENTION-20261117",
+  "title": "Reconciliation drift work claims are pruned once they can no longer be re-presented",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "problem_register_class": "RC3 / WP3.1 (Unbounded or wasteful persistent writers — reconciliation_drift.work_claims)",
+  "writer_runtime_budget": {
+    "writer": "reconciliation_drift.work_claims (PostgreSQL JSONB owner store) and work_claims.json (JSON store fallback)",
+    "owner_service": "reconciliation-drift-svc",
+    "write_cadence": {
+      "scheduled_reconcile": "1 claim per 300-second (5-minute) scheduler window = 288 claims/day",
+      "telemetry_consume": "1 claim per consumed telemetry event = 5,112 to 5,912 claims/day (hosted total 5,400 to 6,200 claims/day, ~6,000 claims/day average)"
+    },
+    "unbounded_state_before_fix": {
+      "existing_rows_on_hosted": 150000,
+      "growth_per_day_rows": "5400 to 6200 (~6000 rows/day)",
+      "cleanup": "none (completed and failed claims were retained indefinitely)"
+    },
+    "bounded_state_after_fix": {
+      "scheduled_reconcile_retention_seconds_default": 86400,
+      "scheduled_reconcile_retention_env": [
+        "RECONCILIATION_DRIFT_SCHEDULED_CLAIM_RETENTION_SECONDS",
+        "RECONCILIATION_DRIFT_SCHEDULED_CLAIM_RETENTION_HOURS"
+      ],
+      "telemetry_consume_retention_seconds_default": 604800,
+      "telemetry_consume_retention_env": [
+        "RECONCILIATION_DRIFT_TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS",
+        "RECONCILIATION_DRIFT_TELEMETRY_CONSUME_CLAIM_RETENTION_DAYS"
+      ],
+      "batch_size_default": 500,
+      "batch_size_env": "RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_BATCH_SIZE",
+      "max_batches_per_tick_default": 10,
+      "max_batches_env": "RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_MAX_BATCHES",
+      "delete_primitive": "PostgresJsonOwnerStore.delete_if_matches (services/foundation/postgres_json_store.py:299) and ReconciliationDriftStore._delete_work_claim_if_matches",
+      "steady_state_rows_at_6000_per_day": 40272,
+      "steady_state_rows_at_6200_per_day": 41672,
+      "steady_state_cap_rows": 45000,
+      "steady_state_net_growth_per_day_rows": 0,
+      "cleanup_trigger": "Executed automatically after each scheduled_reconcile tick in services/reconciliation-drift/main.py and directly via store.prune_work_claims()"
+    }
+  },
+  "hosted_shape_150k_measurement": {
+    "test": "services/reconciliation-drift/tests/test_reconciliation_drift_store.py::test_hosted_shape_150k_existing_completed_claims_pruned_to_steady_state_bound",
+    "initial_completed_claims": 150000,
+    "days_represented": 25,
+    "claims_per_day": 6000,
+    "scheduled_reconcile_per_day": 288,
+    "telemetry_consume_per_day": 5712,
+    "batch_size": 5000,
+    "batches_executed": 22,
+    "deleted_count": 109728,
+    "deleted_by_work_type": {
+      "scheduled_reconcile": 6912,
+      "telemetry_consume": 102816
+    },
+    "steady_state_remaining_rows": 40272,
+    "steady_state_cap_rows": 45000,
+    "within_steady_state_cap": true,
+    "next_day_plus_6000_claims_pruned_deleted_count": 6000,
+    "next_day_steady_state_remaining_rows": 40272
+  },
+  "acceptance_criteria_verification": {
+    "AC1_bounded_cas_delete_with_configurable_horizons": {
+      "status": "verified",
+      "test": "test_prune_work_claims_deletes_expired_scheduled_and_consume_in_bounded_cas_batches",
+      "details": "Completed and failed scheduled_reconcile claims older than 24h and telemetry_consume claims older than 7d (both configurable via kwargs and env vars) are deleted in bounded batches using PostgresJsonOwnerStore.delete_if_matches / _delete_work_claim_if_matches."
+    },
+    "AC2_live_lease_never_deleted": {
+      "status": "verified",
+      "test": "test_prune_work_claims_never_deletes_live_lease_or_concurrently_recovered_claim",
+      "details": "In-progress claims and claims holding a lease_token or active lease_expires_at are excluded from candidate selection; a failed claim concurrently recovered by a worker before delete_if_matches is protected by the CAS payload equality check (cas_conflict_count=1, deleted_count=0)."
+    },
+    "AC3_runtime_summary_and_consumer_state_protection": {
+      "status": "verified",
+      "test": "test_prune_work_claims_protects_runtime_summary_events_and_consumer_state_backlog",
+      "details": "Claims whose window_id is the current last_event_id or last_heartbeat_event_id of any listed runtime summary or is pending or dead-lettered in consumer state (ConsumerWorkerState or consumer-worker-state.json) are never deleted, preventing a stopped runtime's last event from being reprocessed into a duplicate drift report or incident."
+    },
+    "AC4_re_presenting_pruned_window_after_horizon": {
+      "status": "verified",
+      "test": "test_representing_pruned_window_after_horizon_produces_at_most_one_evaluation_and_no_duplicate_incident",
+      "details": "Re-presenting a pruned scheduled_reconcile window after its 24h horizon produces at most one new evaluation (0 for identical tick_id, 1 for a retry tick_id on the same window_id) and 0 duplicate incidents; re-presenting a pruned telemetry_consume event after its 7d horizon deduplicates against the persisted drift report and produces 0 duplicate incidents."
+    },
+    "AC5_hosted_shape_growth_bound_and_150k_measurement": {
+      "status": "verified",
+      "test": "test_hosted_shape_150k_existing_completed_claims_pruned_to_steady_state_bound",
+      "details": "On 150,000 existing completed claims at hosted shape (6,000 claims/day = 288 scheduled_reconcile + 5,712 telemetry_consume over 25 days), pruning deletes 109,728 expired claims in 22 bounded batches and leaves 40,272 steady-state rows (<= 45,000 cap), holding steady at 40,272 rows on subsequent 6,000-claim days."
+    },
+    "AC6_rollback_compatibility": {
+      "status": "verified",
+      "test": "test_previous_release_store_works_against_pruned_work_claims_table",
+      "details": "The previous accepted release store loaded from ede3b8035:services/reconciliation-drift/store.py reads surviving completed receipts, respects surviving active leases, and acquires/completes pruned windows without schema or payload changes."
+    },
+    "AC7_focused_tests_pass": {
+      "status": "verified",
+      "commands": [
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -v services/reconciliation-drift/tests/test_reconciliation_drift_store.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+          "exit_code": 0,
+          "result": "61 passed, 1 skipped in 12.76s"
+        },
+        {
+          "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_l12_rec_001_hardening.py services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py",
+          "exit_code": 0,
+          "result": "96 passed in 24.80s"
+        }
+      ]
+    }
+  },
+  "residual_findings": [
+    {
+      "problem_register_class": "RC3 / WP3.2 (Storage manifest and writer bounds)",
+      "surface": "services/reconciliation-drift/store.py (reconciliation_drift.drift_evaluations, reconciliation_drift.drift_reports, reconciliation_drift.alert_handoffs, reconciliation_drift.reconciliation_records)",
+      "finding": "Sibling authority tables in PostgresReconciliationDriftStore (especially drift_evaluations, written once per active binding per 5-minute scheduled tick) do not yet declare a retention horizon or pruning job; should be inventoried under WP3.2 storage manifest."
+    }
+  ]
+}

@@ -507,9 +507,15 @@ class TestConcurrentWorkers:
         queue.mark_done(job.job_id, seed_id="seed-fresh", claim_token=second.lease_token)
         assert queue.get(job.source_id).seed_id == "seed-fresh"
 
-    def test_expired_lease_cannot_commit_any_terminal_outcome_before_reclaim(
+    def test_lapsed_lease_is_fenced_by_token_not_by_clock(
         self, tmp_path: Path
     ) -> None:
+        # Deliberate contract change (DISTILLATION-LEASE-PER-JOB-AND-BOUNDED-CLAIM):
+        # the token is the fence. Before, a completion arriving after the lease
+        # clock lapsed raised and left the row leased, which aborted the whole
+        # tick and re-queued the same job forever. Now a completion with the
+        # current token is accepted until recovery re-tokens the row; once a
+        # reclaim supersedes the token every terminal outcome is rejected.
         clock = [1_000.0]
         queue = DistillationJobQueue(
             tmp_path / "queue.sqlite3",
@@ -518,52 +524,50 @@ class TestConcurrentWorkers:
         )
         sources = [
             _normalized_source(f"src-expired-{suffix}")
-            for suffix in ("done", "failed", "skipped", "dead-letter")
+            for suffix in ("done", "failed", "skipped", "dead-letter", "late-done")
         ]
         for source in sources:
             queue.enqueue_source_record(source)
         claimed = queue.claim_due(worker_id="expired-worker", lease_seconds=1, limit=10)
-        assert len(claimed) == 4
-
+        assert len(claimed) == 5
+        # Claim order is by availability then job id: re-align to source order.
+        by_job = {job.job_id: job for job in claimed}
+        claimed = [by_job[queue.get(source.source_id).job_id] for source in sources]
         clock[0] += 2
+
+        # Current token, lapsed clock, nobody reclaimed: accepted.
+        queue.mark_done(claimed[4].job_id, seed_id="seed-late", claim_token=claimed[4].lease_token)
+        assert queue.get(sources[4].source_id).status == DistillationJobStatus.DONE.value
+
+        reclaimed = queue.claim_due(worker_id="recovery-worker", lease_seconds=60, limit=10)
+        assert len(reclaimed) == 4
+        assert {job.job_id for job in reclaimed} == {job.job_id for job in claimed[:4]}
+        assert not {job.lease_token for job in reclaimed} & {job.lease_token for job in claimed}
         terminal_actions = (
             lambda job: queue.mark_done(
-                job.job_id,
-                seed_id="seed-stale",
-                claim_token=job.lease_token,
+                job.job_id, seed_id="seed-stale", claim_token=job.lease_token,
             ),
             lambda job: queue.mark_failed(
-                job.job_id,
-                error="stale failure",
-                claim_token=job.lease_token,
+                job.job_id, error="stale failure", claim_token=job.lease_token,
             ),
             lambda job: queue.mark_skipped(
-                job.job_id,
-                reason="stale skip",
-                claim_token=job.lease_token,
+                job.job_id, reason="stale skip", claim_token=job.lease_token,
             ),
         )
         for job, action in zip(claimed[:3], terminal_actions, strict=True):
-            with pytest.raises(DistillationError, match="expired distillation lease"):
+            with pytest.raises(DistillationError, match="stale distillation lease"):
                 action(job)
-        with pytest.raises(DistillationError, match="expired distillation lease"):
+        with pytest.raises(DistillationError, match="stale distillation lease"):
             queue.mark_retry_or_dead_letter(
                 claimed[3],
                 error="stale dead letter",
                 base_delay_seconds=0,
                 permanent=True,
             )
-
+        fresh_tokens = {job.job_id: job.lease_token for job in reclaimed}
         assert all(
-            queue.get(source.source_id).status == DistillationJobStatus.LEASED.value
-            for source in sources
-        )
-
-        reclaimed = queue.claim_due(worker_id="recovery-worker", lease_seconds=60, limit=10)
-        assert len(reclaimed) == 4
-        assert all(
-            fresh.lease_token != stale.lease_token
-            for fresh, stale in zip(reclaimed, claimed, strict=True)
+            queue.get(source.source_id).lease_token == fresh_tokens[stale.job_id]
+            for source, stale in zip(sources[:4], claimed[:4], strict=True)
         )
 
     def test_revised_content_is_a_distinct_versioned_job(self, tmp_path: Path) -> None:

@@ -2251,7 +2251,9 @@ def test_dead_letter_and_quarantined_retention_and_replay_within_retention(tmp_p
     assert b2["delivery_outbox"] == 30
 
     b3 = store.prune_retained_history(batch_size=30)
-    assert b3["delivery_outbox"] == 15
+    # 15 aged rows plus the 2-day-old delivered telemetry row, which now
+    # falls outside the 24 hour telemetry retention.
+    assert b3["delivery_outbox"] == 16
 
     b4 = store.prune_retained_history(batch_size=30)
     assert b4["delivery_outbox"] == 0
@@ -2259,7 +2261,7 @@ def test_dead_letter_and_quarantined_retention_and_replay_within_retention(tmp_p
     counts = store.delivery_counts()
     assert counts["dead_letter"] == 2
     assert counts["quarantined"] == 1
-    assert counts["delivered"] == 1
+    assert counts["delivered"] == 0
 
     # Dead letters inside the 7-day retention can still be replayed and delivered.
     with patch(
@@ -2285,7 +2287,7 @@ def test_dead_letter_and_quarantined_retention_and_replay_within_retention(tmp_p
 
     final_counts = store.delivery_counts()
     assert final_counts["dead_letter"] == 0
-    assert final_counts["delivered"] == 3
+    assert final_counts["delivered"] == 2
 
 
 def test_prune_protects_dependencies_of_retained_rows_and_active_incidents(tmp_path):
@@ -2804,3 +2806,211 @@ class TestIncidentDeliveryRetryWindow:
         assert monitor._store.fail_delivery(
             row, error="network_error", fatal=False, base_backoff_seconds=1.0
         ) == "dead_letter"
+
+
+# ---------------------------------------------------------------------------
+# BFF-DOWNSTREAM-HEALTH-STORAGE-BOUND-20261117
+# ---------------------------------------------------------------------------
+
+
+def _storage_result(name: str, ok: bool, n: int, failures: int = 0) -> DownstreamProbeResult:
+    ts = f"2026-11-17T{(n * 30) // 3600 % 24:02d}:{(n * 30) // 60 % 60:02d}:{(n * 30) % 60:02d}Z"
+    return DownstreamProbeResult(
+        target_name=name,
+        ok=ok,
+        status_code=200 if ok else 503,
+        latency_ms=5.0,
+        checked_at=ts,
+        failure_reason=None if ok else "http_503",
+        consecutive_failures=0 if ok else failures,
+        window_started_at=ts,
+    )
+
+
+def _telemetry_event_ids(monitor) -> List[str]:
+    return [
+        d["event_id"]
+        for d in monitor._store.list_deliveries()
+        if d["channel"] == "telemetry"
+    ]
+
+
+def test_unchanged_healthy_target_emits_transitions_and_hourly_sample_only(tmp_path, monkeypatch):
+    monitor = _io_monitor(tmp_path)
+    clock = {"now": 1_000_000.0}
+    monkeypatch.setattr(time, "time", lambda: clock["now"])
+    monitor._resolve_target_registry = lambda: {}  # type: ignore[assignment]
+
+    for n in range(120):  # one hour at 30s
+        clock["now"] += 30
+        monitor._record_probe_result_sync(_storage_result("telemetry", True, n))
+    # first observation + one still-ok sample after the hour, not 120 events
+    assert len(_telemetry_event_ids(monitor)) <= 2
+    state = monitor._store.get_probe("telemetry")
+    assert state is not None and state.ok  # current state stays on probe_state
+
+    before = len(_telemetry_event_ids(monitor))
+    clock["now"] += 30
+    monitor._record_probe_result_sync(_storage_result("telemetry", False, 121, 1))
+    assert len(_telemetry_event_ids(monitor)) == before + 1  # ok -> degraded
+    clock["now"] += 30
+    monitor._record_probe_result_sync(_storage_result("telemetry", False, 122, 2))
+    assert len(_telemetry_event_ids(monitor)) == before + 1  # still failing, no new event
+    clock["now"] += 30
+    monitor._record_probe_result_sync(_storage_result("telemetry", False, 123, 3))
+    assert len(_telemetry_event_ids(monitor)) == before + 2  # threshold -> incident open
+    clock["now"] += 30
+    monitor._record_probe_result_sync(_storage_result("telemetry", True, 124))
+    assert len(_telemetry_event_ids(monitor)) == before + 3  # recovery
+    incident = monitor._store.get_incident("telemetry")
+    assert incident is not None
+    deliveries = {d["delivery_id"]: d for d in monitor._store.list_deliveries()}
+    for d in deliveries.values():
+        if d["channel"] in {"incident_open", "incident_resolve"}:
+            for dep in d["dependency_ids"]:
+                assert dep in deliveries or dep.startswith("incident")
+            assert any(dep.startswith("telemetry:") for dep in d["dependency_ids"])
+
+
+def test_delivered_telemetry_pruned_at_24h_but_incident_channels_keep_7d(tmp_path):
+    from services.control_plane.bff.downstream_health_monitor import _DurableHealthStore
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    store = _DurableHealthStore(str(tmp_path / "h.sqlite3"))
+    now = datetime.now(timezone.utc)
+
+    def ts(hours: float) -> str:
+        return (now - timedelta(hours=hours)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    with sqlite3.connect(store.path) as conn:
+        for did, channel, status, age in (
+            ("t-old", "telemetry", "delivered", 30),
+            ("t-new", "telemetry", "delivered", 2),
+            ("i-old30h", "incident_open", "delivered", 30),
+            ("dl-30h", "telemetry", "dead_letter", 30),
+        ):
+            conn.execute(
+                "INSERT INTO delivery_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (did, did, channel, "x", "http://u", "{}", "[]", status, 1, 5, 0.0,
+                 None, None, None, None, ts(age), ts(age)),
+            )
+    store.prune_retained_history()
+    remaining = {r["delivery_id"] for r in store.list_deliveries()}
+    assert remaining == {"t-new", "i-old30h", "dl-30h"}
+
+
+def test_list_deliveries_without_event_id_is_bounded(tmp_path):
+    from services.control_plane.bff.downstream_health_monitor import _DurableHealthStore
+    import sqlite3
+
+    store = _DurableHealthStore(str(tmp_path / "h.sqlite3"))
+    with sqlite3.connect(store.path) as conn:
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO delivery_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (f"d{i}", f"e{i}", "telemetry", "x", "http://u", "{}", "[]", "delivered",
+                 1, 5, 0.0, None, None, None, None, "2026-11-17T00:00:00Z", "2026-11-17T00:00:00Z"),
+            )
+    assert len(store.list_deliveries(limit=10)) == 10
+    assert len(store.list_deliveries(event_id="e3")) == 1
+
+
+def _legacy_db(path: str, rows: int, payload: int = 1500) -> None:
+    """A pre-change file: auto_vacuum off, many delivered telemetry rows."""
+    import sqlite3
+    from services.control_plane.bff.downstream_health_monitor import _DurableHealthStore
+
+    store = _DurableHealthStore(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    # recreate without auto_vacuum to model the existing hosted file
+    os.remove(path)
+    for suffix in ("-wal", "-shm"):
+        if os.path.exists(path + suffix):
+            os.remove(path + suffix)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA auto_vacuum = 0")
+    conn.close()
+    conn = sqlite3.connect(path)
+    conn.close()
+    os.remove(path)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA auto_vacuum = 0")
+    conn.execute("CREATE TABLE _seed(x)")
+    conn.commit()
+    conn.close()
+    store = _DurableHealthStore(path)
+    assert store.storage_stats()["auto_vacuum"] == 0
+    old = "2026-11-10T00:00:00Z"
+    body = json.dumps({"p": "x" * payload})
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO delivery_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                (f"telemetry:{i}", f"e{i}", "telemetry", f"t{i % 33}", "http://u", body, "[]",
+                 "delivered", 1, 5, 0.0, None, None, None, None, old, old)
+                for i in range(rows)
+            ),
+        )
+
+
+def test_existing_file_rebuilds_once_and_shrinks_after_pruning_and_old_release_reads_it(tmp_path):
+    import sqlite3
+    from services.control_plane.bff.downstream_health_monitor import _DurableHealthStore
+
+    path = str(tmp_path / "h.sqlite3")
+    _legacy_db(path, rows=6000)
+    store = _DurableHealthStore(path)
+    before = store.storage_stats()["file_bytes"]
+    while store.prune_retained_history(batch_size=3500)["delivery_outbox"]:
+        pass
+    result = store.maintain_storage()
+    assert result["rebuilt"] is True
+    stats = store.storage_stats()
+    assert stats["auto_vacuum"] == 2
+    assert stats["file_bytes"] < before * 0.2
+
+    # refill then prune again: incremental vacuum returns pages, no rebuild
+    old = "2026-11-10T00:00:00Z"
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO delivery_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ((f"telemetry:r{i}", f"r{i}", "telemetry", "t", "http://u", "x" * 1500, "[]",
+              "delivered", 1, 5, 0.0, None, None, None, None, old, old) for i in range(4000)),
+        )
+    full = store.storage_stats()["file_bytes"]
+    while store.prune_retained_history(batch_size=3500)["delivery_outbox"]:
+        pass
+    for _ in range(50):
+        again = store.maintain_storage(budget_seconds=1.0)
+        if store.storage_stats()["freelist_pages"] == 0:
+            break
+    after = store.storage_stats()
+    assert again["rebuilt"] is False
+    assert after["file_bytes"] <= max(after["live_bytes"] * 1.3, 256 * 1024)
+    assert after["file_bytes"] < full * 0.2
+
+    # rollback: a reader/writer that knows nothing of the new pragmas still works
+    with sqlite3.connect(path) as conn:
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"delivery_outbox", "probe_state", "incident_mappings"} <= names
+        conn.execute("SELECT count(*) FROM delivery_outbox").fetchone()
+        conn.execute("DELETE FROM delivery_outbox")
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_maintenance_skips_instead_of_waiting_when_writer_holds_lock(tmp_path):
+    from services.control_plane.bff.downstream_health_monitor import _DurableHealthStore
+
+    path = str(tmp_path / "h.sqlite3")
+    store = _DurableHealthStore(path)
+    thread, release = _hold_write_lock(path, 2.0)
+    started = time.monotonic()
+    try:
+        result = store.maintain_storage()
+    finally:
+        release.set()
+        thread.join()
+    assert time.monotonic() - started < 1.5
+    assert result["skipped"] is None or str(result["skipped"]).startswith("busy")
