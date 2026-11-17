@@ -1,0 +1,20 @@
+{
+  "task": "SEARCH-SVC-MEMORY-BOUND-20261117",
+  "changes": {
+    "evidence_repository": "PostgresReadOnlyEvidenceRepository.refresh(): paged (append_id > watermark, LIMIT 2000) single-flight incremental load; reload() remains the explicit full resync (startup, POST /api/search/index/reload, pipeline force_full) and now builds aside then swaps, paging instead of fetchall. Query, refresh, materialize use refresh(). /health and /api/search/index/status no longer load anything.",
+    "updated_rows_caveat": "source-ingest upserts keep append_id, so updates to existing rows are invisible to the watermark; knowledge_object rows are re-read (replace by id, streamed) every SEARCH_EVIDENCE_KO_RESYNC_SECONDS (default 900s). Deletions or updates to other record types need POST /api/search/index/reload.",
+    "snapshots": "SEARCH_SNAPSHOT_MAX_COUNT (default 1000) and SEARCH_SNAPSHOT_MAX_AGE_SECONDS (default 86400) in both Jsonl and Postgres stores; Postgres reload queries only the bounded recent window.",
+    "pipeline_history": "in-memory runs other than the latest drop indexed_object_ids (summary counts/watermarks kept); latest keeps the list as next-run baseline."
+  },
+  "rollback": "No persisted format change: JSONL/PG columns and keys are unchanged (older runs simply have indexed_object_ids=[] after a prune rewrite; the previous release only reads the latest run's list). Revert = redeploy previous release.",
+  "memory_budget": {
+    "measured_here": "Python heap growth of the shared evidence repository: ~12.0 MB per 10000 evidence rows (5000 source+item pairs, synthetic small payloads, tracemalloc, includes fake-table rows so conservative). Steady for 46000 rows ~55 MB; +3000..18000 rows/day => +3.6..21.6 MB/day with these payload sizes; real payloads are larger and scale linearly.",
+    "before_after_peak_model": "Before: each of N concurrent requests/health calls built its own full copy (fetchall raw rows + objects), so peak ~= (1 + 8 concurrent) copies + raw rows. After: one shared copy; transient raw rows bounded to one 2000-row page per type.",
+    "not_measured": "Hosted RSS with multilingual-e5-large loaded (~6.7GB model), 12000 indexed objects and 8 concurrent live queries was NOT measured: no hosted DB/model in this worker. Needs a post-deploy RSS sample on the hosted host before this budget is accepted.",
+    "retrieval_eval_identity": "Not run against the hosted retrieval eval set. Covered by test_incremental_equals_full_reload (incremental state identical to a full load) and the unchanged search suites (224 passed)."
+  },
+  "tests": {
+    "command": "pytest services/search/test_postgres_store.py services/search/test_index_pipeline.py services/search/tests/test_search_refresh.py services/search/tests/test_search_memory_bound.py",
+    "full_search_suite": "224 passed, 25 skipped, 3 failed (test_zh_segmentation: jieba not installed in worker venv; test_qdrant_backend ignored: qdrant_client missing) - environment, unrelated"
+  }
+}
