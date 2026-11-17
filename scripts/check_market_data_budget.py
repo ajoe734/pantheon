@@ -27,6 +27,7 @@ Exit code 0 only when no check failed. Output is JSON; no credential is read or 
 """
 from __future__ import annotations
 
+import functools
 import argparse
 import json
 import re
@@ -160,6 +161,7 @@ def daily_bars_rows(trade_date: str) -> list[dict[str, Any]]:
     return rows
 
 
+@functools.lru_cache(maxsize=1)  # one 53k-row measurement per process; the design text does not change it
 def measure_daily_bars() -> dict[str, float]:
     try:
         from services.source_ingestion.daily_bars_store import DailyBarsStore

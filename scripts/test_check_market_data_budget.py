@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,7 +112,7 @@ class ByteLimitTests(unittest.TestCase):
         self.assertIn("exceeds", flow[0]["reason"])
 
     def test_oversized_generated_dataset_fails_through_evaluate(self) -> None:
-        big = lambda: [[f"{i}", "x" * 400, str(hash((i, "n")))] for i in range(40_000)]  # noqa: E731
+        big = lambda: [[f"{i}", os.urandom(200).hex(), str(hash((i, "n")))] for i in range(6_000)]  # noqa: E731
         with mock.patch.dict(cmb.DATASET_ROWS, {"tw_index_daily": big}):
             res = cmb.evaluate(self.rows, only={"tw_index_daily"})
         self.assertEqual(res[0]["status"], "fail")
