@@ -29,6 +29,21 @@ MAX_SKIPPED_IDS = 50
 MAX_SKIPPED_ID_LENGTH = 128
 
 
+# Failure stages (controller_worker.ControllerTickError.stage) where the loop ran and a
+# connector reported a failed outcome. Every other stage, and any stage not listed here,
+# is controller level: the loop could not do its own work (source-ingest unreachable or
+# timed out "controller"; reconcile refused "reconcile"/"reconcile_contract"; desired state
+# unreadable "desired_state_*"/"persona_owner_read"; state/readback invalid "actual_readback",
+# "schedule_contract", "provider_boundary", "frontier_recovery", "http_contract", ...).
+CONNECTOR_OUTCOME_STAGES = frozenset({"schedule"})
+
+
+def is_controller_level_stage(stage: str | None) -> bool:
+    """Single classification point; unknown or missing stage counts as controller level."""
+
+    return str(stage or "").strip() not in CONNECTOR_OUTCOME_STAGES
+
+
 class ControllerStateError(RuntimeError):
     """Raised when controller restart truth is missing or corrupt."""
 
@@ -315,6 +330,18 @@ def summarize_schedule(schedule: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _controller_failure_streak(payload: Mapping[str, Any]) -> int:
+    stored = payload.get("consecutive_controller_failures")
+    if stored is not None:
+        return max(0, int(stored))
+    # Written by a release without the field: fail closed, treat the existing streak as
+    # controller level unless the last failure stage is known to be a connector outcome.
+    streak = int(payload.get("consecutive_failures") or 0)
+    if streak and not is_controller_level_stage(payload.get("last_failure_stage")):
+        return 0
+    return streak
+
+
 @dataclass
 class ControllerState:
     controller_id: str
@@ -332,6 +359,8 @@ class ControllerState:
     last_failure_reason: str | None = None
     last_repair_at: str | None = None
     consecutive_failures: int = 0
+    # Consecutive failed ticks whose stage is controller level; read only by controller_healthcheck.
+    consecutive_controller_failures: int = 0
     total_ticks: int = 0
     total_successes: int = 0
     total_failures: int = 0
@@ -373,6 +402,7 @@ class ControllerState:
         self.last_success_at = now
         self.total_successes += 1
         self.consecutive_failures = 0
+        self.consecutive_controller_failures = 0
         self.last_failure_stage = None
         self.last_failure_reason = None
         if recovered:
@@ -398,6 +428,10 @@ class ControllerState:
         self.last_failure_stage = str(stage or "unknown")
         self.last_failure_reason = str(reason or "controller tick failed")[:2000]
         self.consecutive_failures += 1
+        if is_controller_level_stage(self.last_failure_stage):
+            self.consecutive_controller_failures += 1
+        else:
+            self.consecutive_controller_failures = 0
         self.total_failures += 1
         if desired_state is not None:
             self.desired_state = summarize_desired_state(desired_state)
@@ -441,6 +475,7 @@ class ControllerState:
             "last_failure_reason": self.last_failure_reason,
             "last_repair_at": self.last_repair_at,
             "consecutive_failures": self.consecutive_failures,
+            "consecutive_controller_failures": self.consecutive_controller_failures,
             "total_ticks": self.total_ticks,
             "total_successes": self.total_successes,
             "total_failures": self.total_failures,
@@ -481,6 +516,7 @@ class ControllerState:
             last_failure_reason=payload.get("last_failure_reason"),
             last_repair_at=payload.get("last_repair_at"),
             consecutive_failures=int(payload.get("consecutive_failures") or 0),
+            consecutive_controller_failures=_controller_failure_streak(payload),
             total_ticks=int(payload.get("total_ticks") or 0),
             total_successes=int(payload.get("total_successes") or 0),
             total_failures=int(payload.get("total_failures") or 0),
