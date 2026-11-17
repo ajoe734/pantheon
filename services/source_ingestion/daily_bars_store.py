@@ -556,14 +556,13 @@ class DailyBarsStore:
             try:
                 manifest = self.read_manifest(trade_date)
                 current = self._read_day_rows(manifest) if manifest else {}
-                merged = dict(current)
+                # a v1 partition has no new columns: they read as null (normalise only what was read, once)
+                merged = {key: {k: old.get(k) for k in _RAW_ROW_FIELDS} for key, old in current.items()}
                 for row in rows:
                     key = (row["market"], row["symbol"], row["trade_date"])
                     old = merged.get(key)
                     if old is None or old["content_hash"] != row["content_hash"]:
                         merged[key] = {k: row.get(k) for k in _RAW_ROW_FIELDS}
-                for key, old in list(merged.items()):  # a v1 partition has no new columns: they read as null
-                    merged[key] = {k: old.get(k) for k in _RAW_ROW_FIELDS}
                 digest = self.day_digest(merged.values())
                 if manifest and manifest.get("content_digest") == digest:
                     self.counters["days_unchanged"] += 1
