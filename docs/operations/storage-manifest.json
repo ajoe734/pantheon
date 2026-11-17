@@ -5482,6 +5482,25 @@
    ],
    "register_class": "RC3",
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+  },
+  {
+   "bound_proof": {
+    "contains": "?mode=ro",
+    "file": "services/telemetry/heartbeat_retention.py"
+   },
+   "bound_status": "bounded",
+   "cap": "none: read-only connection (mode=ro); writes no data",
+   "cleanup": "not applicable: opens the BFF downstream-health SQLite file read-only to collect incident-referenced event ids",
+   "growth_driver": "opens a SQLite database read-only with sqlite3.connect (no writes)",
+   "growth_per_day": "0 bytes (read-only)",
+   "kind": "sqlite_connect",
+   "name": "services/telemetry/heartbeat_retention.py",
+   "owner": "telemetry",
+   "readers": [
+    "services/telemetry/heartbeat_retention.py"
+   ],
+   "register_class": "RC3",
+   "task": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
