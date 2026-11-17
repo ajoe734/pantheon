@@ -159,10 +159,11 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
 
     assert "fetch-depth: 0" in dev
     assert "refs/remotes/origin/dev" in dev
-    assert '"${sha}" != "${trusted_ref}"' in dev
+    # Payload may be any green ancestor of the dev tip, never an off-dev commit.
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in dev
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
-    assert '"${GITHUB_SHA}" != "${sha}"' in dev
-    assert "current execute-plans dev moved" in dev
+    assert "has no successful dev push Branch CI run" in dev
+    assert "is not on dev" in dev
 
 
 def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
