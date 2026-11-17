@@ -1,0 +1,28 @@
+{
+  "task_id": "SOURCE-RECEIPT-SLIM-KEEPS-BACKUP-20261117",
+  "reproduction": {
+    "test": "services/source_ingestion/tests/test_ingest_schedule_slim_backup.py::test_reproduce_hosted_deployed_rewrite_left_no_copy",
+    "reader": "services/source_ingestion/scheduler.py at 3f65a8b3e (dev head before this task), loaded from git",
+    "shape": "12 receipts embedding 120 snapshot bodies each (4 older than 30 days), scaled down from the hosted 2.2 GB journal",
+    "result": "first load rewrote the journal 1209588 -> under 20% in place; directory held only the journal and its lock; no .pre-migrate.bak"
+  },
+  "design": {
+    "backup": "<journal>.pre-migrate.bak by os.link, shared code path services.source_ingestion.scheduler.keep_journal_backup used by the service and scripts/migrate_ingest_receipts.py",
+    "keep_window": "7 days, setting SOURCE_INGEST_RECEIPT_BACKUP_KEEP_DAYS (default 7, minimum 1); creation time is stamped in the backup mtime before the link so expiry is never early",
+    "existing_backup": "an unexpired backup is never replaced; at most one backup file",
+    "health": "journal_stats().rewrite_backup {path, bytes, keep_days, created_at, expires_at}; last_slim_rewrite.plan {receipts_to_compact, receipts_to_drop_by_retention, bytes_before, bytes_after}; last_slim_rewrite.skipped_reason; the plan is also logged at INFO before the journal is replaced"
+  },
+  "disk_bound": {
+    "extra_bytes_held_by_backup": "at most the journal size before the rewrite (hard link, no copy); hosted shape 2.2 GB journal => at most 2.2 GB extra, 42 MB new file",
+    "skip_rule": "rewrite skipped with a readable reason when free disk < journal bytes + SOURCE_INGEST_RECEIPT_REWRITE_FREE_MARGIN_BYTES (default 256 MiB); journal left unchanged, replay still compacts in memory"
+  },
+  "rollback": "rename <journal>.pre-migrate.bak over the journal; read by the new store and by the previous reader (scheduler at 3f65a8b3e) in test_rollback_by_rename_is_read_by_new_and_previous_reader; crash between hard link and rename covered by test_crash_between_hard_link_and_rename_leaves_a_complete_journal_and_backup",
+  "receipt_content": "unchanged; compaction logic not edited",
+  "validation": [
+    {"command": "pytest scripts/test_migrate_ingest_receipts.py services/source_ingestion/tests/test_ingest_receipt_snapshot_refs_bounded.py services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py services/source_ingestion/tests/test_ingest_schedule_slim_backup.py", "result": "45 passed"},
+    {"command": "pytest services/source_ingestion/tests/test_scheduler.py test_snapshot_universe.py test_collector_outcome_truth.py test_latest_market_snapshot_journal_bounded.py test_scheduled_connector.py", "result": "198 passed"},
+    {"command": "pytest scripts/test_migrate_ingest_receipts.py + refs_bounded + incremental_replay (before new tests)", "result": "35 passed"}
+  ],
+  "not_run": "the full services/source_ingestion/tests directory exceeded the 10 minute bound in one batch; not claimed as passed",
+  "credentials": "none recorded"
+}

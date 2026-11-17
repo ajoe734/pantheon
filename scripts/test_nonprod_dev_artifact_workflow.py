@@ -332,13 +332,29 @@ def test_strict_dispatch_without_failures_completes(tmp_path):
     assert admitted and not compensate and "release" in calls
 
 
-def test_strict_input_is_manual_only_and_defaults_to_advisory():
+def test_strict_mode_is_a_repository_variable_and_defaults_to_advisory():
     on_section = WORKFLOW.get(True) or WORKFLOW.get("on")
-    spec = on_section["workflow_dispatch"]["inputs"]["strict_functional_checks"]
-    assert spec["type"] == "boolean" and spec["default"] is False
-    assert DEPLOY["env"]["FUNCTIONAL_CHECKS_STRICT"] == "${{ inputs.strict_functional_checks && 'true' || 'false' }}"
+    # A 26th dispatch input made GitHub reject the whole workflow on
+    # 2026-11-17, so strict mode is a repository variable, never an input.
+    assert "strict_functional_checks" not in on_section["workflow_dispatch"]["inputs"]
+    assert DEPLOY["env"]["FUNCTIONAL_CHECKS_STRICT"] == (
+        "${{ vars.DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS == 'true' && 'true' || 'false' }}"
+    )
     assert "--strict-functional-checks" in step(DEPLOY, "deploy")["run"]
     assert "strict_functional_checks" not in (ROOT / "scripts/auto_deploy_dev_pair.py").read_text()
+
+
+def test_no_workflow_exceeds_the_github_dispatch_input_limit():
+    # GitHub accepts at most 25 workflow_dispatch inputs; one more invalidates
+    # the workflow file for every trigger, including the automatic deployer.
+    import yaml
+
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        triggers = document.get(True) or document.get("on") or {}
+        dispatch = triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None
+        inputs = (dispatch or {}).get("inputs") or {}
+        assert len(inputs) <= 25, f"{path.name} declares {len(inputs)} workflow_dispatch inputs (limit 25)"
 
 
 def test_advisory_results_are_recorded_and_uploaded_without_failing_the_job():

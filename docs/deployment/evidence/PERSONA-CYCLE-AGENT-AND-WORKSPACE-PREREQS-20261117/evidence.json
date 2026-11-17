@@ -1,0 +1,15 @@
+{
+  "task_id": "PERSONA-CYCLE-AGENT-AND-WORKSPACE-PREREQS-20261117",
+  "fixtures": {
+    "hosted_shaped_persona": "lifecycle_state=paper_owner, workspace_ref=null, metadata.persona_harness.active_version=1",
+    "tests": [
+      "test_hosted_null_workspace_ref_derives_workspace_for_materialize_and_ensure",
+      "test_ensure_precedes_turn_once_per_persona_and_second_cycle_creates_no_duplicate (three paper_owner personas)",
+      "test_failed_ensure_records_named_reason_and_never_attempts_turn"
+    ]
+  },
+  "failure_reason_before": ["observe_prerequisites_unavailable:canonical_memory (null workspace_ref rejected by adapter)", "agent_turn_or_schema_unavailable:* (no agent for openclaw/<persona_id>)"],
+  "failure_reason_after": "workspace derived via runtime_profile (/home/node/.openclaw/workspaces/<persona_id>); agent ensured first; ensure failure => agent_ensure_unavailable:<reason> in packet failure_reason and persona_cycle_health, no turn attempted",
+  "runtime_budget": "one adapter ensure call per eligible persona per cycle; no new persistent writer",
+  "verification": "pytest services/persona/test_persona_cycle_controller.py: 60 tests, 56 passed, 4 skipped (pre-existing) before the 3->final test revision; ensure/hosted subset 5 passed after"
+}

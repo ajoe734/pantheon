@@ -129,7 +129,8 @@ def memory_service(tmp_path_factory):
 def system(tmp_path, monkeypatch, memory_service):
     state = {"jobs": [], "runs": {}, "turns": 0, "outage": False, "paths": [], "answer": OUTPUT,
              "answer_fn": None, "materialize": [], "prompts": {}, "obs": {}, "workspaces": tmp_path / "ws",
-             "broker_runs": {}, "users": [], "memory_ids": [], "record_override": None}
+             "broker_runs": {}, "users": [], "memory_ids": [], "record_override": None,
+             "ensures": [], "agents": {}, "ensure_status": 200}
     broker_path = "/api/openclaw-adapter/agents/persona-tools/runs"
 
     class Handler(BaseHTTPRequestHandler):
@@ -182,6 +183,18 @@ def system(tmp_path, monkeypatch, memory_service):
                 else:
                     raise AssertionError(method)
                 result = {"status": "ok", "data": data}
+            elif self.path == "/api/openclaw-adapter/agents/persona/ensure":
+                assert self.headers.get("X-Pantheon-Service-Token") == "fixture-adapter-token"
+                assert self.headers.get("Idempotency-Key") and self.headers.get("X-Request-Id")
+                state["ensures"].append(body)
+                pid = body["persona"]["persona_id"]
+                if state["ensure_status"] != 200:
+                    status, result = state["ensure_status"], {"status": "upstream_unavailable"}
+                else:
+                    created = pid not in state["agents"]
+                    state["agents"][pid] = True
+                    status = 201 if created else 200
+                    result = {"status": "ok", "agent": {"agent_id": pid, "status": "created" if created else "unchanged"}}
             elif self.path == "/api/openclaw-adapter/agents/persona/memory/materialize":
                 # The real bridge against the real Memory Plane, with the request's own query.
                 state["materialize"].append(body)
@@ -1590,3 +1603,45 @@ def test_daily_cycle_convenes_mt5_once_on_governed_regime_transition_and_skips_r
     assert {"meeting_type": "MT-5", "reason": "no_governed_regime_record"} in c4_one["meetings"]["not_fired"]
 
 
+
+
+def _hosted_shaped(persona_id):
+    return {"persona_id": persona_id, "tenant_id": "tenant-a", "lifecycle_state": "paper_owner",
+            "workspace_ref": None, "metadata": {"persona_harness": {"active_version": 1}}}
+
+
+def test_hosted_null_workspace_ref_derives_workspace_for_materialize_and_ensure(system):
+    controller, state, owner, _ = system
+    persona = {**next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test"), "workspace_ref": None}
+    packet = controller.consume_run(persona, "job-1", run(1))
+    expected = "/home/node/.openclaw/workspaces/persona-cycle-test"
+    assert state["materialize"][-1]["workspace_ref"] == expected
+    assert state["ensures"][-1]["workspace_ref"] == expected
+    assert packet["persona_cycle"]["agent_ensure"]["status"] == "ready"
+
+
+def test_ensure_precedes_turn_once_per_persona_and_second_cycle_creates_no_duplicate(system):
+    controller, state, owner, pool = system
+    base = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    personas = [{**base, "persona_id": pid, "workspace_ref": None}
+                for pid in ("persona-cycle-test", "persona-hosted-b", "persona-hosted-c")]
+    for cycle_no in (1, 2):
+        before = len(state["ensures"])
+        for persona in personas:
+            packet = controller.consume_run(persona, "job-1", {**run(cycle_no), "runId": f"c{cycle_no}-{persona['persona_id']}"})
+            assert not (packet["persona_cycle"]["failure_reason"] or "").startswith("agent_ensure")
+        assert [e["persona"]["persona_id"] for e in state["ensures"][before:]] == [p["persona_id"] for p in personas]
+    assert sorted(state["agents"]) == sorted(p["persona_id"] for p in personas)  # no duplicate agent
+    assert state["paths"].index("/api/openclaw-adapter/agents/persona/ensure") < state["paths"].index("/v1/responses")
+
+
+def test_failed_ensure_records_named_reason_and_never_attempts_turn(system):
+    controller, state, owner, _ = system
+    state["ensure_status"] = 503
+    persona = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    packet = controller.consume_run(persona, "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == "agent_ensure_unavailable:http_503"
+    assert state["turns"] == 0
+    assert "persona-cycle-failure:agent_ensure_unavailable:http_503" in packet["audit_refs"]
+    from services.control_plane.bff.loop_inventory import project_persona_cycle_health
+    assert project_persona_cycle_health(persona, [packet])["status"] != "healthy"

@@ -75,11 +75,6 @@ on:
         required: false
         default: false
         type: boolean
-      strict_functional_checks:
-        description: "Dev only, manual: keep the functional checks (market refresh, paper baseline, probes, Agora smoke, in-script checks) blocking with rollback as before. Automatic releases never set this."
-        required: false
-        default: false
-        type: boolean
       bootstrap_empty_host:
         description: "Dev only: admit and deploy an exact predecessor pair to bootstrap an empty host with no deployment.json"
         required: false
@@ -203,8 +198,11 @@ jobs:
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
       # Dev functional checks are advisory (record result, never roll back)
-      # unless an operator explicitly dispatches with strict_functional_checks.
-      FUNCTIONAL_CHECKS_STRICT: ${{ inputs.strict_functional_checks && 'true' || 'false' }}
+      # unless an operator sets the repository variable
+      # DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS to "true". This is a variable and
+      # not a dispatch input because GitHub rejects a workflow with more than
+      # 25 workflow_dispatch inputs and this workflow already has 25.
+      FUNCTIONAL_CHECKS_STRICT: ${{ vars.DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS == 'true' && 'true' || 'false' }}
       COMPENSATION_DRILL: ${{ inputs.compensation_drill || false }}
       # One applicability decision for the run-scoped paper case: only an
       # explicit proof/probe/bootstrap request on auto/root creates it, so an
