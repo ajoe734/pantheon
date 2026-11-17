@@ -6,11 +6,17 @@ Design of record: SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16 sections 4.3 and 7
 * writes daily bars only, only through ``DailyBarsStore``; never touches the run files;
 * the trade date comes from the row (``trade_date``/``as_of_date``/``date``/``event_time``), never
   from the partition name (the write date) or the ingest day; a row without one is counted, not written;
-* copies of one (symbol, trade date) collapse to the newest run (partition write date, file mtime,
-  file name, then line order) when they agree on open, high, low, close and volume. Keys whose copies
-  disagree are counted separately (price conflicts: open/high/low/close; volume only) and listed in the
-  report, and a trade date that holds one is NOT published (the old read fails closed on conflicting
-  prices). ``--newest-run-on-conflict`` is the one flag that publishes such a date with the newest copy;
+* copies of one (symbol, trade date) collapse by the rule of the evaluator read (design 4.1a item 3) when
+  they agree on open, high, low and close: the copy with the largest volume supplies volume and traded
+  value (a tie takes the newer run: partition write date, file mtime, file name, then line order) and the
+  available time is the latest of all copies. Keys whose copies disagree are counted separately (price
+  conflicts: open/high/low/close; volume only) and listed in the report, and a trade date that holds
+  one is still NOT published by default (unchanged from the merged task; the volume only case is resolved
+  by the rule above when the flag publishes the date).
+  ``--newest-run-on-conflict`` is the one flag that publishes such a date with the newest copy;
+* the three columns (traded value, available time, trading status) come from the run file line exactly as
+  the store extracts them; a day written before them (manifest v1) is upgraded to v2 here and the report
+  lists the v1 dates that no run file can upgrade (``upgrade``);
 * expired warrants (listing of SOURCE-WARRANT-LISTING-EXPIRY-20261117) are not carried; listed
   warrants and delisted ordinary shares are; an unreadable or stale listing stops the run;
 * resumable per trade date: a day whose content digest is unchanged is not rewritten, so a second
@@ -39,8 +45,11 @@ from scripts.delete_expired_warrants import classify  # noqa: E402
 from services.source_ingestion.daily_bars_store import (  # noqa: E402
     _DATE_KEYS,
     DAILY_BARS_DAY_ALARM_BYTES,
+    DAILY_BARS_SCHEMA_VERSION,
     DailyBarsBudgetExceeded,
     DailyBarsStore,
+    _available_time,
+    _body_of,
     _number,
     validate_trade_date,
 )
@@ -171,9 +180,18 @@ def _ohlcv(row: Mapping[str, Any]) -> tuple[float | None, ...]:
         _number(body.get(k) if body.get(k) is not None else meta.get(k)) for k in (*_PRICE_FIELDS, "volume"))
 
 
+def _avail(row: Mapping[str, Any]):
+    meta = effective_metadata(row)
+    normalized = meta.get("normalized_row")
+    body = normalized if isinstance(normalized, Mapping) else meta
+    return _available_time((body, _body_of(meta), meta))
+
+
 def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> dict[str, Any]:
-    """Pass 2 for one trade date: newest copy per symbol, classified. Holds one date in memory."""
+    """Pass 2 for one trade date: one copy per symbol by the evaluator rule, classified. Holds one date in memory."""
     newest: dict[str, Mapping[str, Any]] = {}
+    best: dict[str, tuple[Mapping[str, Any], float]] = {}  # copy with the largest volume (later wins a tie)
+    latest: dict[str, Any] = {}  # latest available time of all copies
     first_seen: dict[str, tuple[float | None, ...]] = {}
     conflicts: dict[str, str] = {}  # symbol -> "price" | "volume"
     rows = 0
@@ -191,6 +209,12 @@ def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> 
                 elif conflicts.get(symbol) != "price":
                     conflicts[symbol] = "volume"
             newest[symbol] = row
+            volume = values[4] if values[4] is not None else 0.0
+            if symbol not in best or volume >= best[symbol][1]:
+                best[symbol] = (row, volume)
+            avail = _avail(row)
+            if avail is not None and (symbol not in latest or avail > latest[symbol]):
+                latest[symbol] = avail
     classes = {"keep_listed": 0, "keep_delisted_share": 0, "review": 0, "delete": 0}
     carried: list[_Rec] = []
     for symbol, row in newest.items():
@@ -198,9 +222,12 @@ def collect_day(trade_date: str, files: Sequence[Path], state: ListingState) -> 
         classes[kind] += 1
         if kind == "delete":
             continue  # expired warrant (or a code in no listing): not carried
-        carried.append(_Rec(
-            metadata=effective_metadata(row), source_id=str(row.get("source_id") or ""),
-            is_rejected=False))
+        if conflicts.get(symbol) != "price":
+            row = best[symbol][0]  # same prices: the largest volume supplies volume and traded value
+        meta = effective_metadata(row)
+        if conflicts.get(symbol) != "price" and symbol in latest:
+            meta["normalized_row"] = {**(meta.get("normalized_row") or meta), "available_time": latest[symbol].isoformat()}
+        carried.append(_Rec(metadata=meta, source_id=str(row.get("source_id") or ""), is_rejected=False))
     conflicts = {k: v for k, v in conflicts.items() if _classify(k, state) != "delete"}
     return {
         "rows": rows, "unique": len(newest), "duplicates": rows - len(newest),
@@ -281,6 +308,7 @@ def backfill(
             entry["manifest_symbols"] = manifest.get("symbol_count")
             entry["content_digest"] = manifest.get("content_digest")
             entry["manifest_bytes"] = manifest.get("bytes")
+            entry["schema_version"] = manifest.get("schema_version")
             entry["verified"] = bool(
                 verify["verified"] and manifest.get("row_count") == len(rows)
                 and manifest.get("symbol_count") == len({r["symbol"] for r in rows}))
@@ -291,6 +319,12 @@ def backfill(
         report["days"][trade_date] = entry
     report["classes"] = class_totals
     report["trade_dates"] = len(report["days"])
+    v1 = sorted(d for d in store.read_manifest_dates()
+                if (store.read_manifest(d) or {}).get("schema_version") != DAILY_BARS_SCHEMA_VERSION)
+    report["upgrade"] = {  # v1 days (no traded value, available time, trading status) after this run
+        "v1_dates": len(v1), "v1_dates_with_run_files": [d for d in v1 if d in plans],
+        "v1_dates_without_run_files": [d for d in v1 if d not in plans],
+        "v1_dates_without_run_files_count": sum(1 for d in v1 if d not in plans)}
     if apply:
         report["budget"] = store.enforce_budget()
         if report["mismatches"]:

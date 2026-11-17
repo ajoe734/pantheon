@@ -435,6 +435,12 @@ class DailyBarsStore:
         except ValueError as exc:
             raise DailyBarsCorrupt(f"manifest for {trade_date} is not valid JSON") from exc
 
+    def read_manifest_dates(self) -> list[str]:
+        """Sorted trade dates that have a manifest."""
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
+
     def _read_day_rows(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
         _, pq = _require_pyarrow()
         out: dict[tuple[str, str, str], dict[str, Any]] = {}

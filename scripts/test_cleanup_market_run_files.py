@@ -215,9 +215,14 @@ def test_the_scan_fails_for_a_new_unlisted_reader(tmp_path):
 
 
 def test_attestation_and_other_unswitched_readers_block_the_real_cleanup(tmp_path):
-    """G2: the survivorship attestation still opens run files, so the checked in list keeps blocking."""
+    """G2 is closed (the attestation reads status and lineage from daily bars and is switched), but two readers
+    still open run files, so the checked in list keeps blocking: the cleanup refuses while any listed reader
+    defaults to run files."""
+    attestation = [r for r in cl.KNOWN_RUN_FILE_READERS if "survivorship attestation" in r.get("part", "")]
+    assert len(attestation) == 1 and attestation[0]["switched"] is True
+    assert attestation[0]["switched_marker"] == "_read_captures_from_daily_bars"
     names = {_rid(r) for r in cl.KNOWN_RUN_FILE_READERS if not r["switched"] and r.get("blocks_cleanup", True)}
-    assert any("survivorship attestation" in n for n in names)
+    assert names and not any("survivorship attestation" in n for n in names)
     assert any(n.startswith("services/source_ingestion/snapshot_universe.py") for n in names)
     assert any(n.startswith("services/source_ingestion/pin_source.py") for n in names)
     backfill = _prepared(tmp_path)
