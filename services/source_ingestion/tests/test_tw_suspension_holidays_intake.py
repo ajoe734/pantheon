@@ -251,13 +251,14 @@ def test_without_any_evidence_nothing_is_attested(tmp_path):
     assert market["includes_delisted"] is False and market["includes_suspended"] is False
 
 
-def test_suspension_production_cap_is_not_truncating_listed_warrant_intake(official_files, tmp_path, monkeypatch):
-    """The production definition (no per-run override) must carry the cap, not only the test helper."""
+def test_suspension_production_cap_is_hosted_valid_and_pages_to_completion(official_files, tmp_path, monkeypatch):
+    """The production cap must pass the hosted fetch.max_records bound (<= 1000); intake above it pages via the resume cursor."""
     production_cap = get_connector_definition(SUSPENSION).default_limits["max_records"]
-    _, records = pull(official_files, tmp_path, monkeypatch, SUSPENSION, max_records=production_cap)
+    assert 0 < production_cap <= 1000
     _, uncapped = pull(official_files, tmp_path / "u", monkeypatch, SUSPENSION, max_records=10_000_000)
-    assert production_cap >= 20000
-    assert len(records) == len(uncapped) > 2000  # evidence: intake exceeds 2000 once listed warrants are kept
+    assert len(uncapped) > 2000  # evidence: intake exceeds 2000 once listed warrants are kept
+    _, first = pull(official_files, tmp_path / "p", monkeypatch, SUSPENSION, max_records=production_cap)
+    assert len(first) == production_cap  # truncated per run, never claimed complete (see next test)
 
 
 def test_suspension_cap_exceeded_is_loud_not_silently_truncated(official_files, tmp_path, monkeypatch):

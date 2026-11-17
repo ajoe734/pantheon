@@ -53,5 +53,12 @@
     "when_exceeded": "Not silent: the adapter returns a CollectorPullResult with complete=False, observed.continuation_pending=True, health_state=degraded (collector_complete_boundary_unverified) and a resume cursor '<bundle>|items=N'. The remainder is delivered on the next run from that cursor. Test: test_suspension_cap_exceeded_is_loud_not_silently_truncated (cap 2000 on the 2476 bundle). Caveat: callers that use execute_provider_owned_adapter without preserve_collector_outcome get a tuple and drop that cursor; the configured ingestion path preserves it.",
     "production_change": "connector_definitions.py: only max_records=20000 on collector-tw-trading-suspension."
   },
-  "pass_counts_reopen_2": "360 passed, 10 skipped, 0 failed (deploy/collector/tests + test_tw_suspension_holidays_intake, test_taiwan_official_connectors, test_security_listing, test_market_data_storage, test_active_universe, scripts/test_delete_expired_warrants) after merging origin/dev"
+  "pass_counts_reopen_2": "360 passed, 10 skipped, 0 failed (deploy/collector/tests + test_tw_suspension_holidays_intake, test_taiwan_official_connectors, test_security_listing, test_market_data_storage, test_active_universe, scripts/test_delete_expired_warrants) after merging origin/dev",
+  "suspension_cap_reopen_3_ci_red": {
+    "finding": "PR #7472 Smoke acceptance failed: max_records=20000 on collector-tw-trading-suspension violates the hosted fetch.max_records <= 1000 bound (configured.py), so every controller tick and test_every_collector_definition_is_created_disabled raised.",
+    "fix": "Reverted connector_definitions.py to the origin/dev state (no max_records override; default 500). No change to configured.py.",
+    "effect": "2476 recorded suspension records exceed one run; the adapter reports complete=False, continuation_pending and a resume cursor, delivering the rest on later runs. Not silent; test_suspension_cap_exceeded_is_loud_not_silently_truncated covers it. The earlier claim that 20000 covers the bundle in one run is withdrawn.",
+    "test": "test_suspension_production_cap_is_hosted_valid_and_pages_to_completion asserts the cap is 0<cap<=1000 and a capped pull returns exactly cap records.",
+    "validation": "Smoke batches rerun locally: test_tw_suspension_holidays_intake + test_collector_bundle_connector + test_scheduled_connector 190 passed, 1 skipped; test_collector_market_early_fetch_pit + newest_session_progress + hosted_throughput 38 passed."
+  }
 }
