@@ -341,6 +341,9 @@ class SourceIngestionRuntime:
         self.latest_market_snapshot_store = LatestMarketSnapshotStore(
             self.LATEST_MARKET_SNAPSHOT_PATH,
             max_closes=self.MARKET_SNAPSHOT_MAX_CLOSES,
+            # MARKET_SNAPSHOT_STORE (journal default | dual | sqlite) is read by the store itself.
+            # In sqlite mode the old-format export is rewritten at most once per interval (design 4.2 S2).
+            export_min_interval_seconds=float(os.getenv("MARKET_SNAPSHOT_EXPORT_INTERVAL_SECONDS", "3600")),
         )
         self.snapshot_universe = SnapshotUniverse(
             self.latest_market_snapshot_store,

@@ -32,6 +32,9 @@ from ..requirement_state import (
     MarketSnapshotStateError,
     RequirementStateError,
     snapshot_dataset_for_frequency,
+    DERIVED_ON_READ_SNAPSHOT_DATASETS,
+    MINUTE_SNAPSHOT_DATASET,
+    NOT_STORED_DERIVE_ON_READ,
 )
 
 if TYPE_CHECKING:
@@ -166,6 +169,17 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 status_code=422,
                 detail={"code": "unsupported_snapshot_frequency", "frequency": frequency, "detail": str(exc)},
             ) from exc
+        if dataset in DERIVED_ON_READ_SNAPSHOT_DATASETS:
+            # Aggregated frequencies are derived from tw_price_1m on read and never stored.
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": NOT_STORED_DERIVE_ON_READ,
+                    "symbol": str(symbol or "").strip().upper(),
+                    "frequency": frequency,
+                    "derive_from": MINUTE_SNAPSHOT_DATASET,
+                },
+            )
         try:
             universe = getattr(runtime, "snapshot_universe", None)
             if dataset == DAILY_SNAPSHOT_DATASET and universe is not None:
