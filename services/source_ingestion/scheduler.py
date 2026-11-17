@@ -665,6 +665,7 @@ class JsonlIngestScheduleStore:
         # lineage (``pinned_run_ids``) still references them; 0 keeps every receipt.
         self.retention_days = receipt_retention_days() if retention_days is None else max(0, int(retention_days))
         self._pinned_run_ids = pinned_run_ids
+        self._pin_state: dict[str, Any] | None = None
         self._last_retention_check = time.monotonic()
         self._growth_samples: deque[tuple[float, int]] = deque(maxlen=512)
         self._max_receipt_line = 0
@@ -713,8 +714,19 @@ class JsonlIngestScheduleStore:
             return stats
         if size == 0:
             return stats
-        pins = tuple(self._pinned_run_ids() or ()) if self._pinned_run_ids else ()
-        scan = scan_journal(self.path, retention_days=self.retention_days, now=now, extra_pinned_run_ids=pins)
+        pins: tuple[str, ...] = ()
+        retention_days = self.retention_days
+        if self._pinned_run_ids:
+            try:
+                pins = tuple(self._pinned_run_ids() or ())
+                self._pin_state = {"resolved": True, "pinned_run_id_count": len(pins)}
+            except Exception as exc:  # noqa: BLE001 - unresolved pins: this run drops nothing (fail closed)
+                retention_days = 0
+                reason = f"{type(exc).__name__}: {exc}"[:300]
+                self._pin_state = {"resolved": False, "reason": reason, "retention_dropped_nothing": True}
+                stats["pin_source"] = self._pin_state
+                logger.warning("ingest receipt retention drops nothing this run: pin references unresolved (%s)", reason)
+        scan = scan_journal(self.path, retention_days=retention_days, now=now, extra_pinned_run_ids=pins)
         stats["bytes_before"] = size
         if not scan.needs_rewrite:
             return stats
@@ -837,6 +849,8 @@ class JsonlIngestScheduleStore:
         }
         if self._last_slim:
             stats["last_slim_rewrite"] = dict(self._last_slim)
+        if self._pin_state is not None:
+            stats["receipt_pin_source"] = dict(self._pin_state)
         return stats
 
     def _sample_growth(self, size: int) -> None:

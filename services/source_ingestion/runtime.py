@@ -74,6 +74,8 @@ from .financial_source_catalog import financial_data_source_catalog_payload
 from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
+from .pin_source import PinSource
+from .security_listing import HOSTED_STATE_FILENAME, HostedListing, set_hosted_listing
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .controller_state import ControllerStateError, ControllerStateStore, read_controller_state
 from .controller_auth import load_controller_token
@@ -329,7 +331,10 @@ class SourceIngestionRuntime:
         self.manager = IngestManager()
         self.proposal_store = SourceChangeProposalStore.from_jsonl(self.PROPOSAL_STORE_PATH)
         self.llm_proposal_adapter = LLMSourceProposalAdapter(self.proposal_store)
-        self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH)
+        # Receipts that a gate proof or paper evidence references are kept past retention; when the evidence
+        # cannot be read (or SOURCE_INGEST_PIN_EVIDENCE_PATHS is unset) retention drops nothing and health says why.
+        self.pin_source = PinSource.from_env()
+        self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH, pinned_run_ids=self.pin_source.run_ids)
         self.connector_store = JsonlConfiguredConnectorStore(self.CONNECTOR_STORE_PATH)
         self.schedule_config_store = JsonlConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)
         self.configured_fetcher = ConfiguredConnectorFetcher(self.connector_store)
@@ -359,7 +364,13 @@ class SourceIngestionRuntime:
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()
         self.source_execution_lock = threading.RLock()
-        self.market_data_storage_writer = MarketDataStorageWriter(self.MARKET_DATA_STORAGE_ROOT)
+        # The dated security listing: the collector host's state, read through the bundle transport (no provider
+        # egress from hosted), kept as one file. Mode: SOURCE_INGEST_SECURITY_LISTING_MODE off|shadow|enforce.
+        self.hosted_listing = HostedListing(self.DATA_DIR / HOSTED_STATE_FILENAME, transport=self._listing_transport)
+        set_hosted_listing(self.hosted_listing)
+        self.market_data_storage_writer = MarketDataStorageWriter(
+            self.MARKET_DATA_STORAGE_ROOT, listing_provider=self.hosted_listing
+        )
         self.distillation_job_queue = IngestDistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
         self.source_management_store = build_source_management_store(self.DATA_DIR)
         self._STRATEGY_SEED_STORE_PATH = Path(
@@ -901,6 +912,15 @@ class SourceIngestionRuntime:
             "provider_egress_attempted": bool(state.schedule.get("provider_egress_attempted")),
         }
 
+    @staticmethod
+    def _listing_transport() -> Any:
+        """The bundle transport the collector pull already uses; None while no collector token is provisioned."""
+        from .connectors.collector_bundle import COLLECTOR_BUNDLE_TOKEN_ENV, HttpBundleTransport, collector_host
+
+        if not os.environ.get(COLLECTOR_BUNDLE_TOKEN_ENV, "").strip():
+            return None
+        return HttpBundleTransport(host=collector_host(), timeout_seconds=20.0)
+
     def _source_runtime_metrics(self) -> dict[str, Any]:
         readiness = self._source_freshness_readiness()
         return {
@@ -914,6 +934,7 @@ class SourceIngestionRuntime:
             "posture_alert_count": self.PRODUCTION_POSTURE.alert_count(),
             "latest_market_snapshot_journal": self.latest_market_snapshot_store.journal_stats(),
             "ingest_schedule_journal": JsonlIngestScheduleStore.journal_stats_for_path(self.SCHEDULE_STORE_PATH),
+            "security_listing": self.hosted_listing.health(),
         }
 
     def _connector_schema_hash(self, connector: SourceConnector, fetch: dict[str, Any] | None) -> str:

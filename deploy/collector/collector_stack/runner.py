@@ -157,7 +157,25 @@ class CollectorRunner:
     def refresh_security_listing(self, fetch_page: Callable[[str], str], *, listing_date: str) -> dict[str, Any]:
         sl = load_security_listing_module()
         state = sl.ListingState.load(self.listing_state_path)
-        return sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
+        result = sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
+        if result.get("ok"):
+            result["published"] = self.publish_security_listing()
+        return result
+
+    def publish_security_listing(self) -> dict[str, Any]:
+        """Publish the dated listing state in the bundle tree (``bundles/security-listing.json``) so hosted reads it
+        through the read only bundle server it already pulls from: one fetch (here), one dated listing, no exchange
+        fetch from hosted. The bytes are the state file's bytes, replaced in one step; never more than the size cap."""
+        sl = load_security_listing_module()
+        try:
+            data = self.listing_state_path.read_bytes()
+        except OSError as exc:
+            return {"ok": False, "reason": f"listing state not readable: {exc}"}
+        if len(data) > sl.MAX_STATE_BYTES:
+            return {"ok": False, "reason": f"listing state is {len(data)} bytes, over the {sl.MAX_STATE_BYTES} byte cap"}
+        target = self.root_dir / sl.BUNDLE_STATE_PATH
+        sl.write_state_bytes(target, data)
+        return {"ok": True, "path": sl.BUNDLE_STATE_PATH, "bytes": len(data)}
 
     def build_collector(self, policy: SourceFetchPolicy) -> Any:
         sid = policy.source_id
