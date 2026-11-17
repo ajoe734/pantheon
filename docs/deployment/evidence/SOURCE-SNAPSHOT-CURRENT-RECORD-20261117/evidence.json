@@ -93,6 +93,12 @@
       "distillation"
     ]
   },
+  "ci_red_return_fix": {
+    "cause": "undeclared writers sqlite:.current.sqlite3, sqlite_connect:services/source_ingestion/snapshot_current_store.py, table:snapshot_current, table:snapshot_meta",
+    "failed_check": "Smoke acceptance (scripts.test_check_storage_manifest.test_repository_manifest_matches_code)",
+    "fix": "four bounded entries added to docs/operations/storage-manifest.json with bound_proof on the ON CONFLICT replace statement",
+    "validation": "python3 -m unittest scripts.test_check_storage_manifest: Ran 10 tests OK; check_storage_manifest.py passed=true"
+  },
   "constructors_and_direct_readers_acceptance_11": [
     {
       "file": "services/source_ingestion/runtime.py",
