@@ -43,7 +43,7 @@ def test_source_default_is_zero_egress_and_snapshot_state_is_durable() -> None:
         "/data/source-ingest/latest_market_snapshots.jsonl"
     )
     assert "source-ingest-data:/data/source-ingest" in source["volumes"]
-    assert "/readyz" in " ".join(source["healthcheck"]["test"])
+    assert "/livez" in " ".join(source["healthcheck"]["test"])
 
     # Reconciliation is the default service behavior. A pull requires the
     # explicit bounded deployment profile and exact allowlists.
