@@ -110,5 +110,65 @@ class GrowthAndGreen(unittest.TestCase):
         self.assertIn("default_transaction_read_only=on", s)
 
 
+MIB = 1024 ** 2
+
+
+def mem_raw(*lines):
+    return "\n".join(["@@time", str(NOW), "@@memory", *lines, "@@end"])
+
+
+def mem_report(lines, previous_lines=None):
+    manifest = {"entries": []}
+    prev = mhs.build_report(mem_raw(*previous_lines), manifest) if previous_lines else None
+    return mhs.build_report(mem_raw(*lines), manifest, prev)
+
+
+def kinds(report):
+    return {(f["finding"], f.get("service")): f for f in report["findings"] if "service" in f}
+
+
+class MemoryBudget(unittest.TestCase):
+    def test_oom_kill_is_red(self):
+        r = mem_report([f"c1|adapter|0|{3072 * MIB}|{3000 * MIB}|54|54"])
+        f = kinds(r)[("container_oom_killed", "adapter")]
+        self.assertEqual((r["status"], f["oom_kill"], f["register_class"]), ("red", 54, "RC3"))
+
+    def test_restart_growth_is_red(self):
+        r = mem_report(["c1|svc|5|268435456|1000|0|0"], ["c1|svc|3|268435456|1000|0|0"])
+        f = kinds(r)[("container_restarts_grew", "svc")]
+        self.assertEqual((r["status"], f["restarts"], f["previous_restarts"]), ("red", 5, 3))
+
+    def test_cache_bound_container_at_limit_is_warning_only(self):
+        lim = 8 * 1024 ** 3
+        r = mem_report([f"c1|postgres|0|{lim}|{lim}|1000000|0"], [f"c1|postgres|0|{lim}|{lim}|10|0"])
+        k = kinds(r)
+        self.assertEqual(r["status"], "green")
+        self.assertEqual(k[("memory_limit_reached", "postgres")]["severity"], "warning")
+        self.assertEqual(k[("memory_peak_near_limit", "postgres")]["percent"], 100.0)
+
+    def test_counter_reset_is_not_a_finding(self):
+        r = mem_report(["c1|svc|0|268435456|1000|0|0"], ["c1|svc|4|268435456|1000|7|0"])
+        self.assertEqual(r["findings"], [])
+        self.assertEqual(r["status"], "green")
+
+    def test_container_without_limit(self):
+        r = mem_report(["c1|minio|0|max|5000|-|-"])
+        row = r["memory_table"][0]
+        self.assertIsNone(row["limit"])
+        self.assertIsNone(row["percent"])
+        self.assertEqual(r["status"], "green")
+        self.assertIn(("memory_limit_missing", "minio"), kinds(r))
+
+    def test_table_present(self):
+        r = mem_report([f"c1|a|0|{100 * MIB}|{50 * MIB}|0|0"])
+        self.assertEqual(r["memory_table"][0]["percent"], 50.0)
+        self.assertEqual(r["findings"], [])
+
+    def test_remote_script_is_read_only(self):
+        self.assertIn("memory.peak", mhs.REMOTE_SCRIPT)
+        for bad in (" > ", " rm ", "docker restart", "docker exec -u root"):
+            self.assertNotIn(bad, mhs.REMOTE_SCRIPT.split("@@memory")[1].split("@@files")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

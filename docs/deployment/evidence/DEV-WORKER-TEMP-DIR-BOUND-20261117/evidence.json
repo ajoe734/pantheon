@@ -1,0 +1,15 @@
+{
+  "task_id": "DEV-WORKER-TEMP-DIR-BOUND-20261117",
+  "temp_root_default": "/tmp/pantheon-worker-temp",
+  "cleanup_interval_seconds": 600,
+  "max_orphan_survival": "one cleanup interval (600 s) plus one supervisor cycle",
+  "max_disk_formula": "concurrent_workers x largest_single_run (about 3 GB from the 2026-11-17 incident)",
+  "measurement": {
+    "command": "TMPDIR=<root>/measure-x pytest scripts/tests/test_source_ingest_scheduler_once.py",
+    "result": "8 passed; pytest-of-<user> created inside the per-worker TMPDIR; about 1 MB",
+    "limitation": "run with TMPDIR set by hand, not through a live supervisor-dispatched worker; the 3 GB single-run size is incident data, not re-measured"
+  },
+  "focused_tests": "python3 -m unittest test_worker_runner rewrite.test_worker_workspace: 70 tests OK",
+  "outside_root_deletions": 0,
+  "needs_runtime_promotion": true
+}

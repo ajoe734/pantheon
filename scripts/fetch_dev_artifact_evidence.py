@@ -403,6 +403,46 @@ def steady_service_drift(baseline_manifest: dict, container_states) -> dict[str,
     return drift
 
 
+def steady_service_restart_loop(first, second) -> dict[str, str]:
+    """Steady services that are restart-looping between two samples.
+
+    Both arguments are ``{"service", "state", "restart_count", "oom_killed"}``
+    row lists from read-only ``docker inspect``. A service loops when its restart
+    count grew between the samples, either sample reports OOMKilled, or either
+    sample's state is ``restarting``. A start-up restart that ended before the
+    first sample (same count in both) is not a loop. Container health status and
+    readiness contents are deliberately not inputs. Returns ``{service: reason}``.
+    """
+    def index(rows_, label):
+        if not isinstance(rows_, list):
+            raise CaptureError(f"{label} steady sample must be a JSON list of container rows")
+        by_service: dict[str, dict] = {}
+        for row in rows_:
+            if (not isinstance(row, dict) or not isinstance(row.get("service"), str) or
+                    not isinstance(row.get("state"), str)):
+                raise CaptureError(f"{label} steady sample row is invalid")
+            if (not isinstance(row.get("restart_count"), int) or isinstance(row.get("restart_count"), bool) or
+                    not isinstance(row.get("oom_killed"), bool)):
+                raise CaptureError(f"{label} steady sample row for {row['service']} lacks restart_count/oom_killed")
+            by_service[row["service"]] = row
+        return by_service
+
+    a, b = index(first, "first"), index(second, "second")
+    loops: dict[str, str] = {}
+    for service in sorted(set(a) | set(b)):
+        ra, rb = a.get(service), b.get(service)
+        present = [r for r in (ra, rb) if r is not None]
+        if not any(r["state"] in ("running", "restarting") for r in present):
+            continue  # not a steady running service (exited one-shot, etc.)
+        if any(r["state"] == "restarting" for r in present):
+            loops[service] = "restarting"
+        elif any(r["oom_killed"] for r in present):
+            loops[service] = "oom-killed"
+        elif ra is not None and rb is not None and rb["restart_count"] > ra["restart_count"]:
+            loops[service] = f"restart-count-grew-{ra['restart_count']}-to-{rb['restart_count']}"
+    return loops
+
+
 def verify_restore_accepted_baseline_preconditions(
     *,
     baseline_manifest: dict,
@@ -888,7 +928,7 @@ def execute_restore_accepted_baseline(
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("fetch", "verify-preconditions", "restore-accepted-baseline"), default="fetch")
+    parser.add_argument("--mode", choices=("fetch", "verify-preconditions", "verify-steady-state", "verify-restart-loop", "restore-accepted-baseline"), default="fetch")
     parser.add_argument("--kind", choices=tuple(FILES))
     parser.add_argument("--artifact-id")
     parser.add_argument("--artifact-sha256")
@@ -901,6 +941,8 @@ def main(argv=None) -> int:
     parser.add_argument("--deployment-json-file", type=Path)
     parser.add_argument("--bff-version-file", type=Path)
     parser.add_argument("--steady-state-file", type=Path)
+    parser.add_argument("--steady-state-second-file", type=Path)
+    parser.add_argument("--sample-gap-seconds", type=int, default=0)
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--output-readback", type=Path)
     args = parser.parse_args(argv)
@@ -911,6 +953,32 @@ def main(argv=None) -> int:
             result = fetch(kind=args.kind, artifact_id=args.artifact_id, expected_digest=args.artifact_sha256,
                            run_id=args.run_id, attempt=args.attempt, output_dir=args.output_dir)
             print(json.dumps(result, sort_keys=True))
+            return 0
+        if args.mode == "verify-restart-loop":
+            # Two samples at least 90 s apart; restart growth, OOMKilled or a
+            # restarting state is an unhealthy stack (same path as a stopped service).
+            if args.steady_state_file is None or args.steady_state_second_file is None:
+                raise CaptureError("verify-restart-loop requires --steady-state-file and --steady-state-second-file")
+            if args.sample_gap_seconds < 90:
+                raise CaptureError("verify-restart-loop requires --sample-gap-seconds >= 90")
+            loops = steady_service_restart_loop(_read_steady_state(args.steady_state_file),
+                                                _read_steady_state(args.steady_state_second_file))
+            print(json.dumps({"steady_service_restart_loop": loops, "sample_gap_seconds": args.sample_gap_seconds}, sort_keys=True))
+            if loops:
+                print("[dev-artifact] ERROR: steady_service_restart_loop: " + ", ".join(sorted(loops)), file=sys.stderr)
+                return 76
+            return 0
+        if args.mode == "verify-steady-state":
+            # Completeness check run after a restore: every steady baseline
+            # service must be running on its baseline image. Drift exits non-zero.
+            if args.baseline_file is None or args.steady_state_file is None:
+                raise CaptureError("verify-steady-state requires --baseline-file and --steady-state-file")
+            baseline_manifest = json.loads(_read_regular_file(args.baseline_file, 1024 * 1024), object_pairs_hook=unique_object)
+            drift = steady_service_drift(baseline_manifest, _read_steady_state(args.steady_state_file))
+            print(json.dumps({"steady_service_drift": drift}, sort_keys=True))
+            if drift:
+                print("[dev-artifact-restore] ERROR: steady_service_incomplete: " + ", ".join(sorted(drift)), file=sys.stderr)
+                return 75
             return 0
         if args.mode == "verify-preconditions":
             if (args.baseline_file is None or args.deployment_json_file is None or

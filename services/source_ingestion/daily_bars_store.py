@@ -31,27 +31,38 @@ import json
 import math
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date as _date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v1"
+DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v2"  # v2: traded_value, available_time, trading_status (design 4.1a)
+DAILY_BARS_SCHEMA_VERSIONS = ("daily_bars_manifest.v1", DAILY_BARS_SCHEMA_VERSION)  # v1 partitions stay readable
+NEW_COLUMNS = ("traded_value", "available_time", "trading_status")
+TRADING_STATUSES = ("traded", "not_traded")
+STATUS_ONLY_KIND = "status_only"  # manifest file entry holding the not_traded rows (no close): price readers skip it
 PART_ROWS = 10_000
 ROW_GROUP_ROWS = 1_000
+SLICE_ROWS = 2_000  # retention sweep: rows converted per slice before the interpreter lock is released for a moment
 
-# Budget row of design section 6 (bytes). *_TARGET is the design bound, *_ALARM the alarm line.
-DAILY_BARS_DAY_TARGET_BYTES = 1_600_000
-DAILY_BARS_DAY_ALARM_BYTES = 2_500_000
-DAILY_BARS_TOTAL_CEILING_BYTES = 1_000_000_000
-LINEAGE_DAY_TARGET_BYTES = 300_000
-LINEAGE_DAY_ALARM_BYTES = 450_000  # 1.5x
-LINEAGE_TOTAL_CEILING_BYTES = 150_000_000
+# Budget row of design section 6 as amended 2026-11-17 (bytes; about 53,000 listed symbols, about 75 B a row).
+# *_TARGET is the design bound, *_ALARM the alarm line.
+DAILY_BARS_DAY_TARGET_BYTES = 4_000_000
+DAILY_BARS_DAY_ALARM_BYTES = 6_000_000  # 1.5x
+DAILY_BARS_TOTAL_CEILING_BYTES = 2_500_000_000
+LINEAGE_DAY_TARGET_BYTES = 400_000
+LINEAGE_DAY_ALARM_BYTES = 600_000  # 1.5x
+LINEAGE_TOTAL_CEILING_BYTES = 200_000_000
 
 _RAW_ROW_FIELDS = (
     "market", "symbol", "trade_date", "open", "high", "low", "close", "volume",
     "adjusted", "source_id", "ingest_run_id", "lineage_ref", "content_hash",
+    "traded_value", "available_time", "trading_status",
 )
+_HASHED_FIELDS = ("open", "high", "low", "close", "volume", "adjusted", *NEW_COLUMNS)  # the twelve of design 4.1a
+_EXCHANGE_VENUE = {"TWSE": "TWSE", "TPEX": "TPEx"}
 
 
 class DailyBarsError(RuntimeError):
@@ -92,7 +103,7 @@ DAILY_BARS = DatasetKeyDeclaration(
     dataset="daily_bars",
     key_fields=("market", "symbol", "trade_date"),
     partition_field="trade_date",
-    value_fields=("open", "high", "low", "close", "volume", "adjusted"),
+    value_fields=("open", "high", "low", "close", "volume", "adjusted", *NEW_COLUMNS),
 )
 
 _DATE_KEYS = ("trade_date", "as_of_date", "date", "event_time")  # never available_time / created_at / ingest day
@@ -153,6 +164,8 @@ def _schema(pa):
         ("open", pa.float64()), ("high", pa.float64()), ("low", pa.float64()), ("close", pa.float64()),
         ("volume", pa.float64()), ("adjusted", pa.bool_()), ("source_id", pa.string()),
         ("ingest_run_id", pa.string()), ("lineage_ref", pa.string()), ("content_hash", pa.string()),
+        ("traded_value", pa.float64()), ("available_time", pa.timestamp("us", tz="UTC")),
+        ("trading_status", pa.string()),
     ])
 
 
@@ -162,6 +175,73 @@ def validate_trade_date(value: Any) -> str | None:
         return _date.fromisoformat(text).isoformat() if len(text) == 10 else None
     except ValueError:
         return None
+
+
+def _body_of(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    body = metadata.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return {}
+    return body if isinstance(body, Mapping) else {}
+
+
+def _first(sources: Sequence[Mapping[str, Any]], key: str) -> Any:
+    for src in sources:
+        if src.get(key) not in (None, ""):
+            return src[key]
+    return None
+
+
+def _traded_value(sources: Sequence[Mapping[str, Any]]) -> float | None:
+    """``value`` else ``value_thousands`` x 1000 (the feed's rule); None when the source gave none. Zero is a value."""
+    value = _number(_first(sources, "value"))
+    if value is None:
+        thousands = _number(_first(sources, "value_thousands"))
+        value = thousands * 1000 if thousands is not None else None
+    return value
+
+
+def _available_time(sources: Sequence[Mapping[str, Any]]) -> datetime | None:
+    """The run file read's available time as a UTC instant. A date only value is pinned to 14:30 +08:00 of that
+    date (what ``evaluator.py`` does); a full timestamp is converted as given; absent or unparseable is None,
+    and 14:30 is never invented for it."""
+    raw = _first(sources, "available_time")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if len(text) <= 10:
+        text = f"{text}T14:30:00+08:00"
+    try:
+        from services.registry.factor_rule import _parse_timestamp_utc
+
+        return _parse_timestamp_utc(text)
+    except Exception:  # noqa: BLE001 - unparseable means the source gave none
+        return None
+
+
+def _utc_text(value: datetime | None) -> str | None:
+    return None if value is None else value.astimezone(timezone.utc).isoformat()
+
+
+def _row_hash(row: Mapping[str, Any]) -> str:
+    """Content hash over the twelve value fields; the available time enters as its UTC text."""
+    fields = {k: row.get(k) for k in _HASHED_FIELDS}
+    fields["available_time"] = _utc_text(row.get("available_time"))
+    return _sha(fields)
+
+
+def _capture_of(sources: Sequence[Mapping[str, Any]], metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Lineage facts of an all-market capture row: venue, collector source id, upstream endpoint, bundle sha."""
+    venue = _EXCHANGE_VENUE.get(str(_first(sources, "exchange") or "").upper())
+    collector = metadata.get("collector") if isinstance(metadata.get("collector"), Mapping) else {}
+    upstream = str(_first(sources, "upstream_endpoint") or "")
+    collector_id = str(collector.get("source_id") or "")
+    if not (venue and upstream and collector_id):
+        return None
+    return {"venue": venue, "collector_source_id": collector_id, "upstream_endpoint": upstream,
+            "bundle_sha12": str(collector.get("bundle_sha256") or "")[:12]}
 
 
 class DailyBarsStore:
@@ -205,6 +285,7 @@ class DailyBarsStore:
         rows: dict[tuple[str, str, str], dict[str, Any]] = {}
         rejected: dict[str, int] = {}
         evidence: dict[str, dict[str, Any]] = {}
+        conflicted: set[tuple[str, str, str]] = set()
 
         def reject(reason: str) -> None:
             rejected[reason] = rejected.get(reason, 0) + 1
@@ -240,8 +321,16 @@ class DailyBarsStore:
             if callable(listing) and not listing(symbol):
                 reject("skipped_not_listed")
                 continue
+            sources = (row, _body_of(metadata), metadata)
+            status = _first(sources, "trading_status")
+            status = status if status in TRADING_STATUSES else None
             close = _number(row.get("close") if row.get("close") is not None else metadata.get("close"))
-            if close is None or close <= 0:
+            if status == "not_traded":
+                if close is not None and close > 0:
+                    reject("contradictory_status")
+                    continue
+                close = None  # the one exception to bad_close: a listed security that did not trade
+            elif close is None or close <= 0:
                 reject("bad_close")
                 continue
             candidates = {str(src["market"]).strip() for src in (row, metadata) if src.get("market")}
@@ -256,21 +345,53 @@ class DailyBarsStore:
                 reject("no_market" if not markets else "contradictory_market")
                 continue
             market = next(iter(markets))
-            ohlcv = {
-                "open": _number(row.get("open")), "high": _number(row.get("high")), "low": _number(row.get("low")),
-                "close": close, "volume": _number(row.get("volume")),
-                "adjusted": bool(row.get("adjusted") or row.get("is_adjusted") or False),
-            }
+            if status == "not_traded":
+                values: dict[str, Any] = {k: None for k in ("open", "high", "low", "close", "volume", "traded_value")}
+            else:
+                values = {
+                    "open": _number(row.get("open")), "high": _number(row.get("high")), "low": _number(row.get("low")),
+                    "close": close, "volume": _number(row.get("volume")), "traded_value": _traded_value(sources),
+                }
+            ohlcv = {**{k: values[k] for k in ("open", "high", "low", "close", "volume")},
+                     "adjusted": bool(row.get("adjusted") or row.get("is_adjusted") or False),
+                     "traded_value": values["traded_value"], "available_time": _available_time(sources),
+                     "trading_status": status}
             cal = row.get("calendar_evidence") if row.get("calendar_evidence") is not None else metadata.get("calendar_evidence")
             if isinstance(cal, Mapping) and cal:
                 evidence[_sha(cal)] = dict(cal)
-            rows[(market, symbol, trade_date)] = {
+            new = {
                 "market": market, "symbol": symbol, "trade_date": trade_date, **ohlcv,
                 "source_id": str(getattr(record, "source_id", "") or ""),
                 "ingest_run_id": ingest_run_id, "lineage_ref": ingest_run_id,
-                "content_hash": _sha(ohlcv),
+                "_capture": _capture_of(sources, metadata),
             }
+            key = (market, symbol, trade_date)
+            if key in conflicted:
+                continue
+            held = rows.get(key)
+            if held is not None:
+                new = self._merge_copies(held, new)
+                if new is None:  # copies disagree on open, high, low or close: no choice is made
+                    del rows[key]
+                    conflicted.add(key)
+                    reject("conflicting_duplicate")
+                    continue
+            new["content_hash"] = _row_hash(new)
+            rows[key] = new
         return list(rows.values()), rejected, evidence
+
+    @staticmethod
+    def _merge_copies(held: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Two copies of one key (design 4.1a item 3, the evaluator's rule). Different open, high, low or close:
+        None (conflict). Same prices: the copy with the larger volume supplies volume and traded value together
+        (a tie takes the later copy); the available time is the latest of both; the first capture is kept."""
+        if any(held.get(f) != new.get(f) for f in ("open", "high", "low", "close")):
+            return None
+        keep = dict(new if (new.get("volume") or 0) >= (held.get("volume") or 0) else held)
+        times = [t for t in (held.get("available_time"), new.get("available_time")) if t is not None]
+        keep["available_time"] = max(times) if times else None
+        keep["_capture"] = held.get("_capture") or new.get("_capture")
+        return keep
 
     # -- write -------------------------------------------------------------------------------
     def write_records(
@@ -316,6 +437,12 @@ class DailyBarsStore:
         except ValueError as exc:
             raise DailyBarsCorrupt(f"manifest for {trade_date} is not valid JSON") from exc
 
+    def read_manifest_dates(self) -> list[str]:
+        """Sorted trade dates that have a manifest."""
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
+
     def _read_day_rows(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
         _, pq = _require_pyarrow()
         out: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -328,12 +455,82 @@ class DailyBarsStore:
         return out
 
     @staticmethod
-    def day_digest(rows: Iterable[Mapping[str, Any]]) -> str:
-        return _sha(sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows))
+    def day_digest(rows: Iterable[Mapping[str, Any]], *, yield_gil: bool = False) -> str:
+        """Digest of a date's rows. ``yield_gil`` hashes the same bytes in slices with a pause between them, so a
+        sweep of a 22,500 row date does not hold the interpreter lock for one long stretch (retention sweeper)."""
+        keyed = sorted((r["market"], r["symbol"], r["trade_date"], r["content_hash"]) for r in rows)
+        if not yield_gil:
+            return _sha(keyed)
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        for start in range(0, len(keyed), SLICE_ROWS):
+            if start:
+                digest.update(b",")
+            digest.update(",".join(_canonical(list(k)) for k in keyed[start:start + SLICE_ROWS]).encode("utf-8"))
+            time.sleep(0.001)
+        digest.update(b"]")
+        return digest.hexdigest()
+
+    def _read_day_rows_sliced(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """``_read_day_rows`` in ``SLICE_ROWS`` slices with a pause between them (same result)."""
+        _, pq = _require_pyarrow()
+        out: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for entry in manifest.get("files", ()):
+            path = self.bars_dir / entry["path"]
+            if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=SLICE_ROWS):
+                for row in batch.to_pylist():
+                    out[(row["market"], row["symbol"], row["trade_date"])] = row
+                time.sleep(0.001)
+        return out
 
     def _hit(self, step: str) -> None:
         if self._fault is not None:
             self._fault(step)
+
+    def _write_parts(self, pa, pq, trade_date: str, generation: int, ordered: Sequence[Mapping[str, Any]],
+                     *, yield_gil: bool = False) -> tuple[list[dict[str, Any]], list[Path]]:
+        """Write one generation of part files for a date (temp write, fsync, rename). Nothing is visible until
+        the manifest is swapped."""
+        files: list[dict[str, Any]] = []
+        new_paths: list[Path] = []
+        schema = _schema(pa)
+        by_part: dict[tuple[str, bool], list[Mapping[str, Any]]] = {}
+        for row in ordered:  # rows with no close (not_traded) go to their own files: price readers skip them
+            by_part.setdefault((row["market"], row["close"] is None), []).append(row)
+        for (market, status_only), market_rows in sorted(by_part.items()):
+            part_dir = self.bars_dir / f"market={market}" / f"date={trade_date}"
+            part_dir.mkdir(parents=True, exist_ok=True)
+            for n, start in enumerate(range(0, len(market_rows), PART_ROWS)):
+                chunk = market_rows[start:start + PART_ROWS]
+                final = part_dir / f"part-g{generation}-{'s' if status_only else ''}{n}.parquet"
+                tmp = final.with_name(final.name + ".tmp")
+                if yield_gil:  # same file layout (row groups of ROW_GROUP_ROWS), built in slices
+                    with pq.ParquetWriter(tmp, schema, compression="zstd") as writer:
+                        for lo in range(0, len(chunk), SLICE_ROWS):
+                            writer.write_table(pa.Table.from_pylist(chunk[lo:lo + SLICE_ROWS], schema=schema),
+                                               row_group_size=ROW_GROUP_ROWS)
+                            time.sleep(0.001)
+                else:
+                    table = pa.Table.from_pylist(chunk, schema=schema)
+                    pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
+                self._hit("after_temp_write")
+                with open(tmp, "rb") as handle:
+                    os.fsync(handle.fileno())
+                self._hit("after_fsync")
+                os.replace(tmp, final)
+                new_paths.append(final)
+                entry = {
+                    "path": final.relative_to(self.bars_dir).as_posix(), "market": market,
+                    "rows": len(chunk), "bytes": final.stat().st_size,
+                    "min_symbol": chunk[0]["symbol"], "max_symbol": chunk[-1]["symbol"],
+                }
+                if status_only:
+                    entry["kind"] = STATUS_ONLY_KIND
+                files.append(entry)
+            _fsync_dir(part_dir)
+        return files, new_paths
 
     def write_day(
         self,
@@ -359,7 +556,8 @@ class DailyBarsStore:
             try:
                 manifest = self.read_manifest(trade_date)
                 current = self._read_day_rows(manifest) if manifest else {}
-                merged = dict(current)
+                # a v1 partition has no new columns: they read as null (normalise only what was read, once)
+                merged = {key: {k: old.get(k) for k in _RAW_ROW_FIELDS} for key, old in current.items()}
                 for row in rows:
                     key = (row["market"], row["symbol"], row["trade_date"])
                     old = merged.get(key)
@@ -371,40 +569,16 @@ class DailyBarsStore:
                     return False
                 generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
                 ordered = sorted(merged.values(), key=lambda r: (r["market"], r["symbol"]))
-                files: list[dict[str, Any]] = []
-                new_paths: list[Path] = []
+                files, new_paths = self._write_parts(pa, pq, trade_date, generation, ordered)
                 schema = _schema(pa)
-                by_market: dict[str, list[dict[str, Any]]] = {}
-                for row in ordered:
-                    by_market.setdefault(row["market"], []).append(row)
-                for market, market_rows in sorted(by_market.items()):
-                    part_dir = self.bars_dir / f"market={market}" / f"date={trade_date}"
-                    part_dir.mkdir(parents=True, exist_ok=True)
-                    for n, start in enumerate(range(0, len(market_rows), PART_ROWS)):
-                        chunk = market_rows[start:start + PART_ROWS]
-                        final = part_dir / f"part-g{generation}-{n}.parquet"
-                        tmp = final.with_name(final.name + ".tmp")
-                        table = pa.Table.from_pylist(chunk, schema=schema)
-                        pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP_ROWS)
-                        self._hit("after_temp_write")
-                        with open(tmp, "rb") as handle:
-                            os.fsync(handle.fileno())
-                        self._hit("after_fsync")
-                        os.replace(tmp, final)
-                        new_paths.append(final)
-                        files.append({
-                            "path": final.relative_to(self.bars_dir).as_posix(), "market": market,
-                            "rows": len(chunk), "bytes": final.stat().st_size,
-                            "min_symbol": chunk[0]["symbol"], "max_symbol": chunk[-1]["symbol"],
-                        })
-                    _fsync_dir(part_dir)
                 self._write_lineage(
-                    trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values())
+                    trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values(),
+                    captures=self._captures_of(rows))
                 self._hit("after_lineage")
                 new_manifest = {
                     "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
                     "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
-                    "generation": generation, "files": files, "row_count": len(ordered),
+                    "generation": generation, "columns": [f.name for f in schema], "files": files, "row_count": len(ordered),
                     "symbol_count": len({r["symbol"] for r in ordered}),
                     "bytes": sum(f["bytes"] for f in files), "content_digest": digest,
                 }
@@ -431,11 +605,12 @@ class DailyBarsStore:
     def _write_lineage(
         self,
         trade_date: str,
-        ingest_run_id: str,
+        ingest_run_id: str | None,
         calendar_evidence: Mapping[str, Mapping[str, Any]],
         connector_id: str | None,
         observed_at: str | None,
         rows: Iterable[Mapping[str, Any]],
+        captures: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         path = self.lineage_dir / f"date={trade_date}.json"
         try:
@@ -445,8 +620,189 @@ class DailyBarsStore:
         doc["calendar_evidence"].update({k: dict(v) for k, v in calendar_evidence.items()})
         referenced = {r["lineage_ref"] for r in rows}
         doc["runs"] = {k: v for k, v in doc["runs"].items() if k in referenced}  # drop runs no row refers to
-        doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
+        run = None
+        if ingest_run_id is not None:  # None: a removal rewrite adds no run, it only drops runs no remaining row refers to
+            run = doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
+        if captures and run is not None:  # once per run, not per row: the survivorship attestation rebuilds its capture ref from these
+            held = {_canonical({k: v for k, v in c.items() if k != "status_known"}): c for c in run.get("captures", [])}
+            for cap in captures:
+                key = _canonical({k: v for k, v in cap.items() if k != "status_known"})
+                if key in held:
+                    held[key]["status_known"] = bool(held[key].get("status_known") or cap.get("status_known"))
+                else:
+                    held[key] = dict(cap)
+            run["captures"] = sorted(held.values(), key=_canonical)
         _atomic_write_bytes(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    @staticmethod
+    def _captures_of(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Distinct all-market capture facts of the incoming rows. ``row_source_id`` is the join key with the
+        row's ``source_id`` column; ``status_known`` says that a row of the capture carried a trading status."""
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cap = row.get("_capture")
+            if not cap:
+                continue
+            item = {**cap, "row_source_id": str(row.get("source_id") or "")}
+            key = _canonical(item)
+            held = out.setdefault(key, {**item, "status_known": False})
+            if row.get("trading_status") in TRADING_STATUSES:
+                held["status_known"] = True
+        return sorted(out.values(), key=_canonical)
+
+    # -- retention support (SOURCE-RETENTION-SWEEPER-20261118-R2) -----------------------------
+    def dates(self) -> list[str]:
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
+
+    def lineage_dates(self) -> list[str]:
+        if not self.lineage_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.lineage_dir.glob("date=*.json"))
+
+    def _lineage_size(self, trade_date: str) -> int:
+        try:
+            return (self.lineage_dir / f"date={trade_date}.json").stat().st_size
+        except OSError:
+            return 0
+
+    def remove_rows(
+        self,
+        trade_date: str,
+        should_remove: Callable[[Mapping[str, Any]], bool],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Remove the rows ``should_remove(row)`` selects from one date.
+
+        ``row`` has ``market``, ``symbol``, ``trade_date``, ``lineage_ref``. The rewrite is the normal write protocol:
+        new part files (temp write, fsync, rename), the lineage rewritten to the runs the kept rows refer to, then
+        the manifest swap LAST. A kill before the swap leaves the previous complete date; a reader sees the old
+        manifest or the new one, never a mixture. A date left with no row is deleted (``delete_day``).
+        ``dry_run`` measures and writes nothing.
+        """
+        _, pq = _require_pyarrow()
+        empty = {"trade_date": trade_date, "rows": 0, "removed": 0, "remaining": 0, "bytes_before": 0, "bytes_freed": 0,
+                 "lineage_bytes_freed": 0, "deleted_day": False}
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(trade_date)
+                if manifest is None:
+                    return empty
+                bytes_before = int(manifest.get("bytes", 0))
+                # Cheap pass: the three small columns only. A date without a hit is not rewritten.
+                hit = 0
+                total = 0
+                for entry in manifest.get("files", ()):
+                    path = self.bars_dir / entry["path"]
+                    if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                        raise DailyBarsCorrupt(f"daily bars file {entry['path']} is missing or has a different size")
+                    for batch in pq.ParquetFile(path).iter_batches(
+                            batch_size=SLICE_ROWS, columns=["market", "symbol", "trade_date", "lineage_ref"]):
+                        cols = batch.to_pylist()
+                        total += len(cols)
+                        hit += sum(1 for r in cols if should_remove(r))
+                        time.sleep(0.001)
+                result = {**empty, "rows": total, "removed": hit, "remaining": total - hit, "bytes_before": bytes_before}
+                if hit == 0:
+                    return result
+                lineage_before = self._lineage_size(trade_date)
+                if dry_run:
+                    share = hit / total if total else 0
+                    result["bytes_freed"] = int(bytes_before * share)
+                    result["deleted_day"] = hit == total
+                    result["lineage_bytes_freed"] = lineage_before if hit == total else 0
+                    return result
+                rows = self._read_day_rows_sliced(manifest)
+                kept = {k: v for k, v in rows.items() if not should_remove(v)}
+                if not kept:
+                    self._delete_day_locked(trade_date, manifest)
+                    result.update(removed=total, remaining=0, bytes_freed=bytes_before, deleted_day=True,
+                                  lineage_bytes_freed=lineage_before)
+                    return result
+                generation = int(manifest.get("generation", 0)) + 1
+                ordered = sorted(kept.values(), key=lambda r: (r["market"], r["symbol"]))
+                files, new_paths = self._write_parts(*_require_pyarrow(), trade_date, generation, ordered, yield_gil=True)
+                self._write_lineage(trade_date, None, {}, None, None, ordered)
+                self._hit("after_lineage")
+                new_manifest = {
+                    "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
+                    "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
+                    "generation": generation, "columns": [f.name for f in _schema(_require_pyarrow()[0])], "files": files,
+                    "row_count": len(ordered), "symbol_count": len({r["symbol"] for r in ordered}),
+                    "bytes": sum(f["bytes"] for f in files), "content_digest": self.day_digest(ordered, yield_gil=True),
+                }
+                manifest_path = self._manifest_path(trade_date)
+                tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
+                with open(tmp_manifest, "wb") as handle:
+                    handle.write(json.dumps(new_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self._hit("before_manifest_rename")
+                os.replace(tmp_manifest, manifest_path)  # LAST: this makes the smaller set visible
+                _fsync_dir(self.manifest_dir)
+                self._hit("after_manifest_rename")
+                keep = {p.resolve() for p in new_paths}
+                for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
+                    if stale.resolve() not in keep:
+                        stale.unlink(missing_ok=True)
+                result.update(removed=hit, remaining=len(ordered), bytes_freed=bytes_before - new_manifest["bytes"],
+                              lineage_bytes_freed=max(0, lineage_before - self._lineage_size(trade_date)))
+                self.counters["days_written"] += 1
+                return result
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def _lock_path(self) -> Path:
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        return self.manifest_dir / ".lock"
+
+    def _delete_day_locked(self, trade_date: str, manifest: Mapping[str, Any] | None) -> None:
+        """Manifest first (the date stops existing for readers in one step), then parts, then lineage.
+        A kill after the first step leaves orphan files that ``delete_orphans`` / ``sweep_interrupted`` remove."""
+        manifest_path = self._manifest_path(trade_date)
+        manifest_path.unlink(missing_ok=True)
+        _fsync_dir(self.manifest_dir)
+        self._hit("after_manifest_unlink")
+        for entry in (manifest or {}).get("files", ()):
+            (self.bars_dir / entry["path"]).unlink(missing_ok=True)
+        for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
+            stale.unlink(missing_ok=True)
+        for part_dir in self.bars_dir.glob(f"market=*/date={trade_date}"):
+            try:
+                part_dir.rmdir()
+            except OSError:
+                pass
+        (self.lineage_dir / f"date={trade_date}.json").unlink(missing_ok=True)
+
+    def delete_day(self, trade_date: str) -> dict[str, Any]:
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(trade_date)
+                freed = int((manifest or {}).get("bytes", 0))
+                lineage = self._lineage_size(trade_date)
+                self._delete_day_locked(trade_date, manifest)
+                return {"trade_date": trade_date, "bytes_freed": freed, "lineage_bytes_freed": lineage}
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def delete_orphan_lineage(self) -> int:
+        """Lineage of a date that has no manifest (a delete killed after its manifest step). Returns bytes removed."""
+        freed = 0
+        with self._lock, open(self._lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                have = set(self.dates())
+                for day in self.lineage_dates():
+                    if day not in have:
+                        freed += self._lineage_size(day)
+                        (self.lineage_dir / f"date={day}.json").unlink(missing_ok=True)
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+        return freed
 
     # -- backfill support ----------------------------------------------------------------------
     def sweep_interrupted(self) -> dict[str, int]:
@@ -510,6 +866,8 @@ class DailyBarsStore:
             manifest = self.read_manifest(trade_date) or {}
             seen: set[str] = set()
             for entry in manifest.get("files", ()):
+                if entry.get("kind") == STATUS_ONLY_KIND:
+                    continue  # a security that did not trade has no bar
                 seen.update(pq.read_table(self.bars_dir / entry["path"], columns=["symbol"])["symbol"].to_pylist())
             for symbol in seen:
                 days, first, last = stats.get(symbol, (0, trade_date, trade_date))
@@ -540,13 +898,13 @@ class DailyBarsStore:
                 lineage_max_day = max(lineage_max_day, size)
         alarms = []
         if bars_max_day > DAILY_BARS_DAY_ALARM_BYTES:
-            alarms.append("daily_bars_day_over_2_5mb")
+            alarms.append("daily_bars_day_over_6mb")
         if bars_total > DAILY_BARS_TOTAL_CEILING_BYTES:
-            alarms.append("daily_bars_total_over_1gb")
+            alarms.append("daily_bars_total_over_2_5gb")
         if lineage_max_day > LINEAGE_DAY_ALARM_BYTES:
             alarms.append("lineage_day_over_1_5x")
         if lineage_total > LINEAGE_TOTAL_CEILING_BYTES:
-            alarms.append("lineage_total_over_150mb")
+            alarms.append("lineage_total_over_200mb")
         return {
             "days": days, "daily_bars_total_bytes": bars_total, "daily_bars_max_day_bytes": bars_max_day,
             "daily_bars_max_day": max_day, "lineage_total_bytes": lineage_total,
@@ -848,6 +1206,37 @@ class KeyedDatasetStore:
                 return True
             finally:
                 fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def delete_partition(self, partition: str, *, dry_run: bool = False) -> dict[str, Any]:
+        """Delete one whole partition: manifest first (readers stop seeing it in one step), then its files."""
+        with self._lock, open(self._manifest_lock_path(), "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(partition)
+                if manifest is None:
+                    return {"partition": partition, "rows": 0, "bytes_freed": 0, "deleted": False}
+                out = {"partition": partition, "rows": int(manifest.get("row_count", 0)),
+                       "bytes_freed": int(manifest.get("bytes", 0)), "deleted": not dry_run}
+                if dry_run:
+                    return out
+                self._manifest_path(partition).unlink(missing_ok=True)
+                _fsync_dir(self.manifest_dir)
+                self._hit("after_manifest_unlink")
+                part_dir = self.base / f"date={partition}"
+                if part_dir.is_dir():
+                    for f in part_dir.iterdir():
+                        f.unlink(missing_ok=True)
+                    try:
+                        part_dir.rmdir()
+                    except OSError:
+                        pass
+                return out
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def _manifest_lock_path(self) -> Path:
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        return self.manifest_dir / ".lock"
 
     def budget_report(self) -> dict[str, Any]:
         sizes = []

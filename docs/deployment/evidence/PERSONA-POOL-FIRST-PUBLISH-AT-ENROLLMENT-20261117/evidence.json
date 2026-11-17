@@ -1,0 +1,16 @@
+{
+  "task": "PERSONA-POOL-FIRST-PUBLISH-AT-ENROLLMENT-20261117",
+  "verified_locally": {
+    "command": "pytest services/control-plane/bff/tests/test_persona_paper_enrollment.py test_persona_pool_publish_route.py test_persona_pool_publisher.py test_persona_enrollment_seed_integration.py test_persona_provisioning_coordinator.py test_persona_enrollment_proposer_principal.py",
+    "result": "150 passed",
+    "acceptance": {"1-6,8": "covered by test_enrollment_publishes_seeded_v1_once_and_binds_the_envelope, test_publish_failure_is_a_readable_reason_and_leaves_paper_untouched, test_pool_beyond_seed_is_left_to_the_cycle_and_legacy_enrolled_readback_is_unsettled"}
+  },
+  "design": {
+    "publish_step": "PersonaPaperEnrollment._ensure_first_publish runs last in enroll(); read-before-write on the live binding (artifact-persona-pool- prefix = already on envelope); only seeded pool v1 is published; later versions deferred to the cycle/risk panel",
+    "reconcile": "enrollment_settled() makes legacy 'enrolled' readbacks (no publish step) unsettled once, so the existing reconciler publishes already-enrolled paper_owner personas; failed publishes retry throttled by PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS",
+    "binding_gap": "plan_id check accepts the pool-publish plan once the binding runs an envelope artifact"
+  },
+  "post_deploy_pending": {
+    "acceptance_7": "After the next hosted deploy record, for persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241, that the paper runtime summary carries member_virtual_books for the pool member. NOT yet verified."
+  }
+}

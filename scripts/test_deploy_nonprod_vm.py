@@ -4282,3 +4282,301 @@ def test_strict_flag_is_parsed_and_forwarded_to_the_remote_payload():
     text = Path(__file__).resolve().parent.joinpath("deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     assert "--strict-functional-checks) STRICT_FUNCTIONAL_CHECKS=true" in text
     assert 'PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=$(shell_quote "${STRICT_FUNCTIONAL_CHECKS:-false}")' in text
+
+
+# --- DEV-DEPLOY-DOCKER-MAINTENANCE-BOUNDS-20261117 ---------------------------
+
+def _run_cache_cap(
+    tmp_path: Path, *, cache_bytes_gb: float = 49.8, after_gb: float = 19.9, help_flag: str = "--reserved-space",
+    prune_sleep: float = 0.0, protect_ok: bool = True, timeout: str = "45", component: str = "root",
+):
+    state = tmp_path / "cache.json"
+    calls = tmp_path / "calls.jsonl"
+    state.write_text(json.dumps({"gb": cache_bytes_gb}), encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "docker"
+    stub.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys, time
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(calls)!r}).open("a") as h:
+    h.write(json.dumps(args) + "\\n")
+st = Path({str(state)!r})
+if args[:2] == ["system", "df"]:
+    print("Images|3GB"); print("Build Cache|%sGB" % json.loads(st.read_text())["gb"]); sys.exit(0)
+if args[:3] == ["builder", "prune", "--help"]:
+    print("      {help_flag} bytes   keep"); sys.exit(0)
+if args[:2] == ["builder", "prune"]:
+    time.sleep({prune_sleep})
+    st.write_text(json.dumps({{"gb": {after_gb}}})); sys.exit(0)
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        "set -euo pipefail\ninfo() { echo \"[info] $*\"; }\n"
+        + f"protect_dev_compose_container_images_for_builder_prune() {{ {'return 0' if protect_ok else 'return 1'}; }}\n"
+        + _prune_shell_function("dev_docker_builder_cache_bytes")
+        + _prune_shell_function("dev_docker_size_to_bytes")
+        + _prune_shell_function("cap_dev_docker_builder_cache_after_build")
+        + '\ncap_dev_docker_builder_cache_after_build "after_build"\n',
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_DEPLOY_ENV": "dev",
+        "PANTHEON_DEPLOY_COMPONENT": component, "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS": timeout,
+    }
+    res = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, check=False, timeout=60)
+    recorded = [json.loads(x) for x in calls.read_text().splitlines()] if calls.exists() else []
+    return res, recorded
+
+
+def test_build_cache_cap_brings_hosted_shape_cache_under_cap(tmp_path: Path) -> None:
+    # hosted shape: 49.8GB cache, cap 20GB.
+    res, calls = _run_cache_cap(tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "status=done" in res.stdout and "before_bytes=49800000000" in res.stdout and "after_bytes=19900000000" in res.stdout
+    prunes = [c for c in calls if c[:2] == ["builder", "prune"] and c[2] != "--help"]
+    assert prunes == [["builder", "prune", "-f", "--reserved-space", "20GB"]]
+    assert '"status": "passed"' in res.stdout and "docker_build_cache_cap" in res.stdout
+
+
+def test_build_cache_cap_falls_back_to_keep_storage_flag(tmp_path: Path) -> None:
+    res, calls = _run_cache_cap(tmp_path, help_flag="--keep-storage")
+    assert "status=done" in res.stdout
+    assert ["builder", "prune", "-f", "--keep-storage", "20GB"] in calls
+
+
+def test_build_cache_cap_reports_timeout_as_not_done_with_sizes(tmp_path: Path) -> None:
+    res, _ = _run_cache_cap(tmp_path, prune_sleep=30, timeout="1")
+    assert res.returncode == 0
+    assert "status=not_done reason=prune_timeout_1s" in res.stdout
+    assert "before_bytes=49800000000 after_bytes=49800000000" in res.stdout
+    assert '"status": "failed"' in res.stdout
+
+
+def test_build_cache_cap_reports_still_over_cap(tmp_path: Path) -> None:
+    res, _ = _run_cache_cap(tmp_path, after_gb=30)
+    assert "status=not_done reason=still_over_cap" in res.stdout
+
+
+def test_build_cache_cap_skips_prune_when_protection_fails(tmp_path: Path) -> None:
+    res, calls = _run_cache_cap(tmp_path, protect_ok=False)
+    assert "status=not_done reason=image_protection_incomplete" in res.stdout
+    assert not [c for c in calls if c[:2] == ["builder", "prune"] and c[2:3] != ["--help"]]
+
+
+def test_build_cache_cap_reports_unsupported_flag(tmp_path: Path) -> None:
+    res, _ = _run_cache_cap(tmp_path, help_flag="--other")
+    assert "reason=no_supported_cap_flag" in res.stdout
+
+
+def test_build_cache_cap_runs_after_build_on_root_and_bff_and_timeout_forwarded() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert source.count('then cap_dev_docker_builder_cache_after_build "after_build"; fi') == 2
+    root = source[source.index("seal_dev_candidate_images ||") :]
+    assert root.index("cap_dev_docker_builder_cache_after_build") - root.index("seal_dev_candidate_images ||") < 200
+    assert 'PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote' in source
+    block = _prune_shell_function("cap_dev_docker_builder_cache_after_build")
+    assert block.index("protect_dev_compose_container_images_for_builder_prune") < block.index("docker builder prune -f")
+    assert not re.search(r"docker builder prune[^\n]*(-a|--all)\b", source) and "--all" not in block
+
+
+def test_unselected_one_shot_service_containers_removed_but_never_running(tmp_path: Path) -> None:
+    calls = tmp_path / "calls.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "docker"
+    stub.write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path({str(calls)!r}).open("a") as h:
+    h.write(json.dumps(args) + "\\n")
+if args[0] == "ps":
+    print("aaa|created|pantheon-source-ingest-agora-projector-1")
+    print("bbb|running|pantheon-source-ingest-agora-projector-2")
+    print("ccc|exited|pantheon-source-ingest-agora-projector-3")
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        "set -euo pipefail\ninfo() { echo \"[info] $*\"; }\n"
+        + _prune_shell_function("retire_unselected_one_shot_service_containers").join(
+            ['DEV_ONE_SHOT_PROFILE_SERVICES=("source-ingest-agora-projector:source-ingest-scheduler,workers")\n', "\n"]
+        )
+        + "retire_unselected_one_shot_service_containers\n",
+        encoding="utf-8",
+    )
+    for profiles, expect_rm in (("root", ["aaa", "ccc"]), ("root,workers", [])):
+        calls.unlink(missing_ok=True)
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_DEV_COMPOSE_PROFILES": profiles}
+        res = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, check=False, timeout=30)
+        assert res.returncode == 0, res.stderr
+        recorded = [json.loads(x) for x in calls.read_text().splitlines()] if calls.exists() else []
+        removed = [c[1] for c in recorded if c[0] == "rm"]
+        assert removed == expect_rm
+        assert all("-f" not in c for c in recorded if c[0] == "rm")
+
+
+def test_one_shot_service_is_restart_no_with_declared_profiles() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    start = compose.index("  source-ingest-agora-projector:")
+    block = compose[start : compose.index("\n\n", start)]
+    assert 'restart: "no"' in block and 'profiles: ["source-ingest-scheduler", "workers"]' in block
+
+
+# ---- DEV-DEPLOY-STACK-CHECK-REVISION-SCOPE-20261117 -------------------------
+
+_RELEASE_SHA = "9ab80dd2528e4bbb15f3947fdcb61c6828f2ef03"
+_GATEWAY_OLD_REV = "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4"
+
+
+def _extract_release_labelled_services_func() -> str:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index("release_labelled_services() {")
+    return text[start : text.index("\n}\n", start) + 3]
+
+
+def _run_stack_check(tmp_path: Path, containers: dict[str, dict], config_services: dict | None):
+    """Run verify_exact_component_deployment over mocked containers (18:35Z replay shape)."""
+    import json
+    import os
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    data = tmp_path / "containers.json"
+    data.write_text(json.dumps({"containers": containers, "config": config_services}), encoding="utf-8")
+    (bin_dir / "docker").write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+d = json.load(open({str(data)!r}))
+a = sys.argv[1:]
+C = d["containers"]
+IMG = "sha256:" + "b" * 64
+if a[0] == "compose":
+    if "config" in a:
+        if d["config"] is None:
+            sys.exit(1)
+        print(json.dumps({{"services": d["config"]}}))
+    elif "images" in a:
+        print(IMG)
+    else:
+        print("cid_" + a[-1])
+elif a[0] == "inspect":
+    fmt, cid = a[2], a[3]
+    c = C[cid[4:]]
+    if fmt == "{{{{.State.Status}}}}": print("running")
+    elif fmt == "{{{{.State.StartedAt}}}}": print("2026-11-17T18:00:00.000000000Z")
+    elif fmt == "{{{{.RestartCount}}}}": print("0")
+    elif "State.Health.Status" in fmt: print(c.get("health", "healthy"))
+    elif fmt == "{{{{.Config.Image}}}}": print("img:" + cid)
+    elif fmt == "{{{{.Image}}}}": print(IMG)
+    elif "image.revision" in fmt: print(c["rev"])
+    elif "json .Config.Cmd" in fmt: print('["run"]')
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "docker").chmod(0o755)
+    _write_mock_git(bin_dir, _RELEASE_SHA)
+    services = " ".join(containers)
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+REQUIRED_LOOP_WORKERS=()
+{_extract_release_labelled_services_func()}
+{_extract_verify_exact_component_deployment_func()}
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{tmp_path / 'receipt.json'}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="{_RELEASE_SHA}"
+verify_exact_component_deployment {services}
+""",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    return subprocess.run(["bash", str(runner)], capture_output=True, text=True, cwd=tmp_path, env=env, timeout=240)
+
+
+_GIT_SHA_BUILD = {"build": {"context": ".", "args": {"GIT_SHA": _RELEASE_SHA}}}
+_STACK_CONFIG = {
+    "operator-bff": _GIT_SHA_BUILD,
+    "dev-paper-principal-issuer": _GIT_SHA_BUILD,
+    "openclaw-gateway": {"build": {"context": ".", "args": {"NPM": "1"}}, "image": "pantheon-openclaw-gateway:2026.7.1"},
+    "postgres": {"image": "postgres:16"},
+}
+
+
+def test_stack_check_prebuilt_gateway_with_older_label_passes(tmp_path: Path) -> None:
+    """2026-11-17 18:35Z replay: gateway label names an older commit; the release does not build it."""
+    containers = {
+        "operator-bff": {"rev": _RELEASE_SHA},
+        "dev-paper-principal-issuer": {"rev": _RELEASE_SHA},
+        "openclaw-gateway": {"rev": _GATEWAY_OLD_REV},
+        "postgres": {"rev": ""},
+    }
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "mismatched image revision" not in proc.stderr
+    import json
+
+    receipt = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
+    gateway = json.dumps(receipt)
+    assert _GATEWAY_OLD_REV not in gateway  # no revision claim for an image the release does not build
+
+
+def test_stack_check_built_service_on_other_revision_still_fails_with_name(tmp_path: Path) -> None:
+    containers = {
+        "operator-bff": {"rev": _GATEWAY_OLD_REV},
+        "openclaw-gateway": {"rev": _GATEWAY_OLD_REV},
+    }
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode != 0
+    assert "operator-bff: image_rev=" in proc.stderr
+    assert "openclaw-gateway: image_rev" not in proc.stderr
+
+
+def test_stack_check_prebuilt_service_still_needs_health(tmp_path: Path) -> None:
+    containers = {"openclaw-gateway": {"rev": _GATEWAY_OLD_REV, "health": "unhealthy"}}
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode != 0
+    assert "openclaw-gateway: health" in proc.stderr
+
+
+def test_stack_check_requires_revision_for_all_when_scope_not_derivable(tmp_path: Path) -> None:
+    containers = {"openclaw-gateway": {"rev": _GATEWAY_OLD_REV}}
+    proc = _run_stack_check(tmp_path, containers, None)
+    assert proc.returncode != 0
+    assert "openclaw-gateway: image_rev=" in proc.stderr
+
+
+def test_release_labelled_services_cover_every_compose_service_that_receives_git_sha() -> None:
+    """Derived from the real Compose file; fails when a built, labelled service is missing."""
+    import yaml
+
+    out = subprocess.run(
+        ["bash", "-c", _extract_release_labelled_services_func() + "\nGIT_SHA=" + _RELEASE_SHA + " release_labelled_services"],
+        capture_output=True, text=True, cwd=ROOT, timeout=120, check=True,
+    ).stdout.split()
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    expected = {
+        name
+        for name, svc in compose.items()
+        if isinstance(svc.get("build"), dict)
+        and ("GIT_SHA" in (svc["build"].get("args") or {})
+             or "org.opencontainers.image.revision" in (svc["build"].get("labels") or {}))
+    }
+    assert expected, "no GIT_SHA-labelled builds found in docker-compose.yml"
+    assert set(out) == expected
+    assert "dev-paper-principal-issuer" in out
+    assert "openclaw-gateway" not in out

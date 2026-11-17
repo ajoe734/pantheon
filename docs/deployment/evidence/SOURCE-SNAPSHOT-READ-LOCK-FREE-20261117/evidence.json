@@ -1,0 +1,87 @@
+{
+  "task": "SOURCE-SNAPSHOT-READ-LOCK-FREE-20261117",
+  "change": [
+    "get (journal and the journal view in dual mode) and live_symbols read the published map without self._lock; docstring states the reference-assignment-only invariant",
+    "journal_stats reads size/line count from the store's last-sync state (_consumed) instead of stat plus a full-file line scan; falls back to the scan only when nothing was synced yet",
+    "the writer builds the sorted per-dataset symbol lists in _publish() before swapping the map, so live_symbols is an O(n) list copy with no walk/sort after publish (re-measured max 1.78 ms append, 1.90 ms compaction)"
+  ],
+  "before_reproduction": {
+    "shape": "17500 keys, 537880200 bytes",
+    "append_full_batch": "get longest call 37.12 s and live_symbols 37.12 s over 2000 calls (old code, same test file); journal_stats probe had not finished at join",
+    "compaction": "not re-measured on old code (it needs ~125 s per run); the lock is held for the whole compaction by the same code path"
+  },
+  "after_measured": {
+    "build_seconds": 36.4,
+    "keys": 17500,
+    "journal_bytes": 537880200,
+    "append_writer_seconds": 38.9,
+    "append_bytes_written": 536975800,
+    "append": {
+      "get": {
+        "calls": 3445,
+        "longest_call_ms": 1.14
+      },
+      "journal_stats": {
+        "calls": 3458,
+        "longest_call_ms": 0.06
+      },
+      "live_symbols": {
+        "calls": 3334,
+        "longest_call_ms": 1.78
+      },
+      "host_load_avg": [
+        4.36181640625,
+        4.296875,
+        3.630859375
+      ]
+    },
+    "compaction_writer_seconds": 81.58,
+    "compaction_bytes": {
+      "before": 1074786000,
+      "after": 536905800
+    },
+    "compaction": {
+      "get": {
+        "calls": 4536,
+        "longest_call_ms": 0.13
+      },
+      "journal_stats": {
+        "calls": 4585,
+        "longest_call_ms": 0.06
+      },
+      "live_symbols": {
+        "calls": 4299,
+        "longest_call_ms": 1.9
+      },
+      "host_load_avg": [
+        3.76318359375,
+        4.115234375,
+        3.67041015625
+      ]
+    },
+    "partial_batch": {
+      "keys": 1500,
+      "reads": 17200,
+      "third_states": 0
+    },
+    "bytes_sha256_25_keys": "03443914d0a10cdac2692663bc63aca7631c0a0e4f3330aa43e3ea502031a67b"
+  },
+  "host_load": "load average 3.5-5.4 on 12 cores during runs",
+  "tests": {
+    "command": "pytest services/source_ingestion/tests/test_snapshot_read_lock_free.py",
+    "result": "9 passed",
+    "existing": "test_latest_market_snapshot, _state, test_snapshot_current_record_store, test_snapshot_frequency_isolation, test_snapshot_universe, test_latest_market_snapshot_journal_bounded, test_ingest_receipt_snapshot_refs_bounded: 123 passed, unchanged"
+  },
+  "acceptance_notes": {
+    "5": "journal bytes == canonical envelope lines of the stored snapshots (asserted, sha256 recorded); writer code untouched",
+    "6": "sqlite and dual tests pass unchanged (mismatch counting kept)",
+    "7": "after a failed re-read the writer publishes {}: get returns None, live_symbols [] as before; test_error_path covers concurrent readers with no exception",
+    "8": "no new store, no new persistent writer, no thread added",
+    "semantic_change": "journal_stats journal_bytes/journal_lines now report the store's last synced view; a foreign writer appears after the next sync"
+  },
+  "residual_findings": [
+    "live_symbols no longer walks the map after a publish (writer pre-builds the sorted lists); max 1.78 ms append, 1.90 ms compaction on this host",
+    "os.stat on the journal itself stalled 84-100 ms during compaction on this host (kernel), which is why journal_stats no longer stats the file",
+    "runtime.py was not changed; no credential in this evidence"
+  ]
+}

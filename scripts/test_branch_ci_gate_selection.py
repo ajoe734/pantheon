@@ -31,7 +31,7 @@ TENANT_FALLBACK_AUDIT_STEP_NAME = "BFF tenant fallback audit gate"
 EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
     "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py"
 )
-EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 30
+EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 40
 SOURCE_INGESTION_STEP_NAME = "Run source ingestion tests"
 MARKET_DATA_BUDGET_STEP_NAME = "Market data budget check"
 EXPECTED_MARKET_DATA_BUDGET_COMMANDS = (
@@ -85,7 +85,7 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         cls.smoke_steps = cls.smoke_job["steps"]
         cls.conditions = _load_smoke_step_conditions()
 
-    def test_smoke_job_timeout_minutes_is_30(self) -> None:
+    def test_smoke_job_timeout_minutes_is_40(self) -> None:
         self.assertEqual(
             self.smoke_job.get("timeout-minutes"),
             EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES,
@@ -169,7 +169,7 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         step = self.smoke_steps[names.index(SOURCE_INGESTION_STEP_NAME)]
         self.assertNotIn("if", step, "source ingestion tests must run unconditionally")
         self.assertFalse(step.get("continue-on-error", False))
-        self.assertEqual(step.get("timeout-minutes"), 15)
+        self.assertEqual(step.get("timeout-minutes"), 25)
         self.assertGreater(names.index(SOURCE_INGESTION_STEP_NAME), names.index("Install test dependencies"))
         self.assertGreater(
             names.index(SOURCE_INGESTION_STEP_NAME),

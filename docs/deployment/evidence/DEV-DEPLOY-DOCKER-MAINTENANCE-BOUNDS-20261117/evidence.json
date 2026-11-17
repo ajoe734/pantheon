@@ -1,0 +1,22 @@
+{
+  "task": "DEV-DEPLOY-DOCKER-MAINTENANCE-BOUNDS-20261117",
+  "changes": {
+    "cap_dev_docker_builder_cache_after_build": "runs right after seal_dev_candidate_images on both root and bff component paths; protects compose container images first (skips prune if protection fails); builder prune -f with --reserved-space (or --keep-storage when that is the only flag the CLI lists); never -a/-af; reports status/reason/cap/before_bytes/after_bytes in the log and as an ADVISORY_CHECK_RESULT docker_build_cache_cap line that the workflow deploy summary lists (advisory mode, never rolls back)",
+    "timeout_forwarding": "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS is now forwarded to the remote command prefix (default 45)",
+    "retire_unselected_one_shot_service_containers": "removes non-running containers of source-ingest-agora-projector (profiles source-ingest-scheduler, workers) when neither profile is selected; plain docker rm without -f, skips running/restarting/paused; called from retire_dormant_and_one_off_profile_containers (root) and the bff path"
+  },
+  "docker_flag_check": {
+    "local_docker": "29.7.2 with buildx 0.36.1: `docker builder prune --help` lists --reserved-space/--max-used-space/--min-free-space and does NOT list --keep-storage",
+    "hosted_29_1_3": "not verifiable from this worker (no hosted ssh). The script therefore detects the flag from `docker builder prune --help` at run time (--reserved-space first, --keep-storage fallback) and reports not_done reason=no_supported_cap_flag if neither exists, instead of silently continuing.",
+    "residual_finding": "The pre-existing root-only prune used --keep-storage unconditionally and only warned on failure; if the hosted buildx lacks that flag it would explain the 49.8GB cache despite a 20GB cap. Hypothesis, not confirmed."
+  },
+  "growth_bound": {
+    "cap_default": "20GB (PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE)",
+    "bound": "Build cache is at most the cap after every deploy (root and bff). If the prune is skipped, times out, fails, or leaves the cache over the cap, the deploy is not failed but is reported as not_done with before/after bytes in the log and deploy summary.",
+    "hosted_shape_test": "stub with 49.8GB cache -> 19.9GB after prune with cap 20GB reports done; timeout, still_over_cap, protection failure and unsupported flag each report not_done",
+    "growth_per_day": "Not measured in this change (hosted access unavailable). Observed state: 49.8GB cache at a 20GB cap. Each build can add several GB; the post-build cap bounds the steady state at cap plus one in-flight build instead of unbounded growth."
+  },
+  "timeout_caveat": "Prune timeout is bounded 1..120s (existing validation). A very large cache may not finish pruning inside the timeout in one deploy; this is then reported as not_done and retried next deploy.",
+  "tests": "scripts/test_deploy_nonprod_vm.py, scripts/test_dev_release_artifact_retention.py, scripts/test_dev_environment_lease_deploy_contract.py: 449 passed, 2 skipped; existing protection tests unmodified",
+  "backward_compat": "No on-disk format change; the previous release reads the same state (script-only change; new containers/labels untouched)."
+}

@@ -1,0 +1,74 @@
+{
+  "task_id": "SD-MARKET-DATA-ONE-WRITE-AMENDMENT-20261117",
+  "owner": "Claude2",
+  "date": "2026-11-17",
+  "scope": "documents only; no code changed",
+  "files_changed": [
+    "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md",
+    "scripts/test_check_market_data_budget.py"
+  ],
+  "sections_changed": [
+    "header",
+    "0 (item 10, decision F)",
+    "4.1 (row)",
+    "4.1a (new)",
+    "4.2 (total live size)",
+    "4.3 (listing counts table, warrant text, budget effect)",
+    "5.2 (latency estimate and acceptance volume)",
+    "5.2a (new)",
+    "6 (volume paragraph and rows daily_bars, lineage, market_snapshot_current, compat export, receipts, listing_allowlist, source_evidence)",
+    "7 (step 9 migration and rollback)",
+    "8a (new, as built)",
+    "9 (intro volume, T1 and E1 rows, 9.1 delivery state, 9A constants and residual findings)",
+    "10 (Chinese summary: old counts corrected, update paragraph, rollout)"
+  ],
+  "listing_counts": {
+    "measured_by_this_task": false,
+    "reason": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2 and strMode=4 each answered HTTP 200 with an empty body at 2026-11-17T12:25Z (two attempts each, second with browser user agent and --compress); the numbers are the ones stated in the amendment request",
+    "stated_2026_11_17": {
+      "twse_warrants": 37740,
+      "tpex_warrants": 13143,
+      "twse_shares": 1058,
+      "tpex_shares": 898,
+      "tpex_etf": 119
+    },
+    "warrants_total": 50883,
+    "shares_etf_total": 2075,
+    "listed_total": 52958,
+    "implementation_task_measure": "57531 listing rows, 3.2 MB state file (security_listing.py comment, SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118)"
+  },
+  "recomputed_rows": {
+    "daily_bars_day": "53,000 x 75 B = 3.98 MB -> <= 4.0 MB; alarm 1.5x = 6.0 MB",
+    "daily_bars_total": "shares/ETF 2,086 x 75 B x 500 = 78 MB (<= 0.2 GB); warrants 50,883 x 75 B x 500 = 1.9 GB; total <= 2.1 GB, ceiling 2.5 GB",
+    "lineage": "<= 0.4 MB/day (0.3 + 106 runs x 1 KB), <= 200 MB total, alarm 0.6 MB",
+    "snapshot": "53,000 x 12 KB = 636 MB (phase 1), 53,000 x 4 KB = 212 MB (phase 2); active universe 200 x 12 KB = 2.4 MB; listed shares/ETF 2,075 x 12 KB = 25 MB",
+    "listing_allowlist": "<= 4 MB/day (3.2 MB measured), cap 20 MB",
+    "receipts": "106 batches x 8 KB = 0.9 MB/day"
+  },
+  "sources_read_2026_11_17": [
+    "docs/04/.../SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (whole)",
+    "docs/deployment/evidence/SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2/evidence.json (gaps G1 to G8)",
+    "services/research/alpha_templates/evaluator.py lines 470-545, 577-705",
+    "services/source_ingestion/candidate_pool_market_feed.py lines 60-210",
+    "services/source_ingestion/daily_bars_store.py, daily_bars_reader.py, security_listing.py, snapshot_current_store.py, requirement_state.py (digest, export), runtime.py line 355, scheduler.py lines 218-226",
+    "scripts/check_market_data_budget.py (table parsing and constants)",
+    "git log origin/dev a16b4b1fc (merge commits per task id)"
+  ],
+  "validation": {
+    "budget_table_parse": "scripts.check_market_data_budget.load_design_rows reads 24 rows; limits of daily_bars, lineage, market_snapshot_current, listing_allowlist parse as 4.0 MB/2.5 GB/6.0 MB, 0.4 MB/200 MB, 640 MB/64 MB/16 KB, 4 MB/20 MB",
+    "budget_check_full_run": "not run to the end: pyarrow is not installed on this worker host (DailyBarsError); the checker constants still follow in the implementation task (section 9A)"
+  },
+  "residual_findings": [
+    "R-F1 run file readers resolve copies of a key differently",
+    "R-F2 compat export would be 3.8 GB if every listed key held a 60-close line; operator decision needed whether listed warrants get a snapshot",
+    "R-F3 window digest includes run id so a same-close re-run under a new run id rewrites the row",
+    "R-F4 history availability count does not prove contiguity"
+  ],
+  "not_checked": "delivery state on hosted (deployed/accepted) and live store task state were not read; table 9.1 states merged on dev only",
+  "ci_red_repair_2026_11_17": {
+    "failing_check": "Smoke acceptance (PR #7523)",
+    "cause": "scripts/test_check_market_data_budget.py pinned the pre-amendment limits parsed from the design table (1.6 MB, 1 GB, 2.5 MB, 22,500 keys, 270 MB, 300 KB, 2 MB); the amended section 6 changes them to 4.0 MB, 2.5 GB, 6.0 MB, 53,000 keys, 640 MB, 0.4 MB, 4 MB",
+    "change": "test expectations only, updated to the amended design; scripts/check_market_data_budget.py is unchanged (its constants are listed in section 9A for the implementation task)",
+    "validation": "python3 -m unittest DesignTableTests ByteLimitTests: 16 tests OK locally; HostedShapedTests need pyarrow and run in CI"
+  }
+}

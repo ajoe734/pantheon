@@ -731,3 +731,166 @@ def test_erroring_transition_whose_readback_is_approved_still_enrols():
     decision_id, refused = _run(ConnectionError("governance 503: lost response"), step="decide",
                                 approve_despite_error=True)
     assert refused is None and decision_id
+
+
+# ---------------------------------------------------------------------------
+# PERSONA-POOL-FIRST-PUBLISH-AT-ENROLLMENT-20261117: first publish of the seeded pool v1
+# ---------------------------------------------------------------------------
+
+class _HostedShapedOwner:
+    """paper_owner persona, harness present, pool served from the real pool store."""
+
+    def __init__(self, pool) -> None:
+        self.pool = pool
+
+    def get_persona(self, persona_id):
+        from services.control_plane.bff.persona_paper_enrollment import ENROLLED_STATE
+        return {"persona_id": persona_id, "tenant_id": TENANT, "status": "active",
+                "lifecycle_state": ENROLLED_STATE, "metadata": {}}
+
+    def get_strategy_pool(self, persona_id, *, tenant_id):
+        return self.pool.current(persona_id, tenant_id)
+
+    def get_harness(self, persona_id, *, tenant_id):
+        return {"active_version": 1}
+
+
+def _hosted_publish_world(monkeypatch):
+    from services.control_plane.bff.tests import test_persona_pool_publish_route as route
+
+    monkeypatch.syspath_prepend(route._PERSONA_DIR)
+    w = route.World()
+    w.append([w.member("artifact-a", 1.0)], 0)  # the seeded v1: the artifact already trading
+    state = {"publishes": 0}
+    real = w.publisher.publish
+
+    def counted(**kwargs):
+        state["publishes"] += 1
+        return real(**kwargs)
+
+    w.publisher.publish = counted
+    w.state = state
+    return w
+
+
+def _first_publish_enrollment(w, **over):
+    ids = w.ids
+    return PersonaPaperEnrollment(
+        tenant_id=route_tenant(), persona_id=route_persona(), capital_pool_id=ids.capital_pool_id,
+        persona_capital_binding_id=ids.persona_capital_binding_id,
+        deployment_plan_id=ids.deployment_plan_id, persona_owner=_HostedShapedOwner(w.pool),
+        transport=w.transport, runtime_binding_reader=w.runtime.reader,
+        governance_actor_id=GATE, proposer=None, proposer_actor_id=PROPOSER,
+        pool_publisher=lambda version: w.publisher.publish(
+            tenant_id=route_tenant(), persona_id=route_persona(), requested_by="enrollment",
+            pool_version=version),
+        **over,
+    )
+
+
+def route_tenant() -> str:
+    return "tenant-a"
+
+
+def route_persona() -> str:
+    return "persona-a"
+
+
+def test_enrollment_publishes_seeded_v1_once_and_binds_the_envelope(monkeypatch):
+    w = _hosted_publish_world(monkeypatch)
+    before = [b for b in w.runtime.bindings.values() if b["status"] == "active"]
+    assert len(before) == 1 and not before[0]["artifact_id"].startswith("artifact-persona-pool-")
+
+    first = _first_publish_enrollment(w).enroll()
+    assert first.status == "enrolled" and first.steps["publish"]["status"] == "published", first.to_dict()
+    live = [b for b in w.runtime.bindings.values() if b["status"] == "active"]
+    assert len(live) == 1 and live[0]["artifact_id"] == first.steps["publish"]["envelope_artifact_id"]
+    assert live[0]["runtime_id"] == before[0]["runtime_id"]
+    assert w.runtime.calls == ["deploy", "replace"] and w.state["publishes"] == 1
+
+    # Read-before-write: a runtime already on the envelope is never republished.
+    again = _first_publish_enrollment(w).enroll()
+    assert again.steps["publish"]["status"] == "current" and w.state["publishes"] == 1
+    assert w.runtime.calls == ["deploy", "replace"]
+
+
+def test_publish_failure_is_a_readable_reason_and_leaves_paper_untouched(monkeypatch):
+    w = _hosted_publish_world(monkeypatch)
+    from services.control_plane.bff.persona_pool_publisher import PoolPublishRefused
+
+    def refuse(**_):
+        raise PoolPublishRefused("owner path unavailable: deployment 503", status_code=503)
+
+    w.publisher.publish = refuse
+    boot = [b for b in w.runtime.bindings.values() if b["status"] == "active"]
+    outcome = _first_publish_enrollment(w).enroll()
+    assert outcome.status == "enrolled" and outcome.lifecycle_state == "paper_owner"
+    assert outcome.steps["publish"]["status"] == "failed" and outcome.reason.startswith("pool_publish_failed:")
+    from services.control_plane.bff.persona_paper_enrollment import enrollment_settled
+    assert enrollment_settled(outcome.to_dict()) is False
+    assert [b for b in w.runtime.bindings.values() if b["status"] == "active"] == boot
+
+
+def test_pool_beyond_seed_is_left_to_the_cycle_and_legacy_enrolled_readback_is_unsettled(monkeypatch):
+    from services.control_plane.bff.persona_paper_enrollment import enrollment_settled
+    w = _hosted_publish_world(monkeypatch)
+    w.append([w.member("artifact-a", 0.5), w.member("artifact-b", 0.5)], 1, policy=True)
+    outcome = _first_publish_enrollment(w).enroll()
+    assert outcome.steps["publish"]["status"] == "deferred" and w.state["publishes"] == 0
+    assert enrollment_settled(outcome.to_dict()) is True
+    assert enrollment_settled({"status": "enrolled", "steps": {"pool": {"status": "present"}}}) is False
+
+
+# ---------------------------------------------------------------------------
+# PERSONA-ENROLLMENT-READBACK-STABLE-WHEN-PAUSED-20261117
+# ---------------------------------------------------------------------------
+
+def test_paused_runtime_keeps_enrolled_readback_waits_then_publishes_once(monkeypatch):
+    from services.control_plane.bff.persona_paper_enrollment import enrollment_settled, retry_due
+    from datetime import datetime, timezone
+
+    w = _hosted_publish_world(monkeypatch)
+    live = [b for b in w.runtime.bindings.values() if b["status"] == "active"]
+    assert len(live) == 1
+    live[0]["status"] = "paused"  # after the close
+
+    paused = _first_publish_enrollment(w).enroll()
+    assert paused.status == "enrolled" and paused.lifecycle_state == "paper_owner", paused.to_dict()
+    assert paused.steps["publish"]["status"] == "waiting"
+    assert enrollment_settled(paused.to_dict()) is False
+    assert w.state["publishes"] == 0
+    # Unsettled enrolled readbacks are throttled by the same minimum interval.
+    assert retry_due(paused.to_dict(), datetime.now(timezone.utc), 600) is False
+
+    live[0]["status"] = "active"  # runtime resumes
+    resumed = _first_publish_enrollment(w).enroll()
+    assert resumed.steps["publish"]["status"] == "published" and w.state["publishes"] == 1
+    again = _first_publish_enrollment(w).enroll()
+    assert again.steps["publish"]["status"] == "current" and w.state["publishes"] == 1
+
+
+def test_enrolled_readback_is_never_replaced_by_a_failed_pass():
+    from services.control_plane.bff.persona_provisioning_coordinator import PersonaProvisioningCoordinator
+
+    class _Rec:
+        references = {"paper_enrollment": {
+            "persona_id": "p", "status": "enrolled", "reason": None,
+            "lifecycle_state": "paper_owner", "steps": {"pool": {"status": "present"}},
+            "attempted_at": "2026-11-17T00:00:00Z"}}
+        persona_id = "p"
+
+    class _Enr:
+        def enroll(self):
+            from services.control_plane.bff.persona_paper_enrollment import EnrollmentOutcome
+            return EnrollmentOutcome("p", "not_eligible", "paper_runtime_binding_not_active",
+                                     attempted_at="2026-11-18T00:00:00Z")
+
+    coord = PersonaProvisioningCoordinator.__new__(PersonaProvisioningCoordinator)
+    coord._paper_enrollment = lambda record: _Enr()
+    coord._checkpoint = lambda record: record
+    rec = _Rec()
+    coord._enroll_in_place(rec)
+    kept = rec.references["paper_enrollment"]
+    assert kept["status"] == "enrolled" and kept["lifecycle_state"] == "paper_owner"
+    assert kept["steps"]["publish"]["reason"].endswith("paper_runtime_binding_not_active")
+    assert kept["attempted_at"] == "2026-11-18T00:00:00Z"

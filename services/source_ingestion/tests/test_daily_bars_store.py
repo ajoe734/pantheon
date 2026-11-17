@@ -185,7 +185,7 @@ def test_budget_alarm_fields_and_enforcement(tmp_path, monkeypatch):
     monkeypatch.setattr(dbs, "DAILY_BARS_DAY_ALARM_BYTES", 1000)
     monkeypatch.setattr(dbs, "LINEAGE_DAY_ALARM_BYTES", 10)
     report = store.health()
-    assert set(report["alarms"]) == {"daily_bars_day_over_2_5mb", "lineage_day_over_1_5x"}
+    assert set(report["alarms"]) == {"daily_bars_day_over_6mb", "lineage_day_over_1_5x"}
     with pytest.raises(DailyBarsBudgetExceeded):
         store.enforce_budget()
 
@@ -224,3 +224,229 @@ def test_symbol_stats_counts_days_and_bounds_without_loading_rows(tmp_path):
     store.write_records([record("2330.TW", "2026-11-13")], ingest_run_id="r2")
     assert store.symbol_stats() == {"2330.TW": (2, "2026-11-12", "2026-11-13"), "2317.TW": (1, "2026-11-12", "2026-11-12")}
     assert store.symbol_stats("2026-11-13", "2026-11-13") == {"2330.TW": (1, "2026-11-13", "2026-11-13")}
+
+
+# --- SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118: traded value, available time, trading status -------
+import pyarrow as pa  # noqa: E402
+import pyarrow.parquet as pq  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+COLS = ["symbol", "trade_date", "close", "volume", "traded_value", "available_time", "trading_status"]
+
+
+def read_cols(root, symbols, day=DAY):
+    return DailyBarsReader(root).read_range(symbols, day, day, columns=COLS)
+
+
+def test_columns_follow_the_source_fields_and_null_is_never_zero(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([
+        record("2330.TW", DAY, 10.0, volume=100.0, value=1234.5, available_time="2026-11-13T15:05:06.123456+08:00",
+               trading_status="traded"),
+        record("2317.TW", DAY, 20.0, volume=50.0, value_thousands=7.0, available_time=DAY),
+        record("2454.TW", DAY, 30.0, volume=0.0, value=0.0, available_time=DAY),   # a real zero stays zero
+        record("2603.TW", DAY, 40.0, volume=5.0),                                     # the source gave nothing
+    ], ingest_run_id="r1")
+    got = read_cols(tmp_path, ["2330.TW", "2317.TW", "2454.TW", "2603.TW"])
+    a, b, c, d = (got[s][0] for s in ("2330.TW", "2317.TW", "2454.TW", "2603.TW"))
+    assert a["traded_value"] == 1234.5 and a["trading_status"] == "traded"
+    assert a["available_time"] == datetime(2026, 11, 13, 7, 5, 6, 123456, tzinfo=timezone.utc)
+    assert b["traded_value"] == 7000.0 and b["trading_status"] is None
+    assert b["available_time"] == datetime(2026, 11, 13, 6, 30, tzinfo=timezone.utc)  # date only: 14:30 +08:00
+    assert c["traded_value"] == 0.0
+    assert d["traded_value"] is None and d["available_time"] is None and d["trading_status"] is None
+    manifest = store.read_manifest(DAY)
+    assert manifest["schema_version"] == "daily_bars_manifest.v2"
+    assert {"traded_value", "available_time", "trading_status"} <= set(manifest["columns"])
+    assert manifest["key_fields"] == ["market", "symbol", "trade_date"]
+
+
+def test_copies_follow_the_evaluator_rule_and_conflicts_are_rejected(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([
+        record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=100.0, value=1000.0, available_time="2026-11-13T14:00:00+08:00"),
+        record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=300.0, value=3000.0, available_time="2026-11-13T13:00:00+08:00"),
+        record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=200.0, value=9999.0, available_time="2026-11-13T15:00:00+08:00"),
+        record("2317.TW", DAY, 10.0, open=9.0, volume=1.0),
+        record("2317.TW", DAY, 11.0, open=9.0, volume=1.0),
+    ], ingest_run_id="r1")
+    row = read_cols(tmp_path, ["2330.TW"])["2330.TW"][0]
+    assert (row["volume"], row["traded_value"]) == (300.0, 3000.0)  # the largest volume supplies both, never mixed
+    assert row["available_time"] == datetime(2026, 11, 13, 7, 0, tzinfo=timezone.utc)  # the latest of all copies
+    assert read_cols(tmp_path, ["2317.TW"])["2317.TW"] == []
+    assert store.last_rejections == {"conflicting_duplicate": 1}
+
+
+def test_digest_covers_new_columns_so_rerun_is_idempotent_and_adding_a_value_replaces(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    base = dict(volume=100.0, available_time="2026-11-13T15:00:00+08:00", trading_status="traded")
+    assert store.write_records([record("2330.TW", DAY, 10.0, **base)], ingest_run_id="r1")["days_written"] == [DAY]
+    digest = store.read_manifest(DAY)["content_digest"]
+    again = store.write_records([record("2330.TW", DAY, 10.0, **base)], ingest_run_id="r2")
+    assert again["days_unchanged"] == [DAY] and store.read_manifest(DAY)["content_digest"] == digest
+    files = tree_files(tmp_path)
+    store.write_records([record("2330.TW", DAY, 10.0, value=1000.0, **base)], ingest_run_id="r3")
+    assert store.read_manifest(DAY)["content_digest"] != digest
+    assert read_cols(tmp_path, ["2330.TW"])["2330.TW"][0]["traded_value"] == 1000.0
+    assert tree_files(tmp_path) != files
+
+
+def test_not_traded_is_stored_with_null_prices_and_price_readers_skip_it(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    out = store.write_records([
+        record("2330.TW", DAY, 10.0, volume=1.0, trading_status="traded"),
+        SourceRecord(source_id="s-1101", connector_id="c", source_type="market", title="t", content_ref="r",
+                                  metadata={"symbol": "1101.TW", "trade_date": DAY, "market": "TW", "trading_status": "not_traded"}),
+        record("1102.TW", DAY, 0.0),  # a zero close without the status is still bad_close
+    ], ingest_run_id="r1")
+    assert out["rejected"] == {"bad_close": 1}
+    reader = DailyBarsReader(tmp_path)
+    assert [r["symbol"] for r in reader.read_range(["2330.TW", "1101.TW"], DAY, DAY, columns=["symbol", "trade_date", "close"])["2330.TW"]] == ["2330.TW"]
+    assert reader.read_range(["1101.TW"], DAY, DAY)["1101.TW"] == []  # no bar
+    asked = reader.read_range(["1101.TW"], DAY, DAY, columns=COLS)["1101.TW"]
+    assert len(asked) == 1 and asked[0]["close"] is None and asked[0]["traded_value"] is None
+    assert asked[0]["trading_status"] == "not_traded"
+    assert [r["symbol"] for r in reader.read_not_traded(DAY)] == ["1101.TW"]
+    assert "1101.TW" not in reader.list_symbols() and "1101.TW" not in store.symbol_stats()
+    assert reader.availability("1101.TW")["1101.TW"]["count"] == 0
+    assert store.verify_day(DAY)["verified"]
+    contradictory = store.write_records([record("2412.TW", DAY, 9.0, trading_status="not_traded")], ingest_run_id="r2")
+    assert contradictory["rejected"] == {"contradictory_status": 1}
+
+
+def test_a_caller_that_does_not_ask_reads_no_new_column(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store.write_records([record("2330.TW", DAY, 10.0, volume=1.0, value=5.0, available_time=DAY, trading_status="traded")], ingest_run_id="r1")
+    seen = []
+    original = pq.ParquetFile.read_row_groups
+
+    def spy(self, groups, columns=None, **kw):
+        seen.append(list(columns or []))
+        return original(self, groups, columns=columns, **kw)
+
+    pq.ParquetFile.read_row_groups = spy
+    try:
+        reader = DailyBarsReader(tmp_path)
+        reader.read_range(["2330.TW"], DAY, DAY)
+        reader.read_range(["2330.TW"], DAY, DAY, columns=["symbol", "trade_date", "close"])
+        reader.availability("2330.TW")
+        reader.read_range(["2330.TW"], DAY, DAY, columns=["symbol", "trade_date", "traded_value"])
+    finally:
+        pq.ParquetFile.read_row_groups = original
+    new = {"traded_value", "available_time", "trading_status"}
+    assert all(not (set(c) & new) for c in seen[:-1]), seen
+    assert set(seen[-1]) == {"symbol", "trade_date", "traded_value"}
+
+
+def _write_v1_day(root, trade_date, symbols):
+    """A partition as the code before this task wrote it: nine value fields, manifest v1, no new columns."""
+    schema = pa.schema([
+        ("market", pa.string()), ("symbol", pa.string()), ("trade_date", pa.string()),
+        ("open", pa.float64()), ("high", pa.float64()), ("low", pa.float64()), ("close", pa.float64()),
+        ("volume", pa.float64()), ("adjusted", pa.bool_()), ("source_id", pa.string()),
+        ("ingest_run_id", pa.string()), ("lineage_ref", pa.string()), ("content_hash", pa.string())])
+    rows = []
+    for s in sorted(symbols):
+        ohlcv = {"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0, "adjusted": False}
+        rows.append({"market": "TW", "symbol": s, "trade_date": trade_date, **ohlcv, "source_id": "s",
+                     "ingest_run_id": "old", "lineage_ref": "old", "content_hash": dbs._sha(ohlcv)})
+    part = root / "daily_bars" / "market=TW" / f"date={trade_date}" / "part-g1-0.parquet"
+    part.parent.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), part, compression="zstd")
+    manifest = {"schema_version": "daily_bars_manifest.v1", "dataset": "daily_bars", "key_fields": ["market", "symbol", "trade_date"],
+                "trade_date": trade_date, "generation": 1, "row_count": len(rows), "symbol_count": len(rows),
+                "bytes": part.stat().st_size, "content_digest": DailyBarsStore.day_digest(rows),
+                "files": [{"path": part.relative_to(root / "daily_bars").as_posix(), "market": "TW", "rows": len(rows),
+                           "bytes": part.stat().st_size, "min_symbol": rows[0]["symbol"], "max_symbol": rows[-1]["symbol"]}]}
+    (root / "daily_bars" / "_manifest").mkdir(parents=True, exist_ok=True)
+    (root / "daily_bars" / "_manifest" / f"date={trade_date}.json").write_text(json.dumps(manifest))
+    return rows
+
+
+def test_v1_partition_reads_nulls_and_is_upgraded_when_the_date_is_next_written(tmp_path):
+    _write_v1_day(tmp_path, DAY, ["2330.TW", "2317.TW"])
+    got = read_cols(tmp_path, ["2330.TW"])["2330.TW"][0]
+    assert got["close"] == 1.5 and got["traded_value"] is None and got["available_time"] is None and got["trading_status"] is None
+    store = DailyBarsStore(tmp_path)
+    assert store.write_records([record("2330.TW", DAY, 1.5, open=1.0, high=2.0, low=0.5, volume=10.0, value=15.0,
+                                       available_time=DAY, trading_status="traded")], ingest_run_id="r1")["days_written"] == [DAY]
+    manifest = store.read_manifest(DAY)
+    assert manifest["schema_version"] == "daily_bars_manifest.v2" and manifest["generation"] == 2
+    assert manifest["row_count"] == 2  # the other v1 row is kept
+    new = read_cols(tmp_path, ["2330.TW", "2317.TW"])
+    assert new["2330.TW"][0]["traded_value"] == 15.0
+    assert new["2317.TW"][0]["close"] == 1.5 and new["2317.TW"][0]["traded_value"] is None
+    assert store.verify_day(DAY)["verified"]
+
+
+def test_v1_row_with_the_same_prices_is_replaced_because_the_hash_covers_the_new_columns(tmp_path):
+    _write_v1_day(tmp_path, DAY, ["2330.TW"])
+    store = DailyBarsStore(tmp_path)
+    out = store.write_records([record("2330.TW", DAY, 1.5, open=1.0, high=2.0, low=0.5, volume=10.0)], ingest_run_id="r1")
+    assert out["days_written"] == [DAY]  # the day digest changes once for the upgrade
+
+
+def test_kill_in_the_middle_of_an_upgrade_leaves_the_previous_complete_partition(tmp_path):
+    before_rows = _write_v1_day(tmp_path, DAY, ["2330.TW", "2317.TW"])
+    for step in ("after_temp_write", "after_fsync", "after_lineage", "before_manifest_rename"):
+        killed = DailyBarsStore(tmp_path, fault=lambda s, step=step: (_ for _ in ()).throw(KeyboardInterrupt()) if s == step else None)
+        with pytest.raises(KeyboardInterrupt):
+            killed.write_records([record("2330.TW", DAY, 1.5, open=1.0, high=2.0, low=0.5, volume=10.0, value=15.0, available_time=DAY)], ingest_run_id="r9")
+        seen = DailyBarsReader(tmp_path).read_range(["2330.TW", "2317.TW"], DAY, DAY, columns=COLS)
+        assert [seen[s][0]["close"] for s in ("2330.TW", "2317.TW")] == [1.5, 1.5]
+        assert seen["2330.TW"][0]["traded_value"] is None  # still the previous complete partition
+        assert DailyBarsStore(tmp_path).verify_day(DAY)["verified"]
+        DailyBarsStore(tmp_path).sweep_interrupted()
+    assert len(before_rows) == 2
+
+
+def test_lineage_keeps_source_endpoint_venue_and_bundle_once_per_run(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    collector = {"source_id": "collector-tw-twse-price-history", "bundle_sha256": "ab" * 32}
+    store.write_records([
+        record("2330", DAY, 10.0, exchange="TWSE", upstream_endpoint="MI_INDEX", trading_status="traded", collector=collector),
+        SourceRecord(source_id="s-1101", connector_id="c", source_type="market", title="t", content_ref="r",
+                     metadata={"symbol": "1101", "trade_date": DAY, "market": "TW", "exchange": "TWSE", "upstream_endpoint": "MI_INDEX",
+                               "trading_status": "not_traded", "collector": collector}),
+    ], ingest_run_id="run-a", default_market="TW")
+    lineage = json.loads((tmp_path / "lineage" / f"date={DAY}.json").read_text())
+    caps = lineage["runs"]["run-a"]["captures"]
+    assert len(caps) == 2  # one per row source id (the join key with the row's source_id column), not per row
+    assert {c["venue"] for c in caps} == {"TWSE"} and {c["upstream_endpoint"] for c in caps} == {"MI_INDEX"}
+    assert {c["collector_source_id"] for c in caps} == {"collector-tw-twse-price-history"}
+    assert {c["bundle_sha12"] for c in caps} == {"ab" * 6} and all(c["status_known"] for c in caps)
+
+
+def test_budget_bytes_at_the_measured_listing_size_and_bytes_per_row(tmp_path):
+    """About 53,000 listed symbols (2,075 shares and ETFs, 50,883 warrants) in 500 record batches, with the three
+    new columns filled as the hosted shape fills them: the day and lineage limits of the amended section 6."""
+    store = DailyBarsStore(tmp_path)
+    n, warrants = 52_958, 50_883
+    rows = make_rows(n, warrants=warrants)
+    for i, row in enumerate(rows):
+        row["traded_value"] = float(row["close"] * row["volume"])
+        row["available_time"] = datetime(2026, 11, 13, 6, 30, tzinfo=timezone.utc)
+        row["trading_status"] = "traded"
+        row["content_hash"] = dbs._row_hash(row)
+    for i in range(0, n, 500):
+        store.write_day(DAY, rows[i:i + 500], ingest_run_id=f"run-{i // 500}", connector_id="c")
+    manifest = store.read_manifest(DAY)
+    assert manifest["row_count"] == n
+    assert manifest["bytes"] <= dbs.DAILY_BARS_DAY_TARGET_BYTES, manifest["bytes"]
+    assert manifest["bytes"] / n <= 75, manifest["bytes"] / n  # the design estimate per row
+    lineage_bytes = (tmp_path / "lineage" / f"date={DAY}.json").stat().st_size
+    assert lineage_bytes <= dbs.LINEAGE_DAY_TARGET_BYTES, lineage_bytes
+    assert store.enforce_budget()["alarms"] == []
+    for name, value in (("DAILY_BARS_DAY_TARGET_BYTES", 4_000_000), ("DAILY_BARS_DAY_ALARM_BYTES", 6_000_000),
+                        ("DAILY_BARS_TOTAL_CEILING_BYTES", 2_500_000_000), ("LINEAGE_DAY_TARGET_BYTES", 400_000),
+                        ("LINEAGE_DAY_ALARM_BYTES", 600_000), ("LINEAGE_TOTAL_CEILING_BYTES", 200_000_000)):
+        assert getattr(dbs, name) == value
+
+
+def test_a_day_over_the_limit_is_refused_by_enforce_budget(tmp_path, monkeypatch):
+    store = DailyBarsStore(tmp_path)
+    store.write_day(DAY, make_rows(3000), ingest_run_id="r")
+    size = store.read_manifest(DAY)["bytes"]
+    monkeypatch.setattr(dbs, "DAILY_BARS_DAY_ALARM_BYTES", size - 1)
+    with pytest.raises(DailyBarsBudgetExceeded):
+        store.enforce_budget()
