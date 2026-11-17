@@ -104,7 +104,8 @@ def test_default_1d_results_identical_before_and_after_minute_projection(tmp_pat
     before_explicit = client.get("/api/source-ingest/snapshots/latest?symbol=AAPL.US&frequency=1d")
     assert before.status_code == 200 and before.json()["closes"] == [220.0, 224.5, 223.0]
     log_before = (tmp_path / "svc").rglob("*snapshot*")
-    log_before = {p: p.read_bytes() for p in log_before if p.is_file()}
+    # the journal file only: the SQLite database and its -wal/-shm files are not line logs
+    log_before = {p: p.read_bytes() for p in log_before if p.is_file() and p.suffix == ".jsonl"}
 
     istore = _store(tmp_path / "intraday")
     istore.put_symbol_day("2330", DAY, _bars())
@@ -117,7 +118,10 @@ def test_default_1d_results_identical_before_and_after_minute_projection(tmp_pat
     assert "dataset" not in after.json()
     # the daily snapshot log lines written earlier are byte-for-byte unchanged (only appended to)
     for path, data in log_before.items():
-        assert path.read_bytes().startswith(data)
+        if module.runtime.latest_market_snapshot_store.store_mode == "journal":
+            assert path.read_bytes().startswith(data)
+        else:  # sqlite mode rewrites the export in key order: every earlier line is still there, unchanged
+            assert set(data.splitlines()) <= set(path.read_bytes().splitlines())
 
 
 def test_projection_ignores_waived_tampered_and_non_pass(tmp_path):
