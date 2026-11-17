@@ -1,0 +1,77 @@
+{
+  "task_id": "SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2",
+  "owner": "Claude2",
+  "reviewer": "Claude",
+  "scope": "source delivery only; the hosted backfill, hosted switch of both settings and the real cleanup run belong to MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117",
+  "hosted_shaped_copy_available": false,
+  "hosted_shaped_copy_note": "No hosted shaped copy of normalized tw_price_daily (about 150 write dates, 3400 symbols per date, about 800 MB) was reachable from this worker. Acceptance items 1, 4 (hosted counts), 6 (hosted 5-day and two-year comparison), 8 (hosted latency, feed before/after) and 11 (hosted before/after size) are NOT proven on hosted data. Every number below is a generated local shape and is labelled as such. No credential was used or recorded.",
+  "settings": {
+    "PANTHEON_DAILY_PRICE_READER": "run_files (default, old read) | daily_bars; unknown value raises ValueError (fail closed); both states tested in evaluator, candidate pool feed and history depth",
+    "PANTHEON_TW_PRICE_DAILY_RUN_FILES": "on (default, raw and normalized run files written as today) | off (a tw_price_daily batch creates no raw and no normalized run file; other datasets untouched); both states tested"
+  },
+  "acceptance": {
+    "1_reproduce": "backfill_daily_bars.py dry run (default) reports per trade date rows, unique, duplicate copies, class counts, rows without trade date, run files. Not run on hosted data.",
+    "2": "Writes only through DailyBarsStore; trade date from the row (tested: partition 2026-11-15/16 never becomes a date); duplicates collapse to the newest run (tested: later write date wins); no-trade-date rows counted not written (tested).",
+    "3": "Second run: file bytes and manifest digests identical (test_second_run_writes_nothing_bytes_and_digests). Kill before the manifest rename of the second date: first date complete and verified, residue confined to the killed date, next run sweeps temp files and orphan parts and finishes (test_kill_in_the_middle_then_resume).",
+    "4": "Per date manifest row_count and symbol_count compared with the deduplicated, classified, validated rows; a mismatch raises BackfillMismatch naming the dates (test_mismatch_fails_and_names_the_date).",
+    "5": "Classification reuses delete_expired_warrants.classify on the SOURCE-WARRANT-LISTING-EXPIRY ListingState: expired warrant not carried, listed warrant and delisted ordinary share carried, counts per class in the report; a listing that is not fresh stops before any write (tested for none and stale).",
+    "6": "evaluator.load_tw_price_daily_snapshot / snapshot_coverage, candidate_pool_market_feed.build_candidate_pool_market and measure_stored_history_depth read through DailyBarsReader paged by 500-symbol chunks and 800-day windows. Local equivalence tests (generated, not hosted): evaluator times, open, high, low, close, volume identical to the run-file read; feed event_time, close, open, high, low, volume, suspended, sessions identical; depth per_entity identical. KNOWN DIFFERENCES, see gaps.",
+    "7_other_readers": "see other_run_file_readers",
+    "8": "see latency_local_generated_shape",
+    "9": "cleanup_market_run_files.py: dry run default with report (write-date partition, file, bytes, refusal reasons, digest); real run needs --execute and --report-digest equal to the fresh report digest; refusals tested: no/short/mismatching reader evidence, inside 30 day window, daily bars not verified, backfill report missing or digest differs, rows without trade date, pinned dates; each deletion logged; only raw/*/tw_price_daily and normalized/tw_price_daily are touched.",
+    "10": "PANTHEON_TW_PRICE_DAILY_RUN_FILES=off tested: no raw/normalized tw_price_daily run file, daily bars still written, tw_index_daily untouched; default and on write both as today.",
+    "11": "Generated 3400 symbols x 504 days: see store_budget_local_generated_shape. Byte tests: test_hosted_shaped_backfill_stays_inside_the_byte_limits (day <= 1.6 MB target) and test_day_over_the_limit_fails_on_bytes. Neither script adds a store.",
+    "12": "see validation"
+  },
+  "store_budget_local_generated_shape": {
+    "shape": "3400 symbols x 504 trading days written through DailyBarsStore.write_day",
+    "daily_bars_total_bytes": 78050788,
+    "daily_bars_max_day_bytes": 156468,
+    "lineage_total_bytes": 61488,
+    "lineage_max_day_bytes": 122,
+    "alarms": [],
+    "design_section_6_rows": {"daily_bars_day_target": 1600000, "daily_bars_day_alarm": 2500000, "daily_bars_total_ceiling": 1000000000, "lineage_day_target": 300000, "lineage_total_ceiling": 150000000},
+    "stores_not_touched": ["market_snapshot_current", "receipt journal", "listing_allowlist", "intraday tw_price_1m"],
+    "note": "synthetic OHLCV compresses far better than real prices; the hosted size is NOT measured here"
+  },
+  "latency_local_generated_shape": {
+    "host": "12 cpu worker, local disk, generated data, reader opened cold per call or reused warm as stated",
+    "reader_1_symbol_2_years_p95_s": {"cold_reader": 1.336, "warm_reader": 0.815, "target": 0.5, "met": false},
+    "reader_500_symbols_250_days_p95_s": {"cold_reader": 1.064, "warm_reader": 0.974, "target": 3.0, "met": true},
+    "candidate_pool_feed_build_s": {"daily_bars_3400_symbols_504_days": 20.5, "run_files_before": "not measured: no hosted shaped run files"},
+    "evaluator_load_500_symbols_504_days_s": {"daily_bars": 22.0, "of_which_reader": "about 1 to 2 s; the rest is the existing _normalize_symbol_panel_entry point in time filter (factor_rule._filter_point_in_time_series), unchanged by this task"},
+    "verdict": "the 2 year x 1 symbol bound (500 ms) is NOT met by daily_bars_reader.py on this shape; the reader belongs to later tasks, see handoff"
+  },
+  "gaps_named_for_handoff": [
+    "G1 daily bars store no available_time and no traded value. The switched evaluator derives ts as trade date 14:30 +08:00 (the rule the old read applies to date-only rows) and vwap falls back to close (old: value/volume); the switched feed derives available_time the same way and omits traded_value. For rows whose real available_time or value differ the two reads are NOT identical. Needs a decision: add value and available_time columns to daily bars (persisted format change: previous-reader test in both directions against the hosted version read from /bff/version, and a change in daily_bars_reader.py _COLUMNS which belongs to a later task), or accept the derived values. Default setting stays run_files until decided.",
+    "G2 The survivorship attestation of the feed needs the all-market capture rows (collector.source_id, upstream_endpoint, trading_status), which are not part of daily bars. In daily_bars mode they are still read from normalized run files; after cleanup there are none and includes_delisted/includes_suspended become false (fail closed). The cleanup must not run on a window the feed still attests until the capture evidence has a store.",
+    "G3 daily_bars_reader.py exposes no symbol listing: callers need symbols to ask for. Added DailyBarsStore.symbol_stats (symbol column only) in daily_bars_store.py for the loader, the feed and depth. A reader-side listing would be the cleaner home (later task).",
+    "G4 A daily bar keeps the symbol as stored (symbol_canonical, e.g. 2330.TW); the old evaluator read keys by body.symbol. Callers passing bare codes to load_tw_price_daily_snapshot(symbols=...) in daily_bars mode get no match.",
+    "G5 The old evaluator read fails closed on conflicting duplicate prices; daily bars hold one row per key, so conflicts are resolved at backfill time by newest run (not by failing). Reported per date as duplicates; the conflicting-OHLC case is not separately counted.",
+    "G6 daily_bars_reader latency for 1 symbol x 2 years (above).",
+    "G7 Cleanup deletes whole run files per write-date partition; a file is refused unless every trade date it holds is verified, so one unverified date keeps the file."
+  ],
+  "other_run_file_readers": [
+    {"file": "services/source_ingestion/candidate_pool_market_feed.py", "lines": "49-52 _partitions, 127-165 _read_bars", "status": "switched for bars and sessions; captures for survivorship still read run files (G2)"},
+    {"file": "services/research/alpha_templates/evaluator.py", "lines": "464-471 _snapshot_files/_snapshot_root, 474-481 compute_snapshot_id, 484-530 _read_snapshot_rows", "status": "switched behind the setting; old read kept for rollback"},
+    {"file": "services/source_ingestion/market_data_storage.py", "lines": "measure_stored_history_depth", "status": "switched behind the setting"},
+    {"file": "services/source_ingestion/intraday_reconcile.py", "lines": "255-290 OfficialDaily.from_snapshot (rglob normalized/tw_price_daily/*.jsonl)", "status": "NOT switched, file outside the artifact list. Needs official volume components, line provenance (path, line, sha256) and available_time that daily bars do not carry. Stops working when the run files are deleted: switch or give it its own evidence store before the real cleanup (owner of the reconciliation task)."},
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "lines": "2124-2147 stored_instrument_authority", "status": "NOT switched, file outside the artifact list. Reads symbol_canonical of normalized tw_price_daily run files to resolve social symbols; stops giving authority when the files are deleted. Can read DailyBarsStore.symbol_stats instead (small follow-up)."},
+    {"file": "scripts/delete_expired_warrants.py", "lines": "_store_files/build_report/execute", "status": "rewrites run files of the one-off warrant delete; harmless after cleanup (nothing left to rewrite)"},
+    {"file": "scripts/report_intraday_reconciliation.py", "lines": "via OfficialDaily", "status": "same as intraday_reconcile.py"},
+    {"file": "scripts/project_market_data_to_bff_agora_surfaces.py", "lines": "330", "status": "filters SourceRecords by dataset; not a run file reader"},
+    {"file": "services/source_ingestion/market_data_storage.py", "lines": "write_run _append_jsonl", "status": "writer; stopped for tw_price_daily by PANTHEON_TW_PRICE_DAILY_RUN_FILES=off"}
+  ],
+  "named_changes_to_files_outside_this_task": [
+    "services/source_ingestion/daily_bars_reader.py (later tasks): optional symbol listing for a date window; 1 symbol x 2 years latency; value and available_time columns if G1 is decided that way."
+  ],
+  "persisted_format_change": "none: daily bars columns and manifest unchanged; the added store methods (sweep_interrupted, verify_day, symbol_stats) read and delete only. No previous-reader test needed; hosted version at time of PR not read (no hosted access).",
+  "validation": {
+    "python": "/tmp/tw-fund-venv/bin/python (python 3.12, pyarrow, pytest)",
+    "commands": [
+      {"cmd": "pytest scripts/test_backfill_daily_bars.py scripts/test_cleanup_market_run_files.py scripts/test_delete_expired_warrants.py services/source_ingestion/tests/test_market_data_storage.py services/source_ingestion/tests/test_daily_bars_store.py services/source_ingestion/tests/test_daily_bars_reader.py services/source_ingestion/tests/test_candidate_pool_market_feed.py services/research/tests/test_alpha_template_snapshot_loader.py services/research/tests/test_alpha_template_evaluation.py services/source_ingestion/tests/test_feature_catalogue.py", "result": "156 passed"},
+      {"cmd": "pytest services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_survivorship_attestation.py services/source_ingestion/tests/test_security_listing.py", "result": "128 passed, 1 skipped"}
+    ],
+    "no_test_weakened": true
+  }
+}

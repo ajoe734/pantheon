@@ -567,6 +567,7 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
     try:
         names = sorted(set(map(str, symbols))) if symbols is not None else sorted(DailyBarsStore(root).symbol_stats())
         rows: dict[tuple[str, str], dict[str, Any]] = {}
+        stamps: dict[str, str] = {}  # one timestamp parse per trade date, not per row
         for i in range(0, len(names), MAX_SYMBOLS):
             chunk = names[i:i + MAX_SYMBOLS]
             for j in range(0, len(dates), MAX_RANGE_DAYS):
@@ -578,11 +579,10 @@ def _read_daily_bars_rows(root: Path, symbols: Sequence[str] | None = None) -> d
                         if any(v is None for v in fields.values()):
                             raise TaiwanEvaluationDataError(
                                 f"daily bars row {sym} {bar['trade_date']} has no {sorted(k for k, v in fields.items() if v is None)}")
-                        ts = _parse_timestamp_utc(f"{bar['trade_date']}T14:30:00+08:00")
-                        rows[(sym, bar["trade_date"])] = {
-                            **{k: float(v) for k, v in fields.items()}, "value": None,
-                            "ts": ts.isoformat().replace("+00:00", "Z"),
-                        }
+                        day = bar["trade_date"]
+                        if day not in stamps:
+                            stamps[day] = _parse_timestamp_utc(f"{day}T14:30:00+08:00").isoformat().replace("+00:00", "Z")
+                        rows[(sym, day)] = {**{k: float(v) for k, v in fields.items()}, "value": None, "ts": stamps[day]}
     except DailyBarsError as exc:
         raise TaiwanEvaluationDataError(f"daily bars read refused: {exc}") from exc
     return rows
