@@ -1,0 +1,15 @@
+{
+  "task_id": "DEV-STORAGE-BUDGET-DAILY-MEASUREMENT-20261117",
+  "growth_of_the_measurement": "one JSON report (tens of KB) per day, kept 30 days by workflow artifact retention; nothing written on hosted; raw collection deleted before upload",
+  "cap_at_hosted_scale": "about 30 reports retained; one ssh session per day, 20 minute timeout",
+  "tests": {
+    "command": "python3 -m unittest scripts.test_measure_hosted_storage scripts.test_dev_storage_budget_workflow scripts.test_check_storage_manifest",
+    "result": "24 tests OK; check_storage_manifest.py exit 0"
+  },
+  "audit_replay": "scripts/test_measure_hosted_storage.py replays 2026-11-17: telemetry_events 29 GB, event_receipts 4.4 GB, downstream_health.sqlite3 1.03 GB flagged exceeded_size; 563 orphan temp files (4.85 GB) in paper-performance flagged; two pre-compact backups (988 MB) flagged unknown_state_file",
+  "not_verified": "no live hosted run: the workflow has not executed (needs merge to dev); the remote probe script is unexercised against a real VM",
+  "residual_findings": [
+    "BUDGETS numbers are proposed ceilings, not operator-approved; 341 manifest entries are still unreviewed and have no numeric budget",
+    "files mounted at the same /data path in several containers are counted once by path"
+  ]
+}
