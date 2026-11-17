@@ -1,0 +1,32 @@
+name: Persona Day Acceptance (daily, read-only)
+
+on:
+  schedule:
+    - cron: "30 6 * * 1-5"   # 14:30 Taipei; the persona daily cycle fires at 10:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: persona-day-acceptance-dev
+  cancel-in-progress: false
+
+jobs:
+  persona-day:
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 10
+    env:
+      ACCEPTANCE_BFF_URL: ${{ vars.DEV_BFF_URL }}
+      ACCEPTANCE_BFF_TOKEN: ${{ secrets.DEV_ACCEPTANCE_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe (GET only; writes nothing on hosted)
+        run: python3 -I acceptance/persona_day.py | tee persona-day.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-day-acceptance
+          path: persona-day.json
+          retention-days: 30

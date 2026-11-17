@@ -433,8 +433,9 @@ class PersonaCycleController:
                     failure = "case_file_unavailable:" + str(getattr(exc, "reason", None) or type(exc).__name__)[:120]
             if not failure:
                 try:
+                    tool_use = cycle.setdefault("tool_use", {})
                     turn, output, returned = self._brokered_turn(
-                        persona, build_case_file_prompt(persona, observe, cycle_case))
+                        persona, build_case_file_prompt(persona, observe, cycle_case), tool_use)
                     cycle["turn"] = turn.to_dict()
                     cycle["output"] = output.model_dump(mode="json")
                     check_case_file_citations(output, cycle_case, returned)
@@ -453,7 +454,8 @@ class PersonaCycleController:
                     if unseen:
                         # The agent has not seen these decision-specific cases: show them, then re-decide.
                         revised_turn, revised, revised_returned = self._brokered_turn(
-                            persona, build_proposal_case_prompt(persona, observe, cycle_case, output, unseen))
+                            persona, build_proposal_case_prompt(persona, observe, cycle_case, output, unseen),
+                            tool_use)
                         cycle["revision_turn"] = revised_turn.to_dict()
                         returned = sorted(set(returned) | set(revised_returned))
                         if not _same_proposals(output, revised, live_refs):
@@ -552,7 +554,8 @@ class PersonaCycleController:
                 url, env.get("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""))
         return self.tool_broker
 
-    def _brokered_turn(self, persona: Mapping[str, Any], prompt: str) -> tuple[Any, CaseFileTurnOutput, list[str]]:
+    def _brokered_turn(self, persona: Mapping[str, Any], prompt: str,
+                       tool_use: dict | None = None) -> tuple[Any, CaseFileTurnOutput, list[str]]:
         """Register the run with the broker as a daily cycle run, dispatch one turn, read that run's record.
 
         Proposals come only from the broker's per-run tool record; the turn's text is never parsed and an
@@ -565,7 +568,14 @@ class PersonaCycleController:
         turn = self.turn_runner(persona_id, prompt, session_user=session_user)
         if turn.status != "completed" or turn.persona_id != persona_id:
             raise ValueError("agent_turn_unavailable")
-        output, returned = output_from_tool_record(broker.run_record(run["run_ref"]), persona_id, run["run_ref"])
+        record = broker.run_record(run["run_ref"])
+        if tool_use is not None and isinstance(record, Mapping):
+            calls = [c for c in (record.get("calls") or []) if isinstance(c, Mapping)]
+            tool_use["memory_recall_ok"] = tool_use.get("memory_recall_ok", 0) + sum(
+                1 for c in calls if c.get("tool") == "persona_memory_recall" and c.get("outcome") == "ok")
+            tool_use["proposals_recorded"] = tool_use.get("proposals_recorded", 0) + sum(
+                1 for c in calls if c.get("tool") == "persona_proposal_submit" and c.get("outcome") == "recorded")
+        output, returned = output_from_tool_record(record, persona_id, run["run_ref"])
         return turn, output, returned
 
     def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:
@@ -1011,6 +1021,23 @@ class CycleOwners:
                 "receipt_ref": f"/api/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/versions/{result['pool_version']}"}
 
 
+def _run_times(healths) -> tuple[datetime | None, datetime | None]:
+    """Newest consumed (terminal) cycle and newest successful cycle across personas, from packet updated_at."""
+    tick = success = None
+    for h in healths:
+        if h.get("status") not in {"completed", "failed"}:
+            continue
+        try:
+            at = datetime.fromisoformat(str(h["updated_at"]).replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        tick = max(tick, at) if tick else at
+        if h["status"] == "completed":
+            success = max(success, at) if success else at
+    return tick, success
+
+
 async def run_controller(controller: PersonaCycleController, stop: asyncio.Event, *, interval_seconds=30):
     """Poll actual cron records; this interval never authorizes a persona turn."""
     writers = {}
@@ -1026,14 +1053,17 @@ async def run_controller(controller: PersonaCycleController, stop: asyncio.Event
                 health = {pid: h for pid, h in report["personas"].items() if pid in owned}
                 failures = [f for f in report["failures"] if f.get("persona_id") in owned]
                 now = _utc_now()
+                last_tick, last_success = _run_times(health.values())
                 await writers[tenant].record_heartbeat("per_persona_ooda",
+                    last_tick_at=last_tick, last_success_at=last_success,
                     desired_state_query="persona owner eligible lifecycle records",
                     actual_state_query="OpenClaw daily-cycle jobs, terminal runs and persisted packets",
                     desired_state={"present": bool(owned), "source": "persona_owner", "checked_at": now},
                     downstream_actual_state={"status": "degraded" if failures else "ready",
                                              "source": "openclaw_cron", "checked_at": now},
                     evidence_refs=["services/persona/persona_cycle_controller.py"],
-                    payload={"persona_cycle_health": health, "failures": failures})
+                    payload={"persona_cycle_health": health, "failures": failures,
+                             "daily_cycle_jobs": {pid: report["jobs"].get(pid) for pid in sorted(owned)}})
         except Exception:
             log.exception("Persona daily-cycle reconciliation failed")
         try:

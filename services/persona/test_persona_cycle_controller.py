@@ -582,7 +582,9 @@ def test_deployed_persona_lifespan_consumes_cycle_and_stops(system, monkeypatch,
         assert records[0]["loop_id"] == "per_persona_ooda"
         assert records[0]["controller_name"] == "persona_cycle_controller"
         assert records[0]["payload"]["persona_cycle_health"]["persona-cycle-test"]["last_packet_id"] == packet["packet_id"]
-        assert "last_success_at" not in records[0]
+        # RC2: the consumed run and the successful cycle are now visible (they were always NULL).
+        assert records[0]["last_tick_at"] and records[0]["last_success_at"]
+        assert records[0]["payload"]["daily_cycle_jobs"]["persona-cycle-test"]
 
 
 def test_provider_outage_still_removes_member_using_real_deterministic_drawdown_rule(system):
