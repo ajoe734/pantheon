@@ -25,6 +25,8 @@ LEGACY_SCHEMA_VERSION = "source_ingest_controller_state.v1"
 MAX_TRACKED_CONNECTORS = 512
 MAX_TEXT_LENGTH = 512
 MAX_FAILED_CONNECTORS = 16
+MAX_SKIPPED_IDS = 50
+MAX_SKIPPED_ID_LENGTH = 128
 
 
 class ControllerStateError(RuntimeError):
@@ -267,10 +269,31 @@ def summarize_reconcile(reconcile: Mapping[str, Any] | None) -> dict[str, Any]:
         inventory["truncated"] = bool(stored_inventory.get("truncated")) or (
             len(inventory["connector_ids"]) != inventory["count"]
         )
+    skipped_count, skipped_ids = _skipped_summary(payload)
     return {
         "summary": _scalar_summary(payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}),
         "connector_inventory": inventory,
+        # Items this release left alone because a newer release wrote them (RC1 WP1.5).
+        # Count is exact; ids are the first MAX_SKIPPED_IDS as "kind:id", each bounded.
+        "skipped_count": skipped_count,
+        "skipped_ids": skipped_ids,
     }
+
+
+def _skipped_summary(payload: Mapping[str, Any]) -> tuple[int, list[str]]:
+    ids: list[str] = []
+    count = 0
+    items = payload.get("skipped")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, Mapping) and item.get("id"):
+                ids.append(f"{item.get('kind') or 'item'}:{item['id']}"[:MAX_SKIPPED_ID_LENGTH])
+        count = _bounded_int(payload.get("skipped_count"))
+        count = max(len(ids), count or 0)
+    elif isinstance(payload.get("skipped_ids"), list):
+        ids = [str(value)[:MAX_SKIPPED_ID_LENGTH] for value in payload["skipped_ids"] if str(value)]
+        count = max(len(ids), _bounded_int(payload.get("skipped_count")) or 0)
+    return count, ids[:MAX_SKIPPED_IDS]
 
 
 def summarize_schedule(schedule: Mapping[str, Any] | None) -> dict[str, Any]:
