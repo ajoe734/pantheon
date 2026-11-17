@@ -1,0 +1,43 @@
+{
+ "task": "STORAGE-MANIFEST-AND-GUARD-20261117",
+ "owner": "Claude",
+ "reviewer": "Antigravity",
+ "base": "origin/dev 922594b2d",
+ "delivery_state": "merged-pending (source only; not deployed, not accepted)",
+ "inventory": {
+  "compose_path": 82,
+  "jsonl": 85,
+  "schema_table": 57,
+  "sqlite": 13,
+  "sqlite_connect": 12,
+  "table": 114
+ },
+ "entries": 360,
+ "waivers": 3,
+ "bound_status": {
+  "bounded": 0,
+  "unbounded": 19,
+  "unreviewed": 341
+ },
+ "count_note": "Discovery gives jsonl 85 (audit measured 81), sqlite 13, sqlite_connect 12, compose 82, CREATE TABLE 114 keys (124 statements; templated targets keyed per file), schema tables 57. jsonl differs from the audit's 81 because this regex also counts f-string fragments (3 waived) and tokens in non-test eval scripts.",
+ "red_green": {
+  "red": "added services/telemetry/zz_demo_writer.py naming undeclared_demo_writer.jsonl; check exit 1: 'undeclared writer (add a manifest entry or waiver): jsonl:undeclared_demo_writer.jsonl'",
+  "green": "same name declared in a manifest copy; exit 0, passed true. Demo file removed; repository manifest passes. Unit test test_undeclared_writer_fails_then_declaring_it_passes repeats this. CI run on the PR is the required-check proof (step 'Storage manifest check' in the unconditional smoke job)."
+ },
+ "claimed_bounds": "None. Zero entries are marked bounded, so no bound claim needs code verification. The bound_proof mechanism is verified by test_bounded_requires_proof_found_in_code. telemetry_events is marked unbounded because only heartbeat rows are deleted (services/telemetry/heartbeat_retention.py, DELETE ... event_type='heartbeat'); infrastructure_health has no cap. Checked and rejected as a bound: IntradayStore.prune has no production caller (grep '.prune(' finds only search/index_pipeline.py), so intraday files stay unreviewed.",
+ "measured_entries": {
+  "public.telemetry_events and telemetry_events": "29 GB",
+  "trade_journey_projection.event_receipts": "4.4 GB",
+  "downstream_health.sqlite3": "1.03 GB",
+  "reconciliation_drift.work_claims": "198 MB",
+  "latest_market_snapshots.jsonl (jsonl and compose)": "502 MB",
+  "/data/source-ingest/distill_job_queue.jsonl": "158 MB"
+ },
+ "tests": "python3 -m unittest scripts.test_check_storage_manifest -> 10 tests OK; scripts.test_branch_ci_gate_selection OK",
+ "residual_findings": [
+  "344 of 360 entries are 'unreviewed': owner is inferred from the path, growth per day is 'unmeasured' and cap 'none verified'. They need per-writer review under RC3 WP3.1 'remaining writers' (task not yet opened) and hosted measurement under WP3.3.",
+  "Tasks named for unbounded entries exist in the brief but several are not yet merged; entries with 'to_be_opened' need a real task id once opened.",
+  "docs/operations/problem-register.md row 'WP3.2 storage manifest and test: to be opened' should now point to this task (not in this task's scope).",
+  "The inventory misses writers outside services/ and docker-compose.yml (scripts/, collector host timers, build cache, orphan *.tmp, pre-compact backups)."
+ ]
+}

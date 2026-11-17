@@ -197,6 +197,12 @@ jobs:
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
+      # Dev functional checks are advisory (record result, never roll back)
+      # unless an operator sets the repository variable
+      # DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS to "true". This is a variable and
+      # not a dispatch input because GitHub rejects a workflow with more than
+      # 25 workflow_dispatch inputs and this workflow already has 25.
+      FUNCTIONAL_CHECKS_STRICT: ${{ vars.DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS == 'true' && 'true' || 'false' }}
       COMPENSATION_DRILL: ${{ inputs.compensation_drill || false }}
       # One applicability decision for the run-scoped paper case: only an
       # explicit proof/probe/bootstrap request on auto/root creates it, so an
@@ -1451,6 +1457,10 @@ jobs:
           esac
           echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
           echo "PPL-ALLOC-009 dev proof enabled: ${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
+          # Keep the deploy output on the runner so the advisory in-script check
+          # results (ADVISORY_CHECK_RESULT lines) reach the advisory summary.
+          deploy_log="${RUNNER_TEMP}/deploy-script-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.log"
+          exec > >(tee -a "${deploy_log}") 2>&1
           args=(
             bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
             --environment dev
@@ -1461,6 +1471,7 @@ jobs:
             --rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
+          [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]] && args+=(--strict-functional-checks)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "${args[@]}"
 
@@ -1498,6 +1509,7 @@ jobs:
         if: ${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' && env.BOUNDED_SOURCE_REFRESH_ENABLED != 'true' && env.BOOTSTRAP_EMPTY_HOST != 'true' }}
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -1549,19 +1561,40 @@ jobs:
           # preflight skips the pull when the closed session is already stored).
           # The step still fails closed; the outcome (with the refresh's own redacted
           # log) is recorded as evidence first, then the failure is re-raised.
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
           refresh_rc=0
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+          guarded_advisory "${outcome_dir}/refresh.rc" \
             bash "${deploy_script}" --refresh-only --output "${outcome_dir}/refresh.json" || refresh_rc=$?
           # A completed refresh only proves it ran; repeat the preflight to prove the session.
           preflight_rc=0
           if (( refresh_rc == 0 )); then
-            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-              "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            guarded_advisory "${outcome_dir}/preflight.rc" \
               bash "${deploy_script}" --refresh-only --preflight-only --output "${outcome_dir}/preflight.json" || preflight_rc=$?
           fi
           lease_token=""
-          python3 - "${outcome_dir}/refresh.json" "${outcome_dir}/preflight.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" "${preflight_rc}" <<'PY'
+          python3 - "${outcome_dir}/refresh.json" "${outcome_dir}/preflight.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" "${preflight_rc}" "${FUNCTIONAL_CHECKS_STRICT}" "${ADVISORY_DIR}" <<'PY'
           import json
           import pathlib
           import sys
@@ -1584,6 +1617,7 @@ jobs:
 
           refresh_path, preflight_path, evidence_dir = sys.argv[1], sys.argv[2], sys.argv[3]
           refresh_rc, preflight_rc = int(sys.argv[4]), int(sys.argv[5])
+          strict, advisory_dir = sys.argv[6] == "true", sys.argv[7]
           refresh = load(refresh_path) or {}
           preflight = load(preflight_path)
           record = dict(refresh)
@@ -1616,6 +1650,19 @@ jobs:
               (ev_dir / "tw-market-refresh.json").write_text(serialized, encoding="utf-8")
           if record["log"]:
               print(record["log"])
+          if advisory_dir:
+              adv = pathlib.Path(advisory_dir)
+              adv.mkdir(parents=True, exist_ok=True)
+              (adv / "taiwan_market_refresh.json").write_text(json.dumps({
+                  "check": "taiwan_market_refresh",
+                  "status": "failed" if failure else "passed",
+                  "reason": failure or "",
+                  "mode": "strict" if strict else "advisory",
+                  "scope": "workflow_step",
+              }, sort_keys=True) + "\n", encoding="utf-8")
+          if failure and not strict:
+              print(f"::warning::advisory check failed (recorded, deploy continues): {failure}")
+              raise SystemExit(0)
           if failure:
               raise SystemExit(failure)
           print(f"Taiwan market session proven: status={record['status']} reason={record['reason']}")
@@ -1883,6 +1930,7 @@ jobs:
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           EXPECTED_BFF_SHA: ${{ steps.target.outputs.sha }}
           EXPECTED_FE_SHA: ${{ steps.frontend.outputs.sha }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
           DEV_PAPER_RUN_ID: ${{ github.run_id }}
           DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
           DEV_PAPER_PHASE: paper_bootstrap
@@ -1923,22 +1971,49 @@ jobs:
           echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
           echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
           python3 -c "import datetime as dt, json, sys; doc = {'schemaVersion': 1, 'collectionStatus': 'not_started', 'bootstrapExit': None, 'collectedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'collectorExit': None, 'collectorErrorCategory': None, 'collectorStderrSummary': None}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(doc, sort_keys=True) + '\n')" "${diagnostic_dir}/collection-status.json"
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
           baseline_status=0
           # Collection happens inside this same guarded child, before the
           # guard observes the failure and quarantines the lease/heartbeat.
           # A later, separate guard invocation cannot do this: the guard's
           # own EXIT trap already stops the heartbeat for quarantine as soon
           # as this command returns non-zero.
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
+          DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
             DEV_PAPER_DIAGNOSTICS_COLLECTOR="${collector}" \
             EXPECTED_FE_SHA="${EXPECTED_FE_SHA}" \
             DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
             DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
             DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
             DEV_PAPER_PREBOOTSTRAP_WORKTREE="${DEV_PAPER_PREBOOTSTRAP_WORKTREE}" \
-            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            guarded_advisory "${diagnostic_dir}/baseline.rc" \
             "${diagnostics_script}" || baseline_status=$?
+          write_advisory_result governed_paper_baseline "${baseline_status}" ""
+          if [[ "${FUNCTIONAL_CHECKS_STRICT}" != "true" && "${baseline_status}" != "0" ]]; then
+            echo "::warning::advisory check governed_paper_baseline failed (exit ${baseline_status}); recorded, deploy continues"
+            exit 0
+          fi
           exit "${baseline_status}"
 
       - name: Upload dev paper failure diagnostics
@@ -1959,6 +2034,7 @@ jobs:
       - name: Dev evolution dispatch hosted probe
         id: evolution-dispatch-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        continue-on-error: ${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
@@ -1989,7 +2065,7 @@ jobs:
           echo "Hosted evolution dispatch evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload evolution dispatch hosted evidence
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' && steps.evolution-dispatch-probe.outputs.artifact_path != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: evoloop-001-hosted-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2000,6 +2076,7 @@ jobs:
       - name: Dev canonical paper lifecycle hosted probe
         id: loop-prod-tel-002-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
+        continue-on-error: ${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}
         working-directory: .target
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
@@ -2210,6 +2287,7 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -2220,8 +2298,31 @@ jobs:
             c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
+          agora_status=0
+          guarded_advisory "${RUNNER_TEMP}/agora-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.rc" \
             bash -c '
               set -euo pipefail
               workshop_id="deploy-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2248,14 +2349,119 @@ jobs:
               "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
                 "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
               echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
-            '
+            ' || agora_status=$?
+          write_advisory_result agora_restart_persistence "${agora_status}" ""
+          if [[ "${FUNCTIONAL_CHECKS_STRICT}" != "true" && "${agora_status}" != "0" ]]; then
+            echo "::warning::advisory check agora_restart_persistence failed (exit ${agora_status}); recorded, deploy continues"
+            exit 0
+          fi
+          exit "${agora_status}"
+
+      - name: Record advisory functional check results
+        id: advisory_summary
+        if: ${{ always() && steps.release_admission.outputs.evidence_dir != '' }}
+        env:
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+          DEPLOY_LOG: ${{ runner.temp }}/deploy-script-${{ github.run_id }}-${{ github.run_attempt }}.log
+          EVOLUTION_PROBE_OUTCOME: ${{ steps.evolution-dispatch-probe.outcome }}
+          LIFECYCLE_PROBE_OUTCOME: ${{ steps.loop-prod-tel-002-probe.outcome }}
+        shell: /bin/bash --noprofile --norc -eu {0}
+        run: |
+          mkdir -p "${ADVISORY_DIR}"
+          python3 - "${ADVISORY_DIR}" "${DEPLOY_LOG}" "${GITHUB_STEP_SUMMARY}" <<'PY'
+          import json, os, pathlib, sys
+
+          advisory_dir, deploy_log, summary_path = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          strict = os.environ.get("FUNCTIONAL_CHECKS_STRICT") == "true"
+          mode = "strict" if strict else "advisory"
+          results = {}
+          for f in sorted(advisory_dir.glob("*.json")):
+              if f.name == "summary.json":
+                  continue
+              try:
+                  doc = json.loads(f.read_text(encoding="utf-8"))
+              except (OSError, ValueError):
+                  continue
+              if isinstance(doc, dict) and doc.get("check"):
+                  results[doc["check"]] = doc
+          try:
+              for line in open(deploy_log, encoding="utf-8", errors="replace"):
+                  marker = "ADVISORY_CHECK_RESULT "
+                  idx = line.find(marker)
+                  if idx < 0:
+                      continue
+                  try:
+                      doc = json.loads(line[idx + len(marker):])
+                  except ValueError:
+                      continue
+                  if isinstance(doc, dict) and doc.get("check"):
+                      results[doc["check"]] = doc
+          except OSError:
+              pass
+          for name, outcome in (
+              ("evolution_dispatch_probe", os.environ.get("EVOLUTION_PROBE_OUTCOME", "")),
+              ("canonical_paper_lifecycle_probe", os.environ.get("LIFECYCLE_PROBE_OUTCOME", "")),
+          ):
+              if outcome and outcome != "skipped":
+                  results[name] = {
+                      "check": name,
+                      "status": "passed" if outcome == "success" else "failed",
+                      "reason": "" if outcome == "success" else f"step_outcome_{outcome}",
+                      "mode": mode,
+                      "scope": "workflow_step",
+                  }
+          failed = sorted(k for k, v in results.items() if v.get("status") == "failed")
+          doc = {
+              "schemaVersion": 1,
+              "mode": mode,
+              "deployment": "deployed",
+              "acceptance": "failed" if failed else ("passed" if results else "pending"),
+              "failedChecks": failed,
+              "checks": [results[k] for k in sorted(results)],
+          }
+          (advisory_dir / "summary.json").write_text(json.dumps(doc, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          lines = ["## Dev functional checks (" + mode + ")", "- deployment: deployed; acceptance: " + doc["acceptance"]]
+          for k in sorted(results):
+              v = results[k]
+              reason = f" ({v.get('reason')})" if v.get("reason") else ""
+              lines.append(f"- {k}: {v.get('status')}{reason}")
+          with open(summary_path, "a", encoding="utf-8") as out:
+              out.write("\n".join(lines) + "\n")
+          if failed and not strict:
+              print("::warning::advisory functional checks failed: " + ", ".join(failed))
+          if strict and failed:
+              (advisory_dir / "strict-failed").write_text("\n".join(failed) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload advisory functional check evidence
+        id: advisory_upload
+        if: ${{ always() && steps.advisory_summary.conclusion != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-advisory-checks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce strict functional checks when requested
+        id: functional_gate
+        if: ${{ always() && env.FUNCTIONAL_CHECKS_STRICT == 'true' && steps.advisory_summary.conclusion != 'skipped' }}
+        env:
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+        shell: /bin/bash --noprofile --norc -eu {0}
+        run: |
+          if [[ -s "${ADVISORY_DIR}/strict-failed" ]]; then
+            echo "Strict functional checks failed: $(tr '\n' ' ' < "${ADVISORY_DIR}/strict-failed")" >&2
+            exit 1
+          fi
 
       - name: Retire this run's dev paper release case before deploy compensation
         id: retire_release_cases
         # Pre-restore preparation only: retire this run's ephemeral probe case
         # before baseline restore waits on health; never marks compensation
         # successful before exact image/FE/health readback.
-        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.market_refresh.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
         continue-on-error: true
         timeout-minutes: 6
         env:
@@ -2294,7 +2500,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.market_refresh.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
         timeout-minutes: 100
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
@@ -2771,11 +2977,10 @@ jobs:
           LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
-          PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
+          FUNCTIONAL_GATE_OUTCOME: ${{ steps.functional_gate.outcome }}
           PAPER_BOOTSTRAP_REQUESTED: ${{ env.PAPER_BOOTSTRAP_REQUESTED }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
-          AGORA_OUTCOME: ${{ steps.agora.outcome }}
           ARTIFACTS_VERIFIED: ${{ job.status != 'cancelled' && steps.artifact_baseline.outcome == 'success' && steps.artifact_baseline_upload.outcome == 'success' && steps.artifact_candidate_seal.outcome == 'success' && steps.artifact_candidate_upload.outcome == 'success' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -2828,13 +3033,14 @@ jobs:
           }
 
           complete_success=false
-          # An unrequested paper bootstrap is intentionally skipped; a
-          # requested one must have succeeded.
-          expected_paper=skipped
-          [[ "${PAPER_BOOTSTRAP_REQUESTED}" == "true" ]] && expected_paper=success
+          # Functional checks are advisory (recorded, never part of completion);
+          # only a strict dispatch makes the gate step participate, and then a
+          # failed gate is not "success".
+          expected_gate=skipped
+          [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]] && expected_gate=success
           case "${TARGET_COMPONENT}" in
             auto|root|bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:${expected_paper}:success:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${FUNCTIONAL_GATE_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}" == "success:success:${expected_gate}:success:success" ]] && complete_success=true
               ;;
           esac
 

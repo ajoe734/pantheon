@@ -10,12 +10,32 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
 
 _JSON_WHITESPACE = " \t\r\n"
+
+DEFAULT_SCHEDULED_RECONCILE_CLAIM_RETENTION_SECONDS = 24 * 3600.0
+DEFAULT_TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS = 7 * 86400.0
+DEFAULT_WORK_CLAIM_PRUNE_BATCH_SIZE = 500
+DEFAULT_WORK_CLAIM_PRUNE_MAX_BATCHES = 10
+
+SCHEDULED_CLAIM_RETENTION_SECONDS_ENV = (
+    "RECONCILIATION_DRIFT_SCHEDULED_CLAIM_RETENTION_SECONDS"
+)
+SCHEDULED_CLAIM_RETENTION_HOURS_ENV = (
+    "RECONCILIATION_DRIFT_SCHEDULED_CLAIM_RETENTION_HOURS"
+)
+TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS_ENV = (
+    "RECONCILIATION_DRIFT_TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS"
+)
+TELEMETRY_CONSUME_CLAIM_RETENTION_DAYS_ENV = (
+    "RECONCILIATION_DRIFT_TELEMETRY_CONSUME_CLAIM_RETENTION_DAYS"
+)
+WORK_CLAIM_PRUNE_BATCH_SIZE_ENV = "RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_BATCH_SIZE"
+WORK_CLAIM_PRUNE_MAX_BATCHES_ENV = "RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_MAX_BATCHES"
 
 
 class ReconciliationStoreError(RuntimeError):
@@ -561,6 +581,509 @@ class ReconciliationDriftStore:
     def _get_work_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:
         return self._get_record(self.work_claims_path, claim_id)
 
+    def list_work_claims(self) -> List[Dict[str, Any]]:
+        return self._list_records(self.work_claims_path)
+
+    def count_work_claims(self) -> int:
+        return self._count_records(self.work_claims_path)
+
+    def _delete_work_claim_if_matches(
+        self,
+        claim_id: str,
+        expected: Dict[str, Any],
+    ) -> bool:
+        if not claim_id or not isinstance(expected, dict):
+            return False
+        with self._locked(self.work_claims_path):
+            records = self._read_map_locked(self.work_claims_path)
+            current = records.get(claim_id)
+            if current is None or current != expected:
+                return False
+            del records[claim_id]
+            self._write_map_locked(self.work_claims_path, records)
+            return True
+
+    def _list_candidate_work_claims(
+        self,
+        *,
+        scheduled_cutoff_iso: Optional[str],
+        consume_cutoff_iso: Optional[str],
+        protected_window_ids: set[str],
+        limit: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        return self.list_work_claims()
+
+    @staticmethod
+    def _parse_positive_retention_seconds(
+        value: Any,
+        *,
+        name: str,
+        scale: float = 1.0,
+    ) -> float:
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a finite number > 0")
+        try:
+            parsed = float(value) * scale
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a finite number > 0") from exc
+        if not math.isfinite(parsed) or parsed <= 0.0:
+            raise ValueError(f"{name} must be a finite number > 0")
+        return parsed
+
+    @classmethod
+    def _resolve_scheduled_claim_retention_seconds(
+        cls,
+        *,
+        seconds: Optional[float] = None,
+        hours: Optional[float] = None,
+    ) -> float:
+        if seconds is not None:
+            return cls._parse_positive_retention_seconds(
+                seconds,
+                name="scheduled_reconcile_max_age_seconds",
+            )
+        if hours is not None:
+            return cls._parse_positive_retention_seconds(
+                hours,
+                name="scheduled_retention_hours",
+                scale=3600.0,
+            )
+        env_seconds = os.getenv(SCHEDULED_CLAIM_RETENTION_SECONDS_ENV, "").strip()
+        if env_seconds:
+            return cls._parse_positive_retention_seconds(
+                env_seconds,
+                name=SCHEDULED_CLAIM_RETENTION_SECONDS_ENV,
+            )
+        env_hours = os.getenv(SCHEDULED_CLAIM_RETENTION_HOURS_ENV, "").strip()
+        if env_hours:
+            return cls._parse_positive_retention_seconds(
+                env_hours,
+                name=SCHEDULED_CLAIM_RETENTION_HOURS_ENV,
+                scale=3600.0,
+            )
+        return DEFAULT_SCHEDULED_RECONCILE_CLAIM_RETENTION_SECONDS
+
+    @classmethod
+    def _resolve_consume_claim_retention_seconds(
+        cls,
+        *,
+        seconds: Optional[float] = None,
+        days: Optional[float] = None,
+    ) -> float:
+        if seconds is not None:
+            return cls._parse_positive_retention_seconds(
+                seconds,
+                name="telemetry_consume_max_age_seconds",
+            )
+        if days is not None:
+            return cls._parse_positive_retention_seconds(
+                days,
+                name="telemetry_consume_retention_days",
+                scale=86400.0,
+            )
+        for env_name in (
+            TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS_ENV,
+            "RECONCILIATION_DRIFT_CONSUME_CLAIM_RETENTION_SECONDS",
+        ):
+            raw = os.getenv(env_name, "").strip()
+            if raw:
+                return cls._parse_positive_retention_seconds(raw, name=env_name)
+        for env_name in (
+            TELEMETRY_CONSUME_CLAIM_RETENTION_DAYS_ENV,
+            "RECONCILIATION_DRIFT_CONSUME_CLAIM_RETENTION_DAYS",
+        ):
+            raw = os.getenv(env_name, "").strip()
+            if raw:
+                return cls._parse_positive_retention_seconds(
+                    raw,
+                    name=env_name,
+                    scale=86400.0,
+                )
+        return DEFAULT_TELEMETRY_CONSUME_CLAIM_RETENTION_SECONDS
+
+    @staticmethod
+    def _resolve_positive_int(
+        value: Any,
+        *,
+        env_name: str,
+        default: Optional[int],
+    ) -> Optional[int]:
+        raw = value
+        if raw is None:
+            env_val = os.getenv(env_name, "").strip()
+            if not env_val:
+                return default
+            raw = env_val
+        if isinstance(raw, bool):
+            raise ValueError(f"{env_name} must be an integer >= 1")
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{env_name} must be an integer >= 1") from exc
+        if parsed < 1:
+            raise ValueError(f"{env_name} must be >= 1")
+        return parsed
+
+    @staticmethod
+    def _extract_bucket_window_ids(bucket: Any, out: set[str]) -> None:
+        if isinstance(bucket, Mapping):
+            for key, record in bucket.items():
+                clean_key = str(key or "").strip()
+                if clean_key:
+                    out.add(clean_key)
+                if isinstance(record, str) and record.strip():
+                    out.add(record.strip())
+                elif isinstance(record, Mapping):
+                    for field in ("event_id", "id", "window_id"):
+                        val = str(record.get(field) or "").strip()
+                        if val:
+                            out.add(val)
+                    event = record.get("event")
+                    if isinstance(event, Mapping):
+                        has_direct_id = False
+                        for field in ("event_id", "id", "window_id"):
+                            val = str(event.get(field) or "").strip()
+                            if val:
+                                out.add(val)
+                                has_direct_id = True
+                        if not has_direct_id and event:
+                            canonical = json.dumps(
+                                dict(event),
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                default=str,
+                            )
+                            out.add(
+                                f"payload-{uuid.uuid5(uuid.NAMESPACE_URL, canonical).hex}"
+                            )
+                        raw_ids = event.get("telemetry_event_ids")
+                        if isinstance(raw_ids, list):
+                            for item in raw_ids:
+                                clean_item = str(item or "").strip()
+                                if clean_item:
+                                    out.add(clean_item)
+        elif isinstance(bucket, Iterable) and not isinstance(bucket, (str, bytes)):
+            for item in bucket:
+                if isinstance(item, str) and item.strip():
+                    out.add(item.strip())
+                elif isinstance(item, Mapping):
+                    ReconciliationDriftStore._extract_bucket_window_ids(
+                        {"": item},
+                        out,
+                    )
+
+    def _extract_protected_window_ids(
+        self,
+        *,
+        runtime_summaries: Optional[Iterable[Mapping[str, Any]]] = None,
+        consumer_state: Any = None,
+        protected_window_ids: Optional[Iterable[str]] = None,
+    ) -> set[str]:
+        protected: set[str] = set()
+        if protected_window_ids is not None:
+            for item in protected_window_ids:
+                clean = str(item or "").strip()
+                if clean:
+                    protected.add(clean)
+
+        if runtime_summaries is not None:
+            for summary in runtime_summaries:
+                if not isinstance(summary, Mapping):
+                    continue
+                for field in ("last_event_id", "last_heartbeat_event_id"):
+                    val = str(summary.get(field) or "").strip()
+                    if val:
+                        protected.add(val)
+
+        target_state = consumer_state
+        if target_state is None:
+            env_state_path = os.getenv(
+                "RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH", ""
+            ).strip()
+            default_state_path = self.data_dir / "consumer-worker-state.json"
+            if env_state_path and Path(env_state_path).exists():
+                target_state = Path(env_state_path)
+            elif default_state_path.exists():
+                target_state = default_state_path
+
+        if target_state is None:
+            return protected
+
+        if isinstance(target_state, (str, Path)):
+            state_path = Path(target_state)
+            if not state_path.exists():
+                return protected
+            try:
+                raw_text = state_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ReconciliationStoreError(
+                    f"{state_path}: failed to read consumer state: {exc}"
+                ) from exc
+            if not raw_text.strip(_JSON_WHITESPACE):
+                raise ReconciliationStoreError(
+                    f"{state_path}: consumer state file is empty"
+                )
+            decoder = self._json_decoder(state_path)
+            try:
+                parsed_state = decoder.decode(raw_text)
+            except json.JSONDecodeError as exc:
+                raise ReconciliationStoreError(
+                    f"{state_path}: malformed consumer state JSON: {exc}"
+                ) from exc
+            if not isinstance(parsed_state, Mapping):
+                raise ReconciliationStoreError(
+                    f"{state_path}: consumer state must be a JSON object"
+                )
+            target_state = parsed_state
+
+        load_error = getattr(target_state, "load_error", None)
+        if load_error:
+            raise ReconciliationStoreError(
+                f"consumer state has load_error: {load_error}"
+            )
+
+        if isinstance(target_state, Mapping):
+            for bucket_name in ("pending", "dead_letters", "dead_letter"):
+                if bucket_name in target_state:
+                    bucket = target_state.get(bucket_name)
+                    if bucket is not None and not isinstance(
+                        bucket, (Mapping, list, tuple, set, frozenset)
+                    ):
+                        raise ReconciliationStoreError(
+                            f"consumer state {bucket_name} must be a mapping or collection"
+                        )
+                    self._extract_bucket_window_ids(bucket, protected)
+        else:
+            for attr in ("pending", "dead_letters"):
+                if hasattr(target_state, attr):
+                    self._extract_bucket_window_ids(
+                        getattr(target_state, attr),
+                        protected,
+                    )
+
+        return protected
+
+    def _work_claim_prune_sort_key(
+        self,
+        claim: Dict[str, Any],
+        *,
+        observed_at: datetime,
+        scheduled_cutoff: Optional[datetime],
+        consume_cutoff: Optional[datetime],
+        protected_window_ids: set[str],
+    ) -> Optional[tuple[datetime, str]]:
+        if not isinstance(claim, dict):
+            return None
+        claim_id = str(claim.get("claim_id") or claim.get("id") or "").strip()
+        if not claim_id:
+            return None
+        status = str(claim.get("status") or "").strip()
+        if status not in {"completed", "failed"}:
+            return None
+        if claim.get("lease_token"):
+            return None
+        raw_lease_expires_at = claim.get("lease_expires_at")
+        if raw_lease_expires_at:
+            try:
+                lease_expires_at = self._as_utc(raw_lease_expires_at)
+            except ReconciliationStoreError:
+                return None
+            if lease_expires_at > observed_at:
+                return None
+
+        work_type = str(claim.get("work_type") or "").strip()
+        if work_type == "scheduled_reconcile":
+            cutoff = scheduled_cutoff
+        elif work_type == "telemetry_consume":
+            cutoff = consume_cutoff
+        else:
+            return None
+        if cutoff is None:
+            return None
+
+        window_id = str(claim.get("window_id") or "").strip()
+        if window_id and window_id in protected_window_ids:
+            return None
+        result = claim.get("result")
+        if isinstance(result, Mapping):
+            result_event_id = str(result.get("event_id") or "").strip()
+            if result_event_id and result_event_id in protected_window_ids:
+                return None
+
+        if status == "completed":
+            raw_finished = (
+                claim.get("completed_at")
+                or claim.get("updated_at")
+                or claim.get("created_at")
+            )
+        else:
+            raw_finished = (
+                claim.get("failed_at")
+                or claim.get("updated_at")
+                or claim.get("created_at")
+            )
+        if not raw_finished:
+            return None
+        try:
+            finished_at = self._as_utc(raw_finished)
+        except ReconciliationStoreError:
+            return None
+        if finished_at >= cutoff:
+            return None
+        return finished_at, claim_id
+
+    def prune_work_claims(
+        self,
+        *,
+        now: datetime | str | None = None,
+        scheduled_reconcile_max_age_seconds: Optional[float] = None,
+        telemetry_consume_max_age_seconds: Optional[float] = None,
+        scheduled_retention_seconds: Optional[float] = None,
+        telemetry_consume_retention_seconds: Optional[float] = None,
+        scheduled_retention_hours: Optional[float] = None,
+        telemetry_consume_retention_days: Optional[float] = None,
+        runtime_summaries: Optional[Iterable[Mapping[str, Any]]] = None,
+        consumer_state: Any = None,
+        protected_window_ids: Optional[Iterable[str]] = None,
+        batch_size: Optional[int] = None,
+        max_batches: Optional[int] = None,
+        include_scheduled_reconcile: bool = True,
+        include_telemetry_consume: bool = True,
+    ) -> Dict[str, Any]:
+        """Delete expired completed/failed work claims in bounded CAS batches."""
+        observed_at = self._as_utc(now)
+        scheduled_retention_s = self._resolve_scheduled_claim_retention_seconds(
+            seconds=(
+                scheduled_reconcile_max_age_seconds
+                if scheduled_reconcile_max_age_seconds is not None
+                else scheduled_retention_seconds
+            ),
+            hours=scheduled_retention_hours,
+        )
+        consume_retention_s = self._resolve_consume_claim_retention_seconds(
+            seconds=(
+                telemetry_consume_max_age_seconds
+                if telemetry_consume_max_age_seconds is not None
+                else telemetry_consume_retention_seconds
+            ),
+            days=telemetry_consume_retention_days,
+        )
+        effective_batch_size = self._resolve_positive_int(
+            batch_size,
+            env_name=WORK_CLAIM_PRUNE_BATCH_SIZE_ENV,
+            default=DEFAULT_WORK_CLAIM_PRUNE_BATCH_SIZE,
+        )
+        assert effective_batch_size is not None
+        effective_max_batches = self._resolve_positive_int(
+            max_batches,
+            env_name=WORK_CLAIM_PRUNE_MAX_BATCHES_ENV,
+            default=None,
+        )
+
+        protected_ids = self._extract_protected_window_ids(
+            runtime_summaries=runtime_summaries,
+            consumer_state=consumer_state,
+            protected_window_ids=protected_window_ids,
+        )
+        scheduled_cutoff = (
+            observed_at - timedelta(seconds=scheduled_retention_s)
+            if include_scheduled_reconcile
+            else None
+        )
+        consume_cutoff = (
+            observed_at - timedelta(seconds=consume_retention_s)
+            if include_telemetry_consume
+            else None
+        )
+        candidate_limit = (
+            effective_batch_size * effective_max_batches
+            if effective_max_batches is not None
+            else None
+        )
+        raw_candidates = self._list_candidate_work_claims(
+            scheduled_cutoff_iso=(
+                self._utc_iso(scheduled_cutoff)
+                if scheduled_cutoff is not None
+                else None
+            ),
+            consume_cutoff_iso=(
+                self._utc_iso(consume_cutoff)
+                if consume_cutoff is not None
+                else None
+            ),
+            protected_window_ids=protected_ids,
+            limit=candidate_limit,
+        )
+
+        eligible: List[tuple[datetime, str, Dict[str, Any]]] = []
+        for claim in raw_candidates:
+            sort_key = self._work_claim_prune_sort_key(
+                claim,
+                observed_at=observed_at,
+                scheduled_cutoff=scheduled_cutoff,
+                consume_cutoff=consume_cutoff,
+                protected_window_ids=protected_ids,
+            )
+            if sort_key is not None:
+                eligible.append((sort_key[0], sort_key[1], claim))
+
+        eligible.sort(key=lambda item: (item[0], item[1]))
+
+        batches_executed = 0
+        deleted_count = 0
+        cas_conflict_count = 0
+        deleted_claim_ids: List[str] = []
+        deleted_by_type: Dict[str, int] = {
+            "scheduled_reconcile": 0,
+            "telemetry_consume": 0,
+        }
+
+        for offset in range(0, len(eligible), effective_batch_size):
+            if (
+                effective_max_batches is not None
+                and batches_executed >= effective_max_batches
+            ):
+                break
+            batch = eligible[offset : offset + effective_batch_size]
+            if not batch:
+                break
+            batches_executed += 1
+            for _finished_at, claim_id, snapshot in batch:
+                if self._delete_work_claim_if_matches(claim_id, snapshot):
+                    deleted_count += 1
+                    deleted_claim_ids.append(claim_id)
+                    wtype = str(snapshot.get("work_type") or "")
+                    if wtype in deleted_by_type:
+                        deleted_by_type[wtype] += 1
+                else:
+                    cas_conflict_count += 1
+
+        return {
+            "status": "ok",
+            "observed_at": self._utc_iso(observed_at),
+            "scheduled_reconcile_cutoff_at": (
+                self._utc_iso(scheduled_cutoff)
+                if scheduled_cutoff is not None
+                else None
+            ),
+            "telemetry_consume_cutoff_at": (
+                self._utc_iso(consume_cutoff)
+                if consume_cutoff is not None
+                else None
+            ),
+            "scheduled_reconcile_retention_seconds": scheduled_retention_s,
+            "telemetry_consume_retention_seconds": consume_retention_s,
+            "batch_size": effective_batch_size,
+            "max_batches": effective_max_batches,
+            "batches_executed": batches_executed,
+            "deleted_count": deleted_count,
+            "rows_deleted": deleted_count,
+            "deleted_claim_ids": deleted_claim_ids,
+            "deleted_by_work_type": deleted_by_type,
+            "cas_conflict_count": cas_conflict_count,
+            "protected_window_id_count": len(protected_ids),
+        }
+
     @staticmethod
     def _assert_claim_identity(
         claim: Dict[str, Any],
@@ -1101,6 +1624,85 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
 
     def _get_work_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:
         return self._work_claim_records.get(claim_id)
+
+    def list_work_claims(self) -> List[Dict[str, Any]]:
+        return self._work_claim_records.list_all()
+
+    def count_work_claims(self) -> int:
+        return self._work_claim_records.count()
+
+    def _delete_work_claim_if_matches(
+        self,
+        claim_id: str,
+        expected: Dict[str, Any],
+    ) -> bool:
+        if not claim_id or not isinstance(expected, dict):
+            return False
+        return self._work_claim_records.delete_if_matches(claim_id, expected)
+
+    def _list_candidate_work_claims(
+        self,
+        *,
+        scheduled_cutoff_iso: Optional[str],
+        consume_cutoff_iso: Optional[str],
+        protected_window_ids: set[str],
+        limit: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        owner = self._work_claim_records
+        if not hasattr(owner, "_use_conn"):
+            return owner.list_all()
+        doc = (
+            "(CASE WHEN jsonb_typeof(payload) = 'string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END)"
+        )
+        finished_expr = (
+            f"COALESCE({doc} ->> 'completed_at', {doc} ->> 'failed_at', "
+            f"{doc} ->> 'updated_at', {doc} ->> 'created_at')"
+        )
+        type_clauses: List[str] = []
+        params: List[Any] = []
+        if scheduled_cutoff_iso is not None:
+            type_clauses.append(
+                f"(({doc} ->> 'work_type') = 'scheduled_reconcile' "
+                f"AND ({finished_expr})::timestamptz < %s::timestamptz)"
+            )
+            params.append(scheduled_cutoff_iso)
+        if consume_cutoff_iso is not None:
+            type_clauses.append(
+                f"(({doc} ->> 'work_type') = 'telemetry_consume' "
+                f"AND ({finished_expr})::timestamptz < %s::timestamptz)"
+            )
+            params.append(consume_cutoff_iso)
+        if not type_clauses:
+            return []
+        clauses = [
+            f"jsonb_typeof({doc}) = 'object'",
+            f"({doc} ->> 'status') IN ('completed', 'failed')",
+            f"COALESCE({doc} ->> 'lease_token', '') = ''",
+            f"({' OR '.join(type_clauses)})",
+        ]
+        if protected_window_ids:
+            clauses.append(
+                f"NOT (COALESCE({doc} ->> 'window_id', '') = ANY(%s::text[]))"
+            )
+            params.append(sorted(protected_window_ids))
+        sql = (
+            f"SELECT payload FROM {owner.table} "
+            f"WHERE {' AND '.join(clauses)} "
+            f"ORDER BY ({finished_expr})::timestamptz ASC NULLS LAST, updated_at ASC, record_id ASC"
+        )
+        if limit is not None and limit > 0:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        with owner._use_conn(None) as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            decoded = owner._decode_payload(payload)
+            if decoded is not None:
+                records.append(decoded)
+        return records
 
 
 def build_reconciliation_drift_store(data_dir: str | Path) -> ReconciliationDriftStore:
