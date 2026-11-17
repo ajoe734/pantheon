@@ -2,13 +2,13 @@
  "commands": {
   "existing": "test_market_data_storage 10, test_active_universe 12, test_candidate_pool_market_feed 13, test_feature_catalogue 50, test_taiwan_official_connectors 58 (1 skipped), test_finmind_taiwan_connectors 34, test_collector_bundle_connector 106 (1 skipped), regime test_features 19, test_instrument_candidates 38, test_futures_session_inputs 13: all passed",
   "new_tests": "python -m pytest -q services/source_ingestion/tests/test_datasets_keyed_write.py -> 38 passed",
-  "scripts": "check_storage_manifest.py passed:true; scripts tests test_check_storage_manifest/test_check_market_data_budget/test_cleanup_market_run_files 42 passed"
+  "scripts": "check_storage_manifest.py passed:true; scripts tests test_check_storage_manifest/test_check_market_data_budget/test_cleanup_market_run_files 42 passed; check_market_data_budget.py now measures every declared 6A dataset through the real KeyedDatasetStore and reads the design row as the limit (18 tests OK, 2 skipped, unittest)"
  },
  "design": "SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16 section 6A",
  "hosted_version_checked": "not read in this worker (no /bff/version access); previous-reader test uses the unchanged run-file tree (default reader setting run_files)",
  "measurement_method": "MarketDataStorageWriter in dual mode on hosted-shaped rows (section 6A row counts, batches of 500), one trading day collected 3 times; counts and bytes from the file tree. Synthetic rows: absolute bytes are a proxy, ratios old vs keyed are what the run proves.",
  "not_done_named": [
-  "scripts/check_market_data_budget.py still measures 6A rows with its zlib proxy (file outside artifact list); the real-writer byte tests are in test_datasets_keyed_write.py",
+  "Readers in data-plane (taiwan_reference.py) and search (index_pipeline.py) named in 6A are listed in the declarations but not switched to the keyed store here; later task",
   "scripts/cleanup_market_run_files.py handles tw_price_daily only; a later cleanup needs a dataset parameter for raw/ and normalized/ of the 13 datasets (outside artifact list; old run files are not deleted here)",
   "readers not switched by default: reader setting default run_files; futures_session_inputs reads through instrument_candidates.read_normalized_ssf_rows",
   "features: no code reader of <root>/features exists (grep); derive-on-read parity is therefore vacuous, feature files default off",
