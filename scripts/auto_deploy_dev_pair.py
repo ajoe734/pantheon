@@ -292,6 +292,16 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
     raise ControllerError("dispatch sent but run could not be correlated; inspect Nonprod Deploy before retrying")
 
 
+def summary_lines(result):
+    """Deployed and acceptance are reported separately; acceptance is the verdict of the run's
+    dev-acceptance-stage job, and a release is 'accepted' only when that verdict is 'passed'."""
+    if result.get("state") != "dispatched":
+        return ""
+    return ("- deployed: pending (follow run_url)\n"
+            "- acceptance: pending (verdict of the run's `dev-acceptance-stage` job; "
+            "never rolls back, never fails the run)\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fe-url", required=True)
@@ -311,7 +321,7 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("\n## Automatic dev pair check\n\n```json\n" + json.dumps(result, indent=2) + "\n```\n")
-            handle.write("A dispatched run is pending deployment and acceptance; follow its run_url.\n")
+            handle.write(summary_lines(result))
     return 1 if result["state"] == "inspection_or_dispatch_failed" else 0
 
 

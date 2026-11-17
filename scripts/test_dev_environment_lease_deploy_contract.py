@@ -3576,3 +3576,29 @@ def test_compensation_drill_has_its_own_run_name() -> None:
     assert "format('Dev compensation drill {0} + {1}'" in head
     assert "inputs.compensation_drill &&" in head
     assert "format('Dev release {0} + {1}'" in head
+
+
+def test_acceptance_stage_is_advisory_and_lease_scoped():
+    """The acceptance job follows coordinate-dev-release, never fails the run, never uses the
+    lease guard wrapper (a guarded step cannot be advisory) and takes the lease only for mutating checks."""
+    import yaml
+
+    workflow = _workflow()
+    job = yaml.safe_load(workflow)["jobs"]["dev-acceptance-stage"]
+    assert job["needs"] == ["deploy-dev", "coordinate-dev-release"]
+    assert job["continue-on-error"] is True
+    assert "needs.coordinate-dev-release.result == 'success'" in job["if"]
+    steps = {step.get("name"): step for step in job["steps"]}
+    acquire = steps["Acquire qualification lease and start identity-bound heartbeat"]
+    assert acquire["if"] == "${{ steps.plan.outputs.mutating == 'true' }}"
+    assert "--mode qualification" in acquire["run"]
+    body = workflow.split("  dev-acceptance-stage:\n", 1)[1].split("  isolated-l12-provider-qualification:\n", 1)[0]
+    assert ".lease-controller/scripts/run_with_dev_environment_lease.sh\"" not in body
+    assert "exec \"${controller}/scripts/run_with_dev_environment_lease.sh\"" not in body
+    run = steps["Run acceptance checks and probes"]
+    assert run["continue-on-error"] is True and "|| true" in run["run"] and run["run"].rstrip().endswith("exit 0")
+    assert "latest.json" in steps["Publish verdict beside the hosted deployment manifest"]["run"]
+    assert steps["Upload acceptance verdict"]["with"]["retention-days"] == 30
+    # no other job depends on the acceptance verdict: it cannot gate or roll back a deploy
+    for name, other in yaml.safe_load(workflow)["jobs"].items():
+        assert "dev-acceptance-stage" not in (other.get("needs") or [])

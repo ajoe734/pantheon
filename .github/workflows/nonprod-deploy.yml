@@ -3968,6 +3968,390 @@ jobs:
           echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
           exit 75
 
+  # Acceptance is a verdict about a release that is already deployed. This job
+  # never rolls back and never fails the run: continue-on-error keeps the run
+  # conclusion a measure of deploys, and the stage itself always exits 0 and
+  # writes the real result to the verdict file. A lease-guarded step cannot be
+  # advisory, so no step here uses the lease guard wrapper; mutating checks run
+  # only while this job holds the qualification lease.
+  dev-acceptance-stage:
+    name: Post-deploy acceptance verdict
+    needs:
+      - deploy-dev
+      - coordinate-dev-release
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.compensation_drill && needs.coordinate-dev-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 120
+    environment: dev
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BACKEND_SHA: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+      FRONTEND_SHA: ${{ needs.coordinate-dev-release.outputs.frontend_sha }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
+      DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
+      VERDICT_FILE: ${{ github.workspace }}/acceptance-verdict.json
+    steps:
+      - name: Checkout exact deployed backend release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout pinned lease controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: 081075781d28a6563c731909667b98b7b5c153f9
+          path: .lease-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Plan acceptance checks
+        id: plan
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/dev_acceptance_stage.py plan
+
+      - name: Prepare pinned direct SSH transport
+        id: ssh
+        continue-on-error: true
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
+
+      - name: Prepare fixed trusted command path
+        id: runtime
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          trusted_bin="${RUNNER_TEMP}/pantheon-trusted-bin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${trusted_bin}"
+          for command_name in ssh scp ssh-keygen; do
+            command_path="$(command -v "${command_name}")"
+            [[ -x "${command_path}" && ! -L "${command_path}" ]]
+            ln -s "${command_path}" "${trusted_bin}/${command_name}"
+          done
+          safe_path="${trusted_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          echo "safe_path=${safe_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Record acceptance pending
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          python3 scripts/dev_acceptance_stage.py pending \
+            --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" --verdict-out "${VERDICT_FILE}"
+
+      - name: Publish pending verdict beside the hosted deployment manifest
+        if: ${{ always() && steps.ssh.outcome == 'success' && hashFiles('acceptance-verdict.json') != '' }}
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          target_dir="$(dirname "${DEV_DEPLOY_WORKTREE}")/acceptance"
+          printf -v dir_q '%q' "${target_dir}"
+          scripts/dev_vm_ssh.sh exec "mkdir -p ${dir_q} && cat > ${dir_q}/latest.json.tmp && mv ${dir_q}/latest.json.tmp ${dir_q}/latest.json" \
+            < "${VERDICT_FILE}"
+          echo "- verdict published to \`${target_dir}/latest.json\` on the dev VM" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Acquire qualification lease and start identity-bound heartbeat
+        id: lease
+        if: ${{ steps.plan.outputs.mutating == 'true' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          ACCEPTED_BACKEND_SHA: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          [[ -n "${lease_token}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the qualification lease." >&2; exit 1; }
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
+          [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+
+          lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          chmod 0700 "${lease_dir}"
+          state_file="${lease_dir}/state.json"
+          pid_file="${lease_dir}/heartbeat.pid"
+          identity_file="${lease_dir}/heartbeat-identity.json"
+          failure_file="${lease_dir}/heartbeat-failure.json"
+          shutdown_file="${lease_dir}/heartbeat-stop.json"
+          heartbeat_log="${lease_dir}/heartbeat.log"
+          {
+            echo "state_file=${state_file}"
+            echo "pid_file=${pid_file}"
+            echo "identity_file=${identity_file}"
+            echo "failure_file=${failure_file}"
+            echo "shutdown_file=${shutdown_file}"
+            echo "heartbeat_log=${heartbeat_log}"
+          } >> "${GITHUB_OUTPUT}"
+
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" acquire \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --mode qualification \
+            --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --ttl-seconds 300 \
+            --wait-seconds 1800 \
+            --poll-seconds 5 \
+            --state-file "${state_file}" \
+            --expected-backend-sha "${ACCEPTED_BACKEND_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --json-out "${lease_dir}/acquisition.json"
+
+          exec {token_fd}<<<"${lease_token}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${state_file}" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${failure_file}" \
+              --shutdown-json-out "${shutdown_file}" \
+              --identity-json-out "${identity_file}" \
+              --token-stdin \
+              <&"${token_fd}" >"${heartbeat_log}" 2>&1 &
+          heartbeat_pid=$!
+          disown "${heartbeat_pid}" 2>/dev/null || true
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${pid_file}"
+          for _ in $(seq 1 100); do
+            [[ -s "${identity_file}" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || {
+              sed -n '1,200p' "${heartbeat_log}" >&2 || true
+              exit 75
+            }
+            sleep 0.1
+          done
+          [[ -s "${identity_file}" ]]
+          python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+            --identity-file "${identity_file}" \
+            --pid "${heartbeat_pid}" \
+            --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+            --state-file "${state_file}" >/dev/null
+          lease_token=""
+
+      - name: Run acceptance checks and probes
+        id: stage
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          DEPLOYED_RESULT: ${{ needs.coordinate-dev-release.result }}
+          LEASE_HELD: ${{ steps.lease.outcome == 'success' && 'true' || 'false' }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          lease_args=()
+          [[ "${LEASE_HELD}" == "true" ]] && lease_args=(--lease-held)
+          # Advisory: the stage exits 0 on every outcome; || true guards a crash before it can write.
+          python3 scripts/dev_acceptance_stage.py run \
+            --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" || true
+          exit 0
+
+      - name: Stop heartbeat and release the acceptance lease
+        id: lease_cleanup
+        if: ${{ always() && steps.lease.conclusion != 'skipped' && steps.lease.outputs.state_file != '' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          LEASE_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          LEASE_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          LEASE_SHUTDOWN_FILE: ${{ steps.lease.outputs.shutdown_file }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+
+          heartbeat_stopped() {
+            local state
+            state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+            case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+            return 1
+          }
+          verify_identity() {
+            python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+              --identity-file "${LEASE_IDENTITY_FILE}" \
+              --pid "${heartbeat_pid}" \
+              --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+              --state-file "${LEASE_STATE_FILE}" >/dev/null
+          }
+          stop_heartbeat() {
+            local attempt
+            heartbeat_stopped && return 0
+            verify_identity || return 1
+            kill -TERM "${heartbeat_pid}" 2>/dev/null || {
+              heartbeat_stopped && return 0
+              return 1
+            }
+            heartbeat_stopped && return 0
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 40); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -KILL "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 20); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            return 1
+          }
+
+          if [[ ! -s "${LEASE_PID_FILE}" ]]; then
+            echo "Lease heartbeat never became identity-bound; quarantining until TTL." >&2
+            exit 0
+          fi
+          heartbeat_pid="$(tr -d '[:space:]' < "${LEASE_PID_FILE}")"
+          [[ "${heartbeat_pid}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Invalid heartbeat PID; quarantining until TTL." >&2
+            exit 0
+          }
+          stop_heartbeat || {
+            echo "Could not identity-safely stop heartbeat; refusing release." >&2
+            exit 75
+          }
+          if [[ -e "${LEASE_FAILURE_FILE}" ]]; then
+            echo "Lease heartbeat failed; lease quarantined until TTL." >&2
+            sed -n '1,200p' "${LEASE_FAILURE_FILE}" >&2 2>/dev/null || true
+            exit 75
+          fi
+          [[ -s "${LEASE_SHUTDOWN_FILE}" ]] || {
+            echo "Heartbeat did not record a graceful identity-bound stop; refusing release." >&2
+            exit 75
+          }
+          python3 - "${LEASE_SHUTDOWN_FILE}" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          if payload.get("status") != "stopped" or payload.get("resource") != "pantheon-dev-environment":
+              raise SystemExit("heartbeat shutdown evidence is invalid")
+          PY
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" release \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --state-file "${LEASE_STATE_FILE}"
+          lease_token=""
+
+      # One verdict per release: the file replaces the previous one beside the
+      # release store; the FE deployment.json stays byte-identical because the
+      # exact-artifact capture pins its digest.
+      - name: Publish verdict beside the hosted deployment manifest
+        if: ${{ always() && steps.ssh.outcome == 'success' && hashFiles('acceptance-verdict.json') != '' }}
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          target_dir="$(dirname "${DEV_DEPLOY_WORKTREE}")/acceptance"
+          printf -v dir_q '%q' "${target_dir}"
+          scripts/dev_vm_ssh.sh exec "mkdir -p ${dir_q} && cat > ${dir_q}/latest.json.tmp && mv ${dir_q}/latest.json.tmp ${dir_q}/latest.json" \
+            < "${VERDICT_FILE}"
+          echo "- verdict published to \`${target_dir}/latest.json\` on the dev VM" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload acceptance verdict
+        if: ${{ always() && hashFiles('acceptance-verdict.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dev-acceptance-verdict-${{ github.run_id }}-${{ github.run_attempt }}
+          path: acceptance-verdict.json
+          if-no-files-found: warn
+          retention-days: 30
+
   isolated-l12-provider-qualification:
     name: Isolated L1-L12 gate with approved provider
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.isolated_provider_qualification && !inputs.hosted_all12_chain && inputs.restore_accepted_baseline_run_id == '' }}
