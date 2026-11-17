@@ -8,6 +8,7 @@ explicit terminal failure rather than buying another model turn.
 from __future__ import annotations
 
 import asyncio
+import copy
 import fcntl
 import hashlib
 import importlib
@@ -326,6 +327,37 @@ def previous_macro(snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[
                 best is None or macro["session"] > best["session"]):
             best = macro
     return best
+
+
+class _ListCachingRuntime:
+    """Serve repeat cron.list reads within one pass from the first read.
+
+    The registrar re-lists after every persona for readback; with no mutation in
+    between those lists are identical, and each real call is an adapter CLI spawn.
+    Any non-read method invalidates the cache, so readback after a write is real.
+    """
+
+    def __init__(self, inner: Any):
+        self._inner, self._lists, self.last_jobs = inner, {}, None
+
+    def gateway_call(self, method: str, params: Any = None, **kwargs: Any) -> Any:
+        if method == "cron.runs":
+            return self._inner.gateway_call(method, params, **kwargs)
+        if method != "cron.list":
+            self._lists.clear()
+            return self._inner.gateway_call(method, params, **kwargs)
+        key = json.dumps(params, sort_keys=True, default=str)
+        if key not in self._lists:
+            self._lists[key] = self._inner.gateway_call(method, params, **kwargs)
+        result = copy.deepcopy(self._lists[key])
+        if isinstance(result, dict) and isinstance(result.get("jobs"), list):
+            if not (params or {}).get("offset"):
+                self.last_jobs = []
+            self.last_jobs = [*(self.last_jobs or []), *result["jobs"]]
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
 
 
 class PersonaCycleController:
@@ -732,7 +764,20 @@ class PersonaCycleController:
 
     def reconcile_once(self) -> dict[str, Any]:
         personas = self.owners.personas()  # fail closed before any cron deletion
-        report = self.registrar.reconcile_daily_cycles(personas)
+        real_runtime = self.registrar._get_runtime()
+        caching = _ListCachingRuntime(real_runtime)
+        saved = self.registrar._runtime
+        self.registrar._runtime = caching
+        try:
+            report = self.registrar.reconcile_daily_cycles(personas)
+        finally:
+            self.registrar._runtime = saved
+        # The final cron.list of the pass carries the job state we gate on.
+        job_states = {}
+        for pid, job_id in report["jobs"].items():
+            job = next((j for j in (caching.last_jobs or []) if isinstance(j, dict) and j.get("id") == job_id), None)
+            job_states[pid] = job.get("state") if job else None
+        report["job_states"] = job_states
         report["tenant_scopes"] = {
             tenant: [p["persona_id"] for p in personas if p.get("tenant_id") == tenant
                      and p.get("lifecycle_state") in ELIGIBLE_STATES and p.get("status", "active") == "active"]
