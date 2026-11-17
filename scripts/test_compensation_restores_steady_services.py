@@ -56,7 +56,8 @@ elif args[0] == "start":
     state.write_text(json.dumps(rows))
 """, encoding="utf-8")
     stub.chmod(0o755)
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_STEADY_RESTORE_WAIT_SECONDS": "1"}
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_STEADY_RESTORE_WAIT_SECONDS": "1",
+            "EXPECTED_STEADY_FOR_TEST": "source-ingest source-ingest-scheduler"}
 
 
 def _ctr(service, state, image, cid, restart="unless-stopped", **extra):
@@ -69,6 +70,7 @@ def _run(tmp_path: Path, before: list[dict], after: list[dict]):
     env = _stub_docker(tmp_path, before)
     fmt = re.search(r"^STEADY_SERVICE_FORMAT=.*$", DEPLOY_SCRIPT.read_text(encoding="utf-8"), re.M).group(0)
     prelude = ('set -uo pipefail\ninfo() { echo "[info] $*"; }\n' + fmt + "\n"
+               + 'expected_steady_services() { printf "%s\\n" ${EXPECTED_STEADY_FOR_TEST:-}; }\n'
                + _function("steady_service_rows") + _function("capture_steady_service_baseline")
                + _function("steady_service_problems") + _function("verify_steady_services_restored"))
     (tmp_path / "state.json").write_text(json.dumps(before))
@@ -187,3 +189,49 @@ def test_restore_preconditions_still_refuse_when_nothing_drifted():
         _preconditions([_row("source-ingest", "running", SRC), _row("source-ingest-scheduler", "running", BASE)])
     with pytest.raises(evidence.CaptureError, match="no drift to restore"):
         _preconditions(None)
+
+
+# ---- completeness: expected set is derived, not observed ------------------
+
+def test_2026_11_16_stopped_scheduler_at_capture_is_drift_and_restore_starts_it(tmp_path):
+    # The scheduler was already stopped when the baseline was taken, so a
+    # running-only baseline never contained it and compensation left it stopped.
+    before = [_ctr("source-ingest", "running", SRC, "c1"), _ctr("source-ingest-scheduler", "exited", BASE, "c2")]
+    baseline, res, final = _run(tmp_path, before, before)
+    assert baseline.read_text().splitlines() == [f"source-ingest|{SRC}", "source-ingest-scheduler|"]
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert {r["service"]: r["state"] for r in final}["source-ingest-scheduler"] == "running"
+
+
+def test_missing_expected_service_is_reported_even_if_never_running(tmp_path):
+    before = [_ctr("source-ingest", "running", SRC, "c1")]
+    _b, res, _ = _run(tmp_path, before, before)
+    assert res.returncode != 0
+    assert "source-ingest-scheduler" in res.stdout + res.stderr
+
+
+def test_one_shot_and_excluded_services_are_not_expected():
+    body = _function("expected_steady_services")
+    assert "unless-stopped" in body and "always" in body
+    assert "config --format json" in body and "COMPOSE_PROFILES" in body
+
+
+def test_capture_fails_closed_without_expected_set():
+    body = _function("capture_steady_service_baseline")
+    assert "return 1" in body
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true' not in source
+
+
+def test_root_post_up_check_covers_whole_expected_set():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "verify_steady_stack_complete \\\n      || rollback_dev_bff_on_failure \"exact_component_deployment\"" in source
+    body = _function("verify_steady_stack_complete")
+    assert "expected_steady_services" in body and "REQUIRED_LOOP_WORKERS" in body
+
+
+def test_restore_workflow_passes_steady_state_file():
+    wf = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    job = wf[wf.index("  restore-accepted-baseline:"):]
+    assert job.count("--steady-state-file") >= 3
+    assert "--mode verify-steady-state" in job

@@ -34,9 +34,9 @@ class DesignTableTests(unittest.TestCase):
 
     def test_limits_are_parsed_in_bytes(self) -> None:
         cells = cmb.load_design_rows()["daily_bars"]["cells"]
-        self.assertEqual(cmb.limit(cells, 1, cmb._le(), "x"), 1_600_000)
-        self.assertEqual(cmb.limit(cells, 2, r"ceiling\s+" + cmb._QTY, "x"), 1_000_000_000)
-        self.assertEqual(cmb.limit(cells, 3, r"day\s*>\s*" + cmb._QTY, "x"), 2_500_000)
+        self.assertEqual(cmb.limit(cells, 1, cmb._le(), "x"), 4_000_000)
+        self.assertEqual(cmb.limit(cells, 2, r"ceiling\s+" + cmb._QTY, "x"), 2_500_000_000)
+        self.assertEqual(cmb.limit(cells, 3, r"day\s*>\s*" + cmb._QTY, "x"), 6_000_000)
 
     def test_unreadable_limit_fails_closed_with_reason(self) -> None:
         with self.assertRaises(cmb.BudgetError) as ctx:
@@ -70,32 +70,32 @@ class ByteLimitTests(unittest.TestCase):
 
     def test_daily_bars_day_over_target_and_alarm_fails(self) -> None:
         cells = self.rows["daily_bars"]["cells"]
-        ok = cmb.check_daily_bars(cells, {"day_bytes": 1_600_000})
+        ok = cmb.check_daily_bars(cells, {"day_bytes": 4_000_000})
         self.assertTrue(all(r["status"] == "pass" for r in ok))
-        over = cmb.check_daily_bars(cells, {"day_bytes": 1_600_001})
+        over = cmb.check_daily_bars(cells, {"day_bytes": 4_000_001})
         self.assertEqual([r["metric"] for r in over if r["status"] == "fail"], ["day_bytes"])
-        alarm = cmb.check_daily_bars(cells, {"day_bytes": 2_500_001})
+        alarm = cmb.check_daily_bars(cells, {"day_bytes": 6_000_001})
         self.assertIn("day_bytes_alarm", [r["metric"] for r in alarm if r["status"] == "fail"])
 
     def test_daily_bars_total_over_one_gb_in_500_days_fails(self) -> None:
         cells = self.rows["daily_bars"]["cells"]
-        res = cmb.check_daily_bars(cells, {"day_bytes": 2_000_001})
+        res = cmb.check_daily_bars(cells, {"day_bytes": 5_000_001})
         self.assertIn("total_bytes_500_days", [r["metric"] for r in res if r["status"] == "fail"])
 
     def test_lineage_over_limit_fails(self) -> None:
         cells = self.rows["lineage"]["cells"]
-        self.assertTrue(all(r["status"] == "pass" for r in cmb.check_lineage(cells, {"lineage_day_bytes": 300_000})))
-        res = cmb.check_lineage(cells, {"lineage_day_bytes": 300_001})
+        self.assertTrue(all(r["status"] == "pass" for r in cmb.check_lineage(cells, {"lineage_day_bytes": 400_000})))
+        res = cmb.check_lineage(cells, {"lineage_day_bytes": 400_001})
         self.assertEqual([r["metric"] for r in res if r["status"] == "fail"], ["day_bytes", "total_bytes_500_days"])
 
     def test_snapshot_each_limit_fails_independently(self) -> None:
         cells = self.rows["market_snapshot_current"]["cells"]
-        good = {"keys": 22_500, "max_record_bytes": 16_000, "live_bytes": 270_000_000, "file_bytes": 351_000_000,
+        good = {"keys": 53_000, "max_record_bytes": 16_000, "live_bytes": 640_000_000, "file_bytes": 832_000_000,
                 "wal_bytes": 64_000_000, "writer_txn_ms_max": 500, "reader_call_ms_max": 100}
         self.assertTrue(all(r["status"] == "pass" for r in cmb.check_snapshot(cells, good)))
         for field, bad, metric in (("max_record_bytes", 16_001, "max_record_bytes"),
-                                   ("live_bytes", 270_000_001, "live_bytes_22500_keys"),
-                                   ("file_bytes", 351_001_000, "file_over_live_ratio"),
+                                   ("live_bytes", 640_000_001, "live_bytes_53000_keys"),
+                                   ("file_bytes", 832_001_000, "file_over_live_ratio"),
                                    ("wal_bytes", 64_000_001, "wal_bytes"),
                                    ("writer_txn_ms_max", 501, "writer_txn_ms_max"),
                                    ("reader_call_ms_max", 101, "reader_call_ms_max")):
@@ -103,10 +103,10 @@ class ByteLimitTests(unittest.TestCase):
             self.assertIn(metric, [r["metric"] for r in res if r["status"] == "fail"], field)
 
     def test_listing_and_6a_dataset_over_limit_fail(self) -> None:
-        listing = cmb.check_listing(self.rows["listing_allowlist"]["cells"], {"day_bytes": 2_000_001})
+        listing = cmb.check_listing(self.rows["listing_allowlist"]["cells"], {"day_bytes": 4_000_001})
         self.assertEqual([r["status"] for r in listing], ["fail", "pass"])
         flow = cmb.check_dataset("tw_institutional_flow")(self.rows["tw_institutional_flow"]["cells"],
-                                                         {"day_bytes": 300_001})
+                                                         {"day_bytes": 400_001})
         self.assertEqual(flow[0]["status"], "fail")
         self.assertIn("exceeds", flow[0]["reason"])
 
@@ -131,7 +131,7 @@ class ByteLimitTests(unittest.TestCase):
         self.assertTrue(set(cmb.DATASET_ROWS) <= set(KEYED_DATASETS))
 
     def test_live_stats_over_limit_fails_and_unknown_store_fails(self) -> None:
-        res = cmb.check_live(self.rows, {"daily_bars": {"day_bytes": 2_600_000}, "ghost_store": {"day_bytes": 1}})
+        res = cmb.check_live(self.rows, {"daily_bars": {"day_bytes": 6_000_001}, "ghost_store": {"day_bytes": 1}})
         failed = {(r["store"], r["metric"]) for r in res if r["status"] == "fail"}
         self.assertIn(("daily_bars", "day_bytes"), failed)
         self.assertIn(("ghost_store", "live_row_present"), failed)
@@ -156,7 +156,7 @@ class HostedShapedTests(unittest.TestCase):
         self.assertEqual(daily["rows"], 22_500)
 
     def test_a_store_row_shrunk_in_the_design_fails_the_run(self) -> None:
-        text = cmb.DESIGN_PATH.read_text(encoding="utf-8").replace("<= 1.6 MB (22,500", "<= 0.5 MB (22,500", 1)
+        text = cmb.DESIGN_PATH.read_text(encoding="utf-8").replace("<= 4.0 MB (per day: 53,000", "<= 0.5 MB (per day: 53,000", 1)
         self.assertNotEqual(text, cmb.DESIGN_PATH.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as tmp:
             design = Path(tmp) / "design.md"

@@ -43,6 +43,7 @@ services:
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
       - dev-paper-research-tokens:/issued/research-orchestrator-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
+      - dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter
       # Capital reader principal only, for the paper producer and fleet reconciler.
       - dev-paper-capital-reader-tokens:/issued/paper-capital-reader
     healthcheck:
@@ -1155,6 +1156,11 @@ services:
       PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
       PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-consultation-provider}
       PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
+      # Persona memory materialize + tool broker: host-issued read-only principal file (survives
+      # container recreation/compensation). Actor id must equal the token subject in strict auth.
+      OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE: ${OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE:-/run/pantheon-principals/OPENCLAW_ADAPTER_MEMORY_TOKEN}
+      PANTHEON_OPENCLAW_MEMORY_ACTOR_ID: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ID:-openclaw-persona-sync}
+      PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES:-persona_memory_reader}
       # Hindsight background-model bridge (design H5): off unless explicitly enabled.
       MEMORY_LLM_BRIDGE_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       MEMORY_LLM_BRIDGE_TOKEN: ${MEMORY_LLM_BRIDGE_TOKEN:-}
@@ -1177,6 +1183,7 @@ services:
       # Shared only for the governed internal agent ensure surface. The adapter
       # validates an exact /workspaces/<persona-id> target before every write.
       - openclaw-data:/home/node/.openclaw:rw
+      - dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro
     depends_on:
       # Wait for shared volume owner and gateway before admitting agent writes.
       openclaw-data-init:
@@ -3594,6 +3601,7 @@ volumes:
   dev-paper-training-worker-tokens:
   dev-paper-research-tokens:
   dev-paper-agora-projector-tokens:
+  dev-paper-openclaw-adapter-tokens:
   dev-paper-capital-reader-tokens:
   broker-data:
   bff-data:

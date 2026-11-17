@@ -615,3 +615,63 @@ def test_cli_output_env_enables_broker_without_printing_token(tmp_path, monkeypa
     token = (tmp_path / "t").read_text()
     assert "export PERSONA_TOOL_BROKER_ENABLED=true" in out and token in out
     assert token not in capsys.readouterr().out
+
+
+def test_openclaw_adapter_memory_principal_is_read_only_file_delivered_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "OPENCLAW_ADAPTER_MEMORY_TOKEN"
+    assert CONSUMER_FILES["openclaw-gateway-adapter"] == (variable,)
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items()
+               if consumer != "openclaw-gateway-adapter")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "openclaw-persona-sync" and claims["roles"] == ["persona_memory_reader"]
+    assert claims["scope"] == "pantheon:dev-owner-read" and claims["tenant_id"] == "tenant-dev"
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    adapter = compose["services"]["openclaw-gateway-adapter"]
+    assert "dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro" in adapter["volumes"]
+    env = adapter["environment"]
+    assert env["OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ID"].endswith(":-" + claims["sub"] + "}")
+    assert env["PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES"].endswith(":-persona_memory_reader}")
+    assert "dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"]
+    )
+    assert "dev-paper-openclaw-adapter-tokens" in compose["volumes"]
+
+
+def test_broker_token_survives_compensation_and_baseline_restore(tmp_path, monkeypatch):
+    """AC3: the deploy-time env path is re-derived from a host-persistent file.
+
+    A compensation / baseline restore recreates containers and the per-deploy
+    principals.env; the broker token must come back identical, and the adapter and
+    gateway must resolve the very same value from it.
+    """
+    import re
+    from scripts import issue_dev_paper_principals as m
+    secret = tmp_path / "secrets" / "broker.token"
+    monkeypatch.setattr(m, "issue_environment", lambda env: {"X": "1"})
+    for k, v in {"PANTHEON_ENV": "dev", "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": str(secret),
+                 "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}.items():
+        monkeypatch.setenv(k, v)
+
+    def deploy(name):
+        out = tmp_path / name / "principals.env"  # fresh private dir per deploy, deleted after sourcing
+        out.parent.mkdir()
+        monkeypatch.setattr("sys.argv", ["x", "--output-env", str(out)])
+        assert m.main() == 0
+        values = dict(re.findall(r"export (\w+)=(\S+)", out.read_text()))
+        out.unlink()
+        out.parent.rmdir()
+        return values
+
+    first = deploy("initial")
+    compensated = deploy("after-compensation")  # principals.env gone, containers recreated
+    restored = deploy("after-baseline-restore")
+    assert first["PERSONA_TOOL_BROKER_ENABLED"] == "true"
+    assert len(first["PERSONA_TOOL_BROKER_TOKEN"]) >= 32
+    assert compensated["PERSONA_TOOL_BROKER_TOKEN"] == first["PERSONA_TOOL_BROKER_TOKEN"]
+    assert restored["PERSONA_TOOL_BROKER_TOKEN"] == first["PERSONA_TOOL_BROKER_TOKEN"]
+    assert secret.read_text().strip() == first["PERSONA_TOOL_BROKER_TOKEN"]
