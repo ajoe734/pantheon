@@ -451,6 +451,188 @@ def test_timer_covers_window_in_taipei_time() -> None:
     assert "capture-close" in service and "SuccessExitStatus=2" in service
 
 
+def _config_with_enabled(overrides: dict[str, bool]):
+    from collector_stack.config import validate_collector_config
+
+    raw = _json_cc.loads(_POLICY_CC.read_text(encoding="utf-8"))
+    for sid, enabled in overrides.items():
+        raw["sources"][sid]["enabled"] = enabled
+    return validate_collector_config(raw, env={})
+
+
+def test_close_capture_twse_disabled_still_captures_tpex(tmp_path, test_hasher) -> None:
+    from collector_stack.runner import SourceDisabledError
+
+    transport, calls = _transport({"twse": True, "tpex": True})
+    config = _config_with_enabled(
+        {
+            "collector-tw-twse-price-history": False,
+            "collector-tw-tpex-price-history": True,
+        }
+    )
+    runner = _CollectorRunner_cc(
+        config, root_dir=tmp_path, hasher=test_hasher, transport=transport, warrants_mode="off"
+    )
+    sleeps: list[float] = []
+    res = capture_same_day_close(runner, now=_taipei("14:40"), sleep_fn=sleeps.append)
+    assert res.sources == {
+        "collector-tw-twse-price-history": "disabled",
+        "collector-tw-tpex-price-history": "captured",
+    }
+    assert not res.retry_needed
+    assert len(calls) == 1 and "tpex.org.tw" in calls[0]
+    assert sleeps == []
+    with pytest.raises(SourceDisabledError):
+        runner.run_source("collector-tw-twse-price-history", run_id="direct-disabled")
+
+
+def test_close_capture_tpex_disabled_captures_twse_once_without_retry_loop(
+    tmp_path, test_hasher
+) -> None:
+    full_twse = _json_cc.loads(
+        (FIXTURES / "twse_mi_index_full_20261110.json").read_text(encoding="utf-8")
+    )
+    calls: list[str] = []
+    transport = _FixtureTransport_cc()
+    transport.register(
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+        lambda url: (
+            calls.append(url)
+            or _FetchResponse_cc(
+                requested_url=url,
+                final_url=url,
+                http_status=200,
+                body=_json_cc.dumps({**full_twse, "date": "20261112"}).encode("utf-8"),
+                headers={},
+            )
+        ),
+    )
+    config = _config_with_enabled(
+        {
+            "collector-tw-twse-price-history": True,
+            "collector-tw-tpex-price-history": False,
+        }
+    )
+    runner = _CollectorRunner_cc(
+        config, root_dir=tmp_path, hasher=test_hasher, transport=transport, warrants_mode="off"
+    )
+    sleeps: list[float] = []
+    first = capture_same_day_close(runner, now=_taipei("14:40"), sleep_fn=sleeps.append)
+    assert first.sources == {
+        "collector-tw-twse-price-history": "captured",
+        "collector-tw-tpex-price-history": "disabled",
+    }
+    assert not first.retry_needed
+    assert len(calls) == 1 and "twse.com.tw" in calls[0]
+    assert sleeps == []
+    bundle_items = list((tmp_path / "bundles" / "collector-tw-twse-price-history").rglob("items.jsonl"))
+    assert len(bundle_items) == 1
+    assert len(bundle_items[0].read_text(encoding="utf-8").splitlines()) == 1389
+
+    second = capture_same_day_close(runner, now=_taipei("14:50"), sleep_fn=sleeps.append)
+    assert second.sources == {
+        "collector-tw-twse-price-history": "already_captured",
+        "collector-tw-tpex-price-history": "disabled",
+    }
+    assert not second.retry_needed
+    assert len(calls) == 1  # no retry loop on later ticks
+
+
+def test_close_capture_both_disabled_and_cli_exits_zero(
+    tmp_path, test_hasher, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from collector_stack.cli import main as cli_main
+
+    transport, calls = _transport({"twse": True, "tpex": True})
+    raw = _json_cc.loads(_POLICY_CC.read_text(encoding="utf-8"))
+    raw["sources"]["collector-tw-twse-price-history"]["enabled"] = False
+    raw["sources"]["collector-tw-tpex-price-history"]["enabled"] = False
+    policy_path = tmp_path / "fetch-policy.json"
+    policy_path.write_text(_json_cc.dumps(raw), encoding="utf-8")
+    salt_path = tmp_path / "salt"
+    salt_path.write_bytes(b"test-salt-close-capture-32-bytes!")
+
+    runner = _CollectorRunner_cc(
+        _load_cc(policy_path),
+        root_dir=tmp_path,
+        hasher=test_hasher,
+        transport=transport,
+        warrants_mode="off",
+    )
+    res = capture_same_day_close(runner, now=_taipei("14:40"), sleep_fn=lambda s: None)
+    assert res.sources == {
+        "collector-tw-twse-price-history": "disabled",
+        "collector-tw-tpex-price-history": "disabled",
+    }
+    assert not res.retry_needed
+    assert calls == []
+    assert not (tmp_path / "state" / "same-day-close").exists()
+
+    rc = cli_main(
+        [
+            "--policy-file",
+            str(policy_path),
+            "--root-dir",
+            str(tmp_path),
+            "--salt-file",
+            str(salt_path),
+            "capture-close",
+            "--now",
+            "2026-11-12T14:40:00+08:00",
+        ]
+    )
+    assert rc == 0
+    cli_out = _json_cc.loads(capsys.readouterr().out)
+    assert cli_out == {
+        "sources": {
+            "collector-tw-tpex-price-history": "disabled",
+            "collector-tw-twse-price-history": "disabled",
+        },
+        "state": "attempted",
+        "trade_date": "2026-11-12",
+    }
+
+
+def test_close_capture_listing_unavailable_and_unknown_source_produce_per_source_results(
+    tmp_path, test_hasher
+) -> None:
+    transport, calls = _transport({"twse": True, "tpex": True})
+    runner_off = _runner(tmp_path / "unknown", test_hasher, transport)
+    unknown_res = capture_same_day_close(
+        runner_off,
+        now=_taipei("14:40"),
+        sources=("collector-unknown-source", "collector-tw-tpex-price-history"),
+        sleep_fn=lambda s: None,
+    )
+    assert unknown_res.sources == {
+        "collector-unknown-source": "failed:CollectorConfigError",
+        "collector-tw-tpex-price-history": "captured",
+    }
+    assert unknown_res.retry_needed
+    assert len(calls) == 1 and "tpex.org.tw" in calls[0]
+
+    calls.clear()
+    runner_listed = _CollectorRunner_cc(
+        _load_cc(_POLICY_CC),
+        root_dir=tmp_path / "stale-listing",
+        hasher=test_hasher,
+        transport=transport,
+        warrants_mode="listed_only",
+    )
+    _wl_state(runner_listed.listing_state_path, ["2330"], last_success="2026-11-02")
+    stale_res = capture_same_day_close(
+        runner_listed,
+        now=_taipei("14:40"),
+        sleep_fn=lambda s: None,
+    )
+    assert stale_res.sources == {
+        "collector-tw-twse-price-history": "failed:ListingUnavailable",
+        "collector-tw-tpex-price-history": "failed:ListingUnavailable",
+    }
+    assert stale_res.retry_needed
+    assert calls == []
+
+
 def test_rsshub_news_pubdate_is_emitted_as_canonical_utc_iso_and_raw_bytes_keep_the_literal(
     tmp_path: Path,
 ) -> None:
