@@ -5673,5 +5673,38 @@
    "name": ".hex}.sqlite3",
    "reason": "regex fragment of an f-string temp name in downstream_health_monitor.py; the database is downstream_health.sqlite3"
   }
+ ],
+ "runtime_budgets": [
+  {
+   "bound_proof": {
+    "contains": "DAILY_BARS_TOTAL_CEILING_BYTES",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "cadence": "one write per ingest batch (about 106 batches of 500 per day); a re-run with an unchanged day digest writes nothing",
+   "cap": "DAILY_BARS_DAY_TARGET_BYTES 4,000,000; DAILY_BARS_DAY_ALARM_BYTES 6,000,000; DAILY_BARS_TOTAL_CEILING_BYTES 2,500,000,000 (health payload alarm fields)",
+   "cleanup": "superseded generation parts deleted after each manifest swap; interrupted temp files swept by sweep_interrupted; date retention by SOURCE-RETENTION-SWEEPER-20261118-R2; nothing is deleted by this task",
+   "columns": "13 old + traded_value, available_time, trading_status (manifest daily_bars_manifest.v2; v1 partitions read with nulls)",
+   "growth": "2.87 MB x 500 days = 1.43 GB at two years",
+   "name": "daily_bars (parquet parts + _manifest)",
+   "owner": "source_ingestion",
+   "size_per_day": "measured on 52,958 generated rows: 2,867,076 B = 54.1 B per row (before: 48.6 B per row on 22,500 rows); limit 4,000,000 B (design section 6 amended), alarm 6,000,000 B",
+   "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+   "writer": "services/source_ingestion/daily_bars_store.py DailyBarsStore.write_day (one manifest swap per date and market; not discovered by the static inventory because parquet is not a discovered kind)"
+  },
+  {
+   "bound_proof": {
+    "contains": "LINEAGE_TOTAL_CEILING_BYTES",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "cadence": "rewritten with each daily bars write of the date; unchanged content writes nothing",
+   "cap": "LINEAGE_DAY_TARGET_BYTES 400,000; LINEAGE_DAY_ALARM_BYTES 600,000; LINEAGE_TOTAL_CEILING_BYTES 200,000,000",
+   "cleanup": "same date retention as daily bars; nothing is deleted by this task",
+   "growth": "at most 0.4 MB x 500 days = 200 MB",
+   "name": "lineage (date=YYYY-MM-DD.json)",
+   "owner": "source_ingestion",
+   "size_per_day": "measured 5,779 B on the generated run (calendar evidence only); limit 400,000 B, alarm 600,000 B",
+   "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+   "writer": "services/source_ingestion/daily_bars_store.py (calendar evidence and run refs with source id and upstream endpoint)"
+  }
  ]
 }

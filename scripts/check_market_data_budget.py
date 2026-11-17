@@ -11,8 +11,8 @@ of: a measuring checker, or a named waiver with a reason (a store that has no im
 yet). A row with neither, or a checker whose row was removed from the table, fails closed.
 
 Measurements:
-  * ``daily_bars`` / ``lineage``: the real ``DailyBarsStore`` writing 22,500 symbols (20,200
-    listed warrants) in 500-record batches, bytes read from the manifest and lineage file.
+  * ``daily_bars`` / ``lineage``: the real ``DailyBarsStore`` writing 52,958 symbols (50,883
+    listed warrants, rows with traded_value, available_time, trading_status) in 500-record batches, bytes read from the manifest and lineage file.
   * ``market_snapshot_current``: the SQLite table of design 4.2 (stdlib) loaded with 22,500
     keys of a 60-close record in 500-key transactions, then fully replaced under a reader.
   * ``listing_allowlist``: generated rows measured as zlib-compressed canonical JSON.
@@ -27,6 +27,7 @@ Exit code 0 only when no check failed. Output is JSON; no credential is read or 
 """
 from __future__ import annotations
 
+import functools
 import argparse
 import json
 import re
@@ -38,6 +39,7 @@ import threading
 import time
 import zlib
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,6 +56,10 @@ SCHEMA_VERSION = "market_data_budget_check.v1"
 LISTED_SYMBOLS = 22_500
 LISTED_WARRANTS = 20_200
 TRADING_DAYS = 500
+# daily_bars and lineage follow section 6 as amended 2026-11-17: 52,958 listed symbols (2,075 shares and ETFs
+# plus 50,883 warrants), about 53,000. The other stores keep their own volume until their tasks amend it.
+DAILY_BARS_SYMBOLS = 52_958
+DAILY_BARS_WARRANTS = 50_883
 BATCH = 500
 SNAPSHOT_CLOSES = 60
 SNAPSHOT_PAGE_SIZE = 16_384
@@ -140,18 +146,22 @@ def daily_bars_rows(trade_date: str) -> list[dict[str, Any]]:
     from services.source_ingestion import daily_bars_store as dbs
 
     rows = []
-    shares = LISTED_SYMBOLS - LISTED_WARRANTS
-    for i in range(LISTED_SYMBOLS):
+    available = datetime.fromisoformat(f"{trade_date}T14:30:00+08:00").astimezone(timezone.utc)
+    shares = DAILY_BARS_SYMBOLS - DAILY_BARS_WARRANTS
+    for i in range(DAILY_BARS_SYMBOLS):
         symbol = f"{1000 + i}.TW" if i < shares else f"0{3 + i % 6}{i:05d}"[:7]
         ohlcv = {"open": 10.0 + i % 50, "high": 11.0 + i % 50, "low": 9.0 + (i % 7) / 10,
                  "close": 10.5 + i % 50 + (i % 13) / 100, "volume": float(1000 + 37 * i), "adjusted": False}
         run = f"run-{i // BATCH}"
         rows.append({"market": "TW", "symbol": symbol, "trade_date": trade_date, **ohlcv,
+                     "traded_value": round((10.5 + i % 50) * (1000 + 37 * i), 2),
+                     "available_time": available, "trading_status": "traded",
                      "source_id": f"src-{symbol}", "ingest_run_id": run, "lineage_ref": run,
                      "content_hash": dbs._sha(ohlcv)})
     return rows
 
 
+@functools.lru_cache(maxsize=1)  # one 53k-row measurement per process; the design text does not change it
 def measure_daily_bars() -> dict[str, float]:
     try:
         from services.source_ingestion.daily_bars_store import DailyBarsStore
@@ -165,10 +175,11 @@ def measure_daily_bars() -> dict[str, float]:
         for i in range(0, len(rows), BATCH):
             store.write_day(day, rows[i:i + BATCH], ingest_run_id=f"run-{i // BATCH}", connector_id="budget")
         manifest = store.read_manifest(day)
-        if not manifest or manifest["row_count"] != LISTED_SYMBOLS:
-            raise BudgetError(f"daily_bars wrote {manifest and manifest['row_count']} rows, expected {LISTED_SYMBOLS}")
+        if not manifest or manifest["row_count"] != DAILY_BARS_SYMBOLS:
+            raise BudgetError(f"daily_bars wrote {manifest and manifest['row_count']} rows, expected {DAILY_BARS_SYMBOLS}")
         lineage = (tmp / "lineage" / f"date={day}.json").stat().st_size
         return {"rows": float(manifest["row_count"]), "day_bytes": float(manifest["bytes"]),
+                "bytes_per_row": float(manifest["bytes"]) / manifest["row_count"],
                 "lineage_day_bytes": float(lineage)}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -511,7 +522,7 @@ def build_report(only: set[str] | None = None, live: dict[str, dict[str, float]]
     failed = [r for r in results if r["status"] == "fail"]
     return {
         "schema_version": SCHEMA_VERSION, "design": str(design_path.relative_to(REPO_ROOT)) if design_path.is_relative_to(REPO_ROOT) else str(design_path),
-        "volume": {"listed_symbols": LISTED_SYMBOLS, "listed_warrants": LISTED_WARRANTS, "trading_days": TRADING_DAYS,
+        "volume": {"listed_symbols": LISTED_SYMBOLS, "listed_warrants": LISTED_WARRANTS, "daily_bars_symbols": DAILY_BARS_SYMBOLS, "trading_days": TRADING_DAYS,
                    "batch": BATCH, "snapshot_closes": SNAPSHOT_CLOSES},
         "rows_in_design": len(rows), "checks": len(results), "passed": sum(r["status"] == "pass" for r in results),
         "waived": sum(r["status"] == "waived" for r in results), "failed": len(failed),

@@ -34,26 +34,35 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import date as _date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v1"
+DAILY_BARS_SCHEMA_VERSION = "daily_bars_manifest.v2"  # v2: traded_value, available_time, trading_status (design 4.1a)
+DAILY_BARS_SCHEMA_VERSIONS = ("daily_bars_manifest.v1", DAILY_BARS_SCHEMA_VERSION)  # v1 partitions stay readable
+NEW_COLUMNS = ("traded_value", "available_time", "trading_status")
+TRADING_STATUSES = ("traded", "not_traded")
+STATUS_ONLY_KIND = "status_only"  # manifest file entry holding the not_traded rows (no close): price readers skip it
 PART_ROWS = 10_000
 ROW_GROUP_ROWS = 1_000
 SLICE_ROWS = 2_000  # retention sweep: rows converted per slice before the interpreter lock is released for a moment
 
-# Budget row of design section 6 (bytes). *_TARGET is the design bound, *_ALARM the alarm line.
-DAILY_BARS_DAY_TARGET_BYTES = 1_600_000
-DAILY_BARS_DAY_ALARM_BYTES = 2_500_000
-DAILY_BARS_TOTAL_CEILING_BYTES = 1_000_000_000
-LINEAGE_DAY_TARGET_BYTES = 300_000
-LINEAGE_DAY_ALARM_BYTES = 450_000  # 1.5x
-LINEAGE_TOTAL_CEILING_BYTES = 150_000_000
+# Budget row of design section 6 as amended 2026-11-17 (bytes; about 53,000 listed symbols, about 75 B a row).
+# *_TARGET is the design bound, *_ALARM the alarm line.
+DAILY_BARS_DAY_TARGET_BYTES = 4_000_000
+DAILY_BARS_DAY_ALARM_BYTES = 6_000_000  # 1.5x
+DAILY_BARS_TOTAL_CEILING_BYTES = 2_500_000_000
+LINEAGE_DAY_TARGET_BYTES = 400_000
+LINEAGE_DAY_ALARM_BYTES = 600_000  # 1.5x
+LINEAGE_TOTAL_CEILING_BYTES = 200_000_000
 
 _RAW_ROW_FIELDS = (
     "market", "symbol", "trade_date", "open", "high", "low", "close", "volume",
     "adjusted", "source_id", "ingest_run_id", "lineage_ref", "content_hash",
+    "traded_value", "available_time", "trading_status",
 )
+_HASHED_FIELDS = ("open", "high", "low", "close", "volume", "adjusted", *NEW_COLUMNS)  # the twelve of design 4.1a
+_EXCHANGE_VENUE = {"TWSE": "TWSE", "TPEX": "TPEx"}
 
 
 class DailyBarsError(RuntimeError):
@@ -94,7 +103,7 @@ DAILY_BARS = DatasetKeyDeclaration(
     dataset="daily_bars",
     key_fields=("market", "symbol", "trade_date"),
     partition_field="trade_date",
-    value_fields=("open", "high", "low", "close", "volume", "adjusted"),
+    value_fields=("open", "high", "low", "close", "volume", "adjusted", *NEW_COLUMNS),
 )
 
 _DATE_KEYS = ("trade_date", "as_of_date", "date", "event_time")  # never available_time / created_at / ingest day
@@ -155,6 +164,8 @@ def _schema(pa):
         ("open", pa.float64()), ("high", pa.float64()), ("low", pa.float64()), ("close", pa.float64()),
         ("volume", pa.float64()), ("adjusted", pa.bool_()), ("source_id", pa.string()),
         ("ingest_run_id", pa.string()), ("lineage_ref", pa.string()), ("content_hash", pa.string()),
+        ("traded_value", pa.float64()), ("available_time", pa.timestamp("us", tz="UTC")),
+        ("trading_status", pa.string()),
     ])
 
 
@@ -164,6 +175,73 @@ def validate_trade_date(value: Any) -> str | None:
         return _date.fromisoformat(text).isoformat() if len(text) == 10 else None
     except ValueError:
         return None
+
+
+def _body_of(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    body = metadata.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return {}
+    return body if isinstance(body, Mapping) else {}
+
+
+def _first(sources: Sequence[Mapping[str, Any]], key: str) -> Any:
+    for src in sources:
+        if src.get(key) not in (None, ""):
+            return src[key]
+    return None
+
+
+def _traded_value(sources: Sequence[Mapping[str, Any]]) -> float | None:
+    """``value`` else ``value_thousands`` x 1000 (the feed's rule); None when the source gave none. Zero is a value."""
+    value = _number(_first(sources, "value"))
+    if value is None:
+        thousands = _number(_first(sources, "value_thousands"))
+        value = thousands * 1000 if thousands is not None else None
+    return value
+
+
+def _available_time(sources: Sequence[Mapping[str, Any]]) -> datetime | None:
+    """The run file read's available time as a UTC instant. A date only value is pinned to 14:30 +08:00 of that
+    date (what ``evaluator.py`` does); a full timestamp is converted as given; absent or unparseable is None,
+    and 14:30 is never invented for it."""
+    raw = _first(sources, "available_time")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if len(text) <= 10:
+        text = f"{text}T14:30:00+08:00"
+    try:
+        from services.registry.factor_rule import _parse_timestamp_utc
+
+        return _parse_timestamp_utc(text)
+    except Exception:  # noqa: BLE001 - unparseable means the source gave none
+        return None
+
+
+def _utc_text(value: datetime | None) -> str | None:
+    return None if value is None else value.astimezone(timezone.utc).isoformat()
+
+
+def _row_hash(row: Mapping[str, Any]) -> str:
+    """Content hash over the twelve value fields; the available time enters as its UTC text."""
+    fields = {k: row.get(k) for k in _HASHED_FIELDS}
+    fields["available_time"] = _utc_text(row.get("available_time"))
+    return _sha(fields)
+
+
+def _capture_of(sources: Sequence[Mapping[str, Any]], metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Lineage facts of an all-market capture row: venue, collector source id, upstream endpoint, bundle sha."""
+    venue = _EXCHANGE_VENUE.get(str(_first(sources, "exchange") or "").upper())
+    collector = metadata.get("collector") if isinstance(metadata.get("collector"), Mapping) else {}
+    upstream = str(_first(sources, "upstream_endpoint") or "")
+    collector_id = str(collector.get("source_id") or "")
+    if not (venue and upstream and collector_id):
+        return None
+    return {"venue": venue, "collector_source_id": collector_id, "upstream_endpoint": upstream,
+            "bundle_sha12": str(collector.get("bundle_sha256") or "")[:12]}
 
 
 class DailyBarsStore:
@@ -207,6 +285,7 @@ class DailyBarsStore:
         rows: dict[tuple[str, str, str], dict[str, Any]] = {}
         rejected: dict[str, int] = {}
         evidence: dict[str, dict[str, Any]] = {}
+        conflicted: set[tuple[str, str, str]] = set()
 
         def reject(reason: str) -> None:
             rejected[reason] = rejected.get(reason, 0) + 1
@@ -242,8 +321,16 @@ class DailyBarsStore:
             if callable(listing) and not listing(symbol):
                 reject("skipped_not_listed")
                 continue
+            sources = (row, _body_of(metadata), metadata)
+            status = _first(sources, "trading_status")
+            status = status if status in TRADING_STATUSES else None
             close = _number(row.get("close") if row.get("close") is not None else metadata.get("close"))
-            if close is None or close <= 0:
+            if status == "not_traded":
+                if close is not None and close > 0:
+                    reject("contradictory_status")
+                    continue
+                close = None  # the one exception to bad_close: a listed security that did not trade
+            elif close is None or close <= 0:
                 reject("bad_close")
                 continue
             candidates = {str(src["market"]).strip() for src in (row, metadata) if src.get("market")}
@@ -258,21 +345,53 @@ class DailyBarsStore:
                 reject("no_market" if not markets else "contradictory_market")
                 continue
             market = next(iter(markets))
-            ohlcv = {
-                "open": _number(row.get("open")), "high": _number(row.get("high")), "low": _number(row.get("low")),
-                "close": close, "volume": _number(row.get("volume")),
-                "adjusted": bool(row.get("adjusted") or row.get("is_adjusted") or False),
-            }
+            if status == "not_traded":
+                values: dict[str, Any] = {k: None for k in ("open", "high", "low", "close", "volume", "traded_value")}
+            else:
+                values = {
+                    "open": _number(row.get("open")), "high": _number(row.get("high")), "low": _number(row.get("low")),
+                    "close": close, "volume": _number(row.get("volume")), "traded_value": _traded_value(sources),
+                }
+            ohlcv = {**{k: values[k] for k in ("open", "high", "low", "close", "volume")},
+                     "adjusted": bool(row.get("adjusted") or row.get("is_adjusted") or False),
+                     "traded_value": values["traded_value"], "available_time": _available_time(sources),
+                     "trading_status": status}
             cal = row.get("calendar_evidence") if row.get("calendar_evidence") is not None else metadata.get("calendar_evidence")
             if isinstance(cal, Mapping) and cal:
                 evidence[_sha(cal)] = dict(cal)
-            rows[(market, symbol, trade_date)] = {
+            new = {
                 "market": market, "symbol": symbol, "trade_date": trade_date, **ohlcv,
                 "source_id": str(getattr(record, "source_id", "") or ""),
                 "ingest_run_id": ingest_run_id, "lineage_ref": ingest_run_id,
-                "content_hash": _sha(ohlcv),
+                "_capture": _capture_of(sources, metadata),
             }
+            key = (market, symbol, trade_date)
+            if key in conflicted:
+                continue
+            held = rows.get(key)
+            if held is not None:
+                new = self._merge_copies(held, new)
+                if new is None:  # copies disagree on open, high, low or close: no choice is made
+                    del rows[key]
+                    conflicted.add(key)
+                    reject("conflicting_duplicate")
+                    continue
+            new["content_hash"] = _row_hash(new)
+            rows[key] = new
         return list(rows.values()), rejected, evidence
+
+    @staticmethod
+    def _merge_copies(held: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Two copies of one key (design 4.1a item 3, the evaluator's rule). Different open, high, low or close:
+        None (conflict). Same prices: the copy with the larger volume supplies volume and traded value together
+        (a tie takes the later copy); the available time is the latest of both; the first capture is kept."""
+        if any(held.get(f) != new.get(f) for f in ("open", "high", "low", "close")):
+            return None
+        keep = dict(new if (new.get("volume") or 0) >= (held.get("volume") or 0) else held)
+        times = [t for t in (held.get("available_time"), new.get("available_time")) if t is not None]
+        keep["available_time"] = max(times) if times else None
+        keep["_capture"] = held.get("_capture") or new.get("_capture")
+        return keep
 
     # -- write -------------------------------------------------------------------------------
     def write_records(
@@ -317,6 +436,12 @@ class DailyBarsStore:
             return None
         except ValueError as exc:
             raise DailyBarsCorrupt(f"manifest for {trade_date} is not valid JSON") from exc
+
+    def read_manifest_dates(self) -> list[str]:
+        """Sorted trade dates that have a manifest."""
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
 
     def _read_day_rows(self, manifest: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
         _, pq = _require_pyarrow()
@@ -371,15 +496,15 @@ class DailyBarsStore:
         files: list[dict[str, Any]] = []
         new_paths: list[Path] = []
         schema = _schema(pa)
-        by_market: dict[str, list[Mapping[str, Any]]] = {}
-        for row in ordered:
-            by_market.setdefault(row["market"], []).append(row)
-        for market, market_rows in sorted(by_market.items()):
+        by_part: dict[tuple[str, bool], list[Mapping[str, Any]]] = {}
+        for row in ordered:  # rows with no close (not_traded) go to their own files: price readers skip them
+            by_part.setdefault((row["market"], row["close"] is None), []).append(row)
+        for (market, status_only), market_rows in sorted(by_part.items()):
             part_dir = self.bars_dir / f"market={market}" / f"date={trade_date}"
             part_dir.mkdir(parents=True, exist_ok=True)
             for n, start in enumerate(range(0, len(market_rows), PART_ROWS)):
                 chunk = market_rows[start:start + PART_ROWS]
-                final = part_dir / f"part-g{generation}-{n}.parquet"
+                final = part_dir / f"part-g{generation}-{'s' if status_only else ''}{n}.parquet"
                 tmp = final.with_name(final.name + ".tmp")
                 if yield_gil:  # same file layout (row groups of ROW_GROUP_ROWS), built in slices
                     with pq.ParquetWriter(tmp, schema, compression="zstd") as writer:
@@ -396,11 +521,14 @@ class DailyBarsStore:
                 self._hit("after_fsync")
                 os.replace(tmp, final)
                 new_paths.append(final)
-                files.append({
+                entry = {
                     "path": final.relative_to(self.bars_dir).as_posix(), "market": market,
                     "rows": len(chunk), "bytes": final.stat().st_size,
                     "min_symbol": chunk[0]["symbol"], "max_symbol": chunk[-1]["symbol"],
-                })
+                }
+                if status_only:
+                    entry["kind"] = STATUS_ONLY_KIND
+                files.append(entry)
             _fsync_dir(part_dir)
         return files, new_paths
 
@@ -428,7 +556,8 @@ class DailyBarsStore:
             try:
                 manifest = self.read_manifest(trade_date)
                 current = self._read_day_rows(manifest) if manifest else {}
-                merged = dict(current)
+                # a v1 partition has no new columns: they read as null (normalise only what was read, once)
+                merged = {key: {k: old.get(k) for k in _RAW_ROW_FIELDS} for key, old in current.items()}
                 for row in rows:
                     key = (row["market"], row["symbol"], row["trade_date"])
                     old = merged.get(key)
@@ -441,13 +570,15 @@ class DailyBarsStore:
                 generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
                 ordered = sorted(merged.values(), key=lambda r: (r["market"], r["symbol"]))
                 files, new_paths = self._write_parts(pa, pq, trade_date, generation, ordered)
+                schema = _schema(pa)
                 self._write_lineage(
-                    trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values())
+                    trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values(),
+                    captures=self._captures_of(rows))
                 self._hit("after_lineage")
                 new_manifest = {
                     "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
                     "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
-                    "generation": generation, "files": files, "row_count": len(ordered),
+                    "generation": generation, "columns": [f.name for f in schema], "files": files, "row_count": len(ordered),
                     "symbol_count": len({r["symbol"] for r in ordered}),
                     "bytes": sum(f["bytes"] for f in files), "content_digest": digest,
                 }
@@ -479,6 +610,7 @@ class DailyBarsStore:
         connector_id: str | None,
         observed_at: str | None,
         rows: Iterable[Mapping[str, Any]],
+        captures: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         path = self.lineage_dir / f"date={trade_date}.json"
         try:
@@ -488,9 +620,35 @@ class DailyBarsStore:
         doc["calendar_evidence"].update({k: dict(v) for k, v in calendar_evidence.items()})
         referenced = {r["lineage_ref"] for r in rows}
         doc["runs"] = {k: v for k, v in doc["runs"].items() if k in referenced}  # drop runs no row refers to
+        run = None
         if ingest_run_id is not None:  # None: a removal rewrite adds no run, it only drops runs no remaining row refers to
-            doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
+            run = doc["runs"].setdefault(ingest_run_id, {"connector_id": connector_id, "observed_at": observed_at})
+        if captures and run is not None:  # once per run, not per row: the survivorship attestation rebuilds its capture ref from these
+            held = {_canonical({k: v for k, v in c.items() if k != "status_known"}): c for c in run.get("captures", [])}
+            for cap in captures:
+                key = _canonical({k: v for k, v in cap.items() if k != "status_known"})
+                if key in held:
+                    held[key]["status_known"] = bool(held[key].get("status_known") or cap.get("status_known"))
+                else:
+                    held[key] = dict(cap)
+            run["captures"] = sorted(held.values(), key=_canonical)
         _atomic_write_bytes(path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    @staticmethod
+    def _captures_of(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Distinct all-market capture facts of the incoming rows. ``row_source_id`` is the join key with the
+        row's ``source_id`` column; ``status_known`` says that a row of the capture carried a trading status."""
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cap = row.get("_capture")
+            if not cap:
+                continue
+            item = {**cap, "row_source_id": str(row.get("source_id") or "")}
+            key = _canonical(item)
+            held = out.setdefault(key, {**item, "status_known": False})
+            if row.get("trading_status") in TRADING_STATUSES:
+                held["status_known"] = True
+        return sorted(out.values(), key=_canonical)
 
     # -- retention support (SOURCE-RETENTION-SWEEPER-20261118-R2) -----------------------------
     def dates(self) -> list[str]:
@@ -572,8 +730,8 @@ class DailyBarsStore:
                 new_manifest = {
                     "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
                     "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
-                    "generation": generation, "files": files, "row_count": len(ordered),
-                    "symbol_count": len({r["symbol"] for r in ordered}),
+                    "generation": generation, "columns": [f.name for f in _schema(_require_pyarrow()[0])], "files": files,
+                    "row_count": len(ordered), "symbol_count": len({r["symbol"] for r in ordered}),
                     "bytes": sum(f["bytes"] for f in files), "content_digest": self.day_digest(ordered, yield_gil=True),
                 }
                 manifest_path = self._manifest_path(trade_date)
@@ -708,6 +866,8 @@ class DailyBarsStore:
             manifest = self.read_manifest(trade_date) or {}
             seen: set[str] = set()
             for entry in manifest.get("files", ()):
+                if entry.get("kind") == STATUS_ONLY_KIND:
+                    continue  # a security that did not trade has no bar
                 seen.update(pq.read_table(self.bars_dir / entry["path"], columns=["symbol"])["symbol"].to_pylist())
             for symbol in seen:
                 days, first, last = stats.get(symbol, (0, trade_date, trade_date))
@@ -738,13 +898,13 @@ class DailyBarsStore:
                 lineage_max_day = max(lineage_max_day, size)
         alarms = []
         if bars_max_day > DAILY_BARS_DAY_ALARM_BYTES:
-            alarms.append("daily_bars_day_over_2_5mb")
+            alarms.append("daily_bars_day_over_6mb")
         if bars_total > DAILY_BARS_TOTAL_CEILING_BYTES:
-            alarms.append("daily_bars_total_over_1gb")
+            alarms.append("daily_bars_total_over_2_5gb")
         if lineage_max_day > LINEAGE_DAY_ALARM_BYTES:
             alarms.append("lineage_day_over_1_5x")
         if lineage_total > LINEAGE_TOTAL_CEILING_BYTES:
-            alarms.append("lineage_total_over_150mb")
+            alarms.append("lineage_total_over_200mb")
         return {
             "days": days, "daily_bars_total_bytes": bars_total, "daily_bars_max_day_bytes": bars_max_day,
             "daily_bars_max_day": max_day, "lineage_total_bytes": lineage_total,

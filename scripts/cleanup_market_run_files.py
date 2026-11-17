@@ -81,9 +81,9 @@ KNOWN_RUN_FILE_READERS: tuple[dict[str, Any], ...] = (
      "reads": "bars and sessions of the newest dates", "marker": "def _partitions(",
      "switched_marker": "_read_bars_from_daily_bars", "switched": True},
     {"file": "services/source_ingestion/candidate_pool_market_feed.py", "part": "survivorship attestation (G2)",
-     "reads": "all-market capture rows (collector.source_id, upstream_endpoint, trading_status) that daily bars do "
-              "not carry: after a cleanup includes_delisted and includes_suspended would become false",
-     "marker": "captures_only=True", "switched_marker": "", "switched": False},
+     "reads": "all-market capture rows (collector.source_id, upstream_endpoint, trading_status): in daily bars mode "
+              "the status column, the status only files and the lineage entry of each run (design 5.2a)",
+     "marker": "def _read_bars(", "switched_marker": "_read_captures_from_daily_bars", "switched": True},
     {"file": "services/source_ingestion/snapshot_universe.py", "part": "_partition_dates (seed)",
      "reads": "raw/<source>/tw_price_daily run files to seed a latest market snapshot",
      "marker": "DAILY_PRICE_DATASET", "switched_marker": "", "switched": False},
