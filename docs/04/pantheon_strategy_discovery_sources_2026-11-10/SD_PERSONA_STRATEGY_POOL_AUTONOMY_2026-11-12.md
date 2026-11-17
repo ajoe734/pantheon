@@ -235,6 +235,28 @@ session D+1** with the statutory costs; a session without an open price gives no
 Admission results now report `fill_convention`; thresholds (correlation cut-off, Sharpe improvement, deflation) are
 unchanged, so some candidates that cleared admission under close fills no longer do on the same recorded bars.
 
+#### 5.1b A pool with no live member (2026-11-16, POOL-EMPTY-POOL-OPERATION-20261116)
+
+Operator decision 2026-11-16: a strategy that loses its approved baseline is re-validated and, if it fails, only
+leaves the pool; capital stays idle and the persona opens its own demand. An empty pool therefore keeps operating:
+
+* **Publish.** The empty version is published from the previous approved envelope (flat, members `[]`, pool snapshot
+  pinned); the persona keeps its capital binding and runtime binding and is never retired, frozen or paused.
+* **Paper runtime.** No member views, no virtual book write, no position. The risk budget observations pool health
+  needs are known and zero (`idle_pool_observations`), so health reads `no_live_members` and low utilisation, not unknown.
+* **Cycle.** The daily cycle answers `no_live_members`: it opens one research demand and does not open a second while
+  one is open, or admits a fresh candidate.
+* **Universe (stopgap, reading of §4.3).** Until the persona declares its permitted universe P, the approved universe of
+  a pool with no live member is the universe approved at its last version that had live members, and never wider
+  (recorded as `decision.approved_universe`; older versions are read from their live members' artifacts). A candidate
+  inside it is not refused for universe, a candidate outside it still is, and with no such version the admission is
+  refused with `empty_pool_approved_universe_unknown`. This is the coordinator's reading, not an operator decision.
+* **Criteria for the first member.** Every other criterion of §5.1 applies unchanged: its own approved next-open
+  baseline, the virtual-book drawdown rule, the consultation memo rule for persona-initiated admission, the admission
+  backtest and the deflated threshold. "Combined is better than the pool alone" against an idle pool: the pool's
+  Sharpe is 0 by definition (`pool_idle: true` in the result), so the combined result must beat it by the minimum
+  improvement on the candidate's own out of sample result; nothing is waived and idle capital changes no criterion.
+
 ### 5.2 Baseline
 
 The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is its approved baseline;
@@ -242,9 +264,31 @@ The gate verdict of a member (out-of-sample Sharpe, drawdown, backtest run) is i
 them with the member's **virtual book**, not with the persona's combined account.
 
 A baseline whose gate proof was computed with the decision filled at the close of its own bar is not comparable with a
-next-open virtual book. `resolve_member_baseline` reports it as `no_approved_baseline` /
-`baseline_computed_under_decision_close_fill` with `operator_decision_required`; it is neither kept as approved nor
-removed. The re-baseline run is `python -m services.research.rebaseline_next_open`.
+next-open virtual book. `resolve_member_baseline` continues to report that registry entry as `no_approved_baseline` /
+`baseline_computed_under_decision_close_fill` (a decision-close proof never becomes an approved baseline and no legacy
+number is rewritten). The standalone comparison tool remains `python -m services.research.rebaseline_next_open`.
+
+**Operator decision 2026-11-16 (`POOL-LEGACY-MEMBER-REQUALIFY-20261116`):** in place of holding a live pool member
+in `operator_decision_required` indefinitely when its baseline was scored with decision-close fills
+(transcript `/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/874a0b84-8f35-4810-9146-7517f0da2c09.jsonl`
+line 8238, 12:35:05.786Z, uuid `d0995ab6-d2dc-4058-878c-f85270ba4585`; answer 「重新驗證，不過就移出 (Recommended)」,
+evidence in `docs/deployment/evidence/POOL-LEGACY-MEMBER-REQUALIFY-20261116/evidence.json`), every pool's existing
+evolution cadence automatically re-qualifies each such live member once per `(member artifact, fill_convention)`:
+
+* **Gate run.** `run_replication_backtest_protocol` and `ReplicationGate.evaluate_candidate` (untouched thresholds)
+  run on the governed two-year point-in-time exchange dataset under `daily_decision_close_d_fills_open_d_plus_1`.
+  Synthetic or fixture series are refused as input; the run records dataset references, window, metrics, and failed checks.
+* **Pass.** The strategy is registered through the existing candidate registration and paper approval path as a new
+  immutable registry entry carrying the next-open proof and lineage (`parent_registry_ids`) to the legacy entry. One
+  pool version removes the legacy member (`removal_reason="replaced_by_requalified_entry"`) and admits the new entry
+  under every admission criterion evaluated against the pool without the legacy member; nothing is waived.
+* **Fail.** The member is removed through the existing pool member removal path with
+  `removal_reason="requalification_failed_next_open_fill"` and a reference to the verdict. It stays in pool history;
+  the persona is not retired, frozen, or paused; the outcome is written to persona memory (`tried_family:<id>`) so the
+  next demand excludes that family.
+* **Could not evaluate.** When the governed dataset is unavailable, synthetic/fixture, shorter than two years, or an
+  owner read fails, the member is never removed: the run records `operator_decision_required: true` with the stated
+  reason and is retried on the next cadence.
 
 ### 5.3 Weights
 

@@ -200,6 +200,34 @@ PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-pyth
 "$PANTHEON_PY" -m pytest -q deploy/collector
 ```
 
+## Warrants: collected while listed, skipped and deleted at expiry
+
+Design of record: `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16` section 4.3 (decision B: 抓，到期就刪).
+`fetch-policy.json` records `warrants.mode = listed_only` and the allowlist date.
+
+- **Rule.** The exchange listing decides, never a symbol pattern (`WARRANT_SYMBOL_RE` is retired; it missed every
+  TPEx warrant `7xxxxx`). A symbol is a warrant if and only if its ISIN-page row is under a warrant category
+  header and its CFI starts with `RW`. Listed warrants are collected like any listed security. A code in no
+  current listing (an expired warrant, an unknown code) is skipped and counted as `skipped_not_listed_count`.
+  The T86, both price-history spiders and the suspension spider take the listing as `symbols_filter`.
+- **Where the listing is fetched.** `CollectorRunner.refresh_security_listing(fetch_page, listing_date=...)` fetches
+  `https://isin.twse.com.tw/isin/C_public.jsp?strMode=2` and `strMode=4` once per trading day with the same
+  `services/source_ingestion/security_listing.py` that hosted uses (stdlib only; the runner imports it, or loads it
+  from `PANTHEON_SECURITY_LISTING_MODULE`). The collector image must ship that file (see deployment note below).
+  The state file is `<root>/state/security-listing.json`.
+- **Fail closed.** If the listing cannot be fetched or parsed the previous allowlist is kept for at most 3 trading
+  days; after that price collection raises `listing_unavailable` and fetches nothing. A host whose listing was never initialised collects unfiltered with a logged warning (rollout shadow) until the first `refresh_security_listing` succeeds. While the listing is
+  unreadable no symbol is treated as expired and nothing is deleted.
+- **Expiry and deletion.** `ListingState.expired_warrants()` is the expired set (warrant whose `last_seen` is older
+  than the last successful listing day). `scripts/delete_expired_warrants.py` removes already expired warrants:
+  dry run by default, report with digest first, real run only with `--execute --confirm-digest <digest>`.
+  Four-digit (ordinary share shaped) symbols go to a review list; daily bars of delisted ordinary shares are kept.
+- **Rollback.** `COLLECTOR_WARRANTS_MODE=off` (or `CollectorRunner(warrants_mode="off")`) removes the filter and
+  restores the previous behaviour; nothing already stored becomes unreadable (the filter only decides what is
+  newly written). Deleted warrant rows are not recoverable by design (nothing is archived).
+- **Deployment note.** The Dockerfile copies only `collector_stack/`; shipping `security_listing.py` into the image
+  and scheduling the daily `refresh_security_listing` call is a separate Human/Ops step.
+
 ## Price-history backfill (TWSE / TPEx / T86)
 
 Daily timers fetch only the newest published trading day. History is loaded once with the

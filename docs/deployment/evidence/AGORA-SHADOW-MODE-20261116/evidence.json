@@ -1,0 +1,22 @@
+{
+  "task_id": "AGORA-SHADOW-MODE-20261116",
+  "design": "A4_shadow_human_actual_sourcing.md; SD_PERSONA_MEETINGS_2026-11-15 s5/s6/s11/s12",
+  "recorded_on": "2026-11-16",
+  "commands": [
+    {
+      "command": "/tmp/ssc-venv/bin/python -m pytest services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/agora/trading_room -q",
+      "result": "96 passed, 3 skipped",
+      "covers": ["AC1 lock + duplicate rejection", "AC2 unavailable arms with reason", "AC3 identity/account/broker/raw text + scoped reads", "AC4 paper proxy never actual fill, record-only", "AC5 production decision route with real AgoraWriteService/AgoraStore"]
+    },
+    {
+      "command": "/tmp/ssc-venv/bin/python -m pytest tests/agora_write_owner services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_agora_router.py -q",
+      "result": "64 passed"
+    }
+  ],
+  "limits": [
+    "No Postgres/psycopg in the worker environment: the real AgoraStore runs over an in-memory JSON table that mimics insert_if_absent; Postgres durability is not proven here.",
+    "Settlement/outcome and attribution numbers are out of scope (attribution task); outcome is recorded unavailable.",
+    "Production wiring: create_agora_router builds the owner when AGORA_STORE_DSN/DATABASE_URL is set; otherwise decisions fail closed with 503."
+  ],
+  "credentials_included": false
+}

@@ -268,3 +268,43 @@ token (not the gateway token, which never reaches Hindsight), runs only the
 deny-all `memory-index` agent, rejects tools and streaming, re-verifies the
 agent's native-tool policy on every call, and logs usage without content.
 Hindsight stays a rebuildable index reachable only by the memory service.
+
+## Persona tool broker (design H9 / H10)
+
+Persona agents read memory and submit proposals only through three brokered
+tools registered by the `pantheon-persona-tools` gateway plugin
+(`integrations/openclaw/plugins/pantheon-persona-tools`, built into the gateway
+image): `persona_memory_recall`, `persona_mental_model_read` and
+`persona_proposal_submit`. There is no reflect tool; the persona reasons itself.
+
+- **Plugin** holds only the broker secret (`PERSONA_TOOL_BROKER_TOKEN`, stored as
+  an unresolved env reference in plugin config). It holds no memory or
+  persona-service credential and no Hindsight or write path. Its
+  `before_tool_call` hook asks the broker to authorize every Pantheon tool call
+  and blocks on refusal, handler error or timeout; `execute()` only runs for a
+  call the hook authorized and forwards the host-provided agent id, run id and
+  session key (never model-supplied identity).
+- **Broker** (`services/openclaw-gateway-adapter/persona_tool_broker.py`, routes
+  `/internal/persona-tools/v1/{authorize,call}`, off unless
+  `PERSONA_TOOL_BROKER_ENABLED`) resolves the agent id through the persona agent
+  registry (`agents.list`; the agent's tool profile must equal the governed
+  persona profile), checks the profile deny-first, reaches memory-svc only for
+  that persona's own bank or the tenant facts bank (separate calls), returns only
+  that persona's standing-question answers, validates and records proposals
+  without applying them, enforces per-run call limits and records every call
+  (persona, run id, parameter digest, canonical ids, outcome) as telemetry and in
+  a per-run record readable at `GET /api/openclaw-adapter/agents/persona-tools/runs/{run_ref}`.
+- **Run registration**: a run must be registered with its purpose
+  (`daily_cycle` or `panel_interpretation`) before dispatch through
+  `POST /api/openclaw-adapter/agents/persona-tools/runs` (adapter service token),
+  using the gateway session identity the dispatch will use. Calls from an
+  unregistered run are refused. A `panel_interpretation` run is a pre-meeting
+  read: recall is limited to that persona's `scope:committee` entries and the
+  facts bank, and the standing-question and proposal tools are refused. Meeting
+  participants still have no tools.
+- **Profile**: persona agents allow by name exactly `read`,
+  `persona_proposal_submit`, `persona_memory_recall`, `persona_mental_model_read`
+  and keep every existing deny (`assert_persona_agent_tool_profile`).
+- The registry lookup is cached for `PERSONA_TOOL_BROKER_REGISTRY_TTL_SECONDS`
+  (default 10s); the per-call limits are coordinator proposals
+  (`PERSONA_TOOL_BROKER_MAX_<TOOL>_PER_RUN`).

@@ -1,0 +1,11 @@
+{
+  "task_id": "COLLECTOR-HELD-SYMBOLS-MOUNT-20261116",
+  "diagnosis": "On accepted 94b73806a source-ingest and source-ingest-scheduler mount only /data/source-ingest; runtime_bindings.json lives in runtime-data at /data/runtime, so the live held-symbol reader reports binding_store_missing. The pull is executed inside source-ingest (configured.py -> execute_provider_owned_adapter); the scheduler only calls it over SOURCE_INGEST_API_URL.",
+  "change": "docker-compose.yml: source-ingest volumes += runtime-data:/data/runtime:ro. No mount on source-ingest-scheduler; no other compose files, services, endpoints, settings or env vars changed.",
+  "test_lock": "test_source_ingest_mounts_runtime_data_read_only_at_held_reader_default_dir asserts mount target == parent of provider_adapters._HELD_BINDING_STORE_DEFAULT, read-only, and absent on the scheduler.",
+  "validation": {
+    "command": "pytest -q services/source_ingestion/test_compose_activation.py services/source_ingestion/tests/test_collector_held_symbols_live.py scripts/test_paper_runtime_topology_contract.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py",
+    "result": "22 passed, 1 warning"
+  },
+  "hosted_readback": "Operator-owned after deploy; not performed by owner."
+}

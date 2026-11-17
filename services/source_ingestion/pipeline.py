@@ -569,6 +569,47 @@ def persist_latest_market_snapshots(
     return projected
 
 
+class ReceiptSnapshotUnavailable(SourceEvidenceError):
+    """A receipt snapshot reference no longer resolves to its original snapshot."""
+
+
+def resolve_receipt_snapshot_bodies(
+    latest_market_snapshot_store: LatestMarketSnapshotStore,
+    batch: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve a receipt ``market_snapshots`` batch to snapshot bodies by identifier.
+
+    Receipts written before the reference format still embed bodies and are returned
+    as stored. A reference resolves only while its snapshot is still the latest one for
+    (symbol, dataset); a superseded or missing snapshot fails closed with a readable reason.
+    """
+    bodies: list[dict[str, Any]] = []
+    if not (batch or {}).get("snapshots") and (batch or {}).get("snapshot_count"):
+        refs = (batch or {}).get("snapshot_refs") or {}
+        raise ReceiptSnapshotUnavailable(
+            f"receipt carries counts and a reference only ({batch['snapshot_count']} snapshots of run "
+            f"{refs.get('ingest_run_id')}); read the bodies from the latest market snapshot store"
+        )
+    for item in (batch or {}).get("snapshots") or ():
+        if not isinstance(item, Mapping):
+            raise ReceiptSnapshotUnavailable("receipt snapshot entry is not an object")
+        if "closes" in item:
+            bodies.append(dict(item))
+            continue
+        symbol, dataset, snapshot_id = item.get("symbol"), item.get("dataset"), item.get("snapshot_id")
+        current = latest_market_snapshot_store.get(str(symbol), str(dataset)) if symbol and dataset else None
+        if current is None:
+            raise ReceiptSnapshotUnavailable(
+                f"snapshot {snapshot_id} for {symbol}/{dataset} is no longer in the latest market snapshot store"
+            )
+        if current.snapshot_id != snapshot_id:
+            raise ReceiptSnapshotUnavailable(
+                f"snapshot {snapshot_id} for {symbol}/{dataset} was superseded by {current.snapshot_id}"
+            )
+        bodies.append(current.to_public_dict())
+    return bodies
+
+
 # REGIME-DATA-INDEX-BREADTH-INTAKE: index closes and market breadth are not per-symbol
 # stock closes, so they never enter the latest-close snapshot projection.
 INDEX_BREADTH_DATASETS = frozenset({"tw_index_daily", "tw_index_ohlc_daily", "tw_market_breadth_daily"})

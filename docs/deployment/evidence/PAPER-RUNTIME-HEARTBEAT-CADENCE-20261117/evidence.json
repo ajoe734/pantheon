@@ -1,0 +1,21 @@
+{
+  "task_id": "PAPER-RUNTIME-HEARTBEAT-CADENCE-20261117",
+  "change": "PaperRuntimeService._maybe_emit_heartbeat gates on a monotonic last-emit time against PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS (default 15, floor 1.0) instead of the same-UTC-second check. Payload, metadata and heartbeat loop interval unchanged. Last-emit time advances only when emit_heartbeat returns truthy; first call after start is not delayed.",
+  "tests": {
+    "command": "python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.execution.lean_runtime.test_paper_runtime_smoke",
+    "result": "Ran 148 tests, OK",
+    "new_tests": [
+      "test_heartbeat_cadence_follows_interval_not_poll (300 simulated idle seconds, 1 s poll: 20 or 21 beats, max gap <= interval + 1 poll)",
+      "test_failed_heartbeat_emit_does_not_advance_interval",
+      "test_heartbeat_carries_changed_state_within_one_interval"
+    ],
+    "telemetry_suite_note": "services/telemetry discover: 17 failures are all 'No module named fastapi' in this worker environment; no telemetry code changed. Not counted as passed."
+  },
+  "growth_bound": {
+    "per_runtime_per_day_max": "86400 / 15 = 5760",
+    "hosted_4_runtimes_per_day_max": "4 x 5760 = 23040",
+    "approx_mb_per_day": "23040 x 2.3 KB = ~53 MB (about 55 MB)",
+    "before_per_day": "about 285000 heartbeat rows (one per ~1.2 s per runtime)",
+    "scaling": "linear in number of paper runtimes"
+  }
+}

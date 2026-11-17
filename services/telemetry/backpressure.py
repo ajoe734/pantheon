@@ -55,6 +55,9 @@ CRITICAL_EVENT_TYPES = frozenset({
     "approval_action",
     "manual_override",
     "kill_switch_action",
+    # Sole carrier of performance/member-book state; heartbeat retention never
+    # deletes it, so it is never shed (heartbeats are shed first).
+    "runtime_state_snapshot",
 })
 
 # Non-critical event types that CAN be delayed under pressure

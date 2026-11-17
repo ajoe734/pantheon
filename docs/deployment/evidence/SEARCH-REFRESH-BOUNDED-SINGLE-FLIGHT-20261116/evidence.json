@@ -1,0 +1,16 @@
+{
+  "task_id": "SEARCH-REFRESH-BOUNDED-SINGLE-FLIGHT-20261116",
+  "changes": {
+    "index_pipeline.py": "run() embeds at most max_batch_size (env SEARCH_INDEX_REFRESH_BATCH_SIZE, default 16) in chunks (SEARCH_INDEX_REFRESH_CHUNK_SIZE=4) and stops starting chunks after SEARCH_INDEX_REFRESH_TIME_BUDGET_SECONDS=15; checkpoint holds only really indexed ids; unprocessed ids stay out of the checkpoint so next call re-selects them; snapshot gains backlog_remaining; checkpoint indexed_at keeps microseconds so bounded batches are not re-selected by the >= last_indexed_at rule",
+    "main.py": "POST /api/search/index/refresh acquires the pipeline lock non-blocking: a concurrent call returns 200 {status: in_progress} immediately, never a second run; completed result adds status=completed, pipeline_snapshot shape unchanged (+backlog_remaining)",
+    "scheduler_worker.py": "assess_progress(); alive file touched only while progressing; unhealthy after SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS (default 6) consecutive stalled ticks (in_progress or no-progress); log line carries progress reason, stalled_ticks, health; timeouts/HTTP errors remain failed ticks"
+  },
+  "reproduction": "Before the change refresh_index ran pipeline.run unbounded under a blocking lock: a backlog > one tick made the 30s client time out while the server kept running and the next tick queued another run over the same unrecorded backlog (the old test_concurrent_refresh_callers... asserted runs==3). Equivalent to max_batch_size >= backlog.",
+  "tests": {
+    "command": "/tmp/rv-venv/bin/python -m pytest services/search -q --ignore=services/search/tests/test_qdrant_backend.py",
+    "result": "224 passed, 25 skipped, 3 failed (test_zh_segmentation: jieba not installed in this venv, unrelated); qdrant_client missing so test_qdrant_backend ignored",
+    "new_tests": ["test_backlog_ten_times_batch_drains_with_no_double_embed (53 objects, batch 5, 11 calls, each embedded once, max_active==1)", "test_refresh_endpoint_single_flight_returns_in_progress", "test_scheduler_progress_assessment"],
+    "updated_tests": ["test_retrieval_activation::test_concurrent_refresh_callers_never_run_the_pipeline_concurrently now asserts runs==1"]
+  },
+  "note": "Source-completion endpoint still waits on the lock (response needs a snapshot) but each run is now bounded."
+}

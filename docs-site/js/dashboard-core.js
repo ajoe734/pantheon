@@ -480,16 +480,19 @@ function queueEventTime(event) {
     || null;
 }
 
-function taskStatusRank(task, rowState) {
+// Real problems first, then whatever a worker is executing right now (owner or
+// reviewer), then the rest of the board.
+function taskStatusRank(task, rowState, hasRunningWorker = false) {
   const status = String(task?.status || "").toLowerCase();
   if (rowState === "attention") return 0;
-  if (status === "blocked") return 1;
-  if (status === "in_progress") return 2;
-  if (status === "review") return 3;
-  if (rowState === "queued") return 4;
-  if (rowState === "ready") return 5;
-  if (status === "review_approved") return 6;
-  return 7;
+  if (hasRunningWorker) return 1;
+  if (status === "blocked") return 2;
+  if (status === "in_progress") return 3;
+  if (status === "review") return 4;
+  if (rowState === "queued") return 5;
+  if (rowState === "ready") return 6;
+  if (status === "review_approved") return 7;
+  return 8;
 }
 
 function dependencyLabel(depId, taskMap) {
@@ -510,10 +513,14 @@ function taskDependents(taskId, tasks) {
   return (tasks || []).filter((task) => (task.depends_on || []).includes(taskId));
 }
 
-function activeRowState(task, liveWorkers, queueEvents, mismatches, unresolvedDeps) {
+function rowHasRunningWorker(liveWorkers) {
+  return liveWorkers.some((worker) => worker.bucket === "running" || worker.runtime_bucket === "running");
+}
+
+function activeRowState(task, liveWorkers, queueEvents, mismatches, unresolvedDeps, autoWorkerExpected = true) {
   const status = String(task?.status || "").toLowerCase();
-  const hasRunning = liveWorkers.some((worker) => worker.bucket === "running" || worker.runtime_bucket === "running");
-  if (mismatches.length || (status === "in_progress" && !hasRunning)) return "attention";
+  const hasRunning = rowHasRunningWorker(liveWorkers);
+  if (mismatches.length || (status === "in_progress" && !hasRunning && autoWorkerExpected)) return "attention";
   if (status === "blocked") return "blocked";
   if (status === "review") return "review";
   if (status === "review_approved") return "approved";
@@ -527,11 +534,11 @@ function activeRowState(task, liveWorkers, queueEvents, mismatches, unresolvedDe
 export function buildActiveWorkRows(status, orchState, dashboardBundle = null, approvalQueue = null) {
   const tasks = status?.tasks || [];
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const dispatchPolicy = dashboardBundle?.dispatch_policy || null;
+  const truth = buildTruthMismatches(status, orchState, approvalQueue, dispatchPolicy);
   const queueEvents = normalizeDispatchQueue(orchState, status);
-  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
-  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
-  const mismatchItems = truth.mismatches.length ? truth.mismatches : bundleMismatches;
+  const bundleLinks = bundleWorkerLinks(orchState, dashboardBundle);
+  const mismatchItems = liveOrBundleMismatches(truth, orchState, dashboardBundle);
 
   const queueByTask = new Map();
   for (const event of queueEvents) {
@@ -567,7 +574,8 @@ export function buildActiveWorkRows(status, orchState, dashboardBundle = null, a
       const mismatches = mismatchesByTask.get(task.id) || [];
       const unresolvedDeps = taskUnresolvedDeps(task, taskMap);
       const dependents = taskDependents(task.id, tasks).filter((item) => !terminalTaskStatus(item.status));
-      const state = activeRowState(task, runtimeWorkers, taskQueueEvents, mismatches, unresolvedDeps);
+      const autoWorkerExpected = actorRunsAutoWorkers(expectedTaskActor(task), dispatchPolicy);
+      const state = activeRowState(task, runtimeWorkers, taskQueueEvents, mismatches, unresolvedDeps, autoWorkerExpected);
       const queueReasons = taskQueueEvents.map(queueWaitReason).filter(Boolean);
       const primaryMismatch = mismatches[0] || null;
       const primaryQueue = taskQueueEvents[0] || null;
@@ -594,7 +602,7 @@ export function buildActiveWorkRows(status, orchState, dashboardBundle = null, a
         primaryQueueReason: queueReasons[0] || "",
         primaryQueueAt: primaryQueue ? queueEventTime(primaryQueue) : null,
         nextAction,
-        rank: taskStatusRank(task, state),
+        rank: taskStatusRank(task, state, rowHasRunningWorker(runtimeWorkers)),
       };
     });
 
@@ -677,13 +685,36 @@ function workerLaneLabel(key, fallback = null) {
   return agentLabel(fallback || key);
 }
 
+// The page reads the supervisor's runtime state on every refresh, so when it
+// loaded it is the live truth. The dashboard bundle is rewritten only on task
+// mutations and can lag by many minutes; use it only when the runtime state
+// could not be read.
+export function hasLiveRuntimeState(orchState) {
+  return Boolean(orchState && typeof orchState.workers === "object" && orchState.workers !== null);
+}
+
+export function liveOrBundleMismatches(truth, orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState) || truth.mismatches.length) return truth.mismatches;
+  return Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
+}
+
+export function bundleWorkerLinks(orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState)) return [];
+  return Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
+}
+
+export function bundleRuntimeSummary(orchState, dashboardBundle) {
+  if (hasLiveRuntimeState(orchState)) return {};
+  return dashboardBundle?.runtime_summary || {};
+}
+
 function finiteCount(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 export function buildWorkerCapacity(status, orchState, dashboardBundle = null, approvalQueue = null) {
-  const runtime = dashboardBundle?.runtime_summary || {};
+  const runtime = bundleRuntimeSummary(orchState, dashboardBundle);
 
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
@@ -851,7 +882,17 @@ function expectedTaskActor(task) {
   return String(task?.owner || "").trim();
 }
 
-export function buildTruthMismatches(status, orchState, approvalQueue = null) {
+// Human/Ops and zero-capacity agents never get an auto-worker, so an active
+// task they own is not missing one. Without a capacity table (an older bundle)
+// every actor is treated as dispatchable, which keeps the previous behavior.
+export function actorRunsAutoWorkers(actor, dispatchPolicy = null) {
+  const caps = dispatchPolicy?.max_parallel_by_agent;
+  if (!caps || typeof caps !== "object" || !Object.keys(caps).length) return true;
+  const key = String(actor || "").trim().toLowerCase();
+  return Number(caps[key] || 0) > 0;
+}
+
+export function buildTruthMismatches(status, orchState, approvalQueue = null, dispatchPolicy = null) {
   const taskMap = new Map((status?.tasks || []).map((task) => [task.id, task]));
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
@@ -992,7 +1033,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
       continue;
     }
     if (taskStatus === "in_progress" && live.length === 0) {
-      if (relatedLiveWorkerCoversTask(task)) {
+      if (relatedLiveWorkerCoversTask(task) || !actorRunsAutoWorkers(expectedTaskActor(task), dispatchPolicy)) {
         continue;
       }
       pushMismatch({
@@ -1179,6 +1220,18 @@ export function parseCurrentWork(markdown) {
   };
 }
 
+export function workerStartedAt(worker) {
+  return worker?.lease_acquired_at || worker?.started_at || null;
+}
+
+// What the worker was dispatched to do, from the supervisor's dispatch reason.
+export function workerRoleLabel(worker) {
+  const reason = String(worker?.reason || "").toLowerCase();
+  if (reason.includes("review")) return "審查";
+  if (reason.includes("finaliz") || reason.includes("closeout")) return "收尾";
+  return "實作";
+}
+
 export function deriveAgentState(status, orchState) {
   const taskMap = new Map((status.tasks || []).map((task) => [task.id, task]));
   const workers = normalizeWorkerRecords(orchState, status);
@@ -1253,6 +1306,9 @@ export function deriveAgentState(status, orchState) {
       approved_count: approved.length,
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
+      live_workers: [...liveRunningWorkers, ...livePendingWorkers].sort((a, b) =>
+        String(workerStartedAt(a) || "").localeCompare(String(workerStartedAt(b) || ""))
+      ),
       transition_count: transitionWorkers.length,
     };
   });

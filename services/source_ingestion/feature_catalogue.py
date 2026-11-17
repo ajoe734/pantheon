@@ -141,7 +141,8 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
     _ds("tw_quarterly_statements", "tw_financial_statement", "symbol", "quarterly", "event_time", 45,
         ("twse:opendata/t187ap06_L_ci", "twse:opendata/t187ap07_L_ci",
          "tpex:mopsfin_t187ap06_O_ci", "tpex:mopsfin_t187ap07_O_ci"),
-        "Quarterly income statement and balance sheet ratios (Q1-Q3 deadline +45d, Q4 +90d)"),
+        "Quarterly income statement and balance sheet ratios; available no earlier than the statutory "
+        "deadline (Q1 May 15, Q2 Aug 14, Q3 Nov 14, annual report Mar 31 of the next year)"),
     _ds("tw_margin_transactions", "tw_margin_short_balance", "symbol", "daily", "date", 0,
         ("twse:exchangeReport/MI_MARGN", "tpex:tpex_mainboard_margin_balance"),
         "Daily margin purchase and short sale balances"),
@@ -409,6 +410,35 @@ def iso_utc(dt: datetime) -> str:
     return dt.astimezone(_UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_STATUTORY_QUARTER_DEADLINE = {3: (5, 15), 6: (8, 14), 9: (11, 14), 12: (3, 31)}
+
+
+def statutory_available_date(dataset: str, event_date: Any) -> date | None:
+    """Statutory publication deadline for slow fundamental datasets, else ``None``.
+
+    Monthly revenue is due on the 10th of the month after the revenue month. Quarterly
+    statements are due May 15 (Q1), Aug 14 (Q2), Nov 14 (Q3) and, for the annual report
+    covering Q4, Mar 31 of the next year. A fixed day offset cannot express the annual
+    deadline (Dec 31 + 90 days is Mar 30 in a leap year), so the date is explicit.
+    """
+    if dataset not in ("tw_monthly_revenue", "tw_quarterly_statements"):
+        return None
+    event = date.fromisoformat(str(event_date)[:10])
+    if dataset == "tw_monthly_revenue":
+        year, month = (event.year + 1, 1) if event.month == 12 else (event.year, event.month + 1)
+        return date(year, month, 10)
+    quarter_end_month = 3 * ((event.month - 1) // 3 + 1)
+    month, day = _STATUTORY_QUARTER_DEADLINE[quarter_end_month]
+    return date(event.year + 1 if quarter_end_month == 12 else event.year, month, day)
+
+
+def statutory_available_time(dataset: str, event_date: Any, *, hour: int = 18) -> datetime | None:
+    deadline = statutory_available_date(dataset, event_date)
+    if deadline is None:
+        return None
+    return parse_time(iso_utc(datetime.combine(deadline, time(hour, 0), tzinfo=_TAIPEI)))
+
+
 def default_available_time(event_date: str, lag_days: int, *, hour: int = 18) -> str:
     """Conservative availability: ``event_date + lag_days`` at ``hour``:00 Asia/Taipei."""
     d = date.fromisoformat(event_date[:10]) + timedelta(days=lag_days)
@@ -491,7 +521,10 @@ def observations_from_row(
             lag = row_lag
         avail = parse_time(avail_raw) if (avail_raw and len(str(avail_raw)) > 10) else None
         floor = parse_time(default_available_time(event_date, lag))
-        if avail is None or (lag > 0 and avail < floor):
+        statutory = statutory_available_time(dataset, event_date)
+        if statutory is not None and statutory > floor:
+            floor = statutory
+        if avail is None or ((lag > 0 or statutory is not None) and avail < floor):
             avail = floor
         out.append(
             {
@@ -705,6 +738,9 @@ def read_feature_series(
         if parse_time(obs["available_time"]) > decision:
             continue
         if event + timedelta(days=row_lag) > decision:
+            continue
+        statutory = statutory_available_time(dataset, obs["event_time"])
+        if statutory is not None and statutory > decision:
             continue
         visible.append(dict(obs))
     visible.sort(

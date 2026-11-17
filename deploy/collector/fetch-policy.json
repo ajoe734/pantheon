@@ -11,6 +11,23 @@
   "logged_in_sessions": false,
   "cookie_reuse": false,
   "raw_retention_days": 90,
+  "warrants": {
+    "mode": "listed_only",
+    "rule": "warrants are collected while the exchange listing lists them (CFI RW under a warrant header); a code in no current listing (expired warrant, unknown code) is skipped and counted as skipped_not_listed_count; no symbol pattern is used",
+    "listing_sources": [
+      "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+      "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
+    ],
+    "allowlist_date": "2026-11-16",
+    "max_stale_trading_days": 3,
+    "filtered_sources": [
+      "collector-tw-twse-t86",
+      "collector-tw-twse-price-history",
+      "collector-tw-tpex-price-history",
+      "collector-tw-trading-suspension"
+    ],
+    "rollback": "COLLECTOR_WARRANTS_MODE=off (or CollectorRunner(warrants_mode='off')) restores the previous behaviour; nothing already stored becomes unreadable"
+  },
   "auto_pause_consecutive_blocks": 2,
   "disabled_by_build_sources": [
     "yahoo",

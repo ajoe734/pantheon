@@ -955,6 +955,8 @@ ssh_bash() {
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
+    command_prefix+=" SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}")"
+    command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_INGEST_MAX_RECORDS:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
     command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
@@ -1148,6 +1150,8 @@ ssh_bash() {
       SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" \
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
       SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+      SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}" \
+      SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-}" \
       bash -s
       return $?
     fi
@@ -1402,6 +1406,7 @@ profile = TW_CHIP_REFRESH_PROFILES.get(sys.argv[2])
 if profile is not None:
     required = ({"openapi.taifex.com.tw", "www.taifex.com.tw"}
                 if profile["base"] == "tw-taifex-futures-options-chip"
+                else {"api.finmindtrade.com"} if profile["base"] == "tw-finmind-fundamentals"
                 else {"openapi.twse.com.tw", "www.tpex.org.tw"})
     if hosts != required:
         raise SystemExit("chip refresh requires exact hosts: " + ",".join(sorted(required)))
@@ -1446,7 +1451,7 @@ PY
   # Real official-source pulls plus durable/index readback can exceed the
   # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
   # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
-  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 300 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 300 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-taifex-futures-options-chip" && -z "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -2505,6 +2510,36 @@ if now_t.weekday() >= 5:
     emit("skipped", reason="weekend", checked_at=now_u.isoformat())
 if d_str in holidays:
     emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+# TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117: a session covered only by provisional collector
+# closes still lacks its official OpenAPI rows. Once the official next-morning publication time has
+# passed, proceed so the existing bounded official refresh ingests them and the snapshot store
+# reconciles collector vs official (official wins). A collector_close lineage entry exists only
+# while no official row replaced it, so a session already holding official rows never matches.
+OFFICIAL_PUBLISH_TIME = time(7, 0)  # Taipei, morning after the session; 07:30 refresh is past it
+OFFICIAL_PENDING_LOOKBACK_DAYS = 7
+pending_official = {}
+for symbol, snap in snaps:
+    for entry in ((snap.get("lineage") or {}).get("collector_close") or []):
+        try:
+            entry_date = date.fromisoformat(str(entry.get("trade_date"))[:10])
+        except (AttributeError, ValueError):
+            continue
+        published_at = datetime.combine(entry_date + timedelta(days=1), OFFICIAL_PUBLISH_TIME, tzinfo=tz)
+        if (
+            entry_date <= session_date
+            and (session_date - entry_date).days <= OFFICIAL_PENDING_LOOKBACK_DAYS
+            and now_u >= published_at.astimezone(timezone.utc)
+        ):
+            pending_official.setdefault(str(entry_date), set()).add(symbol)
+if pending_official:
+    emit(
+        "proceed",
+        reason="official_rows_missing_collector_only",
+        session_date=str(session_date),
+        pending_trade_dates=sorted(pending_official),
+        symbols=sorted({sym for syms in pending_official.values() for sym in syms}),
+        checked_at=now_u.isoformat(),
+    )
 if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
@@ -2530,7 +2565,8 @@ for k in ("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS", "SOURCE_INGEST_CONTROLLER_
 cmd = ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml"]
 if action == "bounded":
     allowed_hosts = os.environ.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") or "openapi.twse.com.tw,www.tpex.org.tw"
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull"})
+    max_records = (os.environ.get("SOURCE_INGEST_MAX_RECORDS") or env.get("SOURCE_INGEST_MAX_RECORDS") or "100").strip()
+    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull", "SOURCE_INGEST_MAX_RECORDS": max_records})
     if arg:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = arg
     bounded_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET") or ""
@@ -2539,7 +2575,7 @@ if action == "bounded":
     # FinMind reads env://FINMIND_API_TOKEN; the recorded container env may carry
     # an old or empty value, so the supplied secret overrides it for this window only.
     # Restore rebuilds env from the recorded pre-environment, so the old value returns.
-    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") == "tw-finmind-broker-daily-report":
+    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") in ("tw-finmind-broker-daily-report", "tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation"):
         finmind_token = os.environ.get("FINMIND_API_TOKEN") or ""
         if not finmind_token:
             raise SystemExit("FINMIND_API_TOKEN is required for the FinMind bounded refresh")
@@ -2622,10 +2658,10 @@ if action == "restore":
 PY
   local runtime_rc=$?
   (( runtime_rc == 0 )) || return "${runtime_rc}"
-  if [[ "${action}" == "restore" ]]; then
-    # A recreated process is not ready for the next connector's preflight yet.
-    # Use the existing retry budget and the Source healthcheck's /readyz + 5s limit.
-    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 12 5 --max-time 5 --connect-timeout 5
+  if [[ "${action}" == "bounded" || "${action}" == "restore" ]]; then
+    # A recreated process is not ready for dataset preparation or the next connector's preflight yet.
+    # Wait up to 180s (36 * 5s, matching docker-compose start_period 120s plus retries) with a 5s curl limit.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5
   fi
 }
 
@@ -2818,9 +2854,15 @@ prepare_bounded_source_refresh_dataset() {
   case "${connector_id}:${dataset}" in
     tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
       return 0 ;;
+    tw-finmind-monthly-revenue:tw_monthly_revenue|tw-finmind-quarterly-statements:tw_financial_statement|tw-finmind-valuation:tw_valuation_bwibbu)
+      ;;
+    tw-finmind-monthly-revenue:*|tw-finmind-quarterly-statements:*|tw-finmind-valuation:*)
+      error "FinMind fundamentals bounded refresh got unsupported dataset '${dataset:-missing}' for ${connector_id}" ;;
   esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
     [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
+  elif [[ "${connector_id}" == tw-finmind-monthly-revenue || "${connector_id}" == tw-finmind-quarterly-statements || "${connector_id}" == tw-finmind-valuation ]]; then
+    :
   elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
     return 0
   elif [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
@@ -2882,7 +2924,14 @@ dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
 
-is_finmind = connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top"
+FINMIND_FUNDAMENTAL_BOUNDED = {
+    "tw-finmind-monthly-revenue": "tw_monthly_revenue",
+    "tw-finmind-quarterly-statements": "tw_financial_statement",
+    "tw-finmind-valuation": "tw_valuation_bwibbu",
+}
+is_fund = FINMIND_FUNDAMENTAL_BOUNDED.get(connector_id) == dataset
+# is_finmind: symbol-keyed FinMind bounded refresh (broker top-N or governed fundamentals).
+is_finmind = is_fund or (connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top")
 if not is_finmind and (connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts"):
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
 if not controller_token:
@@ -2947,7 +2996,7 @@ FINMIND_MAX_SYMBOLS_PER_JOB = 25
 FINMIND_FETCH_MAX_RECORDS_CAP = 1000
 fanout_rules = [
     dataclass_replace(rule, max_symbols_per_run=FINMIND_MAX_SYMBOLS_PER_JOB)
-    if is_finmind and rule.connector_id == connector_id and rule.dataset == dataset
+    if is_finmind and not is_fund and rule.connector_id == connector_id and rule.dataset == dataset
     else rule
     for rule in DEFAULT_SOURCE_UPDATE_RULES
 ]
@@ -2995,7 +3044,14 @@ if not contracts:
 interval_seconds = 86400
 priority = int(selected_rule.priority)
 
-if is_finmind:
+if is_fund:
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanFundamentalsAdapter
+    adapter = FinMindTaiwanFundamentalsAdapter(
+        connector_id=connector_id, max_records=500,
+        connector_metadata={"definition_id": connector_id, "refresh_profile": TW_CHIP_REFRESH_PROFILES[connector_id]},
+    )
+elif is_finmind:
     adapter = FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)
 else:
     adapter = TaifexDerivativesChipAdapter(
@@ -3011,8 +3067,10 @@ if is_finmind:
     # batch job carries its own symbols in job_parameters, which override request.symbols, so
     # all batches are processed. max_records is the per-job top-N buy+sell budget and must stay
     # within the generic provider_owned_adapter guard.
-    rows_per_symbol = int(adapter.max_rank) * 2
-    per_job_budget = rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
+    # Fundamentals jobs are bounded by the rule's max_symbols_per_run and the adapter's
+    # fail-closed 500-record cap (an over-cap window raises; it is never truncated).
+    rows_per_symbol = 1 if is_fund else int(adapter.max_rank) * 2
+    per_job_budget = 500 if is_fund else rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
     if per_job_budget > FINMIND_FETCH_MAX_RECORDS_CAP:
         raise SystemExit(
             f"FinMind per-job row budget {per_job_budget} exceeds provider_owned_adapter cap {FINMIND_FETCH_MAX_RECORDS_CAP}"
@@ -3022,7 +3080,7 @@ if is_finmind:
         for job in (fanout.get("jobs") or [])
         if isinstance(job, dict) and job.get("connector_id") == connector_id and job.get("dataset") == dataset
     ]
-    if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
+    if not is_fund and any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
         raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
     # The adapter's fetch_config() also carries provider-descriptive keys (base_url, endpoint,
     # secret_ref_id, dataset, history_start, max_rank) that the strict ConfiguredFetchBody DTO
@@ -3047,7 +3105,7 @@ desired_requirement = {
     "connector_id": connector_id,
     "provider": "FinMind" if is_finmind else "TAIFEX",
     "dataset": dataset,
-    "source_class": "taiwan_chip" if is_finmind else "derivatives_chip",
+    "source_class": "live_pull" if is_fund else "taiwan_chip" if is_finmind else "derivatives_chip",
     "cadence": "daily",
     "schedule_interval_seconds": interval_seconds,
     "priority": priority,
@@ -3261,8 +3319,8 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
   SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
   SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" \
-  SOURCE_INGEST_MAX_RECORDS="100"
-  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET
+  SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
+  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS SOURCE_INGEST_MAX_RECORDS
   validate_source_refresh_profile
   BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
   write_bounded_refresh_outcome() {
@@ -3311,7 +3369,7 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
   }
   trap handle_pre_mutation_refresh_exit EXIT INT TERM
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}" ]]; then
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}" ]]; then
     # No credential: record the reason and leave the stack untouched.
     write_bounded_refresh_outcome "skipped" "missing_credential" '{"status": "skipped", "reason": "missing_credential"}'
     info "FinMind broker refresh skipped: missing_credential (no container mutation)"
@@ -3319,6 +3377,8 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
+  curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
+    || error "source-ingest /readyz did not become ready before bounded refresh preflight"
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
@@ -3550,7 +3610,7 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${bounded_concurrency}" \
-    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
@@ -5265,7 +5325,7 @@ remove_dev_untagged_unreferenced_images_for_build() {
   local -a candidates=()
   declare -A seen=()
   remaining=$((budget - (SECONDS - started) - grace))
-  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --all --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
     info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
     return 0
   fi
@@ -6108,6 +6168,90 @@ run_dev_candidate_compose() {
     -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH}" "$@"
 }
 
+# Steady services (restart policy unless-stopped/always, non one-off) that run
+# before a root rollout. A failed rollout's compensation must put each of them
+# back to running on the same image, or report them as incomplete by name; a
+# stopped steady service (e.g. source-ingest-scheduler) is never a success.
+STEADY_SERVICE_FORMAT='{{index .Config.Labels "com.docker.compose.service"}}|{{index .Config.Labels "com.docker.compose.oneoff"}}|{{.HostConfig.RestartPolicy.Name}}|{{.State.Status}}|{{.Image}}|{{.Id}}'
+
+steady_service_rows() {
+  local id
+  for id in $(docker ps -a -q --filter label=com.docker.compose.project=pantheon 2>/dev/null); do
+    docker inspect --format "${STEADY_SERVICE_FORMAT}" "${id}" 2>/dev/null || true
+  done
+}
+
+capture_steady_service_baseline() {
+  local out="$1"
+  steady_service_rows | python3 -c '
+import sys
+seen = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) != 6:
+        continue
+    service, oneoff, restart, state, image, _cid = parts
+    if service and oneoff != "True" and restart in ("unless-stopped", "always") and state == "running":
+        seen[service] = image
+for service, image in sorted(seen.items()):
+    print(service + "|" + image)
+' > "${out}"
+}
+
+# Prints "service|container_id|problem" for each baseline steady service that is
+# not running on its baseline image. problem is stopped (image matches, can be
+# started), or missing/ambiguous/image-mismatch (needs a recreate).
+steady_service_problems() {
+  local baseline="$1"
+  steady_service_rows | python3 -c '
+import sys
+expected = {}
+for line in open(sys.argv[1]):
+    service, _, image = line.rstrip("\n").partition("|")
+    if service:
+        expected[service] = image
+live = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) == 6 and parts[1] != "True":
+        live.setdefault(parts[0], []).append(parts)
+for service, image in sorted(expected.items()):
+    rows = live.get(service, [])
+    if len(rows) != 1:
+        print(service + "||" + ("missing" if not rows else "ambiguous"))
+        continue
+    _s, _o, _r, state, current, cid = rows[0]
+    if current != image:
+        print(service + "|" + cid + "|image-mismatch")
+    elif state != "running":
+        print(service + "|" + cid + "|stopped")
+' "${baseline}"
+}
+
+verify_steady_services_restored() {
+  local baseline="${1:-}" problems line service cid problem attempt
+  [[ -n "${baseline}" && -s "${baseline}" ]] || { info "no steady service baseline recorded; steady services not verified"; return 0; }
+  problems="$(steady_service_problems "${baseline}")"
+  if grep -q '|stopped$' <<<"${problems}"; then
+    while IFS='|' read -r service cid problem; do
+      [[ "${problem}" == stopped ]] || continue
+      info "compensation: starting stopped steady service ${service} on its baseline image"
+      docker start "${cid}" >/dev/null 2>&1 || true
+    done <<<"${problems}"
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+  fi
+  [[ -z "${problems}" ]] && return 0
+  local names
+  names="$(cut -d'|' -f1 <<<"${problems}" | paste -sd, -)"
+  info "steady_service_compensation_incomplete: ${names} ($(paste -sd';' - <<<"${problems}"))" >&2
+  return 1
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
   dump_dev_root_failure_diagnostics
@@ -6121,7 +6265,11 @@ rollback_dev_bff_on_failure() {
     # producer file without a runner ACK is not authority to compensate.
     run_dev_artifact_driver verify || info "unchanged baseline verification failed"
   elif run_dev_artifact_driver restore; then
-    info "automatic BFF exact-artifact restore verified"
+    if verify_steady_services_restored "${DEV_STEADY_SERVICE_BASELINE_FILE:-}"; then
+      info "automatic BFF exact-artifact restore verified"
+    else
+      info "automatic BFF exact-artifact restore INCOMPLETE: baseline steady services are not running on their baseline image"
+    fi
   else
     info "automatic BFF exact-artifact restore failed; no source-build fallback"
   fi
@@ -6433,6 +6581,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
+    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.

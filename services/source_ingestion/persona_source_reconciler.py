@@ -18,7 +18,9 @@ from jsonschema import Draft7Validator
 
 from .configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError
-from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindLiveFetcher, FinMindTaiwanDatasetAdapter
+from .connectors.finmind_taiwan import (
+    FINMIND_TAIWAN_DATASETS, FinMindLiveFetcher, FinMindTaiwanDatasetAdapter, FinMindTaiwanFundamentalsAdapter,
+)
 from .connectors.taiwan_official import (
     TAIWAN_OFFICIAL_ENDPOINTS,
     TW_OFFICIAL_CONNECTOR_ID,
@@ -289,6 +291,10 @@ def chip_profile_provider(connector_id: str) -> SourceConnectorProvider:
         return TaiwanOfficialMarketDatasetAdapter(
             connector_id=connector_id, max_records=500, connector_metadata=metadata,
         )
+    if profile["base"] == "tw-finmind-fundamentals":
+        return FinMindTaiwanFundamentalsAdapter(
+            connector_id=connector_id, max_records=500, connector_metadata=metadata,
+        )
     return TaifexDerivativesChipAdapter(
         connector_id=connector_id, dataset=profile["dataset"],
         contracts=profile["contracts"], max_records=500, connector_metadata=metadata,
@@ -400,6 +406,24 @@ class SourceProvisioningReconciler:
                 schedule_action="not_attempted",
                 idempotency_key=requirement.idempotency_key,
                 details={"reason": COLLECTOR_HOST_UNSET_REASON, "collector_host_env": COLLECTOR_HOST_ENV},
+            )
+
+        finmind_candidates = [
+            c for c in requirement.connector_candidates
+            if (TW_CHIP_REFRESH_PROFILES.get(c) or {}).get("base") == "tw-finmind-fundamentals"
+        ]
+        if finmind_candidates and not (FinMindLiveFetcher().resolve_token() or "").strip():
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=finmind_candidates[0],
+                # Skipped, not unsupported: a posture without the FinMind credential is valid and
+                # must not fail the whole controller tick closed; nothing is provisioned or fetched.
+                status="skipped",
+                connector_action="finmind_credential_not_configured",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"reason": "finmind_credential_not_configured", "secret_ref_id": "env://FINMIND_API_TOKEN"},
             )
 
         connector_id = self._select_connector_id(requirement)
@@ -541,7 +565,10 @@ class SourceProvisioningReconciler:
             else:
                 continue
             # Configuration availability is not proof of live provider health.
-            if candidate == "tw-finmind-datasets" and not (
+            if (
+                candidate == "tw-finmind-datasets"
+                or (TW_CHIP_REFRESH_PROFILES.get(candidate) or {}).get("base") == "tw-finmind-fundamentals"
+            ) and not (
                 FinMindLiveFetcher(secret_ref_id=connector.secret_ref_id or "").resolve_token() or ""
             ).strip():
                 continue

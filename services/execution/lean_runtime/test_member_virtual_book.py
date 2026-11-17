@@ -262,3 +262,20 @@ def test_baseline_lookup_uses_the_pool_member_registry_ref():
     looked_up = []
     books.snapshot(baseline_resolver=lambda ref, *_: looked_up.append(ref))
     assert looked_up == ['registry-alias']
+
+
+def test_idle_pool_observations_are_known_zero_and_invalid_inputs_fail_closed():
+    import importlib
+    import pytest
+    from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+    policy = importlib.import_module("services.control-plane.persona.pool_policy")
+    p = policy.load_policy()
+    days = [f"2026-10-{d:02d}" for d in range(1, p.health_window_days + 1)]
+    rows = idle_pool_observations(days, source_ref="unit:risk", gross_limit=100, drawdown_limit=.1)
+    health = policy.pool_health([], {}, rows, p)
+    assert health["gross_utilisation"]["value"] == 0 and health["drawdown_utilisation"]["value"] == 0
+    assert health["idle_day_share"]["value"] == 1 and health["effective_bets"]["reason"] == "no_live_members"
+    assert "low_risk_budget_utilisation" in health["demand_reasons"]
+    for bad in ({"source_ref": ""}, {"gross_limit": 0}, {"drawdown_limit": -1}):
+        with pytest.raises(ValueError):
+            idle_pool_observations(days, **{"source_ref": "x", "gross_limit": 1, "drawdown_limit": 1, **bad})

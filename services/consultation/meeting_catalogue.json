@@ -1,0 +1,230 @@
+{
+  "schema_version": "persona_meeting_catalogue.v2",
+  "amendment": "SD-PERSONA-MEETINGS-AMEND-20261115",
+  "default_budget": {
+    "max_participants": 5,
+    "max_rounds": 2,
+    "max_rounds_with_evidence": 3,
+    "max_meetings_per_persona_per_week": 3,
+    "max_calls_per_meeting": 16
+  },
+  "types": [
+    {
+      "meeting_type": "MT-1",
+      "slug": "pool_evolution_review",
+      "title": "Pool Evolution Review",
+      "title_zh": "池子演進會議",
+      "aliases": ["MT-1", "pool_evolution_review"],
+      "enabled": true,
+      "cadence": "weekly",
+      "cross_persona": false,
+      "roster_rule": {
+        "chair": "owning_persona",
+        "participants": ["owning_persona", "peer_different_style", "persona-risk-officer"],
+        "min_trading_personas": 1,
+        "requires_risk": true,
+        "requires_red_team": false,
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": false,
+        "description": "owner + 1 peer trading persona of a different style (rotating) + risk persona"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "evolution_proposal",
+        "pool_decision",
+        "research_demand",
+        "agora_candidate_decision"
+      ]
+    },
+    {
+      "meeting_type": "MT-2",
+      "slug": "optimisation_review",
+      "title": "Optimisation Review",
+      "title_zh": "優化會議",
+      "aliases": ["MT-2", "optimisation_review", "optimization_review"],
+      "enabled": true,
+      "cadence": "event_driven",
+      "cross_persona": false,
+      "roster_rule": {
+        "chair": "owning_persona",
+        "participants": ["owning_persona", "peers_same_strategy_family", "persona-risk-officer"],
+        "min_trading_personas": 1,
+        "requires_risk": true,
+        "requires_red_team": false,
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": false,
+        "description": "owner + peers holding the same strategy family + risk persona"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "harness_patch",
+        "lesson_rule",
+        "lesson_candidate",
+        "evolution_proposal",
+        "agora_candidate_decision"
+      ]
+    },
+    {
+      "meeting_type": "MT-3",
+      "slug": "strategy_ideation",
+      "title": "Strategy Ideation",
+      "title_zh": "新策略發想會議",
+      "aliases": ["MT-3", "strategy_ideation"],
+      "enabled": true,
+      "cadence": "weekly",
+      "cross_persona": true,
+      "roster_rule": {
+        "chair": "rotating_trading_persona",
+        "participants": ["enrolled_trading_personas", "persona-red-team"],
+        "min_trading_personas": 2,
+        "requires_risk": false,
+        "requires_red_team": true,
+        "red_team_assigned_case": "oppose_leading_proposal",
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": false,
+        "description": "all enrolled trading personas (<=4) + red-team persona as devil's advocate"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "research_demand",
+        "evolution_proposal",
+        "agora_candidate_decision"
+      ]
+    },
+    {
+      "meeting_type": "MT-4",
+      "slug": "performance_attribution_review",
+      "title": "Performance Attribution Review",
+      "title_zh": "績效歸因檢討",
+      "aliases": ["MT-4", "performance_attribution_review"],
+      "enabled": true,
+      "cadence": "weekly_and_event",
+      "cross_persona": false,
+      "roster_rule": {
+        "chair": "closest_institutional_persona",
+        "participants": [
+          "subject_persona_or_trader_servant",
+          "counter_party_persona",
+          "peers_same_strategy_family",
+          "persona-risk-officer",
+          "persona-red-team"
+        ],
+        "min_trading_personas": 1,
+        "requires_risk": true,
+        "requires_red_team": true,
+        "red_team_assigned_case": "luck_or_small_sample_or_confounder",
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": true,
+        "description": "subject (persona or trader's own servant) + party that decided the other way + peers of same strategy family + risk persona + red-team persona"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "research_demand"
+      ]
+    },
+    {
+      "meeting_type": "MT-5",
+      "slug": "regime_interpretation",
+      "title": "Regime Interpretation",
+      "title_zh": "盤勢研判會議",
+      "aliases": ["MT-5", "regime_interpretation"],
+      "enabled": true,
+      "cadence": "event_driven",
+      "cross_persona": true,
+      "roster_rule": {
+        "chair": "rotating_trading_persona",
+        "participants": ["enrolled_trading_personas", "persona-risk-officer"],
+        "min_trading_personas": 2,
+        "requires_risk": true,
+        "requires_red_team": false,
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": false,
+        "description": "all enrolled trading personas + risk persona"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "pool_decision",
+        "research_demand",
+        "evolution_proposal",
+        "agora_candidate_decision"
+      ]
+    },
+    {
+      "meeting_type": "MT-6",
+      "slug": "quarterly_review",
+      "title": "Quarterly Review",
+      "title_zh": "季度檢討會議",
+      "aliases": ["MT-6", "quarterly_review"],
+      "enabled": true,
+      "cadence": "quarterly",
+      "cross_persona": true,
+      "roster_rule": {
+        "chair": "rotating_trading_persona",
+        "participants": ["enrolled_trading_personas", "persona-risk-officer", "persona-red-team"],
+        "min_trading_personas": 2,
+        "requires_risk": true,
+        "requires_red_team": true,
+        "red_team_assigned_case": "oppose_leading_proposal",
+        "allow_agora_advisor": true,
+        "allow_owning_user_servant": true,
+        "allow_subject_trader_servant": false,
+        "description": "all enrolled trading personas + risk + red team"
+      },
+      "budget": {
+        "max_participants": 5,
+        "max_rounds": 2,
+        "max_rounds_with_evidence": 3,
+        "max_meetings_per_persona_per_week": 3,
+        "max_calls_per_meeting": 16
+      },
+      "allowed_proposal_kinds": [
+        "research_demand",
+        "governance_approval",
+        "evolution_proposal",
+        "pool_decision",
+        "agora_candidate_decision"
+      ]
+    }
+  ],
+  "refused_legacy_types": [
+    "post_mortem",
+    "MT-4_post_mortem",
+    "generic_learning_sharing",
+    "experience_sharing"
+  ]
+}

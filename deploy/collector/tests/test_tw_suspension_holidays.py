@@ -371,6 +371,25 @@ def test_official_holiday_schedule_spider_and_bundle_2024_through_2026(
     assert "twse-2026-schedule-v1" in TW_GOVERNED_CALENDAR_PINS
 
 
+def _write_listing_for_fixture_symbols(path: Path, transport: FixtureTransport, *, end_yyyymmdd: str) -> None:
+    import re
+    from services.source_ingestion import security_listing as sl
+
+    symbols: set[str] = set()
+    twse = json.loads((SURVIVORSHIP_FIXTURES_DIR / "twse_twtawu_2024_2026.json").read_text(encoding="utf-8"))
+    symbols.update(str(r[1]).strip() for r in twse["data"])
+    for year in (2024, 2025, 2026):
+        t = json.loads((SURVIVORSHIP_FIXTURES_DIR / f"tpex_sprc_his_{year}.json").read_text(encoding="utf-8"))
+        symbols.update(str(r[2]).strip() for r in t["tables"][0]["data"])
+    warrant_codes = re.compile(r"^0[3-8]\d{3}[0-9A-Za-z]$")  # test-only: classify the recorded fixture codes
+    state = sl.ListingState(last_success_date="2026-11-15")
+    for sym in sorted(symbols):
+        if not warrant_codes.match(sym):
+            state.allowlist[sym] = {"venue": "TWSE", "category": "股票", "cfi": "ESVUFR", "is_warrant": False,
+                                    "first_seen": "2026-11-15", "last_seen": "2026-11-15"}
+    state.save(path)
+
+
 def test_official_trading_suspension_spider_and_bundle_2024_through_2026(
     tmp_path: Path,
 ) -> None:
@@ -384,6 +403,9 @@ def test_official_trading_suspension_spider_and_bundle_2024_through_2026(
         hasher=AuthorHasher(b"test-salt-suspension-32-bytes-ok!"),
         transport=transport,
     )
+    # The exchange listing (not a symbol pattern) decides which codes are collected: list every
+    # fixture code that is not a warrant code (the recorded fixtures carry 6-character warrant codes).
+    _write_listing_for_fixture_symbols(runner.listing_state_path, transport, end_yyyymmdd="20261115")
     with pytest.raises(SourceDisabledError):
         runner.run_source("collector-tw-trading-suspension", run_id="suspension-blocked")
 
@@ -511,6 +533,7 @@ def test_holiday_and_suspension_spiders_fail_closed_on_format_change(
         root_dir=tmp_path,
         hasher=AuthorHasher(b"test-salt-fail-closed-32-bytes!!"),
         transport=transport,
+        warrants_mode="off",
     )
     collector = runner.build_collector(config.get_source(source_id))
     kwargs = {"end_date": "2026-11-15"} if source_id == "collector-tw-trading-suspension" else {}

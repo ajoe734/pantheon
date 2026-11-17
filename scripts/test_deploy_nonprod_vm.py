@@ -2457,10 +2457,14 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = script.index("execute_bounded_source_refresh_entrypoint() {")
     body = script[start : script.index("\n}\n", start)]
+    finmind_guard = body.index('tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"')
+    readyz_wait = body.index(
+        'curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5'
+    )
     resolve = body.index("resolve_bounded_source_refresh_active_symbols")
     preflight = body.index('check_taiwan_refresh_preflight "${force}"')
     no_symbols_skip = body.index("no_active_taiwan_symbols")
-    assert resolve < preflight < no_symbols_skip
+    assert finmind_guard < readyz_wait < resolve < preflight < no_symbols_skip
 
 
 def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs() -> None:
@@ -3757,6 +3761,7 @@ def test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs():
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         hosts = ('openapi.taifex.com.tw,www.taifex.com.tw' if profile['base'] == 'tw-taifex-futures-options-chip'
+                 else 'api.finmindtrade.com' if profile['base'] == 'tw-finmind-fundamentals'
                  else 'openapi.twse.com.tw,www.tpex.org.tw')
         accepted = _chip_admission(cid, profile['dataset'], hosts)
         assert accepted.returncode == 0, accepted.stderr
@@ -3827,6 +3832,8 @@ elif args[:1] == ["inspect"]:
 elif args[:2] == ["image", "ls"]:
     for img_id, tags in imgs.items():
         short = img_id.split(":", 1)[1]
+        # containerd image store: untagged images only listed with -a/--all
+        if not tags and not ({{"-a", "--all"}} & set(args)): continue
         for t in (tags or ["<none>:<none>"]): print(f"{{t}}|sha256:{{short}}")
 elif args[:1] == ["rmi"]:
     assert "-f" not in args and "--force" not in args
@@ -3948,3 +3955,276 @@ def test_tx_daily_admission_is_exact_and_does_not_widen_the_ssf_profile():
         assert _chip_admission('tw-taifex-tx-daily', dataset, hosts).returncode != 0
     assert _chip_admission('tw-taifex-futures-options-chip', 'taifex_tx_daily', hosts).returncode != 0
     assert 'tw-taifex-tx-daily:taifex_tx_daily' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+
+
+FINMIND_FUNDAMENTAL_PAIRS = (
+    ('tw-finmind-monthly-revenue', 'tw_monthly_revenue'),
+    ('tw-finmind-quarterly-statements', 'tw_financial_statement'),
+    ('tw-finmind-valuation', 'tw_valuation_bwibbu'),
+)
+
+
+def test_finmind_fundamentals_admission_is_exactly_the_three_datasets_on_the_exact_host():
+    host = 'api.finmindtrade.com'
+    for cid, dataset in FINMIND_FUNDAMENTAL_PAIRS:
+        assert _chip_admission(cid, dataset, host).returncode == 0
+        assert f'{cid}:{dataset}' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+        # a profile admits only its own dataset, on exactly the FinMind host
+        for other in [d for _, d in FINMIND_FUNDAMENTAL_PAIRS if d != dataset] + ['tw_broker_top', 'tw_price_daily', 'tw_institutional_flow', '']:
+            assert _chip_admission(cid, other, host).returncode != 0
+        for bad_hosts in (host + ',storage.googleapis.com', host + ',example.com', 'openapi.twse.com.tw,www.tpex.org.tw', ''):
+            assert _chip_admission(cid, dataset, bad_hosts).returncode != 0
+    # no other connector id gains these datasets, and no unlisted FinMind connector is admitted
+    assert _chip_admission('tw-finmind-broker-daily-report', 'tw_monthly_revenue', 'api.finmindtrade.com,storage.googleapis.com').returncode != 0
+    assert _chip_admission('tw-twse-tpex-official-market', 'tw_valuation_bwibbu', 'openapi.twse.com.tw,www.tpex.org.tw').returncode != 0
+    assert _chip_admission('tw-finmind-fundamentals', 'tw_monthly_revenue', host).returncode != 0
+    assert _chip_admission('tw-finmind-other', 'tw_monthly_revenue', host).returncode != 0
+
+
+def test_finmind_fundamentals_bounded_refresh_requires_the_credential_and_overrides_it_only_for_the_window():
+    source = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    for cid, _ in FINMIND_FUNDAMENTAL_PAIRS:
+        assert source.count(cid) >= 3
+    assert 'missing_credential' in source and 'FINMIND_API_TOKEN is required for the FinMind bounded refresh' in source
+
+
+def test_refresh_only_ssh_and_local_forward_timeout_and_max_records() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    ssh_start = source.index('  if [[ "${remote_component}" == "refresh-only" ]]; then')
+    ssh_block = source[ssh_start : source.index("\n  else\n", ssh_start)]
+    assert 'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}")' in ssh_block
+    assert 'SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_INGEST_MAX_RECORDS:-}")' in ssh_block
+
+    local_start = source.index('    if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then')
+    local_block = source[local_start : source.index("\n    fi\n", local_start) + 7]
+    assert 'SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}"' in local_block
+    assert 'SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-}"' in local_block
+
+    # Execute both forwarding blocks with caller-supplied values.
+    ssh_harness = (
+        "set -euo pipefail\n"
+        "shell_quote() { printf '%q' \"$1\"; }\n"
+        "remote_component=refresh-only\n"
+        "remote_output=''\n"
+        "DEPLOY_ENV=dev\n"
+        + ssh_block
+        + "\nfi\n"
+        + 'eval "${command_prefix% bash -s} python3 -c \'import json,os; print(json.dumps([os.environ.get(\\\"SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS\\\"), os.environ.get(\\\"SOURCE_INGEST_MAX_RECORDS\\\")]))\'"\n'
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": "300",
+        "SOURCE_INGEST_MAX_RECORDS": "500",
+    }
+    ssh_res = subprocess.run(["bash", "-c", ssh_harness], env=env, capture_output=True, text=True, check=False)
+    assert ssh_res.returncode == 0, ssh_res.stderr
+    assert json.loads(ssh_res.stdout.strip()) == ["300", "500"]
+
+    local_harness = (
+        "set -euo pipefail\n"
+        "remote_component=refresh-only\n"
+        "DEV_DEPLOY_SSH_HOST=''\n"
+        "run_local() {\n"
+        + local_block
+        + "\n}\n"
+        + "run_local <<'EOF'\n"
+        + 'printf "%s|%s\\n" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}" "${SOURCE_INGEST_MAX_RECORDS}"\n'
+        + "EOF\n"
+    )
+    local_res = subprocess.run(["bash", "-c", local_harness], env=env, capture_output=True, text=True, check=False)
+    assert local_res.returncode == 0, local_res.stderr
+    assert local_res.stdout.strip() == "300|500"
+
+
+@pytest.mark.parametrize(
+    ("outer_timeout", "expected_controller_timeout"),
+    [(30, "30"), (120, "120"), (240, "240"), (300, "300"), (1800, "300")],
+)
+def test_validate_source_refresh_profile_caps_controller_timeout_at_300s(
+    outer_timeout: int, expected_controller_timeout: str
+) -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("validate_source_refresh_profile() {")
+    end = source.index("\n}\n\n# One required scheduled/async worker", start) + 2
+    script = (
+        'set -euo pipefail\nerror() { echo "$*" >&2; exit 1; }\n'
+        + source[start:end]
+        + "\nexport PANTHEON_DEV_COMPOSE_PROFILES=root,source-ingest-scheduler\n"
+        "export PANTHEON_EXTERNAL_EGRESS=allowlist\n"
+        "export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw,www.tpex.org.tw\n"
+        "export SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull\n"
+        "export SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof\n"
+        "export SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no\n"
+        "export SOURCE_INGEST_CONTROLLER_MAX_TICKS=1\n"
+        "export SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1\n"
+        "export SOURCE_INGEST_MAX_RECORDS=500\n"
+        "export SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-official-twse-margin-balances\n"
+        "export SOURCE_INGEST_BOUNDED_DATASET=tw_margin_short_balance\n"
+        f"export SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS={outer_timeout}\n"
+        "validate_source_refresh_profile >/dev/null\n"
+        'printf "%s\\n" "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected_controller_timeout
+
+
+@pytest.mark.parametrize("caller_max_records,expected_max_records", [(None, "100"), ("", "100"), ("500", "500")])
+def test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records(
+    tmp_path: Path, caller_max_records: str | None, expected_max_records: str
+) -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"' in source
+    assert source.count('SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"') >= 3
+
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    captured_up_env = tmp_path / "up_env.json"
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"img"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} img") echo sha256:aa ;;\n'
+        f'  *" up "*) python3 -c "import json,os; print(json.dumps({{\'max_records\': os.environ.get(\'SOURCE_INGEST_MAX_RECORDS\')}}))" > "{captured_up_env}" ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        'esac\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "env.json"
+    env_file.write_text(json.dumps(["SOURCE_INGEST_MAX_RECORDS=100"]), encoding="utf-8")
+    script = tmp_path / "refresh.py"
+    script.write_text(_refresh_runtime_python(), encoding="utf-8")
+    run_env = {"PATH": f"{fake}:{os.environ['PATH']}"}
+    if caller_max_records is not None:
+        run_env["SOURCE_INGEST_MAX_RECORDS"] = caller_max_records
+    proc = subprocess.run(
+        ["python3", str(script), str(env_file), "bounded", "sha256:aa", "2330.TW"],
+        capture_output=True,
+        text=True,
+        env=run_env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(captured_up_env.read_text(encoding="utf-8"))["max_records"] == expected_max_records
+
+
+
+def test_finmind_fundamentals_bounded_prepare_binds_symbols_and_run_date_through_the_fanout():
+    text = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    body = text[text.index('prepare_bounded_source_refresh_dataset() {'):]
+    body = body[:body.index('PREPARE_DATASET_PY\n', body.index('PREPARE_DATASET_PY'))]
+    # No early return for fundamentals: the symbol-keyed fanout job supplies request.symbols and run_date.
+    head = body[:body.index('esac')]
+    assert 'tw_monthly_revenue' not in head.split('return 0')[0]
+    assert 'FINMIND_FUNDAMENTAL_BOUNDED' in body and 'is_fund' in body
+    assert 'FinMindTaiwanFundamentalsAdapter' in body
+    assert '"symbols": list(finmind_batches[0])' in body
+
+
+def _run_manage_refresh_runtime_shell(
+    tmp_path: Path, action: str, *, fail_attempts: int
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    curl_fn = _prune_shell_function("curl_with_retry")
+    manage_fn = _prune_shell_function("manage_source_ingest_refresh_runtime")
+
+    fake = tmp_path / "bin"
+    fake.mkdir(parents=True, exist_ok=True)
+    curl_log = tmp_path / "curl.log"
+    sleep_log = tmp_path / "sleep.log"
+    attempt_file = tmp_path / "attempts"
+    attempt_file.write_text("0", encoding="utf-8")
+
+    docker = fake / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  *" config --format json source-ingest"*) echo \'{"services":{"source-ingest":{"image":"sha256:aa"}}}\' ;;\n'
+        '  "image inspect --format {{.Id}} sha256:aa") echo sha256:aa ;;\n'
+        '  *" up "*) : ;;\n'
+        '  *" ps -q source-ingest"*) echo cid1 ;;\n'
+        '  "inspect --format {{.Image}} cid1") echo sha256:aa ;;\n'
+        '  "inspect --format {{json .Config.Env}} cid1") echo \'["A=1","PANTHEON_EXTERNAL_EGRESS=deny","PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="]\' ;;\n'
+        'esac\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    curl = fake / "curl"
+    curl.write_text(
+        f"""#!/usr/bin/env python3
+import pathlib, sys
+log = pathlib.Path({str(curl_log)!r})
+attempts_path = pathlib.Path({str(attempt_file)!r})
+n = int(attempts_path.read_text(encoding="utf-8")) + 1
+attempts_path.write_text(str(n), encoding="utf-8")
+with log.open("a", encoding="utf-8") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\\n")
+sys.exit(1 if n <= {fail_attempts} else 0)
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+
+    sleep = fake / "sleep"
+    sleep.write_text(
+        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\n',
+        encoding="utf-8",
+    )
+    sleep.chmod(0o755)
+
+    env_file = tmp_path / "steady_env.json"
+    env_file.write_text(
+        json.dumps(["A=1", "PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="]),
+        encoding="utf-8",
+    )
+    harness = (
+        "set -euo pipefail\n"
+        + curl_fn
+        + "\n"
+        + manage_fn
+        + f'\nmanage_source_ingest_refresh_runtime "{env_file}" "{action}" "sha256:aa" "2330.TW"\n'
+    )
+    proc = subprocess.run(
+        ["bash", "-c", harness],
+        env={
+            "PATH": f"{fake}:{os.environ['PATH']}",
+            "SOURCE_INGEST_API_URL": "http://127.0.0.1:18097",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    curls = curl_log.read_text(encoding="utf-8").splitlines() if curl_log.exists() else []
+    sleeps = sleep_log.read_text(encoding="utf-8").splitlines() if sleep_log.exists() else []
+    return proc, curls, sleeps
+
+
+@pytest.mark.parametrize("action", ["bounded", "restore"])
+def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_and_restore(
+    tmp_path: Path, action: str
+) -> None:
+    # 18 failures (= 90s warmup, exceeding the old 12x5=60s restore cap and previously
+    # skipped entirely on bounded) must still succeed within the 36x5s (180s) budget.
+    warm_dir = tmp_path / f"warm-{action}"
+    warm_dir.mkdir()
+    ok_proc, ok_curls, ok_sleeps = _run_manage_refresh_runtime_shell(warm_dir, action, fail_attempts=18)
+    assert ok_proc.returncode == 0, ok_proc.stderr
+    assert len(ok_curls) == 19
+    assert all(
+        c == "-fsS --max-time 5 --connect-timeout 5 http://127.0.0.1:18097/readyz"
+        for c in ok_curls
+    )
+    assert ok_sleeps == ["5"] * 18
+
+    # Persistent failure exhausts all 36 retry loops + 1 final curl attempt and fails closed.
+    fail_dir = tmp_path / f"fail-{action}"
+    fail_dir.mkdir()
+    fail_proc, fail_curls, fail_sleeps = _run_manage_refresh_runtime_shell(fail_dir, action, fail_attempts=100)
+    assert fail_proc.returncode != 0
+    assert len(fail_curls) == 37
+    assert fail_sleeps == ["5"] * 36
+

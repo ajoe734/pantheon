@@ -83,6 +83,25 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
         return event
 
     # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/decision-events/{decision_event_id}/decision-lock
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/decision-events/{decision_event_id}/decision-lock")
+    def get_decision_lock(
+        decision_event_id: str,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+    ) -> Dict[str, Any]:
+        """Forward an Agora-owner read of the shadow-mode decision lock.
+
+        The owner scopes the read: operators/admins read any lock in their
+        tenant, a trader only their own. The BFF only forwards and shapes.
+        """
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        return {"data": ctx.service.get_decision_lock(decision_event_id, identity), "meta": ctx._meta()}
+
+    # ------------------------------------------------------------------
     # POST /bff/agora/trading-room/decision-events/{decision_event_id}/decisions
     # ------------------------------------------------------------------
 

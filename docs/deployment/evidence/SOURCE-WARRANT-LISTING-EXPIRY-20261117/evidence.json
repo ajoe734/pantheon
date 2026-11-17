@@ -1,0 +1,64 @@
+{
+  "task_id": "SOURCE-WARRANT-LISTING-EXPIRY-20261117",
+  "recorded_utc": "2026-11-16",
+  "no_credentials": true,
+  "reproduction_acceptance_1": {
+    "source": "live ISIN pages fetched 2026-11-16 (page update date 2026/11/17): strMode=2 and strMode=4",
+    "listing_rows": 57531,
+    "listed_warrants": 55108,
+    "twse_warrants": 41965,
+    "tpex_warrants": 13143,
+    "ordinary_share_registry_rows": 2014,
+    "old_pattern_WARRANT_SYMBOL_RE_misses_listed_warrants": 13143,
+    "old_pattern_matches_non_warrants": 0,
+    "finding": "the symbol pattern misses every TPEx warrant (7xxxxx); only the listing separates a listed warrant from an expired one",
+    "not_measured": "hosted stored-price-symbol count and recorded collector bundle count need hosted/collector host read access that this worker does not have; scripts/delete_expired_warrants.py dry run produces them"
+  },
+  "design_vs_reality_difference": "design section 4.3/6 assumed 7,053 TWSE warrants and ~22,500 allowlist rows (2 MB). Live listing today has 41,965 TWSE warrants and 57,531 rows; compact state file = 3,218,831 bytes (> 2 MB design limit, <= 20 MB hard limit). Design-shaped 22,500 rows = 1,233,074 bytes (test fails above 2 MB). Section 6 row for listing_allowlist needs the daily limit raised or the row count budget restated.",
+  "measurements": {
+    "parse_both_full_pages_seconds": 0.76,
+    "state_bytes_live_57531_rows": 1621830,
+    "state_bytes_design_shaped_22500_rows": 625628,
+    "writer_batch_500_records": "2 listed stored, 498 unlisted skipped, skipped_not_listed_count=498 (test_batch_of_500_listed_warrants_stored_and_unlisted_skipped)",
+    "stores_touched_budget_row": "listing_allowlist + ordinary_share_registry (section 6): measured above; market_snapshot_current, daily_bars, receipts: not touched (filter only decides what is written)",
+    "budget_reconciliation_acceptance_9": "Reopen fix: state schema v2 interns venue and dates (v1 still loads). Live shaped 57,531 rows = 1,621,830 bytes (was 3,218,831), inside the 2 MB design row; design shaped 22,500 rows = 625,628 bytes. Tests test_live_shaped_state_bytes_budget_and_roundtrip and test_hosted_shaped_state_bytes_budget fail above 2 MB. Design section 6 assumed 7,053 TWSE warrants; live is 41,965, recorded as the new row-count basis."
+  },
+  "same_parser_acceptance_4": "collector host and hosted both call security_listing.refresh_listing/parse_isin_page; the collector runner imports services.source_ingestion.security_listing or loads the same file from PANTHEON_SECURITY_LISTING_MODULE. Difference: collector image (Dockerfile COPY collector_stack only) does not ship the module yet; deploying it and scheduling refresh_security_listing is a Human/Ops step. Hosted refresh scheduling is not wired in this task (module + function delivered).",
+  "rollback_acceptance_10": "COLLECTOR_WARRANTS_MODE=off / warrants_mode='off' / ListingFilter(enabled=False): previous behaviour; tests test_rollback_mode_off_restores_previous_behaviour and test_filter_disabled_is_previous_behaviour. No persisted format of an existing store changed (listing state is a new file), so no previous-reader test is needed.",
+  "commands": [
+    "python -m pytest services/source_ingestion/tests/test_security_listing.py scripts/test_delete_expired_warrants.py services/source_ingestion/tests/test_active_universe.py",
+    "cd deploy/collector && python -m pytest tests --ignore=tests/test_scrapling_backend.py",
+    "python -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_market_data_storage.py"
+  ],
+  "known_environment_failures": [
+    "Reviewer env lacked pytest/jsonschema/fastapi. Worker re-ran in a venv with pytest and jsonschema: the earlier 13 failures were the missing jsonschema; one remains, test_taiwan_official_connectors::test_tdcc_and_taifex_evidence_and_search_canary_readback, which needs fastapi (services/search/main.py import), unrelated to this task."
+  ],
+  "not_done": [
+    "hosted deletion run (MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117)",
+    "daily_bars row deletion (retention sweeper SOURCE-RETENTION-SWEEPER-20261118); script reports only",
+    "features and snapshot_current stores are not rewritten by the script (no per symbol key in features rows; snapshot delete entry point is the sweeper's)",
+    "active_universe.py unchanged (FinMind adapters only fetch active-universe symbols); hosted scheduling of the listing refresh",
+    "hosted stored-symbol count and recorded collector bundle count (acceptance 1 measurement): needs hosted and collector host read access, produced by the delete_expired_warrants.py dry run on those hosts",
+    "collector image shipping security_listing and hosted listing refresh scheduling (Human/Ops step, named in the README deployment note)"
+  ],
+  "pass_counts": {
+    "command": "PYTHONPATH=. pytest -q deploy/collector/tests services/source_ingestion/tests/test_taiwan_official_connectors.py test_tw_suspension_holidays_intake.py test_market_data_storage.py test_active_universe.py test_security_listing.py scripts/test_delete_expired_warrants.py",
+    "result": "356 passed, 11 skipped, 1 failed (fastapi missing, environmental) after the reopen fixes; test_tw_suspension_holidays_intake.py 10 passed"
+  },
+  "suspension_cap_reopen_1": "collector-tw-trading-suspension definition now has max_records=20000 in connector_definitions.py (default was 500, truncating intake once listed warrants are kept). test_suspension_production_cap_is_not_truncating_listed_warrant_intake pulls with the production cap and compares to an uncapped pull (equal, > 2000 records).",
+  "no_listing_source_acceptance_3_4": "Neither runtime ships a listing refresh yet. Collector: a host whose security-listing.json was never created collects unfiltered with a logged warning (rollout shadow = the previous behaviour); this is never a deletion path: ListingState.expired_warrants() on an empty state is empty and scripts/delete_expired_warrants.py refuses (listing_unavailable) so nothing is treated as expired or deleted. Once a listing exists it is fail closed after 3 trading days (test_listing_older_than_three_trading_days_stops_price_collection_and_uninitialised_is_shadow). Hosted: market data storage writer with no listing_filter writes as before. The effect: until Ops ships security_listing into the collector image and schedules the refresh, expired warrants are still collected, not newly skipped.",
+  "suspension_cap_reopen_2": {
+    "measured_count": "2476 tw_trading_suspension records in the recorded official TWSE TWTAWU + TPEx sprcHis collector bundle (2024-2026 window), counted by an uncapped pull through the production entry point. This is the recorded-fixture shape, not a live hosted pull; no hosted suspension measurement was taken in this task.",
+    "why_20000_is_sufficient": "20000 is about 8x the measured 2476 and covers the whole bundle in one run. The suspension set is bounded by the number of suspension events in the 2024-2026 window, which does not scale with the 57,531-row listing.",
+    "when_exceeded": "Not silent: the adapter returns a CollectorPullResult with complete=False, observed.continuation_pending=True, health_state=degraded (collector_complete_boundary_unverified) and a resume cursor '<bundle>|items=N'. The remainder is delivered on the next run from that cursor. Test: test_suspension_cap_exceeded_is_loud_not_silently_truncated (cap 2000 on the 2476 bundle). Caveat: callers that use execute_provider_owned_adapter without preserve_collector_outcome get a tuple and drop that cursor; the configured ingestion path preserves it.",
+    "production_change": "connector_definitions.py: only max_records=20000 on collector-tw-trading-suspension."
+  },
+  "pass_counts_reopen_2": "360 passed, 10 skipped, 0 failed (deploy/collector/tests + test_tw_suspension_holidays_intake, test_taiwan_official_connectors, test_security_listing, test_market_data_storage, test_active_universe, scripts/test_delete_expired_warrants) after merging origin/dev",
+  "suspension_cap_reopen_3_ci_red": {
+    "finding": "PR #7472 Smoke acceptance failed: max_records=20000 on collector-tw-trading-suspension violates the hosted fetch.max_records <= 1000 bound (configured.py), so every controller tick and test_every_collector_definition_is_created_disabled raised.",
+    "fix": "Reverted connector_definitions.py to the origin/dev state (no max_records override; default 500). No change to configured.py.",
+    "effect": "2476 recorded suspension records exceed one run; the adapter reports complete=False, continuation_pending and a resume cursor, delivering the rest on later runs. Not silent; test_suspension_cap_exceeded_is_loud_not_silently_truncated covers it. The earlier claim that 20000 covers the bundle in one run is withdrawn.",
+    "test": "test_suspension_production_cap_is_hosted_valid_and_pages_to_completion asserts the cap is 0<cap<=1000 and a capped pull returns exactly cap records.",
+    "validation": "Smoke batches rerun locally: test_tw_suspension_holidays_intake + test_collector_bundle_connector + test_scheduled_connector 190 passed, 1 skipped; test_collector_market_early_fetch_pit + newest_session_progress + hosted_throughput 38 passed."
+  }
+}

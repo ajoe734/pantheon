@@ -88,6 +88,7 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
 )
 
 _default_store: Optional[TradingRoomStore] = None
+_active_service: Optional["TradingRoomService"] = None
 
 
 def get_default_trading_room_store() -> TradingRoomStore:
@@ -98,8 +99,16 @@ def get_default_trading_room_store() -> TradingRoomStore:
 
 
 def reset_default_trading_room_store() -> None:
-    global _default_store
+    global _default_store, _active_service
     _default_store = None
+    _active_service = None
+
+
+def get_active_trading_room_service() -> "TradingRoomService":
+    global _active_service
+    if _active_service is None:
+        _active_service = TradingRoomService()
+    return _active_service
 
 
 class TradingRoomService:
@@ -111,11 +120,17 @@ class TradingRoomService:
         workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
+        decision_lock_owner: Optional[Any] = None,
+        institutional_knowledge_reader: Optional[Any] = None,
     ):
+        global _active_service
+        self.decision_lock_owner = decision_lock_owner
+        self.institutional_knowledge_reader = institutional_knowledge_reader
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
         self.utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat())
         self.bff_error = bff_error or self._default_bff_error
+        _active_service = self
 
     def _default_bff_error(
         self,
@@ -453,6 +468,16 @@ class TradingRoomService:
             "decided_at": now,
         }
 
+        shadow_lock = self._write_shadow_lock(
+            event=event,
+            decision_event_id=decision_event_id,
+            decision_record=decision_record,
+            body=body,
+            identity=identity,
+            scope=scope,
+            now=now,
+        )
+
         intent = None
         intent_ref: Optional[str] = None
         if body.decision in ("approve", "modify"):
@@ -479,6 +504,8 @@ class TradingRoomService:
             "decision_event_id": decision_event_id,
             "decision": body.decision,
             "intent_ref": intent_ref,
+            "human_decision_id": shadow_lock["human_decision_id"],
+            "execution_observation_kind": shadow_lock["execution_observation_kind"],
         }
         if intent_ref:
             data["no_order_route_proof"] = "agora_intent_record_only"
@@ -490,6 +517,149 @@ class TradingRoomService:
             now,
         )
         return data
+
+    # -----------------------------------------------------------------------
+    # Shadow mode: immutable decision lock in the Agora owner (design A4)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _identity_roles(identity: Any) -> List[str]:
+        roles = identity.get("roles") if isinstance(identity, dict) else getattr(identity, "roles", None)
+        roles = [str(r) for r in (roles or [])]
+        # The write-role gate already ran; a role-less identity acts as the trader.
+        return roles or ["trader"]
+
+    def _write_shadow_lock(
+        self,
+        *,
+        event: Dict[str, Any],
+        decision_event_id: str,
+        decision_record: Dict[str, Any],
+        body: TraderDecisionRequest,
+        identity: Any,
+        scope: Dict[str, str],
+        now: str,
+    ) -> Dict[str, Any]:
+        """Write the lock before the decision is recorded; fail closed."""
+        from services.agora.shadow_mode import (
+            DecisionLockExistsError,
+            DecisionLockInvalidError,
+            build_decision_lock,
+        )
+        from services.agora.write_authority import AgoraWriteForbiddenError
+
+        owner = self.decision_lock_owner
+        if owner is None:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        roles = self._identity_roles(identity)
+        try:
+            lock = build_decision_lock(
+                human_decision_id=owner.store.decision_lock_id(scope["tenant_id"], decision_event_id),
+                decision_record_id=decision_record["decision_record_id"],
+                event=event,
+                decision_event_id=decision_event_id,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                body_decision=body.decision,
+                rationale=body.rationale,
+                modifications=body.modifications,
+                decision_time=now,
+                execution_observation_kind=body.execution_observation_kind,
+                account_id=body.account_id,
+                broker_ids=body.broker_ids,
+                actor_roles=roles,
+            )
+            return dict(owner.create_decision_lock(lock, roles))
+        except DecisionLockExistsError as exc:
+            raise self.bff_error(
+                409, "TRADING_INTENT_ALREADY_RECORDED", str(exc), "decision_lock_exists"
+            ) from exc
+        except DecisionLockInvalidError as exc:
+            raise self.bff_error(422, "VALIDATION_ERROR", str(exc), exc.reason) from exc
+        except AgoraWriteForbiddenError as exc:
+            raise self.bff_error(403, "FORBIDDEN", str(exc), "decision_lock_forbidden") from exc
+        except Exception as exc:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner write failed",
+                "decision_lock_owner_unavailable",
+            ) from exc
+
+    def get_decision_lock(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
+        owner = self.decision_lock_owner
+        if owner is None:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        scope = _workspace_scope(identity)
+        lock = owner.get_decision_lock_for_event(
+            decision_event_id,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            actor_roles=self._identity_roles(identity),
+        )
+        if lock is None:
+            raise self.bff_error(404, "NOT_FOUND", "Decision lock not found", "decision_lock_not_found")
+        return dict(lock)
+
+    # -----------------------------------------------------------------------
+    # Institutional knowledge & system suggestions (Design §12.7)
+    # -----------------------------------------------------------------------
+
+    def _get_institutional_knowledge_reader(self) -> Any:
+        if self.institutional_knowledge_reader is not None:
+            return self.institutional_knowledge_reader
+        from ..servant.institutional_knowledge import InstitutionalKnowledgeReader
+
+        return InstitutionalKnowledgeReader()
+
+    def _raise_institutional_knowledge_error(self, exc: Any) -> None:
+        ErrorCode = self._error_code_enum()
+        dep_code = getattr(ErrorCode, "DEPENDENCY_UNAVAILABLE", "SERVICE_UNAVAILABLE")
+        detail_dict = exc.to_detail() if hasattr(exc, "to_detail") else {"status": "unavailable", "owner": getattr(exc, "owner", "institutional_knowledge"), "reason": getattr(exc, "reason", str(exc)), "fallback_used": False}
+        http_exc = self.bff_error(
+            getattr(exc, "status_code", 503), dep_code, f"Institutional knowledge owner {detail_dict.get('owner')!r} is unavailable",
+            str(detail_dict.get("reason") or "owner_unavailable"), precondition_failed=f"{detail_dict.get('owner')}_owner", details_extra=detail_dict,
+        )
+        if isinstance(http_exc.detail, dict):
+            for k, v in (("status", "unavailable"), ("owner", detail_dict.get("owner")), ("reason", detail_dict.get("reason")), ("fallback_used", False)):
+                http_exc.detail.setdefault(k, v)
+        raise http_exc from exc
+
+    def get_system_suggestions(
+        self, *, identity: Any, decision_event_id: Optional[str] = None, strategy_id: Optional[str] = None,
+        symbol: Optional[str] = None, strategy_family: Optional[str] = None, event_kind: Optional[str] = None,
+        action: Optional[str] = None, regime_ref: Optional[str] = None, servant_persona_id: Optional[str] = None,
+        authorization: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from ..servant.institutional_knowledge import InstitutionalKnowledgeUnavailableError
+
+        scope = _workspace_scope(identity)
+        event: Optional[Dict[str, Any]] = None
+        if decision_event_id:
+            event = self.get_decision_event(decision_event_id, identity)
+        elif not any((strategy_id, symbol, strategy_family, event_kind, action, regime_ref)):
+            items = self.list_decision_events(identity=identity, state="pending_review", page_size=1).get("items") or self.list_decision_events(identity=identity, page_size=1).get("items") or []
+            if items:
+                event = items[0]
+        try:
+            return self._get_institutional_knowledge_reader().get_system_suggestions_for_decision(
+                tenant_id=scope["tenant_id"], user_id=scope["user_id"], servant_persona_id=servant_persona_id,
+                decision_event=event, decision_event_id=decision_event_id, symbol=symbol, strategy_id=strategy_id,
+                strategy_family=strategy_family, event_kind=event_kind, suggested_action=action,
+                regime_ref=regime_ref, operator_id=scope["user_id"], authorization=authorization,
+            )
+        except InstitutionalKnowledgeUnavailableError as exc:
+            self._raise_institutional_knowledge_error(exc)
+            raise
+
+    def get_decision_system_suggestions(
+        self, decision_event_id: str, identity: Any, *, servant_persona_id: Optional[str] = None, authorization: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return self.get_system_suggestions(identity=identity, decision_event_id=decision_event_id, servant_persona_id=servant_persona_id, authorization=authorization)
 
     # -----------------------------------------------------------------------
     # Trading Intents & Governed Handoffs

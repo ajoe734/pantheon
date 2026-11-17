@@ -3,7 +3,8 @@ Write-authority matrix and role-checking for the Agora service boundary.
 
 Agora is the canonical domain-owned write path for Agora sessions, memos,
 evidence packs, notes, insights, signals, feedback, decision journal entries,
-workshops, proposals, and interactions. Callers must satisfy role-based write
+workshops, proposals, interactions, and shadow-mode decision locks
+(insert-only; operators/admins read all, a trader reads only their own). Callers must satisfy role-based write
 authority gates; unauthorized callers fail closed.
 """
 from __future__ import annotations
@@ -35,6 +36,8 @@ WRITE_AUTHORITY_MATRIX: Dict[Tuple[str, str], List[str]] = {
     ("AgoraProposal", "create"): ["operator", "admin", "trader", "strategy.review"],
     ("AgoraProposal", "modify"): ["operator", "admin", "trader", "strategy.review"],
     ("AgoraInteraction", "create"): ["operator", "admin", "trader"],
+    ("AgoraDecisionLock", "create"): ["operator", "admin", "trader"],
+    ("AgoraDecisionLock", "read_all"): ["operator", "admin"],
     ("AgoraInteraction", "resolve_context"): ["operator", "admin", "trader"],
 }
 

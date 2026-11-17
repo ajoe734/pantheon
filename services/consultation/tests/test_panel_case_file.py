@@ -88,7 +88,8 @@ def _contribution():
         "participant_type": "persona", "participant_ref": "p1", "summary": "summary",
         "recommendation": "approve", "confidence": .7,
         "event_content": {"claims": [{"claim": "bounded claim", "evidence_refs": ["item-1"]}],
-                          "summary_evidence_refs": ["item-1"]},
+                          "summary_evidence_refs": ["item-1"],
+                          "interpretation": {"mode": "fallback", "reason": "broker_disabled", "citations": []}},
         "evidence": [{"id": "item-1", "evidence_type": "case_file_item", "link": "casefile://1"}],
         "findings": []}, expected_tenant_id="t1", expected_request_id="r1")
 
@@ -113,6 +114,20 @@ def test_per_claim_citations_cannot_be_replaced_by_global_evidence(change, reaso
     assert wf._case_file_rejection(contribution, CASE) is None
     changed = replace(contribution, event_content={**contribution.event_content, **change})
     assert wf._case_file_rejection(changed, CASE) == reason
+
+
+@pytest.mark.parametrize("record,reason", [
+    (None, "interpretation_missing"),
+    ({"mode": "interpretation", "text": "t", "citations": ["c"] * 13, "run_ref": "r"}, "interpretation_too_many_citations"),
+    ({"mode": "interpretation", "text": "", "citations": [], "run_ref": "r"}, "interpretation_incomplete"),
+    ({"mode": "fallback", "citations": []}, "interpretation_fallback_reason_missing"),
+    ({"mode": "guess", "citations": []}, "interpretation_mode_unknown"),
+])
+def test_interpretation_record_is_required_and_bounded(record, reason):
+    content = {k: v for k, v in _contribution().event_content.items() if k != "interpretation"}
+    if record is not None:
+        content["interpretation"] = record
+    assert wf._case_file_rejection(replace(_contribution(), event_content=content), CASE) == reason
 
 
 def test_uncited_finding_is_invalid():

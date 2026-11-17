@@ -33,6 +33,21 @@ from services.source_ingestion.runtime import SourceIngestionRuntime, _receipt_s
 from services.source_ingestion.scheduler import IngestReceipt
 
 
+def _persist_legacy_receipt(store, receipt):
+    """Write a receipt exactly as the deployed (e7ec353d6) writer did: bodies embedded.
+
+    These summary/registry tests pin the reader against that legacy journal shape; the
+    new writer's slim form is covered by test_ingest_receipt_snapshot_refs_bounded.py.
+    """
+    from services.source_ingestion.process_lock import exclusive_file_lock
+
+    with exclusive_file_lock(store._lock_path, store._lock):
+        store._reload_if_changed_unlocked()
+        store._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
+        store._receipts[receipt.ingest_run_id] = receipt
+    return receipt
+
+
 @pytest.fixture()
 def hosted_registry_fixture(tmp_path, monkeypatch):
     """Replay the complete captured wire shape through the real receipt reader.
@@ -63,7 +78,7 @@ def hosted_registry_fixture(tmp_path, monkeypatch):
         }))
         receipt = IngestReceipt.from_dict(row["freshness"]["latest_receipt"])
         assert receipt.to_dict() == row["freshness"]["latest_receipt"]
-        runtime.store.upsert_receipt(receipt)
+        _persist_legacy_receipt(runtime.store, receipt)
         receipts.append(receipt)
 
     read_entries = runtime._source_connector_entries
@@ -190,7 +205,7 @@ def registry_fixture(tmp_path_factory):
         rejected_count=0, watermark=days[-1], source_timestamp="2026-11-11T06:00:00Z",
         source_timestamp_status="valid", evidence_refs=refs,
     )
-    runtime.store.upsert_receipt(receipt)
+    _persist_legacy_receipt(runtime.store, receipt)
     app = FastAPI()
     app.include_router(create_catalog_controller_router(runtime))
     app.include_router(create_ingest_operations_router(runtime))
@@ -324,7 +339,7 @@ def test_complete_hosted_snapshot_growth_changes_only_counts(hosted_registry_fix
                      accepted_record_count=count, updated_snapshot_count=count)
         refs["source_ids"] = [receipt.evidence_refs["source_ids"][0]] * count
         grown_receipt = replace(receipt, evidence_refs=refs)
-        runtime.store.upsert_receipt(grown_receipt)
+        _persist_legacy_receipt(runtime.store, grown_receipt)
         response = client.get("/api/source-ingest/registry")
         assert response.status_code == 200
         summary = _registry_receipt(response.json(), receipt.connector_id)
@@ -409,7 +424,7 @@ def test_snapshot_and_evidence_list_growth_changes_only_counts(registry_fixture,
             refs["market_snapshots"] = batch
             refs["source_ids"] = [receipt.evidence_refs["source_ids"][0]] * count
             grown_receipt = replace(receipt, evidence_refs=refs)
-            runtime.store.upsert_receipt(grown_receipt)
+            _persist_legacy_receipt(runtime.store, grown_receipt)
             response = client.get("/api/source-ingest/registry")
             assert response.status_code == 200
             summary = _registry_receipt(response.json(), receipt.connector_id)
@@ -419,7 +434,7 @@ def test_snapshot_and_evidence_list_growth_changes_only_counts(registry_fixture,
             baseline = _assert_growth_preserves_payload_and_raw(
                 runtime, client, response, grown_receipt, baseline)
     finally:
-        runtime.store.upsert_receipt(receipt)
+        _persist_legacy_receipt(runtime.store, receipt)
     # Only the decimal widths of four counters can change, never the bodies.
     assert max(lengths) - min(lengths) <= 8
 

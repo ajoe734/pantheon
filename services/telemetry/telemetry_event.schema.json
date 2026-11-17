@@ -70,6 +70,7 @@
         "manual_override",
         "kill_switch_action",
         "heartbeat",
+        "runtime_state_snapshot",
         "bracket_order_logged",
         "telemetry_mirror_mismatch"
       ],
@@ -413,6 +414,10 @@
         "action": {
           "type": "string",
           "description": "Lifecycle action tag for non-metric events (deploy, rollback, kill-switch). Allows the event to pass minProperties=1 without inventing numeric telemetry."
+        },
+        "state_snapshot": {
+          "type": "integer",
+          "description": "Marker for runtime_state_snapshot events (state lives in metadata). Value is always 1."
         },
         "heartbeat": {
           "type": "integer",

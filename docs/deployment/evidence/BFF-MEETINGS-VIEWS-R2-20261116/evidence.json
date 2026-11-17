@@ -1,0 +1,31 @@
+{
+  "task_id": "BFF-MEETINGS-VIEWS-R2-20261116",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base": "origin/dev 6f08fdbfb39c54e5a341325208ca662a313ac3e4",
+  "hosted_behavior_claimed": false,
+  "parallel_contract": {
+    "contract_id": "PARALLEL CONTRACT 2026-11-16 C1",
+    "provider_task": "MEETING-PROTOCOL-ENGINE-R2-20261116",
+    "provider_merged_on_dev": false,
+    "provider_availability_note": "MEETING-PROTOCOL-ENGINE-R2-20261116 was not yet merged on origin/dev (6f08fdbfb39c54e5a341325208ca662a313ac3e4) at delivery time; per coordinator contract, consumer built against the fixed C1 routes (/api/consult/meetings, /api/consult/meetings/{meeting_id}, /api/consult/meetings/proposals, /api/consult/meetings/catalogue) with the consultation owner doubled at its HTTP edge (urllib.request.urlopen)."
+  },
+  "changes": {
+    "services/control-plane/bff/meetings/__init__.py": "Exported MeetingsOwnerClient, shaping helpers, and create_meetings_router",
+    "services/control-plane/bff/meetings/client.py": "Implemented MeetingsOwnerClient forwarding C1 reads and operator convene POST with Idempotency-Key to the consultation owner; stripped all private memory items/fields; showed trader identities and Agora records only to operators and to a trader for his own records; revealed anonymised round labels only to operators; projected REVIEW meetings, insufficient_participants refusals, and operator-waiting proposals for the Human Inbox",
+    "services/control-plane/bff/meetings/router.py": "Mounted GET /bff/management/meetings, GET /bff/management/meetings/proposals, GET /bff/management/meetings/catalogue, GET /bff/management/meetings/{meeting_id}, POST /bff/management/meetings (plus /bff/meetings* aliases) with write-gating, Idempotency-Key enforcement, 404 on unknown meeting_id, and explicit unavailable states",
+    "services/control-plane/bff/core/app_factory.py": "Mounted create_meetings_router in mount_bff_routers",
+    "services/control-plane/bff/management_read_models/service.py": "Integrated the meetings contributor into ManagementService.get_human_inbox and compose_human_inbox"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_meetings_human_inbox.py",
+      "result": "9 passed in 5.97s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "result": "44 passed in 58.52s"
+    }
+  ],
+  "credentials_present": false
+}
