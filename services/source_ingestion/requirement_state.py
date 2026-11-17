@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 import zlib
@@ -1241,6 +1242,9 @@ def _compact_journal_in_place(fd: int, *, path: Path) -> dict[tuple[str, str], i
     return kept_lengths
 
 
+_READER_SWITCH_INTERVAL_SECONDS = 0.005
+
+
 class LatestMarketSnapshotStore:
     """Append-only, checksummed Source projection for latest normalized closes.
 
@@ -1307,6 +1311,10 @@ class LatestMarketSnapshotStore:
         if mode != "journal":
             with _sqlite_errors("open"):
                 self._backend = SqliteSnapshotBackend(self.sqlite_path)
+                # A reader call re-acquires the GIL several times (sqlite step, inflate, parse); against a
+                # CPU-bound ingest thread each wait is one switch interval (default 5 ms). Only ever lower it.
+                if sys.getswitchinterval() > _READER_SWITCH_INTERVAL_SECONDS:
+                    sys.setswitchinterval(_READER_SWITCH_INTERVAL_SECONDS)
         if mode == "sqlite":
             self._seed_sqlite_from_journal()
         else:
@@ -1717,13 +1725,22 @@ class LatestMarketSnapshotStore:
                 # One short read transaction takes a consistent copy of the raw rows; decoding then runs
                 # outside it (a long read transaction would pin the WAL) and yields the GIL regularly so
                 # the ingest writer and API readers sharing this process are not starved.
-                rows = list(self._backend.iter_records())
+                rows = []
+                for number, item in enumerate(self._backend.iter_records(), start=1):
+                    rows.append(item)
+                    if number % 100 == 0:
+                        time.sleep(0.001)
                 with tmp.open("w", encoding="utf-8") as handle:
                     for number, (key, row) in enumerate(rows, start=1):
                         snapshot = _snapshot_from_row(key, row)
                         handle.write(self._envelope_line(snapshot.to_dict()) + "\n")
                         if number % 25 == 0:
                             time.sleep(0.002)
+                        if number % 100 == 0:
+                            # Flush in ~0.4 MB slices: one ~40 MB fsync at the end would stall the writer's
+                            # commit fsync on the same filesystem (journal contention, measured ~500 ms).
+                            handle.flush()
+                            os.fsync(handle.fileno())
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(tmp, self.path)
@@ -2263,6 +2280,8 @@ class LatestMarketSnapshotStore:
                 # Phase 1 (no write lock held): read the current versions and build the next ones.
                 prepared: dict[tuple[str, str], tuple[str | None, LatestMarketSnapshot, tuple[str, str, str]]] = {}
                 for symbol in sorted(grouped):
+                    # Yield the GIL between keys: encode/compress work must not stall in-process readers.
+                    time.sleep(0)
                     key = (symbol, dataset)
                     with _sqlite_errors("read"):
                         row = self._backend.get(*key)
