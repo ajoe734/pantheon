@@ -1292,6 +1292,7 @@ class LatestMarketSnapshotStore:
         self.compact_min_bytes = compact_min_bytes
         self._lock = threading.RLock()
         self._latest_by_symbol: dict[tuple[str, str], LatestMarketSnapshot] = {}
+        self._live_symbols_cache: tuple[Any, str, tuple[str, ...]] | None = None
         # (inode, size, mtime_ns) of the journal exactly as this store last
         # read or wrote it; None forces a full re-parse under the next lock.
         self._journal_signature: tuple[int, int, int] | None = None
@@ -1531,11 +1532,18 @@ class LatestMarketSnapshotStore:
     def journal_stats(self) -> dict[str, Any]:
         """Journal size readback; ``warning`` precedes the deployment capture bound."""
         try:
-            size = self.path.stat().st_size
-            lines = 0
-            if self.store_mode != "sqlite":  # the sqlite-mode file is the compat export: one line per key
-                with self.path.open("rb") as handle:
-                    lines = sum(1 for raw in handle if raw.strip())
+            consumed = self._consumed  # one reference read; the tuple is replaced, never edited
+            if self.store_mode != "sqlite" and consumed is not None:
+                # Size and line count as of this store's last sync or write.  The health endpoint
+                # reads memory only: no stat, no 500 MB scan, nothing that waits on a fsync or an
+                # in-place compaction.  A foreign writer shows up after the next sync.
+                size, lines = consumed[1], consumed[2]
+            else:
+                size = self.path.stat().st_size
+                lines = 0
+                if self.store_mode != "sqlite":  # the sqlite-mode file is the compat export: one line per key
+                    with self.path.open("rb") as handle:
+                        lines = sum(1 for raw in handle if raw.strip())
         except OSError:
             size, lines = 0, 0
         current_stats = self.snapshot_current_stats()
@@ -1795,23 +1803,29 @@ class LatestMarketSnapshotStore:
         return result
 
     def get(self, symbol: str, dataset: str = DAILY_SNAPSHOT_DATASET) -> LatestMarketSnapshot | None:
-        """Latest snapshot for ``symbol`` in ``dataset`` (default: daily; never crosses datasets)."""
+        """Latest snapshot for ``symbol`` in ``dataset`` (default: daily; never crosses datasets).
+
+        The journal view is read without ``self._lock``.  That is safe because the published map
+        ``self._latest_by_symbol`` is only ever replaced by assigning a new dict (one reference
+        store, atomic under the GIL) and is never mutated in place, and ``LatestMarketSnapshot``
+        values are immutable.  A reader therefore sees the map from before or after a batch,
+        never a partial one, and does not wait for an append, fsync or compaction.  After a
+        failed read the writer publishes ``{}``; a reader then gets ``None`` as before.
+        """
         key_dataset = _snapshot_dataset(dataset)
         key = (_market_snapshot_lookup_symbol(symbol), key_dataset)
         if self.store_mode == "sqlite":
             return self._sqlite_get(key)
         if self.store_mode == "dual":
             # Reads SQLite and compares with the journal; a difference is counted and reported.
-            with self._lock:
-                journal_view = self._latest_by_symbol.get(key)
+            journal_view = self._latest_by_symbol.get(key)  # lock-free, see the journal branch below
             current = self._sqlite_get(key)
             if (current is None) != (journal_view is None) or (
                 current is not None and current.to_dict() != journal_view.to_dict()
             ):
                 self._mismatch_count += 1
             return current
-        with self._lock:
-            return self._latest_by_symbol.get(key)
+        return self._latest_by_symbol.get(key)
 
     def withdraw_sessions(
         self,
@@ -1932,8 +1946,13 @@ class LatestMarketSnapshotStore:
         if self.store_mode != "journal":
             with _sqlite_errors("read"):
                 return [symbol for symbol, _ds in self._backend.keys(key_dataset)]
-        with self._lock:
-            return sorted(sym for (sym, ds) in self._latest_by_symbol if ds == key_dataset)
+        published = self._latest_by_symbol  # lock-free: published maps are never mutated in place
+        cached = self._live_symbols_cache  # (map, dataset, symbols): a tuple, replaced whole
+        if cached is not None and cached[0] is published and cached[1] == key_dataset:
+            return list(cached[2])  # the map is unchanged since it was last listed: no 17k-key walk under GIL contention
+        symbols = sorted(sym for (sym, ds) in published if ds == key_dataset)
+        self._live_symbols_cache = (published, key_dataset, tuple(symbols))
+        return symbols
 
     def withdraw_symbols(
         self,
