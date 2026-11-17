@@ -766,12 +766,15 @@ class PersonaCycleController:
         personas = self.owners.personas()  # fail closed before any cron deletion
         real_runtime = self.registrar._get_runtime()
         caching = _ListCachingRuntime(real_runtime)
-        saved = self.registrar._runtime
-        self.registrar._runtime = caching
+        swappable = hasattr(self.registrar, "_runtime")
+        saved = getattr(self.registrar, "_runtime", None)
+        if swappable:
+            self.registrar._runtime = caching
         try:
             report = self.registrar.reconcile_daily_cycles(personas)
         finally:
-            self.registrar._runtime = saved
+            if swappable:
+                self.registrar._runtime = saved
         # The final cron.list of the pass carries the job state we gate on.
         job_states = {}
         for pid, job_id in report["jobs"].items():
