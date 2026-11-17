@@ -2599,7 +2599,25 @@ def test_full_size_close_through_controller_main_with_persistence(
     files["status.json"] = json.dumps({"sources": statuses}).encode()
     clock, reads, peak, active = [600.0], [], [0], [0]
     lock = threading.Lock()
-    real_start = time.monotonic()
+    # Persisted run/schedule timestamps (second resolution) come from an injected stamp clock that
+    # advances exactly one second per controller sleep, never from wall time. Consecutive ticks
+    # therefore always get distinct, ordered timestamps without any real wait, and staleness is
+    # measured in ticks (as on a healthy runner) rather than in the charged virtual read time.
+    from datetime import datetime as real_datetime
+    from services.source_ingestion import pipeline as pipeline_module
+    from services.source_ingestion import runtime as runtime_module
+    from services.source_ingestion import scheduler as scheduler_module
+    stamp = [0]
+    epoch = real_datetime.now(timezone.utc).replace(microsecond=0)  # fixed anchor, read once
+
+    class ModelDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            moment = epoch + timedelta(seconds=stamp[0])
+            return moment.astimezone(tz) if tz is not None else moment.replace(tzinfo=None)
+
+    for owner in (pipeline_module, scheduler_module, runtime_module, cw):
+        monkeypatch.setattr(owner, "datetime", ModelDatetime)
 
     class LatencyTransport(FakeTransport):
         def read(self, relative_path, *, max_bytes):
@@ -2643,11 +2661,11 @@ def test_full_size_close_through_controller_main_with_persistence(
     schedule_elapsed = []
 
     def record_receipts(*args, **kwargs):
-        wall_started, model_started = time.perf_counter(), clock[0]
+        model_started = clock[0]
         response = tick_request(*args, **kwargs)
         if args[0].endswith("/run-scheduled"):
             receipts.extend(item["receipt"] for item in response["ran"])
-            schedule_elapsed.append(time.perf_counter() - wall_started + clock[0] - model_started)
+            schedule_elapsed.append(clock[0] - model_started)
         return response
 
     monkeypatch.setattr(cw, "_request_json", record_receipts)
@@ -2658,7 +2676,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     def sleep(seconds):
         sleeps.append(seconds)
         clock[0] += seconds
-        time.sleep(1)  # real persisted run timestamps must advance between loop ticks
+        stamp[0] += 1  # persisted run timestamps advance between loop ticks, deterministically
         assert len(sleeps) < 150, "bounded controller regression"
         for cid, path in paths.items():
             if not path.is_file():
@@ -2667,7 +2685,7 @@ def test_full_size_close_through_controller_main_with_persistence(
             if not progress[cid] or state["delivered"] != progress[cid][-1]:
                 progress[cid].append(state["delivered"])
             if state["done"]:
-                completed_at.setdefault(cid, clock[0] + time.monotonic() - real_start)
+                completed_at.setdefault(cid, clock[0])
         if len(completed_at) == len(paths):
             # Every row in these newest-only bundles is acknowledged; restore cadence.
             assert seconds == config.interval_seconds
@@ -2724,7 +2742,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     assert pending == []  # acknowledged newest-only bundles have no remaining history
     assert active[0] == 0
     assert max(schedule_elapsed) < config.timeout_seconds
-    elapsed = clock[0] + time.monotonic() - real_start
+    elapsed = clock[0]
     print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
            "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2),
            "max_schedule_request_seconds": max(schedule_elapsed)})

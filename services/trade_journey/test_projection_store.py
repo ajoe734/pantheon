@@ -7,13 +7,16 @@ typed persistence API, advisory locks, duplicate/conflict/quarantine, and two-wr
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -23,7 +26,9 @@ from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
 from services.trade_journey.materializer import SHARED_IDENTIFIER_TYPES
 from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
+    CANONICAL_LIFECYCLE_EVENT_TYPES,
     DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+    DROP_REDUNDANT_RECEIPTS_INDEX_MIGRATION_PATH,
     BatchProjectionMutation,
     ConflictingDuplicateException,
     ConcurrentReceiptClaimException,
@@ -35,27 +40,84 @@ from services.trade_journey.projection_store import (
     JourneyRow,
     JourneyStageRow,
     LoopRunRow,
+    NonLifecycleReceiptPruneJob,
     ProjectionStore,
     ProjectionStoreException,
     QuarantineRow,
     controller_advisory_lock_id,
+    prune_non_lifecycle_receipts_on_connection,
+    run_non_lifecycle_receipt_prune,
 )
 
 
-@pytest.fixture
-def postgres_dsn() -> str:
-    dsn = os.getenv("TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("TEST_DATABASE_URL is not set")
-    return dsn
+@pytest.fixture(scope="module")
+def _ephemeral_pg_cluster():
+    explicit = os.getenv("TEST_DATABASE_URL") or os.getenv("TEST_DATABASE_ADMIN_URL")
+    if explicit:
+        yield explicit
+        return
+    if shutil.which("docker") is None:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker is not available")
+    probe = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker daemon is not reachable")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+    cname = f"pantheon-proj-store-{uuid4().hex[:10]}"
+    started = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-d",
+            "--name",
+            cname,
+            "-e",
+            "POSTGRES_PASSWORD=postgres",
+            "-e",
+            "POSTGRES_USER=postgres",
+            "-e",
+            "POSTGRES_DB=postgres",
+            "-p",
+            f"127.0.0.1:{port}:5432",
+            "postgres:16-alpine",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if started.returncode != 0:
+        pytest.skip(f"Failed to start PostgreSQL container: {started.stderr}")
+    dsn = f"postgresql://postgres:postgres@127.0.0.1:{port}/postgres"
+    import psycopg  # type: ignore[import]
+
+    deadline = time.monotonic() + 15.0
+    connected = False
+    while time.monotonic() < deadline:
+        try:
+            with psycopg.connect(dsn, connect_timeout=1):
+                connected = True
+                break
+        except Exception:
+            time.sleep(0.2)
+    if not connected:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
+        pytest.skip("PostgreSQL container did not become healthy in time")
+    try:
+        yield dsn
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
 
 
 @pytest.fixture
-def postgres_admin_dsn() -> str:
-    dsn = os.getenv("TEST_DATABASE_ADMIN_URL")
-    if not dsn:
-        pytest.skip("TEST_DATABASE_ADMIN_URL is not set")
-    return dsn
+def postgres_dsn(_ephemeral_pg_cluster: str) -> str:
+    return os.getenv("TEST_DATABASE_URL") or _ephemeral_pg_cluster
+
+
+@pytest.fixture
+def postgres_admin_dsn(_ephemeral_pg_cluster: str) -> str:
+    return os.getenv("TEST_DATABASE_ADMIN_URL") or _ephemeral_pg_cluster
 
 
 def test_projection_store_bootstrap_and_schema_idempotency(postgres_dsn: str) -> None:
@@ -1366,10 +1428,11 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
             """
         )
 
-        # Index 1: event_receipts (ingested_seq)
+        # Index 1: event_receipts (ingested_seq) uses the UNIQUE index after 002 drops the redundant second index
         cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.event_receipts WHERE ingested_seq > 990 ORDER BY ingested_seq LIMIT 10")
         plan1 = "\n".join(r[0] for r in cur.fetchall())
-        assert "idx_event_receipts_ingested_seq" in plan1
+        assert "event_receipts_ingested_seq_key" in plan1
+        assert "idx_event_receipts_ingested_seq" not in plan1
 
         # Index 2: identity resolution through the scoped primary key.
         cur.execute(
@@ -2123,3 +2186,422 @@ def test_reclassify_sweep_updates_journeys_and_loop_runs_in_batches(postgres_dsn
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
             for table in ("loop_runs", "journeys"):
                 cur.execute(f"DELETE FROM {schema}.{table} WHERE tenant_id=%s", (tenant,))
+
+
+def test_migration_002_drops_redundant_ingested_seq_index_and_previous_release_tolerates_it(
+    postgres_dsn: str,
+) -> None:
+    """AC 5 & AC 7: 002 drops idx_event_receipts_ingested_seq while keeping event_receipts_ingested_seq_key."""
+    import psycopg  # type: ignore[import]
+
+    schema_name = f"test_mig002_{uuid4().hex[:8]}"
+    migration_001 = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8").replace(
+        "trade_journey_projection", schema_name
+    )
+    migration_002 = DROP_REDUNDANT_RECEIPTS_INDEX_MIGRATION_PATH.read_text(
+        encoding="utf-8"
+    ).replace("trade_journey_projection", schema_name)
+
+    try:
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            # 1. Apply 001 alone: both indexes on ingested_seq exist.
+            cur.execute(migration_001)
+            cur.execute(
+                """
+                SELECT indexname
+                FROM pg_indexes
+                WHERE schemaname = %s AND tablename = 'event_receipts'
+                ORDER BY indexname
+                """,
+                (schema_name,),
+            )
+            indexes_after_001 = {row[0] for row in cur.fetchall()}
+            assert "event_receipts_ingested_seq_key" in indexes_after_001
+            assert "idx_event_receipts_ingested_seq" in indexes_after_001
+
+            # 2. Apply 002 (and re-apply 002 for idempotency): redundant index is gone.
+            cur.execute(migration_002)
+            cur.execute(migration_002)
+            cur.execute(
+                """
+                SELECT indexname
+                FROM pg_indexes
+                WHERE schemaname = %s AND tablename = 'event_receipts'
+                ORDER BY indexname
+                """,
+                (schema_name,),
+            )
+            indexes_after_002 = {row[0] for row in cur.fetchall()}
+            assert "event_receipts_ingested_seq_key" in indexes_after_002
+            assert "event_receipts_pkey" in indexes_after_002
+            assert "idx_event_receipts_tenant_env_journey" in indexes_after_002
+            assert "idx_event_receipts_ingested_seq" not in indexes_after_002
+
+        # 3. Previous release runtime (bootstrap=False) runs batch transactions against the dropped index.
+        store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=False)
+        now = datetime.now(timezone.utc)
+        ctrl = store.execute_batch_transaction(
+            "ctrl-prev",
+            "*",
+            "*",
+            BatchProjectionMutation(
+                receipts=[
+                    EventReceiptRow(
+                        "evt-ig-1", 1, "fp-1", "", "", "", "", "heartbeat", now, "ignored", 1
+                    ),
+                    EventReceiptRow(
+                        "evt-ap-2",
+                        2,
+                        "fp-2",
+                        "t-1",
+                        "paper",
+                        "j-1",
+                        "lr-1",
+                        "signal_generation",
+                        now,
+                        "applied",
+                        1,
+                    ),
+                ],
+                source_high_watermark=2,
+                mode="live",
+                status="ready",
+                accepted_live=True,
+            ),
+        )
+        assert ctrl.checkpoint_seq == 2
+        assert ctrl.backlog_count == 0
+    finally:
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_prune_non_lifecycle_receipts_bounded_batches_and_preserves_lifecycle_receipts(
+    postgres_dsn: str,
+) -> None:
+    """AC 2 & AC 4: Prunes ignored non-lifecycle receipts <= min controller checkpoint in bounded batches."""
+    import psycopg  # type: ignore[import]
+
+    from services.trade_journey.lifecycle_projector import LIFECYCLE_EVENT_TYPES
+
+    assert CANONICAL_LIFECYCLE_EVENT_TYPES == LIFECYCLE_EVENT_TYPES
+
+    schema_name = f"test_prune_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    now = datetime.now(timezone.utc)
+
+    try:
+        # 1. Before any controller exists, safe_ingested_seq is 0 and nothing is deleted.
+        empty_res = store.prune_non_lifecycle_receipts(batch_size=2, max_batches=5)
+        assert empty_res.safe_ingested_seq == 0
+        assert empty_res.rows_deleted == 0
+
+        # 2. Seed receipts 1..12:
+        # - seq 1: applied lifecycle (signal_generation)
+        # - seq 2: quarantined lifecycle (risk_evaluation)
+        # - seq 3: superseded-retry ignored lifecycle (trade_decision)
+        # - seq 4: ignored non-lifecycle (heartbeat)
+        # - seq 5: applied lifecycle (trade_decision)
+        # - seq 6, 7, 8: ignored non-lifecycle (infrastructure_health, heartbeat, pnl_snapshot)
+        # - seq 9, 10, 11, 12: ignored non-lifecycle above controller ctrl-slow checkpoint (8)
+        receipts = [
+            EventReceiptRow(
+                "evt-lc-applied-1",
+                1,
+                "fp-1",
+                "t-1",
+                "paper",
+                "j-1",
+                "lr-1",
+                "signal_generation",
+                now,
+                "applied",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-lc-quar-2",
+                2,
+                "fp-2",
+                "t-1",
+                "paper",
+                "",
+                "",
+                "risk_evaluation",
+                now,
+                "quarantined",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-lc-retry-ignored-3",
+                3,
+                "fp-3",
+                "",
+                "",
+                "",
+                "",
+                "trade_decision",
+                now,
+                "ignored",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-hb-4", 4, "fp-4", "", "", "", "", "heartbeat", now, "ignored", 1
+            ),
+            EventReceiptRow(
+                "evt-lc-applied-5",
+                5,
+                "fp-5",
+                "t-1",
+                "paper",
+                "j-1",
+                "lr-1",
+                "trade_decision",
+                now,
+                "applied",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-infra-6",
+                6,
+                "fp-6",
+                "",
+                "",
+                "",
+                "",
+                "infrastructure_health",
+                now,
+                "ignored",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-hb-7", 7, "fp-7", "", "", "", "", "heartbeat", now, "ignored", 1
+            ),
+            EventReceiptRow(
+                "evt-pnl-8",
+                8,
+                "fp-8",
+                "",
+                "",
+                "",
+                "",
+                "pnl_snapshot",
+                now,
+                "ignored",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-hb-9", 9, "fp-9", "", "", "", "", "heartbeat", now, "ignored", 1
+            ),
+            EventReceiptRow(
+                "evt-infra-10",
+                10,
+                "fp-10",
+                "",
+                "",
+                "",
+                "",
+                "infrastructure_health",
+                now,
+                "ignored",
+                1,
+            ),
+            EventReceiptRow(
+                "evt-hb-11", 11, "fp-11", "", "", "", "", "heartbeat", now, "ignored", 1
+            ),
+            EventReceiptRow(
+                "evt-hb-12", 12, "fp-12", "", "", "", "", "heartbeat", now, "ignored", 1
+            ),
+        ]
+        # Fast controller reaches 12
+        ctrl_fast = store.execute_batch_transaction(
+            "ctrl-fast",
+            "*",
+            "*",
+            BatchProjectionMutation(
+                receipts=receipts,
+                quarantines=[
+                    QuarantineRow(
+                        "evt-lc-quar-2",
+                        2,
+                        "INVALID_LIFECYCLE_EVENT",
+                        "bad",
+                        "risk_evaluation",
+                        "t-1",
+                        "paper",
+                        "",
+                        "fp-2",
+                    )
+                ],
+                source_high_watermark=12,
+                source_frontier_seq=12,
+            ),
+        )
+        assert ctrl_fast.checkpoint_seq == 12
+
+        # Slow controller is at checkpoint 8 (plus a superseded ctrl-fast-migrate at 2)
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {schema_name}.controller (
+                    controller_id, tenant_scope, environment_scope, checkpoint_seq,
+                    source_high_watermark, backlog_count, projection_revision,
+                    deployment_sha, mode, status, accepted_live
+                ) VALUES
+                    ('ctrl-slow', '*', '*', 8, 12, 4, 1, 'sha', 'recovery', 'recovering', FALSE),
+                    ('ctrl-fast-migrate', '*', '*', 2, 2, 0, 1, 'sha', 'backfill', 'ready', FALSE)
+                """
+            )
+            conn.commit()
+
+        # 3. First bounded pass: batch_size=2, max_batches=1 -> deletes exactly 2 rows (seq 4 and 6).
+        pass1 = store.prune_non_lifecycle_receipts(
+            batch_size=2, max_batches=1, statement_timeout_ms=5000
+        )
+        assert pass1.status == "ok"
+        assert pass1.safe_ingested_seq == 8
+        assert pass1.batches_executed == 1
+        assert pass1.rows_deleted == 2
+
+        # 4. Second bounded pass: batch_size=2, max_batches=5 -> deletes remaining 2 rows <= 8 (seq 7 and 8).
+        pass2 = store.prune_non_lifecycle_receipts(
+            batch_size=2, max_batches=5, statement_timeout_ms=5000
+        )
+        assert pass2.status == "ok"
+        assert pass2.safe_ingested_seq == 8
+        assert pass2.rows_deleted == 2
+
+        # 5. Re-running at checkpoint 8 is a safe no-op.
+        pass3 = store.prune_non_lifecycle_receipts(
+            batch_size=2, max_batches=5, statement_timeout_ms=5000
+        )
+        assert pass3.rows_deleted == 0
+        assert pass3.batches_executed == 0
+
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT ingested_seq, event_id, source_event_type, disposition FROM {schema_name}.event_receipts ORDER BY ingested_seq ASC"
+            )
+            remaining = cur.fetchall()
+        assert [row[0] for row in remaining] == [1, 2, 3, 5, 9, 10, 11, 12]
+
+        # 6. Advance ctrl-slow to 12 and run via NonLifecycleReceiptPruneJob & asyncpg helper.
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {schema_name}.controller SET checkpoint_seq = 12, backlog_count = 0 WHERE controller_id = 'ctrl-slow'"
+            )
+            conn.commit()
+
+        job = NonLifecycleReceiptPruneJob(
+            store,
+            batch_size=2,
+            max_batches_per_run=1,
+            interval_seconds=0.1,
+            statement_timeout_ms=5000,
+        )
+        job_pass1 = asyncio.run(job.run_once())
+        assert job_pass1.safe_ingested_seq == 12
+        assert job_pass1.rows_deleted == 2
+        assert job.stats()["total_rows_deleted"] == 2
+
+        job_pass2 = asyncio.run(
+            run_non_lifecycle_receipt_prune(
+                postgres_dsn,
+                projection_schema=schema_name,
+                batch_size=2,
+                max_batches=5,
+                statement_timeout_ms=5000,
+            )
+        )
+        assert job_pass2.rows_deleted == 2
+
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT ingested_seq, event_id, source_event_type, disposition FROM {schema_name}.event_receipts ORDER BY ingested_seq ASC"
+            )
+            final_rows = cur.fetchall()
+        # Only the 4 lifecycle receipts (1=applied, 2=quarantined, 3=superseded-retry ignored, 5=applied) remain!
+        assert [(r[0], r[1], r[3]) for r in final_rows] == [
+            (1, "evt-lc-applied-1", "applied"),
+            (2, "evt-lc-quar-2", "quarantined"),
+            (3, "evt-lc-retry-ignored-3", "ignored"),
+            (5, "evt-lc-applied-5", "applied"),
+        ]
+
+        # 7. Replay and conflict checks on retained lifecycle receipts still work.
+        for retained in (receipts[0], receipts[1], receipts[2], receipts[4]):
+            conflicting = EventReceiptRow(
+                retained.event_id,
+                retained.ingested_seq,
+                "fp-CONFLICT",
+                retained.tenant_id,
+                retained.environment,
+                retained.journey_id,
+                retained.loop_run_id,
+                retained.source_event_type,
+                now,
+                retained.disposition,
+                2,
+            )
+            with pytest.raises(ConflictingDuplicateException, match="conflicting fingerprint"):
+                store.execute_batch_transaction(
+                    "ctrl-fast",
+                    "*",
+                    "*",
+                    BatchProjectionMutation(receipts=[conflicting], source_high_watermark=12),
+                )
+    finally:
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_prune_non_lifecycle_receipts_enforces_statement_timeout(
+    postgres_dsn: str,
+) -> None:
+    """AC 4: Bounded batch deletion runs under a statement timeout."""
+    import psycopg  # type: ignore[import]
+
+    schema_name = f"test_prune_to_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    now = datetime.now(timezone.utc)
+    store.execute_batch_transaction(
+        "ctrl-1",
+        "*",
+        "*",
+        BatchProjectionMutation(
+            receipts=[
+                EventReceiptRow(
+                    "evt-hb-1", 1, "fp-1", "", "", "", "", "heartbeat", now, "ignored", 1
+                )
+            ],
+            source_high_watermark=1,
+            source_frontier_seq=1,
+        ),
+    )
+
+    locked = threading.Event()
+    release = threading.Event()
+
+    def hold_table_lock() -> None:
+        with psycopg.connect(postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"LOCK TABLE {schema_name}.event_receipts IN ACCESS EXCLUSIVE MODE")
+                locked.set()
+                release.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_table_lock, daemon=True)
+    holder.start()
+    try:
+        assert locked.wait(timeout=5.0)
+        t0 = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            store.prune_non_lifecycle_receipts(
+                batch_size=10, max_batches=1, statement_timeout_ms=150
+            )
+        elapsed = time.monotonic() - t0
+        assert elapsed < 2.0
+    finally:
+        release.set()
+        holder.join(timeout=5.0)
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+

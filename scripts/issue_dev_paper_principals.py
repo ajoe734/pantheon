@@ -487,6 +487,42 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
     return True
 
 
+BROKER_TOKEN_FILE_ENV = "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE"
+BROKER_TOKEN_FILE_DEFAULT = "~/.pantheon-secrets/persona-tool-broker.token"
+
+
+def broker_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """Dev persona tool broker enablement with one host-persistent secret file.
+
+    The token is generated once (0600, never overwritten) and re-read on every
+    deploy, so it survives container recreation. Value is never logged.
+    """
+    if env.get("PANTHEON_ENV") != "dev":
+        raise ValueError("Broker secret is dev-only")
+    path = Path(env.get(BROKER_TOKEN_FILE_ENV) or BROKER_TOKEN_FILE_DEFAULT).expanduser()
+    if path.is_symlink():
+        raise ValueError("Unsafe broker token file")
+    token = ""
+    if path.exists():
+        if path.stat().st_mode & 0o077:
+            raise ValueError("Broker token file must be private")
+        token = path.read_text(encoding="utf-8").strip()
+    if len(token) < 32:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        token = secrets.token_urlsafe(48)
+        descriptor, temporary = tempfile.mkstemp(prefix=".broker-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(token)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    return {"PERSONA_TOOL_BROKER_ENABLED": "true", "PERSONA_TOOL_BROKER_TOKEN": token}
+
+
 def write_environment(path: Path, values: Mapping[str, str]) -> None:
     # Refuse existing files and symlinks. Never truncate a credential or follow a
     # caller-selected symlink; the deploy lane supplies its own fresh private dir.
@@ -520,7 +556,7 @@ def main() -> int:
         values = (revoked_environment(os.environ)
                   if os.environ.get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") == "false"
                   else issue_environment(os.environ))
-        write_environment(args.output_env, values)
+        write_environment(args.output_env, {**values, **broker_environment(os.environ)})
     except (ValueError, OSError, KeyError, TypeError):
         # Do not echo paths, environment, key material or a token on failures.
         parser.exit(1, "Dev product principal issuance failed closed\n")

@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,7 +25,16 @@ from services.knowledge.evidence import (
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors.base import SourceRecord
 
-from .index_store import JsonlSearchIndexStore, SearchIndexSnapshot
+from .index_store import (
+    SNAPSHOT_MAX_AGE_SECONDS,
+    SNAPSHOT_MAX_COUNT,
+    JsonlSearchIndexStore,
+    SearchIndexSnapshot,
+    bound_snapshots,
+)
+
+_PAGE_SIZE = int(os.getenv("SEARCH_EVIDENCE_PAGE_SIZE", "2000") or 2000)
+_KO_RESYNC_SECONDS = float(os.getenv("SEARCH_EVIDENCE_KO_RESYNC_SECONDS", "900") or 900)
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -72,6 +83,10 @@ class PostgresReadOnlyEvidenceRepository(InMemoryEvidenceRepository):
         self.table = _quote_pg(table)
         self.path = f"postgres:{table}"
         super().__init__()
+        self._load_lock = threading.RLock()
+        self._watermark = 0
+        self._loaded_seq = 0
+        self._last_ko_resync = time.monotonic()
         self.reload()
 
     def _connect(self):
@@ -83,38 +98,95 @@ class PostgresReadOnlyEvidenceRepository(InMemoryEvidenceRepository):
             ) from exc
         return psycopg.connect(self.dsn)
 
-    def reload(self) -> None:
-        self.clear()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
-            )
-            rows = cursor.fetchall()
-        records_by_type: Dict[str, list[Any]] = {
-            record_type: [] for record_type in _EVIDENCE_REPLAY_ORDER
-        }
-        for row in rows:
-            record_type = row[0] if isinstance(row, tuple) else row.get("record_type")
+    # -- loading ---------------------------------------------------------
+    #
+    # ``reload()`` is the explicit full resync (startup, admin reload, deletes).
+    # ``refresh()`` is what request paths use: it only reads rows whose
+    # append_id is above the watermark, concurrent callers share one load
+    # (single-flight), and nothing here is called from /health or /status.
+    # Rows are paged by append_id so no more than _PAGE_SIZE raw rows are ever
+    # held next to the repository.
+
+    def _fetch_page(self, conn: Any, record_type: str, after_append_id: int) -> list[tuple[int, Any]]:
+        cursor = conn.execute(
+            f"SELECT append_id, payload FROM {self.table} "
+            "WHERE record_type = %s AND append_id > %s ORDER BY append_id ASC LIMIT %s",
+            (record_type, after_append_id, _PAGE_SIZE),
+        )
+        page = []
+        for row in cursor.fetchall():
+            append_id = row[0] if isinstance(row, tuple) else row.get("append_id")
             payload = row[1] if isinstance(row, tuple) else row.get("payload")
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            normalized_type = str(record_type or "")
-            loader = _EVIDENCE_LOADERS.get(normalized_type)
-            if loader is None or not isinstance(payload, dict):
-                raise EvidenceValidationError(
-                    f"Unsupported source evidence record type from Postgres: {record_type!r}"
-                )
-            records_by_type[normalized_type].append(loader(payload))
-        for record_type in _EVIDENCE_REPLAY_ORDER:
-            for obj in records_by_type[record_type]:
-                if isinstance(obj, SourceRecord):
-                    InMemoryEvidenceRepository.add_source_record(self, obj)
-                elif isinstance(obj, EvidenceItem):
-                    InMemoryEvidenceRepository.add_evidence_item(self, obj)
-                elif isinstance(obj, EvidenceBundle):
-                    InMemoryEvidenceRepository.add_bundle(self, obj)
-                elif isinstance(obj, KnowledgeObject):
-                    InMemoryEvidenceRepository.add_knowledge_object(self, obj)
+            page.append((int(append_id), payload))
+        return page
+
+    def _apply(self, record_type: str, payload: Any, target: InMemoryEvidenceRepository) -> None:
+        loader = _EVIDENCE_LOADERS.get(record_type)
+        if loader is None or not isinstance(payload, dict):
+            raise EvidenceValidationError(
+                f"Unsupported source evidence record type from Postgres: {record_type!r}"
+            )
+        obj = loader(payload)
+        if isinstance(obj, SourceRecord):
+            InMemoryEvidenceRepository.add_source_record(target, obj)
+        elif isinstance(obj, EvidenceItem):
+            InMemoryEvidenceRepository.add_evidence_item(target, obj)
+        elif isinstance(obj, EvidenceBundle):
+            InMemoryEvidenceRepository.add_bundle(target, obj)
+        elif isinstance(obj, KnowledgeObject):
+            InMemoryEvidenceRepository.add_knowledge_object(target, obj)
+
+    def _load_types(
+        self,
+        target: InMemoryEvidenceRepository,
+        record_types: tuple[str, ...],
+        watermark: int,
+    ) -> int:
+        """Replay record_types in dependency order above watermark; return max append_id seen."""
+        high = watermark
+        with self._connect() as conn:
+            for record_type in record_types:
+                cursor_id = watermark
+                while True:
+                    page = self._fetch_page(conn, record_type, cursor_id)
+                    for append_id, payload in page:
+                        self._apply(record_type, payload, target)
+                        cursor_id = append_id
+                        high = max(high, append_id)
+                    if len(page) < _PAGE_SIZE:
+                        break
+        return high
+
+    def reload(self) -> None:
+        """Full resync. Builds the new state aside, then swaps it in."""
+        with self._load_lock:
+            fresh = InMemoryEvidenceRepository()
+            high = self._load_types(fresh, _EVIDENCE_REPLAY_ORDER, 0)
+            self._adopt(fresh)
+            self._watermark = high
+            self._loaded_seq += 1
+            self._last_ko_resync = time.monotonic()
+
+    def _adopt(self, fresh: InMemoryEvidenceRepository) -> None:
+        for name, value in vars(fresh).items():
+            setattr(self, name, value)
+
+    def refresh(self) -> None:
+        """Incremental, single-flight load of rows appended since the last load."""
+        seen_seq = self._loaded_seq
+        with self._load_lock:
+            if self._loaded_seq != seen_seq:
+                # Another caller finished a load while we waited; share its result.
+                return
+            self._watermark = self._load_types(self, _EVIDENCE_REPLAY_ORDER, self._watermark)
+            # Upserts keep their original append_id, so an updated knowledge object
+            # is invisible to the watermark; re-read only that (small) type on a timer.
+            if time.monotonic() - self._last_ko_resync >= _KO_RESYNC_SECONDS:
+                self._load_types(self, ("knowledge_object",), 0)
+                self._last_ko_resync = time.monotonic()
+            self._loaded_seq += 1
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         raise EvidenceValidationError(
@@ -149,9 +221,13 @@ class PostgresSearchIndexStore:
         dsn: str,
         table: str = "search_svc.search_index_snapshots",
         bootstrap: bool = True,
+        max_count: int | None = None,
+        max_age_seconds: int | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for PostgresSearchIndexStore")
+        self.max_count = max_count if max_count is not None else SNAPSHOT_MAX_COUNT
+        self.max_age_seconds = max_age_seconds if max_age_seconds is not None else SNAPSHOT_MAX_AGE_SECONDS
         self.dsn = dsn
         self.table = _quote_pg(table)
         self.schema = table.split(".", 1)[0] if "." in table else ""
@@ -189,7 +265,12 @@ class PostgresSearchIndexStore:
         self._snapshots = {}
         with self._connect() as conn:
             cursor = conn.execute(
-                f"SELECT request_id, payload FROM {self.table} ORDER BY append_id ASC"
+                "SELECT request_id, payload FROM ("
+                f"SELECT append_id, request_id, payload FROM {self.table} "
+                "WHERE created_at >= now() - make_interval(secs => %s) "
+                "ORDER BY append_id DESC LIMIT %s"
+                ") recent ORDER BY append_id ASC",
+                (self.max_age_seconds, self.max_count),
             )
             rows = cursor.fetchall()
         for row in rows:
@@ -199,7 +280,9 @@ class PostgresSearchIndexStore:
                 payload = json.loads(payload)
             if isinstance(payload, dict):
                 snapshot = SearchIndexSnapshot.from_dict(payload)
+                self._snapshots.pop(snapshot.request_id, None)
                 self._snapshots[snapshot.request_id] = snapshot
+        self._snapshots = bound_snapshots(self._snapshots, self.max_count, self.max_age_seconds)
 
     def append_snapshot(self, snapshot: SearchIndexSnapshot) -> SearchIndexSnapshot:
         with self._connect() as conn:
@@ -213,7 +296,9 @@ class PostgresSearchIndexStore:
                     json.dumps(snapshot.to_dict(), ensure_ascii=True, sort_keys=True),
                 ),
             )
+        self._snapshots.pop(snapshot.request_id, None)
         self._snapshots[snapshot.request_id] = snapshot
+        self._snapshots = bound_snapshots(self._snapshots, self.max_count, self.max_age_seconds)
         return snapshot
 
     def get_snapshot(self, request_id: str) -> SearchIndexSnapshot | None:

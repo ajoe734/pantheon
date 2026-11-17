@@ -639,6 +639,11 @@ def create_app(
     app = FastAPI(title="Pantheon Search Service", version="0.2.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
+    def _refresh_evidence() -> None:
+        """Incremental, single-flight evidence load; never a whole-table re-read."""
+        refresh = getattr(durable_repository, "refresh", None)
+        (refresh or durable_repository.reload)()
+
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
     durable_only = durable_index_only if durable_index_only is not None else DURABLE_INDEX_ONLY
     dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
@@ -749,7 +754,7 @@ def create_app(
         trigger_ref: str | None = None,
         source_completion: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        durable_repository.reload()
+        _refresh_evidence()
         adapter = KeywordIndexAdapter(
             durable_repository,
             source_watermarks=_source_watermarks(durable_repository),
@@ -824,8 +829,7 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        store.reload()
-        durable_repository.reload()
+        # Never loads: reports what is already in memory.
         return {
             "status": retrieval_status()["status"],
             "service": "pantheon-search",
@@ -982,7 +986,7 @@ def create_app(
     @app.get("/api/search/index/status")
     def index_status() -> dict[str, Any]:
         try:
-            durable_repository.reload()
+            # status never triggers a table load; it reports the in-memory view
             adapter = KeywordIndexAdapter(
                 durable_repository,
                 source_watermarks=_source_watermarks(durable_repository),
@@ -1019,7 +1023,7 @@ def create_app(
                 repository = _repository_from_documents(body.documents)
                 adapter_state = "request_documents_compat"
             else:
-                durable_repository.reload()
+                _refresh_evidence()
                 repository = durable_repository
                 adapter_state = "durable"
 

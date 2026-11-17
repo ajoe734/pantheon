@@ -688,3 +688,62 @@ def test_convenience_wrapper_materialize_seed_from_bundle(tmp_path: Path) -> Non
     assert result.seed.evidence_bundle_id == "evbundle-test-001"
     assert result.seed.lineage["execution_route"] == "none"
     assert result.seed.metadata["research_only"] is True
+
+
+def test_identical_replay_save_writes_nothing(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    seed = _memory_seed(seed_id="seed-replay", status=StrategySpecSeedStatus.DRAFT)
+    assert store.save(seed) is True
+    st = store.path.stat()
+    assert store.save(seed) is False
+    st2 = store.path.stat()
+    assert (st.st_size, st.st_mtime_ns) == (st2.st_size, st2.st_mtime_ns)
+
+
+def test_per_source_cap_prunes_oldest_mutable_first(tmp_path: Path) -> None:
+    store = StrategySpecSeedStore(path=tmp_path / "seeds.jsonl", max_seeds_per_source=2)
+    store.save(_memory_seed(seed_id="seed-keep", status=StrategySpecSeedStatus.REJECTED))
+    for i in range(3):
+        store.save(
+            _memory_seed(
+                seed_id=f"seed-draft-{i}",
+                status=StrategySpecSeedStatus.DRAFT,
+                created_at=f"2026-06-1{i}T00:00:00Z",
+            )
+        )
+    ids = {s.seed_id for s in store.list_all()}
+    assert len(ids) == 2
+    assert "seed-draft-2" in ids
+
+
+def test_total_cap_bounds_store(tmp_path: Path) -> None:
+    store = StrategySpecSeedStore(
+        path=tmp_path / "seeds.jsonl", max_seeds_per_source=50, max_total_seeds=3
+    )
+    for i in range(6):
+        store.save(
+            _memory_seed(
+                seed_id=f"seed-t-{i}",
+                source_id=f"src-{i}",
+                status=StrategySpecSeedStatus.DRAFT,
+                created_at=f"2026-06-0{i + 1}T00:00:00Z",
+            )
+        )
+    assert store.count() == 3
+
+
+def test_readers_match_legacy_full_scan(tmp_path: Path) -> None:
+    import json
+
+    store = _make_store(tmp_path)
+    for i, st in enumerate(
+        (StrategySpecSeedStatus.DRAFT, StrategySpecSeedStatus.REJECTED, StrategySpecSeedStatus.DRAFT)
+    ):
+        store.save(_memory_seed(seed_id=f"seed-r-{i}", status=st, evidence_bundle_id=f"b-{i % 2}"))
+    raw = [json.loads(x) for x in store.path.read_text().splitlines() if x.strip()]
+    assert [s.seed_id for s in store.list_all()] == [r["seed_id"] for r in raw]
+    assert {s.seed_id for s in store.list_by_bundle("b-0")} == {
+        r["seed_id"] for r in raw if r["evidence_bundle_id"] == "b-0"
+    }
+    assert len(store.list_negative_memory_records()) == 1
+    assert {s.seed_id for s in store.list_by_status("draft")} == {"seed-r-0", "seed-r-2"}

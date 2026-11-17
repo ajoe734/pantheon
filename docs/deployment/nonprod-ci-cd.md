@@ -175,9 +175,51 @@ refresh, TAIFEX refresh, governed paper baseline or canonical paper lifecycle
 probe. Only an unhealthy stack rolls back. Their functional acceptance stays
 pending until the acceptance stage of
 `docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` exists. A manual
-dispatch that sets the input still runs the probe exactly as before. Missing or unaccepted baseline evidence requires recovery through
+dispatch that sets the input still runs the probe, now as an advisory check (see
+"Dev deploy: blocking set and advisory set"). Missing or unaccepted baseline evidence requires recovery through
 the existing deployment flow. The checker can run without `--apply` to inspect
 its decision without dispatching.
+
+### Dev deploy: blocking set and advisory set
+
+A dev deploy is build, switch and stack health
+(`docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` section 3.1).
+
+**Blocking set** (a failure rolls back / compensates, as before): admission and
+identity, the environment lease, the prior-artifact baseline and candidate seal;
+build, migration bootstrap, `compose up`, `/readyz` at the exact SHA, source SHA,
+the auth gate, ingress, the exact component deployment check; the public BFF
+smoke (health, exact version, CORS); frontend build, artifact authentication,
+atomic switch and final verify.
+
+**Advisory set** (runs after the switch; records its real result; never rolls
+back, never fails the deploy job and is not part of `complete_success`):
+
+- workflow steps: Taiwan market refresh after candidate stack deploy, governed
+  dev paper baseline, evolution dispatch probe, canonical paper lifecycle probe,
+  Agora restart persistence smoke;
+- deploy-script checks: `verify_dev_paper_fleet`,
+  `verify_dev_evolution_daily_sweep`, `verify_trade_journey_residual_dev.sh`,
+  `verify_bounded_source_refresh_readback` (run through `run_dev_advisory_check`).
+
+Lease-guarded steps cannot use `continue-on-error`: the pinned lease guard stops
+the heartbeat and quarantines the lease whenever its command exits non-zero.
+They therefore run the guarded child through `guarded_advisory`, which hands the
+guard an exit 0 and returns the real exit code from a result file; the step
+records the real result and exits 0. The deploy script prints one
+`ADVISORY_CHECK_RESULT {json}` line per check. The step "Record advisory
+functional check results" collects both into
+`summary.json` (`deployment: deployed`, `acceptance: passed|failed|pending`,
+failing checks) in the `pantheon-dev-advisory-checks-<run>-<attempt>` artifact
+and in the run summary, so a release with failed checks is visible as deployed
+with acceptance not passed.
+
+Manual strict mode: dispatch with `strict_functional_checks: true` (default
+`false`; the automatic deployer never sets it). The workflow steps then keep
+today's blocking behaviour, the deploy script receives
+`--strict-functional-checks` and rolls back on the original stage names, and the
+gate step "Enforce strict functional checks when requested" fails and triggers
+the whole-stack compensation. Staging and production are unchanged.
 
 The existing release workflow admits the exact current pair before any switch.
 Once admitted, new dev merges queue work for the next tick: the active release

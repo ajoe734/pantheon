@@ -1,0 +1,26 @@
+{
+  "task_id": "SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117",
+  "changed_files": ["services/source_ingestion/tests/test_scheduled_connector.py"],
+  "production_code_changed": false,
+  "change": {
+    "removed": ["time.sleep(1) inside the injected controller sleep hook", "time.perf_counter() in schedule_elapsed", "time.monotonic()-real_start in completed_at and elapsed"],
+    "added": "ModelDatetime injected into pipeline, scheduler, runtime and controller_worker modules; a stamp clock advances exactly 1 second per controller sleep so persisted run timestamps are ordered by tick, not wall time. Anchor is read once at test start.",
+    "kept_assertions": ["7467 rows", "one source record per connector", "peak == LATEST_CLOSE_RAW_READ_CONCURRENCY", "sleep == interval_seconds (cadence restored) after completion", "continuation pause on every earlier tick"],
+    "residual_real_wait": "time.sleep(0.002) in the fake transport read only forces thread overlap for the concurrency-peak assertion; it does not take part in deciding which tick completes delivery."
+  },
+  "cause_analysis": {
+    "mechanism": "main() picks sleep_seconds = min(interval, CONTINUATION_PAUSE_SECONDS) only when run_controller_tick returns continuation_pending, which select_collector_pull_connectors derives from persisted fetch_state plus freshness.latest_run/is_due/staleness. Those use second-resolution timestamps from pipeline.utc_now_iso and scheduler._utc_now (datetime.now, microsecond=0) and are compared against real now (e.g. the 300s captured_at check and staleness<=interval check in controller_worker). The old test only separated ticks with a real 1s sleep, so which tick saw delivery done and which sleep value (1 continuation vs 60 interval, or 60 after a failed tick) it got depended on wall-clock second boundaries and runner speed.",
+    "classification": "test-only race: the production controller is a pure function of persisted state plus now; the test coupled real seconds to tick ordering. No production change made.",
+    "reproduction_note": "The original test was run 2 times under 8 busy workers on a 12-core host and passed both (a third run hit my 120s timeout); the failure was not reproduced locally, so the mechanism above is derived from code reading, not observed.",
+    "residual_finding": "Low-severity observation only: continuation/freshness decisions rely on second-resolution timestamps, so two runs in one second tie in _run_effective_at ordering. Not changed here (production out of scope)."
+  },
+  "verification": {
+    "contention": "8 busy-loop python processes on a 12-core host",
+    "target_test_runs_under_contention": 20,
+    "passed": 20,
+    "failed": 0,
+    "run_seconds": [57,61,55,44,49,59,54,51,47,48,75,89,57,48,52,48,45,45,49,46],
+    "focused_file": "services/source_ingestion/tests/test_scheduled_connector.py: 73 passed (no contention)",
+    "baseline_uncontended_runtime_seconds": {"before": 77.7, "after": 32.2}
+  }
+}
