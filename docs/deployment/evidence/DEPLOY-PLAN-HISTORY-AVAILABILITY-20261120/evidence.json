@@ -1,0 +1,23 @@
+{
+  "task_id": "DEPLOY-PLAN-HISTORY-AVAILABILITY-20261120",
+  "setting": "DEPLOYMENT_HISTORY_FROM_DAILY_BARS (default off = phase 1 rule; on = min_closes window live, availability check)",
+  "source_url_settings": ["DEPLOYMENT_SOURCE_INGEST_BASE_URL", "PANTHEON_SOURCE_INGEST_URL"],
+  "commands": [
+    {"cmd": "pytest services/source_ingestion/tests/test_history_availability.py", "result": "6 passed"},
+    {"cmd": "pytest services/deployment/test_pool_envelope_plan.py", "result": "14 passed (8 new)"},
+    {"cmd": "pytest services/deployment/test_service.py services/deployment/test_inline_paper_execution_projection.py services/source_ingestion/tests/test_snapshot_min_closes_window.py services/source_ingestion/tests/test_daily_bars_reader.py", "result": "61 passed"}
+  ],
+  "hosted_shaped_measurement": {
+    "data": "500 trading days x 22500 symbols/day (20200 warrant-like), 50 symbols requested",
+    "cold_first_call_ms": 636, "warm_p95_ms": 30.4, "warm_median_ms": 27.8, "budget_p95_ms": 100,
+    "stored_bytes_added": 0, "test": "test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes (asserts file tree byte/mtime identical)"
+  },
+  "stores_touched": "none written; reads daily_bars manifests and the symbol column of pruned row groups only",
+  "stores_not_touched": ["current snapshot record", "daily bars files", "manifests", "lineage", "minute bars"],
+  "differences_from_design": [
+    "The manifest holds per-file symbol ranges, not per-symbol counts, and acceptance 7 forbids new stored data. Count is therefore derived by reading only the symbol column of pruned row groups, cached per date against the manifest signature: the first call for a symbol set is cold (about 0.6 s here), repeats are cache hits.",
+    "Count is closes present, not proven contiguous; the min_closes join still checks contiguity at read time."
+  ],
+  "persisted_format_change": false,
+  "credentials_recorded": false
+}
