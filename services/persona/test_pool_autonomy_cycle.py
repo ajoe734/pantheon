@@ -222,8 +222,13 @@ def test_failed_pool_cycle_is_reported_as_cycle_failure_even_when_model_turn_suc
                                                                   "human_feedback_refs": [], "harness_version": 1},
                              risk=lambda persona, observe, packet_id: {"status": "no_change"})
     controller = PersonaCycleController(None, owners, store_path=tmp_path / "packets.jsonl",
-        turn_runner=lambda pid, prompt: SimpleNamespace(status="completed", persona_id=pid, decision=json.dumps(output),
-                                                        to_dict=lambda: {}),
+        tool_broker=SimpleNamespace(
+            register_run=lambda pid, purpose, user: {"run_ref": "ptr-1"},
+            run_record=lambda ref: {"run_ref": ref, "persona_id": PERSONA["persona_id"], "purpose": "daily_cycle",
+                                    "run_id": "r1", "proposals": output["proposals"],
+                                    "calls": [{"tool": "persona_proposal_submit", "outcome": "recorded"}]}),
+        turn_runner=lambda pid, prompt, session_user=None: SimpleNamespace(status="completed", persona_id=pid,
+                                                        decision="", to_dict=lambda: {}),
         pool_cycle=SimpleNamespace(run=lambda persona, observe, packet_id: {
             "persona_id": persona["persona_id"], "packet_id": packet_id, "status": "failed", "reason": "RuntimeError: boom"}))
     persona = {**PERSONA, "lifecycle_state": "paper_owner"}

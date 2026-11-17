@@ -906,6 +906,33 @@ def _compose_panel_case_file(
     return {"case_file_id": f"casefile-{digest[:24]}", "digest": digest, **case}
 
 
+PANEL_INTERPRETATION_MAX_CITATIONS = 12
+
+
+def _interpretation_rejection(record: Any) -> str | None:
+    """Every panel answer must state which mode its context came from (fail closed).
+
+    The adapter checks citations against the broker's record of the turn; here the
+    record's shape and the count limit are re-checked and nothing is truncated.
+    """
+
+    if not isinstance(record, Mapping):
+        return "interpretation_missing"
+    mode = record.get("mode")
+    citations = record.get("citations")
+    if not isinstance(citations, list) or any(not isinstance(c, str) or not c for c in citations):
+        return "interpretation_citations_malformed"
+    if len(citations) > PANEL_INTERPRETATION_MAX_CITATIONS:
+        return "interpretation_too_many_citations"
+    if mode == "interpretation":
+        if not isinstance(record.get("text"), str) or not record["text"].strip() or not record.get("run_ref"):
+            return "interpretation_incomplete"
+        return None
+    if mode == "fallback":
+        return None if record.get("reason") else "interpretation_fallback_reason_missing"
+    return "interpretation_mode_unknown"
+
+
 def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str, Any]) -> str | None:
     """Every claim, summary and finding must cite an existing case item.
 
@@ -921,8 +948,12 @@ def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str,
     if not isinstance(claims, list) or not claims:
         return "claims_missing"
     content = contribution.event_content
-    if set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs"}:
+    if set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs",
+                       "interpretation"}:
         return "unvalidated_claim_fields"
+    interpretation_problem = _interpretation_rejection(content.get("interpretation"))
+    if interpretation_problem:
+        return interpretation_problem
     nodes = [*claims, {"claim": contribution.summary, "evidence_refs": content.get("summary_evidence_refs")},
              *contribution.findings]
     # A legacy free claim beside the claims list cannot escape validation.
