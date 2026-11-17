@@ -258,3 +258,22 @@ def test_suspension_production_cap_is_not_truncating_listed_warrant_intake(offic
     _, uncapped = pull(official_files, tmp_path / "u", monkeypatch, SUSPENSION, max_records=10_000_000)
     assert production_cap >= 20000
     assert len(records) == len(uncapped) > 2000  # evidence: intake exceeds 2000 once listed warrants are kept
+
+
+def test_suspension_cap_exceeded_is_loud_not_silently_truncated(official_files, tmp_path, monkeypatch):
+    """Above the cap the pull reports an incomplete, degraded run with a resume cursor; it never claims completeness."""
+    class _T(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return official_files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _T())
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    definition = get_connector_definition(SUSPENSION)
+    cfg = {"source_id": SUSPENSION, "source_type": "market", "dataset": definition.datasets[0],
+           "attribution_required": True, "max_records": 2000}
+    result = CollectorBundleAdapter(connector_id=SUSPENSION, **cfg).pull(trace_id="cap", max_records=2000)
+    assert len(result.records) == 2000
+    assert result.complete is False
+    assert result.observed["continuation_pending"] is True
+    assert result.observed["health_state"] == "degraded"
+    assert "items=2000" in result.next_cursor
