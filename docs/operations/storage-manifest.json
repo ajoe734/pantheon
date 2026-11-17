@@ -2759,6 +2759,16 @@
     "size": "at most about 6.7 KB added with 50 ids (50 x (128 + 4) bytes); whole file asserted below 64 KiB in services/source_ingestion/tests/test_reconcile_tolerates_newer_state.py",
     "task": "SOURCE-RECONCILE-TOLERATES-NEWER-STATE-20261117"
    },
+   "changed_fields_liveness": {
+    "cadence": "rewritten in place once per controller tick (same single file, atomic replace, no append)",
+    "cap": "one integer, counted only for controller level failure stages (CONNECTOR_OUTCOME_STAGES in services/source_ingestion/controller_state.py)",
+    "cleanup": "reset to 0 by a successful tick or a connector-outcome failure; no history is kept",
+    "fields": [
+     "consecutive_controller_failures"
+    ],
+    "size": "one integer, under 30 bytes",
+    "task": "SOURCE-INGEST-SCHEDULER-HEALTH-LIVENESS-20261117"
+   },
    "readers": [
     "docker-compose.yml"
    ],

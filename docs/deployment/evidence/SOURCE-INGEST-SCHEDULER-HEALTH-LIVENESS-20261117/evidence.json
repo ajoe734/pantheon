@@ -1,0 +1,48 @@
+{
+ "task": "SOURCE-INGEST-SCHEDULER-HEALTH-LIVENESS-20261117",
+ "reproduction_before": {
+  "state_shape": "hosted 2026-11-17 15:10Z: fresh heartbeat, ticks running, last tick failed at stage schedule (connector failed), consecutive_failures>0",
+  "previous_healthcheck_exit": 1,
+  "previous_code_check": "controller_healthcheck.py at 80d4cf2ca returns 1 when consecutive_failures > 0 (run through scripts/previous_release_reader.py: healthcheck_exit 1 for the same state)",
+  "compose_effect": "docker-compose.yml source-ingest-agora-projector depends_on source-ingest-scheduler condition service_healthy; an unhealthy scheduler leaves the projector in Created"
+ },
+ "stage_classification": {
+  "location": "services/source_ingestion/controller_state.py CONNECTOR_OUTCOME_STAGES / is_controller_level_stage (one place; unknown stage is controller level)",
+  "connector_outcome": {"schedule": "controller_worker.py:892 scheduled tick reported failed connector(s)"},
+  "controller_level": {
+   "controller": "controller_worker.py:164 HTTPError from source-ingest (incl. reconcile HTTP 400), :2383 any other exception (timeouts, unreachable)",
+   "http_contract": "171,174", "desired_state_auth": "207,209",
+   "desired_state_validate": "220,261,273 (and 229,237,244,267)", "desired_state_read": "316", "persona_owner_read": "331,333",
+   "reconcile_contract": "398,401,407,430,", "reconcile": "415,448", "frontier_recovery": "525-699",
+   "actual_readback": "838-1506 (readback schema/stale/DLQ/frontier/connector verification)",
+   "schedule_contract": "888-951 (response contract)", "provider_boundary": "1457", "controller_store": "1678", "operation_key_conflict": "1943,1951"
+  },
+  "note": "the single record_failure caller is controller_worker.py:2385 using error.stage"
+ },
+ "healthcheck_rule": "fails when state missing/unreadable, heartbeat older than max age, no tick completed (last_success_at or last_failure_at) within max age, or consecutive_controller_failures >= 3; passes when only connector outcomes failed; prints readable reason to stderr",
+ "other_consumers_of_existing_fields": {
+  "services/source_ingestion/controller_worker.py:2141": "had_failures = state.consecutive_failures > 0 (repair recording)",
+  "services/source_ingestion/controller_state.py": "record_success/record_failure/to_dict/from_dict",
+  "behaviour_change": "none: consecutive_failures keeps its meaning (every failed tick); controller_worker.py and what a tick records as failed are untouched"
+ },
+ "connector_failures_stay_visible": "state.schedule.failed (connector_id + error, bounded 16), last_failure_stage/reason, consecutive_failures, total_failures stay in controller_state.json and the controller readback; the source_ingestion loop failure record and source health are unchanged",
+ "previous_release": {
+  "revision": "80d4cf2ca (hosted /bff/version on 2026-11-17 as stated in task; not re-read from hosted by this worker)",
+  "command": "scripts/previous_release_reader.py --revision 80d4cf2ca --path services --module services.source_ingestion.controller_state --driver <loads state, runs healthcheck>",
+  "result": "state written by new code loaded without error; previous healthcheck exit 1, identical to its answer for the same state today (consecutive_failures=4)"
+ },
+ "runtime_budget": "one file replaced each tick; one added integer; storage-manifest.json entry /data/source-ingest/controller_state.json gains changed_fields_liveness for this task only",
+ "hosted_statement": "Expected after this is served (not yet observed on hosted): the scheduler container is healthy while collector sources are paused or not deployed, and the Agora projector starts at the next deploy; a scheduler that cannot reach source-ingest or whose reconcile is refused for 3 ticks in a row is still unhealthy.",
+ "residual_findings": [
+  "The loop writer still records every connector-failure tick as a failed source_ingestion loop (controller_worker.py:2396); out of scope here.",
+  "Connector-level failures keep consecutive_failures>0 forever while any connector fails; consumers wanting connector health should use source health, not this counter.",
+  "With one controller failure then success pattern flapping (fail/ok) the check stays healthy by design; only 3 in a row fails."
+ ],
+ "validation": {
+  "services/source_ingestion/tests/test_controller_healthcheck.py + test_controller_state_health.py + scripts/test_source_ingest_scheduler_health_compose_contract.py": "18 passed",
+  "test_controller_worker.py + test_controller_readback.py + test_controller_worker_manual_once.py": "223 passed",
+  "scripts/check_storage_manifest.py": "passed:true",
+  "scripts/test_check_storage_manifest.py": "10 passed"
+ },
+ "files_outside_artifact_list_edited": []
+}
