@@ -42,6 +42,7 @@ doing and by the first eight characters of its session id.
 | WP1.4 deploy the newest green commit | DEV-AUTO-DEPLOY-NEWEST-GREEN-20261117 | open |
 | Persisted config that a rollback cannot read: OpenClaw persona-tools plugin paths | OPENCLAW-PERSONA-TOOLS-PLUGIN-ROLLBACK-SAFE-20261117 | open |
 | Integrator re-dispatches the review gate and cancels its own queued run | AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117 (PR #7478) | merged |
+| Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 | open |
 
 The workflow and deploy-script tasks are serialised in this order: no probe
 input, advisory checks, stack completeness, newest green, acceptance stage.
@@ -55,7 +56,8 @@ rescue: back up `openclaw.json`, remove the two persona-tools entries); a
 baseline scheduler started on candidate-written connector state fails every
 tick with HTTP 400, so intake returns only with a release; Root 44023618158
 rejected by an execute-plans unit test in the gate
-(FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117, #1036 merged).
+(FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117, #1036 merged); Root 44049970156
+failed at projection_bootstrap with a Postgres deadlock on event_receipts.
 
 ## RC2. Done means merged, not working
 
