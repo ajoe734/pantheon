@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import threading
@@ -110,14 +111,27 @@ class JsonlIndexPipelineStore:
                         runs.append(IndexPipelineSnapshot.from_dict(data))
                     except (json.JSONDecodeError, KeyError):
                         continue
-            self._runs = runs
+            self._runs = self._compact(runs)
+
+    @staticmethod
+    def _compact(runs: list[IndexPipelineSnapshot]) -> list[IndexPipelineSnapshot]:
+        """Only the latest run needs its checkpoint id list (it is the next run's baseline).
+
+        Older runs keep the bounded summary (counts, watermarks, timestamps) without the full
+        indexed_object_ids list. The persisted JSONL format is unchanged.
+        """
+        return [
+            run if index == len(runs) - 1 or not run.indexed_object_ids
+            else dataclasses.replace(run, indexed_object_ids=[])
+            for index, run in enumerate(runs)
+        ]
 
     def record_run(self, snapshot: IndexPipelineSnapshot) -> IndexPipelineSnapshot:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(snapshot.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
-            self._runs = [*self._runs, snapshot]
+            self._runs = self._compact([*self._runs, snapshot])
             if len(self._runs) > self.max_retention:
                 self.prune(self.max_retention)
         return snapshot
@@ -312,7 +326,12 @@ class IncrementalIndexPipeline:
         force_full: bool = False,
     ) -> IndexPipelineSnapshot:
         """Run incremental (or full) index refresh. Records and returns the pipeline snapshot."""
-        self.repository.reload()
+        # Incremental by append_id; only an explicit force_full pays for a whole-table resync.
+        refresh = getattr(self.repository, "refresh", None)
+        if force_full or refresh is None:
+            self.repository.reload()
+        else:
+            refresh()
         self.pipeline_store.reload()
 
         previous = self.pipeline_store.get_latest()

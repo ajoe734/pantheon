@@ -429,7 +429,10 @@ def run_capacity_benchmark(
         high_watermark = max(high_watermark, max(int(row["ingested_seq"]) for row in batch))
         started = clock()
         result = projector.project_records(
-            batch, mode="live", source_high_watermark=high_watermark
+            batch,
+            mode="live",
+            source_high_watermark=high_watermark,
+            source_frontier_seq=high_watermark,
         )
         latency = clock() - started
         backlog = max(0, high_watermark - projector.checkpoint)
