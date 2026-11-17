@@ -787,7 +787,7 @@ class CollectorBundleAdapter:
             "normalized_datasets": [derived, *original],
             "feature_targets": [derived],
             "raw_only_datasets": original,
-            "storage_targets": [f"normalized/{derived}", f"features/{derived}"],
+            "storage_targets": [f"normalized/{derived}"],
         }
 
     def fetch_config(self) -> Mapping[str, Any]:

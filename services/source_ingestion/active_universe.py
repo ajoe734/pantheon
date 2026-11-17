@@ -176,7 +176,7 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         metadata={
             "detail_level": "official_daily_price_baseline",
             "source_role": "preferred_official_reference",
-            "storage_targets": ["normalized/tw_price_daily", "features/returns"],
+            "storage_targets": ["normalized/tw_price_daily"],
             "archive_behavior": "daily_price_only",
         },
     ),
@@ -301,7 +301,7 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "normalized_target": "tw_monthly_revenue",
             "source_role": "research_grade",
             "value_revision": "provider_latest_revision_not_first_release",
-            "storage_targets": ["raw/finmind/tw_monthly_revenue", "normalized/tw_monthly_revenue", "features/tw_monthly_revenue"],
+            "storage_targets": ["raw/finmind/tw_monthly_revenue", "normalized/tw_monthly_revenue"],
             "archive_behavior": "skip",
         },
     ),
@@ -319,7 +319,7 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "normalized_target": "tw_financial_statement",
             "source_role": "research_grade",
             "value_revision": "provider_latest_revision_not_first_release",
-            "storage_targets": ["raw/finmind/tw_financial_statement", "normalized/tw_financial_statement", "features/tw_quarterly_statements"],
+            "storage_targets": ["raw/finmind/tw_financial_statement", "normalized/tw_financial_statement"],
             "archive_behavior": "skip",
         },
     ),
@@ -336,7 +336,7 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "normalized_target": "tw_valuation_bwibbu",
             "source_role": "research_grade",
             "value_revision": "provider_latest_revision_not_first_release",
-            "storage_targets": ["raw/finmind/tw_valuation_bwibbu", "normalized/tw_valuation_bwibbu", "features/tw_valuation_bwibbu"],
+            "storage_targets": ["raw/finmind/tw_valuation_bwibbu", "normalized/tw_valuation_bwibbu"],
             "archive_behavior": "skip",
         },
     ),
@@ -354,7 +354,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "storage_targets": [
                 "raw/tdcc/shareholding_distribution",
                 "normalized/tdcc_shareholding_distribution",
-                "features/tdcc_holding_concentration",
             ],
             "raw_storage_policy": {
                 "compression": "gzip",
@@ -380,7 +379,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "storage_targets": [
                 "raw/taifex/futures_chip",
                 "normalized/taifex_futures_chip",
-                "features/taifex_oi_regime",
             ],
             "raw_storage_policy": {
                 "compression": "gzip",
@@ -406,7 +404,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "storage_targets": [
                 "raw/taifex/options_chip",
                 "normalized/taifex_options_chip",
-                "features/taifex_put_call_regime",
             ],
             "raw_storage_policy": {
                 "compression": "gzip",
@@ -457,7 +454,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "storage_targets": [
                 "raw/taifex/tx_daily",
                 "normalized/taifex_tx_daily",
-                "features/taifex_market_tx_daily",
             ],
             "raw_storage_policy": {
                 "compression": "gzip",
@@ -528,7 +524,7 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "detail_level": "symbolless_macro_context",
             "source_role": "public_macro_reference",
             "symbol_scope": "global_no_symbol_filter",
-            "storage_targets": ["normalized/macro_fred_observation", "features/macro_regime_features"],
+            "storage_targets": ["normalized/macro_fred_observation"],
             "archive_behavior": "not_symbol_scoped",
         },
     ),
@@ -566,7 +562,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
                 "raw/coingecko/spot",
                 "normalized/crypto_spot_ohlc",
                 "normalized/crypto_spot_price",
-                "features/crypto_returns",
             ],
             "symbol_id_mapping": {
                 "BTC": "bitcoin",
