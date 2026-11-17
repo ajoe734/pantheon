@@ -39,7 +39,9 @@ from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
 from services.memory import mental_models
 from services.persona.consult_triggers import macro_regime_shift_requirement
-from services.persona.cron_ooda_closure import append_ooda_packet, resolve_ooda_packet_store_path, _utc_now
+from services.persona.cron_ooda_closure import (
+    append_ooda_packet, compact_ooda_packet_store, load_packet_index, resolve_ooda_packet_store_path, _utc_now,
+)
 from services.persona.lesson_cycle import LessonCycle, lesson_summary
 from services.persona.runtime_profile import build_persona_runtime_profile
 
@@ -185,6 +187,19 @@ def read_packets(path: Path) -> dict[str, dict[str, Any]]:
     if not isinstance(rows, list):
         raise ValueError("OODA JSON store must be an array of record envelopes")
     return {r["packet_id"]: r["payload"] for r in rows if r.get("record_type") == "packet_snapshot"}
+
+
+def read_packet_index(path: Path) -> dict[str, Any]:
+    """Per-pass replay check input: identities + per-job watermark, never packet bodies for `.json`."""
+    if path.suffix.lower() == ".jsonl":
+        return {"identities": set(read_packets(path)), "watermarks": {}}
+    return load_packet_index(path)
+
+
+def run_is_pruned(index: Mapping[str, Any], job_id: str, run: Mapping[str, Any]) -> bool:
+    """True when retention pruned this run's packet: its runAtMs is at or below the job watermark."""
+    at, mark = run.get("runAtMs"), (index.get("watermarks") or {}).get(job_id)
+    return type(at) is int and type(mark) is int and at <= mark
 
 
 def cycle_health(packet: dict[str, Any] | None) -> dict[str, Any]:
@@ -372,6 +387,11 @@ class PersonaCycleController:
         self.pool_cycle = pool_cycle  # PoolAutonomyCycle: the persona's own daily pool OODA
         self.meeting_triggers = meeting_triggers  # None: built lazily when the consultation owner is configured
         self.path = Path(store_path) if store_path else resolve_ooda_packet_store_path()
+        if self.path.suffix.lower() != ".jsonl":
+            try:  # first start: compact a legacy store in place (identities kept)
+                compact_ooda_packet_store(self.path)
+            except Exception:
+                logging.getLogger(__name__).exception("ooda packet store compaction failed")
         self._last_health: dict[str, dict[str, Any]] = {}
         self._consumed_watermarks: dict[str, tuple[Any, Any]] = {}  # job_id -> (lastRunAtMs, lastRunStatus)
 
@@ -397,6 +417,10 @@ class PersonaCycleController:
                     existing["updated_at"] = _utc_now()
                     append_ooda_packet(self.path, existing)
                 return existing
+            if run_is_pruned(read_packet_index(self.path), job_id, run):
+                # Retention pruned this run's packet; the watermark keeps it from being consumed again.
+                return {"packet_id": packet_id, "status": "closed", "updated_at": _utc_now(),
+                        "persona_cycle": {"phase": "terminal", "pruned": True}}
             now = _utc_now()
             packet = OodaLoopPacket(packet_id=packet_id, loop_type="paper_strategy", status="observing",
                                     environment="paper", persona_ids=[persona["persona_id"]],
@@ -789,7 +813,8 @@ class PersonaCycleController:
         runtime = self.registrar._get_runtime()
         by_id = {p["persona_id"]: p for p in personas}
         report["personas"] = {}
-        known = read_packets(self.path)
+        index = read_packet_index(self.path)
+        known = index["identities"]
         job_states = report.get("job_states") or {}
         for pid, job_id in report["jobs"].items():
             try:
@@ -812,7 +837,8 @@ class PersonaCycleController:
                         break
                     # Records are newest-first. A durable earlier claim is a
                     # replay watermark; already consumed history needs no turn.
-                    if any(packet_identity(by_id[pid], job_id, r) in known for r in entries
+                    if any(packet_identity(by_id[pid], job_id, r) in known or run_is_pruned(index, job_id, r)
+                           for r in entries
                            if r.get("status") in {"ok", "error", "skipped"}):
                         break
                     next_offset = listing.get("nextOffset", offset + len(entries))
@@ -827,6 +853,8 @@ class PersonaCycleController:
                 for run in sorted(runs, key=lambda r: r.get("runAtMs", 0)):
                     if run.get("status") in {"ok", "error", "skipped"}:
                         identity = packet_identity(by_id[pid], job_id, run)
+                        if run_is_pruned(index, job_id, run) and identity not in known:
+                            continue  # pruned by retention: never consumed again
                         if identity in known:
                             packets.append(self.consume_run(by_id[pid], job_id, run))
                         elif consumed < 1:

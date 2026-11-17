@@ -63,13 +63,14 @@ packet store contract (`services/control-plane/ooda/jsonl_store.py`) so
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import fcntl
 import os
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
@@ -190,6 +191,59 @@ def resolve_ooda_packet_store_path() -> Path:
     return DEFAULT_OODA_PACKET_STORE_PATH
 
 
+# --- Bounded packet store (PERSONA-OODA-PACKET-STORE-BOUNDED-20261117) -------
+# A persisted packet never embeds an unbounded series; the live observe bundle
+# handed to the turn is untouched because only the persisted copy is reduced.
+PACKET_LIST_BOUND = 64
+ALWAYS_ELIDED_KEYS = frozenset({"quarter_equity_observations"})
+DEFAULT_RETENTION_DAYS = 30
+DEFAULT_MAX_RECORDS = 1000
+_INDEX_SUFFIX = ".index"
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _elided(value: list[Any], source_ref: str | None) -> dict[str, Any]:
+    return {"elided": True, "length": len(value), "sha256": _digest(value), "source_ref": source_ref}
+
+
+def _bound_value(value: Any, source_ref: str | None) -> Any:
+    if isinstance(value, dict):
+        runtime_id = value.get("runtime_id")
+        ref = f"telemetry://runtime-summaries/{runtime_id}" if isinstance(runtime_id, str) and runtime_id else source_ref
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, list) and (key in ALWAYS_ELIDED_KEYS or len(item) > PACKET_LIST_BOUND):
+                out[f"{key}_elided"] = _elided(item, ref)
+            else:
+                out[key] = _bound_value(item, ref)
+        return out
+    if isinstance(value, list):
+        return [
+            _elided(item, source_ref) if isinstance(item, list) and len(item) > PACKET_LIST_BOUND
+            else _bound_value(item, source_ref)
+            for item in value
+        ]
+    return value
+
+
+def bound_packet_payload(packet_dict: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of *packet_dict* whose observe bundle carries no unbounded list.
+
+    Oversized lists (and always `quarter_equity_observations`) are replaced by
+    `<key>_elided = {length, sha256, source_ref}`; scalar summaries stay.
+    """
+    out = json.loads(json.dumps(packet_dict, ensure_ascii=False))
+    cycle = out.get("persona_cycle")
+    if isinstance(cycle, dict) and isinstance(cycle.get("observe_bundle"), dict):
+        cycle["observe_bundle"] = _bound_value(cycle["observe_bundle"], None)
+    return out
+
+
 def _build_packet_record(packet_dict: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": _OODA_RECORD_SCHEMA_VERSION,
@@ -197,8 +251,144 @@ def _build_packet_record(packet_dict: Mapping[str, Any]) -> dict[str, Any]:
         "record_id": f"ooda-rec-{uuid.uuid4()}",
         "packet_id": packet_dict["packet_id"],
         "recorded_at": _utc_now(),
-        "payload": json.loads(json.dumps(packet_dict, ensure_ascii=False)),
+        "payload": bound_packet_payload(packet_dict),
     }
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _index_path(store_path: Path) -> Path:
+    return store_path.with_suffix(store_path.suffix + _INDEX_SUFFIX)
+
+
+def _read_raw_index(store_path: Path) -> dict[str, Any]:
+    try:
+        loaded = json.loads(_index_path(store_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _apply_cap(
+    records: list[Any], watermarks: dict[str, int], now: datetime
+) -> tuple[list[Any], dict[str, int], int]:
+    """Dedupe by packet_id (last wins), prune beyond the retention window and the
+    record cap, and advance the per-job replay watermark for what is pruned."""
+    last_index: dict[str, int] = {}
+    for index, record in enumerate(records):
+        if isinstance(record, dict):
+            last_index[str(record.get("packet_id"))] = index
+    deduped = [r for i, r in enumerate(records)
+               if not isinstance(r, dict) or last_index.get(str(r.get("packet_id"))) == i]
+    cutoff = now - timedelta(days=_env_int("PANTHEON_OODA_PACKET_RETENTION_DAYS", DEFAULT_RETENTION_DAYS))
+    cap = _env_int("PANTHEON_OODA_PACKET_MAX_RECORDS", DEFAULT_MAX_RECORDS)
+    kept: list[Any] = []
+    pruned: list[Any] = []
+    for record in deduped:
+        stamp = _parse_ts(record.get("recorded_at")) if isinstance(record, dict) else None
+        (pruned if stamp is not None and stamp < cutoff else kept).append(record)
+    while len(kept) > cap:
+        pruned.append(kept.pop(0))
+    marks = dict(watermarks)
+    for record in pruned:
+        producer = (record.get("payload") or {}).get("producer") or {}
+        job, at = producer.get("cron_job_id"), producer.get("cron_run_at_ms")
+        if isinstance(job, str) and type(at) is int:
+            marks[job] = max(marks.get(job, at), at)
+    return kept, marks, len(pruned)
+
+
+def _write_store_locked(store_path: Path, records: list[Any], watermarks: dict[str, int]) -> None:
+    _atomic_write(store_path, json.dumps(records, ensure_ascii=False, indent=2))
+    stat = store_path.stat()
+    identities = [r["packet_id"] for r in records if isinstance(r, dict) and r.get("record_type") == "packet_snapshot"]
+    _atomic_write(_index_path(store_path), json.dumps({
+        "schema": 1, "store": {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns},
+        "watermarks": watermarks, "identities": identities, "records": len(records)}))
+
+
+def _load_records(store_path: Path) -> list[Any]:
+    if not store_path.exists():
+        return []
+    text = store_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    loaded = json.loads(text)
+    if not isinstance(loaded, list):
+        raise CronOodaClosureError("OODA JSON store must contain record envelopes")
+    return loaded
+
+
+def compact_ooda_packet_store(store_path: Path | str, *, now: datetime | None = None) -> dict[str, Any]:
+    """Compact a `.json` packet store in place, atomically, keeping every packet
+    identity (pruned ones live on as the per-job replay watermark). The result is
+    still a JSON array of record envelopes, so the previous release reads it."""
+    store_path = Path(store_path)
+    if store_path.suffix.lower() == ".jsonl" or not store_path.exists():
+        return {"compacted": False}
+    with store_path.with_suffix(store_path.suffix + ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        before = store_path.stat().st_size
+        records = _load_records(store_path)
+        for record in records:
+            if isinstance(record, dict) and isinstance(record.get("payload"), dict):
+                record["payload"] = bound_packet_payload(record["payload"])
+        marks = {k: v for k, v in (_read_raw_index(store_path).get("watermarks") or {}).items()
+                 if isinstance(k, str) and type(v) is int}
+        kept, marks, pruned = _apply_cap(records, marks, now or datetime.now(timezone.utc))
+        _write_store_locked(store_path, kept, marks)
+        return {"compacted": True, "bytes_before": before, "bytes_after": store_path.stat().st_size,
+                "records_before": len(records), "records_after": len(kept), "pruned": pruned}
+
+
+def load_packet_index(store_path: Path | str) -> dict[str, Any]:
+    """Bounded replay index `{"identities": set, "watermarks": {job: ms}}`.
+
+    Reads only the small sidecar when it matches the store file; otherwise (first
+    start, or a previous release wrote the file) compacts once to rebuild it."""
+    store_path = Path(store_path)
+    if not store_path.exists():
+        return {"identities": set(), "watermarks": {}}
+    raw = _read_raw_index(store_path)
+    stat = store_path.stat()
+    if raw.get("store") != {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}:
+        compact_ooda_packet_store(store_path)
+        raw = _read_raw_index(store_path)
+    return {"identities": set(raw.get("identities") or []),
+            "watermarks": {k: v for k, v in (raw.get("watermarks") or {}).items() if type(v) is int}}
 
 
 def append_ooda_packet(store_path: Path, packet_dict: Mapping[str, Any]) -> dict[str, Any]:
@@ -212,6 +402,10 @@ def append_ooda_packet(store_path: Path, packet_dict: Mapping[str, Any]) -> dict
     of the same record envelopes, appended and rewritten whole — the BFF read
     surface (`_load_record_store_payload`) parses non-`.jsonl` files as one
     JSON document, so newline-delimited appends would not parse there.
+
+    The `.json` store is bounded: the persisted payload drops unbounded series,
+    and records past the retention window / record cap are pruned at write time
+    while a per-job replay watermark (sidecar index) keeps them from re-running.
     """
     store_path.parent.mkdir(parents=True, exist_ok=True)
     if store_path.suffix.lower() == ".jsonl":
@@ -221,30 +415,12 @@ def append_ooda_packet(store_path: Path, packet_dict: Mapping[str, Any]) -> dict
     record = _build_packet_record(packet_dict)
     with store_path.with_suffix(store_path.suffix + ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        existing: list[Any] = []
-        if store_path.exists():
-            text = store_path.read_text(encoding="utf-8").strip()
-            if text:
-                loaded = json.loads(text)
-                if not isinstance(loaded, list):
-                    raise CronOodaClosureError("OODA JSON store must contain record envelopes")
-                existing = loaded
+        existing = _load_records(store_path)
         existing.append(record)
-        descriptor, temporary = tempfile.mkstemp(dir=store_path.parent)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(existing, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, store_path)
-            directory = os.open(store_path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        marks = {k: v for k, v in (_read_raw_index(store_path).get("watermarks") or {}).items()
+                 if isinstance(k, str) and type(v) is int}
+        kept, marks, _ = _apply_cap(existing, marks, datetime.now(timezone.utc))
+        _write_store_locked(store_path, kept, marks)
     return record
 
 
