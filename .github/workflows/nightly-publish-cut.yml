@@ -6,7 +6,8 @@ name: Hourly Publish Cut
 # Per docs/conventions/GIT_WORKFLOW.md §3 (per-task PR model, 2026-05-17).
 #
 # Trigger:
-#   * cron hourly at :00 UTC
+#   * workflow_run: a successful Branch CI Gate push run on dev (primary)
+#   * cron hourly at :17 UTC (fallback; GitHub does not guarantee schedules)
 #   * workflow_dispatch (manual override)
 #
 # The cut + push + tag live in scripts/git/nightly_publish.sh so the operator
@@ -17,8 +18,12 @@ name: Hourly Publish Cut
 # when no snapshot was cut. Nonprod Deploy owns admission and switching.
 
 on:
+  workflow_run:
+    workflows: ["Branch CI Gate"]
+    types: [completed]
+    branches: [dev]
   schedule:
-    - cron: "0 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -37,6 +42,11 @@ concurrency:
 jobs:
   cut:
     name: Cut nightly publish snapshot
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'dev')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout dev
@@ -116,6 +126,11 @@ jobs:
 
   dev-pair:
     name: Reconcile automatic dev FE/BFF pair
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'dev')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

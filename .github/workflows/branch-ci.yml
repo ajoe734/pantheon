@@ -34,9 +34,13 @@ on:
 permissions:
   contents: read
 
+# A dev push run that started always reaches a conclusion: a newer push only
+# replaces the pending run of the same group (at most one in progress and one
+# pending), so every green commit can trigger the publish cut. Pull requests and
+# every other ref keep cancel-in-progress.
 concurrency:
   group: branch-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 jobs:
   trailers:

@@ -1,0 +1,30 @@
+{
+  "task_id": "DEV-GREEN-COMMIT-DEPLOY-TRIGGER-20261117",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "review_independence_exception": "Codex quota exhausted until 2026-11-20; Antigravity quota exhausted 2026-11-17; reviewer is same model family",
+  "changes": [
+    ".github/workflows/branch-ci.yml: cancel-in-progress false for push on dev, true otherwise",
+    ".github/workflows/nightly-publish-cut.yml: workflow_run trigger on Branch CI Gate (dev, success, push); cron moved to 17 * * * *"
+  ],
+  "concurrency_bound": "one group per ref; cancel-in-progress false means at most one in progress and one pending dev push run; a newer push replaces only the pending run",
+  "runtime_budget": "publish cut runs once per completed green dev CI, roughly 6 to 24 per day at the measured merge rate (24 scheduled before); no new writer on hosted, deployer script unchanged",
+  "schedule_gaps_measured": "11/15 11:38Z to 11/17 08:48Z, 45 hours without a scheduled run",
+  "existing_tests_not_changed": {
+    "scripts/test_isolated_l12_provider_workflow.py": "pins nonprod-deploy.yml concurrency, not branch-ci.yml",
+    "scripts/test_release_gate_current_run.py": "cancel-in-progress assertion is for a stage0 workflow, not branch-ci.yml"
+  },
+  "verification": {
+    "command": "python -m pytest -q scripts/test_dev_green_commit_deploy_trigger.py scripts/test_isolated_l12_provider_workflow.py scripts/test_release_gate_current_run.py scripts/test_auto_deploy_dev_pair.py scripts/test_nonprod_dev_artifact_workflow.py",
+    "result": "366 passed, 4 failed",
+    "preexisting_failures_identical_on_dev_68198983b": [
+      "test_isolated_l12_provider_workflow.py::test_tempgit_multipayload_fetch_and_mismatch_guard",
+      "test_isolated_l12_provider_workflow.py::test_hosted_mode_is_explicit_and_mutually_exclusive",
+      "test_isolated_l12_provider_workflow.py::test_hosted_validation_guard_script",
+      "test_release_gate_current_run.py::test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode"
+    ]
+  },
+  "residual_findings": [
+    "4 focused tests fail on unmodified dev 68198983b (nonprod-deploy.yml / stage0 workflow); outside this task scope"
+  ]
+}
