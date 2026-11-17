@@ -8,6 +8,7 @@ still owns.
 """
 from __future__ import annotations
 
+import os
 import sys
 import json
 import shutil
@@ -1936,3 +1937,46 @@ class OwnerWipResumeAutostashTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkerTempDirTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile as _t
+
+        self._tmp = _t.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "root"
+        self.root.mkdir()
+        self.outside = Path(self._tmp.name) / "outside"
+        self.outside.mkdir()
+        (self.outside / "keep.txt").write_text("x")
+
+    def test_create_and_remove_stay_inside_root(self) -> None:
+        d = worker_workspace.create_worker_temp_dir("run-1", 4242, self.root)
+        self.assertEqual(d.parent, self.root)
+        (d / "f").write_text("x")
+        self.assertFalse(worker_workspace.remove_worker_temp_dir(self.outside, self.root))
+        self.assertTrue(worker_workspace.remove_worker_temp_dir(d, self.root))
+        self.assertFalse(d.exists())
+        self.assertTrue((self.outside / "keep.txt").exists())
+
+    def test_prune_removes_dead_keeps_live(self) -> None:
+        dead = worker_workspace.create_worker_temp_dir("a", 111, self.root)
+        live = worker_workspace.create_worker_temp_dir("b", 222, self.root)
+        (self.root / "not-a-worker").mkdir()
+        removed = worker_workspace.prune_orphan_worker_temp(
+            self.root, is_alive=lambda pid, _r: pid == 222
+        )
+        self.assertEqual(removed, [dead.name])
+        self.assertTrue(live.exists())
+        self.assertTrue((self.root / "not-a-worker").exists())
+
+    def test_prune_never_follows_symlink_out_of_root(self) -> None:
+        link = self.root / "333-evil"
+        link.symlink_to(self.outside)
+        worker_workspace.prune_orphan_worker_temp(self.root, is_alive=lambda *_: False)
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue((self.outside / "keep.txt").exists())
+
+    def test_prune_missing_root_is_noop(self) -> None:
+        self.assertEqual(worker_workspace.prune_orphan_worker_temp(self.root / "nope"), [])
