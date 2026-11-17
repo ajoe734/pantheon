@@ -147,7 +147,11 @@ def validate_external_source_record(
     )
     available_time = _parse_required_time(metadata.get("available_time"), "available_time")
     if available_time < event_time:
-        raise SourceEvidenceError("available_time must be >= event_time for PIT external source records")
+        raise SourceEvidenceError(
+            "available_time must be >= event_time for PIT external source records: "
+            f"source_id={_bounded(record.source_id)} connector_id={_bounded(record.connector_id)} "
+            f"event_time={_iso(event_time)} available_time={_iso(available_time)}"
+        )
 
     content_hash = str(metadata.get("content_hash") or metadata.get("body_hash") or _content_hash(record, metadata))
     metadata.update(
@@ -354,6 +358,11 @@ def _flatten_values(value: Any) -> Iterable[str]:
 
 def _normalize_token(value: Any) -> str:
     return str(value or "").strip().lower().replace(" ", "_")
+
+
+def _bounded(value: object, limit: int = 160) -> str:
+    text = str(value)
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _parse_required_time(value: Any, field_name: str) -> datetime:
