@@ -27,6 +27,7 @@ from ..api_models import (
     TriggerIngestJobRequest,
 )
 from ..connectors import SourceEvidenceError
+from ..daily_bars_reader import SNAPSHOT_CLOSES, DailyBarsReader, join_snapshot_with_daily_bars
 from ..requirement_state import (
     DAILY_SNAPSHOT_DATASET,
     MarketSnapshotStateError,
@@ -148,11 +149,23 @@ def _owned_evidence_read(repository: Any, method: str, tenant: str, record_id: s
         raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
 
 
+def _taipei_trade_date(event_time: str) -> str:
+    """Trade date of a stored point: stored times are UTC, the daily bars calendar is Asia/Taipei."""
+    from datetime import datetime, timedelta, timezone
+
+    parsed = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.date().isoformat()
+    return parsed.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+
+
 def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRouter:
     router = APIRouter(tags=["ingest-operations"])
 
     @router.get("/api/source-ingest/snapshots/latest")
-    def get_latest_market_snapshot(symbol: str, frequency: str = "1d") -> dict[str, Any]:
+    def get_latest_market_snapshot(
+        symbol: str, frequency: str = "1d", min_closes: int | None = Query(default=None, ge=1, le=504)
+    ) -> dict[str, Any]:
         """Return the one Source-owned, already-stored normalized snapshot.
 
         This is intentionally a read-only projection lookup. It does not invoke
@@ -204,7 +217,28 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                     **({} if frequency == "1d" else {"frequency": frequency}),
                 },
             )
-        return snapshot.to_public_dict(requested_symbol=symbol)
+        public = snapshot.to_public_dict(requested_symbol=symbol)
+        if min_closes is not None and min_closes > SNAPSHOT_CLOSES and dataset == DAILY_SNAPSHOT_DATASET:
+            # Older part from daily bars; the record itself is never enlarged. <=60 or absent: as before.
+            reader = getattr(runtime, "_min_closes_reader", None)
+            if reader is None:
+                try:
+                    reader = DailyBarsReader(runtime.MARKET_DATA_STORAGE_ROOT)
+                except Exception:  # noqa: BLE001 - e.g. pyarrow missing: reported as history_insufficient
+                    reader = None
+                runtime._min_closes_reader = reader
+            points = [(_taipei_trade_date(p.event_time), p.close) for p in snapshot.points]
+            joined = join_snapshot_with_daily_bars(reader, snapshot.symbol, points, min_closes)
+            public["window_source"] = joined["window_source"]
+            if joined["closes"] is None:
+                public.update(
+                    closes=[], reason=joined["reason"], requested=joined["requested"],
+                    available=joined["available"], first_available_date=joined["first_available_date"],
+                    detail=joined["detail"],
+                )
+            else:
+                public["closes"] = joined["closes"]
+        return public
 
     @router.post("/api/source-ingest/snapshots/universe/sweep")
     def sweep_snapshot_universe() -> dict[str, Any]:

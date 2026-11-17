@@ -177,3 +177,66 @@ class DailyBarsReader:
         for items in by_symbol.values():
             items.sort(key=lambda r: r["trade_date"])
         return by_symbol[symbols[0]] if single else by_symbol
+
+
+# -- SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW-20261120: snapshot (newest 60) + daily bars (older) ---------
+SNAPSHOT_CLOSES = 60  # the stored current record keeps 60 closes; it is never enlarged (design 5.4 E1)
+
+
+def join_snapshot_with_daily_bars(
+    reader: "DailyBarsReader | None", symbol: str, points: Sequence[tuple[str, float]], min_closes: int
+) -> dict[str, Any]:
+    """Return exactly ``min_closes`` closes: the record's points plus the older part from daily bars.
+
+    ``points`` are the record's ``(trade_date, close)`` oldest first. Result keys: ``closes`` (list or
+    None), ``window_source`` and, when the history is not there, ``reason='history_insufficient'`` with
+    ``requested``, ``available``, ``first_available_date`` and ``detail``. Nothing is filled or
+    carried forward; the older part is joined on trade date and must be contiguous in the stored
+    trading calendar. Writes nothing.
+    """
+    own = list(points)[-min_closes:]
+    need = min_closes - len(own)
+    source = {"snapshot": len(own), "daily_bars": 0}
+    first_own = own[0][0] if own else None
+
+    def short(available: list[tuple[str, float]], detail: str) -> dict[str, Any]:
+        return {
+            "closes": None, "reason": "history_insufficient", "requested": min_closes,
+            "available": len(available), "first_available_date": available[0][0] if available else None,
+            "detail": detail, "window_source": {"snapshot": len(own), "daily_bars": len(available) - len(own)},
+        }
+
+    if need <= 0:
+        return {"closes": [c for _, c in own], "window_source": source}
+    if reader is None or first_own is None:
+        return short(own, "daily bars store is not available")
+    try:
+        calendar = reader.trade_dates()
+        older_dates = [d for d in calendar if d < first_own]
+        if first_own not in calendar:
+            return short(own, f"snapshot start {first_own} is not a stored trading day; the join cannot be verified")
+        if not older_dates:
+            return short(own, "daily bars hold no trading day before the snapshot window")
+        rows = reader.read_close_window(symbol, older_dates[-1], min(need, MAX_WINDOW_CLOSES))
+    except DailyBarsError as exc:
+        return short(own, f"daily bars read refused: {exc}")
+    older = [(r["trade_date"], float(r["close"])) for r in rows]
+    joined = older + own
+    # contiguity against the trading calendar: the joined dates must be one unbroken calendar slice
+    index = {d: i for i, d in enumerate(calendar)}
+    positions = [index.get(d) for d, _ in joined]
+    if None in positions or any(b - a != 1 for a, b in zip(positions, positions[1:])):
+        gap = next((f"{a[0]}..{b[0]}" for a, b, pa, pb in zip(joined, joined[1:], positions, positions[1:])
+                    if pa is None or pb is None or pb - pa != 1), "unknown")
+        # the longest unbroken tail is what is really available
+        tail = [joined[-1]]
+        for i in range(len(joined) - 2, -1, -1):
+            if positions[i] is not None and positions[i + 1] is not None and positions[i + 1] - positions[i] == 1:
+                tail.insert(0, joined[i])
+            else:
+                break
+        return short(tail, f"daily bars and snapshot are not contiguous in the trading calendar at {gap}; not filled")
+    if len(joined) < min_closes:
+        return short(joined, f"only {len(joined)} contiguous closes are stored")
+    source["daily_bars"] = len(older)
+    return {"closes": [c for _, c in joined], "window_source": source}
