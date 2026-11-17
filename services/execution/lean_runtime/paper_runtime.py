@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -23,7 +24,7 @@ except Exception:  # pragma: no cover - fallback if package path differs at runt
         suffix = s.rsplit(".", 1)[1] if "." in s else "TW"
         return ticker, {"TPEX": "OTC", "TWO": "OTC"}.get(suffix, "TSE")
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -40,6 +41,10 @@ if str(_RUNTIME_MANAGER_DIR) not in sys.path:
     sys.path.insert(0, str(_RUNTIME_MANAGER_DIR))
 
 from runtime_manager_client import RuntimeManagerClient
+from services.foundation.reliable_delivery import (
+    atomic_write_text,
+    sweep_stale_temp_siblings,
+)
 from services.execution.lean_runtime.taiwan_cash_costs import (
     buy_cash_required,
     cash_share_costs,
@@ -117,6 +122,7 @@ _CANONICAL_LIFECYCLE_EVENT_TYPES = frozenset(
         "paper_forced_liquidation",
     }
 )
+_LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS = 35 * 24 * 3600.0
 _PILOT_FUTURES_PROFILES: dict[str, dict[str, Any]] = {
     "QFF": {
         "underlying": "2330",
@@ -449,6 +455,8 @@ class PaperExecutionAlgorithm:
         self._state_binding_error: str | None = None
         self._loaded_state_missing_binding_id = False
         self._state_path = Path(state_path) if state_path else None
+        if self._state_path is not None:
+            sweep_stale_temp_siblings(self._state_path)
         self._state_error: str | None = None
         self._state_load_error: str | None = None
         self._load_state()
@@ -4127,37 +4135,14 @@ class PaperExecutionAlgorithm:
             "futures_mark_diagnostic": self._last_futures_mark_diagnostic,
             "settled_futures_contracts": sorted(self._settled_futures_contracts),
         }
-        temporary: Path | None = None
-        directory_fd: int | None = None
         try:
             serialized = json.dumps(payload, sort_keys=True, allow_nan=False)
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            directory_fd = os.open(
-                self._state_path.parent,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-            )
-            temporary = self._state_path.with_name(f"{self._state_path.name}.{uuid.uuid4().hex}.tmp")
-            temporary.write_text(serialized, encoding="utf-8")
-            with temporary.open("rb") as state_file:
-                os.fsync(state_file.fileno())
-            os.replace(temporary, self._state_path)
-            os.fsync(directory_fd)
+            atomic_write_text(self._state_path, serialized)
             self._state_error = None
             return True
         except (OSError, TypeError, ValueError) as exc:
             self._state_error = f"{type(exc).__name__}: {exc}"
-            if temporary is not None:
-                try:
-                    temporary.unlink(missing_ok=True)
-                except OSError:
-                    pass
             return False
-        finally:
-            if directory_fd is not None:
-                try:
-                    os.close(directory_fd)
-                except OSError:
-                    pass
 
     def open_bracket_orders(self) -> list[dict[str, Any]]:
         return [dict(order) for order in self._open_bracket_orders]
@@ -4672,6 +4657,9 @@ class RuntimeTelemetryEmitter:
     ) -> bool:
         return self.emit("heartbeat", {"heartbeat": 1, **(extra_metrics or {})}, metadata=metadata)
 
+    def emit_runtime_state_snapshot(self, metadata: dict[str, Any] | None = None) -> bool:
+        return self.emit("runtime_state_snapshot", {"state_snapshot": 1}, metadata=metadata)
+
     def emit_pnl_snapshot(
         self,
         pnl: float,
@@ -4747,6 +4735,7 @@ class LifecycleTelemetryOutbox:
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(path)
+        sweep_stale_temp_siblings(self._path)
         self._lock = threading.RLock()
         self._state = self._empty_state()
         self._load_error: str | None = None
@@ -4773,6 +4762,7 @@ class LifecycleTelemetryOutbox:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             candidate = self._strict_copy(raw)
             self._validate_state(candidate)
+            self._prune_expired_chains(candidate)
             self._state = candidate
         except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             self._load_error = f"{type(exc).__name__}: {exc}"
@@ -4890,6 +4880,43 @@ class LifecycleTelemetryOutbox:
                     "lifecycle telemetry pending payload does not match chain checkpoint"
                 )
 
+    @staticmethod
+    def _chain_retention_seconds() -> float:
+        raw = os.getenv("PANTHEON_LIFECYCLE_CHAIN_RETENTION_SECONDS", "")
+        try:
+            value = float(raw) if raw.strip() else _LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS
+        except ValueError:
+            value = _LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS
+        return max(value, 0.0)
+
+    @classmethod
+    def _prune_expired_chains(
+        cls, state: dict[str, Any], *, now: datetime | None = None
+    ) -> int:
+        """Drop chain checkpoints of journeys with no pending event and no recent event.
+
+        A journey's chain must outlive every path that can still emit an event on
+        it: a duplicate/redelivered signal re-enters the same journey while its
+        execution decision (30 day TTL in the signal store) exists. A journey is
+        therefore released only when nothing of it is pending *and* its last
+        event is older than the retention window (default 35 days), so open or
+        recently active journeys keep their exact sequence/causal checkpoint.
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=cls._chain_retention_seconds())
+        pending_journeys = {record["journey_id"] for record in state["pending"]}
+        expired = []
+        for journey_id, checkpoint in state["chains"].items():
+            if journey_id in pending_journeys:
+                continue
+            envelope = checkpoint.get("correlation_envelope") or {}
+            stamp = _parse_iso_utc(envelope.get("event_time"))
+            if stamp is not None and stamp < cutoff:
+                expired.append(journey_id)
+        for journey_id in expired:
+            del state["chains"][journey_id]
+        return len(expired)
+
     def _require_healthy(self) -> None:
         if self._load_error:
             raise LifecycleTelemetryOutboxError(
@@ -4898,41 +4925,15 @@ class LifecycleTelemetryOutbox:
 
     def _write_state(self, state: Mapping[str, Any]) -> None:
         self._require_healthy()
-        temporary: Path | None = None
-        directory_fd: int | None = None
         try:
             serialized = json.dumps(state, sort_keys=True, allow_nan=False)
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            directory_fd = os.open(
-                self._path.parent,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-            )
-            temporary = self._path.with_name(
-                f"{self._path.name}.{uuid.uuid4().hex}.tmp"
-            )
-            with temporary.open("w", encoding="utf-8") as state_file:
-                state_file.write(serialized)
-                state_file.flush()
-                os.fsync(state_file.fileno())
-            os.replace(temporary, self._path)
-            os.fsync(directory_fd)
+            atomic_write_text(self._path, serialized)
             self._last_error = None
         except (OSError, TypeError, ValueError) as exc:
             self._last_error = f"{type(exc).__name__}: {exc}"
-            if temporary is not None:
-                try:
-                    temporary.unlink(missing_ok=True)
-                except OSError:
-                    pass
             raise LifecycleTelemetryOutboxError(
                 f"lifecycle telemetry outbox persistence failed: {self._last_error}"
             ) from exc
-        finally:
-            if directory_fd is not None:
-                try:
-                    os.close(directory_fd)
-                except OSError:
-                    pass
 
     def verify_writable(self) -> None:
         """Fail before queue consumption when the durable store is unavailable."""
@@ -5009,6 +5010,7 @@ class LifecycleTelemetryOutbox:
                     "payload": exact_payload,
                 }
             )
+            self._prune_expired_chains(candidate)
             self._validate_state(candidate)
             self._write_state(candidate)
             self._state = candidate
@@ -5083,6 +5085,7 @@ class LifecycleTelemetryOutbox:
             # ledger acknowledges the fill (release_batch), otherwise a replay
             # would re-publish the fill with a new sequence_no.
             candidate["admitted_batches"] = admitted_batches
+            self._prune_expired_chains(candidate)
             self._validate_state(candidate)
             self._write_state(candidate)
             self._state = candidate
@@ -5119,8 +5122,9 @@ class LifecycleTelemetryOutbox:
             ]
             if len(remaining) == len(self._state["pending"]):
                 return
-            candidate = dict(self._state)
+            candidate = self._strict_copy(self._state)
             candidate["pending"] = remaining
+            self._prune_expired_chains(candidate)
             self._validate_state(candidate)
             self._write_state(candidate)
             self._state = candidate
@@ -5332,6 +5336,7 @@ class PaperRuntimeService:
         self._last_skipped_status: str | None = None
         self._last_error: str | None = None
         self._last_heartbeat_at: str | None = None
+        self._last_state_snapshot_digest: str | None = None
         self._last_heartbeat_monotonic: float | None = None
         self._heartbeat_clock = time.monotonic
         self._poll_count = 0
@@ -5831,6 +5836,7 @@ class PaperRuntimeService:
         if acknowledged_event_ids:
             try:
                 self._lifecycle_outbox.acknowledge_many(acknowledged_event_ids)
+                self._sync_lifecycle_chains_after_ack()
             except LifecycleTelemetryOutboxError as exc:
                 # Exact payloads remain pending on disk. A subsequent replay may
                 # duplicate remotely accepted events; ingest idempotency
@@ -6423,6 +6429,16 @@ class PaperRuntimeService:
         if batch is not None and batch.items:
             self._admit_lifecycle_batch(batch, batch_id=event.event_id)
 
+    def _sync_lifecycle_chains_after_ack(self) -> None:
+        """Drop cached chains the outbox removed for closed, fully delivered journeys."""
+        try:
+            durable = self._lifecycle_outbox.chains()
+        except LifecycleTelemetryOutboxError:
+            return
+        for journey_id in [j for j in self._lifecycle_chains if j not in durable]:
+            self._lifecycle_chains.pop(journey_id, None)
+            self._blocked_lifecycle_chains.discard(journey_id)
+
     def _admit_lifecycle_batch(self, batch: _LifecycleBatch, *, batch_id: str) -> None:
         journeys = {str(item["journey_id"]) for item in batch.items}
         try:
@@ -6470,8 +6486,6 @@ class PaperRuntimeService:
             "is_real_capital": False,
             "sim_fill_flag": False,
             "capital_scale_pct": 0,
-            "performance_telemetry": dict(self._performance_telemetry),
-            "member_virtual_books": self._member_book_snapshot(),
             "runtime_heartbeat": {"connectivity_status": "connected" if self._last_error is None else "degraded", "broker_status": "not_applicable", **lags},
             **lags,
         }
@@ -6482,6 +6496,35 @@ class PaperRuntimeService:
         if emitted:
             self._last_heartbeat_at = now
             self._last_heartbeat_monotonic = mono_now
+        self._maybe_emit_runtime_state_snapshot()
+
+    def _maybe_emit_runtime_state_snapshot(self) -> None:
+        """Send performance_telemetry/member_virtual_books only when they change.
+
+        The digest is advanced only after a successful emit, so a failed emit
+        is retried at the next heartbeat tick.
+        """
+        try:
+            state = {
+                "performance_telemetry": dict(self._performance_telemetry),
+                "member_virtual_books": self._member_book_snapshot(),
+            }
+            digest = hashlib.sha256(
+                json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            ).hexdigest()
+            if digest == self._last_state_snapshot_digest:
+                return
+            meta = {"runtime_package": "paper_execution_runtime", "state_digest": digest, **state}
+            emit = getattr(self._telemetry, "emit_runtime_state_snapshot", None)
+            if callable(emit):
+                emitted = emit(metadata=meta)
+            else:
+                emitted = self._telemetry.emit("runtime_state_snapshot", {"state_snapshot": 1}, metadata=meta)
+        except Exception:  # noqa: BLE001 - state snapshot must never break the heartbeat path
+            log.exception("runtime_state_snapshot emit failed")
+            return
+        if emitted:
+            self._last_state_snapshot_digest = digest
 
     def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:

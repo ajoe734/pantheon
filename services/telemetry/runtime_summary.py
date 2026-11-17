@@ -46,6 +46,10 @@ _COUNTERFACTUAL_ROW_FIELDS = (
     "underlying_mark",
 )
 
+# Events whose metadata carries performance_telemetry / member_virtual_books.
+# "heartbeat" is kept so rows written by the previous release stay readable.
+_STATE_CARRIER_EVENT_TYPES = frozenset({"heartbeat", "runtime_state_snapshot"})
+
 _LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
     {
         "signal_generation",
@@ -1455,7 +1459,7 @@ class RuntimeSummaryProjectionStore:
                     # time or letting undated legacy data poison every quarter.
                     observation["as_of"] = event_time
             perf_observation = metadata.get("performance_telemetry")
-            if event_type == "heartbeat" and isinstance(perf_observation, dict):
+            if event_type in _STATE_CARRIER_EVENT_TYPES and isinstance(perf_observation, dict):
                 if perf_observation.get("status") in ("marks_unavailable", "invalid_ledger", "invalid_drawdown_series"):
                     _, attempted_at = _strict_rfc3339(perf_observation.get("attempted_at"))
                     attempted_at = attempted_at or event_boundary_at
@@ -1802,12 +1806,12 @@ class RuntimeSummaryProjectionStore:
             # heartbeat performance_telemetry. Only its own attempt time orders
             # it; a heartbeat never refreshes a mark, it can only withdraw one.
             member_books = metadata.get("member_virtual_books")
-            if isinstance(member_books, list) and event_type in {"heartbeat", "signal_generation"}:
+            if isinstance(member_books, list) and event_type in (_STATE_CARRIER_EVENT_TYPES | {"signal_generation"}):
                 safe_books = _json_safe_object({"books": member_books})
                 if safe_books is not None:
                     current["member_virtual_books"] = safe_books["books"]
             perf = metadata.get("performance_telemetry")
-            if event_type == "heartbeat" and isinstance(perf, dict):
+            if event_type in _STATE_CARRIER_EVENT_TYPES and isinstance(perf, dict):
                 # The heartbeat reports the same authoritative ledger fill_count
                 # even when the performance sample is unchanged and no new
                 # pnl/drawdown snapshot is emitted (e.g. a flat book that was

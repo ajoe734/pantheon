@@ -96,7 +96,7 @@ def collector_files(tmp_path: Path, *, holidays=True, suspension=True, twse_page
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def pull(files, tmp_path, monkeypatch, source_id, *, max_records=2000):
+def pull(files, tmp_path, monkeypatch, source_id, *, max_records=20000):
     """Production pull entry point (execute_provider_owned_adapter) over a collector bundle tree."""
     class _Transport(BundleTransport):
         def read(self, relative_path: str, *, max_bytes: int) -> bytes:
@@ -249,3 +249,32 @@ def test_without_any_evidence_nothing_is_attested(tmp_path):
         "symbol_canonical": "2330.TWSE", "date": "2026-10-30", "close": 10.0, "volume": 1.0}}}) + "\n")
     market = feed.build_candidate_pool_market(tmp_path, INPUTS)
     assert market["includes_delisted"] is False and market["includes_suspended"] is False
+
+
+def test_suspension_production_cap_is_hosted_valid_and_pages_to_completion(official_files, tmp_path, monkeypatch):
+    """The production cap must pass the hosted fetch.max_records bound (<= 1000); intake above it pages via the resume cursor."""
+    production_cap = get_connector_definition(SUSPENSION).default_limits["max_records"]
+    assert 0 < production_cap <= 1000
+    _, uncapped = pull(official_files, tmp_path / "u", monkeypatch, SUSPENSION, max_records=10_000_000)
+    assert len(uncapped) > 2000  # evidence: intake exceeds 2000 once listed warrants are kept
+    _, first = pull(official_files, tmp_path / "p", monkeypatch, SUSPENSION, max_records=production_cap)
+    assert len(first) == production_cap  # truncated per run, never claimed complete (see next test)
+
+
+def test_suspension_cap_exceeded_is_loud_not_silently_truncated(official_files, tmp_path, monkeypatch):
+    """Above the cap the pull reports an incomplete, degraded run with a resume cursor; it never claims completeness."""
+    class _T(BundleTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            return official_files[relative_path]
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: _T())
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tmp_path / "raw_store"))
+    definition = get_connector_definition(SUSPENSION)
+    cfg = {"source_id": SUSPENSION, "source_type": "market", "dataset": definition.datasets[0],
+           "attribution_required": True, "max_records": 2000}
+    result = CollectorBundleAdapter(connector_id=SUSPENSION, **cfg).pull(trace_id="cap", max_records=2000)
+    assert len(result.records) == 2000
+    assert result.complete is False
+    assert result.observed["continuation_pending"] is True
+    assert result.observed["health_state"] == "degraded"
+    assert "items=2000" in result.next_cursor

@@ -253,6 +253,31 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_source_observed_snapshots_instance
         ON source_ingest.source_observed_snapshots (source_instance_id, observed_at DESC);
     """,
+    # Permanent hourly runtime heartbeat summary table (TELEMETRY-HEARTBEAT-RETENTION-20261117).
+    # Summarises raw heartbeat rows per (runtime_id, hour_bucket) in UTC before
+    # raw heartbeats older than the retention window are deleted.
+    """
+    CREATE TABLE IF NOT EXISTS telemetry_heartbeat_hourly_summaries (
+        runtime_id               TEXT             NOT NULL,
+        hour_bucket              TIMESTAMPTZ      NOT NULL,
+        heartbeat_count          BIGINT           NOT NULL CHECK (heartbeat_count > 0),
+        first_heartbeat_at       TIMESTAMPTZ      NOT NULL,
+        last_heartbeat_at        TIMESTAMPTZ      NOT NULL,
+        largest_gap_seconds      DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (largest_gap_seconds >= 0.0),
+        last_connectivity_status TEXT             NOT NULL,
+        first_event_id           TEXT,
+        last_event_id            TEXT,
+        min_ingested_seq         BIGINT,
+        max_ingested_seq         BIGINT,
+        summarized_at            TIMESTAMPTZ      NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (runtime_id, hour_bucket),
+        CHECK (first_heartbeat_at <= last_heartbeat_at)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telemetry_heartbeat_hourly_summaries_hour_bucket
+        ON telemetry_heartbeat_hourly_summaries (hour_bucket DESC);
+    """,
 
 ]
 

@@ -1,0 +1,34 @@
+{
+  "twse_isin_strmode2_excerpt.html": {
+    "source_url": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+    "fetched_utc": "2026-11-16",
+    "page_update_date": "2026/11/17",
+    "full_page_sha256": "8b3700bcaec2e17abed41fa95209cb72ee8e34d8eb9574fde465f1ddc33e4ab5",
+    "category_row_counts_full_page": [
+      1058,
+      41965,
+      27,
+      31,
+      249,
+      14,
+      10,
+      6
+    ],
+    "excerpt_rule": "header + first 4 rows of every category header; original Big5 page converted to UTF-8"
+  },
+  "tpex_isin_strmode4_excerpt.html": {
+    "source_url": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4",
+    "fetched_utc": "2026-11-16",
+    "page_update_date": "2026/11/17",
+    "full_page_sha256": null,
+    "category_row_counts_full_page": [
+      13143,
+      119,
+      6,
+      898,
+      1,
+      4
+    ],
+    "excerpt_rule": "header + first 4 rows of every category header; original Big5 page converted to UTF-8"
+  }
+}

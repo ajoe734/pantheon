@@ -351,3 +351,230 @@ def test_controller_reuses_queue_across_ticks_with_market_sources_and_zero_regis
     assert jobs[0].skip_reason == MARKET_SOURCE_SKIP_REASON
     assert jobs[0].registry_id is None
 
+
+
+# ---------------------------------------------------------------------------
+# DISTILLATION-LEASE-PER-JOB-AND-BOUNDED-CLAIM-20261117
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+
+from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
+
+
+def _src(source_id: str) -> SourceRecord:
+    return SourceRecord(
+        source_id=source_id, connector_id="conn-papers", source_type="paper",
+        title=f"title {source_id}", content_ref=f"https://doi.org/{source_id}",
+        status="normalized",
+        metadata={"trust_score": 0.8, "access_scope": ["research"], "license_scope": "internal"},
+    )
+
+
+def _worker(tmp_path, clock, *, sync_seconds=0.0, on_sync=None, lease_seconds=30.0, **queue_kwargs):
+    queue = storage.DistillationJobQueue(
+        tmp_path / "queue.sqlite3", now=lambda: clock[0], **queue_kwargs,
+    )
+
+    def registry_sync(request):
+        clock[0] += sync_seconds
+        if on_sync is not None:
+            on_sync(queue, request)
+        return storage.RegistrySyncResult(registry_id="reg-" + request.job.job_id, status="synced")
+
+    worker = storage.DistillationWorker(
+        queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+        worker_id="w", lease_seconds=lease_seconds, registry_sync=registry_sync,
+    )
+    return worker, queue
+
+
+def test_batch_of_100_jobs_of_1_5_seconds_has_no_expired_lease(tmp_path):
+    clock = [1_000_000.0]
+    worker, queue = _worker(tmp_path, clock, sync_seconds=1.5, lease_seconds=30.0)
+    for i in range(100):
+        queue.enqueue_source_record(_src(f"s{i:03d}"))
+    result = worker.run_pending(limit=100)
+    assert result.processed == 100 and result.lease_lost == ()
+    assert queue.metrics()["done"] == 100
+    # 150 s of work against a 30 s lease: every job got its own window.
+    assert clock[0] - 1_000_000.0 >= 150
+
+
+def test_superseded_token_on_one_job_does_not_abort_the_tick(tmp_path):
+    clock = [1_000_000.0]
+    victim = {}
+
+    def steal(queue, request):
+        if request.source.source_id == "s002":
+            victim["id"] = request.job.job_id
+            with queue._connect() as conn:
+                conn.execute("UPDATE distillation_outbox SET lease_token='other' WHERE job_id=?",
+                             (request.job.job_id,))
+
+    worker, queue = _worker(tmp_path, clock, on_sync=steal)
+    for i in range(5):
+        queue.enqueue_source_record(_src(f"s{i:03d}"))
+    result = worker.run_pending(limit=10)
+    assert result.lease_lost == (victim["id"],)
+    assert result.processed == 4 and queue.metrics()["done"] == 4
+
+
+def test_repeated_lease_expiry_is_backed_off_and_dead_lettered(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(
+        tmp_path / "queue.sqlite3", now=lambda: clock[0], max_lease_expiries=3,
+        lease_backoff_base_seconds=30.0,
+    )
+    queue.enqueue_source_record(_src("stuck"))
+    available = []
+    for _ in range(3):
+        job = queue.claim_due(worker_id="w", lease_seconds=10, limit=5)[0]
+        queue.begin_job(job, lease_seconds=10)
+        clock[0] += 11  # work outlives the lease and nobody completes it
+        assert queue.claim_due(worker_id="w", lease_seconds=10, limit=5) == []
+        row = queue.get("stuck")
+        available.append(row.next_attempt_at)
+        clock[0] += 3600  # skip past any backoff
+    final = queue.get("stuck")
+    assert final.status == "dead_letter"
+    dead = queue.list_dead_letters(include_payload=False)
+    assert dead and dead[0]["reason"].startswith(storage.LEASE_EXPIRED_REASON)
+    assert queue.claim_due(worker_id="w", lease_seconds=10, limit=5) == []
+    # backoff grows: attempts counted once per started execution only.
+    assert final.attempts == 3
+
+
+def test_unstarted_claim_expiry_is_released_without_penalty(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0],
+                                         max_lease_expiries=2)
+    queue.enqueue_source_record(_src("a"))
+    for _ in range(6):
+        assert len(queue.claim_due(worker_id="w", lease_seconds=5, limit=5)) == 1
+        clock[0] += 6
+    job = queue.get("a")
+    assert job.attempts == 0 and job.status == "leased"
+
+
+def test_inflated_attempts_from_the_expiry_loop_are_normalised_once(tmp_path):
+    clock = [1_000_000.0]
+    worker, queue = _worker(tmp_path, clock)
+    queue.enqueue_source_record(_src("stuck"))
+    with closing(sqlite3.connect(queue.path, isolation_level=None)) as conn:
+        for index in ("distillation_outbox_deferred_idx", "distillation_outbox_lease_idx",
+                      "distillation_outbox_prune_idx"):
+            conn.execute(f"DROP INDEX {index}")
+        for column in ("lease_expiries", "lease_started", "pruned_at"):
+            conn.execute(f"ALTER TABLE distillation_outbox DROP COLUMN {column}")
+        conn.execute("UPDATE distillation_outbox SET attempts = 4321, status = 'pending', "
+                     "last_error = 'lease_expired_before_registry_ack'")
+    queue = storage.DistillationJobQueue(queue.path, now=lambda: clock[0])  # upgrade
+    assert queue.get("stuck").attempts == 0
+    worker._queue = queue
+    result = worker.run_pending()
+    assert result.processed == 1 and queue.get("stuck").status == "done"
+
+
+def test_claim_reads_a_bounded_number_of_rows_and_never_sorts_on_disk(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0])
+    payload = json.dumps({"source_id": "x", "metadata": {"tenant_id": "t"}})
+    with closing(sqlite3.connect(queue.path, isolation_level=None)) as conn:
+        conn.execute("BEGIN")
+        for i in range(3000):
+            conn.execute("INSERT INTO distillation_source_versions VALUES (?, ?, 'v', ?, 1)",
+                         (f"s{i}", f"d{i}", payload))
+            conn.execute(
+                "INSERT INTO distillation_outbox (job_id, event_id, source_id, source_digest,"
+                " event_version, idempotency_key, status, enqueued_at, available_at, max_attempts,"
+                " updated_at) VALUES (?,?,?,?, 'v', ?, 'pending', ?, ?, 3, 1)",
+                (f"j{i}", f"e{i}", f"s{i}", f"d{i}", f"k{i}", i, i),
+            )
+        conn.execute("COMMIT")
+    parsed = []
+    real_loads = storage.json.loads
+    storage.json.loads = lambda *a, **k: (parsed.append(1), real_loads(*a, **k))[1]
+    try:
+        claimed = queue.claim_due(worker_id="w", limit=7)
+    finally:
+        storage.json.loads = real_loads
+    assert len(claimed) == 7 and len(parsed) <= 7
+    with closing(sqlite3.connect(queue.path)) as conn:
+        for status in ("pending", "retry_wait"):
+            plan = " ".join(str(r) for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT job_id FROM distillation_outbox WHERE status=? "
+                "AND available_at<=? ORDER BY available_at, enqueued_at LIMIT ?", (status, 1e12, 7)))
+            assert "TEMP B-TREE" not in plan and "distillation_outbox_due_idx" in plan
+
+
+def test_prune_bounds_payloads_but_keeps_idempotency(tmp_path):
+    clock = [1_000_000.0]
+    worker, queue = _worker(tmp_path, clock)
+    source = _src("old")
+    queue.enqueue_source_record(source)
+    worker.run_pending()
+    assert queue.get("old").status == "done"
+    clock[0] += 8 * 86400
+    counts = queue.prune()
+    assert counts["payloads"] == 1 and counts["inbox"] == 1
+    assert queue.prune() == {"payloads": 0, "inbox": 0, "dead_letters": 0, "bytes": 0}
+    with closing(sqlite3.connect(queue.path)) as conn:
+        assert conn.execute("SELECT payload_json FROM distillation_source_versions").fetchone()[0] \
+            == storage.PRUNED_PAYLOAD_JSON
+        assert conn.execute("SELECT COUNT(*) FROM distillation_inbox").fetchone()[0] == 0
+    # catch_up must not re-enqueue the pruned version; re-enqueue stays idempotent.
+    result = worker.catch_up([source])
+    assert result.enqueued == 0 and queue.count() == 1
+    queue.enqueue_source_record(source)
+    assert queue.count() == 1
+
+
+def test_resolved_dead_letters_are_pruned_unresolved_kept(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0])
+    with closing(sqlite3.connect(queue.path, isolation_level=None)) as conn:
+        for i, resolved in enumerate((1.0, None)):
+            conn.execute("INSERT INTO distillation_dead_letters (job_id, event_id, source_id,"
+                         " source_digest, payload_json, attempts, reason, created_at, resolved_at)"
+                         " VALUES (?, 'e', 's', 'd', '{}', 1, 'r', 1, ?)", (f"j{i}", resolved))
+    assert queue.prune(now=10_000_000.0)["dead_letters"] == 1
+    assert [d["job_id"] for d in queue.list_dead_letters()] == ["j1"]
+
+
+def test_controller_alive_marker_stops_after_consecutive_hard_failures(tmp_path):
+    config = SimpleNamespace(alive_path=tmp_path / "alive", max_consecutive_failed_ticks=3)
+    controller._HARD_FAILURES.clear()
+    controller._refresh_alive(config, hard_failure=False)
+    assert config.alive_path.exists()
+    config.alive_path.unlink()
+    controller._refresh_alive(config, hard_failure=True)
+    controller._refresh_alive(config, hard_failure=True)
+    assert config.alive_path.exists()  # below the threshold: still healthy
+    config.alive_path.unlink()
+    controller._refresh_alive(config, hard_failure=True)
+    assert not config.alive_path.exists()  # third consecutive failure: marker ages out
+    controller._refresh_alive(config, hard_failure=False)
+    assert config.alive_path.exists()  # one success restores it
+
+
+def test_compaction_returns_pruned_payload_space_to_the_filesystem(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0])
+    big = json.dumps({"source_id": "x", "metadata": {"body": "y" * 2900}})
+    with closing(sqlite3.connect(queue.path, isolation_level=None)) as conn:
+        conn.execute("BEGIN")
+        for i in range(2000):
+            conn.execute("INSERT INTO distillation_source_versions VALUES (?, ?, 'v', ?, 1)",
+                         (f"s{i}", f"d{i}", big))
+            conn.execute(
+                "INSERT INTO distillation_outbox (job_id, event_id, source_id, source_digest,"
+                " event_version, idempotency_key, status, enqueued_at, available_at, processed_at,"
+                " max_attempts, updated_at) VALUES (?,?,?,?, 'v', ?, 'done', 1, 1, 2, 3, 1)",
+                (f"j{i}", f"e{i}", f"s{i}", f"d{i}", f"k{i}"),
+            )
+        conn.execute("COMMIT")
+    before = queue.path.stat().st_size
+    pruned = queue.prune(now=clock[0] + 8 * 86400, batch=5000)
+    assert pruned["payloads"] == 2000 and pruned["bytes"] >= 2000 * 2900
+    queue.compact()
+    assert queue.path.stat().st_size < before / 3

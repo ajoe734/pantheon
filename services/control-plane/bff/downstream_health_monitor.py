@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -70,6 +71,22 @@ INFRASTRUCTURE_INCIDENT_RECONCILE_PATH = "/api/incidents/reconcile-infrastructur
 ORPHAN_RECOVERED_REASON = "orphan_recovered"
 _DELIVERY_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _DELIVERY_PRUNE_BATCH_SIZE = 3500
+# Delivered telemetry rows only need to live while a re-queue of the same
+# window is still possible; incident channels, dead letters and the replay
+# audit keep the longer history above.
+_TELEMETRY_DELIVERED_RETENTION_SECONDS = 24 * 60 * 60
+# Unchanged healthy targets emit one "still ok" sample per interval; state
+# transitions, recoveries and incident openings always emit.
+_TELEMETRY_SAMPLE_INTERVAL_SECONDS = 60 * 60
+_STORAGE_MAINTENANCE_INTERVAL_SECONDS = 60.0
+_VACUUM_CHUNK_PAGES = 256
+_VACUUM_BUDGET_SECONDS = 0.2
+_VACUUM_BUSY_TIMEOUT_MS = 250
+_AUTO_VACUUM_INCREMENTAL = 2
+# One-time rebuild only once the live data is small enough that VACUUM holds
+# the writer lock for well under a probe interval.
+_REBUILD_MAX_LIVE_BYTES = 192 * 1024 * 1024
+_LIST_DELIVERIES_DEFAULT_LIMIT = 500
 # Undelivered health rows older than this no longer describe current health.
 _DELIVERY_MAX_AGE_SECONDS = 6 * 60 * 60
 _STALE_DELIVERY_ERROR = "stale_beyond_delivery_age_bound"
@@ -714,6 +731,12 @@ class _DurableHealthStore:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            if connection.execute("PRAGMA page_count").fetchone()[0] <= 2:
+                # Brand-new file: pick incremental auto-vacuum before any
+                # table exists (no rebuild needed).
+                connection.execute(
+                    f"PRAGMA auto_vacuum = {_AUTO_VACUUM_INCREMENTAL}"
+                )
             legacy_table: Optional[str] = None
             existing_columns = {
                 str(row["name"])
@@ -1815,6 +1838,7 @@ class _DurableHealthStore:
         delivery_history_seconds: float = _DELIVERY_HISTORY_RETENTION_SECONDS,
         window_history_seconds: float = _WINDOW_HISTORY_RETENTION_SECONDS,
         batch_size: int = _DELIVERY_PRUNE_BATCH_SIZE,
+        telemetry_history_seconds: float = _TELEMETRY_DELIVERED_RETENTION_SECONDS,
     ) -> Dict[str, int]:
         """Bound durable history that is not required for retry/DLQ recovery."""
 
@@ -1823,6 +1847,19 @@ class _DurableHealthStore:
         delivery_cutoff = (
             datetime.fromtimestamp(
                 now.timestamp() - max(60.0, float(delivery_history_seconds)),
+                tz=timezone.utc,
+            )
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        telemetry_cutoff = (
+            datetime.fromtimestamp(
+                now.timestamp()
+                - min(
+                    max(60.0, float(telemetry_history_seconds)),
+                    max(60.0, float(delivery_history_seconds)),
+                ),
                 tz=timezone.utc,
             )
             .replace(microsecond=0)
@@ -1914,6 +1951,10 @@ class _DurableHealthStore:
                     FROM delivery_outbox INDEXED BY delivery_outbox_prune_idx
                     WHERE status IN ('delivered', 'dead_letter', 'quarantined')
                       AND updated_at < ?
+                      AND (
+                          updated_at < ?
+                          OR (status = 'delivered' AND channel = 'telemetry')
+                      )
                       AND rowid NOT IN (
                           SELECT outbox_rowid FROM delivery_prune_protected
                       )
@@ -1921,7 +1962,7 @@ class _DurableHealthStore:
                     LIMIT ?
                 )
                 """,
-                (delivery_cutoff, limit),
+                (telemetry_cutoff, delivery_cutoff, limit),
             ).rowcount
             probe_windows = connection.execute(
                 """
@@ -1970,6 +2011,81 @@ class _DurableHealthStore:
             "delivery_replay_audit": max(0, int(replay_audit)),
         }
 
+    def storage_stats(self) -> Dict[str, int]:
+        with self._connect() as connection:
+            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+            page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+            freelist = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+            auto_vacuum = int(connection.execute("PRAGMA auto_vacuum").fetchone()[0])
+        return {
+            "page_size": page_size,
+            "page_count": page_count,
+            "freelist_pages": freelist,
+            "auto_vacuum": auto_vacuum,
+            "file_bytes": page_size * page_count,
+            "live_bytes": page_size * max(0, page_count - freelist),
+        }
+
+    def maintain_storage(
+        self,
+        *,
+        budget_seconds: float = _VACUUM_BUDGET_SECONDS,
+        chunk_pages: int = _VACUUM_CHUNK_PAGES,
+    ) -> Dict[str, Any]:
+        """Shrink the file after pruning without long writer-lock holds.
+
+        Existing files created without auto_vacuum are rebuilt once (VACUUM)
+        when their live data is small enough for a short rebuild; afterwards
+        freed pages are returned in small incremental_vacuum chunks and the
+        WAL is truncated.  Every step uses a short busy timeout and skips
+        instead of waiting so a probe window is never delayed by maintenance.
+        """
+
+        result: Dict[str, Any] = {
+            "rebuilt": False,
+            "pages_released": 0,
+            "wal_truncated": False,
+            "skipped": None,
+        }
+        stats = self.storage_stats()
+        deadline = time.monotonic() + max(0.0, float(budget_seconds))
+        try:
+            if stats["auto_vacuum"] != _AUTO_VACUUM_INCREMENTAL:
+                if stats["live_bytes"] > _REBUILD_MAX_LIVE_BYTES:
+                    result["skipped"] = "rebuild_deferred_until_pruned"
+                    return result
+                free = shutil.disk_usage(Path(self.path).parent).free
+                if free < stats["live_bytes"] * 2 + 16 * 1024 * 1024:
+                    result["skipped"] = "insufficient_disk_for_rebuild"
+                    return result
+                with self._connect(_VACUUM_BUSY_TIMEOUT_MS) as connection:
+                    connection.execute(
+                        f"PRAGMA auto_vacuum = {_AUTO_VACUUM_INCREMENTAL}"
+                    )
+                    connection.execute("VACUUM")
+                result["rebuilt"] = True
+            else:
+                released = 0
+                while (
+                    time.monotonic() < deadline
+                    and stats["freelist_pages"] - released > 0
+                ):
+                    with self._connect(_VACUUM_BUSY_TIMEOUT_MS) as connection:
+                        connection.execute(
+                            f"PRAGMA incremental_vacuum({int(chunk_pages)})"
+                        ).fetchall()
+                    released += int(chunk_pages)
+                result["pages_released"] = min(released, stats["freelist_pages"])
+            with self._connect(_VACUUM_BUSY_TIMEOUT_MS) as connection:
+                row = connection.execute(
+                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                ).fetchone()
+                result["wal_truncated"] = bool(row is not None and int(row[0]) == 0)
+        except sqlite3.OperationalError as exc:
+            # Locked by a writer: try again next cycle rather than wait.
+            result["skipped"] = f"busy:{exc}"
+        return result
+
     def delivery_counts(self) -> Dict[str, int]:
         counts = {
             "pending": 0,
@@ -1990,13 +2106,22 @@ class _DurableHealthStore:
         )
         return counts
 
-    def list_deliveries(self, *, event_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_deliveries(
+        self,
+        *,
+        event_id: Optional[str] = None,
+        limit: int = _LIST_DELIVERIES_DEFAULT_LIMIT,
+    ) -> List[Dict[str, Any]]:
         query = "SELECT * FROM delivery_outbox"
         params: tuple[Any, ...] = ()
         if event_id:
             query += " WHERE event_id=?"
             params = (event_id,)
-        query += " ORDER BY created_at, delivery_id"
+            query += " ORDER BY created_at, delivery_id"
+        else:
+            # Unfiltered reads are bounded: never decode the whole table.
+            query += " ORDER BY created_at, delivery_id LIMIT ?"
+            params = (max(1, int(limit)),)
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         values: List[Dict[str, Any]] = []
@@ -2206,6 +2331,11 @@ class DownstreamHealthMonitor:
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_retention_prune_at = 0.0
+        self._last_telemetry_at: Dict[str, float] = {}
+        # First maintenance runs one interval after start so it never
+        # contends with the startup flush/probe burst.
+        self._last_storage_maintenance_at = time.monotonic()
+        self._maintenance_task: Optional["asyncio.Task[None]"] = None
         self._loop_12_truth: Dict[str, Any] = {
             "status": "not_attempted",
             "error": None,
@@ -2511,10 +2641,39 @@ class DownstreamHealthMonitor:
                 await asyncio.to_thread(self._deliver_due_sync)
             except Exception as exc:  # noqa: BLE001
                 log.warning("delivery_loop: unexpected error: %s", exc)
+            if (
+                time.monotonic() - self._last_storage_maintenance_at
+                >= _STORAGE_MAINTENANCE_INTERVAL_SECONDS
+            ):
+                self._last_storage_maintenance_at = time.monotonic()
+                # Run beside the loop so a slow vacuum chunk never delays
+                # the probe/flush/delivery cadence.
+                if (
+                    self._maintenance_task is None
+                    or self._maintenance_task.done()
+                ):
+                    self._maintenance_task = asyncio.create_task(
+                        self._run_storage_maintenance()
+                    )
             try:
                 await asyncio.sleep(min(1.0, self._probe_interval))
             except asyncio.CancelledError:
                 break
+
+    async def _run_storage_maintenance(self) -> None:
+        try:
+            await asyncio.to_thread(self._maintain_storage_sync)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("storage_maintenance: unexpected error: %s", exc)
+
+    def _maintain_storage_sync(self) -> None:
+        """Prune retained history, then return freed pages to the filesystem."""
+
+        pruned = self._store.prune_retained_history()
+        if any(count >= _DELIVERY_PRUNE_BATCH_SIZE for count in pruned.values()):
+            # Backlog still draining: keep pruning on the next cycle.
+            self._last_storage_maintenance_at = 0.0
+        self._store.maintain_storage()
 
     async def _probe_all(self) -> None:
         targets = self._resolve_target_registry()
@@ -3054,8 +3213,34 @@ class DownstreamHealthMonitor:
             incident_ref=str(incident["incident_id"]) if incident else None,
         )
         event_id = str(event["event_id"])
+        opens_incident = bool(
+            should_open
+            and incident is not None
+            and self._incidents_url
+            and (
+                incident_created
+                or (
+                    str(incident["status"]) == "opening"
+                    and str(incident["opening_event_id"]) == event_id
+                )
+            )
+        )
+        sample_now = time.time()
+        emit_telemetry = bool(
+            previous is None
+            or previous.ok != recorded.ok
+            or is_recovery
+            or opens_incident
+            or (
+                not recorded.ok
+                and recorded.consecutive_failures == self._failure_threshold
+            )
+            or sample_now - self._last_telemetry_at.get(recorded.target_name, 0.0)
+            >= _TELEMETRY_SAMPLE_INTERVAL_SECONDS
+        )
         telemetry_delivery_id: Optional[str] = None
-        if self._telemetry_url:
+        if self._telemetry_url and emit_telemetry:
+            self._last_telemetry_at[recorded.target_name] = sample_now
             telemetry_delivery_id = f"telemetry:{event_id}"
             self._store.queue_delivery(
                 delivery_id=telemetry_delivery_id,

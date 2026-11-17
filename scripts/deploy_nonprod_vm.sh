@@ -6168,6 +6168,90 @@ run_dev_candidate_compose() {
     -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH}" "$@"
 }
 
+# Steady services (restart policy unless-stopped/always, non one-off) that run
+# before a root rollout. A failed rollout's compensation must put each of them
+# back to running on the same image, or report them as incomplete by name; a
+# stopped steady service (e.g. source-ingest-scheduler) is never a success.
+STEADY_SERVICE_FORMAT='{{index .Config.Labels "com.docker.compose.service"}}|{{index .Config.Labels "com.docker.compose.oneoff"}}|{{.HostConfig.RestartPolicy.Name}}|{{.State.Status}}|{{.Image}}|{{.Id}}'
+
+steady_service_rows() {
+  local id
+  for id in $(docker ps -a -q --filter label=com.docker.compose.project=pantheon 2>/dev/null); do
+    docker inspect --format "${STEADY_SERVICE_FORMAT}" "${id}" 2>/dev/null || true
+  done
+}
+
+capture_steady_service_baseline() {
+  local out="$1"
+  steady_service_rows | python3 -c '
+import sys
+seen = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) != 6:
+        continue
+    service, oneoff, restart, state, image, _cid = parts
+    if service and oneoff != "True" and restart in ("unless-stopped", "always") and state == "running":
+        seen[service] = image
+for service, image in sorted(seen.items()):
+    print(service + "|" + image)
+' > "${out}"
+}
+
+# Prints "service|container_id|problem" for each baseline steady service that is
+# not running on its baseline image. problem is stopped (image matches, can be
+# started), or missing/ambiguous/image-mismatch (needs a recreate).
+steady_service_problems() {
+  local baseline="$1"
+  steady_service_rows | python3 -c '
+import sys
+expected = {}
+for line in open(sys.argv[1]):
+    service, _, image = line.rstrip("\n").partition("|")
+    if service:
+        expected[service] = image
+live = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) == 6 and parts[1] != "True":
+        live.setdefault(parts[0], []).append(parts)
+for service, image in sorted(expected.items()):
+    rows = live.get(service, [])
+    if len(rows) != 1:
+        print(service + "||" + ("missing" if not rows else "ambiguous"))
+        continue
+    _s, _o, _r, state, current, cid = rows[0]
+    if current != image:
+        print(service + "|" + cid + "|image-mismatch")
+    elif state != "running":
+        print(service + "|" + cid + "|stopped")
+' "${baseline}"
+}
+
+verify_steady_services_restored() {
+  local baseline="${1:-}" problems line service cid problem attempt
+  [[ -n "${baseline}" && -s "${baseline}" ]] || { info "no steady service baseline recorded; steady services not verified"; return 0; }
+  problems="$(steady_service_problems "${baseline}")"
+  if grep -q '|stopped$' <<<"${problems}"; then
+    while IFS='|' read -r service cid problem; do
+      [[ "${problem}" == stopped ]] || continue
+      info "compensation: starting stopped steady service ${service} on its baseline image"
+      docker start "${cid}" >/dev/null 2>&1 || true
+    done <<<"${problems}"
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+  fi
+  [[ -z "${problems}" ]] && return 0
+  local names
+  names="$(cut -d'|' -f1 <<<"${problems}" | paste -sd, -)"
+  info "steady_service_compensation_incomplete: ${names} ($(paste -sd';' - <<<"${problems}"))" >&2
+  return 1
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
   dump_dev_root_failure_diagnostics
@@ -6181,7 +6265,11 @@ rollback_dev_bff_on_failure() {
     # producer file without a runner ACK is not authority to compensate.
     run_dev_artifact_driver verify || info "unchanged baseline verification failed"
   elif run_dev_artifact_driver restore; then
-    info "automatic BFF exact-artifact restore verified"
+    if verify_steady_services_restored "${DEV_STEADY_SERVICE_BASELINE_FILE:-}"; then
+      info "automatic BFF exact-artifact restore verified"
+    else
+      info "automatic BFF exact-artifact restore INCOMPLETE: baseline steady services are not running on their baseline image"
+    fi
   else
     info "automatic BFF exact-artifact restore failed; no source-build fallback"
   fi
@@ -6493,6 +6581,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
+    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" || true
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.

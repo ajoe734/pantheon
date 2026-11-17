@@ -364,6 +364,45 @@ def _git_is_ancestor(repo_root: Path, commit_sha: str, ref: str = "refs/remotes/
     return result.returncode == 0
 
 
+def steady_service_drift(baseline_manifest: dict, container_states) -> dict[str, str]:
+    """Steady baseline services that are stopped, missing or on a non-baseline image.
+
+    ``container_states`` is a list of ``{"service", "state", "image_id"}`` rows
+    recorded from the live non-one-off Compose containers. Baseline services are
+    the ``running`` rows of the v2 ``stack_baseline`` (or, for a v1 baseline, the
+    sealed three-image bundle). Returns ``{service: reason}``; empty means none.
+    """
+    if not isinstance(container_states, list):
+        raise CaptureError("steady service state must be a JSON list of container rows")
+    stack = baseline_manifest.get("stack_baseline")
+    if isinstance(stack, dict) and isinstance(stack.get("services"), dict):
+        expected = {name: row["image_id"] for name, row in stack["services"].items()
+                    if isinstance(row, dict) and row.get("state") == "running" and isinstance(row.get("image_id"), str)}
+    else:
+        bundle = baseline_manifest.get("image_bundle")
+        services = bundle.get("services") if isinstance(bundle, dict) else None
+        if not isinstance(services, dict):
+            raise CaptureError("baseline manifest lacks a steady service image record")
+        expected = {name: row["image_id"] for name, row in services.items()
+                    if isinstance(row, dict) and isinstance(row.get("image_id"), str)}
+    live: dict[str, list[dict]] = {}
+    for row in container_states:
+        if (not isinstance(row, dict) or not isinstance(row.get("service"), str) or
+                not isinstance(row.get("state"), str) or not isinstance(row.get("image_id"), str)):
+            raise CaptureError("steady service state row is invalid")
+        live.setdefault(row["service"], []).append(row)
+    drift: dict[str, str] = {}
+    for service, image_id in sorted(expected.items()):
+        rows = live.get(service, [])
+        if len(rows) != 1:
+            drift[service] = "container-missing" if not rows else "container-ambiguous"
+        elif rows[0]["image_id"] != image_id:
+            drift[service] = "stopped-on-non-baseline-image" if rows[0]["state"] != "running" else "non-baseline-image"
+        elif rows[0]["state"] != "running":
+            drift[service] = "stopped"
+    return drift
+
+
 def verify_restore_accepted_baseline_preconditions(
     *,
     baseline_manifest: dict,
@@ -372,7 +411,8 @@ def verify_restore_accepted_baseline_preconditions(
     repo_root: Path | None = None,
     expected_bff_url: str | None = None,
     is_ancestor=None,
-) -> dict[str, str]:
+    steady_services: list | None = None,
+) -> dict:
     if not isinstance(baseline_manifest, dict) or not isinstance(baseline_manifest.get("identity"), dict):
         raise CaptureError("baseline manifest lacks identity")
     identity = baseline_manifest["identity"]
@@ -393,7 +433,8 @@ def verify_restore_accepted_baseline_preconditions(
     live_backend_sha = bff_version.get("source_commit_sha")
     if not isinstance(live_backend_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", live_backend_sha):
         raise CaptureError("live /bff/version lacks an exact 40-hex source_commit_sha")
-    if live_backend_sha == accepted_backend_sha:
+    steady_drift = steady_service_drift(baseline_manifest, steady_services) if steady_services is not None else {}
+    if live_backend_sha == accepted_backend_sha and not steady_drift:
         raise CaptureError("live /bff/version already matches the accepted backend; no drift to restore")
     checker = is_ancestor
     if checker is None:
@@ -408,6 +449,7 @@ def verify_restore_accepted_baseline_preconditions(
         "accepted_backend_sha": accepted_backend_sha,
         "accepted_frontend_sha": accepted_frontend_sha,
         "drifted_backend_sha": live_backend_sha,
+        "steady_service_drift": steady_drift,
         "candidate_backend_sha": matches(str(identity.get("candidate_backend_sha") or ""), r"[0-9a-f]{40}"),
         "candidate_frontend_sha": matches(str(identity.get("candidate_frontend_sha") or ""), r"[0-9a-f]{40}"),
         "candidate_id": matches(str(identity.get("candidate_id") or ""), r"[0-9a-f]{64}"),
@@ -660,6 +702,12 @@ def build_restore_remote_script(
     return body.encode("utf-8")
 
 
+def _read_steady_state(path: Path | None) -> list | None:
+    if path is None:
+        return None
+    return json.loads(_read_regular_file(path, 1024 * 1024), object_pairs_hook=unique_object)
+
+
 def execute_restore_accepted_baseline(
     *,
     baseline_path: Path,
@@ -672,6 +720,7 @@ def execute_restore_accepted_baseline(
     env: dict[str, str] | None = None,
     is_ancestor=None,
     guarded_runner=None,
+    steady_state_path: Path | None = None,
 ) -> dict:
     environment = dict(os.environ if env is None else env)
     matches(expected_baseline_sha256, r"[0-9a-f]{64}")
@@ -701,6 +750,7 @@ def execute_restore_accepted_baseline(
         repo_root=repo_root,
         expected_bff_url=expected_bff_url,
         is_ancestor=is_ancestor,
+        steady_services=_read_steady_state(steady_state_path),
     )
 
     candidate_raw = _read_regular_file(candidate_receipt_path, 65536)
@@ -850,6 +900,7 @@ def main(argv=None) -> int:
     parser.add_argument("--candidate-receipt-file", type=Path)
     parser.add_argument("--deployment-json-file", type=Path)
     parser.add_argument("--bff-version-file", type=Path)
+    parser.add_argument("--steady-state-file", type=Path)
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--output-readback", type=Path)
     args = parser.parse_args(argv)
@@ -874,6 +925,7 @@ def main(argv=None) -> int:
                 bff_version=bff_version,
                 repo_root=args.repo_root,
                 expected_bff_url=os.environ.get("DEV_BFF_URL"),
+                steady_services=_read_steady_state(args.steady_state_file),
             )
             print(json.dumps(summary, sort_keys=True))
             return 0
@@ -889,6 +941,7 @@ def main(argv=None) -> int:
             bff_version_path=args.bff_version_file,
             repo_root=args.repo_root,
             output_readback_path=args.output_readback,
+            steady_state_path=args.steady_state_file,
         )
         print(json.dumps(readback, sort_keys=True))
         return 0

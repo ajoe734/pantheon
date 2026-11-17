@@ -2528,3 +2528,23 @@ def test_taifex_tx_daily_records_carry_schema_and_are_declared() -> None:
     assert "taifex_tx_daily" in get_connector_definition("tw-taifex-futures-options-chip").datasets
     assert TW_CHIP_REFRESH_PROFILES["tw-taifex-tx-daily"]["dataset"] == "taifex_tx_daily"
     assert get_connector_definition("tw-taifex-tx-daily").datasets == ("taifex_tx_daily",)
+
+
+def test_adapter_listing_filter_skips_unlisted_and_counts_and_rollback_restores():
+    """SOURCE-WARRANT-LISTING-EXPIRY-20261117: a tw_price_daily row in no current listing is not stored."""
+    from services.source_ingestion.security_listing import ListingFilter
+
+    payload = [
+        {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+        {"Date": "1150210", "Code": "030002", "ClosingPrice": "0.50"},  # expired warrant, in no listing
+        {"Date": "1150210", "Code": "030001", "ClosingPrice": "0.80"},  # listed warrant
+    ]
+    flt = ListingFilter(listed=frozenset({"2330", "030001"}), listing_date="2026-11-16")
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10, listing_filter=flt)
+    recs = adapter.records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")
+    assert sorted(r.metadata["normalized_row"]["symbol_canonical"] for r in recs) == ["030001.TWSE", "2330.TWSE"]
+    assert flt.skipped_not_listed_count == 1
+    off = TaiwanOfficialMarketDatasetAdapter(max_records=10, listing_filter=ListingFilter(listed=frozenset(), enabled=False))
+    assert len(off.records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")) == 3
+    # other datasets are never filtered by the price listing rule
+    assert TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")
