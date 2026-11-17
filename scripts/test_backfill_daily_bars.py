@@ -751,3 +751,72 @@ def main(argv=None) -> int:  # pragma: no cover - measurement driver
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+
+
+# --- SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118: three columns, copies rule, v1 upgrade --------------
+from datetime import datetime, timezone  # noqa: E402
+
+COLS = ["symbol", "trade_date", "close", "volume", "traded_value", "available_time", "trading_status"]
+
+
+def _read(root, symbol, day):
+    return DailyBarsReader(root).read_range([symbol], day, day, columns=COLS)[symbol]
+
+
+def test_columns_come_from_the_run_file_line_and_copies_follow_the_evaluator_rule(tmp_path):
+    _write(tmp_path, "2026-11-13", "run-a", [
+        _line("2330", "2026-11-13", 100.0, volume=100.0, value=10000.0, available_time="2026-11-13T14:00:00+08:00", trading_status="traded"),
+        _line("2317", "2026-11-13", 50.0, volume=10.0, value_thousands=0.5, available_time="2026-11-13"),
+        _line("1101", "2026-11-13", 9.0),
+    ])
+    _write(tmp_path, "2026-11-14", "run-b", [  # a later copy with a smaller volume: the larger volume still wins
+        _line("2330", "2026-11-13", 100.0, volume=40.0, value=4000.0, available_time="2026-11-13T16:30:00+08:00"),
+    ])
+    report = bf.backfill(tmp_path, _state(), today=TODAY, apply=True, newest_run_on_conflict=True)
+    assert report["mismatches"] == []
+    big = _read(tmp_path, "2330", "2026-11-13")[0]
+    assert (big["volume"], big["traded_value"]) == (100.0, 10000.0)
+    assert big["available_time"] == datetime(2026, 11, 13, 8, 30, tzinfo=timezone.utc)  # the latest of both copies
+    assert big["trading_status"] == "traded"
+    small = _read(tmp_path, "2317", "2026-11-13")[0]
+    assert small["traded_value"] == 500.0 and small["available_time"] == datetime(2026, 11, 13, 6, 30, tzinfo=timezone.utc)
+    none = _read(tmp_path, "1101", "2026-11-13")[0]
+    assert none["traded_value"] is None and none["trading_status"] is None
+    assert report["conflicts"]["volume_only_keys"] == 1
+
+
+def test_v1_days_are_upgraded_idempotently_and_dates_without_run_files_are_reported(tmp_path):
+    from services.source_ingestion.tests.test_daily_bars_store import _write_v1_day
+
+    _write(tmp_path, "2026-11-13", "run-a", [
+        _line("2330", "2026-11-13", 1.5, volume=10.0, value=15.0, available_time="2026-11-13T15:00:00+08:00")])
+    _write_v1_day(tmp_path, "2026-11-13", ["2330"])
+    _write_v1_day(tmp_path, "2026-11-12", ["2330"])  # its run files are already deleted
+    before = DailyBarsStore(tmp_path).read_manifest("2026-11-13")
+    assert before["schema_version"] == "daily_bars_manifest.v1"
+    dry = bf.backfill(tmp_path, _state(), today=TODAY)
+    assert dry["upgrade"]["v1_dates_with_run_files"] == ["2026-11-13"]
+    assert dry["upgrade"]["v1_dates_without_run_files"] == ["2026-11-12"]
+    first = bf.backfill(tmp_path, _state(), today=TODAY, apply=True)
+    assert first["days"]["2026-11-13"]["written"] is True and first["days"]["2026-11-13"]["schema_version"] == "daily_bars_manifest.v2"
+    row = _read(tmp_path, "2330", "2026-11-13")[0]
+    assert row["traded_value"] == 15.0 and row["available_time"] == datetime(2026, 11, 13, 7, 0, tzinfo=timezone.utc)
+    assert first["upgrade"]["v1_dates_without_run_files_count"] == 1
+    snapshot = _bytes(tmp_path)
+    second = bf.backfill(tmp_path, _state(), today=TODAY, apply=True)
+    assert second["days"]["2026-11-13"]["written"] is False and _bytes(tmp_path) == snapshot  # a second run writes nothing
+    old = _read(tmp_path, "2330", "2026-11-12")[0]  # untouched v1 day still reads, with nulls
+    assert old["close"] == 1.5 and old["traded_value"] is None and old["available_time"] is None
+
+
+def test_kill_during_the_upgrade_keeps_the_previous_partition_and_the_rerun_finishes(tmp_path):
+    from services.source_ingestion.tests.test_daily_bars_store import _write_v1_day
+
+    _write(tmp_path, "2026-11-13", "run-a", [_line("2330", "2026-11-13", 1.5, volume=10.0, value=15.0, available_time="2026-11-13")])
+    _write_v1_day(tmp_path, "2026-11-13", ["2330"])
+    killed = DailyBarsStore(tmp_path, fault=lambda s: (_ for _ in ()).throw(KeyboardInterrupt()) if s == "before_manifest_rename" else None)
+    with pytest.raises(KeyboardInterrupt):
+        bf.backfill(tmp_path, _state(), today=TODAY, apply=True, store=killed)
+    assert _read(tmp_path, "2330", "2026-11-13")[0]["traded_value"] is None  # previous complete partition
+    done = bf.backfill(tmp_path, _state(), today=TODAY, apply=True)
+    assert done["mismatches"] == [] and _read(tmp_path, "2330", "2026-11-13")[0]["traded_value"] == 15.0
