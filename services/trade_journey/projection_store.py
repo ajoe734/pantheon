@@ -1920,15 +1920,8 @@ class ReceiptPruneRunResult:
 _DOLLAR_PARAM_RE = re.compile(r"\$\d+")
 
 
-def _rewrite_safe_telemetry_max_query(query: str) -> str:
-    if "FROM public.telemetry_events" in query and "MAX(ingested_seq)" in query:
-        return """
-        SELECT CASE
-            WHEN to_regclass('public.telemetry_events') IS NULL THEN 0
-            ELSE (SELECT COALESCE(MAX(ingested_seq), 0) FROM public.telemetry_events)
-        END
-        """
-    return query
+def _is_telemetry_max_query(query: str) -> bool:
+    return "FROM public.telemetry_events" in query and "MAX(ingested_seq)" in query
 
 
 class _PsycopgCeilingAdapter:
@@ -1938,7 +1931,12 @@ class _PsycopgCeilingAdapter:
         self._cur = cur
 
     async def fetchval(self, query: str, *args: Any) -> Any:
-        sql = _DOLLAR_PARAM_RE.sub("%s", _rewrite_safe_telemetry_max_query(query))
+        if _is_telemetry_max_query(query):
+            self._cur.execute("SELECT to_regclass('public.telemetry_events')")
+            reg = self._cur.fetchone()
+            if reg is None or reg[0] is None:
+                return 0
+        sql = _DOLLAR_PARAM_RE.sub("%s", query)
         self._cur.execute(sql, args)
         row = self._cur.fetchone()
         return row[0] if row is not None else None
@@ -1957,7 +1955,11 @@ class _AsyncpgCeilingProxy:
         self._conn = conn
 
     async def fetchval(self, query: str, *args: Any, **kwargs: Any) -> Any:
-        return await self._conn.fetchval(_rewrite_safe_telemetry_max_query(query), *args, **kwargs)
+        if _is_telemetry_max_query(query):
+            reg = await self._conn.fetchval("SELECT to_regclass('public.telemetry_events')", **kwargs)
+            if reg is None:
+                return 0
+        return await self._conn.fetchval(query, *args, **kwargs)
 
     async def fetch(self, query: str, *args: Any, **kwargs: Any) -> Any:
         return await self._conn.fetch(query, *args, **kwargs)
