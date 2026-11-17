@@ -74,10 +74,16 @@ from .financial_source_catalog import financial_data_source_catalog_payload
 from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
+from .pin_source import PinSource
+from .security_listing import HOSTED_STATE_FILENAME, HostedListing, set_hosted_listing
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .controller_state import ControllerStateError, ControllerStateStore, read_controller_state
 from .controller_auth import load_controller_token
-from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
+from .persona_source_reconciler import (
+    RECONCILIATION_METADATA_KEY,
+    UNDEFINED_BY_RELEASE_ACTIONS,
+    SourceProvisioningReconciler,
+)
 from .process_lock import exclusive_file_lock
 from .requirement_state import (
     LatestMarketSnapshotStore,
@@ -325,7 +331,10 @@ class SourceIngestionRuntime:
         self.manager = IngestManager()
         self.proposal_store = SourceChangeProposalStore.from_jsonl(self.PROPOSAL_STORE_PATH)
         self.llm_proposal_adapter = LLMSourceProposalAdapter(self.proposal_store)
-        self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH)
+        # Receipts that a gate proof or paper evidence references are kept past retention; when the evidence
+        # cannot be read (or SOURCE_INGEST_PIN_EVIDENCE_PATHS is unset) retention drops nothing and health says why.
+        self.pin_source = PinSource.from_env(run_files_root=self.MARKET_DATA_STORAGE_ROOT)
+        self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH, pinned_run_ids=self.pin_source.run_ids)
         self.connector_store = JsonlConfiguredConnectorStore(self.CONNECTOR_STORE_PATH)
         self.schedule_config_store = JsonlConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)
         self.configured_fetcher = ConfiguredConnectorFetcher(self.connector_store)
@@ -341,6 +350,9 @@ class SourceIngestionRuntime:
         self.latest_market_snapshot_store = LatestMarketSnapshotStore(
             self.LATEST_MARKET_SNAPSHOT_PATH,
             max_closes=self.MARKET_SNAPSHOT_MAX_CLOSES,
+            # MARKET_SNAPSHOT_STORE (journal default | dual | sqlite) is read by the store itself.
+            # In sqlite mode the old-format export is rewritten at most once per interval (design 4.2 S2).
+            export_min_interval_seconds=float(os.getenv("MARKET_SNAPSHOT_EXPORT_INTERVAL_SECONDS", "3600")),
         )
         self.snapshot_universe = SnapshotUniverse(
             self.latest_market_snapshot_store,
@@ -352,7 +364,13 @@ class SourceIngestionRuntime:
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()
         self.source_execution_lock = threading.RLock()
-        self.market_data_storage_writer = MarketDataStorageWriter(self.MARKET_DATA_STORAGE_ROOT)
+        # The dated security listing: the collector host's state, read through the bundle transport (no provider
+        # egress from hosted), kept as one file. Mode: SOURCE_INGEST_SECURITY_LISTING_MODE off|shadow|enforce.
+        self.hosted_listing = HostedListing(self.DATA_DIR / HOSTED_STATE_FILENAME, transport=self._listing_transport)
+        set_hosted_listing(self.hosted_listing)
+        self.market_data_storage_writer = MarketDataStorageWriter(
+            self.MARKET_DATA_STORAGE_ROOT, listing_provider=self.hosted_listing
+        )
         self.distillation_job_queue = IngestDistillationJobQueue(self.DISTILLATION_JOB_QUEUE_PATH)
         self.source_management_store = build_source_management_store(self.DATA_DIR)
         self._STRATEGY_SEED_STORE_PATH = Path(
@@ -874,9 +892,15 @@ class SourceIngestionRuntime:
         return {
             "status": "stale" if stale or controller_stale else ("degraded_data" if degraded else "ok"),
             "data_ready": not stale and not degraded and not controller_stale,
+            "controller_stale": controller_stale,
+            "reason": "controller_stale" if controller_stale else None,
+            "controller_max_age_seconds": self._SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS,
             "scheduled_connector_count": len(scheduled),
             "stale_connector_count": len(stale),
             "degraded_connector_count": len(degraded),
+            # Items the last reconcile left alone because a newer release wrote them (RC1 WP1.5).
+            "skipped_count": int(state.reconcile.get("skipped_count") or 0),
+            "skipped_ids": list(state.reconcile.get("skipped_ids") or [])[:50],
             "controller_state_size_bytes": state_size_bytes,
             "controller_heartbeat_age_seconds": heartbeat_age_seconds,
             "connector_inventory_count": (
@@ -888,6 +912,15 @@ class SourceIngestionRuntime:
             "provider_egress_attempted": bool(state.schedule.get("provider_egress_attempted")),
         }
 
+    @staticmethod
+    def _listing_transport() -> Any:
+        """The bundle transport the collector pull already uses; None while no collector token is provisioned."""
+        from .connectors.collector_bundle import COLLECTOR_BUNDLE_TOKEN_ENV, HttpBundleTransport, collector_host
+
+        if not os.environ.get(COLLECTOR_BUNDLE_TOKEN_ENV, "").strip():
+            return None
+        return HttpBundleTransport(host=collector_host(), timeout_seconds=20.0)
+
     def _source_runtime_metrics(self) -> dict[str, Any]:
         readiness = self._source_freshness_readiness()
         return {
@@ -896,9 +929,12 @@ class SourceIngestionRuntime:
             "scheduled_connector_count": readiness.get("scheduled_connector_count", 0),
             "stale_connector_count": readiness.get("stale_connector_count", 0),
             "degraded_connector_count": readiness.get("degraded_connector_count", 0),
+            "skipped_count": readiness.get("skipped_count", 0),
+            "skipped_ids": readiness.get("skipped_ids", []),
             "posture_alert_count": self.PRODUCTION_POSTURE.alert_count(),
             "latest_market_snapshot_journal": self.latest_market_snapshot_store.journal_stats(),
             "ingest_schedule_journal": JsonlIngestScheduleStore.journal_stats_for_path(self.SCHEDULE_STORE_PATH),
+            "security_listing": self.hosted_listing.health(),
         }
 
     def _connector_schema_hash(self, connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
@@ -1105,6 +1141,62 @@ class SourceIngestionRuntime:
                     bindings[action.idempotency_key] = action.connector_id
         return bindings
 
+    def _skipped_requirements(self, results: list[Any]) -> list[dict[str, str]]:
+        return [
+            {
+                "kind": "requirement",
+                "id": action.idempotency_key,
+                "reason": str(action.details.get("reason") or action.connector_action),
+            }
+            for result in results
+            for action in result.actions
+            if action.connector_action in UNDEFINED_BY_RELEASE_ACTIONS
+        ]
+
+    def _undefined_stored_records(self, reconciler: SourceProvisioningReconciler) -> list[dict[str, str]]:
+        """Stored connector and schedule records this release cannot interpret (read-only)."""
+
+        items: list[dict[str, str]] = []
+        for config in sorted(self.connector_store.list_configs(), key=lambda item: item.connector.connector_id):
+            reason = reconciler.undefined_reason(config)
+            if reason is None:
+                continue
+            connector_id = config.connector.connector_id
+            items.append({"kind": "connector_record", "id": connector_id, "reason": reason})
+            if self.schedule_config_store.get_schedule(connector_id) is not None:
+                items.append(
+                    {"kind": "schedule_record", "id": connector_id, "reason": "connector-not-defined-by-this-release"}
+                )
+        return items
+
+    @staticmethod
+    def _dedupe_skipped(items: list[dict[str, str]]) -> list[dict[str, str]]:
+        seen: set[tuple[str, str]] = set()
+        unique: list[dict[str, str]] = []
+        for item in items:
+            key = (item["kind"], item["id"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        return unique
+
+    def _uninterpreted_bindings(
+        self, planned_bindings: Mapping[str, str], reconciler: SourceProvisioningReconciler
+    ) -> dict[str, str]:
+        """Previously accepted bindings whose connector record this release cannot interpret."""
+
+        previous = self.requirement_snapshot_store.latest
+        if previous is None:
+            return {}
+        carried: dict[str, str] = {}
+        for requirement_id, connector_id in previous.bindings.items():
+            if requirement_id in planned_bindings:
+                continue
+            config = self.connector_store.get_config(connector_id)
+            if config is not None and reconciler.undefined_reason(config) is not None:
+                carried[requirement_id] = connector_id
+        return carried
+
     def _provisioning_summary(self, results: list[Any]) -> dict[str, int]:
         summary = {
             "persona_count": len(results),
@@ -1124,7 +1216,11 @@ class SourceIngestionRuntime:
         self,
         *,
         current_bindings: Mapping[str, str],
+        reconciler: SourceProvisioningReconciler | None = None,
+        skipped: list[dict[str, str]] | None = None,
     ) -> list[dict[str, Any]]:
+        reconciler = reconciler or self._source_provisioning_reconciler()
+        skipped = skipped if skipped is not None else []
         retained_connector_ids = set(current_bindings.values())
         removed_connector_ids = sorted(
             config.connector.connector_id
@@ -1146,6 +1242,12 @@ class SourceIngestionRuntime:
             owner = str(marker.get("managed_by") or "") if isinstance(marker, Mapping) else ""
             if owner != "persona_source_provisioning_reconciler":
                 actions.append({"connector_id": connector_id, "action": "retained_operator_owned"})
+                continue
+            undefined = reconciler.undefined_reason(config)
+            if undefined is not None:
+                # Written by a newer release: this release cannot interpret it, so it must not
+                # disable it, rewrite it or fail the tick over it. Stored bytes stay untouched.
+                actions.append({"connector_id": connector_id, "action": "left_alone_not_defined_by_release"})
                 continue
             schedule = self.schedule_config_store.get_schedule(connector_id)
             already_retired = (
@@ -1359,7 +1461,17 @@ class SourceIngestionRuntime:
         )
         documents: dict[str, Any] = {}
         offerings = {}
+        reconciler = self._source_provisioning_reconciler()
         for config in configs:
+            undefined = reconciler.undefined_reason(config)
+            if undefined is not None:
+                # A record a newer release wrote: not offered by this release, so the scheduler
+                # skips it instead of failing the pull stage on an adapter it does not define.
+                offerings[config.connector.connector_id] = {
+                    "offered": False,
+                    "reason": f"not-defined-by-this-release: {undefined}",
+                }
+                continue
             fetch = getattr(config, "fetch", None) or {}
             if fetch.get("mode") != "provider_owned_adapter" or fetch.get("adapter") != COLLECTOR_BUNDLE_ADAPTER_TOKEN:
                 continue
@@ -1478,6 +1590,8 @@ class SourceIngestionRuntime:
             "schema_version": "source_ingest_controller_readback.v1",
             "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "controller_state": controller_state,
+            "skipped_count": int(((controller_state or {}).get("reconcile") or {}).get("skipped_count") or 0),
+            "skipped_ids": list(((controller_state or {}).get("reconcile") or {}).get("skipped_ids") or [])[:50],
             "controller_state_path": str(self.CONTROLLER_STATE_PATH),
             "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
             "connector_count": len(connector_readbacks),
@@ -1514,6 +1628,7 @@ class SourceIngestionRuntime:
         pre_readback = self._controller_readback_payload()
         reconciler = self._source_provisioning_reconciler()
         retirement_actions: list[dict[str, Any]] = []
+        skipped_items: list[dict[str, str]] = []
         accepted_snapshot = None
         if request.authoritative_snapshot and not request.dry_run:
             planned_results = list(reconciler.reconcile_personas(personas, dry_run=True))
@@ -1524,9 +1639,19 @@ class SourceIngestionRuntime:
                 summary = planned_summary
                 bindings = planned_bindings
             else:
+                uninterpreted = self._uninterpreted_bindings(planned_bindings, reconciler)
+                for requirement_id, connector_id in sorted(uninterpreted.items()):
+                    skipped_items.append(
+                        {
+                            "kind": "binding",
+                            "id": requirement_id,
+                            "reason": f"binding-kept-uninterpreted: connector {connector_id} is not defined by this release",
+                        }
+                    )
                 accepted_snapshot = self.requirement_snapshot_store.append(
                     desired_state_sha256=desired_state_sha256,
-                    bindings=planned_bindings,
+                    # Bindings this release cannot interpret are carried forward, never dropped.
+                    bindings={**planned_bindings, **uninterpreted},
                     persona_count=len(personas),
                     authority=str(request.source_authority or "api://persona-source-provisioning"),
                     authoritative=True,
@@ -1539,12 +1664,17 @@ class SourceIngestionRuntime:
                         "actual source convergence contradicted the admitted authoritative requirement snapshot"
                     )
                 retirement_actions = self._retire_removed_requirement_bindings(
-                    current_bindings=bindings,
+                    current_bindings={**bindings, **uninterpreted},
+                    reconciler=reconciler,
+                    skipped=skipped_items,
                 )
         else:
             results = list(reconciler.reconcile_personas(personas, dry_run=request.dry_run))
             summary = self._provisioning_summary(results)
             bindings = self._requirement_bindings(results)
+        skipped_items = self._dedupe_skipped(
+            [*self._skipped_requirements(results), *skipped_items, *self._undefined_stored_records(reconciler)]
+        )
         return {
             "schema_version": "persona_source_provisioning_response.v1",
             "controller": "persona_source_provisioning_reconciler",
@@ -1556,6 +1686,8 @@ class SourceIngestionRuntime:
             "results": [result.to_dict() for result in results],
             "bindings": bindings,
             "retirement_actions": retirement_actions,
+            "skipped": skipped_items,
+            "skipped_count": len(skipped_items),
             "accepted_requirement_snapshot": accepted_snapshot.to_dict() if accepted_snapshot is not None else None,
             "pre_readback": pre_readback,
             "post_readback": self._controller_readback_payload(),

@@ -4,6 +4,78 @@ These rules apply to Codex work in this repository. They are Codex's own
 responsibility. Do not treat CI, hooks, reviewers, or the user as the first line
 of enforcement for this workflow.
 
+## Remediation Plan 2026-11-17 (Operator Decisions)
+
+On 2026-11-17 the operator approved the remediation plan in
+`docs/operations/remediation-plan-20261117.md`. It binds every coordinator
+chatbox and every worker until the operator lifts it. Current state, owners and
+open instances live in `docs/operations/problem-register.md`.
+
+### Feature Freeze
+
+Until the three trading personas complete one full day on hosted dev (enrolled,
+daily cycle ticked, a decision used memory, a meeting was held, results were
+written back), do not open new feature tasks. Open only tasks that belong to a
+root-cause class in the problem register or that finish or repair work that is
+already merged. An operator instruction in the current conversation that names
+a specific feature overrides the freeze for that feature only.
+
+### One Problem, One Class
+
+Before opening a fix task, find the root-cause class in the problem register
+and attach the incident to its owning work package. Do not open a one-off fix
+for a symptom whose class already has an owner; add the instance to the
+register. A new class needs a register entry before any task is opened.
+Coordinators work inside one domain (see the register); acting on another
+domain's files or on hosted outside your domain requires checking that
+domain's register entry and live tasks first.
+
+### Dev Deployment: Deployed Versus Accepted
+
+For the dev environment only, a deployment is build, switch, and every expected
+service running healthy at the expected version. Only an unhealthy stack rolls
+back. Functional checks (management page crawl, paper lifecycle probe, Agora
+smoke, paper baseline, market refresh) run after the switch; a failure marks the
+release `deployed, not accepted` and opens a task for the owning chain. It does
+not roll back. After any deploy or rollback, every expected steady service must
+be verified running at the expected version; a matching `/bff/version` alone is
+not proof. Staging and production keep gate-before-switch.
+
+Do not add a new blocking functional gate to the dev deploy path. Until the
+pipeline work packages in the register land, the pipeline still behaves the old
+way; report a release as `accepted` only when its acceptance stage passed.
+
+### Delivery States
+
+Report every task and chain as exactly one of `merged`, `deployed` (served by
+hosted dev according to the hosted manifest) or `accepted` (its acceptance probe
+passed on hosted). Never report merged work to the operator as done or
+complete. A feature chain ships with an executable read-only acceptance probe;
+a manual Human/Ops hosted acceptance task is the fallback only when no probe
+can exist.
+
+### Runtime Budget
+
+A task that adds or changes a recurring job, an emitter or a persistent writer
+(file, table, queue, cache, image, temporary directory) must state in its
+acceptance the cadence, size and count at hosted scale, the growth per day, the
+cap, and how it is cleaned. Once the storage manifest exists the writer must be
+registered there. Reviewers reject a change that adds a writer without this.
+
+### Findings Outside Scope
+
+A worker that finds a defect outside its task scope must record it as a
+residual finding in the handoff, not only in evidence prose. The coordinator
+attaches it to a register class or opens a class before the chain is closed.
+"Not in scope" is not a disposition.
+
+### Review Independence
+
+The reviewer must be a different model family from the owner whenever another
+family has capacity. Claude and Claude2 are one family, Codex and Codex2 are
+one family, Antigravity and Antigravity2 are one family. Record the exception
+in the task when no other family has capacity.
+
 ## Chatbox Work Classification And Dispatch Authority
 
 ### Explicit Operator Bypass
@@ -188,7 +260,9 @@ GitHub deployment/check evidence. A newer remote commit or a successful build
 does not prove that the hosted symlink serves it. If the hosted manifest has
 unsafe write defaults, lacks exact FE/BFF identities, or points to a candidate
 whose deployment workflow failed, treat the deployment as unaccepted until a
-gate-before-switch and rollback-safe release passes.
+release with exact identities passes stack health and its acceptance stage.
+For dev the deployed/accepted split in "Remediation Plan 2026-11-17" applies;
+staging and production remain gate-before-switch and rollback-safe.
 
 When deploying or validating the dev frontend, ensure the frontend build uses
 `VITE_BFF_MODE=live`, `VITE_BFF_BASE_URL` pointing at the dev BFF,

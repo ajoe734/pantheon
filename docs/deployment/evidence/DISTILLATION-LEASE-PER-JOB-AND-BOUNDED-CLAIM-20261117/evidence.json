@@ -1,0 +1,73 @@
+{
+  "task_id": "DISTILLATION-LEASE-PER-JOB-AND-BOUNDED-CLAIM-20261117",
+  "owner": "Claude",
+  "scope": "services/source_ingestion/distillation_worker.py, distillation_controller.py and their tests",
+  "tests": {
+    "command": "pytest services/source_ingestion/tests/{test_l12_dist_001_transactional_distillation,test_distillation_worker,test_distillation_controller,test_distillation_queue_lifetime,test_demand_priority}.py",
+    "result": "144 passed"
+  },
+  "root_cause": "claim_due stamped one expires_at for the whole batch of up to 100 jobs and ran them sequentially without renewal; any job finishing after the shared 30 s deadline made _terminal_update raise, aborting the tick. The next claim re-queued the same batch (attempts +1 per claim, no cap, no dead-letter exit), so the same job id stalled the loop. Every claim also selected and json-parsed payload_json of the whole due backlog inside BEGIN IMMEDIATE, and the controller wrote the alive file in finally so the container stayed healthy.",
+  "contract_changes": {
+    "lease": "claim_due only reserves (token + placeholder lease, lease_started=0, attempts NOT incremented). begin_job(job) starts the job's own lease (now + lease_seconds) and is the only place an attempt is counted. run_pending calls it immediately before each job, so claim time and earlier jobs never consume a job's lease.",
+    "completion_fencing": "The token is the fence, not the clock. A completion/failure/deferral with the CURRENT token is accepted even if the lease clock lapsed, because expiry recovery re-tokens the row. A superseded token still raises (message 'stale distillation lease completion' unchanged; new subclass DistillationLeaseError of DistillationError). The test that pinned raise-and-stay-leased for an expired-but-current lease (test_expired_lease_cannot_commit_any_terminal_outcome_before_reclaim) was replaced deliberately by test_lapsed_lease_is_fenced_by_token_not_by_clock: current token accepted before reclaim, every terminal outcome rejected after reclaim.",
+    "per_job_isolation": "run_pending catches DistillationLeaseError per job, records the job id in DistillationRunResult.lease_lost and continues. The controller raises stage 'lease_lost' (degraded, names the job ids) after the batch.",
+    "expiry_bound": "_recover_expired handles at most 200 rows per claim. A lease that expired after the job started increments lease_expiries, re-queues with exponential backoff (30 s * 2^(n-1), cap 1 h; applies to budget-deferred rows too, which keep deferred_since), and at DISTILLATION_JOB_MAX_LEASE_EXPIRIES (default 5) moves to distillation_dead_letters with reason 'lease_expired_repeatedly: n lease expiries'. A lease that expired before the job started is released with no penalty and no attempt. redispatch/redrive reset the counters.",
+    "claim_bound": "claim_due reads at most `limit` rows per status in index order (distillation_outbox_due_idx, no temp b-tree, asserted by EXPLAIN QUERY PLAN in test) plus a window of 500 budget-deferred rows via a partial index, and parses only those payloads. due_tenants is bounded the same way. Demand ranking therefore applies within that window, not across an unbounded backlog (residual: a deferred backlog larger than 500 is ranked by enqueue order beyond the window).",
+    "health": "The alive marker is no longer refreshed after DISTILLATION_CONTROLLER_MAX_CONSECUTIVE_FAILED_TICKS (default 5) consecutive hard-failed ticks, so the existing alive-file healthcheck turns unhealthy. Stage 'registry_sync' (durable retry/DLQ remains, work is tracked) does not count as hard; any other stage does. One successful tick restores it. docker-compose.yml was not edited."
+  },
+  "attempts_normalisation": "One-time migration (runs when the lease_expiries column is first added): non-terminal rows with last_error='lease_expired_before_registry_ack' get attempts=0; other non-terminal rows with attempts>=max_attempts are clamped to max_attempts-1; inbox attempts follow. Test: attempts=4321 row is normalised to 0 and then completes (test_inflated_attempts_from_the_expiry_loop_are_normalised_once). Terminal rows are untouched.",
+  "schema_compatibility": "Additive only: columns lease_expiries, lease_started, pruned_at on distillation_outbox and four partial indexes. The previous accepted release ignores unknown columns and its INSERT/UPDATE statements still work (new columns have defaults). Previous release still reads: all jobs and their payloads except pruned terminal ones; a pruned version holds the marker {\"_pruned\":true} and only matters if an operator redispatches a terminal job older than the retention (source_for_job returns None, the job fails with 'SourceRecord not found'); recorded as residual. Rolling back leaves lease_expiries/pruned_at unused.",
+  "growth_bound": {
+    "prune": "queue.prune() runs each controller tick on at most 500 rows per kind through partial indexes (cost independent of history): terminal (done/skipped/failed) outbox rows older than DISTILLATION_QUEUE_TERMINAL_RETENTION_SECONDS (default 7 d) have their source payload replaced by a marker and their inbox row deleted; resolved dead letters older than DISTILLATION_QUEUE_DEAD_LETTER_RETENTION_SECONDS (default 30 d) are deleted. The outbox row (job_id, idempotency_key, digest, outcome) survives so catch_up never re-enqueues a pruned version (test_prune_bounds_payloads_but_keeps_idempotency).",
+    "compaction": "Replacing a payload leaves its leaf page allocated and rowid appends do not refill it, so measured file size did not shrink after prune alone (228 MB -> 228 MB). The controller therefore runs queue.compact() (VACUUM + wal_checkpoint TRUNCATE) once 64 MiB of payload bytes have been pruned (process-local counter).",
+    "measurement_hosted_shape": {
+      "dataset": "52,000 jobs, ~2.95 KB payload each (46,000 done + 6,000 pending, SQLite WAL), synthetic but the same schema and size order as the 158 MB hosted queue",
+      "db_bytes_before": 228102144,
+      "payload_bytes_before_prune": 153400000,
+      "payload_bytes_after_prune": 18508000,
+      "prune_batch_500_seconds": 0.04,
+      "prune_whole_backlog_seconds": 2.49,
+      "vacuum_seconds": 0.47,
+      "db_bytes_after_prune_and_compact": 36241408,
+      "retained_bytes_per_terminal_row": "about 700 (outbox row + idempotency key + digest)"
+    },
+    "growth_per_day_and_cap": "Per 1,000 jobs/day: before this change ~3.0 MB/day of payload accumulates forever (plus ~0.7 MB row overhead); after it payload is capped at retention_days * jobs_per_day * ~3 KB (7 d: ~21 MB per 1,000 jobs/day) and only ~0.7 MB/day of row overhead is retained permanently. The hosted jobs/day rate could not be read from this environment; the 158 MB file corresponds to ~52k rows at this shape, so at that volume the cap is ~36 MB after compaction plus 7 d of payload. Retained forever (not pruned, residual): outbox rows. Per-tick queue.metrics() still does an index-only GROUP BY over them (ms at 52k rows)."
+  },
+  "claim_measurement": {
+    "dataset": "same 52k-row queue with 6,000 due pending jobs",
+    "old_claim_100_seconds": 0.144,
+    "new_claim_100_seconds": 0.019,
+    "note": "old cost scales with the due backlog (payload select+parse+Python sort), new cost with `limit`",
+    "query_plan": "SEARCH distillation_outbox USING INDEX distillation_outbox_due_idx (status=? AND available_at<?) with no TEMP B-TREE (asserted in test_claim_reads_a_bounded_number_of_rows_and_never_sorts_on_disk, which also asserts <=7 payload parses for a limit of 7 over 3,000 due rows)."
+  },
+  "other_per_tick_scans_removed": [
+    "controller list_all() of every job to build terminal_drafts -> recent_terminal_drafts(limit=200) via the (status, processed_at) partial index",
+    "list_dead_letters() with payloads twice per tick -> dead_letter_count() (COUNT only)"
+  ],
+  "acceptance_mapping": {
+    "1": "test_batch_of_100_jobs_of_1_5_seconds_has_no_expired_lease",
+    "2": "test_superseded_token_on_one_job_does_not_abort_the_tick; controller stage lease_lost",
+    "3": "test_repeated_lease_expiry_is_backed_off_and_dead_lettered; test_unstarted_claim_expiry_is_released_without_penalty",
+    "4": "test_inflated_attempts_from_the_expiry_loop_are_normalised_once",
+    "5": "test_lapsed_lease_is_fenced_by_token_not_by_clock; test_stale_deferral_cannot_release_a_new_workers_lease unchanged and passing",
+    "6": "test_claim_reads_a_bounded_number_of_rows_and_never_sorts_on_disk",
+    "7": "test_controller_alive_marker_stops_after_consecutive_hard_failures",
+    "8": "test_prune_bounds_payloads_but_keeps_idempotency; test_resolved_dead_letters_are_pruned_unresolved_kept; test_compaction_returns_pruned_payload_space_to_the_filesystem; measurement above",
+    "9": "see post_deploy_checks",
+    "10": "144 passed across the five listed files"
+  },
+  "post_deploy_checks": [
+    "Container log for pantheon-strategy-distillation-worker-1: first tick after restart no longer prints 'expired distillation lease completion: distill-072acfc4c675f05acdf08a03'.",
+    "SELECT status, attempts, lease_expiries FROM distillation_outbox WHERE job_id='distill-072acfc4c675f05acdf08a03' -> attempts reset to 0 by the migration, then status done (or skipped), or after 5 real expiries a dead_letter row with reason lease_expired_repeatedly.",
+    "Loop record strategy_distillation turns from failing to success; controller_state consecutive_failures returns to 0.",
+    "distill_job_queue.jsonl shrinks (pruning then compaction, ~100 ticks at 500 rows/tick for ~50k terminal rows) and the worker's disk write rate drops from the 53.8 GB/5.8 h seen on 2026-11-17 (the seed-store rewrite part is DISTILLATION-SEED-STORE-BOUNDED-WRITE-20261117).",
+    "If ticks keep failing with a non-registry stage, the controller_alive file stops updating after 5 ticks and the container reports unhealthy."
+  ],
+  "residual_findings": [
+    "catch_up only considers the first `limit` (100 from the controller) eligible source records each tick (pre-existing slice), so sources beyond that are never admitted by it; not changed here.",
+    "Claim tenant filter (EXISTS + json_extract) still scans foreign-tenant rows ahead of the LIMIT when a tenant is passed.",
+    "Redispatching a terminal job older than the retention fails with 'SourceRecord not found' because its payload was pruned.",
+    "The claim placeholder lease equals lease_seconds; with several concurrent workers a batch longer than that can be reclaimed by a peer, in which case the first worker's begin_job raises DistillationLeaseError and skips the job (safe, but wasteful).",
+    "Outbox rows themselves (~0.7 KB each) are retained forever to keep idempotency keys."
+  ]
+}

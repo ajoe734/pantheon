@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -56,6 +57,90 @@ def _parse_time(value: str | datetime | None) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+_STALE_TEMP_HEX = re.compile(r"^[0-9a-f]{32}$")
+
+
+def atomic_temp_path(target: str | Path) -> Path:
+    """Deterministic single temp sibling for ``target`` (at most one per target)."""
+
+    target = Path(target)
+    return target.with_name(f"{target.name}.tmp")
+
+
+def sweep_stale_temp_siblings(target: str | Path) -> list[Path]:
+    """Remove leftover temp siblings of ``target``; never touch ``target`` itself.
+
+    Matches the deterministic name plus the legacy random names
+    (``<name>.<32 hex>.tmp``, ``.<name>.<32 hex>.tmp`` and the reconciler's
+    ``.<name>.<pid>.<32 hex>.tmp``) written by earlier releases.  Only siblings of
+    this exact target name match, so other targets in the directory are safe.
+    """
+
+    target = Path(target)
+    removed: list[Path] = []
+    try:
+        entries = list(os.scandir(target.parent))
+    except OSError:
+        return removed
+    name = target.name
+    deterministic = f"{name}.tmp"
+    for entry in entries:
+        candidate = entry.name
+        if candidate == name or not candidate.endswith(".tmp"):
+            continue
+        stem = candidate[: -len(".tmp")]
+        match = candidate == deterministic
+        if not match:
+            for base in (name, f".{name}"):
+                prefix = f"{base}."
+                if not stem.startswith(prefix):
+                    continue
+                middle = stem[len(prefix):]
+                parts = middle.split(".")
+                if _STALE_TEMP_HEX.match(parts[-1]) and (
+                    len(parts) == 1 or (len(parts) == 2 and parts[0].isdigit())
+                ):
+                    match = True
+                    break
+        if not match or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            os.unlink(entry.path)
+            removed.append(Path(entry.path))
+        except OSError:
+            continue
+    return removed
+
+
+def atomic_write_text(target: str | Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Durably replace ``target`` through one deterministic temp file.
+
+    The temp file is removed on every exit path, so a failed write leaves no
+    orphan; a hard kill leaves at most the single deterministic temp, which
+    ``sweep_stale_temp_siblings`` removes on the owner's next start.
+    """
+
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = atomic_temp_path(target)
+    directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        try:
+            with temporary.open("w", encoding=encoding) as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            os.fsync(directory_fd)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+    finally:
+        os.close(directory_fd)
 
 
 class AtomicJsonRecordStore:

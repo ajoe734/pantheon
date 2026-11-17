@@ -40,8 +40,9 @@ RUN rm -rf /home/node/.claude \
 # Pantheon persona tools plugin (design H9): registers persona_memory_recall,
 # persona_mental_model_read and persona_proposal_submit and forwards each call to
 # the adapter's internal broker. Built here (npm ci from the lockfile, tests run at
-# build time) and loaded by the compose startup via plugins.load.paths; it is not
-# enabled unless PERSONA_TOOL_BROKER_TOKEN is provided at runtime.
+# build time) and loaded by the compose startup; it is not
+# enabled unless PERSONA_TOOL_BROKER_TOKEN is provided at runtime. The compose startup loads it through a
+# runtime-only overlay config, never by persisting plugins.load.paths into the shared volume config.
 COPY integrations/openclaw/plugins/pantheon-persona-tools /opt/pantheon/plugins/pantheon-persona-tools
 # A host-built node_modules or dist in the build context must never be reused.
 RUN cd /opt/pantheon/plugins/pantheon-persona-tools \

@@ -2959,15 +2959,17 @@ def test_nonprod_deploy_workflow_runs_taifex_refresh_post_mutation_non_blocking_
         < retire_idx
         < comp_idx
     )
-    # The Taiwan refresh fails closed into the same compensation flow as other
-    # post-switch failures and keeps its own log in the run evidence.
+    # The Taiwan refresh is advisory and keeps its own log in the run evidence.
     assert market_step["name"] == "Refresh Taiwan market session under lease after candidate stack deploy"
     assert "continue-on-error" not in market_step
     assert "--non-blocking" not in market_step["run"]
     assert "tw-market-refresh.json" in market_step["run"]
     assert "if record[\"log\"]:\n    print(record[\"log\"])" in market_step["run"]
-    assert "steps.market_refresh.outcome == 'failure'" in retire_step["if"]
-    assert "steps.market_refresh.outcome == 'failure'" in comp_step["if"]
+    # Advisory since DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117: the refresh
+    # records its real result and no longer drives retirement or compensation.
+    assert "steps.market_refresh" not in retire_step["if"]
+    assert "steps.market_refresh" not in comp_step["if"]
+    assert "guarded_advisory" in market_step["run"]
     assert "always()" in by_id["market_refresh_upload"][1]["if"]
     assert by_id["market_refresh_upload"][1]["with"]["path"] == "${{ steps.release_admission.outputs.evidence_dir }}/tw-market-refresh.json"
     assert by_id["market_refresh"][0] < by_id["market_refresh_upload"][0] < taifex_idx
@@ -4228,3 +4230,55 @@ def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_a
     assert len(fail_curls) == 37
     assert fail_sleeps == ["5"] * 36
 
+
+
+def _advisory_helper_source() -> str:
+    text = Path(__file__).resolve().parent.joinpath("deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    start = text.index("run_dev_advisory_check() {")
+    return text[start:text.index("\nrollback_dev_bff_on_failure() {", start)]
+
+
+def _run_advisory(strict: str, command: str):
+    import subprocess
+
+    script = (
+        "set -euo pipefail\n"
+        "info() { echo \"[remote-deploy] $*\"; }\n"
+        "rollback_dev_bff_on_failure() { echo \"ROLLBACK:$1\"; exit 1; }\n"
+        + _advisory_helper_source()
+        + f"\nrun_dev_advisory_check sample_check sample_stage {command}\necho after-check\n"
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, "PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS": strict},
+        text=True, capture_output=True, timeout=30,
+    )
+
+
+def test_advisory_script_check_failure_is_recorded_and_does_not_roll_back():
+    result = _run_advisory("false", "false")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ROLLBACK" not in result.stdout and "after-check" in result.stdout
+    line = next(l for l in result.stdout.splitlines() if l.startswith("ADVISORY_CHECK_RESULT "))
+    record = json.loads(line.split(" ", 1)[1])
+    assert record["check"] == "sample_check" and record["status"] == "failed"
+    assert record["mode"] == "advisory" and record["reason"] == "exit_1"
+
+
+def test_advisory_script_check_success_is_recorded_as_passed():
+    result = _run_advisory("false", "true")
+    record = json.loads(next(l for l in result.stdout.splitlines() if l.startswith("ADVISORY_CHECK_RESULT ")).split(" ", 1)[1])
+    assert result.returncode == 0 and record["status"] == "passed" and record["reason"] == ""
+
+
+def test_strict_script_check_failure_still_rolls_back():
+    result = _run_advisory("true", "false")
+    assert result.returncode == 1
+    assert "ROLLBACK:sample_stage" in result.stdout and "after-check" not in result.stdout
+    assert '"mode": "strict"' in result.stdout
+
+
+def test_strict_flag_is_parsed_and_forwarded_to_the_remote_payload():
+    text = Path(__file__).resolve().parent.joinpath("deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert "--strict-functional-checks) STRICT_FUNCTIONAL_CHECKS=true" in text
+    assert 'PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=$(shell_quote "${STRICT_FUNCTIONAL_CHECKS:-false}")' in text

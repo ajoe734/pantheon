@@ -154,7 +154,10 @@ def read_normalized_ssf_rows(
     snapshot chronology before selecting ``max_files``, and reading fails closed
     when latest coverage cannot be established within the bounded limits.
     """
-    base = Path(root) / NORMALIZED_DATASET_PATH
+    from services.source_ingestion.market_data_storage import normalized_dataset_base
+
+    # PANTHEON_KEYED_DATASET_READER=keyed reads the keyed store (same record shape); default = run files.
+    base = normalized_dataset_base(root, NORMALIZED_DATASET_PATH.rsplit("/", 1)[-1])
     if not base.is_dir():
         return None
     if max_partitions <= 0 or max_files <= 0 or max_rows <= 0 or max_file_bytes <= 0 or max_scan_files <= 0:
@@ -175,7 +178,7 @@ def read_normalized_ssf_rows(
     candidate_files: list[_CandidateDiskFile] = []
     scanned_files = 0
     for part_date, part_name, partition in partitions:
-        for file_path in sorted(partition.glob("*.jsonl")):
+        for file_path in sorted(partition.glob("*.jsonl*")):
             scanned_files += 1
             if scanned_files > max_scan_files:
                 return []
@@ -186,8 +189,14 @@ def read_normalized_ssf_rows(
             if stat.st_size <= 0 or stat.st_size > max_file_bytes:
                 return []
             try:
-                with file_path.open("r", encoding="utf-8") as handle:
-                    lines = handle.readlines()
+                if file_path.suffix == ".gz":
+                    import gzip
+
+                    with gzip.open(file_path, "rt", encoding="utf-8") as handle:
+                        lines = handle.readlines()
+                else:
+                    with file_path.open("r", encoding="utf-8") as handle:
+                        lines = handle.readlines()
             except OSError:
                 return []
             parsed_file_rows: list[dict[str, Any]] = []

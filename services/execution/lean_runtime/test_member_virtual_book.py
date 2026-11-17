@@ -279,3 +279,25 @@ def test_idle_pool_observations_are_known_zero_and_invalid_inputs_fail_closed():
     for bad in ({"source_ref": ""}, {"gross_limit": 0}, {"drawdown_limit": -1}):
         with pytest.raises(ValueError):
             idle_pool_observations(days, **{"source_ref": "x", "gross_limit": 1, "drawdown_limit": 1, **bad})
+
+
+class SinceInceptionTests(unittest.TestCase):
+    def _mark(self, books, day, joined_at, member_id="m"):
+        return books.observe(binding_id="b", envelope_checksum="e", symbol="2330.TW",
+            event_time=f"2024-10-{day:02}T05:30:00+00:00", price=100 + day, open_price=100 + day,
+            source_ref="r", bar_frequency="1d", members={member_id: {
+                "artifact_id": "a", "version": "1", "checksum": "c", "virtual_only": False,
+                "view": {"direction": "LONG", "strength": 1},
+                **({"joined_at": joined_at} if joined_at else {})}})[0]
+
+    def test_true_only_when_history_starts_at_admission(self):
+        self.assertTrue(self._mark(MemberVirtualBooks(), 2, "2024-10-01T00:00:00+00:00")["since_inception"])
+        self.assertFalse(self._mark(MemberVirtualBooks(), 2, None)["since_inception"])
+        self.assertFalse(self._mark(MemberVirtualBooks(), 20, "2024-10-01T00:00:00+00:00")["since_inception"])
+        self.assertFalse(self._mark(MemberVirtualBooks(), 2, "2024-10-09T00:00:00+00:00")["since_inception"])
+
+    def test_survives_restart_and_a_later_envelope_carries_the_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v.json"
+            self._mark(MemberVirtualBooks(path), 2, "2024-10-01T00:00:00+00:00")
+            self.assertTrue(MemberVirtualBooks(path).snapshot()[0]["since_inception"])

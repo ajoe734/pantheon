@@ -1535,6 +1535,10 @@ def _market_input_for_binding(
                 f"{source_ingest_url}/api/source-ingest/snapshots/latest"
                 f"?symbol={urllib.parse.quote(symbol, safe='')}"
             )
+            if intraday_frequency is None and policy["minimum_closes"] > 60:
+                # SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW: only a plan needing more than the snapshot's 60
+                # closes asks Source for the older part; <=60 URLs stay byte-identical.
+                url += f"&min_closes={int(policy['minimum_closes'])}"
             if intraday_frequency is not None:
                 # Daily URLs stay byte-identical; only a declared intraday cadence
                 # asks for the dataset-isolated minute snapshot.
@@ -1569,6 +1573,12 @@ def _market_input_for_binding(
         raise SignalDecisionUnavailable(
             "market_input_missing",
             f"binding {binding_id} has no market_input.closes snapshot",
+        )
+    if raw.get("reason") == "history_insufficient":
+        raise SignalDecisionUnavailable(
+            "market_input_insufficient",
+            f"binding {binding.get('binding_id') or '<unknown>'} requires {raw.get('requested')} closes, "
+            f"Source has {raw.get('available')} from {raw.get('first_available_date')}: {raw.get('detail')}",
         )
     closes = raw.get("closes")
     if (

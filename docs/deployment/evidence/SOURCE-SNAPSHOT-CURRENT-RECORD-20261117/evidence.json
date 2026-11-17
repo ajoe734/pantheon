@@ -1,0 +1,265 @@
+{
+  "blocking_bounds_acceptance_6": {
+    "append_call_seconds_max": 2.71,
+    "batches_of_500": 22,
+    "keys_replaced": 10700,
+    "limits": {
+      "reader_call_ms": 100,
+      "second_writer_retryable_after_seconds": 2,
+      "write_txn_500_keys_p99_ms": 250
+    },
+    "maintenance_step_ms_max": 16.8,
+    "reader_process_calls": 18339,
+    "reader_process_ms_max": 67.67,
+    "reader_process_ms_p99": 2.37,
+    "reader_thread_calls": 8373,
+    "reader_thread_ms_max": 94.65,
+    "second_writer": {
+      "error": "MarketSnapshotWriteBusy",
+      "waited_seconds": 2.0
+    },
+    "write_txn_ms_all": [
+      60,
+      51,
+      50,
+      53,
+      49,
+      34,
+      45,
+      52,
+      57,
+      45,
+      57,
+      55,
+      49,
+      58,
+      66,
+      65,
+      51,
+      55,
+      47,
+      45,
+      49,
+      24
+    ],
+    "write_txn_ms_max": 66.4,
+    "write_txn_ms_p50": 51.0,
+    "write_txn_ms_p99": 66.4
+  },
+  "budget_rows_acceptance_4": {
+    "compat_journal_export": "one v1 line per key, <= 1x live in the old format; measured v1 line 31239 bytes per 60-close key (journal file 328 MB for 10700 keys in this shape, above the 171 MB hosted figure because the assumed content_ref is long)",
+    "market_snapshot_current": {
+      "alarm_emitted_in": "source-ingest health payload: latest_market_snapshot_journal.snapshot_current.budget_alarms",
+      "alarm_names": [
+        "snapshot_record_over_16kb",
+        "snapshot_live_over_ceiling",
+        "snapshot_file_over_1_3x_live",
+        "snapshot_wal_over_budget"
+      ],
+      "db_file_bytes": {
+        "alarm_ratio": 1.3,
+        "budget_ratio": 1.1,
+        "measured": 41775616,
+        "ratio_to_live": 1.081
+      },
+      "live_bytes": {
+        "budget": 134217728,
+        "ceiling": 283115520,
+        "measured": 38639653
+      },
+      "record_bytes_max": {
+        "alarm": 16384,
+        "budget": 12288,
+        "measured": 3683
+      },
+      "tests": [
+        "test_budget_row_market_snapshot_current_on_hosted_shaped_copy",
+        "test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers",
+        "test_over_budget_record_raises_the_health_alarm"
+      ],
+      "wal_bytes": {
+        "budget": 67108864,
+        "measured_after_full_replacement": 0
+      }
+    },
+    "stores_not_touched": [
+      "daily_bars",
+      "lineage",
+      "ingest_schedule receipts",
+      "raw/normalized run files",
+      "listing_allowlist",
+      "tw_price_1m IntradayStore shards",
+      "source_evidence",
+      "distillation"
+    ]
+  },
+  "ci_red_return_fix": {
+    "cause": "undeclared writers sqlite:.current.sqlite3, sqlite_connect:services/source_ingestion/snapshot_current_store.py, table:snapshot_current, table:snapshot_meta",
+    "failed_check": "Smoke acceptance (scripts.test_check_storage_manifest.test_repository_manifest_matches_code)",
+    "fix": "four bounded entries added to docs/operations/storage-manifest.json with bound_proof on the ON CONFLICT replace statement",
+    "validation": "python3 -m unittest scripts.test_check_storage_manifest: Ran 10 tests OK; check_storage_manifest.py passed=true"
+  },
+  "ci_red_return_fix_2": {
+    "cause": "test_runtime_health_carries_the_snapshot_store_block used 'from services.source_ingestion import main', which returns the stale package attribute after sys.modules eviction, so the runtime kept journal mode when an earlier test had imported main (order dependent; failed only in the full Smoke acceptance run)",
+    "fix": "test now uses importlib.import_module for a fresh import; no product code changed",
+    "validation": "test_snapshot_current_record_store.py + test_snapshot_frequency_isolation.py: 57 passed (260 s); refs_bounded then runtime_health in one session: 11 passed. The full services/source_ingestion/tests run exceeded the 590 s bound locally and is not counted; Smoke acceptance on the PR is the full-suite check."
+  },
+  "constructors_and_direct_readers_acceptance_11": [
+    {
+      "file": "services/source_ingestion/runtime.py",
+      "line": 341,
+      "modes": "journal, dual, sqlite",
+      "use": "the Source's own store (flag read from the environment, export interval from MARKET_SNAPSHOT_EXPORT_INTERVAL_SECONDS)"
+    },
+    {
+      "file": "services/trade_journey/hosted_lifecycle_probe.py",
+      "line": 844,
+      "modes": "works in every mode (test_hosted_lifecycle_probe_constructor_reads_the_snapshot_in_every_mode): without the flag it reads the one-line-per-key export, with the flag it reads SQLite",
+      "use": "LatestMarketSnapshotStore(snapshot_store_path).reload() then get(symbol)"
+    },
+    {
+      "file": "services/trade_journey/hosted_lifecycle_probe.py",
+      "line": 847,
+      "modes": "same; the exported journal file exists in sqlite mode after the first export",
+      "use": "LatestMarketSnapshotStore(p) if Path(p).exists()"
+    },
+    {
+      "file": "services/source_ingestion/requirement_state.py",
+      "line": 2382,
+      "modes": "forces journal bytes in every mode",
+      "use": "market_snapshot_writer_samples()"
+    },
+    {
+      "file": "scripts/dev_release_artifacts.py",
+      "line": 539,
+      "modes": "reads the compat export in sqlite mode (test_deploy_capture_probe_parses_the_export_with_the_journal_reader). In sqlite mode the file can lag SQLite by one export interval, so a capture taken for a baseline must call flush_export() first; that change is in scripts/, outside this task's artifact list, and is named for the hosted acceptance task.",
+      "use": "deploy capture probe streams the journal FILE through _market_snapshots_from_lines (SOURCE_PROBE)"
+    },
+    {
+      "file": "services/source_ingestion/pipeline.py",
+      "line": "538-600",
+      "modes": "unchanged API, all modes",
+      "use": "persist_latest_market_snapshots / get via runtime.latest_market_snapshot_store"
+    },
+    {
+      "file": "services/source_ingestion/snapshot_universe.py",
+      "line": "99,213,265,283,300,336",
+      "modes": "test_snapshot_universe.py passes with MARKET_SNAPSHOT_STORE=journal, dual and sqlite (and test_snapshot_universe_hooks_work_in_every_mode)",
+      "use": "admission, stats_extra, live_symbols, withdraw_symbols, max_closes, _point_from_record, append_normalized_records(record_context, enforce_admission)"
+    },
+    {
+      "file": "services/source_ingestion/intraday_snapshot_projection.py",
+      "line": "60-100",
+      "modes": "row replaced in place in sqlite mode",
+      "use": "append_normalized_records(dataset=tw_price_1m) and withdraw_sessions"
+    },
+    {
+      "file": "scripts/migrate_ingest_receipts.py",
+      "line": 246,
+      "modes": "unchanged keys plus store_mode",
+      "use": "journal_stats() readback"
+    },
+    {
+      "file": "services/execution/lean_runtime/performance_telemetry.py",
+      "line": "435-440",
+      "modes": "same JSON",
+      "use": "reads GET /api/source-ingest/snapshots/latest only (verify only)"
+    }
+  ],
+  "crash_safety_acceptance_5": "test_kill_inside_a_500_key_transaction_leaves_the_previous_complete_state (subprocess os._exit with 250 of 500 rows written, nothing committed) and test_failure_inside_the_transaction_rolls_back_every_row",
+  "credentials": "none recorded",
+  "delete_entry_point_acceptance_10": "LatestMarketSnapshotStore.delete_symbols(symbols, reason='delisted'|'expired'): every dataset of the symbol in ONE transaction in sqlite mode (test_delete_entry_point_removes_every_dataset_of_a_delisted_symbol_in_one_transaction); the listing lookup belongs to SOURCE-WARRANT-LISTING-EXPIRY-20261117",
+  "design_differences_named": [
+    "Record is zlib-compressed canonical compact v2 JSON (design: dictionary-compact body). The 60 closes and every point field are kept; measured 3645 bytes versus 31239 for the v1 line. Compression was needed because the uncompressed compact record measured 12.8 to 12.9 KB (above the 12 KB budget) with a 112 character content_ref.",
+    "Table is a rowid table with a (symbol, dataset) primary key, not WITHOUT ROWID, and page_size is 512: WITHOUT ROWID at 4 KB pages measured 1.18x and rowid at 4 KB 1.09x, rowid at 512 B 1.03x to 1.08x file/live; larger pages exceed the 1.1x budget.",
+    "last_trade_date and snapshot_dict columns of the design are not used: the digest column is the window digest and the dictionary is inside the compact record.",
+    "The window digest includes ingest_run_id (part of every point's lineage), exactly as the journal's prior.points == candidate.points test did; a re-run with a new run id replaces the row, the same window with the same run id writes zero rows.",
+    "The compat export runs after a write at most once per MARKET_SNAPSHOT_EXPORT_INTERVAL_SECONDS (runtime default 3600, the constructor default 0 = synchronous, used by tests) from a daemon thread; flush_export() forces it. A background export in the first run of this task held a long read transaction and slowed the writer transaction from 35 ms to 200 to 600 ms; the export now takes a short consistent read of the raw rows and decodes outside it.",
+    "synchronous=FULL, auto_vacuum=INCREMENTAL, busy_timeout=2000 as designed; WAL is truncated after each batch with a 40 ms bounded wait."
+  ],
+  "design_of_record": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md section 4.2",
+  "equality_with_journal_acceptance_3": {
+    "keys_compared": 10700,
+    "mismatches": 0
+  },
+  "health_payload_acceptance_12": "GET /health -> latest_market_snapshot_journal.snapshot_current: record_count, live_bytes, max_record_bytes, db_bytes, wal_bytes, file_bytes, mismatch_count, last_export_at, export_pending, budget_alarms, last_export_error, shadow_error; and market_snapshot_store at the top level",
+  "host_load_caveat": "The timing bounds were measured on a shared 12-core worker VM. On a quiet host the run recorded reader process max 67.7 ms, in-process reader thread max 94.7 ms, write transaction max 66 ms (p99 of 22 batches). Three later runs under host load average 14 to 14.4 gave: pass (reader 85/92 ms, txn max 96 ms), fail (reader thread 131 ms, txn max 309 ms) and fail (reader process 164 ms) while a second pytest suite ran in parallel. The bound test is therefore load sensitive around its 100 ms limit; the hosted acceptance run must repeat it on a quiet host. No test was relaxed. Review round 2 (reviewer saw reader thread 102.8 ms 3/3): GIL hold on the ingest path was reduced (time.sleep(0) between keys in the sqlite append read/build phase; compat export materialises rows with periodic yields and fsyncs every 100 rows instead of one ~40 MB fsync). Measured afterwards on the shared VM (load avg ~3): in-process reader thread max 35-88 ms over 9 runs (was 94-104), reader process max 58-62 ms in 8 of 9 runs. Remaining flakiness is a ~450-570 ms single write transaction in some runs (filesystem journal contention with the export/checkpoint fsync on this shared VM) and one reader-process outlier of 129 ms with a normal transaction, i.e. host noise; 6 of 9 isolated runs and the final 5-suite run (103 passed) were green. No bound was relaxed; hosted acceptance must repeat the run on a quiet host. Follow-up still named: scripts/dev_release_artifacts.py flush_export.",
+  "hosted_shaped_data": {
+    "closes_per_key": 60,
+    "collector_batch": 500,
+    "keys": 10700,
+    "note": "measured on this worker host (shared 12-core VM), not hosted",
+    "shape_assumptions": "content_ref is a 112 character URL with a 64 hex digest per close; one source_id and connector_id; one ingest_run_id per trading day (40 characters); calendar_evidence on every key; open on 1 key in 7. The real hosted content_ref length is not visible from this branch, so the first command in 'how_to_remeasure_on_hosted' must be run on the hosted copy before the flag is switched."
+  },
+  "how_to_remeasure_on_hosted": [
+    "SNAPSHOT_EVIDENCE_OUT=/tmp/m.json python -m pytest services/source_ingestion/tests/test_snapshot_current_record_store.py -q  (synthetic hosted shape)",
+    "construct LatestMarketSnapshotStore(<copy of hosted journal>, store_mode='sqlite') on a copy and read journal_stats()['snapshot_current'] for the real record size"
+  ],
+  "intraday_acceptance_9": "tw_price_1m is replaced in place through the same path; append to tw_price_5m/15m/30m/60m raises not_stored_derive_on_read in every mode; GET snapshots/latest?frequency=5m|15m|30m|60m answers 404 {code: not_stored_derive_on_read, derive_from: tw_price_1m}. market_snapshot_writer_samples keeps writing the previous-reader protocol witnesses (including those dataset names) as journal bytes whatever the flag says.",
+  "post_merge_validation": {
+    "after_merge_of_origin_dev": "11 snapshot suites (universe, frequency isolation, intraday projection, latest snapshot x3, incremental read, compact encoding, pipeline isolation, receipt refs): 149 passed, 1 skipped; test_snapshot_current_record_store.py: 34 passed and the full-day bounds test passed on a rerun alone (see host_load_caveat)"
+  },
+  "previous_reader_acceptance_8": {
+    "fixture": "services/source_ingestion/tests/fixtures/requirement_state_e7ec353.py = git show e7ec353d6b9917b4d92cca766d4cd439a47edc2d:services/source_ingestion/requirement_state.py (73367 bytes, blob 83070f80fc19b8131d9a489d10d20863db09c785)",
+    "tests": [
+      "test_frozen_fixture_is_the_hosted_version_from_git",
+      "test_previous_reader_reads_the_sqlite_mode_export_and_returns_the_same_data",
+      "test_new_code_reads_a_journal_written_by_the_previous_version_in_every_mode"
+    ]
+  },
+  "reproduction_on_journal_acceptance_1": {
+    "closes_per_key": 60,
+    "compact_record_bytes_one_60_close_key": 3645,
+    "compaction_exclusive_lock_seconds": 47.39,
+    "file_bytes_after_compaction": 327796932,
+    "file_bytes_after_full_day_of_replacements": 656306412,
+    "file_bytes_before_full_day": 328509480,
+    "keys": 10700,
+    "superseded_lines_after_day": 10700,
+    "v1_line_bytes_one_60_close_key": 31239
+  },
+  "rollout_flag_acceptance_7": {
+    "env": "MARKET_SNAPSHOT_STORE",
+    "invalid_value": "ValueError at construction",
+    "rollback": "set the flag back; the sqlite-mode export is a valid one-line-per-key journal; in dual mode the journal is always current",
+    "sqlite_file": "<journal path>.current.sqlite3 (+ -wal, -shm)",
+    "values": [
+      "journal (default)",
+      "dual",
+      "sqlite"
+    ]
+  },
+  "scope": "phase 1 of design 4.2 (S0 shadow, S1 flag, S2 compat export code); hosted flag switch and 5-day comparison belong to MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117; journal removal is T3b",
+  "seed_from_journal_seconds": 27.2,
+  "task_id": "SOURCE-SNAPSHOT-CURRENT-RECORD-20261117",
+  "test_changes_not_weakening": [
+    "test_snapshot_frequency_isolation.py::test_daily_state_is_byte_identical_to_pre_k4_layout now pins store_mode='journal' (append order is a journal property); sqlite twin test_sqlite_export_keeps_the_pre_k4_daily_line_bytes added",
+    "test_intraday_snapshot_projection.py::test_default_1d_results_identical_before_and_after_minute_projection: journal mode keeps the byte-prefix assertion; sqlite/dual compare lines and ignore the SQLite database files"
+  ],
+  "validation_acceptance_13": {
+    "commands": [
+      {
+        "cmd": "python -m pytest services/source_ingestion/tests/test_snapshot_current_record_store.py -q",
+        "result": "35 passed (343 s)"
+      },
+      {
+        "cmd": "python -m pytest services/source_ingestion/tests (all other 103 files, 8 parallel groups, MARKET_SNAPSHOT_STORE unset = journal)",
+        "result": "2141 passed, 18 skipped, 0 failed"
+      },
+      {
+        "cmd": "MARKET_SNAPSHOT_STORE=dual python -m pytest test_snapshot_universe test_snapshot_frequency_isolation test_intraday_snapshot_projection test_latest_market_snapshot test_latest_market_snapshot_state test_pipeline_snapshot_dataset_isolation test_ingest_receipt_snapshot_refs_bounded test_tw_close_reconcile test_market_snapshot_compact_encoding",
+        "result": "132 passed"
+      },
+      {
+        "cmd": "the same files with MARKET_SNAPSHOT_STORE=sqlite",
+        "result": "132 passed"
+      },
+      {
+        "cmd": "python -m pytest services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_tw_official_reconcile_after_collector.py deploy/collector/tests/test_tw_suspension_holidays.py scripts/test_dev_release_artifacts.py",
+        "result": "321 passed, 3 skipped"
+      }
+    ],
+    "interpreter": "/tmp/ssc-venv python 3.12.3, sqlite 3.45.1",
+    "journal_mode_tests_that_keep_passing": "test_latest_market_snapshot_compaction, test_latest_market_snapshot_journal_bounded, test_market_snapshot_incremental_read (in the 2141)"
+  }
+}

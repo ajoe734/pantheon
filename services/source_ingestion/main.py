@@ -29,12 +29,20 @@ def create_app(runtime: SourceIngestionRuntime | None = None) -> FastAPI:
 
     app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 
+    def _source_freshness_dependency() -> dict[str, Any]:
+        # A dead scheduler must fail readiness. Stale individual connectors
+        # (e.g. daily Taiwan feeds on weekends) are reported but never flip it.
+        freshness = dict(runtime._source_freshness_readiness())
+        if freshness.get("controller_stale"):
+            freshness["status"] = "degraded"
+        return freshness
+
     register_fastapi_health_routes(
         app,
         "pantheon-source-ingest",
         dependencies=lambda: {
             "source_search_posture": runtime.PRODUCTION_POSTURE.to_dict(),
-            "source_freshness": runtime._source_freshness_readiness(),
+            "source_freshness": _source_freshness_dependency(),
         },
         metrics=lambda: runtime._source_runtime_metrics(),
         details=lambda: {
@@ -44,6 +52,7 @@ def create_app(runtime: SourceIngestionRuntime | None = None) -> FastAPI:
             "market_data_storage_root": str(runtime.MARKET_DATA_STORAGE_ROOT),
             "latest_market_snapshot_path": str(runtime.LATEST_MARKET_SNAPSHOT_PATH),
             "market_snapshot_max_closes": runtime.MARKET_SNAPSHOT_MAX_CLOSES,
+            "market_snapshot_store": runtime.latest_market_snapshot_store.store_mode,
             "dlq_path": str(runtime.DLQ_STORE_PATH),
             "audit_path": str(runtime.AUDIT_STORE_PATH),
             "scheduler_max_concurrency": runtime.SCHEDULER_MAX_CONCURRENCY,
@@ -64,6 +73,7 @@ def create_app(runtime: SourceIngestionRuntime | None = None) -> FastAPI:
             "source_evidence_path": str(runtime.SOURCE_EVIDENCE_STORE_PATH),
             "market_data_storage_root": str(runtime.MARKET_DATA_STORAGE_ROOT),
             "latest_market_snapshot_path": str(runtime.LATEST_MARKET_SNAPSHOT_PATH),
+            "market_snapshot_store": runtime.latest_market_snapshot_store.store_mode,
             "dlq_path": str(runtime.DLQ_STORE_PATH),
             "audit_path": str(runtime.AUDIT_STORE_PATH),
             **runtime_metrics,

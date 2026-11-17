@@ -21,6 +21,7 @@ class Client:
     def __init__(self, repo, sha):
         self.repository, self.sha = repo, sha
         self.ci = "success"
+        self.extra_ci = []  # (run_id, sha, conclusion) for non-tip commits
         self.active = False
         self.deploys = []
         self.failed_steps = {}
@@ -48,11 +49,16 @@ class Client:
         if "status" in query:
             return {"workflow_runs": [{"html_url": "https://github.test/active"}] if self.active else []}
         if "branch-ci.yml" in path:
-            return {"workflow_runs": [{"id": 1, "head_sha": self.sha, "head_branch": "dev",
-                "event": "push", "status": "completed", "conclusion": self.ci}]}
-        dispatched = [{"id": 99, "head_sha": self.sha, "status": "queued",
-            "display_title": f"Dev release {B} + {F}", "html_url": "https://github.test/99"}]
-        history = self.deploys + (dispatched if self.dispatches else [])
+            ci_runs = [{"id": 1, "head_sha": self.sha, "head_branch": "dev",
+                "event": "push", "status": "completed", "conclusion": self.ci}]
+            ci_runs += [{"id": rid, "head_sha": sha, "head_branch": "dev", "event": "push",
+                "status": "completed", "conclusion": conclusion} for rid, sha, conclusion in self.extra_ci]
+            return {"workflow_runs": [item for item in ci_runs
+                if query.get("head_sha", [item["head_sha"]])[0] == item["head_sha"]]}
+        dispatched = [{"id": 99, "head_sha": inputs["ref"], "status": "queued",
+            "display_title": f"Dev release {inputs['ref']} + {inputs['frontend_sha']}",
+            "html_url": "https://github.test/99"} for _, inputs, _ in self.dispatches[:1]]
+        history = self.deploys + dispatched
         return {"workflow_runs": [run for run in history
             if query.get("head_sha", [run["head_sha"]])[0] == run["head_sha"]]}
 
@@ -94,7 +100,13 @@ def test_backend_frontend_and_combined_changes_dispatch_exact_pair(host_b, host_
     assert inputs["ref"] == B and inputs["frontend_sha"] == F
     assert inputs["frontend_profile"] == "operator-live"
     assert inputs["component"] == "root" and inputs["allow_dirty"] == "false"
-    assert inputs["run_loop_prod_tel_002_probe"] == "true"
+    # Automatic dev releases are deploy-only: the full input set is pinned and
+    # no functional-gate / PAPER_BOOTSTRAP_REQUESTED input may be sent.
+    assert inputs == {
+        "environment": "dev", "component": "root", "ref": B, "frontend_sha": F,
+        "frontend_ref": "dev", "frontend_profile": "operator-live",
+        "dev_auth_profile": "strict", "allow_dirty": "false",
+    }
 
 
 def test_accepted_pair_is_noop_but_live_bff_drift_is_not():
@@ -372,3 +384,78 @@ def test_failed_drill_does_not_mask_or_clear_a_failed_normal_run():
     assert result["run_url"] == "https://github.test/10"
     backend.deploys = [drill_run(10, "failure"), deploy_run(11, "failure")]
     assert run(apply=True)["state"] == "failed_pair_not_retried"
+
+
+A1 = "a" * 40  # aeb227ff3 in the 2026-11-17 replay: green, on dev, not the tip
+
+
+def ahead(**overrides):
+    return {"status": "ahead", "ahead_by": 1, "behind_by": 0, **overrides}
+
+
+def test_selects_newest_green_ancestor_when_tip_ci_is_cancelled_replay_20261117():
+    # 00:10Z-00:55Z: six consecutive tip runs were cancelled while aeb227ff3 was green.
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success"), (2, "d" * 40, "cancelled"), (3, "e" * 40, "cancelled")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    result = run(apply=True)
+    assert result["state"] == "dispatched"
+    assert backend.dispatches[0][1]["ref"] == A1 and backend.dispatches[0][1]["frontend_sha"] == F
+    assert result["tip_backend_sha"] == B
+
+
+def test_green_commit_off_dev_or_not_ahead_of_served_is_never_selected():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(5, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = {"status": "diverged"}  # not on dev
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = {"status": "behind"}  # older than served
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    assert not backend.dispatches
+
+
+def test_served_green_commit_is_up_to_date_while_tip_waits_not_redeployed():
+    backend, _, _, _, run = setup_pair(A1, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    assert not backend.dispatches
+
+
+def test_failed_pair_is_evaluated_for_the_selected_candidate_not_the_tip():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    backend.deploys = [deploy_run(10, "failure", B, F)]  # tip pair failed earlier: irrelevant
+    assert run(apply=True)["state"] == "dispatched"
+    backend.deploys = [deploy_run(11, "failure", A1, F)]
+    backend.dispatches.clear()
+    assert run(apply=True)["state"] == "failed_pair_not_retried"
+
+
+def test_tip_moving_past_an_unchanged_candidate_does_not_supersede():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    backend.comparisons[f"{A1}...{'c' * 40}"] = ahead()
+    backend.move_on_read = True
+    assert run(apply=True)["state"] == "dispatched"
+
+
+def test_workflow_accepts_older_green_payload_on_dev_and_names_script_source():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in workflow
+    assert 'git merge-base --is-ancestor "${requested}" "${ref_tip}"' in workflow
+    assert "has no successful dev push Branch CI run" in workflow
+    assert '"${sha}" != "${trusted_ref}"' not in workflow.split("Compensation drill is a dev root only drill")[1].split("docker compose")[0]
+    # Older payload: deploy scripts run from .target (the payload), workflow from dev tip.
+    assert "Deploy scripts under .target/ come from that payload" in workflow

@@ -20,6 +20,8 @@
     ],
     "allowlist_date": "2026-11-16",
     "max_stale_trading_days": 3,
+    "published_state": "bundles/security-listing.jsonl",
+    "published_state_max_bytes": 20971520,
     "filtered_sources": [
       "collector-tw-twse-t86",
       "collector-tw-twse-price-history",

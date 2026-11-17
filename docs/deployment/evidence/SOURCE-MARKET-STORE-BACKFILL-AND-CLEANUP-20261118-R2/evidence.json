@@ -1,0 +1,190 @@
+{
+  "task_id": "SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2",
+  "owner": "Claude2",
+  "reviewer": "Claude",
+  "scope": "source delivery measured on a LOCALLY GENERATED shaped copy (coordinator clarification: no hosted access is needed or used); the real hosted numbers and the hosted run belong to MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117 (owner Human/Ops, status todo, in the live store of the coordination root)",
+  "settings": {
+    "PANTHEON_DAILY_PRICE_READER": "run_files (default, old read) | daily_bars; unknown value raises ValueError (fail closed); both states tested in evaluator, candidate pool feed and history depth",
+    "PANTHEON_TW_PRICE_DAILY_RUN_FILES": "on (default, raw and normalized run files written as today) | off (a tw_price_daily batch creates no raw and no normalized run file; other datasets untouched); both states tested"
+  },
+  "acceptance": {
+    "1_reproduce": {
+      "dry_run_command": "backfill_daily_bars.py (dry run default); here driven with apply on shape A",
+      "trade_dates": 150,
+      "rows": 564564,
+      "rows_without_trade_date": 3750,
+      "duplicate_copies_total": 50814,
+      "duplicate_copies_per_trade_date": {"min": 0, "max": 385},
+      "per_trade_date": {"2026-04-20": "rows=3758 unique=3400 duplicate_copies=358 run_files=2 expired_warrants_not_carried=840", "2026-04-21": "rows=3748 unique=3400 duplicate_copies=348 run_files=2 expired_warrants_not_carried=840", "2026-04-22": "rows=3767 unique=3400 duplicate_copies=367 run_files=2 expired_warrants_not_carried=840", "2026-04-23": "rows=3728 unique=3400 duplicate_copies=328 run_files=2 expired_warrants_not_carried=840", "2026-04-24": "rows=3751 unique=3400 duplicate_copies=351 run_files=3 expired_warrants_not_carried=840", "2026-04-27": "rows=3718 unique=3400 duplicate_copies=318 run_files=2 expired_warrants_not_carried=840", "2026-04-28": "rows=3767 unique=3400 duplicate_copies=367 run_files=3 expired_warrants_not_carried=840", "2026-04-29": "rows=3732 unique=3400 duplicate_copies=332 run_files=3 expired_warrants_not_carried=840", "2026-04-30": "rows=3732 unique=3400 duplicate_copies=332 run_files=3 expired_warrants_not_carried=840", "2026-05-01": "rows=3713 unique=3400 duplicate_copies=313 run_files=2 expired_warrants_not_carried=840", "2026-05-04": "rows=3769 unique=3400 duplicate_copies=369 run_files=3 expired_warrants_not_carried=840", "2026-05-05": "rows=3727 unique=3400 duplicate_copies=327 run_files=3 expired_warrants_not_carried=840", "2026-05-06": "rows=3724 unique=3400 duplicate_copies=324 run_files=2 expired_warrants_not_carried=840", "2026-05-07": "rows=3734 unique=3400 duplicate_copies=334 run_files=3 expired_warrants_not_carried=840", "2026-05-08": "rows=3725 unique=3400 duplicate_copies=325 run_files=2 expired_warrants_not_carried=840", "2026-05-11": "rows=3734 unique=3400 duplicate_copies=334 run_files=2 expired_warrants_not_carried=840", "2026-05-12": "rows=3746 unique=3400 duplicate_copies=346 run_files=3 expired_warrants_not_carried=840", "2026-05-13": "rows=3731 unique=3400 duplicate_copies=331 run_files=3 expired_warrants_not_carried=840", "2026-05-14": "rows=3730 unique=3400 duplicate_copies=330 run_files=2 expired_warrants_not_carried=840", "2026-05-15": "rows=3777 unique=3400 duplicate_copies=377 run_files=3 expired_warrants_not_carried=840", "2026-05-18": "rows=3754 unique=3400 duplicate_copies=354 run_files=3 expired_warrants_not_carried=840", "2026-05-19": "rows=3749 unique=3400 duplicate_copies=349 run_files=3 expired_warrants_not_carried=840", "2026-05-20": "rows=3739 unique=3400 duplicate_copies=339 run_files=2 expired_warrants_not_carried=840", "2026-05-21": "rows=3759 unique=3400 duplicate_copies=359 run_files=3 expired_warrants_not_carried=840", "2026-05-22": "rows=3750 unique=3400 duplicate_copies=350 run_files=2 expired_warrants_not_carried=840", "2026-05-25": "rows=3772 unique=3400 duplicate_copies=372 run_files=3 expired_warrants_not_carried=840", "2026-05-26": "rows=3751 unique=3400 duplicate_copies=351 run_files=3 expired_warrants_not_carried=840", "2026-05-27": "rows=3741 unique=3400 duplicate_copies=341 run_files=2 expired_warrants_not_carried=840", "2026-05-28": "rows=3752 unique=3400 duplicate_copies=352 run_files=3 expired_warrants_not_carried=840", "2026-05-29": "rows=3715 unique=3400 duplicate_copies=315 run_files=3 expired_warrants_not_carried=840", "2026-06-01": "rows=3702 unique=3400 duplicate_copies=302 run_files=2 expired_warrants_not_carried=840", "2026-06-02": "rows=3725 unique=3400 duplicate_copies=325 run_files=3 expired_warrants_not_carried=840", "2026-06-03": "rows=3718 unique=3400 duplicate_copies=318 run_files=2 expired_warrants_not_carried=840", "2026-06-04": "rows=3777 unique=3400 duplicate_copies=377 run_files=3 expired_warrants_not_carried=840", "2026-06-05": "rows=3732 unique=3400 duplicate_copies=332 run_files=3 expired_warrants_not_carried=840", "2026-06-08": "rows=3720 unique=3400 duplicate_copies=320 run_files=2 expired_warrants_not_carried=840", "2026-06-09": "rows=3740 unique=3400 duplicate_copies=340 run_files=3 expired_warrants_not_carried=840", "2026-06-10": "rows=3730 unique=3400 duplicate_copies=330 run_files=2 expired_warrants_not_carried=840", "2026-06-11": "rows=3735 unique=3400 duplicate_copies=335 run_files=3 expired_warrants_not_carried=840", "2026-06-12": "rows=3721 unique=3400 duplicate_copies=321 run_files=2 expired_warrants_not_carried=840", "2026-06-15": "rows=3747 unique=3400 duplicate_copies=347 run_files=3 expired_warrants_not_carried=840", "2026-06-16": "rows=3729 unique=3400 duplicate_copies=329 run_files=3 expired_warrants_not_carried=840", "2026-06-17": "rows=3724 unique=3400 duplicate_copies=324 run_files=2 expired_warrants_not_carried=840", "2026-06-18": "rows=3762 unique=3400 duplicate_copies=362 run_files=3 expired_warrants_not_carried=840", "2026-06-19": "rows=3727 unique=3400 duplicate_copies=327 run_files=2 expired_warrants_not_carried=840", "2026-06-22": "rows=3762 unique=3400 duplicate_copies=362 run_files=3 expired_warrants_not_carried=840", "2026-06-23": "rows=3739 unique=3400 duplicate_copies=339 run_files=3 expired_warrants_not_carried=840", "2026-06-24": "rows=3699 unique=3400 duplicate_copies=299 run_files=2 expired_warrants_not_carried=840", "2026-06-25": "rows=3756 unique=3400 duplicate_copies=356 run_files=2 expired_warrants_not_carried=840", "2026-06-26": "rows=3739 unique=3400 duplicate_copies=339 run_files=3 expired_warrants_not_carried=840", "2026-06-29": "rows=3735 unique=3400 duplicate_copies=335 run_files=2 expired_warrants_not_carried=840", "2026-06-30": "rows=3755 unique=3400 duplicate_copies=355 run_files=2 expired_warrants_not_carried=840", "2026-07-01": "rows=3755 unique=3400 duplicate_copies=355 run_files=3 expired_warrants_not_carried=840", "2026-07-02": "rows=3730 unique=3400 duplicate_copies=330 run_files=2 expired_warrants_not_carried=840", "2026-07-03": "rows=3762 unique=3400 duplicate_copies=362 run_files=3 expired_warrants_not_carried=840", "2026-07-06": "rows=3741 unique=3400 duplicate_copies=341 run_files=3 expired_warrants_not_carried=840", "2026-07-07": "rows=3717 unique=3400 duplicate_copies=317 run_files=3 expired_warrants_not_carried=840", "2026-07-08": "rows=3729 unique=3400 duplicate_copies=329 run_files=3 expired_warrants_not_carried=840", "2026-07-09": "rows=3722 unique=3400 duplicate_copies=322 run_files=2 expired_warrants_not_carried=840", "2026-07-10": "rows=3741 unique=3400 duplicate_copies=341 run_files=2 expired_warrants_not_carried=840", "2026-07-13": "rows=3755 unique=3400 duplicate_copies=355 run_files=3 expired_warrants_not_carried=840", "2026-07-14": "rows=3740 unique=3400 duplicate_copies=340 run_files=3 expired_warrants_not_carried=840", "2026-07-15": "rows=3719 unique=3400 duplicate_copies=319 run_files=2 expired_warrants_not_carried=840", "2026-07-16": "rows=3754 unique=3400 duplicate_copies=354 run_files=3 expired_warrants_not_carried=840", "2026-07-17": "rows=3732 unique=3400 duplicate_copies=332 run_files=2 expired_warrants_not_carried=840", "2026-07-20": "rows=3741 unique=3400 duplicate_copies=341 run_files=2 expired_warrants_not_carried=840", "2026-07-21": "rows=3744 unique=3400 duplicate_copies=344 run_files=2 expired_warrants_not_carried=840", "2026-07-22": "rows=3770 unique=3400 duplicate_copies=370 run_files=3 expired_warrants_not_carried=840", "2026-07-23": "rows=3734 unique=3400 duplicate_copies=334 run_files=3 expired_warrants_not_carried=840", "2026-07-24": "rows=3731 unique=3400 duplicate_copies=331 run_files=2 expired_warrants_not_carried=840", "2026-07-27": "rows=3764 unique=3400 duplicate_copies=364 run_files=3 expired_warrants_not_carried=840", "2026-07-28": "rows=3741 unique=3400 duplicate_copies=341 run_files=3 expired_warrants_not_carried=840", "2026-07-29": "rows=3738 unique=3400 duplicate_copies=338 run_files=3 expired_warrants_not_carried=840", "2026-07-30": "rows=3720 unique=3400 duplicate_copies=320 run_files=2 expired_warrants_not_carried=840", "2026-07-31": "rows=3743 unique=3400 duplicate_copies=343 run_files=2 expired_warrants_not_carried=840", "2026-08-03": "rows=3765 unique=3400 duplicate_copies=365 run_files=3 expired_warrants_not_carried=840", "2026-08-04": "rows=3725 unique=3400 duplicate_copies=325 run_files=3 expired_warrants_not_carried=840", "2026-08-05": "rows=3723 unique=3400 duplicate_copies=323 run_files=2 expired_warrants_not_carried=840", "2026-08-06": "rows=3755 unique=3400 duplicate_copies=355 run_files=2 expired_warrants_not_carried=840", "2026-08-07": "rows=3749 unique=3400 duplicate_copies=349 run_files=3 expired_warrants_not_carried=840", "2026-08-10": "rows=3720 unique=3400 duplicate_copies=320 run_files=2 expired_warrants_not_carried=840", "2026-08-11": "rows=3756 unique=3400 duplicate_copies=356 run_files=2 expired_warrants_not_carried=840", "2026-08-12": "rows=3745 unique=3400 duplicate_copies=345 run_files=2 expired_warrants_not_carried=840", "2026-08-13": "rows=3756 unique=3400 duplicate_copies=356 run_files=3 expired_warrants_not_carried=840", "2026-08-14": "rows=3733 unique=3400 duplicate_copies=333 run_files=3 expired_warrants_not_carried=840", "2026-08-17": "rows=3723 unique=3400 duplicate_copies=323 run_files=3 expired_warrants_not_carried=840", "2026-08-18": "rows=3731 unique=3400 duplicate_copies=331 run_files=2 expired_warrants_not_carried=840", "2026-08-19": "rows=3758 unique=3400 duplicate_copies=358 run_files=3 expired_warrants_not_carried=840", "2026-08-20": "rows=3738 unique=3400 duplicate_copies=338 run_files=2 expired_warrants_not_carried=840", "2026-08-21": "rows=3757 unique=3400 duplicate_copies=357 run_files=2 expired_warrants_not_carried=840", "2026-08-24": "rows=3756 unique=3400 duplicate_copies=356 run_files=3 expired_warrants_not_carried=840", "2026-08-25": "rows=3744 unique=3400 duplicate_copies=344 run_files=3 expired_warrants_not_carried=840", "2026-08-26": "rows=3740 unique=3400 duplicate_copies=340 run_files=2 expired_warrants_not_carried=840", "2026-08-27": "rows=3761 unique=3400 duplicate_copies=361 run_files=3 expired_warrants_not_carried=840", "2026-08-28": "rows=3747 unique=3400 duplicate_copies=347 run_files=3 expired_warrants_not_carried=840", "2026-08-31": "rows=3739 unique=3400 duplicate_copies=339 run_files=3 expired_warrants_not_carried=840", "2026-09-01": "rows=3741 unique=3400 duplicate_copies=341 run_files=3 expired_warrants_not_carried=840", "2026-09-02": "rows=3738 unique=3400 duplicate_copies=338 run_files=3 expired_warrants_not_carried=840", "2026-09-03": "rows=3731 unique=3400 duplicate_copies=331 run_files=2 expired_warrants_not_carried=840", "2026-09-04": "rows=3736 unique=3400 duplicate_copies=336 run_files=2 expired_warrants_not_carried=840", "2026-09-07": "rows=3777 unique=3400 duplicate_copies=377 run_files=3 expired_warrants_not_carried=840", "2026-09-08": "rows=3716 unique=3400 duplicate_copies=316 run_files=2 expired_warrants_not_carried=840", "2026-09-09": "rows=3750 unique=3400 duplicate_copies=350 run_files=3 expired_warrants_not_carried=840", "2026-09-10": "rows=3724 unique=3400 duplicate_copies=324 run_files=2 expired_warrants_not_carried=840", "2026-09-11": "rows=3734 unique=3400 duplicate_copies=334 run_files=2 expired_warrants_not_carried=840", "2026-09-14": "rows=3748 unique=3400 duplicate_copies=348 run_files=3 expired_warrants_not_carried=840", "2026-09-15": "rows=3733 unique=3400 duplicate_copies=333 run_files=2 expired_warrants_not_carried=840", "2026-09-16": "rows=3771 unique=3400 duplicate_copies=371 run_files=3 expired_warrants_not_carried=840", "2026-09-17": "rows=3716 unique=3400 duplicate_copies=316 run_files=2 expired_warrants_not_carried=840", "2026-09-18": "rows=3775 unique=3400 duplicate_copies=375 run_files=2 expired_warrants_not_carried=840", "2026-09-21": "rows=3785 unique=3400 duplicate_copies=385 run_files=3 expired_warrants_not_carried=840", "2026-09-22": "rows=3734 unique=3400 duplicate_copies=334 run_files=3 expired_warrants_not_carried=840", "2026-09-23": "rows=3737 unique=3400 duplicate_copies=337 run_files=3 expired_warrants_not_carried=840", "2026-09-24": "rows=3735 unique=3400 duplicate_copies=335 run_files=2 expired_warrants_not_carried=840", "2026-09-25": "rows=3750 unique=3400 duplicate_copies=350 run_files=3 expired_warrants_not_carried=840", "2026-09-28": "rows=3728 unique=3400 duplicate_copies=328 run_files=2 expired_warrants_not_carried=840", "2026-09-29": "rows=3751 unique=3400 duplicate_copies=351 run_files=2 expired_warrants_not_carried=840", "2026-09-30": "rows=3770 unique=3400 duplicate_copies=370 run_files=3 expired_warrants_not_carried=840", "2026-10-01": "rows=3738 unique=3400 duplicate_copies=338 run_files=3 expired_warrants_not_carried=840", "2026-10-02": "rows=3744 unique=3400 duplicate_copies=344 run_files=3 expired_warrants_not_carried=840", "2026-10-05": "rows=3739 unique=3400 duplicate_copies=339 run_files=2 expired_warrants_not_carried=840", "2026-10-06": "rows=3752 unique=3400 duplicate_copies=352 run_files=3 expired_warrants_not_carried=840", "2026-10-07": "rows=3746 unique=3400 duplicate_copies=346 run_files=2 expired_warrants_not_carried=840", "2026-10-08": "rows=3754 unique=3400 duplicate_copies=354 run_files=3 expired_warrants_not_carried=840", "2026-10-09": "rows=3748 unique=3400 duplicate_copies=348 run_files=2 expired_warrants_not_carried=840", "2026-10-12": "rows=3777 unique=3400 duplicate_copies=377 run_files=3 expired_warrants_not_carried=840", "2026-10-13": "rows=3723 unique=3400 duplicate_copies=323 run_files=2 expired_warrants_not_carried=840", "2026-10-14": "rows=3744 unique=3400 duplicate_copies=344 run_files=3 expired_warrants_not_carried=840", "2026-10-15": "rows=3738 unique=3400 duplicate_copies=338 run_files=2 expired_warrants_not_carried=840", "2026-10-16": "rows=3754 unique=3400 duplicate_copies=354 run_files=2 expired_warrants_not_carried=840", "2026-10-19": "rows=3750 unique=3400 duplicate_copies=350 run_files=3 expired_warrants_not_carried=840", "2026-10-20": "rows=3733 unique=3400 duplicate_copies=333 run_files=2 expired_warrants_not_carried=840", "2026-10-21": "rows=3749 unique=3400 duplicate_copies=349 run_files=2 expired_warrants_not_carried=840", "2026-10-22": "rows=3758 unique=3400 duplicate_copies=358 run_files=3 expired_warrants_not_carried=840", "2026-10-23": "rows=3722 unique=3400 duplicate_copies=322 run_files=3 expired_warrants_not_carried=840", "2026-10-26": "rows=3723 unique=3400 duplicate_copies=323 run_files=3 expired_warrants_not_carried=840", "2026-10-27": "rows=3724 unique=3400 duplicate_copies=324 run_files=3 expired_warrants_not_carried=840", "2026-10-28": "rows=3723 unique=3400 duplicate_copies=323 run_files=2 expired_warrants_not_carried=840", "2026-10-29": "rows=3732 unique=3400 duplicate_copies=332 run_files=3 expired_warrants_not_carried=840", "2026-10-30": "rows=3727 unique=3400 duplicate_copies=327 run_files=2 expired_warrants_not_carried=840", "2026-11-02": "rows=3751 unique=3400 duplicate_copies=351 run_files=2 expired_warrants_not_carried=840", "2026-11-03": "rows=3748 unique=3400 duplicate_copies=348 run_files=3 expired_warrants_not_carried=840", "2026-11-04": "rows=3740 unique=3400 duplicate_copies=340 run_files=3 expired_warrants_not_carried=840", "2026-11-05": "rows=3713 unique=3400 duplicate_copies=313 run_files=2 expired_warrants_not_carried=840", "2026-11-06": "rows=3757 unique=3400 duplicate_copies=357 run_files=3 expired_warrants_not_carried=840", "2026-11-09": "rows=3741 unique=3400 duplicate_copies=341 run_files=3 expired_warrants_not_carried=840", "2026-11-10": "rows=3702 unique=3400 duplicate_copies=302 run_files=2 expired_warrants_not_carried=840", "2026-11-11": "rows=3737 unique=3400 duplicate_copies=337 run_files=2 expired_warrants_not_carried=840", "2026-11-12": "rows=3736 unique=3400 duplicate_copies=336 run_files=2 expired_warrants_not_carried=840", "2026-11-13": "rows=3400 unique=3400 duplicate_copies=0 run_files=1 expired_warrants_not_carried=840"},
+      "class_totals": {"delete": 126000, "keep_delisted_share": 9000, "keep_listed": 375000, "review": 0},
+      "seconds": 67.6,
+      "loadavg": [3.69873046875, 3.6083984375, 3.27783203125]
+    },
+    "2": "Writes only through DailyBarsStore; trade date from the row (tested: partition 2026-11-15/16 never becomes a date); duplicates collapse to the newest run (tested: later write date wins); no-trade-date rows counted not written (tested).",
+    "3": "Second run: file bytes and manifest digests identical (test_second_run_writes_nothing_bytes_and_digests). Kill before the manifest rename of the second date: first date complete and verified, residue confined to the killed date, next run sweeps temp files and orphan parts and finishes (test_kill_in_the_middle_then_resume).",
+    "4": {
+      "shape_A": {"mismatches": [], "every_date_verified": true, "manifest_rows_equal_expected_rows_all_dates": true, "manifest_symbols_equal_rows": true},
+      "shape_B": {"mismatches": [], "trade_dates": 504, "seconds": 474.6},
+      "failure": "a mismatch raises BackfillMismatch naming the dates (test_mismatch_fails_and_names_the_date)"
+    },
+    "5": "Classification reuses delete_expired_warrants.classify on the SOURCE-WARRANT-LISTING-EXPIRY ListingState: expired warrant not carried, listed warrant and delisted ordinary share carried, counts per class in the report; a listing that is not fresh stops before any write (tested for none and stale).",
+    "6": {
+      "setting": "PANTHEON_DAILY_PRICE_READER = run_files (default, rollback) | daily_bars; both states tested in evaluator, feed and history depth",
+      "measured_on": "shape A (full shape, 150 trade dates = its full range; the 2 year range is B, see 8)",
+      "evaluator": {"compare_5_trading_days": {"field_series_compared": 12800, "first_mismatches": [], "mismatches": 0, "old_only_bars_from_rows_without_trade_date": 1724, "symbols_compared": 2560, "vwap_series_differing_known_gap_G1": 2560}, "compare_full_range": {"field_series_compared": 12800, "first_mismatches": [], "mismatches": 0, "old_only_bars_from_rows_without_trade_date": 1724, "symbols_compared": 2560, "vwap_series_differing_known_gap_G1": 2560}, "daily_bars_seconds": 34.305, "only_in_run_files": 840, "only_in_run_files_are_expired_warrants_only": true, "run_files_seconds": 46.81, "symbols_daily_bars": 2560, "symbols_run_files": 3400},
+      "feed": {"compare_5_trading_days": {"first_mismatches": [], "mismatches": 0, "symbols_compared": 2560}, "compare_full_range": {"first_mismatches": [], "mismatches": 0, "symbols_compared": 2560}, "daily_bars_build_seconds": 10.965, "run_files_build_seconds": 11.977, "sessions_equal": true, "symbols_daily_bars": 2560, "symbols_run_files": 3400},
+      "reading_the_numbers": "evaluator open/high/low/close/volume/time: 0 mismatches over 5 days and over the full range on 2560 carried symbols. The 840 symbols only in the run file read are the expired warrants (not carried by design, item 5). vwap differs for every series: known gap G1 (old = value/volume, daily bars carry no value). The old evaluator read also makes a bar out of a row without a trade date (key None): 1724 such old-only bars, daily bars never carry them (item 2); counted, not compared. Feed: 0 mismatches in event_time, close, open, high, low, volume, suspended; traded_value and available_time are the G1 gap.",
+      "depth": {"daily_bars_seconds": 0.525, "run_files_seconds": 7.534, "tw_price_daily_daily_bars": {"tw_price_daily": {"distinct_event_dates": 150, "entity_count": 2560, "first_event_date": "2026-04-20", "last_event_date": "2026-11-13", "per_entity": "omitted (per symbol depth entries)", "row_count": 384000, "rows_without_entity_or_event_time": 0, "span_days": 208}}, "tw_price_daily_run_files": {"tw_price_daily": {"distinct_event_dates": 150, "entity_count": 3400, "first_event_date": "2026-04-20", "last_event_date": "2026-11-13", "per_entity": "omitted (per symbol depth entries)", "row_count": 564564, "rows_without_entity_or_event_time": 3750, "span_days": 208}}}
+    },
+    "7_other_readers": "see other_run_file_readers",
+    "8": {
+      "host": "12 cpu shared worker host that runs many workers; load average during the runs 3.6 to 5.1 (read from os.getloadavg per series)",
+      "method": "20 warm repetitions after one discarded first call per series (first call opens parquet footers); p50/p95 over the 20",
+      "data": "shape B (504 trade dates x 2560 carried symbols)",
+      "results": {"500_symbols_250_days_reader": {"loadavg_after": [4.791015625, 4.369140625, 3.97607421875], "max_s": 0.547, "p50_s": 0.46, "p95_s": 0.508, "warm_runs": 20}, "500_symbols_250_days_switched_evaluator_path": {"loadavg_after": [3.8115234375, 4.16552734375, 3.92333984375], "max_s": 1.907, "p50_s": 1.747, "p95_s": 1.836, "warm_runs": 20}, "one_symbol_2_years_reader": {"loadavg_after": [4.61474609375, 4.30810546875, 3.9482421875], "max_s": 0.471, "p50_s": 0.412, "p95_s": 0.449, "warm_runs": 20}, "one_symbol_2_years_switched_evaluator_path": {"loadavg_after": [4.92724609375, 4.38134765625, 3.9755859375], "max_s": 0.478, "p50_s": 0.416, "p95_s": 0.459, "warm_runs": 20}},
+      "breakdown_per_partition_1_symbol_2_years": {"files_per_partition": 1, "partition_bytes": 171160, "per_partition_ms_p50": 0.96, "per_partition_ms_p95": 1.177, "serial_all_dates_s": 0.499},
+      "verdict": "MET: 2 years x 1 symbol through the switched evaluator path p95 0.459 s (bound 0.5 s, thin margin: 8%); 500 symbols x 250 days through the switched evaluator path p95 1.836 s (bound 3 s).",
+      "what_was_tried": "First attempt: the switched path built a new DailyBarsReader per call: p95 0.624 s (above the bound; only the raw warm reader was 0.474). Caller side concurrency (date range split into 126 day windows read in parallel) was tried and measured WORSE, p95 0.747 s (GIL bound decode; reverted, not shipped). Kept: one reader per store root for the process (evaluator._daily_bars_reader), whose size+mtime keyed caches keep footers warm; a rewritten day is re-read (tested). daily_bars_reader.py unchanged.",
+      "risk": "a cold process pays the first call (about 0.8 s for 2 years x 1 symbol); if the bound must hold cold, the change that would meet it is in daily_bars_reader.py: read the per-partition footer metadata lazily from the manifest (min/max symbol are already in it) and skip pq.read_metadata for files the manifest bounds already exclude, and one combined dataset scan instead of one open per partition (504 opens, about 1 ms each = 0.5 s).",
+      "candidate_pool_feed_build_seconds": {"run_files_before": 11.977, "daily_bars_after": 10.965, "shape": "shape A, 3400 symbols x 150 days, one run each (cold, same host); loaded host"},
+      "evaluator_load_seconds": {"run_files": 46.81, "daily_bars": 34.305}
+    },
+    "9": {
+      "tests": "scripts/test_cleanup_market_run_files.py 15 tests: dry run default, 5 day reader gate, verification window, unverified daily bars, stale backfill report digest, rows without trade date, pinned dates, digest required, other datasets untouched, CLI, and the unswitched reader refusal (test_refuses_every_file_while_a_known_reader_is_not_switched, test_switching_the_last_reader_lifts_the_refusal, test_known_readers_list_matches_the_code)",
+      "known_readers_refusal": "KNOWN_RUN_FILE_READERS is a checked in list; while any entry is switched=False every file is refused with unswitched_reader:<file> and a real run deletes nothing. test_known_readers_list_matches_the_code fails when the list and the code disagree.",
+      "run_on_shape_A": {"checked_in_list": {"totals": {"files": 150, "bytes": 800540106, "eligible_files": 0, "eligible_bytes": 0}, "refusal_reasons_by_file": {"unswitched_reader": 300, "rows_without_trade_date": 150}, "unswitched": ["services/source_ingestion/intraday_reconcile.py", "services/source_ingestion/connectors/collector_bundle.py"], "digest": "987e860d46b005c0b146bdc3c8d119086124726a0660c1a730f9c47ce3110330"}, "all_readers_switched_hypothetical": {"totals": {"files": 150, "bytes": 800540106, "eligible_files": 0, "eligible_bytes": 0}, "refusal_reasons_by_file": {"rows_without_trade_date": 150}, "unswitched": [], "digest": "aae999f9c0607d74acd214d2fc2232c824dc17bf629531ace84089f81aac551c"}},
+      "finding": "On the generated shape every one of the 150 run files also holds rows without a trade date (25 each), so even with all readers switched nothing is eligible: those rows were never carried into daily bars and the cleanup refuses to delete their only copy. A decision is needed (drop those rows as invalid, or keep them) before a real cleanup can free space."
+    },
+    "10": "PANTHEON_TW_PRICE_DAILY_RUN_FILES=off tested: no raw/normalized tw_price_daily run file, daily bars still written, tw_index_daily untouched; default and on write both as today.",
+    "11": {
+      "before_shape_A": {"run_files_jsonl_bytes": 800540106, "note": "normalized only; raw copies not generated"},
+      "after_backfill_shape_A": {"alarms": [], "daily_bars_max_day": "2026-07-03", "daily_bars_max_day_bytes": 174650, "daily_bars_total_bytes": 25808490, "days": 150, "limits": {"daily_bars_day_alarm_bytes": 2500000, "daily_bars_total_ceiling_bytes": 1000000000, "lineage_day_alarm_bytes": 450000, "lineage_total_ceiling_bytes": 150000000}, "lineage_max_day_bytes": 122, "lineage_total_bytes": 18300},
+      "after_backfill_shape_B_504_days": {"alarms": [], "daily_bars_max_day": "2026-09-30", "daily_bars_max_day_bytes": 174984, "daily_bars_total_bytes": 86712359, "days": 504, "limits": {"daily_bars_day_alarm_bytes": 2500000, "daily_bars_total_ceiling_bytes": 1000000000, "lineage_day_alarm_bytes": 450000, "lineage_total_ceiling_bytes": 150000000}, "lineage_max_day_bytes": 122, "lineage_total_bytes": 61488},
+      "size_after_cleanup": "unchanged (0 bytes freed): the cleanup refuses every file, see 9",
+      "design_section_6_rows": "daily_bars day target 1.6 MB / alarm 2.5 MB / total ceiling 1 GB; lineage day target 0.3 MB / total ceiling 150 MB: all inside (max day 174,650 B; B total 86.7 MB; lineage 61 KB). Synthetic prices compress better than real ones, so the hosted size is still to be measured by the hosted acceptance task.",
+      "byte_tests": "test_hosted_shaped_backfill_stays_inside_the_byte_limits and test_day_over_the_limit_fails_on_bytes; the full backfill enforces DAILY_BARS_DAY_ALARM_BYTES per day and enforce_budget at the end (no alarms on A or B)",
+      "new_store": "none added by either script"
+    },
+    "12": "see validation"
+  },
+  "gaps_named_for_handoff": [
+    "G1 daily bars store no available_time and no traded value. The switched evaluator derives ts as trade date 14:30 +08:00 (the rule the old read applies to date-only rows) and vwap falls back to close (old: value/volume); the switched feed derives available_time the same way and omits traded_value. For rows whose real available_time or value differ the two reads are NOT identical. Needs a decision: add value and available_time columns to daily bars (persisted format change: previous-reader test in both directions against the hosted version read from /bff/version, and a change in daily_bars_reader.py _COLUMNS which belongs to a later task), or accept the derived values. Default setting stays run_files until decided.",
+    "G2 The survivorship attestation of the feed needs the all-market capture rows (collector.source_id, upstream_endpoint, trading_status), which are not part of daily bars. In daily_bars mode they are still read from normalized run files; after cleanup there are none and includes_delisted/includes_suspended become false (fail closed). The cleanup must not run on a window the feed still attests until the capture evidence has a store.",
+    "G3 daily_bars_reader.py exposes no symbol listing: callers need symbols to ask for. Added DailyBarsStore.symbol_stats (symbol column only) in daily_bars_store.py for the loader, the feed and depth. A reader-side listing would be the cleaner home (later task).",
+    "G4 A daily bar keeps the symbol as stored (symbol_canonical, e.g. 2330.TW); the old evaluator read keys by body.symbol. Callers passing bare codes to load_tw_price_daily_snapshot(symbols=...) in daily_bars mode get no match.",
+    "G5 The old evaluator read fails closed on conflicting duplicate prices; daily bars hold one row per key, so conflicts are resolved at backfill time by newest run (not by failing). Reported per date as duplicates; the conflicting-OHLC case is not separately counted.",
+    "G6 resolved on the local shape: see acceptance 8 (reader reuse per root, p95 0.459 s); a cold process is still about 0.8 s",
+    "G7 Cleanup deletes whole run files per write-date partition; a file is refused unless every trade date it holds is verified, so one unverified date keeps the file.",
+    "G8 every run file holds rows without a trade date on the generated shape: cleanup frees nothing until that is decided (acceptance 9 finding)."
+  ],
+  "other_run_file_readers": [
+    {
+      "file": "services/source_ingestion/candidate_pool_market_feed.py",
+      "lines": "49-52 _partitions, 127-165 _read_bars",
+      "status": "switched for bars and sessions; captures for survivorship still read run files (G2)"
+    },
+    {
+      "file": "services/research/alpha_templates/evaluator.py",
+      "lines": "464-471 _snapshot_files/_snapshot_root, 474-481 compute_snapshot_id, 484-530 _read_snapshot_rows",
+      "status": "switched behind the setting; old read kept for rollback"
+    },
+    {
+      "file": "services/source_ingestion/market_data_storage.py",
+      "lines": "measure_stored_history_depth",
+      "status": "switched behind the setting"
+    },
+    {
+      "file": "services/source_ingestion/intraday_reconcile.py",
+      "lines": "255-290 OfficialDaily.from_snapshot (rglob normalized/tw_price_daily/*.jsonl)",
+      "status": "NOT switched, file outside the artifact list. Needs official volume components, line provenance (path, line, sha256) and available_time that daily bars do not carry. Stops working when the run files are deleted: switch or give it its own evidence store before the real cleanup (owner of the reconciliation task)."
+    },
+    {
+      "file": "services/source_ingestion/connectors/collector_bundle.py",
+      "lines": "2124-2147 stored_instrument_authority",
+      "status": "NOT switched, file outside the artifact list. Reads symbol_canonical of normalized tw_price_daily run files to resolve social symbols; stops giving authority when the files are deleted. Can read DailyBarsStore.symbol_stats instead (small follow-up)."
+    },
+    {
+      "file": "scripts/delete_expired_warrants.py",
+      "lines": "_store_files/build_report/execute",
+      "status": "rewrites run files of the one-off warrant delete; harmless after cleanup (nothing left to rewrite)"
+    },
+    {
+      "file": "scripts/report_intraday_reconciliation.py",
+      "lines": "via OfficialDaily",
+      "status": "same as intraday_reconcile.py"
+    },
+    {
+      "file": "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "lines": "330",
+      "status": "filters SourceRecords by dataset; not a run file reader"
+    },
+    {
+      "file": "services/source_ingestion/market_data_storage.py",
+      "lines": "write_run _append_jsonl",
+      "status": "writer; stopped for tw_price_daily by PANTHEON_TW_PRICE_DAILY_RUN_FILES=off"
+    }
+  ],
+  "named_changes_to_files_outside_this_task": [
+    "services/source_ingestion/daily_bars_reader.py (later task): lazy footer use and one combined scan so the bound also holds cold; optional symbol listing for a date window; value and available_time columns if G1 is decided that way.",
+    "services/source_ingestion/intraday_reconcile.py and connectors/collector_bundle.py: switch (listed above); then set switched=True in scripts/cleanup_market_run_files.py KNOWN_RUN_FILE_READERS."
+  ],
+  "persisted_format_change": "none: daily bars columns and manifest unchanged; the added store methods (sweep_interrupted, verify_day, symbol_stats) read and delete only. No previous-reader test needed; hosted version at time of PR not read (no hosted access).",
+  "validation": {
+    "python": "/tmp/tw-fund-venv/bin/python (python 3.12, pyarrow, pytest)",
+    "commands": [
+      {"cmd": "pytest scripts/test_backfill_daily_bars.py scripts/test_cleanup_market_run_files.py scripts/test_delete_expired_warrants.py services/source_ingestion/tests/test_market_data_storage.py services/source_ingestion/tests/test_daily_bars_store.py services/source_ingestion/tests/test_daily_bars_reader.py services/source_ingestion/tests/test_candidate_pool_market_feed.py services/research/tests/test_alpha_template_snapshot_loader.py services/research/tests/test_alpha_template_evaluation.py services/source_ingestion/tests/test_feature_catalogue.py", "result": "160 passed"},
+      {"cmd": "pytest services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_survivorship_attestation.py services/source_ingestion/tests/test_security_listing.py", "result": "128 passed, 1 skipped"},
+      {"cmd": "python -m scripts.test_backfill_daily_bars generate|backfill|equiv|latency (shapes A and B)", "result": "completed; numbers above"}
+    ],
+    "no_test_weakened": true
+  },
+  "generator": {
+    "where": "scripts/test_backfill_daily_bars.py: generate_shaped_copy / shaped_listing; drive with `python -m scripts.test_backfill_daily_bars generate|backfill|equiv|latency --root R --out F` (/tmp/tw-fund-venv/bin/python, python 3.12)",
+    "seed": 20261118,
+    "deterministic": "random.Random(seed); same seed gives the same bytes",
+    "classes_per_date": {
+      "ordinary_listed": 1500,
+      "delisted_ordinary": 60,
+      "warrant_listed": 1000,
+      "warrant_expired": 840,
+      "total": 3400
+    },
+    "duplicates": "about 10% of rows are re-captured by a later run (same OHLC, larger final volume) so the old read and newest-wins agree",
+    "rows_without_trade_date": "25 per run file",
+    "shape_A_full_shape_item_1_4_6_11": {
+      "write_dates": 150,
+      "trade_dates": 150,
+      "symbols_per_date": 3400,
+      "rows": 564564,
+      "bytes": 800540106,
+      "run_files": 150,
+      "duplicate_rows": 50814,
+      "rows_without_trade_date": 3750,
+      "disk_note": "800.5 MB of jsonl, row about 1418 bytes"
+    },
+    "shape_B_two_year_item_8": {
+      "write_dates": 150,
+      "trade_dates": 504,
+      "symbols_per_date": 3400,
+      "rows": 1888701,
+      "bytes": 2678654599,
+      "run_files": 150,
+      "duplicate_rows": 171351,
+      "rows_without_trade_date": 3750,
+      "note": "504 trade dates (2 years) over 150 write dates (about 3.4 trade dates per write date, monthly-capture style), real row size, 2.68 GB; used for the latency bound that needs 2 years. B was generated before the duplicate rule was changed to same-OHLC, so B's duplicates carry a different close; B is NOT used for equivalence, only for latency (duplicates do not change latency)."
+    },
+    "listing": "shaped_listing(): ListingState fresh at 2026-11-17 with the same class counts"
+  },
+  "unswitched_readers_for_follow_up": [
+    {
+      "file": "services/source_ingestion/intraday_reconcile.py",
+      "lines": "255-290 OfficialDaily.from_snapshot",
+      "reads": "rglob normalized/tw_price_daily/*.jsonl: official close and volume with line provenance (path, line, sha256) and available_time"
+    },
+    {
+      "file": "services/source_ingestion/connectors/collector_bundle.py",
+      "lines": "2124-2147 stored_instrument_authority",
+      "reads": "symbol_canonical of normalized tw_price_daily rows to resolve social symbols; DailyBarsStore.symbol_stats can replace it"
+    }
+  ]
+}

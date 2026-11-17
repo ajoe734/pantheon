@@ -54,6 +54,7 @@ services:
 
   postgres:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POSTGRES:-2g}
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
@@ -82,6 +83,7 @@ services:
 
   retrieval-postgres:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RETRIEVAL_POSTGRES:-1g}
     image: pgvector/pgvector:0.8.0-pg16@sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9
     restart: unless-stopped
     environment:
@@ -100,6 +102,7 @@ services:
 
   memory-index-postgres:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MEMORY_INDEX_POSTGRES:-512m}
     build:
       context: .
       dockerfile: deploy/memory-index-postgres/Dockerfile
@@ -121,6 +124,7 @@ services:
 
   hindsight:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_HINDSIGHT:-6g}
     build:
       context: .
       dockerfile: deploy/hindsight/Dockerfile
@@ -183,6 +187,7 @@ services:
 
   nats:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_NATS:-512m}
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
@@ -200,6 +205,7 @@ services:
 
   signal-store:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SIGNAL_STORE:-640m}
     image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     healthcheck:
@@ -210,6 +216,7 @@ services:
 
   consultation-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_CONSULTATION_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -290,6 +297,7 @@ services:
 
   source-ingest:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST:-6g}
     stop_grace_period: 30s
     build:
       context: .
@@ -363,7 +371,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/livez', timeout=5).read()\"",
         ]
       interval: 10s
       timeout: 5s
@@ -372,6 +380,7 @@ services:
 
   source-ingest-controller-migrate:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST_CONTROLLER_MIGRATE:-256m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -388,6 +397,7 @@ services:
         required: false
   source-ingest-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -479,6 +489,7 @@ services:
 
   strategy-distillation-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_STRATEGY_DISTILLATION_WORKER:-640m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -541,6 +552,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-256m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -608,6 +620,7 @@ services:
 
   search-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SEARCH_SVC:-13g}
     stop_grace_period: 30s
     cpus: 2.0
     cpu_shares: 256
@@ -667,6 +680,7 @@ services:
 
   search-index-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SEARCH_INDEX_SCHEDULER:-256m}
     # Default-on: this scheduler only talks to the in-stack search service, so
     # the runtime manifest — not an operator-selected profile — is the single
     # source of truth for whether the required loop worker is running.
@@ -702,6 +716,7 @@ services:
 
   training-session-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_TRAINING_SESSION_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -774,6 +789,7 @@ services:
 
   training-session-preview-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_TRAINING_SESSION_PREVIEW_WORKER:-256m}
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -815,6 +831,7 @@ services:
 
   policy-learning-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POLICY_LEARNING_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -866,6 +883,7 @@ services:
 
   policy-learning-shadow-eval-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_POLICY_LEARNING_SHADOW_EVAL_SCHEDULER:-256m}
     # Human-imitation shadow-evaluation loop worker (L12-IMIT-001).
     build:
       context: .
@@ -918,6 +936,7 @@ services:
 
   research-orchestrator-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-256m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -993,6 +1012,7 @@ services:
 
   openclaw-data-init:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_DATA_INIT:-128m}
     image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
     volumes:
@@ -1000,6 +1020,7 @@ services:
 
   openclaw-gateway:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY:-1280m}
     # Governed OpenClaw gateway image with Claude Code and Gemini CLIs.
     build:
       context: .
@@ -1032,8 +1053,13 @@ services:
       # stays disabled. The config value is an unresolved env reference, so the secret is never
       # written to the openclaw-data volume.
       PERSONA_TOOL_BROKER_TOKEN: ${PERSONA_TOOL_BROKER_TOKEN:-}
-      PANTHEON_PERSONA_TOOLS_ENABLE_BATCH: '[{"path":"plugins.load.paths","value":["/opt/pantheon/plugins/pantheon-persona-tools"]},{"path":"plugins.entries.pantheon-persona-tools.enabled","value":true},{"path":"plugins.entries.pantheon-persona-tools.config.brokerUrl","value":"http://openclaw-gateway-adapter:8104/internal/persona-tools/v1"},{"path":"plugins.entries.pantheon-persona-tools.config.brokerToken","value":"$${PERSONA_TOOL_BROKER_TOKEN}"}]'
-      PANTHEON_PERSONA_TOOLS_DISABLE_BATCH: '[{"path":"plugins.entries.pantheon-persona-tools.enabled","value":false}]'
+      # Rollback-safe: the plugin path/entry are NEVER persisted into openclaw.json on the shared
+      # openclaw-data volume (a previous gateway image without /opt/pantheon fails config validation and
+      # restart-loops). With the token, startup writes a runtime-only overlay (openclaw.runtime.json, read only
+      # via OPENCLAW_CONFIG_PATH, $include-ing the real config); without it the overlay is deleted.
+      # BASE_PATCH also strips any plugin path/entry an earlier candidate persisted (one config write per start).
+      PANTHEON_OPENCLAW_BASE_PATCH: '{"gateway":{"http":{"endpoints":{"responses":{"enabled":true}}}},"plugins":{"load":{"paths":null},"entries":{"pantheon-persona-tools":null}}}'
+      PANTHEON_PERSONA_TOOLS_OVERLAY: '{"$$include":"./openclaw.json","plugins":{"load":{"paths":["/opt/pantheon/plugins/pantheon-persona-tools"]},"entries":{"pantheon-persona-tools":{"enabled":true,"config":{"brokerUrl":"http://openclaw-gateway-adapter:8104/internal/persona-tools/v1","brokerToken":"$${PERSONA_TOOL_BROKER_TOKEN}"}}}}}'
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -1047,7 +1073,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && if [ -n \"$$PERSONA_TOOL_BROKER_TOKEN\" ]; then node dist/index.js config set --batch-json \"$$PANTHEON_PERSONA_TOOLS_ENABLE_BATCH\" >/dev/null || exit 1; else node dist/index.js config set --batch-json \"$$PANTHEON_PERSONA_TOOLS_DISABLE_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && if [ -n \"$$PERSONA_TOOL_BROKER_TOKEN\" ]; then printf '%s' \"$$PANTHEON_PERSONA_TOOLS_OVERLAY\" > /home/node/.openclaw/openclaw.runtime.json.tmp && mv /home/node/.openclaw/openclaw.runtime.json.tmp /home/node/.openclaw/openclaw.runtime.json && export OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.runtime.json; else rm -f /home/node/.openclaw/openclaw.runtime.json; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -1068,6 +1094,7 @@ services:
 
   openclaw-gateway-adapter:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY_ADAPTER:-256m}
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -1173,6 +1200,7 @@ services:
 
   broker:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_BROKER:-640m}
     stop_grace_period: 30s
     build:
       context: .
@@ -1197,6 +1225,7 @@ services:
 
   runtime-manager:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RUNTIME_MANAGER:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -1267,6 +1296,7 @@ services:
 
   governance:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_GOVERNANCE:-256m}
     build:
       context: .
       dockerfile: services/governance/Dockerfile
@@ -1335,6 +1365,7 @@ services:
 
   telemetry:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_TELEMETRY:-4g}
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -1376,6 +1407,7 @@ services:
 
   incidents:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_INCIDENTS:-1024m}
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
@@ -1421,6 +1453,7 @@ services:
 
   postmortems:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POSTMORTEMS:-384m}
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -1460,6 +1493,7 @@ services:
 
   operator-bff:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPERATOR_BFF:-3g}
     stop_grace_period: 30s
     build:
       context: .
@@ -1849,6 +1883,7 @@ services:
 
   agora-interaction-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_AGORA_INTERACTION_WORKER:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2006,6 +2041,7 @@ services:
         required: false
   persona:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PERSONA:-256m}
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
@@ -2137,6 +2173,7 @@ services:
 
   router:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_ROUTER:-256m}
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
@@ -2162,6 +2199,7 @@ services:
 
   web-channel:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_WEB_CHANNEL:-256m}
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
@@ -2184,6 +2222,7 @@ services:
 
   evaluation:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_EVALUATION:-256m}
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
@@ -2214,6 +2253,7 @@ services:
 
   feedback:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_FEEDBACK:-256m}
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
@@ -2234,6 +2274,7 @@ services:
 
   learning-feedback-bridge:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_LEARNING_FEEDBACK_BRIDGE:-256m}
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -2257,6 +2298,7 @@ services:
 
   memory:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MEMORY:-256m}
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -2304,6 +2346,7 @@ services:
 
   registry:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_REGISTRY:-256m}
     build:
       context: .
       dockerfile: services/registry/Dockerfile
@@ -2354,6 +2397,7 @@ services:
 
   optimizer-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPTIMIZER_SVC:-256m}
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
@@ -2378,6 +2422,7 @@ services:
 
   promotion:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PROMOTION:-256m}
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
@@ -2406,6 +2451,7 @@ services:
 
   capital:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_CAPITAL:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2460,6 +2506,7 @@ services:
 
   deployment:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_DEPLOYMENT:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2509,6 +2556,7 @@ services:
 
   deployment-outbox-consumer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_DEPLOYMENT_OUTBOX_CONSUMER:-256m}
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -2574,6 +2622,7 @@ services:
 
   evolution:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2645,6 +2694,7 @@ services:
 
   evolution-dispatch-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_DISPATCH_WORKER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2686,6 +2736,7 @@ services:
 
   evolution-daily-sweep-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_DAILY_SWEEP_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2745,6 +2796,7 @@ services:
 
   evolution-threshold-sweep-producer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_THRESHOLD_SWEEP_PRODUCER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2786,6 +2838,7 @@ services:
 
   lineage-read:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_LINEAGE_READ:-256m}
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
@@ -2806,6 +2859,7 @@ services:
 
   paper-fleet-reconciler:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-640m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2866,6 +2920,7 @@ services:
 
   paper-signal-producer:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PAPER_SIGNAL_PRODUCER:-256m}
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile
@@ -2923,6 +2978,7 @@ services:
 
   reconciliation-drift-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2978,6 +3034,7 @@ services:
 
   reconciliation-drift-consumer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_CONSUMER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -3019,6 +3076,7 @@ services:
 
   reconciliation-drift-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -3053,6 +3111,7 @@ services:
 
   reconciliation-drift-incident-listener:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_INCIDENT_LISTENER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -3092,6 +3151,7 @@ services:
 
   research-worker-gateway-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_WORKER_GATEWAY_SVC:-256m}
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
@@ -3436,6 +3496,7 @@ services:
 
   monitor-agent:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MONITOR_AGENT:-256m}
     build:
       context: .
       dockerfile: services/monitor-agent/Dockerfile
@@ -3460,6 +3521,7 @@ services:
         required: false
   persona-evaluator-agent:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PERSONA_EVALUATOR_AGENT:-256m}
     build:
       context: .
       dockerfile: services/persona-evaluator-agent/Dockerfile

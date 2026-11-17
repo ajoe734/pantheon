@@ -24,6 +24,7 @@ from services.source_ingestion.strategy_seed_builder import (
 from services.source_ingestion.strategy_seed_store import (
     StrategySpecSeedStore,
     StrategySpecSeedStoreError,
+    _seeds_replay_equal,
 )
 
 
@@ -126,24 +127,38 @@ class SeedMaterializationService:
         actor = requested_by or self._created_by
         ikey = idempotency_key or f"{bundle.evidence_bundle_id}:{mode.value}:{actor}"
 
-        if mode == MaterializationMode.CREATE_IF_ABSENT:
-            existing = self._store.get_by_bundle_idempotent(
-                bundle.evidence_bundle_id,
-                bundle.source_ids,
+        existing = self._store.get_by_bundle_idempotent(
+            bundle.evidence_bundle_id,
+            bundle.source_ids,
+        )
+        if mode == MaterializationMode.CREATE_IF_ABSENT and existing is not None:
+            return SeedMaterializationResult(
+                seed=existing,
+                was_created=False,
+                idempotency_key=ikey,
+                mode=mode,
+                materialized_at=_utc_now_iso(),
             )
-            if existing is not None:
-                return SeedMaterializationResult(
-                    seed=existing,
-                    was_created=False,
-                    idempotency_key=ikey,
-                    mode=mode,
-                    materialized_at=_utc_now_iso(),
-                )
 
         store_negative_memory_records = tuple(self._store.list_negative_memory_records())
         combined_negative_memory_records = (
             *store_negative_memory_records,
             *tuple(negative_memory_records),
+        )
+
+        effective_created_at = (
+            created_at
+            if created_at is not None
+            else (existing.created_at if existing is not None else None)
+        )
+        effective_ikey = (
+            idempotency_key
+            if idempotency_key is not None
+            else (
+                str(existing.metadata.get("idempotency_key") or ikey)
+                if existing is not None
+                else ikey
+            )
         )
 
         try:
@@ -152,10 +167,10 @@ class SeedMaterializationService:
                 source_records=source_records,
                 evidence_items=evidence_items,
                 created_by=actor,
-                created_at=created_at,
+                created_at=effective_created_at,
                 metadata={
                     "materialization_mode": mode.value,
-                    "idempotency_key": ikey,
+                    "idempotency_key": effective_ikey,
                     "requested_by": actor,
                     **(dict(metadata) if metadata else {}),
                 },
@@ -163,6 +178,15 @@ class SeedMaterializationService:
             )
         except StrategySpecSeedError as exc:
             raise SeedMaterializationError(str(exc)) from exc
+
+        if existing is not None and _seeds_replay_equal(existing, seed):
+            return SeedMaterializationResult(
+                seed=existing,
+                was_created=False,
+                idempotency_key=ikey,
+                mode=mode,
+                materialized_at=_utc_now_iso(),
+            )
 
         try:
             self._store.save(seed)

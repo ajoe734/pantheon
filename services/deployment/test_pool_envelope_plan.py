@@ -104,3 +104,108 @@ def test_envelope_member_needing_more_than_snapshot_is_refused_naming_member(cli
     detail = response.json()["detail"]
     assert "'m1'" in detail and "120" in detail and "60" in detail
     assert test_client.get("/api/deployment/plans/plan-env-long").status_code == 404
+
+
+# --- DEPLOY-PLAN-HISTORY-AVAILABILITY-20261120: refuse a plan whose symbols lack governed history ---
+import sys  # noqa: E402
+
+
+def _planner():
+    return sys.modules["services.deployment.service"].planner_service
+
+
+def _report(counts):
+    return lambda names: {n: {"count": counts.get(n, 0), "first_date": "2025-01-01", "last_date": "2026-11-13"} for n in names}
+
+
+def test_phase1_refusal_stays_when_daily_bars_setting_is_off(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.delenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", raising=False)
+    _planner().history_reader = _report({"2330.TW": 500})  # must not matter while the setting is off
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 120, 1)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-off"))
+    assert response.status_code == 422 and "market snapshot serves 60" in response.json()["detail"]
+
+
+def test_setting_on_lifts_snapshot_rule_and_accepts_when_history_is_enough(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    seen = []
+    counts = {"2330.TW": 120, "2317.TW": 300}
+    _planner().history_reader = lambda names: seen.append(list(names)) or _report(counts)(names)
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 120, 0.5), (["2317.TW"], 200, 0.5)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-ok"))
+    assert response.status_code == 201, response.text
+    assert response.json()["metadata"]["market_data_policy"]["minimum_closes"] == 200
+    assert seen == [["2317.TW", "2330.TW"]]
+
+
+def test_setting_on_refuses_short_symbol_naming_symbol_available_needed_kind(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    _planner().history_reader = _report({"2330.TW": 500, "2317.TW": 150})
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 120, 0.5), (["2317.TW"], 200, 0.5)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-short"))
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "2317.TW" in detail and "150" in detail and "200" in detail and "short by 50" in detail
+    assert "persona_portfolio_v1/" in detail
+    assert test_client.get("/api/deployment/plans/plan-av-short").status_code == 404
+
+
+def test_setting_on_checks_short_history_even_below_snapshot_size(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    _planner().history_reader = _report({"2330.TW": 3})
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-small"))
+    assert response.status_code == 422 and "has 3 governed closes" in response.json()["detail"]
+
+
+def test_source_unreachable_refuses_and_does_not_build(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    monkeypatch.setenv("DEPLOYMENT_SOURCE_INGEST_BASE_URL", "http://127.0.0.1:9")
+    _planner().history_reader = None  # the real HTTP reader
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-down"))
+    assert response.status_code == 422 and "history_unavailable" in response.json()["detail"]
+    assert test_client.get("/api/deployment/plans/plan-av-down").status_code == 404
+
+
+def test_source_url_missing_and_malformed_reply_refuse(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    monkeypatch.delenv("DEPLOYMENT_SOURCE_INGEST_BASE_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_URL", raising=False)
+    _planner().history_reader = None
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    r = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-nourl"))
+    assert r.status_code == 422 and "not configured" in r.json()["detail"]
+    _planner().history_reader = lambda names: {"2330.TW": {"count": "many"}}
+    r = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-bad"))
+    assert r.status_code == 422 and "reported no history" in r.json()["detail"]
+
+
+def test_explicit_market_data_policy_keeps_existing_behaviour(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    _planner().history_reader = lambda names: (_ for _ in ()).throw(AssertionError("Source must not be asked"))
+    _install_envelope(test_client, governance_dir, [(["2330.TW"], 5, 1)])
+    payload = _plan_payload(plan_id="plan-av-explicit")
+    payload["metadata"] = {"market_data_policy": {"owner": "source-ingest", "contract": "latest_stored_normalized",
+                                                  "minimum_closes": 5, "max_age_seconds": 86400}}
+    assert test_client.post("/api/deployment/plans", json=payload).status_code == 201
+
+
+def test_fifty_symbol_pool_refused_when_one_is_short_and_accepted_otherwise(client, monkeypatch):
+    test_client, governance_dir = client
+    monkeypatch.setenv("DEPLOYMENT_HISTORY_FROM_DAILY_BARS", "true")
+    symbols = [f"{1000 + i}.TW" for i in range(50)]
+    _install_envelope(test_client, governance_dir, [(symbols, 200, 1)])
+    counts = {s: 500 for s in symbols}
+    _planner().history_reader = _report(counts)
+    assert test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-50ok")).status_code == 201
+    counts[symbols[37]] = 199
+    r = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-av-50short"))
+    assert r.status_code == 422 and symbols[37] in r.json()["detail"] and "199" in r.json()["detail"]

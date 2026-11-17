@@ -157,20 +157,27 @@ def evaluate(expression, values, cancelled=False):
     return eval(expression.strip(), {"__builtins__": {}}, {})
 
 
-MANDATORY = ("heartbeat", "deploy", "paper_bootstrap", "public_smoke",
-             "deploy-posture-evidence", "agora", "artifact_baseline_upload",
+# The stack-safety set. Functional checks (market refresh, paper baseline,
+# probes, Agora smoke) are advisory and deliberately absent: see ADVISORY.
+MANDATORY = ("heartbeat", "deploy", "public_smoke",
+             "deploy-posture-evidence", "artifact_baseline_upload",
              "artifact_candidate_seal", "artifact_candidate_upload")
+ADVISORY = ("market_refresh", "paper_bootstrap", "evolution-dispatch-probe",
+            "loop-prod-tel-002-probe", "agora")
 
 
-def run_completion(tmp_path, component, outcomes, cancelled=False, fault=None, requested=None):
+def run_completion(tmp_path, component, outcomes, cancelled=False, fault=None, requested=None, strict=False):
     """Run the production cleanup tail with only lease transport/stop stubbed."""
     cleanup = step(DEPLOY, "lease_cleanup")
     if requested is None:  # explicit paper request on auto/root unless a test says otherwise
         requested = component in ("auto", "root")
     values = {"env.TARGET_COMPONENT": component,
               "env.PAPER_BOOTSTRAP_REQUESTED": str(requested).lower(),
+              "env.FUNCTIONAL_CHECKS_STRICT": str(strict).lower(),
+              "steps.functional_gate.outcome": "success" if strict else "skipped",
               **{f"steps.{key}.outcome": value for key, value in outcomes.items()}}
     env = {**os.environ, "TARGET_COMPONENT": component,
+           "FUNCTIONAL_CHECKS_STRICT": str(strict).lower(),
            "PAPER_BOOTSTRAP_REQUESTED": values["env.PAPER_BOOTSTRAP_REQUESTED"]}
     for key, expression in cleanup["env"].items():
         if key.endswith("_OUTCOME"):
@@ -211,24 +218,18 @@ def run_completion(tmp_path, component, outcomes, cancelled=False, fault=None, r
 @pytest.mark.parametrize("failed", MANDATORY)
 def test_mandatory_failure_cannot_admit_or_release_and_requires_compensation(tmp_path, component, outcome, failed):
     outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
-    if component == "bff":
-        outcomes["paper_bootstrap"] = "skipped"
     outcomes[failed] = outcome
     result, admitted, compensate, calls = run_completion(tmp_path, component, outcomes)
-    inapplicable = component == "bff" and failed == "paper_bootstrap"
-    accepted = inapplicable and outcome == "skipped"
     assert result.returncode == 0, result.stderr
-    assert admitted is accepted
-    assert compensate is (not inapplicable)
-    assert ("release" in calls) is accepted
+    assert admitted is False
+    assert compensate is True
+    assert "release" not in calls
 
 
 @pytest.mark.parametrize("component", ["auto", "root", "bff", "sidecar"])
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_success_and_cancellation_follow_loaded_admission_and_compensation(tmp_path, component, cancelled):
     outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
-    if component == "bff":
-        outcomes["paper_bootstrap"] = "skipped"
     result, admitted, compensate, calls = run_completion(tmp_path, component, outcomes, cancelled)
     assert result.returncode == 0, result.stderr
     assert admitted is (not cancelled and component != "sidecar")
@@ -249,7 +250,7 @@ def test_cleanup_cannot_publish_verification_before_identity_bound_release(tmp_p
 @pytest.mark.parametrize("outcome", ["failure", "skipped", "cancelled", ""])
 def test_compensation_needs_acquired_lease_and_captured_predecessor(prerequisite, outcome):
     values = {f"steps.{name}.outcome": "success" for name in (*MANDATORY, "lease", "artifact_baseline")}
-    values.update({"env.TARGET_COMPONENT": "root", "steps.agora.outcome": "failure",
+    values.update({"env.TARGET_COMPONENT": "root", "steps.public_smoke.outcome": "failure",
                    f"steps.{prerequisite}.outcome": outcome})
     assert not evaluate(step(DEPLOY, "deploy_compensation")["if"], values)
     assert not evaluate(DEPLOY["outputs"]["bff_fe_pair_verified"], values)
@@ -280,9 +281,9 @@ def test_each_explicit_flag_requests_paper_only_on_auto_or_root(component, flag)
     assert paper_requested(component, **{flag: True}) is (component != "bff")
 
 
-def test_paper_step_and_compensation_share_the_one_applicability_decision():
+def test_paper_step_and_retirement_share_the_one_applicability_decision():
     assert step(DEPLOY, "paper_bootstrap")["if"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' }}"
-    assert "PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success'" in step(DEPLOY, "deploy_compensation")["if"]
+    assert "env.PAPER_BOOTSTRAP_REQUESTED == 'true'" in step(DEPLOY, "retire_release_cases")["if"]
     assert DEPLOY["outputs"]["paper_bootstrap_requested"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
 
 
@@ -295,19 +296,83 @@ def test_ordinary_release_skipped_paper_completes_without_compensation(tmp_path,
     assert admitted and not compensate and "release" in calls
 
 
+@pytest.mark.parametrize("failed", ADVISORY)
 @pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", ""])
-def test_requested_paper_failure_or_skip_still_blocks_and_compensates(tmp_path, outcome):
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_advisory_failure_leaves_deploy_successful_and_does_not_compensate(tmp_path, component, failed, outcome):
     outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
-    outcomes["paper_bootstrap"] = outcome
-    result, admitted, compensate, calls = run_completion(tmp_path, "root", outcomes, requested=True)
+    outcomes[failed] = outcome
+    result, admitted, compensate, calls = run_completion(tmp_path, component, outcomes, requested=True)
+    assert result.returncode == 0, result.stderr
+    assert admitted and not compensate and "release" in calls
+
+
+@pytest.mark.parametrize("name", ADVISORY)
+def test_compensation_and_completion_conditions_do_not_name_advisory_steps(name):
+    cleanup = step(DEPLOY, "lease_cleanup")
+    for text in (step(DEPLOY, "deploy_compensation")["if"], step(DEPLOY, "retire_release_cases")["if"],
+                 "".join(cleanup["env"].values()), cleanup["run"]):
+        assert f"steps.{name}." not in text
+    assert "AGORA_OUTCOME" not in cleanup["run"] and "PAPER_BOOTSTRAP_OUTCOME" not in cleanup["run"]
+
+
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_strict_functional_gate_failure_still_blocks_and_compensates(tmp_path, component):
+    outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
+    outcomes["functional_gate"] = "failure"
+    result, admitted, compensate, calls = run_completion(tmp_path, component, outcomes, requested=True, strict=True)
     assert result.returncode == 0, result.stderr
     assert not admitted and compensate and "release" not in calls
 
 
-def test_unrequested_paper_success_outcome_is_not_a_valid_completion(tmp_path):
+def test_strict_dispatch_without_failures_completes(tmp_path):
     outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
-    _, admitted, _, _ = run_completion(tmp_path, "root", outcomes, requested=False)
-    assert not admitted
+    result, admitted, compensate, calls = run_completion(tmp_path, "root", outcomes, requested=True, strict=True)
+    assert result.returncode == 0, result.stderr
+    assert admitted and not compensate and "release" in calls
+
+
+def test_strict_mode_is_a_repository_variable_and_defaults_to_advisory():
+    on_section = WORKFLOW.get(True) or WORKFLOW.get("on")
+    # A 26th dispatch input made GitHub reject the whole workflow on
+    # 2026-11-17, so strict mode is a repository variable, never an input.
+    assert "strict_functional_checks" not in on_section["workflow_dispatch"]["inputs"]
+    assert DEPLOY["env"]["FUNCTIONAL_CHECKS_STRICT"] == (
+        "${{ vars.DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS == 'true' && 'true' || 'false' }}"
+    )
+    assert "--strict-functional-checks" in step(DEPLOY, "deploy")["run"]
+    assert "strict_functional_checks" not in (ROOT / "scripts/auto_deploy_dev_pair.py").read_text()
+
+
+def test_no_workflow_exceeds_the_github_dispatch_input_limit():
+    # GitHub accepts at most 25 workflow_dispatch inputs; one more invalidates
+    # the workflow file for every trigger, including the automatic deployer.
+    import yaml
+
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        triggers = document.get(True) or document.get("on") or {}
+        dispatch = triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None
+        inputs = (dispatch or {}).get("inputs") or {}
+        assert len(inputs) <= 25, f"{path.name} declares {len(inputs)} workflow_dispatch inputs (limit 25)"
+
+
+def test_advisory_results_are_recorded_and_uploaded_without_failing_the_job():
+    order = [item.get("id") for item in DEPLOY["steps"]]
+    assert order.index("agora") < order.index("advisory_summary") < order.index("advisory_upload") \
+        < order.index("functional_gate") < order.index("retire_release_cases")
+    summary = step(DEPLOY, "advisory_summary")
+    assert "always()" in summary["if"] and "summary.json" in summary["run"]
+    assert "ADVISORY_CHECK_RESULT" in summary["run"] and "GITHUB_STEP_SUMMARY" in summary["run"]
+    assert step(DEPLOY, "advisory_upload")["with"]["name"].startswith("pantheon-dev-advisory-checks-")
+    for name in ("evolution-dispatch-probe", "loop-prod-tel-002-probe"):
+        assert step(DEPLOY, name)["continue-on-error"] == "${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}"
+    for name in ("market_refresh", "paper_bootstrap", "agora"):
+        # Lease-guarded: continue-on-error is not enough, so the guarded child
+        # must be wrapped to exit 0 (design finding 2).
+        assert "guarded_advisory" in step(DEPLOY, name)["run"]
+        assert "continue-on-error" not in step(DEPLOY, name)
+    assert "run_with_dev_environment_lease.sh" not in step(DEPLOY, "advisory_summary")["run"]
 
 
 def test_inline_retirement_only_for_requested_case_after_compensation():
@@ -790,3 +855,40 @@ def test_compensation_helper_binds_fe_controller_to_admitted_frontend_run():
     # Neither the BE controller SHA nor the FE candidate SHA is a fallback.
     assert "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
     assert "PANTHEON_DEV_FE_CONTROLLER_SHA" in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text()
+
+
+def _guarded_advisory_source(step_id):
+    body = step(DEPLOY, step_id)["run"]
+    start = body.index("guarded_advisory() {")
+    marker = 'return "${child_rc}"\n}\n'
+    return body[start:body.index(marker, start) + len(marker)]
+
+
+@pytest.mark.parametrize("step_id", ["market_refresh", "paper_bootstrap", "agora"])
+@pytest.mark.parametrize("strict,child_rc", [("false", 0), ("false", 7), ("true", 0), ("true", 7)])
+def test_guarded_advisory_never_makes_the_lease_guard_see_a_failure(tmp_path, step_id, strict, child_rc):
+    """The pinned guard quarantines the lease when its command exits non-zero, so
+    advisory mode must hand the guard an exit 0 and still report the real code."""
+    guard_dir = tmp_path / "ws/.lease-controller/scripts"
+    guard_dir.mkdir(parents=True)
+    guard = guard_dir / "run_with_dev_environment_lease.sh"
+    guard.write_text(
+        '#!/bin/bash\n"$@"\nrc=$?\n'
+        f'echo "$rc" > {tmp_path}/guard_saw\n'
+        f'[[ $rc -eq 0 ]] || echo quarantined > {tmp_path}/quarantine\n'
+        "exit $rc\n")
+    guard.chmod(0o755)
+    script = (
+        "set -euo pipefail\n"
+        f'controller="{tmp_path}/ws/.lease-controller"; lease_token=x\n'
+        + _guarded_advisory_source(step_id)
+        + f'rc=0\nguarded_advisory "{tmp_path}/child.rc" bash -c "exit {child_rc}" || rc=$?\necho "$rc"\n')
+    result = subprocess.run(
+        ["bash", "-c", script], text=True, capture_output=True, timeout=30,
+        env={**os.environ, "FUNCTIONAL_CHECKS_STRICT": strict, "GITHUB_WORKSPACE": str(tmp_path / "ws")})
+    assert result.stdout.strip() == str(child_rc), result.stderr
+    guard_saw = int((tmp_path / "guard_saw").read_text())
+    if strict == "false":
+        assert guard_saw == 0 and not (tmp_path / "quarantine").exists()
+    else:
+        assert guard_saw == child_rc

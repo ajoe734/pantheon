@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -92,11 +94,50 @@ class SearchIndexSnapshot:
         )
 
 
+SNAPSHOT_MAX_COUNT = max(1, int(os.getenv("SEARCH_SNAPSHOT_MAX_COUNT", "1000") or 1000))
+SNAPSHOT_MAX_AGE_SECONDS = max(1, int(os.getenv("SEARCH_SNAPSHOT_MAX_AGE_SECONDS", "86400") or 86400))
+
+
+def _snapshot_age_seconds(snapshot: SearchIndexSnapshot, now: datetime) -> float:
+    try:
+        created = datetime.fromisoformat(str(snapshot.created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (now - created).total_seconds()
+
+
+def bound_snapshots(
+    snapshots: dict[str, SearchIndexSnapshot],
+    max_count: int,
+    max_age_seconds: int,
+) -> dict[str, SearchIndexSnapshot]:
+    """Drop snapshots older than max_age, then the oldest beyond max_count (insertion order)."""
+    now = datetime.now(timezone.utc)
+    kept = {
+        key: snap
+        for key, snap in snapshots.items()
+        if _snapshot_age_seconds(snap, now) <= max_age_seconds
+    }
+    if len(kept) > max_count:
+        for key in list(kept)[: len(kept) - max_count]:
+            del kept[key]
+    return kept
+
+
 class JsonlSearchIndexStore:
     """Append-only search refs store; replay returns latest snapshot per request."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        max_count: int | None = None,
+        max_age_seconds: int | None = None,
+    ) -> None:
         self.path = Path(path)
+        self.max_count = max_count if max_count is not None else SNAPSHOT_MAX_COUNT
+        self.max_age_seconds = max_age_seconds if max_age_seconds is not None else SNAPSHOT_MAX_AGE_SECONDS
         self._snapshots: dict[str, SearchIndexSnapshot] = {}
         self.reload()
 
@@ -104,21 +145,28 @@ class JsonlSearchIndexStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(snapshot.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+        self._snapshots.pop(snapshot.request_id, None)
         self._snapshots[snapshot.request_id] = snapshot
+        self._snapshots = bound_snapshots(self._snapshots, self.max_count, self.max_age_seconds)
         return snapshot
 
     def reload(self) -> None:
         self._snapshots = {}
         if not self.path.exists():
             return
-        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                snapshot = SearchIndexSnapshot.from_dict(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise EvidenceValidationError(f"Invalid search index JSONL at {self.path}:{line_no}: {exc.msg}") from exc
-            self._snapshots[snapshot.request_id] = snapshot
+        with self.path.open(encoding="utf-8") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    snapshot = SearchIndexSnapshot.from_dict(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    raise EvidenceValidationError(f"Invalid search index JSONL at {self.path}:{line_no}: {exc.msg}") from exc
+                self._snapshots.pop(snapshot.request_id, None)
+                self._snapshots[snapshot.request_id] = snapshot
+                if len(self._snapshots) > 2 * self.max_count:
+                    self._snapshots = bound_snapshots(self._snapshots, self.max_count, self.max_age_seconds)
+        self._snapshots = bound_snapshots(self._snapshots, self.max_count, self.max_age_seconds)
 
     def get_snapshot(self, request_id: str) -> SearchIndexSnapshot | None:
         return self._snapshots.get(request_id)

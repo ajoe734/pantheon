@@ -159,10 +159,11 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
 
     assert "fetch-depth: 0" in dev
     assert "refs/remotes/origin/dev" in dev
-    assert '"${sha}" != "${trusted_ref}"' in dev
+    # Payload may be any green ancestor of the dev tip, never an off-dev commit.
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in dev
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
-    assert '"${GITHUB_SHA}" != "${sha}"' in dev
-    assert "current execute-plans dev moved" in dev
+    assert "has no successful dev push Branch CI run" in dev
+    assert "is not on dev" in dev
 
 
 def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
@@ -246,7 +247,8 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 
     assert '${DEV_BFF_URL}/bff/version' in dev
     assert '[[ "${actual}" == "${TARGET_SHA}" ]]' in dev
-    assert "PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}" in dev
+    assert "FUNCTIONAL_GATE_OUTCOME: ${{ steps.functional_gate.outcome }}" in dev
+    assert "PAPER_BOOTSTRAP_OUTCOME" not in dev and "AGORA_OUTCOME" not in dev
     assert '"${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}' in dev
     assert '[[ "${complete_success}" != "true" || -e "${LEASE_FAILURE_FILE}" ]]' in dev
     assert "lease quarantined until TTL" in dev
@@ -277,15 +279,15 @@ def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
     assert "OPENCLAW_OUTCOME" not in dev
     cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
     assert cleanup["env"]["PAPER_BOOTSTRAP_REQUESTED"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
-    assert "success:success:${expected_paper}:success:success:success" in cleanup["run"]
+    assert "success:success:${expected_gate}:success:success" in cleanup["run"]
 
 
 @pytest.mark.parametrize(("component", "paper_requested"), [
     ("root", True), ("root", False), ("auto", True), ("auto", False), ("bff", False),
 ])
 @pytest.mark.parametrize("failed_step", [None, "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
-                                      "PAPER_BOOTSTRAP_OUTCOME", "PUBLIC_SMOKE_OUTCOME",
-                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME"])
+                                      "PUBLIC_SMOKE_OUTCOME",
+                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME"])
 def test_deployment_completion_retains_real_checks_without_provider_gate(
     component: str, failed_step: str | None, paper_requested: bool,
 ) -> None:
@@ -294,16 +296,17 @@ def test_deployment_completion_retains_real_checks_without_provider_gate(
     start = body.index("complete_success=false")
     end = body.index('if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
     outcomes = {name: "success" for name in (
-        "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME", "PAPER_BOOTSTRAP_OUTCOME",
-        "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME",
+        "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
+        "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME",
     )}
-    if not paper_requested:
-        outcomes["PAPER_BOOTSTRAP_OUTCOME"] = "skipped"
+    # Advisory (non-strict) run: the functional gate step is skipped.
+    outcomes["FUNCTIONAL_GATE_OUTCOME"] = "skipped"
     if failed_step:
         outcomes[failed_step] = "failure"
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", body[start:end] + '\nprintf "%s" "$complete_success"'],
         env={**os.environ, **outcomes, "TARGET_COMPONENT": component,
+             "FUNCTIONAL_CHECKS_STRICT": "false",
              "PAPER_BOOTSTRAP_REQUESTED": str(paper_requested).lower(), "ARTIFACTS_VERIFIED": "true"},
         capture_output=True, text=True, check=True, timeout=10,
     )
@@ -380,9 +383,12 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7
     assert dev.count("unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR") >= 3
     assert dev.count("unset PANTHEON_ENVIRONMENT_LEASE_TOKEN") >= 7
+    # The advisory steps (market refresh, paper baseline, Agora) now call the
+    # guard through guarded_advisory instead of exec, so only the stack deploy
+    # and the two remaining guarded mutations still exec the wrapper.
     assert dev.count(
         'exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh"'
-    ) >= 3
+    ) >= 2
     assert "env -i \\\n" in dev
     assert "PANTHEON_ENVIRONMENT_LEASE_TOKEN=\"${{ secrets." not in dev
 
@@ -1336,18 +1342,32 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     for post_up_gate in (
         'rollback_dev_bff_on_failure "docker_compose_up"',
         'rollback_dev_bff_on_failure "projector_recreate"',
-        'rollback_dev_bff_on_failure "source_refresh_readback"',
         'rollback_dev_bff_on_failure "shared_model_pool"',
-        'rollback_dev_bff_on_failure "paper_fleet"',
         'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',
         'rollback_dev_bff_on_failure "bff_source_sha"',
         'rollback_dev_bff_on_failure "bff_auth_gate"',
         'rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"',
         'rollback_dev_bff_on_failure "caddy_ingress"',
-        'rollback_dev_bff_on_failure "evolution_daily_sweep"',
-        'rollback_dev_bff_on_failure "trade_journey_residual"',
     ):
         assert post_up_gate in root_section, f"Missing {post_up_gate} in root deploy path"
+
+    # The four in-script functional checks are advisory: they run through
+    # run_dev_advisory_check and no longer roll back directly. Only a strict
+    # dispatch maps a failure to the named rollback stage.
+    for check, stage, command in (
+        ("bounded_source_refresh_readback", "source_refresh_readback", "verify_bounded_source_refresh_readback"),
+        ("dev_paper_fleet", "paper_fleet", "verify_dev_paper_fleet"),
+        ("evolution_daily_sweep", "evolution_daily_sweep", "verify_dev_evolution_daily_sweep"),
+        ("trade_journey_residual", "trade_journey_residual", "verify_trade_journey_residual_dev.sh"),
+    ):
+        assert f"run_dev_advisory_check {check} {stage}" in root_section, check
+        assert command in root_section.split(f"run_dev_advisory_check {check} {stage}", 1)[1].split("\n    ", 3)[0] \
+            or command in root_section.split(f"run_dev_advisory_check {check} {stage}", 1)[1][:200]
+        assert f'rollback_dev_bff_on_failure "{stage}"' not in root_section
+    assert 'rollback_dev_bff_on_failure "${rollback_stage}"' in deploy_script
+    assert 'run_dev_advisory_check bounded_source_refresh_readback' not in bff_section
+    # The stack-safety gates stay blocking in the root path.
+    assert 'rollback_dev_bff_on_failure "exact_component_deployment"' in root_section
 
     for post_up_gate in (
         'rollback_dev_bff_on_failure "bff_recreate"',
@@ -1364,7 +1384,8 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     assert "PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}" in dev_job
     assert "PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}" in dev_job
     condition = _extract_deploy_compensation_condition()
-    assert "(env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success')" in condition
+    assert "steps.paper_bootstrap" not in condition and "steps.agora" not in condition
+    assert "steps.functional_gate.outcome == 'failure'" in condition
     for component in ("root", "auto"):
         for requested in (True, False):
             context = {
@@ -1378,7 +1399,12 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
             context["steps"]["paper_bootstrap"] = {"outcome": "success" if requested else "skipped"}
             assert not _evaluate_github_actions_condition(condition, context)
             context["steps"]["paper_bootstrap"]["outcome"] = "failure"
-            assert _evaluate_github_actions_condition(condition, context) is requested
+            assert not _evaluate_github_actions_condition(condition, context)  # advisory
+            context["steps"]["agora"]["outcome"] = "failure"
+            assert not _evaluate_github_actions_condition(condition, context)  # advisory
+            context["steps"]["functional_gate"] = {"outcome": "failure"}  # strict dispatch only
+            assert _evaluate_github_actions_condition(condition, context)
+            context["steps"]["functional_gate"] = {"outcome": "skipped"}
             context["steps"]["public_smoke"]["outcome"] = "failure"
             assert _evaluate_github_actions_condition(condition, context)
 
@@ -1537,8 +1563,8 @@ def _extract_deploy_compensation_condition() -> str:
             "success",
             "failure",
             "success",
-            True,
-            "Root paper bootstrap failure must trigger rollback compensation",
+            False,
+            "Root paper bootstrap failure is advisory and must not trigger rollback compensation",
         ),
         (
             "root",
@@ -1598,8 +1624,8 @@ def _extract_deploy_compensation_condition() -> str:
             "success",
             "failure",
             "success",
-            True,
-            "Auto paper bootstrap failure must trigger rollback compensation",
+            False,
+            "Auto paper bootstrap failure is advisory and must not trigger rollback compensation",
         ),
         (
             "auto",
@@ -3181,12 +3207,12 @@ def test_candidate_protection_removal_is_detected(tmp_path, monkeypatch, mutatio
 ])
 def test_restart_admission_removal_is_detected(monkeypatch, component, paper_requested):
     test_deployment_completion_retains_real_checks_without_provider_gate(component, None, paper_requested)
-    test_deployment_completion_retains_real_checks_without_provider_gate(component, "AGORA_OUTCOME", paper_requested)
+    test_deployment_completion_retains_real_checks_without_provider_gate(component, "PUBLIC_SMOKE_OUTCOME", paper_requested)
     source = _workflow()
-    assert source.count("${AGORA_OUTCOME}") == 1
-    monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${AGORA_OUTCOME}", "success"))
-    with pytest.raises(AssertionError, match=r"completion must be false; got true \(AGORA_OUTCOME\)"):
-        test_deployment_completion_retains_real_checks_without_provider_gate(component, "AGORA_OUTCOME", paper_requested)
+    assert source.count("${PUBLIC_SMOKE_OUTCOME}") == 1
+    monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${PUBLIC_SMOKE_OUTCOME}", "success"))
+    with pytest.raises(AssertionError, match=r"completion must be false; got true \(PUBLIC_SMOKE_OUTCOME\)"):
+        test_deployment_completion_retains_real_checks_without_provider_gate(component, "PUBLIC_SMOKE_OUTCOME", paper_requested)
 
 
 _VISIBILITY_FLAGS = (
@@ -3391,11 +3417,12 @@ def test_market_refresh_runs_under_held_lease_after_candidate_stack_deploy() -> 
     assert steps[refresh]["id"] == "market_refresh"
 
     text = steps[refresh]["run"]
-    # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
-    assert text.count('run_with_dev_environment_lease.sh" \\\n') - 1 == 2  # minus the checksum printf
-    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n') - 1 == text.count(
-        'bash "${deploy_script}"'
-    )
+    # Existing refresh-only path under the pinned wrapper (through guarded_advisory,
+    # which is the only caller of the wrapper); no second lease or implementation.
+    assert "guarded_advisory() {" in text
+    assert text.count("guarded_advisory ") == 2  # the two refresh-only calls
+    assert text.count('run_with_dev_environment_lease.sh" "$@"') == 1  # strict path
+    assert text.count('bash -c \'rcfile=') == 1  # advisory path wraps the guarded child so it exits 0
     assert text.count('bash "${deploy_script}"') == 2
     assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
     assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
@@ -3418,13 +3445,19 @@ def test_market_refresh_failure_is_a_post_switch_failure_handled_by_compensation
     assert names.index("Capture actual prior artifacts under pinned dev lease") < names.index(MARKET_REFRESH_STEP)
     assert names.index("Deploy dev VM stack under lease") < names.index(MARKET_REFRESH_STEP)
     refresh = steps[names.index(MARKET_REFRESH_STEP)]
+    # continue-on-error is not enough for a lease-guarded step; the step itself
+    # exits 0 in advisory mode (see guarded_advisory) and records its result.
     assert "continue-on-error" not in refresh
+    assert "guarded_advisory" in refresh["run"]
     # The baseline and lifecycle steps are not `always()` steps: they never run after this failure.
     for later in ("Ensure governed dev paper baseline under lease",):
         assert "always()" not in str(steps[names.index(later)].get("if", ""))
     compensation = next(step for step in steps if step.get("id") == "deploy_compensation")
     assert "steps.artifact_baseline.outcome == 'success'" in compensation["if"]
-    assert "steps.market_refresh.outcome == 'failure'" in compensation["if"]
+    # Functional checks are advisory: neither market refresh nor the paper
+    # baseline nor the Agora smoke is a compensation trigger any more.
+    assert "steps.market_refresh" not in compensation["if"]
+    assert "steps.functional_gate.outcome == 'failure'" in compensation["if"]
 
 
 def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> None:
@@ -3531,7 +3564,7 @@ def test_compensation_drill_feeds_the_existing_compensation_step_only() -> None:
     deploy = _job(workflow, "deploy-dev", "isolated-l12-provider-qualification")
     comp = deploy.split("id: deploy_compensation", 1)[1].split("- name:", 1)[0]
     assert "steps.compensation_drill.outcome == 'failure'" in comp
-    assert "steps.deploy.outcome != 'success'" in comp and "steps.agora.outcome != 'success'" in comp
+    assert "steps.deploy.outcome != 'success'" in comp and "steps.agora" not in comp
     assert "COMPENSATION DRILL" in comp and "compensation-drill.json" in comp
     assert deploy.count("Compensate dev deployment failure") == 1
     assert workflow.count("--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}") == 1
