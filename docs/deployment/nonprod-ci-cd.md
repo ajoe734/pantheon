@@ -214,8 +214,12 @@ failing checks) in the `pantheon-dev-advisory-checks-<run>-<attempt>` artifact
 and in the run summary, so a release with failed checks is visible as deployed
 with acceptance not passed.
 
-Manual strict mode: dispatch with `strict_functional_checks: true` (default
-`false`; the automatic deployer never sets it). The workflow steps then keep
+Manual strict mode: set the repository variable
+`DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS` to `true` (unset or any other value means
+advisory; the automatic deployer never sets it). It is a variable and not a
+dispatch input because GitHub rejects a workflow with more than 25
+`workflow_dispatch` inputs and this workflow already declares 25; a 26th input
+invalidated the whole workflow on 2026-11-17. The workflow steps then keep
 today's blocking behaviour, the deploy script receives
 `--strict-functional-checks` and rolls back on the original stage names, and the
 gate step "Enforce strict functional checks when requested" fails and triggers
