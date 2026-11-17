@@ -55,7 +55,7 @@ services:
 
   postgres:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_POSTGRES:-2g}
+    mem_limit: ${DEV_MEM_LIMIT_POSTGRES:-8g}
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
@@ -125,7 +125,7 @@ services:
 
   hindsight:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_HINDSIGHT:-6g}
+    mem_limit: ${DEV_MEM_LIMIT_HINDSIGHT:-10g}
     build:
       context: .
       dockerfile: deploy/hindsight/Dockerfile
@@ -553,7 +553,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
-    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-512m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -1095,7 +1095,7 @@ services:
 
   openclaw-gateway-adapter:
     profiles: ["management-ai", "openclaw", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY_ADAPTER:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY_ADAPTER:-3g}
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -1460,7 +1460,7 @@ services:
 
   postmortems:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_POSTMORTEMS:-384m}
+    mem_limit: ${DEV_MEM_LIMIT_POSTMORTEMS:-512m}
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -2048,7 +2048,7 @@ services:
         required: false
   persona:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_PERSONA:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_PERSONA:-512m}
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
@@ -2867,7 +2867,7 @@ services:
 
   paper-fleet-reconciler:
     profiles: ["execution", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-640m}
+    mem_limit: ${DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m}
     stop_grace_period: 30s
     build:
       context: .
