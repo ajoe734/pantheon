@@ -24,11 +24,16 @@ from typing import Iterable, Iterator, Mapping
 
 SCHEMA_VERSION = 1
 DEFAULT_BUSY_TIMEOUT_MS = 2000
-DEFAULT_PAGE_SIZE = 4096
+# 512 B pages: a compressed record is ~4 KB and spills to overflow pages whose last page is on average
+# half empty, so the smallest page keeps the file within the 1.1x-of-live budget (measured on 60-close
+# records: 1.08x at 512 B, 1.15x at 1 KiB and above).
+DEFAULT_PAGE_SIZE = 512
+WRITER_CACHE_KIB = 96 * 1024
+CHECKPOINT_WAIT_MS = 40
 VACUUM_STEP_PAGES = 200  # design 4.2: bounded incremental_vacuum step after each commit
 
 Key = tuple[str, str]
-Row = tuple[str, str, str]  # (digest, record_text, observed_at)
+Row = tuple[str, bytes, str]  # (digest, encoded record, observed_at); the caller owns the codec
 
 
 class SnapshotStoreError(RuntimeError):
@@ -78,6 +83,8 @@ class SqliteSnapshotBackend:
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA wal_autocheckpoint=256")
                 conn.execute("PRAGMA journal_size_limit=4194304")
+                # Replacing a record walks the old overflow chain; keep the working set (<= live budget) in memory.
+                conn.execute(f"PRAGMA cache_size=-{WRITER_CACHE_KIB}")
             except sqlite3.Error as exc:
                 raise SnapshotStoreError(f"snapshot current store cannot be opened: {self.path}: {exc}") from exc
             self._conn = conn
@@ -91,7 +98,6 @@ class SqliteSnapshotBackend:
                     self.path, timeout=self.busy_timeout_ms / 1000.0, isolation_level=None, check_same_thread=False
                 )
                 conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
-                conn.execute("PRAGMA query_only=ON")
             except sqlite3.Error as exc:
                 raise SnapshotStoreError(f"snapshot current store cannot be opened: {self.path}: {exc}") from exc
             self._local.conn = conn
@@ -121,11 +127,11 @@ class SqliteSnapshotBackend:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS snapshot_current ("
                     " symbol TEXT NOT NULL, dataset TEXT NOT NULL,"
-                    " digest TEXT NOT NULL, record TEXT NOT NULL, observed_at TEXT NOT NULL,"
-                    " PRIMARY KEY (symbol, dataset)) WITHOUT ROWID"
+                    " digest TEXT NOT NULL, record BLOB NOT NULL, observed_at TEXT NOT NULL,"
+                    " PRIMARY KEY (symbol, dataset))"
                 )
                 conn.execute("CREATE TABLE IF NOT EXISTS snapshot_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID")
-                row = conn.execute("SELECT v FROM snapshot_meta WHERE k='schema_version'").fetchone()
+                row = _one(conn, "SELECT v FROM snapshot_meta WHERE k='schema_version'")
                 if row is None:
                     conn.execute("INSERT OR IGNORE INTO snapshot_meta(k, v) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
                 elif row[0] != str(SCHEMA_VERSION):
@@ -165,13 +171,14 @@ class SqliteSnapshotBackend:
     # -- reads --------------------------------------------------------------------------
     def get(self, symbol: str, dataset: str) -> Row | None:
         try:
-            row = self._rconn().execute(
+            row = _one(
+                self._rconn(),
                 "SELECT digest, record, observed_at FROM snapshot_current WHERE symbol=? AND dataset=?",
                 (symbol, dataset),
-            ).fetchone()
+            )
         except sqlite3.Error as exc:
             raise SnapshotStoreError(f"snapshot current store read failed: {exc}") from exc
-        return None if row is None else (row[0], row[1], row[2])
+        return None if row is None else (row[0], bytes(row[1]), row[2])
 
     def digests(self) -> dict[Key, str]:
         try:
@@ -201,7 +208,7 @@ class SqliteSnapshotBackend:
                 "SELECT symbol, dataset, digest, record, observed_at FROM snapshot_current ORDER BY symbol, dataset"
             )
             for s, d, g, r, o in cursor:
-                yield (s, d), (g, r, o)
+                yield (s, d), (g, bytes(r), o)
         except sqlite3.Error as exc:
             raise SnapshotStoreError(f"snapshot current store read failed: {exc}") from exc
 
@@ -214,7 +221,6 @@ class SqliteSnapshotBackend:
                 yield SnapshotTransaction(conn)
         except sqlite3.Error as exc:
             raise SnapshotStoreError(f"snapshot current store write failed: {exc}") from exc
-        self._maintain()
 
     def apply(self, upserts: Mapping[Key, Row], deletes: Iterable[Key] = ()) -> dict[str, int]:
         """Replace/delete rows in ONE transaction; an unchanged digest writes zero rows."""
@@ -223,14 +229,22 @@ class SqliteSnapshotBackend:
                 tx.put(key, row)
             for key in deletes:
                 tx.delete(key)
+        self.maintain()
         return {"written": tx.written, "unchanged": tx.unchanged, "deleted": tx.deleted}
 
-    def _maintain(self) -> None:
+    def maintain(self) -> None:
         """Bounded space reclaim after a commit; never fails the write that already committed."""
         with self._lock:
             try:
                 conn = self._connect()
                 conn.execute(f"PRAGMA incremental_vacuum({VACUUM_STEP_PAGES})").fetchall()
+                # Reset the WAL when readers allow it: a long WAL slows every later page lookup of the writer.
+                # The wait is bounded (CHECKPOINT_WAIT_MS), never the 2 s writer-lock timeout.
+                conn.execute(f"PRAGMA busy_timeout={CHECKPOINT_WAIT_MS}")
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+                finally:
+                    conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
             except sqlite3.Error:
                 pass
 
@@ -248,12 +262,11 @@ class SqliteSnapshotBackend:
     # -- stats --------------------------------------------------------------------------
     def stats(self) -> dict[str, int]:
         try:
-            rows, live = self._rconn().execute(
-                "SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(record AS BLOB))), 0) FROM snapshot_current"
-            ).fetchone()
-            max_record = self._rconn().execute(
-                "SELECT COALESCE(MAX(LENGTH(CAST(record AS BLOB))), 0) FROM snapshot_current"
-            ).fetchone()[0]
+            rows, live, max_record = _one(
+                self._rconn(),
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(record)), 0), COALESCE(MAX(LENGTH(record)), 0)"
+                " FROM snapshot_current",
+            )
         except sqlite3.Error as exc:
             raise SnapshotStoreError(f"snapshot current store read failed: {exc}") from exc
         db_bytes = _size(self.path)
@@ -274,17 +287,45 @@ class SnapshotTransaction:
         self.written = self.unchanged = self.deleted = 0
 
     def get(self, key: Key) -> Row | None:
-        row = self._conn.execute(
-            "SELECT digest, record, observed_at FROM snapshot_current WHERE symbol=? AND dataset=?", key
-        ).fetchone()
-        return None if row is None else (row[0], row[1], row[2])
+        row = _one(
+            self._conn, "SELECT digest, record, observed_at FROM snapshot_current WHERE symbol=? AND dataset=?", key
+        )
+        return None if row is None else (row[0], bytes(row[1]), row[2])
+
+    def digest(self, key: Key) -> str | None:
+        row = _one(self._conn, "SELECT digest FROM snapshot_current WHERE symbol=? AND dataset=?", key)
+        return None if row is None else row[0]
+
+    def put_many(self, rows: Mapping[Key, tuple[str | None, Row]]) -> int:
+        """Replace many rows with ONE statement batch (no per-row Python round trip inside the transaction).
+
+        ``rows`` maps a key to ``(prior_digest, new_row)``: the digest the caller based the new version on
+        (``None`` for a new key).  A row is written only while the stored digest still equals ``prior_digest``
+        and differs from the new one, so an unchanged window writes nothing.  Returns the rows written; a
+        caller that expected more raised :class:`SnapshotWriteBusy` (another writer got in between).
+        """
+        before = self._conn.total_changes
+        self._conn.executemany(
+            "INSERT INTO snapshot_current(symbol, dataset, digest, record, observed_at) VALUES (?,?,?,?,?)"
+            " ON CONFLICT(symbol, dataset) DO UPDATE SET digest=excluded.digest, record=excluded.record,"
+            " observed_at=excluded.observed_at WHERE snapshot_current.digest = ? AND snapshot_current.digest <> excluded.digest",
+            [
+                (key[0], key[1], digest, record, observed_at, prior)
+                for key, (prior, (digest, record, observed_at)) in rows.items()
+            ],
+        )
+        written = self._conn.total_changes - before
+        expected = sum(1 for _key, (prior, row) in rows.items() if prior != row[0])
+        if written != expected:
+            raise SnapshotWriteBusy("snapshot record changed concurrently; retry the batch")
+        self.written += written
+        self.unchanged += len(rows) - written
+        return written
 
     def put(self, key: Key, row: Row) -> bool:
         """Replace the row in place; False (and no row touched) when the stored digest is equal."""
         digest, record, observed_at = row
-        prior = self._conn.execute(
-            "SELECT digest FROM snapshot_current WHERE symbol=? AND dataset=?", key
-        ).fetchone()
+        prior = _one(self._conn, "SELECT digest FROM snapshot_current WHERE symbol=? AND dataset=?", key)
         if prior is not None and prior[0] == digest:
             self.unchanged += 1
             return False
@@ -299,6 +340,12 @@ class SnapshotTransaction:
         cur = self._conn.execute("DELETE FROM snapshot_current WHERE symbol=? AND dataset=?", key)
         self.deleted += cur.rowcount
         return cur.rowcount > 0
+
+
+def _one(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> tuple | None:
+    """First row of a query, with the statement run to completion so no read transaction stays open."""
+    rows = conn.execute(sql, params).fetchall()
+    return rows[0] if rows else None
 
 
 def _size(path: Path) -> int:

@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import time
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1080,16 +1081,17 @@ def _window_digest(compact: Mapping[str, Any]) -> str:
     return sha256(_canonical_json(body).encode("utf-8")).hexdigest()
 
 
-def _snapshot_row(snapshot: "LatestMarketSnapshot") -> tuple[str, str, str]:
+def _snapshot_row(snapshot: "LatestMarketSnapshot") -> tuple[str, bytes, str]:
+    """(window digest, zlib-compressed canonical compact JSON, observed_at); the digest covers the JSON."""
     compact = snapshot.to_compact_dict()
-    return _window_digest(compact), _canonical_json(compact), snapshot.observed_at
+    return _window_digest(compact), zlib.compress(_canonical_json(compact).encode("utf-8"), 6), snapshot.observed_at
 
 
-def _snapshot_from_row(key: tuple[str, str], row: tuple[str, str, str]) -> "LatestMarketSnapshot":
-    digest, text, observed_at = row
+def _snapshot_from_row(key: tuple[str, str], row: tuple[str, bytes, str]) -> "LatestMarketSnapshot":
+    digest, blob, observed_at = row
     try:
-        state = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
-    except (json.JSONDecodeError, _DuplicateJsonKey) as exc:
+        state = json.loads(zlib.decompress(blob).decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (json.JSONDecodeError, _DuplicateJsonKey, zlib.error, UnicodeError) as exc:
         raise MarketSnapshotStateError(f"market snapshot record is malformed for {key[0]}/{key[1]}: {exc}") from exc
     if not isinstance(state, Mapping) or not hmac.compare_digest(digest, _window_digest(state)):
         raise MarketSnapshotStateError(f"market snapshot record checksum mismatch for {key[0]}/{key[1]}")
@@ -1280,6 +1282,7 @@ class LatestMarketSnapshotStore:
         self._last_export_monotonic: float | None = None
         self._last_export_error: str | None = None
         self._export_pending = False
+        self._export_lock = threading.Lock()
         self.max_closes = max_closes
         self.compact_factor = compact_factor
         self.compact_min_bytes = compact_min_bytes
@@ -1670,6 +1673,7 @@ class LatestMarketSnapshotStore:
                             if tx.delete((lookup, dataset)):
                                 removed.add(lookup)
                 if removed:
+                    self._backend.maintain()
                     self._export_after_write()
             return sorted(removed)
         for dataset in sorted(_FREQUENCY_SNAPSHOT_DATASETS.values()):
@@ -1681,12 +1685,22 @@ class LatestMarketSnapshotStore:
 
     # -- compat export for the previous reader (``sqlite`` mode) ------------------------------
     def _export_after_write(self) -> None:
+        """Interval 0: export before the write returns (tests, small stores). Otherwise at most once per
+        interval, from a daemon thread that holds no writer lock (design 4.2 S2: never blocks the writer)."""
         self._export_pending = True
-        if (
+        if self.export_min_interval_seconds <= 0:
+            self.export_compat()
+            return
+        due = (
             self._last_export_monotonic is None
             or time.monotonic() - self._last_export_monotonic >= self.export_min_interval_seconds
-        ):
-            self.export_compat()
+        )
+        if due and not self._export_lock.locked():
+            threading.Thread(target=self.export_compat, name="snapshot-compat-export", daemon=True).start()
+
+    def flush_export(self) -> bool:
+        """Export now if a write is not yet in the old-format file (shutdown, rollback preparation)."""
+        return self.export_compat() if self._export_pending or not self.path.exists() else False
 
     def export_compat(self) -> bool:
         """Write the previous format (one v1 line per key) by temp file, fsync, rename.
@@ -1696,14 +1710,20 @@ class LatestMarketSnapshotStore:
         """
         if self.store_mode != "sqlite":
             return False
-        with self._lock:
+        with self._export_lock:
             tmp = self.path.with_name(self.path.name + ".export.tmp")
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
+                # One short read transaction takes a consistent copy of the raw rows; decoding then runs
+                # outside it (a long read transaction would pin the WAL) and yields the GIL regularly so
+                # the ingest writer and API readers sharing this process are not starved.
+                rows = list(self._backend.iter_records())
                 with tmp.open("w", encoding="utf-8") as handle:
-                    for key, row in self._backend.iter_records():
+                    for number, (key, row) in enumerate(rows, start=1):
                         snapshot = _snapshot_from_row(key, row)
                         handle.write(self._envelope_line(snapshot.to_dict()) + "\n")
+                        if number % 25 == 0:
+                            time.sleep(0.002)
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(tmp, self.path)
@@ -1831,6 +1851,7 @@ class LatestMarketSnapshotStore:
                         tx.delete(key)
                     else:
                         tx.put(key, _snapshot_row(candidate))
+                self._backend.maintain()
                 self._export_after_write()
                 return True
         with self._lock:
@@ -1924,8 +1945,9 @@ class LatestMarketSnapshotStore:
                     for lookup in wanted:
                         row = tx.get((lookup, dataset))
                         if row is not None and tx.delete((lookup, dataset)):
-                            removed.append(_snapshot_from_row((lookup, dataset), row).symbol)
+                            removed.append(lookup)  # rows are stored under the canonical symbol
                 if removed:
+                    self._backend.maintain()
                     self._export_after_write()
             return removed
         with self._lock:
@@ -2238,15 +2260,25 @@ class LatestMarketSnapshotStore:
         updated: list[LatestMarketSnapshot] = []
         if self.store_mode == "sqlite":
             with self._lock:
-                with _sqlite_errors("append"), self._backend.transaction() as tx:  # one transaction per batch
-                    for symbol in sorted(grouped):
-                        key = (symbol, dataset)
-                        row = tx.get(key)
-                        candidate = self._project_symbol(
-                            symbol, _snapshot_from_row(key, row) if row else None, grouped[symbol], dataset, observed
-                        )
-                        if candidate is not None and tx.put(key, _snapshot_row(candidate)):
-                            updated.append(candidate)
+                # Phase 1 (no write lock held): read the current versions and build the next ones.
+                prepared: dict[tuple[str, str], tuple[str | None, LatestMarketSnapshot, tuple[str, str, str]]] = {}
+                for symbol in sorted(grouped):
+                    key = (symbol, dataset)
+                    with _sqlite_errors("read"):
+                        row = self._backend.get(*key)
+                    candidate = self._project_symbol(
+                        symbol, _snapshot_from_row(key, row) if row else None, grouped[symbol], dataset, observed
+                    )
+                    if candidate is not None:
+                        prepared[key] = (row[0] if row else None, candidate, _snapshot_row(candidate))
+                # Phase 2: ONE short transaction per batch; rows another writer changed meanwhile are a retryable conflict.
+                if prepared:
+                    with _sqlite_errors("append"):
+                        with self._backend.transaction() as tx:
+                            tx.put_many({key: (prior, new_row) for key, (prior, _c, new_row) in prepared.items()})
+                        self._backend.maintain()
+                    # a row whose digest equals the stored one was left untouched by put_many
+                    updated.extend(cand for key, (prior, cand, row) in prepared.items() if prior != row[0])
                 if updated:
                     self._export_after_write()
             return self._batch_result(run_id, accepted_record_count, updated, skipped_non_member)
