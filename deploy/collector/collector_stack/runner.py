@@ -68,6 +68,42 @@ class RunOutcome:
     skipped_count: int = 0
 
 
+LISTING_FILTERED_SOURCES = frozenset(
+    {
+        "collector-tw-twse-t86",
+        "collector-tw-twse-price-history",
+        "collector-tw-tpex-price-history",
+        "collector-tw-trading-suspension",
+    }
+)
+
+
+def load_security_listing_module() -> Any:
+    """Load the ONE shared parser (services/source_ingestion/security_listing.py, stdlib only) by path, so the
+    collector host and hosted run the same code. Override with PANTHEON_SECURITY_LISTING_MODULE."""
+    import importlib
+    import importlib.util
+
+    if not os.environ.get("PANTHEON_SECURITY_LISTING_MODULE"):
+        try:  # repo checkout / hosted image: the very same module object
+            return importlib.import_module("services.source_ingestion.security_listing")
+        except ImportError:
+            pass
+    path = Path(
+        os.environ.get("PANTHEON_SECURITY_LISTING_MODULE")
+        or Path(__file__).resolve().parents[3] / "services" / "source_ingestion" / "security_listing.py"
+    )
+    if not path.is_file():
+        raise CollectorConfigError(f"security_listing module not found at {path}")
+    spec = importlib.util.spec_from_file_location("security_listing", path)
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    import sys
+
+    sys.modules.setdefault("security_listing", mod)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
 class CollectorRunner:
     """Executes one collector source run with policy enforcement, auto-pause, and bundle output."""
 
@@ -80,8 +116,15 @@ class CollectorRunner:
         library_dir: Path | str | None = None,
         hasher: AuthorHasher,
         transport: FetchTransport | None = None,
+        listing_state_path: Path | str | None = None,
+        warrants_mode: str | None = None,
     ) -> None:
         self.config = config
+        # SOURCE-WARRANT-LISTING-EXPIRY: warrants are collected while listed (listed_only); "off" is the
+        # rollback to the previous behaviour (no listing filter at all).
+        self.warrants_mode = (warrants_mode or os.environ.get("COLLECTOR_WARRANTS_MODE") or "listed_only").strip()
+        if self.warrants_mode not in {"listed_only", "off"}:
+            raise CollectorConfigError(f"warrants mode must be listed_only or off, got {self.warrants_mode!r}")
         self.root_dir = Path(root_dir)
         self.library_dir = Path(library_dir) if library_dir else (self.root_dir / "library" / "books")
         self.state_store = CollectorStateStore(
@@ -93,6 +136,28 @@ class CollectorRunner:
         )
         self.hasher = hasher
         self.transport = transport or LiveScraplingTransport()
+        self.listing_state_path = Path(listing_state_path) if listing_state_path else (
+            self.root_dir / "state" / "security-listing.json"
+        )
+
+    def listing_symbols(self, today: str) -> list[str] | None:
+        """Allowed symbols for the listing filter, or None while the listing was never initialised on this
+        host (rollout shadow: unfiltered, logged; the daily refresh initialises it). Once a listing exists it
+        is fail closed: older than 3 trading days raises ListingUnavailable (``listing_unavailable``)."""
+        sl = load_security_listing_module()
+        state = sl.ListingState.load(self.listing_state_path)
+        if state.last_success_date is None:
+            logger.warning("security listing not initialised at %s: collecting unfiltered", self.listing_state_path)
+            return None
+        state.require_collectable(today)
+        # listed now, plus every symbol ever listed as an ordinary share: a delisted share keeps its daily
+        # history (survivorship); only expired warrants and codes in no listing are skipped.
+        return sorted(state.listed_symbols() | set(state.ordinary_share_registry))
+
+    def refresh_security_listing(self, fetch_page: Callable[[str], str], *, listing_date: str) -> dict[str, Any]:
+        sl = load_security_listing_module()
+        state = sl.ListingState.load(self.listing_state_path)
+        return sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
 
     def build_collector(self, policy: SourceFetchPolicy) -> Any:
         sid = policy.source_id
@@ -232,6 +297,12 @@ class CollectorRunner:
         collector = self.build_collector(policy)
         kwargs = dict(collect_kwargs or {})
         kwargs.setdefault("fetched_at", finished_iso)
+        if source_id in LISTING_FILTERED_SOURCES and self.warrants_mode == "listed_only":
+            # fail closed: raises ListingUnavailable (reason listing_unavailable) when the allowlist is
+            # missing or older than 3 trading days; price collection stops, nothing is guessed.
+            allowed = self.listing_symbols(finished_iso[:10])
+            if allowed is not None:
+                kwargs.setdefault("symbols_filter", allowed)
 
         try:
             items: Sequence[CollectedItem] = collector.collect(**kwargs)

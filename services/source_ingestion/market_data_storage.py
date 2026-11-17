@@ -145,6 +145,14 @@ def _raw_storage_policy(
     return policy
 
 
+def _record_symbol(record: SourceRecord) -> str | None:
+    meta = record.metadata if isinstance(record.metadata, Mapping) else {}
+    nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+    sym = nrow.get("symbol_canonical") or nrow.get("symbol") or meta.get("symbol_canonical") or meta.get("symbol")
+    sym = str(sym or "").strip()
+    return sym or None
+
+
 @dataclass(frozen=True)
 class MarketDataStorageManifest:
     ingest_run_id: str
@@ -153,6 +161,7 @@ class MarketDataStorageManifest:
     feature_refs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     created_at: str = field(default_factory=utc_now_iso)
     schema_version: str = "market_data_storage_manifest.v1"
+    skipped_not_listed_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +176,7 @@ class MarketDataStorageManifest:
                 "normalized_ref_count": len(self.normalized_refs),
                 "feature_ref_count": len(self.feature_refs),
                 "normalized_row_count": sum(int(ref.get("row_count") or 0) for ref in self.normalized_refs),
+                "skipped_not_listed_count": self.skipped_not_listed_count,
             },
         }
 
@@ -174,8 +184,18 @@ class MarketDataStorageManifest:
 class MarketDataStorageWriter:
     """Writes bounded JSONL dev artifacts and returns storage refs."""
 
-    def __init__(self, root: str | Path, *, daily_bars_store: Any | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        daily_bars_store: Any | None = None,
+        listing_filter: Any | None = None,
+    ) -> None:
         from .daily_bars_store import DailyBarsStore
+
+        # SOURCE-WARRANT-LISTING-EXPIRY: defence in depth. A tw_price_daily record whose symbol is in
+        # no current exchange listing (expired warrant, unknown code) is not stored. None = off.
+        self.listing_filter = listing_filter
 
         self.root = Path(root)
         # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
@@ -206,8 +226,21 @@ class MarketDataStorageWriter:
         connector: SourceConnector,
     ) -> MarketDataStorageManifest:
         records = [record for record in result.records if not record.is_rejected]
+        skipped_not_listed = 0
+        if self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+            kept: list[SourceRecord] = []
+            for record in records:
+                if _slug(_dataset_for_record(record, connector)) == _slug(_DAILY_BAR_DATASET):
+                    sym = _record_symbol(record)
+                    if sym is not None and not self.listing_filter.admits(sym):
+                        skipped_not_listed += 1
+                        continue
+                kept.append(record)
+            records = kept
         if not records:
-            return MarketDataStorageManifest(ingest_run_id=result.run.ingest_run_id)
+            return MarketDataStorageManifest(
+                ingest_run_id=result.run.ingest_run_id, skipped_not_listed_count=skipped_not_listed
+            )
 
         grouped: dict[tuple[str, str], list[SourceRecord]] = {}
         for record in records:
@@ -314,6 +347,7 @@ class MarketDataStorageWriter:
             raw_refs=tuple(raw_refs),
             normalized_refs=tuple(normalized_refs),
             feature_refs=tuple(feature_refs),
+            skipped_not_listed_count=skipped_not_listed,
         )
 
 
