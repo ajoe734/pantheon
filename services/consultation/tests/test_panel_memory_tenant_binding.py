@@ -1,6 +1,12 @@
 import json
+import sys
 import urllib.request
 from pathlib import Path
+
+# Collection order must not decide whether the adapter module is importable.
+_ADAPTER_DIR = str(Path(__file__).resolve().parents[2] / 'openclaw-gateway-adapter')
+if _ADAPTER_DIR not in sys.path:
+    sys.path.insert(0, _ADAPTER_DIR)
 
 import pytest
 from fastapi.testclient import TestClient
