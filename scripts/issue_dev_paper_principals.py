@@ -145,6 +145,13 @@ WRITERS = {
         "persona_session",
         "pantheon:dev-owner-write",
     ),
+    # Persona service memory writes (harness adoption, learning feedback, pool outcomes) -> memory owner.
+    # Least privilege: persona-svc write role only; persona_session (reader above) stays read-only.
+    "PERSONA_MEMORY_WRITE_TOKEN": (
+        "persona-svc",
+        "persona-svc",
+        "pantheon:dev-owner-write",
+    ),
     # Persona lesson-rule proposal publisher -> governance owner (propose-only, no decide).
     "LESSON_RULE_PROPOSER_TOKEN": (
         "persona-svc",
@@ -204,6 +211,7 @@ CONSUMER_FILES = {
         "PERSONA_POOL_SOURCE_READ_TOKEN",
         "PERSONA_REGISTRY_SERVICE_TOKEN",
         "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_WRITE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
     ),
@@ -356,7 +364,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
         "PANTHEON_REGISTRY_JWT_AUDIENCE": audience,
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
-        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
+        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_WRITE_TOKEN"],
         "PANTHEON_MEMORY_SERVICE_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
         "PANTHEON_RESEARCH_SERVICE_TOKEN": values["PERSONA_RESEARCH_SERVICE_TOKEN"],
         "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],

@@ -475,6 +475,7 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
         "PERSONA_POOL_SOURCE_READ_TOKEN",
         "PERSONA_REGISTRY_SERVICE_TOKEN",
         "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_WRITE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
     }
@@ -502,6 +503,11 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
     assert memory_claims["sub"] == "persona_cycle_controller"
     assert memory_claims["roles"] == ["persona_session"]
     assert memory_claims["scope"] == "pantheon:dev-owner-write"
+
+    write_claims = verify(values["PERSONA_MEMORY_WRITE_TOKEN"])
+    assert write_claims["sub"] == "persona-svc"
+    assert write_claims["roles"] == ["persona-svc"]
+    assert "persona_session" not in write_claims["roles"]
 
     proposer_claims = verify(values["LESSON_RULE_PROPOSER_TOKEN"])
     assert proposer_claims["sub"] == "persona-svc"
