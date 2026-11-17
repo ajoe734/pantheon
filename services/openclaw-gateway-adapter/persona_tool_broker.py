@@ -54,7 +54,6 @@ from integrations.openclaw.persona_agent_sync import (
 )
 from integrations.openclaw.persona_memory_bridge import normalize_retrieval_hits
 from services.service_token_file import configured_service_token
-from services.service_token_file import configured_service_token
 from integrations.openclaw.persona_ooda_runtime import CycleProposal
 
 LOGGER = logging.getLogger("pantheon.persona_tool_broker")
