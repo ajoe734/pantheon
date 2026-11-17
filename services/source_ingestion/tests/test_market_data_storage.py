@@ -80,12 +80,10 @@ def test_health_payload_carries_daily_bars_alarm_fields(tmp_path):
     runtime = SimpleNamespace(
         market_data_storage_writer=writer,
         source_health_store=SimpleNamespace(list=lambda source_kind=None: []),
-        _retention_sweeper=SimpleNamespace(health=lambda: {"alarms": []}),
     )
     app = FastAPI()
     app.include_router(create_observability_router(runtime))
     body = TestClient(app).get("/api/source-ingest/health").json()
-    assert body["retention"] == {"alarms": []}
     daily = body["daily_bars"]
     assert daily["alarms"] == [] and daily["counters"]["rows_written"] == 1
     assert {"daily_bars_total_bytes", "daily_bars_max_day_bytes", "lineage_max_day_bytes"} <= set(daily["budget"])

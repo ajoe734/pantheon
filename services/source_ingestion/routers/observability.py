@@ -50,6 +50,14 @@ def _retention_sweeper(runtime: Any) -> Any:
     return sweeper
 
 
+def _retention_health(runtime: Any) -> dict[str, Any]:
+    """Retention health for the shared health payload; a sweeper that cannot be built must not break source health."""
+    try:
+        return _retention_sweeper(runtime).health()
+    except Exception as exc:  # noqa: BLE001 - report, never 500 the health route
+        return {"status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
     router = APIRouter(tags=["source-observability"])
 
@@ -71,7 +79,7 @@ def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
             "health_records": [r.to_dict() for r in records],
             "count": len(records),
             "daily_bars": runtime.market_data_storage_writer.daily_bars_store.health(),
-            "retention": _retention_sweeper(runtime).health(),
+            "retention": _retention_health(runtime),
         }
 
     @router.get("/api/source-ingest/health/{source_id}")
