@@ -262,7 +262,7 @@ def test_sealed_upgrade_refuses_unsafe_layout_without_changes(
         elif failure == "custom_routine":
             conn.execute("CREATE FUNCTION trade_journey_projection.custom() RETURNS int LANGUAGE sql AS 'SELECT 1'")
         elif failure == "ddl_rollback":
-            conn.execute("DROP INDEX trade_journey_projection.idx_event_receipts_ingested_seq")
+            conn.execute("DROP INDEX trade_journey_projection.idx_event_receipts_tenant_env_journey")
             conn.execute("ALTER TABLE trade_journey_projection.event_receipts RENAME COLUMN ingested_seq TO invalid_seq")
         elif failure == "grant_rollback":
             conn.execute("CREATE FUNCTION public.reject_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced grant failure'; END $$")
