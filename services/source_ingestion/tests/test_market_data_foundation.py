@@ -34,13 +34,6 @@ RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-
-@pytest.fixture(autouse=True)
-def _legacy_feature_files(monkeypatch):
-    # Downstream consumers (training-session authority) still require feature_refs; this test
-    # covers that legacy path, so it opts in to the old feature write (PANTHEON_FEATURE_FILES=on).
-    monkeypatch.setenv("PANTHEON_FEATURE_FILES", "on")
-
 def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
     from services.runtime_auth_inbound import encode_jwt_hs256
 

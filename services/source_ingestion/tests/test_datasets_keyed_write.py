@@ -112,7 +112,7 @@ def test_record_without_a_key_part_is_rejected_and_counted_not_filed(tmp_path):
 def test_settings_default_and_unknown_values_fail_closed(monkeypatch):
     for name in ("PANTHEON_KEYED_DATASETS_WRITE", "PANTHEON_KEYED_DATASET_READER", "PANTHEON_FEATURE_FILES"):
         monkeypatch.delenv(name, raising=False)
-    assert (keyed_datasets_write_mode(), keyed_dataset_reader_mode(), feature_files_enabled()) == ("dual", "run_files", False)
+    assert (keyed_datasets_write_mode(), keyed_dataset_reader_mode(), feature_files_enabled()) == ("dual", "run_files", True)
     for name, bad in (("PANTHEON_KEYED_DATASETS_WRITE", "both"), ("PANTHEON_KEYED_DATASET_READER", "x"), ("PANTHEON_FEATURE_FILES", "maybe")):
         monkeypatch.setenv(name, bad)
     with pytest.raises(ValueError):
@@ -133,13 +133,14 @@ def test_write_modes_run_files_dual_keyed_only(tmp_path, monkeypatch):
         assert keyed_dataset_dir(root, ds).is_dir() is keyed
 
 
-def test_features_are_not_stored_by_default_and_old_write_is_selectable(tmp_path, monkeypatch):
+def test_features_written_by_default_and_old_write_stoppable(tmp_path, monkeypatch):
     conn = _connector(feature_targets=["returns"])
-    MarketDataStorageWriter(tmp_path / "off").write_run(result=_result([_rec("tw_index_daily", 1)]), connector=conn)
-    assert not (tmp_path / "off" / "features").exists()
-    monkeypatch.setenv("PANTHEON_FEATURE_FILES", "on")
+    monkeypatch.delenv("PANTHEON_FEATURE_FILES", raising=False)
     manifest = MarketDataStorageWriter(tmp_path / "on").write_run(result=_result([_rec("tw_index_daily", 1)]), connector=conn)
     assert (tmp_path / "on" / "features" / "returns").is_dir() and manifest.feature_refs
+    monkeypatch.setenv("PANTHEON_FEATURE_FILES", "off")
+    manifest = MarketDataStorageWriter(tmp_path / "off").write_run(result=_result([_rec("tw_index_daily", 1)]), connector=conn)
+    assert not (tmp_path / "off" / "features").exists() and not manifest.feature_refs
 
 
 def test_connector_storage_targets_name_no_features_path():

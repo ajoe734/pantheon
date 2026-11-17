@@ -248,9 +248,9 @@
     "search/index_pipeline.py": "not a reader of market_data_store: JsonlIndexPipelineStore (lines 91-148) opens its own pipeline-run snapshot jsonl"
   },
   "review_independence": "Antigravity reported terminal quota; no other model family had review capacity; Claude reviews (AGENTS.md Review Independence).",
-  "rollout_order": "1 dual write (default, this PR) -> 2 reader keyed after zero mismatch -> 3 keyed_only stops old run files -> cleanup of old run files later",
+  "rollout_order": "1 dual write (default, this PR; feature files still written) -> 2 reader keyed after zero mismatch -> 3 PANTHEON_FEATURE_FILES=off once training-session authority no longer requires feature_refs -> 4 keyed_only stops old run files -> cleanup of old run files later",
   "settings": {
-    "PANTHEON_FEATURE_FILES": "off (default, nothing stored) | on (old write)",
+    "PANTHEON_FEATURE_FILES": "on (default, dual-write step: old feature write kept) | off (stops storing derived feature files)",
     "PANTHEON_KEYED_DATASETS_WRITE": "dual (default) | keyed_only | run_files",
     "PANTHEON_KEYED_DATASET_READER": "run_files (default, old read) | keyed"
   },
@@ -265,9 +265,8 @@
   ],
   "task": "SOURCE-DATASETS-KEYED-WRITE-20261119",
   "ci_red_repair_20261117": {
-    "cause": "features no longer written by default (PANTHEON_FEATURE_FILES=off) so feature_refs is empty; collector_outcome_truth, market_data_foundation and training-session source_dataset_authority tests asserted non-empty feature_refs; regime parity test imported numpy which the Smoke acceptance image lacks",
-    "fix": "those tests opt in to PANTHEON_FEATURE_FILES=on; regime parity test uses pytest.importorskip('numpy'); no production code changed",
-    "verified": "224 passed on test_collector_outcome_truth, test_market_data_foundation, test_datasets_keyed_write, training-session test_source_dataset_authority",
-    "follow_up": "training-session source_dataset_authority still requires non-empty feature_refs; migrate it to derive from daily bars before the production default of PANTHEON_FEATURE_FILES stays off for that consumer"
+    "cause": "default-off feature files left feature_refs empty; collector_outcome_truth, market_data_foundation and training-session source_dataset_authority tests (outside this task's artifact contract) require non-empty feature_refs; regime parity test imported numpy which the Smoke acceptance image lacks",
+    "fix": "PANTHEON_FEATURE_FILES default is on (dual-write step), off stops the write; regime parity test uses pytest.importorskip('numpy'); out-of-contract tests untouched",
+    "follow_up": "migrate training-session source_dataset_authority off feature_refs, then set PANTHEON_FEATURE_FILES=off in deployment (acceptance 4 storage stop completes at that step)"
   }
 }

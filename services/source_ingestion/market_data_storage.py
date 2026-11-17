@@ -69,7 +69,9 @@ def keyed_dataset_reader_mode(env: Mapping[str, str] | None = None) -> str:
 
 
 def feature_files_enabled(env: Mapping[str, str] | None = None) -> bool:
-    return _env_choice(FEATURE_FILES_ENV, ("off", "on"), "off", env) == "on"
+    """Derived feature files stay written (dual-write step of the rollout) until the named setting is
+    ``off``; training-session authority still reads ``feature_refs``, so the stop is an explicit rollout step."""
+    return _env_choice(FEATURE_FILES_ENV, ("on", "off"), "on", env) == "on"
 
 
 def normalized_dataset_base(root: str | Path, dataset: str, *, env: Mapping[str, str] | None = None) -> Path:

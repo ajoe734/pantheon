@@ -22,13 +22,6 @@ SOURCE = "collector-tw-ptt-stock"
 CURSOR = "2026-11-10T02:05:00Z#run1"
 
 
-
-@pytest.fixture(autouse=True)
-def _legacy_feature_files(monkeypatch):
-    # Downstream consumers (training-session authority) still require feature_refs; this test
-    # covers that legacy path, so it opts in to the old feature write (PANTHEON_FEATURE_FILES=on).
-    monkeypatch.setenv("PANTHEON_FEATURE_FILES", "on")
-
 def setup_path(tmp_path, monkeypatch, *, status="ok", bundle_status="complete", cap=100):
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     files, entry, manifest = make_bundle(status=bundle_status)

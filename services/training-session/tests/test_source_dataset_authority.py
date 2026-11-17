@@ -33,13 +33,6 @@ DESIRED_STATE = {
 SNAPSHOT_SHA = DESIRED_SHA
 
 
-
-@pytest.fixture(autouse=True)
-def _legacy_feature_files(monkeypatch):
-    # Downstream consumers (training-session authority) still require feature_refs; this test
-    # covers that legacy path, so it opts in to the old feature write (PANTHEON_FEATURE_FILES=on).
-    monkeypatch.setenv("PANTHEON_FEATURE_FILES", "on")
-
 def _desired_digest(desired_state: dict[str, Any]) -> str:
     return _connector_digest(desired_state)
 
