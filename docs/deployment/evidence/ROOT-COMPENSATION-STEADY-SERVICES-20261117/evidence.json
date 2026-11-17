@@ -1,0 +1,23 @@
+{
+  "task": "ROOT-COMPENSATION-STEADY-SERVICES-20261117",
+  "owner": "Claude",
+  "diagnosis": {
+    "hosted_logs": "gh run view 43932397748 --log returned no retrievable log text in this worker; hosted evidence could not be re-read",
+    "code_finding": "restore_images (dev_release_artifacts.py) stops every running service absent from stack_baseline, and capture_stack records only running/completed services; rollback_dev_bff_on_failure accepted a restore without checking steady services; verify-preconditions refused on /bff/version equality alone. This matches the recorded sequence (scheduler on candidate image stopped with 137, never started, restore refused 'no drift')."
+  },
+  "changes": [
+    "scripts/deploy_nonprod_vm.sh: capture_steady_service_baseline before root rollout; verify_steady_services_restored after a successful driver restore starts stopped baseline-image steady services and otherwise prints steady_service_compensation_incomplete: <names>; rollback logs INCOMPLETE instead of verified",
+    "scripts/fetch_dev_artifact_evidence.py: steady_service_drift(); preconditions accept optional --steady-state-file and proceed when a baseline steady service is stopped / missing / on a non-baseline image even if /bff/version matches"
+  ],
+  "not_done": "Workflow nonprod-deploy.yml does not yet collect the VM container-state JSON and pass --steady-state-file, so the hosted restore job still refuses until that wiring (outside scoped artifacts) is added. Hosted verification not run.",
+  "validation": [
+    {
+      "command": "python -m pytest scripts/test_compensation_restores_steady_services.py -q",
+      "result": "11 passed"
+    },
+    {
+      "command": "python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_nonprod_restore_accepted_baseline.py -q",
+      "result": "150 passed, 17 failed, 2 skipped; the identical 17 failures (finmind/paper_signal_producer tests and test_whole_stack_restore_succeeds_with_current_controller_and_streaming_source_probe, UnboundLocalError in services/source_ingestion/requirement_state.py) also fail on unmodified HEAD (150 passed, 17 failed) in this environment"
+    }
+  ]
+}
