@@ -1,0 +1,28 @@
+{
+  "task_id": "DISTILLATION-SEED-STORE-BOUNDED-WRITE-20261117",
+  "measurement": {
+    "shape": "9000 seeds, 33.6 MB jsonl (hosted-shaped, 36 MB class), local disk with fsync, 20 saves",
+    "before": {"sec_per_save": 0.458, "bytes_written_per_save": 33632870, "replay_bytes_written": 33669120},
+    "after": {"sec_per_save_warm": 0.0069, "bytes_written_per_save": 7577, "replay_bytes_written": 0, "cold_process_index_build_sec": 0.462, "note": "cold process pays one sequential read (no write) to build the keyed index; a persisting save is then one keyed lookup and one pwrite+fsync. Hosted 1.2-1.5s/job was measured by the task owner; local numbers are not a hosted claim."}
+  },
+  "acceptance": {
+    "1_bounded_write": "JsonlRegistryStore.upsert_and_delete: keyed in-memory span index; new record = one pwrite at EOF; shrinking/equal update = in-place padded pwrite; growing an existing record = ordered rewrite (rare review path; keeps record order for all readers). Test: test_upsert_bytes_written_independent_of_store_size.",
+    "2_replay": "save() returns False and writes nothing on identical record (ignores materialization_mode); materializer skips save when rebuilt seed equals existing. Tests: test_identical_replay_writes_nothing, test_identical_replay_save_writes_nothing.",
+    "3_readers": {
+      "readers": ["StrategySpecSeedStore.get/list_all/list_by_status/list_by_bundle/get_by_bundle_idempotent/list_negative_memory_records/count (used by alpha-replication card admission, source-ingest runtime, BFF seed + persona-discovery reads)"],
+      "comparison": "test_readers_match_legacy_full_scan compares indexed readers with a raw full file scan on the same data; 143 pre-existing seed/replication/distillation tests pass unchanged."
+    },
+    "4_temp_cleanup": "Stale .<store>.*.tmp files removed on every mutation lease while holding the flock; overwrite_all still writes temp+replace, a kill leaves only a temp that the next write removes. Torn tail record is truncated by next write. Tests: test_stale_temp_files_removed_on_next_write, test_torn_tail_is_repaired_by_next_write.",
+    "5_growth_bound": {
+      "per_source_max": 50,
+      "total_max": 10000,
+      "env_overrides": ["STRATEGY_SEED_MAX_PER_SOURCE", "STRATEGY_SEED_MAX_TOTAL"],
+      "at_cap": "the lowest-priority active seeds are deleted in the same write as the new seed: draft/needs_more_evidence first, then other non-governed, then accepted/promoted, rejected/negative-memory last; oldest created_at first within a tier.",
+      "daily_growth": "bounded by min(total cap 10000, sources x 50); steady-state file size is capped near the cap rather than growing daily.",
+      "idempotency": "pruned seeds are remembered by bundle and seed id (bounded 20000 entries, in-process); replaying a pruned bundle returns the pruned seed instead of re-creating it. Limitation: this memory is per-process and lost on restart, so a replay after restart of a pruned bundle may re-create it once.",
+      "decision": "same-bundle versions are not auto-pruned because distinct seed ids under one bundle are legitimate (merge/review flows rely on them); only caps prune."
+    },
+    "6_rollback": "File format unchanged: one JSON object per line. Updated/deleted records leave blank (space-padded) lines which the previous release's reader skips (it ignores empty stripped lines). Test: test_update_and_delete_keep_legacy_reader_compatible. No downgrade step needed.",
+    "7_tests": "test_strategy_seed_store.py (27), test_jsonl_registry_store.py (5), replication_bridge/distillation_controller/l12_dist_001/hypothesis_extraction pass (143 total in the earlier run)."
+  }
+}

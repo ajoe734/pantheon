@@ -442,6 +442,23 @@ class JsonlRegistryStore:
             ):
                 return False
 
+            if (
+                entry_id in state.records
+                and not is_unchanged
+                and len(new_raw) > state.spans[entry_id][1]
+            ):
+                # A grown record cannot be updated in place.  Moving it to the
+                # end of the file would change record order for every reader, so
+                # this rare path rewrites the file to keep order stable.
+                delete_set = set(to_delete)
+                rewritten = [
+                    record if key == entry_id else rec
+                    for key, rec in state.records.items()
+                    if key not in delete_set
+                ]
+                self.overwrite_all(rewritten)
+                return True
+
             fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o666)
             try:
                 if state.incomplete_tail_offset is not None:

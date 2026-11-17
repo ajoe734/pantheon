@@ -31,7 +31,7 @@ from services.source_ingestion.strategy_seed_builder import (
 
 _IDS_AUDIT_OPTIONAL = True  # lazy import to avoid circular dependency
 
-DEFAULT_MAX_SEEDS_PER_SOURCE = 4
+DEFAULT_MAX_SEEDS_PER_SOURCE = 50
 DEFAULT_MAX_TOTAL_SEEDS = 10_000
 DEFAULT_MAX_PRUNED_BUNDLES = 20_000
 
@@ -405,7 +405,7 @@ class StrategySpecSeedStore:
     and upserts rather than duplicates.
 
     Growth bounds:
-    - ``max_seeds_per_source`` (default 4): bounds active seeds per ``source_id``,
+    - ``max_seeds_per_source`` (default 50): bounds active seeds per ``source_id``,
       pruning superseded mutable bundle versions while retaining replay idempotency.
     - ``max_total_seeds`` (default 10,000): bounds total active seeds in the store.
     """
