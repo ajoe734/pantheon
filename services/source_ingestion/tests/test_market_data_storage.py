@@ -103,7 +103,7 @@ def test_run_files_setting_off_creates_no_tw_price_daily_run_file_and_other_data
         connector=_connector()).to_dict()
     names = _files(tmp_path)
     assert not any("tw_price_daily" in n for n in names)  # no raw, no normalized run file for the daily price batch
-    assert any("tw_index_daily" in n for n in names) and len([n for n in names if "tw_index_daily" in n]) == 2
+    assert any("tw_index_daily" in n for n in names) and len([n for n in names if "tw_index_daily" in n and not n.startswith("keyed/")]) == 2  # run files unchanged; keyed copy is separate
     assert {r["dataset"] for r in manifest["raw_refs"] + manifest["normalized_refs"]} == {"tw_index_daily"}
     got = DailyBarsReader(tmp_path).read_range(["2330.TW"], "2026-11-13", "2026-11-13")
     assert got["2330.TW"][0]["close"] == 900.0  # daily bars still written

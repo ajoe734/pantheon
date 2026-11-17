@@ -25,7 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .market_data_storage import _iter_normalized_rows, _slug, daily_price_reader_mode
+from .market_data_storage import _iter_normalized_rows, _slug, daily_price_reader_mode, normalized_dataset_base
 from .survivorship_attestation import ALL_MARKET_BUNDLES, HOLIDAY_DATASET, SUSPENSION_DATASET, attest_survivorship
 
 SCHEMA_VERSION = "candidate_pool_market.v1"
@@ -48,7 +48,7 @@ class CandidatePoolMarketNeedsData(RuntimeError):
 
 
 def _partitions(root: Path, dataset: str) -> list[Path]:
-    base = root / "normalized" / _slug(dataset)
+    base = normalized_dataset_base(root, _slug(dataset))
     return sorted(base.glob("date=*/*.jsonl*")) if base.is_dir() else []
 
 

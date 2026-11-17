@@ -15,8 +15,11 @@ Measurements:
     listed warrants) in 500-record batches, bytes read from the manifest and lineage file.
   * ``market_snapshot_current``: the SQLite table of design 4.2 (stdlib) loaded with 22,500
     keys of a 60-close record in 500-key transactions, then fully replaced under a reader.
-  * ``listing_allowlist`` and every 6A dataset: generated rows at the design's row counts,
-    measured as zlib-compressed canonical JSON (a proxy until their keyed writer exists).
+  * ``listing_allowlist``: generated rows measured as zlib-compressed canonical JSON.
+  * every 6A dataset with a ``KEYED_DATASETS`` declaration (SOURCE-DATASETS-KEYED-WRITE-20261119): hosted-shaped
+    records written through the real ``KeyedDatasetStore`` in 500-record batches, bytes read from its manifest; the
+    limit is the design table row, and the declaration's own ``day_budget_bytes`` must not exceed it.
+    A 6A dataset without a declaration falls back to the zlib proxy.
 ``--live-stats FILE`` additionally checks measured values from a live read (JSON object
 ``{store: {metric: value}}``, metrics named as in the report) against the same limits.
 
@@ -34,6 +37,7 @@ import tempfile
 import threading
 import time
 import zlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -280,9 +284,57 @@ DATASET_ROWS: dict[str, Callable[[], list[Any]]] = {
 }
 
 
+def _keyed_record(name: str, i: int, n: int):
+    from services.source_ingestion.connectors import SourceRecord
+    from services.source_ingestion.market_data_storage import _compact_keyed_record
+
+    day = "2026-11-13"
+    row: dict[str, Any] = {"dataset": name, "date": day, "event_time": f"{day}T00:00:00Z", "value": float(i % 997) + 0.5,
+                           "available_time": f"{day}T10:00:00Z", "ingest_time": f"t{i}",
+                           "a": i % 977, "b": 300 + i % 97, "c": (i % 211) - 100}
+    sym = f"{1000 + i}"
+    row.update({
+        "tw_index_daily": {"index_code": f"IDX{i:02d}"}, "tw_index_ohlc_daily": {"index_code": f"IDX{i:02d}"},
+        "tw_market_breadth_daily": {"market": f"M{i}"},
+        "tw_institutional_flow": {"symbol": f"{1000 + i // 3}", "investor_class": ("foreign", "trust", "dealer")[i % 3]},
+        "tw_margin_short_balance": {"symbol": sym}, "tw_broker_top": {"symbol": f"{1000 + i // 15}", "rank": i % 15 + 1},
+        "tw_broker_branch_detail": {"symbol": f"{1000 + i // 45}", "broker_id": f"B{i // 3}", "branch_id": f"BR{i % 3}"},
+        "taifex_ssf_contracts": {"contract_id": f"ssf:C{i}:202611"}, "taifex_tx_daily": {"contract_id": f"TX{i}"},
+        "tw_macro_series": {"series_code": f"M{i:03d}", "date": "2026-10"},
+        "tw_community_daily": {"symbol": f"{1000 + i // 2}", "platform": ("ptt", "dcard")[i % 2]},
+        "collector_news": {"url": f"https://example.test/n/{i}", "body": f"{i:04d} " + "x" * 3_500},
+        "collector_social_posts": {"url": f"https://example.test/p/{i}", "body": f"{i:04d} " + "x" * 3_500},
+    }[name])
+    rec = SourceRecord(source_id=f"s{i}", connector_id="budget", source_type="market", title="t", content_ref=f"r{i}",
+                       metadata={"dataset": name, "normalized_row": row, "event_time": row["event_time"],
+                                 "available_time": row["available_time"]})
+    return _compact_keyed_record(rec, name)
+
+
+KEYED_ROW_COUNTS = {"collector_news": 45, "collector_social_posts": 30}
+
+
 def measure_dataset(name: str) -> dict[str, float]:
-    rows = DATASET_ROWS[name]()
-    return {"rows": float(len(rows)), "day_bytes": float(_zbytes(rows))}
+    try:
+        from services.source_ingestion.daily_bars_store import KEYED_DATASETS, KeyedDatasetStore
+    except ImportError as exc:
+        raise BudgetError(f"keyed store not importable: {exc}") from exc
+    decl = KEYED_DATASETS.get(name)
+    if decl is None:  # no keyed writer yet: zlib proxy
+        rows = DATASET_ROWS[name]()
+        return {"rows": float(len(rows)), "day_bytes": float(_zbytes(rows))}
+    n = KEYED_ROW_COUNTS.get(name) or len(DATASET_ROWS[name]())
+    tmp = Path(tempfile.mkdtemp(prefix=f"budget-{name}-"))
+    try:
+        store = KeyedDatasetStore(tmp, replace(decl, day_budget_bytes=None))  # measure, do not let the writer refuse
+        records = [_keyed_record(name, i, n) for i in range(n)]
+        for i in range(0, n, BATCH):
+            store.write_records(records[i:i + BATCH], ingest_run_id="budget")
+        report = store.budget_report()
+        return {"rows": float(n), "day_bytes": float(report["max_day_bytes"]),
+                "declared_budget_bytes": float(decl.day_budget_bytes or 0), "keyed": 1.0}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def measure_listing() -> dict[str, float]:
@@ -351,7 +403,13 @@ def check_listing(cells: list[str], m: dict[str, float]) -> list[dict[str, Any]]
 def check_dataset(name: str) -> Callable[[list[str], dict[str, float]], list[dict[str, Any]]]:
     def run(cells: list[str], m: dict[str, float]) -> list[dict[str, Any]]:
         day = limit(cells, 4, r"<=\s*" + _QTY, f"{name} growth budget")
-        return [_result(name, "day_bytes", m["day_bytes"], day, "<=", "sec6A growth budget (zlib JSON proxy)")]
+        keyed = bool(m.get("keyed"))
+        out = [_result(name, "day_bytes", m["day_bytes"], day, "<=",
+                       "sec6A growth budget (KeyedDatasetStore bytes)" if keyed else "sec6A growth budget (zlib JSON proxy)")]
+        if keyed:  # the declaration's own enforced limit must not be looser than the design row
+            out.append(_result(name, "declared_budget_bytes", m["declared_budget_bytes"], day, "<=",
+                               "sec6A growth budget (declaration vs design row)"))
+        return out
     return run
 
 
