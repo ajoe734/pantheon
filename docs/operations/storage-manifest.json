@@ -5482,6 +5482,27 @@
    ],
    "register_class": "RC3",
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+  },
+  {
+   "bound_proof": {
+    "contains": "day_budget_bytes is not None and size > decl.day_budget_bytes",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days",
+   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none) and read by SOURCE-RETENTION-SWEEPER-20261118-R2; superseded generation file deleted after each manifest swap",
+   "growth_driver": "keyed partition writer (one record per key per date partition, replaced in place; unchanged re-run writes nothing)",
+   "growth_per_day": "measured on hosted-shaped rows (SOURCE-DATASETS-KEYED-WRITE-20261119 evidence): institutional 0.114 MB, margin 0.038 MB, broker_top 0.058 MB, broker_branch 0.175 MB, community 0.075 MB, ssf 0.012 MB, index 0.001 MB each",
+   "kind": "jsonl",
+   "name": "part-g{generation}.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/market_data_storage.py",
+    "services/source_ingestion/candidate_pool_market_feed.py",
+    "services/research/regime/features.py",
+    "services/execution/lean_runtime/instrument_candidates.py"
+   ],
+   "task": "SOURCE-DATASETS-KEYED-WRITE-20261119"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",

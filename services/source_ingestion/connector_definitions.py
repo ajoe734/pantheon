@@ -405,7 +405,7 @@ def _collector_feature_routing(raw_dataset: str) -> dict[str, Any]:
         "normalized_datasets": (derived, raw_dataset),
         "feature_targets": (derived,),
         "raw_only_datasets": (raw_dataset,),
-        "storage_targets": (f"normalized/{derived}", f"features/{derived}"),
+        "storage_targets": (f"normalized/{derived}",),
     }
 
 
@@ -516,7 +516,6 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
             "feature_targets": ("returns",),
             "storage_targets": (
                 "normalized/tw_price_daily",
-                "features/returns",
                 *(f"normalized/{ds}" for ds in GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
             ),
             "normalized_datasets": ("tw_price_daily", *GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
