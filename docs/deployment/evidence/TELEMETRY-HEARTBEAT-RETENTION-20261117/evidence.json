@@ -2,7 +2,7 @@
   "task_id": "TELEMETRY-HEARTBEAT-RETENTION-20261117",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "source_base_sha": "aeb227ff3619b9c6bd79e64e1493bfeb5ab3b950",
+  "source_base_sha": "e05a12727d6d8f3d3bbdda193d20b0f5f0dab3a0",
   "hosted_context_measured_by_coordinator": {
     "measured_at": "2026-11-16T23:55:00Z",
     "table": "public.telemetry_events",
