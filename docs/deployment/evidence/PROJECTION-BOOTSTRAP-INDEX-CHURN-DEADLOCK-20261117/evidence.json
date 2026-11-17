@@ -9,7 +9,6 @@
     "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
     "services/trade_journey/migrations/002_drop_redundant_event_receipts_index.sql",
     "services/trade_journey/test_projection_store.py",
-    "services/trade_journey/test_projection_migration.py",
     "services/trade_journey/tests/test_projection_bootstrap_no_index_churn.py"
   ],
   "rollback_cost": {
@@ -24,5 +23,5 @@
     "skipped_note": "21 tests in test_projection_migration.py need TEST_PROJECTION_CONTAINER (init-db.sh plus docker compose profile 'root'); with that container and a docker shim adding --profile root they fail 21/21 identically on the unmodified HEAD migrations and tests, i.e. an environment limitation, not a regression. They were NOT validated by this task. The ddl_rollback case I edited lives in that set.",
     "new_test_file": "3 passed (concurrent writer + two bootstraps with identical index oid/relfilenode; bootstrap with an open writer transaction and lock_timeout 1s; legacy DB loses the index once). The open-writer test fails on the old 001 with LockNotAvailable."
   },
-  "known_residual": "Other CREATE INDEX IF NOT EXISTS statements in 001 (identity_links, journeys, journey_stages, loop_runs, quarantine) still take a brief ShareLock on those tables each bootstrap; out of scope for event_receipts."
+  "known_residual": "Other CREATE INDEX IF NOT EXISTS statements in 001 (identity_links, journeys, journey_stages, loop_runs, quarantine) still take a brief ShareLock on those tables each bootstrap; out of scope for event_receipts. FOLLOW-UP REQUIRED: test_projection_migration.py (outside this task's artifact contract, so unchanged) line ~265 ddl_rollback does 'DROP INDEX trade_journey_projection.idx_event_receipts_ingested_seq'; since 001 no longer creates that index this will fail in the TEST_PROJECTION_CONTAINER-gated suite. Change it to drop idx_event_receipts_tenant_env_journey (verified only by reasoning; that suite could not run here)."
 }
