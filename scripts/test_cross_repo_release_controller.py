@@ -634,10 +634,9 @@ def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
         "github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'"
         in deploy_job
     )
-    assert (
-        'GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}"'
-        in deploy_job
-    )
+    assert 'GITHUB_REF}" != "refs/heads/dev"' in deploy_job
+    assert "git merge-base --is-ancestor" in deploy_job
+    assert "completed:success" in deploy_job
     assert "frontend_ref:" in deploy_job
     assert "refs/heads/${FRONTEND_REF}:refs/remotes/origin/${FRONTEND_REF}" in deploy_job
     assert "requested" in deploy_job and "ref_tip" in deploy_job

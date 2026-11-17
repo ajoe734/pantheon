@@ -254,6 +254,7 @@ jobs:
         working-directory: .target
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
+          GH_TOKEN: ${{ github.token }}
           RUN_EVOLUTION_DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe || false }}
           RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
           DRILL_ISOLATED: ${{ inputs.isolated_provider_qualification }}
@@ -282,8 +283,23 @@ jobs:
           fi
           trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
-          if [[ "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
-            echo "Dev release must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF} workflow_sha=${GITHUB_SHA}" >&2
+          # The workflow definition always comes from the dev tip (GITHUB_REF/GITHUB_SHA);
+          # the payload may be an older commit on dev that has a green dev push Branch CI
+          # run.  Deploy scripts under .target/ come from that payload, the lease controller
+          # is the pinned checkout above, and this workflow file is the dev tip's.
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "Dev release must be dispatched from refs/heads/dev; got workflow_ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${sha}" "${trusted_ref}"; then
+            echo "Dev release payload ${sha} is not on Pantheon dev (tip ${trusted_ref})" >&2
+            exit 1
+          fi
+          ci_conclusion="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/branch-ci.yml/runs" \
+            -f branch=dev -f event=push -f head_sha="${sha}" -f per_page=100 \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"${sha}"'" and .head_branch == "dev" and .event == "push")] | max_by(.id) | if . == null then "none" else "\(.status):\(.conclusion)" end')"
+          if [[ "${ci_conclusion}" != "completed:success" ]]; then
+            echo "Dev release payload ${sha} has no successful dev push Branch CI run (latest=${ci_conclusion})" >&2
             exit 1
           fi
           case "${TARGET_COMPONENT}" in
@@ -344,6 +360,8 @@ jobs:
         id: frontend
         working-directory: .agora-frontend
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        env:
+          GH_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         run: |
           requested="${FRONTEND_SHA,,}"
           [[ "${requested}" =~ ^[0-9a-f]{40}$ ]] || {
@@ -364,14 +382,22 @@ jobs:
             exit 1
           }
           ref_tip="$(git rev-parse "refs/remotes/origin/${FRONTEND_REF}")"
-          [[ "${ref_tip}" == "${requested}" ]] || {
-            echo "execute-plans frontend ref ${FRONTEND_REF} moved: tip=${ref_tip} requested=${requested}" >&2
-            exit 1
-          }
+          if [[ "${FRONTEND_REF}" != "dev" ]]; then
+            [[ "${ref_tip}" == "${requested}" ]] || {
+              echo "execute-plans frontend ref ${FRONTEND_REF} moved: tip=${ref_tip} requested=${requested}" >&2
+              exit 1
+            }
+          fi
           if [[ "${FRONTEND_REF}" == "dev" ]]; then
-            current="$(git rev-parse refs/remotes/origin/dev)"
-            [[ "${requested}" == "${current}" ]] || {
-              echo "current execute-plans dev moved: current=${current} requested=${requested}" >&2
+            git merge-base --is-ancestor "${requested}" "${ref_tip}" || {
+              echo "execute-plans frontend commit ${requested} is not on dev (tip ${ref_tip})" >&2
+              exit 1
+            }
+            fe_ci="$(gh api -X GET "repos/ajoe734/execute-plans/actions/workflows/branch-ci.yml/runs" \
+              -f branch=dev -f event=push -f head_sha="${requested}" -f per_page=100 \
+              --jq '[.workflow_runs[] | select(.head_sha == "'"${requested}"'" and .head_branch == "dev" and .event == "push")] | max_by(.id) | if . == null then "none" else "\(.status):\(.conclusion)" end')"
+            [[ "${fe_ci}" == "completed:success" ]] || {
+              echo "execute-plans frontend commit ${requested} has no successful dev push Branch CI run (latest=${fe_ci})" >&2
               exit 1
             }
           fi
