@@ -859,12 +859,23 @@ def create_app(
             triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
             trigger_ref = body.trigger_ref if body else None
             force_full = body.force_full if body else False
-            snapshot = _run_pipeline(
-                triggered_by=triggered_by,
-                trigger_ref=trigger_ref,
-                force_full=force_full,
-            )
-            return {"pipeline_snapshot": snapshot.to_dict()}
+            if not pipeline_run_lock.acquire(blocking=False):
+                # Single-flight: never start (or queue) a second run; report promptly instead.
+                latest = pipeline_store.get_latest()
+                return {
+                    "status": "in_progress",
+                    "detail": "an index refresh is already running; this call did not start another",
+                    "pipeline_snapshot": latest.to_dict() if latest else None,
+                }
+            try:
+                snapshot = pipeline.run(
+                    triggered_by=triggered_by,
+                    trigger_ref=trigger_ref,
+                    force_full=force_full,
+                )
+            finally:
+                pipeline_run_lock.release()
+            return {"status": "completed", "pipeline_snapshot": snapshot.to_dict()}
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except SearchCapabilityUnavailableError as exc:

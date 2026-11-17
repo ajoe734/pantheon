@@ -1,0 +1,15 @@
+{
+  "task_id": "DEV-UNTAGGED-IMAGE-ENUMERATION-ALL-20261117",
+  "root_cause": "docker image ls without --all hides <none>:<none> images under the containerd image store (Docker 29.1.3); hosted showed 0 rows vs 104 with -a; Root run 43980251069 logged candidates=0",
+  "fix": "remove_dev_untagged_unreferenced_images_for_build enumerates with docker image ls --all; non-forced one-at-a-time rmi and budget logic unchanged",
+  "local_verification": {
+    "command": "pytest scripts/test_deploy_nonprod_vm.py -k untagged",
+    "old_code": "2 failed, 4 passed (regression detected)",
+    "fixed_code": "6 passed in ~8s"
+  },
+  "hosted_evidence": {
+    "status": "pending_next_root_deploy",
+    "run_id": null,
+    "required": "log line 'untagged image removal' with candidates>0, removed>0, free_bytes_after>free_bytes_before"
+  }
+}

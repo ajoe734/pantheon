@@ -184,3 +184,121 @@ def test_search_production_posture_fails_closed_without_durable_backend() -> Non
     assert check.status == "error"
     assert "SEARCH_INDEX_STORE_BACKEND must be postgres" in "; ".join(check.errors)
     assert "SEARCH_DURABLE_INDEX_ONLY must be true" in "; ".join(check.errors)
+
+
+# --- bounded batch + single-flight (SEARCH-REFRESH-BOUNDED-SINGLE-FLIGHT-20261116) ---
+
+import threading
+import time
+
+from services.knowledge.evidence import JsonlEvidenceRepository as _Repo
+from services.search.index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
+from services.search.scheduler_worker import assess_progress
+
+
+class _SlowBackend:
+    """Fake retrieval backend: each document costs `cost` seconds; records every embed."""
+
+    def __init__(self, cost: float = 0.0) -> None:
+        self.cost = cost
+        self.embedded: list[str] = []
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def index_documents(self, records) -> None:
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            for record in records:
+                time.sleep(self.cost)
+                self.embedded.append(record.id)
+        finally:
+            with self._lock:
+                self.active -= 1
+
+    def delete_document(self, _id: str) -> None:
+        pass
+
+
+def _make_pipeline(tmp_path: Path, backend: _SlowBackend, *, batch: int, n: int):
+    evidence_path = tmp_path / "ev.jsonl"
+    for i in range(n):
+        _write_source_evidence(evidence_path, f"src-{i:03d}")
+    repo = _Repo(evidence_path)
+    store = JsonlIndexPipelineStore(tmp_path / "pipe.jsonl")
+    pipe = IncrementalIndexPipeline(
+        repo, store, retrieval_backend=backend, max_batch_size=batch, chunk_size=2, time_budget_seconds=60
+    )
+    return pipe, store
+
+
+def test_backlog_ten_times_batch_drains_with_no_double_embed(tmp_path: Path) -> None:
+    backend = _SlowBackend()
+    batch = 5
+    pipe, _ = _make_pipeline(tmp_path, backend, batch=batch, n=batch * 10 + 3)
+    calls = 0
+    last_remaining = None
+    while True:
+        calls += 1
+        started = time.monotonic()
+        snap = pipe.run(triggered_by="t")
+        assert time.monotonic() - started < 30  # well inside the scheduler timeout
+        assert snap.incremental_count <= batch
+        if last_remaining is not None:
+            assert snap.backlog_remaining < last_remaining  # monotonic progress
+        last_remaining = snap.backlog_remaining
+        if snap.backlog_remaining == 0:
+            break
+        assert calls < 100
+    assert calls == 11
+    assert len(backend.embedded) == len(set(backend.embedded)) == batch * 10 + 3
+    assert backend.max_active == 1
+    # steady state: nothing left to embed
+    assert pipe.run(triggered_by="t").incremental_count == 0
+    assert len(backend.embedded) == batch * 10 + 3
+
+
+def test_refresh_endpoint_single_flight_returns_in_progress(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "ev.jsonl"
+    for i in range(6):
+        _write_source_evidence(evidence_path, f"src-{i}")
+    backend = _SlowBackend(cost=0.3)
+    client = TestClient(
+        create_app(
+            tmp_path / "idx.jsonl",
+            evidence_path,
+            tmp_path / "mat.jsonl",
+            tmp_path / "pipe.jsonl",
+            freshness_sla_seconds=60,
+            retrieval_backend=backend,
+        )
+    )
+    first: dict = {}
+
+    def _slow() -> None:
+        first["r"] = client.post("/api/search/index/refresh", json={"triggered_by": "a"})
+
+    t = threading.Thread(target=_slow)
+    t.start()
+    time.sleep(0.4)
+    started = time.monotonic()
+    second = client.post("/api/search/index/refresh", json={"triggered_by": "b"})
+    assert time.monotonic() - started < 0.25
+    assert second.status_code == 200
+    assert second.json()["status"] == "in_progress"
+    t.join()
+    assert first["r"].json()["status"] == "completed"
+    assert backend.max_active == 1
+    assert len(backend.embedded) == len(set(backend.embedded))
+    assert client.get("/api/search/index/freshness").status_code == 200
+    assert client.get("/api/search/index/pipeline-runs").json()["total"] == 1
+
+
+def test_scheduler_progress_assessment() -> None:
+    assert assess_progress({"status": "in_progress"}, 5)[0] is False
+    ok, backlog, reason = assess_progress({"pipeline_snapshot": {"backlog_remaining": 7, "incremental_count": 5}}, 12)
+    assert ok and backlog == 7 and "draining" in reason
+    assert assess_progress({"pipeline_snapshot": {"backlog_remaining": 7, "incremental_count": 0}}, 7)[0] is False
+    assert assess_progress({"pipeline_snapshot": {"backlog_remaining": 0, "incremental_count": 3}}, 7)[1] == 0

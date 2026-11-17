@@ -80,13 +80,37 @@ def run_tick(
     return result
 
 
+def assess_progress(refresh: Any, last_backlog: int | None) -> tuple[bool, int | None, str]:
+    """Classify a refresh result: (progressing, backlog_remaining, reason).
+
+    Progress = backlog drained, or embedded items / smaller backlog than last tick. A refresh
+    answered "in_progress" (another run owns the pipeline) is a stalled tick, tolerated up to
+    SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS consecutive ticks.
+    """
+
+    if not isinstance(refresh, dict):
+        return True, last_backlog, "no_refresh_detail"
+    if refresh.get("status") == "in_progress":
+        return False, last_backlog, "refresh_already_in_progress"
+    snap = refresh.get("pipeline_snapshot") or {}
+    backlog = int(snap.get("backlog_remaining") or 0)
+    if backlog == 0:
+        return True, 0, "backlog_drained"
+    if int(snap.get("incremental_count") or 0) > 0:
+        return True, backlog, f"backlog_draining remaining={backlog}"
+    return False, backlog, f"no_progress remaining={backlog}"
+
+
 def main() -> int:
     api_url = os.getenv("SEARCH_API_URL", "http://127.0.0.1:8098")
     interval_seconds = _env_int("SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS", 300, minimum=1)
     max_ticks = _env_int("SEARCH_INDEX_SCHEDULER_MAX_TICKS", 0, minimum=0)
     force_full = _env_bool("SEARCH_INDEX_SCHEDULER_FORCE_FULL", False)
     materialize = _env_bool("SEARCH_INDEX_SCHEDULER_MATERIALIZE", True)
+    max_stalled_ticks = _env_int("SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS", 6, minimum=1)
     tick = 0
+    stalled = 0
+    last_backlog: int | None = None
     while True:
         tick += 1
         try:
@@ -106,15 +130,31 @@ def main() -> int:
                 flush=True,
             )
         else:
+            progressing, last_backlog, reason = assess_progress(result.get("refresh"), last_backlog)
+            stalled = 0 if progressing else stalled + 1
+            healthy = stalled < max_stalled_ticks
             alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
-            if alive_path:
+            if alive_path and healthy:
                 try:
                     alive_p = Path(alive_path)
                     alive_p.parent.mkdir(parents=True, exist_ok=True)
                     alive_p.touch()
                 except Exception:
                     pass
-            print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
+            print(
+                json.dumps(
+                    {
+                        "tick": tick,
+                        "result": result,
+                        "progress": reason,
+                        "stalled_ticks": stalled,
+                        "max_stalled_ticks": max_stalled_ticks,
+                        "health": "healthy" if healthy else "unhealthy",
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
         if max_ticks and tick >= max_ticks:
             return 0
         time.sleep(interval_seconds)

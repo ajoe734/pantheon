@@ -2457,7 +2457,7 @@ def test_bounded_refresh_entrypoint_resolves_active_symbols_before_preflight() -
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = script.index("execute_bounded_source_refresh_entrypoint() {")
     body = script[start : script.index("\n}\n", start)]
-    finmind_guard = body.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    finmind_guard = body.index('tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"')
     readyz_wait = body.index(
         'curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5'
     )
@@ -3761,6 +3761,7 @@ def test_chip_admission_accepts_only_governed_dataset_and_exact_host_pairs():
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         hosts = ('openapi.taifex.com.tw,www.taifex.com.tw' if profile['base'] == 'tw-taifex-futures-options-chip'
+                 else 'api.finmindtrade.com' if profile['base'] == 'tw-finmind-fundamentals'
                  else 'openapi.twse.com.tw,www.tpex.org.tw')
         accepted = _chip_admission(cid, profile['dataset'], hosts)
         assert accepted.returncode == 0, accepted.stderr
@@ -3831,6 +3832,8 @@ elif args[:1] == ["inspect"]:
 elif args[:2] == ["image", "ls"]:
     for img_id, tags in imgs.items():
         short = img_id.split(":", 1)[1]
+        # containerd image store: untagged images only listed with -a/--all
+        if not tags and not ({{"-a", "--all"}} & set(args)): continue
         for t in (tags or ["<none>:<none>"]): print(f"{{t}}|sha256:{{short}}")
 elif args[:1] == ["rmi"]:
     assert "-f" not in args and "--force" not in args
@@ -3954,6 +3957,37 @@ def test_tx_daily_admission_is_exact_and_does_not_widen_the_ssf_profile():
     assert 'tw-taifex-tx-daily:taifex_tx_daily' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
 
 
+FINMIND_FUNDAMENTAL_PAIRS = (
+    ('tw-finmind-monthly-revenue', 'tw_monthly_revenue'),
+    ('tw-finmind-quarterly-statements', 'tw_financial_statement'),
+    ('tw-finmind-valuation', 'tw_valuation_bwibbu'),
+)
+
+
+def test_finmind_fundamentals_admission_is_exactly_the_three_datasets_on_the_exact_host():
+    host = 'api.finmindtrade.com'
+    for cid, dataset in FINMIND_FUNDAMENTAL_PAIRS:
+        assert _chip_admission(cid, dataset, host).returncode == 0
+        assert f'{cid}:{dataset}' in DEPLOY_SCRIPT.read_text(encoding='utf-8')
+        # a profile admits only its own dataset, on exactly the FinMind host
+        for other in [d for _, d in FINMIND_FUNDAMENTAL_PAIRS if d != dataset] + ['tw_broker_top', 'tw_price_daily', 'tw_institutional_flow', '']:
+            assert _chip_admission(cid, other, host).returncode != 0
+        for bad_hosts in (host + ',storage.googleapis.com', host + ',example.com', 'openapi.twse.com.tw,www.tpex.org.tw', ''):
+            assert _chip_admission(cid, dataset, bad_hosts).returncode != 0
+    # no other connector id gains these datasets, and no unlisted FinMind connector is admitted
+    assert _chip_admission('tw-finmind-broker-daily-report', 'tw_monthly_revenue', 'api.finmindtrade.com,storage.googleapis.com').returncode != 0
+    assert _chip_admission('tw-twse-tpex-official-market', 'tw_valuation_bwibbu', 'openapi.twse.com.tw,www.tpex.org.tw').returncode != 0
+    assert _chip_admission('tw-finmind-fundamentals', 'tw_monthly_revenue', host).returncode != 0
+    assert _chip_admission('tw-finmind-other', 'tw_monthly_revenue', host).returncode != 0
+
+
+def test_finmind_fundamentals_bounded_refresh_requires_the_credential_and_overrides_it_only_for_the_window():
+    source = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    for cid, _ in FINMIND_FUNDAMENTAL_PAIRS:
+        assert source.count(cid) >= 3
+    assert 'missing_credential' in source and 'FINMIND_API_TOKEN is required for the FinMind bounded refresh' in source
+
+
 def test_refresh_only_ssh_and_local_forward_timeout_and_max_records() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     ssh_start = source.index('  if [[ "${remote_component}" == "refresh-only" ]]; then')
@@ -4075,6 +4109,19 @@ def test_bounded_refresh_entrypoint_and_runtime_preserve_caller_max_records(
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(captured_up_env.read_text(encoding="utf-8"))["max_records"] == expected_max_records
+
+
+
+def test_finmind_fundamentals_bounded_prepare_binds_symbols_and_run_date_through_the_fanout():
+    text = DEPLOY_SCRIPT.read_text(encoding='utf-8')
+    body = text[text.index('prepare_bounded_source_refresh_dataset() {'):]
+    body = body[:body.index('PREPARE_DATASET_PY\n', body.index('PREPARE_DATASET_PY'))]
+    # No early return for fundamentals: the symbol-keyed fanout job supplies request.symbols and run_date.
+    head = body[:body.index('esac')]
+    assert 'tw_monthly_revenue' not in head.split('return 0')[0]
+    assert 'FINMIND_FUNDAMENTAL_BOUNDED' in body and 'is_fund' in body
+    assert 'FinMindTaiwanFundamentalsAdapter' in body
+    assert '"symbols": list(finmind_batches[0])' in body
 
 
 def _run_manage_refresh_runtime_shell(

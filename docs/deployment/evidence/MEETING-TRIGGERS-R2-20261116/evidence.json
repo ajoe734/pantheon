@@ -1,0 +1,22 @@
+{
+  "task_id": "MEETING-TRIGGERS-R2-20261116",
+  "hosted_behavior_claimed": false,
+  "commands": [
+    {"cmd": "PYTHONPATH=. python -m pytest services/persona/test_meeting_triggers.py services/persona/test_harness_cycle.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/persona/test_pool_autonomy_cycle.py -q", "result": "158 passed, 1 skipped (before the integration test was added; meeting_triggers file now 24 passed)"},
+    {"cmd": "PYTHONPATH=. python -m pytest services/persona/test_persona_cycle_controller.py -q", "result": "42 passed, 3 skipped before the new tests; 3 new meeting tests pass"}
+  ],
+  "acceptance": {
+    "1": "MT-1 weekly evolution day, MT-2 conditions, MT-3 + weekly outlier run by the first enrolled persona once per ISO week; no scheduler added (controller step meeting_step in persona_cycle_controller.py)",
+    "2": "MT-4 per attribution record (attribution reads via AttributionPort); MT-6 via convene_quarterly_review before paper_cycle_once, evidence_ref attached to pool_health_factors.quarterly_review of every persona line",
+    "3": "consult_request with params.meeting_type opens the meeting within cycle/week/day budgets, else decision status meeting_refused with reason; harness_cycle leaves that decision alone",
+    "4": "MeetingTriggerConfig (env PANTHEON_MEETING_<FIELD>) carries design defaults; tests cover each trigger firing and not firing"
+  },
+  "provider_integration": "C1 meeting routes merged on dev (MEETING-PROTOCOL-ENGINE-R2): one integration test drives the real consultation app and real ConsultationServiceClient.open_persona_meeting (idempotent replay returns the same meeting). C3 attribution owner not merged here: AttributionPort doubled at its function edge; hosted acceptance covers it.",
+  "differences_and_gaps": [
+    "No 'weekly evolution day' existed in the repo: default is a stable hash of persona_id to Mon-Fri, overridable by persona.metadata.meeting_evolution_weekday.",
+    "MT-2 reads observe.pending_lesson_candidates and observe.counterfactual_window ({window_id, trading_days}); no owner populates them yet, so those two conditions record not_fired until an owner supplies them. Open harness patches (persona metadata) fire today.",
+    "The capital paper-allocation request forbids extra fields, so the MT-6 minutes reference rides in pool_health[persona].quarterly_review (stored by the owner as pool_health_factors). A pending review holds the run; a refused/unavailable review is recorded and the run proceeds under its own gates.",
+    "Attribution weekly run uses window_end = previous Sunday; attribution env: PANTHEON_ATTRIBUTION_API_URL / PANTHEON_ATTRIBUTION_SERVICE_TOKEN."
+  ],
+  "credentials_present": false
+}

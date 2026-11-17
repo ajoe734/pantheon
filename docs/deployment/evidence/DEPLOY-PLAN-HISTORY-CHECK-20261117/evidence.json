@@ -1,0 +1,36 @@
+{
+  "task_id": "DEPLOY-PLAN-HISTORY-CHECK-20261117",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "reproduction_before_fix": {
+    "method": "real StagePlanner.create_plan through POST /api/deployment/plans (TestClient); pre-fix behaviour emulated by setting MARKET_SNAPSHOT_SERVED_CLOSES to 10**9 (the dev checkout could not be added as a second worktree: read-only .git/worktrees)",
+    "close_to_close_momentum_lookback_120": {"status": 201, "market_data_policy": {"owner": "source-ingest", "contract": "latest_stored_normalized", "minimum_closes": 120, "max_age_seconds": 86400}},
+    "factor_rule_v1_z_window_504": {"status": 201, "market_data_policy": {"owner": "source-ingest", "contract": "latest_stored_normalized", "minimum_closes": 504, "max_age_seconds": 86400}},
+    "producer_refusal": "SignalDecisionUnavailable('market_input_insufficient', 'binding <id> requires 120 closes, got <=60') at services/execution/lean_runtime/paper_signal_producer.py:1584-1590"
+  },
+  "after_fix": {
+    "momentum_120": {"status": 422, "body": {"detail": "history_unavailable: strategy kind 'close_to_close_momentum' needs 120 closes but the market snapshot serves 60"}},
+    "factor_rule_504": {"status": 422, "body": {"detail": "history_unavailable: strategy kind 'factor_rule_v1' needs 504 closes but the market snapshot serves 60"}},
+    "error_path": "DeploymentPlanError -> HTTPException(422, detail) in create_deployment_plan; /plans/validate returns ok=false with the same text; no new route; plan not persisted (GET 404)"
+  },
+  "change": {
+    "services/deployment/service.py": "MARKET_SNAPSHOT_SERVED_CLOSES = 60 (mirrors SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES default, services/source_ingestion/runtime.py:298) and _refuse_history_beyond_snapshot(); called after minimum_closes derivation, skipped when plan.metadata already has market_data_policy; persona_portfolio_v1 names the offending member_id",
+    "untouched": ["strategy_artifact_minimum_closes", "paper_signal_producer", "Source ingestion"]
+  },
+  "code_path_audit": {
+    "services/deployment/service.py:380 DeploymentPlanService.create_plan (inline paper artifact block ~ lines 506-570)": "the only place that derives or writes market_data_policy.minimum_closes; reached by POST /api/deployment/plans (~L2265), POST /api/deployment/plans/validate (~L2280); checked",
+    "pool publish / envelope plans": "same create_plan, persona_portfolio_v1 branch; checked per member",
+    "services/promotion/main.py:453, services/control-plane/cron/service.py:248, services/control-plane/governance/paper_deployment_plan.py:171, services/control-plane/ooda/paper_loop_packet.py:218, services/control-plane/governance/smoke_test_deployment_plan.py": "use the governance StagePlanner.create_plan (services/control-plane/governance/deployment_plan.py:535), which never derives or writes minimum_closes; not checked, nothing to check",
+    "scripts/probe_dev_runtime_paper_lifecycle.py:1028": "hosted probe passes explicit minimum_closes=2 policy; explicit policy skips the check by design",
+    "persona provisioning / trial activation": "grep for minimum_closes across py/ts/sh found no other writer; those paths reach plans only via the routes above"
+  },
+  "validation": {
+    "commands": [
+      "/tmp/ssc-venv/bin/python -m pytest services/deployment/test_pool_envelope_plan.py services/deployment/test_inline_paper_execution_projection.py -q  -> 17 passed",
+      "/tmp/ssc-venv/bin/python -m pytest services/deployment -q -> 266 passed, 1 error (test_approved_paper_command_reaches_terminal_plan_and_binding needs GOV_APPROVAL_TEST_DSN, environmental, untouched by this change)"
+    ],
+    "new_tests": ["test_plan_needing_more_closes_than_snapshot_serves_is_refused", "test_plan_needing_exactly_served_closes_is_built", "test_explicit_market_data_policy_skips_history_check", "test_factor_rule_plan_needing_504_bars_is_refused", "test_factor_rule_plan_within_snapshot_is_built", "test_envelope_member_needing_more_than_snapshot_is_refused_naming_member"]
+  },
+  "missing_files": [],
+  "note": "services/deployment/test_service.py was in scope but unchanged"
+}

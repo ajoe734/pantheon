@@ -1,0 +1,10 @@
+{
+  "task": "PERSONA-SERVICE-PANTHEON-ENV-WIRING-20261116",
+  "hosted_evidence": "dev 6356e8523 @2026-11-16T16:52Z: approvals apv-persona-enroll-* approved (scope environment=dev, stages=[paper]); persona paper_enrollment refused GOVERNANCE_DECISION_INVALID; PANTHEON_ENV empty in pantheon-persona-1, dev in pantheon-governance-1",
+  "change": "docker-compose.yml persona service: PANTHEON_ENV: ${PANTHEON_ENV:-dev}",
+  "test": "scripts/test_persona_cycle_owner_ports_compose_contract.py::test_approval_usage_context_services_all_wire_pantheon_env",
+  "validation": {
+    "before_fix_compose": "new test fails (persona missing PANTHEON_ENV)",
+    "after_fix": "9 passed"
+  }
+}

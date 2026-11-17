@@ -1,0 +1,28 @@
+{
+  "_note": "Published TSMC (2330) figures transcribed by hand into the FinMind response shape; not a raw provider response. Monthly revenue: TSMC monthly revenue reports (NT$). Quarterly amounts: TSMC quarterly management reports (NT$), rounded to NT$ million; ratios in tests are computed from these amounts.",
+  "TaiwanStockMonthRevenue": [
+    {"date": "2023-02-01", "stock_id": "2330", "country": "Taiwan", "revenue": 200050000000, "revenue_month": 1, "revenue_year": 2023},
+    {"date": "2024-01-01", "stock_id": "2330", "country": "Taiwan", "revenue": 176299000000, "revenue_month": 12, "revenue_year": 2023},
+    {"date": "2024-02-01", "stock_id": "2330", "country": "Taiwan", "revenue": 215785000000, "revenue_month": 1, "revenue_year": 2024}
+  ],
+  "TaiwanStockFinancialStatements": [
+    {"date": "2024-03-31", "stock_id": "2330", "type": "Revenue", "value": 592644000000},
+    {"date": "2024-03-31", "stock_id": "2330", "type": "GrossProfit", "value": 314700000000},
+    {"date": "2024-03-31", "stock_id": "2330", "type": "OperatingIncome", "value": 249000000000},
+    {"date": "2024-03-31", "stock_id": "2330", "type": "EPS", "value": 8.7},
+    {"date": "2024-03-31", "stock_id": "2330", "type": "EquityAttributableToOwnersOfParent", "value": 225490000000},
+    {"date": "2023-12-31", "stock_id": "2330", "type": "Revenue", "value": 625529000000},
+    {"date": "2023-12-31", "stock_id": "2330", "type": "GrossProfit", "value": 319400000000},
+    {"date": "2023-12-31", "stock_id": "2330", "type": "EPS", "value": 9.21},
+    {"date": "2023-09-30", "stock_id": "2330", "type": "Revenue", "value": 546737000000},
+    {"date": "2023-09-30", "stock_id": "2330", "type": "EPS", "value": 5.0},
+    {"date": "2023-06-30", "stock_id": "2330", "type": "Revenue", "value": 480841000000},
+    {"date": "2023-06-30", "stock_id": "2330", "type": "EPS", "value": 5.14}
+  ],
+  "TaiwanStockBalanceSheet": [
+    {"date": "2024-03-31", "stock_id": "2330", "type": "EquityAttributableToOwnersOfParent", "value": 2900000000000}
+  ],
+  "TaiwanStockPER": [
+    {"date": "2024-03-29", "stock_id": "2330", "dividend_yield": 1.4, "PER": 26.5, "PBR": 6.6}
+  ]
+}

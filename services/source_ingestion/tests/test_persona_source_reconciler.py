@@ -960,7 +960,10 @@ def test_default_chip_requirements_provision_independent_idempotent_daily_instan
         assert cfg.fetch['request']['dataset'] == profile['dataset']
         assert cfg.fetch['max_records'] == 500
         assert cfg.fetch['allow_empty'] is False
-        if 'venues' in profile:
+        if profile['base'] == 'tw-finmind-fundamentals':
+            # Symbols and run date come from the active-universe fanout job, never the stored request.
+            assert 'symbols' not in cfg.fetch['request']
+        elif 'venues' in profile:
             assert cfg.fetch['request']['venues'] == profile['venues']
         else:
             assert cfg.fetch['request']['contracts'] == profile['contracts']
