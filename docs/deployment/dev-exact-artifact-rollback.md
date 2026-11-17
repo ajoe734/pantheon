@@ -324,3 +324,34 @@ recreating, if it differs from the image running when the refresh began.
 
 Evidence is functional (fake Docker at 57 services, shell fixture); hosted
 verification is performed separately by the coordinator.
+
+## Steady stack completeness (DEV-DEPLOY-STACK-COMPLETENESS-20261117)
+
+Recorded incident: on 2026-11-16 19:19Z a failed deploy's compensation left
+`source-ingest-scheduler` stopped for six hours while every check was green,
+because restore compared only the BFF version and the baseline listed only
+services that were running at capture.
+
+- **Expected set is derived, not observed.** `expected_steady_services` in
+  `scripts/deploy_nonprod_vm.sh` resolves `docker compose config --format json`
+  for the selected profiles and keeps every service whose restart policy is
+  `unless-stopped` or `always`. One-shot services (`no`/`on-failure`, e.g. exit 0
+  migrations), services outside the selected profiles, and the bounded source
+  refresh scheduler (restart `no`) are not expected and never reported as drift.
+- **Baseline.** `capture_steady_service_baseline` records every expected service;
+  one that was not running at capture is recorded with an empty image, so it is
+  still required to be running later. Failing to derive the set fails closed.
+- **After compose up** `verify_steady_stack_complete` runs the exact component
+  check over the whole expected set (plus the required loop workers): one
+  container per service, running, healthy, on the Compose image, revision label
+  equal to the release SHA when the image carries one.
+- **After the in-script rollback** `verify_steady_services_restored` uses the same
+  baseline; a stopped service is started, a missing or wrong-image one is
+  reported as `steady_service_compensation_incomplete` and the rollback is not
+  reported as verified.
+- **Restore accepted baseline.** The job collects live container state over SSH
+  (`scripts/dev_steady_state_rows.py`), passes it with `--steady-state-file` to
+  `verify-preconditions` and `restore-accepted-baseline`, so a stack whose BFF
+  matches the accepted backend but whose steady service is stopped is restored
+  instead of refused. After the restore, `--mode verify-steady-state` re-checks
+  the stack and exits non-zero on any drift.
