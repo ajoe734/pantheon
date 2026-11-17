@@ -12271,37 +12271,41 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
 
     def test_same_family_reassignment_records_independence_exception(self) -> None:
-        event = audited_reassignment_event(
-            task_id="REG-002", old_owner="Claude", new_owner="Claude",
-            old_reviewer="Antigravity2", new_reviewer="Claude2",
+        event = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Antigravity2", new_reviewer="Claude2",
+            )
         )
         record = event["review_independence_exception"]
         self.assertEqual(record["owner_family"], "claude")
         self.assertEqual({c["family"] for c in record["considered"]}, {"antigravity", "codex", "copilot", "piastra"})
         self.assertLess(len(json.dumps(record)), 1024)
-        # Still a valid canonical event after archive: the audit reader keeps it.
+        # Still a valid canonical event: the extra field is outside the digest.
         self.assertIsNotNone(task_machine.validate_assignment_activity_event(event))
-        with_evidence = task_machine.build_assignment_activity_event(
-            task_id="REG-002", timestamp="2026-11-17T06:00:00Z",
-            assignment=task_machine.assignment_transition(
-                "Claude", "Antigravity2", "Claude", "Claude2", actor="Orchestrator", reason="r"),
-            old_generation=1, new_generation=2,
-            capacity_evidence={"codex": "Codex2:terminal_quota:codex"},
+        with_evidence = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Antigravity2", new_reviewer="Claude2",
+            ),
+            {"codex": "Codex2:terminal_quota:codex"},
         )
         reasons = {c["family"]: c["reason"] for c in with_evidence["review_independence_exception"]["considered"]}
         self.assertEqual(reasons["codex"], "Codex2:terminal_quota:codex")
 
     def test_cross_family_reassignment_records_no_exception(self) -> None:
-        event = audited_reassignment_event(
-            task_id="REG-002", old_owner="Claude", new_owner="Claude",
-            old_reviewer="Claude2", new_reviewer="Codex",
+        event = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Claude2", new_reviewer="Codex",
+            )
         )
         self.assertNotIn("review_independence_exception", event)
 
     def test_every_configured_agent_has_a_model_family(self) -> None:
         config = json.loads((Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json").read_text())
         names = set(config.get("agents", {})) | set(ai_status.KNOWN_AGENTS)
-        missing = sorted(n for n in names if n != "Human/Ops" and task_machine.agent_family(n) is None)
+        missing = sorted(n for n in names if n != "Human/Ops" and ai_status.agent_family(n) is None)
         self.assertEqual(missing, [])
 
     def test_done_reviewer_reassignment_ignores_pre_delivery_cycle(self) -> None:

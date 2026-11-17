@@ -10233,6 +10233,84 @@ def resolve_obsolete_worker_recovery_receipt(
     return True
 
 
+# Model families per AGENTS.md "Review Independence". Reviewer must be of a
+# different family than the owner whenever another family has capacity.
+AGENT_FAMILIES: dict[str, str] = {
+    "claude": "claude",
+    "claude2": "claude",
+    "codex": "codex",
+    "codex2": "codex",
+    "antigravity": "antigravity",
+    "antigravity2": "antigravity",
+    "copilot": "copilot",
+    "piastra": "piastra",
+}
+_REVIEW_EXCEPTION_REASON_LIMIT = 120
+
+
+def agent_family(name: object) -> str | None:
+    """Return the model family of an agent name, or None when it has none."""
+
+    key = str(name or "").strip().casefold()
+    if key in AGENT_FAMILIES:
+        return AGENT_FAMILIES[key]
+    # codex1_1 / codex2_3 style lane aliases belong to the codex family.
+    if key.startswith("codex"):
+        return "codex"
+    return None
+
+
+def build_review_independence_exception(
+    *,
+    owner: object,
+    reviewer: object,
+    capacity_evidence: Mapping[str, Any] | None = None,
+) -> dict[str, object] | None:
+    """Record why a same-family reviewer was used, or None when independent.
+
+    Bounded: at most one entry per other family (four), each reason capped, so
+    the record adds well under 1 KiB to one activity event per reassignment.
+    """
+
+    owner_family = agent_family(owner)
+    reviewer_family = agent_family(reviewer)
+    if owner_family is None or reviewer_family is None:
+        return None
+    if owner_family != reviewer_family:
+        return None
+    evidence = {
+        str(key).strip().casefold(): str(value or "").strip()
+        for key, value in (capacity_evidence or {}).items()
+    }
+    considered = []
+    for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family}):
+        reason = evidence.get(family) or "no capacity evidence supplied"
+        considered.append(
+            {"family": family, "reason": reason[:_REVIEW_EXCEPTION_REASON_LIMIT]}
+        )
+    return {
+        "owner_family": owner_family,
+        "reviewer_family": reviewer_family,
+        "considered": considered,
+    }
+
+
+def attach_review_independence_exception(
+    event: dict[str, Any],
+    capacity_evidence: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Add the exception record to a canonical reassignment event, if due."""
+
+    exception = build_review_independence_exception(
+        owner=event.get("new_owner"),
+        reviewer=event.get("new_reviewer"),
+        capacity_evidence=capacity_evidence,
+    )
+    if exception is not None:
+        event["review_independence_exception"] = exception
+    return event
+
+
 def _review_exception_capacity_evidence(
     config: dict[str, Any], owner: str, reviewer: str
 ) -> dict[str, str]:
@@ -10242,8 +10320,8 @@ def _review_exception_capacity_evidence(
     bounded (one health lookup per configured agent, once per reassignment).
     """
 
-    owner_family = rewrite_task_machine.agent_family(owner)
-    if owner_family is None or owner_family != rewrite_task_machine.agent_family(reviewer):
+    owner_family = agent_family(owner)
+    if owner_family is None or owner_family != agent_family(reviewer):
         return {}
     try:
         state = load_runtime_state(config)
@@ -10252,7 +10330,7 @@ def _review_exception_capacity_evidence(
     evidence: dict[str, str] = {}
     viable: set[str] = set()
     for agent_id in sorted(config.get("agents", {}) or {}):
-        family = rewrite_task_machine.agent_family(agent_id)
+        family = agent_family(agent_id)
         if family is None or family == owner_family:
             continue
         try:
@@ -10437,7 +10515,10 @@ def _persist_task_reassignment_locked(
         assignment=assignment,
         old_generation=old_generation,
         new_generation=old_generation + 1,
-        capacity_evidence=_review_exception_capacity_evidence(
+    )
+    attach_review_independence_exception(
+        event,
+        _review_exception_capacity_evidence(
             config, assignment.new_owner, assignment.new_reviewer
         ),
     )

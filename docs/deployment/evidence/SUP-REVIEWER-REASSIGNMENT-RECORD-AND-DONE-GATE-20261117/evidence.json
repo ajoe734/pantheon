@@ -3,7 +3,7 @@
   "owner": "Claude",
   "reviewer": "Claude2",
   "review_independence_exception": "no other model family has capacity on 2026-11-17 (operator-recorded in task brief)",
-  "delivery": "scripts/ai_status.py, .orchestrator/rewrite/task_machine.py, .orchestrator/supervisor.py, docs/operations/reviewer-reassignment-and-done-gate.md",
+  "delivery": "scripts/ai_status.py, .orchestrator/supervisor.py, docs/operations/reviewer-reassignment-and-done-gate.md",
   "verification": [
     "python3 -m unittest scripts.test_ai_status: 528 tests OK",
     "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor: only OrphanUnmergedWorktreeStalenessTests (3) fail; they need git worktree writes and this sandbox's .git is read-only (not touched by this change)"

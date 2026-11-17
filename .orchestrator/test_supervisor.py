@@ -14547,6 +14547,12 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
 class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
     CONFIG = {"agents": {"claude": {}, "claude2": {}, "codex": {}, "antigravity": {}}}
 
+    def test_family_map_matches_ai_status_and_covers_config_agents(self) -> None:
+        self.assertEqual(supervisor.AGENT_FAMILIES, ai_status.AGENT_FAMILIES)
+        config = json.loads((Path(__file__).resolve().parent / "config.json").read_text())
+        for name in config.get("agents", {}):
+            self.assertIsNotNone(supervisor.agent_family(name), name)
+
     def test_cross_family_pair_yields_no_evidence(self) -> None:
         self.assertEqual(
             supervisor._review_exception_capacity_evidence(self.CONFIG, "Claude", "Codex"), {}

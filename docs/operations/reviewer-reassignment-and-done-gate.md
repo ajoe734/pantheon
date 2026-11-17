@@ -6,7 +6,7 @@ governed runtime promotion.
 
 ## 1. Independence exception record
 
-Family map (AGENTS.md "Review Independence"), code: `task_machine.AGENT_FAMILIES`:
+Family map (AGENTS.md "Review Independence"), code: `AGENT_FAMILIES` in `scripts/ai_status.py` and `.orchestrator/supervisor.py` (a test asserts the two are identical):
 Claude/Claude2 = claude, Codex/Codex2 (and `codexN_M` lanes) = codex,
 Antigravity/Antigravity2 = antigravity, plus copilot and piastra. A test fails if
 a configured or known agent has no family.
