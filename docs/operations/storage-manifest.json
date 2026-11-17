@@ -5485,6 +5485,74 @@
   },
   {
    "bound_proof": {
+    "contains": "ON CONFLICT(symbol, dataset) DO UPDATE",
+    "file": "services/source_ingestion/snapshot_current_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one current record per (symbol, dataset); last SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES closes; superseded version replaced in place",
+   "cleanup": "newer version replaces the row; delisted/expired symbols deleted in one transaction",
+   "growth_driver": "SQLite WAL current-record snapshot store",
+   "growth_per_day": "zero net rows: replacement in place (SOURCE-SNAPSHOT-CURRENT-RECORD-20261117)",
+   "kind": "sqlite",
+   "name": ".current.sqlite3",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/snapshot_current_store.py"
+   ]
+  },
+  {
+   "bound_proof": {
+    "contains": "ON CONFLICT(symbol, dataset) DO UPDATE",
+    "file": "services/source_ingestion/snapshot_current_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one current record per (symbol, dataset); last SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES closes; superseded version replaced in place",
+   "cleanup": "newer version replaces the row; delisted/expired symbols deleted in one transaction",
+   "growth_driver": "opens the snapshot current-record SQLite database",
+   "growth_per_day": "zero net rows: replacement in place (SOURCE-SNAPSHOT-CURRENT-RECORD-20261117)",
+   "kind": "sqlite_connect",
+   "name": "services/source_ingestion/snapshot_current_store.py",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/snapshot_current_store.py"
+   ]
+  },
+  {
+   "bound_proof": {
+    "contains": "ON CONFLICT(symbol, dataset) DO UPDATE",
+    "file": "services/source_ingestion/snapshot_current_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one current record per (symbol, dataset); last SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES closes; superseded version replaced in place",
+   "cleanup": "newer version replaces the row; delisted/expired symbols deleted in one transaction",
+   "growth_driver": "one row per symbol and dataset, replaced by newer version",
+   "growth_per_day": "zero net rows: replacement in place (SOURCE-SNAPSHOT-CURRENT-RECORD-20261117)",
+   "kind": "table",
+   "name": "snapshot_current",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/snapshot_current_store.py"
+   ]
+  },
+  {
+   "bound_proof": {
+    "contains": "ON CONFLICT(symbol, dataset) DO UPDATE",
+    "file": "services/source_ingestion/snapshot_current_store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one current record per (symbol, dataset); last SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES closes; superseded version replaced in place",
+   "cleanup": "newer version replaces the row; delisted/expired symbols deleted in one transaction",
+   "growth_driver": "fixed key/value metadata rows",
+   "growth_per_day": "zero net rows: replacement in place (SOURCE-SNAPSHOT-CURRENT-RECORD-20261117)",
+   "kind": "table",
+   "name": "snapshot_meta",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/snapshot_current_store.py"
+   ]
+  },
+  {
+   "bound_proof": {
     "contains": "?mode=ro",
     "file": "services/telemetry/heartbeat_retention.py"
    },

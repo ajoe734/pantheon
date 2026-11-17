@@ -147,7 +147,9 @@ def test_cli_outputs_no_secrets(tmp_path):
     path = tmp_path / "generated.env"
     result = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("issue_dev_paper_principals.py")),
-         "--output-env", str(path)], env={**os.environ, **configured()},
+         "--output-env", str(path)],
+        env={**os.environ, **configured(),
+             "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": str(tmp_path / "broker.token")},
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stderr
@@ -586,3 +588,30 @@ def test_governance_binding_readers_are_distinct_read_only_and_least_privilege()
         assert variable in issuer.CONSUMER_FILES["governance"]
         assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
         assert variable not in issuer.WRITERS
+
+
+def test_broker_environment_is_persistent_private_and_dev_only(tmp_path):
+    from scripts.issue_dev_paper_principals import broker_environment
+    env = {"PANTHEON_ENV": "dev", "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": str(tmp_path / "s" / "t")}
+    first = broker_environment(env)
+    assert first["PERSONA_TOOL_BROKER_ENABLED"] == "true"
+    assert len(first["PERSONA_TOOL_BROKER_TOKEN"]) >= 32
+    assert broker_environment(env) == first
+    assert (tmp_path / "s" / "t").stat().st_mode & 0o077 == 0
+    import pytest
+    with pytest.raises(ValueError):
+        broker_environment({**env, "PANTHEON_ENV": "prod"})
+
+
+def test_cli_output_env_enables_broker_without_printing_token(tmp_path, monkeypatch, capsys):
+    from scripts import issue_dev_paper_principals as m
+    monkeypatch.setattr(m, "issue_environment", lambda env: {"X": "1"})
+    for k, v in {"PANTHEON_ENV": "dev", "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": str(tmp_path / "t")}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED", "true")
+    monkeypatch.setattr("sys.argv", ["x", "--output-env", str(tmp_path / "o.env")])
+    assert m.main() == 0
+    out = (tmp_path / "o.env").read_text()
+    token = (tmp_path / "t").read_text()
+    assert "export PERSONA_TOOL_BROKER_ENABLED=true" in out and token in out
+    assert token not in capsys.readouterr().out

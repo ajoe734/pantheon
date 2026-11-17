@@ -114,3 +114,71 @@ def test_market_without_capture_evidence_attests_nothing_and_names_missing_datas
     att = market["survivorship_attestation"]
     assert att["suspended"]["missing_dataset"].startswith("tw_trading_suspension")
     _, _ = _market(market)
+
+
+# --- SOURCE-MARKET-STORE-BACKFILL-AND-CLEANUP-20261118-R2: bars through DailyBarsReader -----------------
+
+def _bars_state():
+    from services.source_ingestion.security_listing import ListingState
+
+    state = ListingState(last_success_date="2026-11-17")
+    for sym in ("2330", "2317"):
+        state.allowlist[sym] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                                "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    return state
+
+
+def _backfilled(tmp_path):
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+
+    _write(tmp_path, [_row(s, d, 100 + i, volume=i * 10) for s in ("2330.TW", "2317.TW")
+                      for i, d in enumerate(["2026-10-29", "2026-10-30"])])
+    bf.backfill(tmp_path, _bars_state(), today="2026-11-17", apply=True)
+
+
+def _core(market):
+    return {s: [{k: b[k] for k in ("event_time", "close", "open", "high", "low", "volume", "suspended") if k in b}
+                for b in p["bars"]] for s, p in market["symbols"].items()}
+
+
+def test_daily_bars_reader_gives_the_same_bars_and_sessions_and_rollback_setting(tmp_path, monkeypatch):
+    _backfilled(tmp_path)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    old = feed.build_candidate_pool_market(tmp_path, INPUTS, decision_day="2026-11-02")
+    feed._CACHE.clear()
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    new = feed.build_candidate_pool_market(tmp_path, INPUTS, decision_day="2026-11-02")
+    assert _core(new) == _core(old)
+    assert new["trading_sessions"] == old["trading_sessions"]
+    assert new["calendar_coverage_through"] == old["calendar_coverage_through"]
+    assert new["source_refs"][0].startswith("daily_bars@sha256:")
+    _market(new)  # the registry's validator accepts it
+    feed._CACHE.clear()
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")  # rollback state
+    assert feed.build_candidate_pool_market(tmp_path, INPUTS, decision_day="2026-11-02")["source_refs"][0].startswith("normalized/")
+
+
+def test_daily_bars_mode_has_no_run_files_needed_for_bars_and_attestation_fails_closed(tmp_path, monkeypatch):
+    import shutil
+
+    _backfilled(tmp_path)
+    shutil.rmtree(tmp_path / "normalized")
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    market = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    assert set(market["symbols"]) == {"2330.TW", "2317.TW"}
+    assert market["includes_delisted"] is False  # no capture evidence left: never assumed
+
+
+def test_daily_bars_mode_names_the_dataset_when_daily_bars_are_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    with pytest.raises(feed.CandidatePoolMarketNeedsData) as err:
+        feed.build_candidate_pool_market(tmp_path, INPUTS)
+    assert err.value.dataset == "tw_price_daily"
+
+
+def test_daily_bars_mode_cache_follows_the_manifests(tmp_path, monkeypatch):
+    _backfilled(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    first = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    assert feed.build_candidate_pool_market(tmp_path, INPUTS) is first
