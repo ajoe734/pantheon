@@ -153,7 +153,10 @@ class HostedShapedTests(unittest.TestCase):
         stores = {r["store"] for r in report["results"] if r["status"] == "pass"}
         self.assertTrue({"daily_bars", "lineage", "market_snapshot_current", "listing_allowlist"} <= stores)
         daily = cmb.measure_daily_bars()
-        self.assertEqual(daily["rows"], 22_500)
+        self.assertEqual(daily["rows"], 52_958)
+        self.assertLessEqual(daily["day_bytes"], 4_000_000)
+        self.assertLessEqual(daily["lineage_day_bytes"], 400_000)
+        self.assertLessEqual(daily["bytes_per_row"] * 53_000, 4_000_000)
 
     def test_a_store_row_shrunk_in_the_design_fails_the_run(self) -> None:
         text = cmb.DESIGN_PATH.read_text(encoding="utf-8").replace("<= 4.0 MB (per day: 53,000", "<= 0.5 MB (per day: 53,000", 1)
