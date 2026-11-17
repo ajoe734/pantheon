@@ -172,6 +172,7 @@
     "mismatches": 0
   },
   "health_payload_acceptance_12": "GET /health -> latest_market_snapshot_journal.snapshot_current: record_count, live_bytes, max_record_bytes, db_bytes, wal_bytes, file_bytes, mismatch_count, last_export_at, export_pending, budget_alarms, last_export_error, shadow_error; and market_snapshot_store at the top level",
+  "host_load_caveat": "The timing bounds were measured on a shared 12-core worker VM. On a quiet host the run recorded reader process max 67.7 ms, in-process reader thread max 94.7 ms, write transaction max 66 ms (p99 of 22 batches). Three later runs under host load average 14 to 14.4 gave: pass (reader 85/92 ms, txn max 96 ms), fail (reader thread 131 ms, txn max 309 ms) and fail (reader process 164 ms) while a second pytest suite ran in parallel. The bound test is therefore load sensitive around its 100 ms limit; the hosted acceptance run must repeat it on a quiet host. No test was relaxed.",
   "hosted_shaped_data": {
     "closes_per_key": 60,
     "collector_batch": 500,
@@ -184,6 +185,9 @@
     "construct LatestMarketSnapshotStore(<copy of hosted journal>, store_mode='sqlite') on a copy and read journal_stats()['snapshot_current'] for the real record size"
   ],
   "intraday_acceptance_9": "tw_price_1m is replaced in place through the same path; append to tw_price_5m/15m/30m/60m raises not_stored_derive_on_read in every mode; GET snapshots/latest?frequency=5m|15m|30m|60m answers 404 {code: not_stored_derive_on_read, derive_from: tw_price_1m}. market_snapshot_writer_samples keeps writing the previous-reader protocol witnesses (including those dataset names) as journal bytes whatever the flag says.",
+  "post_merge_validation": {
+    "after_merge_of_origin_dev": "11 snapshot suites (universe, frequency isolation, intraday projection, latest snapshot x3, incremental read, compact encoding, pipeline isolation, receipt refs): 149 passed, 1 skipped; test_snapshot_current_record_store.py: 34 passed and the full-day bounds test passed on a rerun alone (see host_load_caveat)"
+  },
   "previous_reader_acceptance_8": {
     "fixture": "services/source_ingestion/tests/fixtures/requirement_state_e7ec353.py = git show e7ec353d6b9917b4d92cca766d4cd439a47edc2d:services/source_ingestion/requirement_state.py (73367 bytes, blob 83070f80fc19b8131d9a489d10d20863db09c785)",
     "tests": [
