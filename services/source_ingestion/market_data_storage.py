@@ -42,6 +42,49 @@ def tw_price_daily_run_files_enabled(env: Mapping[str, str] | None = None) -> bo
     raise ValueError(f"{TW_PRICE_DAILY_RUN_FILES_ENV}={raw!r} is not one of on, off")
 
 
+# SOURCE-DATASETS-KEYED-WRITE-20261119: three named settings, defaults keep today's reads working.
+KEYED_DATASETS_WRITE_ENV = "PANTHEON_KEYED_DATASETS_WRITE"  # dual (default) | keyed_only | run_files
+KEYED_DATASET_READER_ENV = "PANTHEON_KEYED_DATASET_READER"  # run_files (default, old read) | keyed
+FEATURE_FILES_ENV = "PANTHEON_FEATURE_FILES"  # off (default: derived on read, not stored) | on (old write)
+
+
+def _env_choice(name: str, allowed: Sequence[str], default: str, env: Mapping[str, str] | None) -> str:
+    import os
+
+    raw = str((env if env is not None else os.environ).get(name, "") or "").strip().lower()
+    if raw == "":
+        return default
+    if raw in allowed:
+        return raw
+    raise ValueError(f"{name}={raw!r} is not one of {', '.join(allowed)}")
+
+
+def keyed_datasets_write_mode(env: Mapping[str, str] | None = None) -> str:
+    """dual: run files and keyed store; keyed_only: keyed store only for declared datasets; run_files: old only."""
+    return _env_choice(KEYED_DATASETS_WRITE_ENV, ("dual", "keyed_only", "run_files"), "dual", env)
+
+
+def keyed_dataset_reader_mode(env: Mapping[str, str] | None = None) -> str:
+    return _env_choice(KEYED_DATASET_READER_ENV, ("run_files", "keyed"), "run_files", env)
+
+
+def feature_files_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Derived feature files stay written (dual-write step of the rollout) until the named setting is
+    ``off``; training-session authority still reads ``feature_refs``, so the stop is an explicit rollout step."""
+    return _env_choice(FEATURE_FILES_ENV, ("on", "off"), "on", env) == "on"
+
+
+def normalized_dataset_base(root: str | Path, dataset: str, *, env: Mapping[str, str] | None = None) -> Path:
+    """Directory a reader scans for ``date=*/<file>.jsonl[.gz]`` of a dataset. Declared 6A datasets
+    resolve to the keyed store when ``PANTHEON_KEYED_DATASET_READER=keyed``; everything else (and the
+    default) is the run-file tree. Both trees hold the same record shape."""
+    from .daily_bars_store import KEYED_DATASETS, keyed_dataset_dir
+
+    if keyed_dataset_reader_mode(env) == "keyed" and dataset in KEYED_DATASETS:
+        return keyed_dataset_dir(root, dataset)
+    return Path(root) / "normalized" / dataset
+
+
 def _run_observed_at(result: Any) -> str:
     """Observation time of a run = its recorded finish time (stable across replays), else now."""
     try:
@@ -219,6 +262,18 @@ class MarketDataStorageManifest:
         }
 
 
+def _compact_keyed_record(record: SourceRecord, dataset: str) -> dict[str, Any]:
+    """Record shape of the keyed store = the normalized run-file shape, minus what the run-file tree
+    already holds per run: ``content_ref`` (a per-run raw pointer) and metadata entries that repeat
+    the same value inside ``normalized_row``. Readers read ``metadata.normalized_row`` and fall back to
+    the row for ``available_time`` / ``ingest_time``, so values are unchanged."""
+    meta = dict(record.metadata)
+    nrow = meta.get("normalized_row")
+    if isinstance(nrow, Mapping):
+        meta = {k: v for k, v in meta.items() if k == "normalized_row" or k not in nrow or nrow[k] != v}
+    return {"source_id": record.source_id, "connector_id": record.connector_id, "dataset": dataset, "metadata": meta}
+
+
 class MarketDataStorageWriter:
     """Writes bounded JSONL dev artifacts and returns storage refs."""
 
@@ -228,16 +283,42 @@ class MarketDataStorageWriter:
         *,
         daily_bars_store: Any | None = None,
         listing_filter: Any | None = None,
+        listing_provider: Any | None = None,
     ) -> None:
         from .daily_bars_store import DailyBarsStore
 
         # SOURCE-WARRANT-LISTING-EXPIRY: defence in depth. A tw_price_daily record whose symbol is in
         # no current exchange listing (expired warrant, unknown code) is not stored. None = off.
         self.listing_filter = listing_filter
+        # SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118: ``HostedListing`` (security_listing). Builds one
+        # filter per run from the dated hosted state; mode shadow counts only, enforce skips, off reads nothing.
+        self.listing_provider = listing_provider
 
         self.root = Path(root)
         # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
         self.daily_bars_store = daily_bars_store if daily_bars_store is not None else DailyBarsStore(self.root)
+        self.keyed_errors: dict[str, str] = {}
+        self.keyed_counters: dict[str, int] = {"partitions_written": 0, "partitions_unchanged": 0, "rejected_no_key": 0}
+
+    def _write_keyed(self, dataset: str, run_date: str, dataset_records: Sequence[SourceRecord], *, ingest_run_id: str) -> None:
+        """Write one declared 6A dataset through the keyed partition writer. In dual mode a failure is
+        recorded in ``keyed_errors`` and does not fail the run; in keyed_only mode it raises (fail closed)."""
+        from .daily_bars_store import keyed_dataset_store
+
+        store = keyed_dataset_store(self.root, dataset)
+        if store is None:
+            return
+        rows = [_compact_keyed_record(r, dataset) for r in dataset_records]
+        try:
+            out = store.write_records(rows, ingest_run_id=ingest_run_id)
+        except Exception as exc:  # noqa: BLE001
+            if keyed_datasets_write_mode() == "keyed_only":
+                raise
+            self.keyed_errors[dataset] = f"{type(exc).__name__}: {exc}"[:300]
+            return
+        self.keyed_counters["partitions_written"] += len(out["partitions_written"])
+        self.keyed_counters["partitions_unchanged"] += len(out["partitions_unchanged"])
+        self.keyed_counters["rejected_no_key"] += out["rejected_no_key"]
 
     def _dual_write_daily_bars(self, grouped, *, result: Any, connector: SourceConnector) -> None:
         """Also write tw_price_daily records to daily_bars. Never changes the existing stores:
@@ -265,16 +346,25 @@ class MarketDataStorageWriter:
     ) -> MarketDataStorageManifest:
         records = [record for record in result.records if not record.is_rejected]
         skipped_not_listed = 0
-        if self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+        run_filter = self.listing_filter
+        provider_run = False
+        if run_filter is None and self.listing_provider is not None and any(
+            _slug(_dataset_for_record(r, connector)) == _slug(_DAILY_BAR_DATASET) for r in records
+        ):
+            provider_run = True
+            run_filter = self.listing_provider.filter_for_run()
+        if run_filter is not None and getattr(run_filter, "enabled", True):
             kept: list[SourceRecord] = []
             for record in records:
                 if _slug(_dataset_for_record(record, connector)) == _slug(_DAILY_BAR_DATASET):
                     sym = _record_symbol(record)
-                    if sym is not None and not self.listing_filter.admits(sym):
+                    if sym is not None and not run_filter.admits(sym):
                         skipped_not_listed += 1
                         continue
                 kept.append(record)
             records = kept
+        if provider_run:
+            self.listing_provider.record_run(result.run.ingest_run_id, run_filter)
         if not records:
             return MarketDataStorageManifest(
                 ingest_run_id=result.run.ingest_run_id, skipped_not_listed_count=skipped_not_listed
@@ -293,6 +383,13 @@ class MarketDataStorageWriter:
             dataset_slug = _slug(dataset)
             if skip_daily_run_files and dataset_slug == _slug(_DAILY_BAR_DATASET):
                 continue  # daily_bars (dual write below) is the only store of this dataset
+            keyed_mode = keyed_datasets_write_mode()
+            from .daily_bars_store import KEYED_DATASETS
+
+            if keyed_mode != "run_files" and dataset_slug in KEYED_DATASETS:
+                self._write_keyed(dataset_slug, run_date, dataset_records, ingest_run_id=result.run.ingest_run_id)
+                if keyed_mode == "keyed_only":
+                    continue  # the keyed store is the only store of this dataset
             raw_policy = _raw_storage_policy(dataset_records, connector, dataset)
             raw_suffix = ".jsonl.gz" if raw_policy.get("compression") == "gzip" else ".jsonl"
             raw_path = self.root / "raw" / source / dataset_slug / f"date={run_date}" / f"{result.run.ingest_run_id}{raw_suffix}"
@@ -346,7 +443,7 @@ class MarketDataStorageWriter:
                 }
             )
             raw_only = {str(v) for v in (connector.metadata or {}).get("raw_only_datasets") or ()}
-            for feature_dataset in () if dataset in raw_only else _feature_targets(dataset_records, connector):
+            for feature_dataset in () if (dataset in raw_only or not feature_files_enabled()) else _feature_targets(dataset_records, connector):
                 feature_path = (
                     self.root
                     / "features"
@@ -474,11 +571,11 @@ def measure_stored_history_depth(root: str | Path, *, daily_bar_dataset: str = _
     bars_stats: dict[str, tuple[int, str, str]] = {}
     bars_dates: list[str] = []
     if bars_mode:
-        from .daily_bars_store import DailyBarsStore
+        from .daily_bars_reader import DailyBarsReader
 
-        _store = DailyBarsStore(root)
-        bars_stats = _store.symbol_stats()
-        bars_dates = sorted(p.name[5:-5] for p in _store.manifest_dir.glob("date=*.json")) if _store.manifest_dir.is_dir() else []
+        _reader = DailyBarsReader(root)
+        bars_stats = _reader.list_symbols()
+        bars_dates = _reader.trade_dates()
     if base.is_dir():
         for dataset_dir in sorted(p for p in base.iterdir() if p.is_dir()):
             if bars_mode and dataset_dir.name == _slug(daily_bar_dataset):

@@ -1,0 +1,17 @@
+{
+  "task": "MEMBER-VIRTUAL-BOOK-SINCE-INCEPTION-20261117",
+  "rule": "Snapshot since_inception is true only when the member view carried joined_at (pool admission time) at book creation and the first recorded mark is 0..5 calendar days after the admission date. admitted_at is stored on the book and carried across envelopes. Missing joined_at, a first mark before/too long after admission, or a legacy book without admitted_at => false. Documented in member_virtual_book.py.",
+  "tests": {
+    "services/execution/lean_runtime/test_member_virtual_book.py": "14 passed, 1 skipped (pre-existing skip)",
+    "services/control-plane/persona/test_pool_policy.py": "15 passed; new tests build books with real MemberVirtualBooks.observe, merge net_of_costs exactly as persona_cycle_controller does, and call pool_policy.reweight; 25 marks -> statistics, 2 marks -> virtual_book_history_missing, unknown/late admission -> virtual_book_high_water_history_missing, legacy book -> false"
+  },
+  "unchanged": "pool_policy.py not modified; halving/removal tests (own_high_water_drawdown) still pass",
+  "runtime_budget": {
+    "row_bytes_measured": 136,
+    "growth_per_persona_per_trading_day": "one row per member per underlying per daily bar = ~136 B x underlyings (1 member, 1 underlying: ~0.14 KB/day, ~34 KB per 252-day year)",
+    "hosted_scale_three_personas_one_member_each": "3 rows/day, ~0.4 KB/day, ~100 KB/year across the three persona-scoped stores (each store is its own file)",
+    "write_cost": "each observe rewrites the persona's whole file atomically: ~35 KB at one year, negligible",
+    "cap_and_cleanup": "NONE exists and none was added: since_inception requires the full history, so pruning would invalidate the rule. Growth is linear and small at this scale; a retention policy is a follow-up if members/underlyings grow by orders of magnitude."
+  },
+  "residual": "The portfolio envelope member / paper_signal_producer member view does not yet forward joined_at (producers outside this task's scoped files), so until it does, runtime books report since_inception false (safe, fail-closed) and reweight keeps refusing. Follow-up needed: forward the pool member joined_at into portfolio_member_views."
+}

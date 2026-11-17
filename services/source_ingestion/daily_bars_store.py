@@ -74,10 +74,18 @@ class DatasetKeyDeclaration:
     key_fields: tuple[str, ...]
     partition_field: str
     value_fields: tuple[str, ...] = ()
+    # SOURCE-DATASETS-KEYED-WRITE-20261119 (design 6A). Optional: a dataset without them behaves as before.
+    key_aliases: tuple[tuple[str, ...], ...] = ()  # per key field, the record fields that may carry it
+    optional_key_fields: tuple[str, ...] = ()  # key fields a record may lack (then not part of its key)
+    retention_days: int | None = None  # None = no expiry; read by SOURCE-RETENTION-SWEEPER
+    day_budget_bytes: int | None = None  # section 6A growth budget per trading day (stored bytes)
+    readers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.partition_field not in self.key_fields:
             raise ValueError("partition_field must be part of key_fields")
+        if self.key_aliases and len(self.key_aliases) != len(self.key_fields):
+            raise ValueError("key_aliases must give one tuple per key field")
 
 
 DAILY_BARS = DatasetKeyDeclaration(
@@ -567,3 +575,296 @@ class DailyBarsStore:
     def record_dual_write_error(self, exc: BaseException) -> None:
         self.counters["dual_write_errors"] += 1
         self.last_error = f"{type(exc).__name__}: {exc}"[:300]
+
+
+# ---------------------------------------------------------------------------------------------
+# SOURCE-DATASETS-KEYED-WRITE-20261119: every other persisted dataset (design section 6A).
+# One declaration per dataset: unique key, retention, per-day byte budget, readers. Aliases are the
+# record fields that may carry a key part (first present wins). Budgets are section 6A bounds.
+# ---------------------------------------------------------------------------------------------
+_DATE_ALIASES = ("date", "trade_date", "as_of_date", "event_time")
+_SYMBOL_ALIASES = ("symbol_canonical", "symbol", "stock_id", "code")
+
+
+def _decl(dataset, key, aliases, *, partition="trade_date", optional=(), retention=2555, budget, readers=()):
+    return DatasetKeyDeclaration(
+        dataset=dataset, key_fields=tuple(key), partition_field=partition, key_aliases=tuple(tuple(a) for a in aliases),
+        optional_key_fields=tuple(optional), retention_days=retention, day_budget_bytes=budget, readers=tuple(readers))
+
+
+_MB = 1_000_000
+KEYED_DATASETS: dict[str, DatasetKeyDeclaration] = {d.dataset: d for d in (
+    _decl("tw_index_daily", ("index_code", "trade_date"), (("index_code", "index_id", "symbol_canonical", "symbol"), _DATE_ALIASES),
+          budget=int(0.1 * _MB), readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
+    _decl("tw_index_ohlc_daily", ("index_code", "trade_date"), (("index_code", "index_id", "symbol_canonical", "symbol"), _DATE_ALIASES),
+          budget=int(0.1 * _MB), readers=("services/source_ingestion/connectors/collector_bundle.py", "services/research/regime/features.py")),
+    _decl("tw_market_breadth_daily", ("market", "trade_date"), (("market", "exchange", "venue"), _DATE_ALIASES),
+          budget=10_000, readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
+    _decl("tw_institutional_flow", ("symbol", "trade_date", "investor_class"),
+          (("market",) + _SYMBOL_ALIASES, _DATE_ALIASES, ("investor_class", "institution", "investor_type")),
+          optional=("symbol", "investor_class"), budget=int(0.3 * _MB),
+          readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
+    _decl("tw_margin_short_balance", ("symbol", "trade_date"), (("market",) + _SYMBOL_ALIASES, _DATE_ALIASES),
+          optional=("symbol",), budget=int(0.2 * _MB),
+          readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
+    _decl("tw_broker_top", ("symbol", "trade_date", "rank"), (_SYMBOL_ALIASES, _DATE_ALIASES, ("rank", "broker_rank", "broker_id")),
+          retention=750, budget=int(0.2 * _MB), readers=("services/data-plane/taiwan_reference.py",)),
+    _decl("tw_broker_branch_detail", ("symbol", "trade_date", "broker_id", "branch_id"),
+          (_SYMBOL_ALIASES, _DATE_ALIASES, ("broker_id", "securities_trader_id"), ("branch_id", "branch", "securities_trader")),
+          retention=250, budget=5 * _MB),
+    _decl("taifex_ssf_contracts", ("contract_id", "trade_date"), (("contract_id", "contract", "symbol_canonical", "symbol"), _DATE_ALIASES),
+          retention=750, budget=int(0.1 * _MB),
+          readers=("services/execution/lean_runtime/instrument_candidates.py", "services/execution/lean_runtime/futures_session_inputs.py")),
+    _decl("taifex_tx_daily", ("contract_id", "trade_date"), (("contract_id", "contract", "symbol_canonical", "symbol"), _DATE_ALIASES),
+          budget=10_000, readers=("services/research/regime/features.py",)),
+    _decl("tw_macro_series", ("series_code", "period"), (("series_code", "series_id", "symbol_canonical"), _DATE_ALIASES),
+          partition="period", retention=None, budget=10_000, readers=("services/source_ingestion/feature_catalogue.py",)),
+    _decl("tw_community_daily", ("symbol", "trade_date", "platform"), (_SYMBOL_ALIASES, _DATE_ALIASES, ("platform", "source")),
+          retention=180, budget=int(0.2 * _MB), readers=("services/source_ingestion/feature_catalogue.py",)),
+    _decl("collector_news", ("item", "trade_date"), (("url", "content_ref", "source_id"), _DATE_ALIASES),
+          retention=365, budget=20 * _MB, readers=("services/search/index_pipeline.py",)),
+    _decl("collector_social_posts", ("item", "trade_date"), (("url", "content_ref", "source_id"), _DATE_ALIASES),
+          retention=365, budget=20 * _MB, readers=("services/search/index_pipeline.py",)),
+)}
+KEYED_VOLATILE_FIELDS = frozenset({
+    "ingest_time", "available_time", "ingest_run_id", "fetched_at", "observed_at", "created_at", "raw_ref", "content_ref"})
+KEYED_SCHEMA_VERSION = "keyed_dataset_manifest.v1"
+
+
+class KeyedDatasetError(DailyBarsError):
+    """Keyed dataset write or read refused; the message is a readable reason."""
+
+
+def keyed_dataset_dir(root: str | Path, dataset: str) -> Path:
+    return Path(root) / "keyed" / dataset
+
+
+def _partition_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    day = validate_trade_date(text)
+    if day:
+        return day
+    return text if len(text) <= 10 and all(c.isalnum() or c == "-" for c in text) else None
+
+
+class KeyedDatasetStore:
+    """Keyed partition writer for one 6A dataset: one record per key, newer replaces older,
+    an unchanged re-run writes nothing. Same protocol as DailyBarsStore (parts, then manifest LAST)."""
+
+    def __init__(self, root: str | Path, declaration: DatasetKeyDeclaration, *, fault: Callable[[str], None] | None = None) -> None:
+        if not declaration.key_aliases:
+            raise KeyedDatasetError(f"dataset {declaration.dataset} has no key aliases declared")
+        self.root = Path(root)
+        self.declaration = declaration
+        self.base = keyed_dataset_dir(root, declaration.dataset)
+        self.manifest_dir = self.base / "_manifest"
+        self._fault = fault
+        self._lock = threading.Lock()
+        self.counters = {"rows_written": 0, "days_written": 0, "days_unchanged": 0, "rejected_no_key": 0}
+
+    # -- key and content ---------------------------------------------------------------------
+    @staticmethod
+    def _sources(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+        nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+        return [nrow, meta, record]
+
+    def key_of(self, record: Mapping[str, Any]) -> tuple[tuple[str, ...], str] | None:
+        """Return (key parts, partition) or None when a required key part is missing."""
+        decl = self.declaration
+        parts: list[str] = []
+        partition: str | None = None
+        for name, aliases in zip(decl.key_fields, decl.key_aliases):
+            value = None
+            for src in self._sources(record):
+                for alias in aliases:
+                    if src.get(alias) not in (None, ""):
+                        value = src[alias]
+                        break
+                if value is not None:
+                    break
+            if name == decl.partition_field:
+                partition = _partition_value(value)
+                if partition is None:
+                    return None
+                parts.append(partition)
+            elif value is None:
+                if name in decl.optional_key_fields:
+                    parts.append("")
+                else:
+                    return None
+            else:
+                parts.append(str(value))
+        return tuple(parts), str(partition)
+
+    @staticmethod
+    def content_hash(record: Mapping[str, Any]) -> str:
+        sources = KeyedDatasetStore._sources(record)
+        nrow = sources[0] or sources[1]
+        return _sha({k: v for k, v in nrow.items() if k not in KEYED_VOLATILE_FIELDS})
+
+    # -- files -------------------------------------------------------------------------------
+    def _manifest_path(self, partition: str) -> Path:
+        return self.manifest_dir / f"date={partition}.json"
+
+    def read_manifest(self, partition: str) -> dict[str, Any] | None:
+        try:
+            return json.loads(self._manifest_path(partition).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except ValueError as exc:
+            raise KeyedDatasetError(f"manifest of {self.declaration.dataset} {partition} is not valid JSON") from exc
+
+    def _read_partition(self, manifest: Mapping[str, Any]) -> dict[tuple[str, ...], dict[str, Any]]:
+        import gzip
+
+        out: dict[tuple[str, ...], dict[str, Any]] = {}
+        for entry in manifest.get("files", ()):
+            path = self.base / entry["path"]
+            if not path.is_file() or path.stat().st_size != int(entry["bytes"]):
+                raise KeyedDatasetError(f"{self.declaration.dataset} file {entry['path']} is missing or has a different size")
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        item = json.loads(line)
+                        keyed = self.key_of(item)
+                        if keyed is None:
+                            raise KeyedDatasetError(f"{self.declaration.dataset} file {entry['path']} holds a record without a key")
+                        item["_hash"] = self.content_hash(item)  # recomputed, not stored (bytes)
+                        out[keyed[0]] = item
+        return out
+
+    def records(self, partition: str) -> list[dict[str, Any]]:
+        manifest = self.read_manifest(partition)
+        if manifest is None:
+            return []
+        return [{k: v for k, v in item.items() if k != "_hash"}
+                for item in self._read_partition(manifest).values()]
+
+    def partitions(self) -> list[str]:
+        if not self.manifest_dir.is_dir():
+            return []
+        return sorted(p.name[5:-5] for p in self.manifest_dir.glob("date=*.json"))
+
+    def verify_partition(self, partition: str) -> dict[str, Any]:
+        """Re-read one partition against its manifest: files exist with the recorded size, every record has a
+        key, the row count and the content digest match. Writes nothing. ``keys`` is the set of key tuples."""
+        try:
+            manifest = self.read_manifest(partition)
+        except KeyedDatasetError as exc:
+            return {"partition": partition, "verified": False, "reason": str(exc), "keys": set()}
+        if manifest is None:
+            return {"partition": partition, "verified": False, "reason": "no_manifest", "keys": set()}
+        try:
+            merged = self._read_partition(manifest)
+        except (KeyedDatasetError, OSError, ValueError) as exc:
+            return {"partition": partition, "verified": False, "reason": str(exc)[:200], "keys": set()}
+        digest = _sha(sorted([list(k), v["_hash"]] for k, v in merged.items()))
+        ok = digest == manifest.get("content_digest") and len(merged) == manifest.get("row_count")
+        return {"partition": partition, "verified": ok, "reason": None if ok else "manifest_mismatch",
+                "row_count": len(merged), "content_digest": manifest.get("content_digest"), "keys": set(merged)}
+
+    def _hit(self, step: str) -> None:
+        if self._fault is not None:
+            self._fault(step)
+
+    # -- write -------------------------------------------------------------------------------
+    def write_records(self, records: Iterable[Mapping[str, Any]], *, ingest_run_id: str = "") -> dict[str, Any]:
+        by_part: dict[str, dict[tuple[str, ...], dict[str, Any]]] = {}
+        rejected = 0
+        for record in records:
+            keyed = self.key_of(record)
+            if keyed is None:
+                rejected += 1
+                continue
+            key, partition = keyed
+            by_part.setdefault(partition, {})[key] = {"_hash": self.content_hash(record), **dict(record)}
+        self.counters["rejected_no_key"] += rejected
+        written: list[str] = []
+        unchanged: list[str] = []
+        for partition in sorted(by_part):
+            (written if self._write_partition(partition, by_part[partition]) else unchanged).append(partition)
+        return {"partitions_written": written, "partitions_unchanged": unchanged, "rejected_no_key": rejected,
+                "rows": sum(len(v) for v in by_part.values())}
+
+    def _write_partition(self, partition: str, incoming: Mapping[tuple[str, ...], dict[str, Any]]) -> bool:
+        import gzip
+
+        decl = self.declaration
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock, open(self.manifest_dir / ".lock", "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(partition)
+                merged = self._read_partition(manifest) if manifest else {}
+                for key, item in incoming.items():
+                    old = merged.get(key)
+                    if old is None or old["_hash"] != item["_hash"]:
+                        merged[key] = item
+                digest = _sha(sorted([list(k), v["_hash"]] for k, v in merged.items()))
+                if manifest and manifest.get("content_digest") == digest:
+                    self.counters["days_unchanged"] += 1
+                    return False
+                generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
+                part_dir = self.base / f"date={partition}"
+                part_dir.mkdir(parents=True, exist_ok=True)
+                final = part_dir / f"part-g{generation}.jsonl.gz"
+                tmp = final.with_name(final.name + ".tmp")
+                with open(tmp, "wb") as raw:
+                    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+                        for key in sorted(merged):
+                            gz.write((_canonical({k: v for k, v in merged[key].items() if k != "_hash"}) + "\n").encode("utf-8"))
+                    raw.flush()
+                    os.fsync(raw.fileno())
+                self._hit("after_fsync")
+                os.replace(tmp, final)
+                _fsync_dir(part_dir)
+                size = final.stat().st_size
+                if decl.day_budget_bytes is not None and size > decl.day_budget_bytes:
+                    final.unlink(missing_ok=True)
+                    raise DailyBudgetError(decl.dataset, partition, size, decl.day_budget_bytes)
+                new_manifest = {
+                    "schema_version": KEYED_SCHEMA_VERSION, "dataset": decl.dataset, "key_fields": list(decl.key_fields),
+                    "partition": partition, "generation": generation, "row_count": len(merged), "bytes": size,
+                    "files": [{"path": final.relative_to(self.base).as_posix(), "rows": len(merged), "bytes": size}],
+                    "content_digest": digest,
+                }
+                manifest_path = self._manifest_path(partition)
+                tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
+                with open(tmp_manifest, "wb") as handle:
+                    handle.write(json.dumps(new_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self._hit("before_manifest_rename")
+                os.replace(tmp_manifest, manifest_path)  # LAST
+                _fsync_dir(self.manifest_dir)
+                for stale in part_dir.iterdir():
+                    if stale != final:
+                        stale.unlink(missing_ok=True)
+                self.counters["rows_written"] += len(merged)
+                self.counters["days_written"] += 1
+                return True
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def budget_report(self) -> dict[str, Any]:
+        sizes = []
+        for part in self.partitions():
+            sizes.append(int((self.read_manifest(part) or {}).get("bytes", 0)))
+        limit = self.declaration.day_budget_bytes
+        return {"dataset": self.declaration.dataset, "partitions": len(sizes), "total_bytes": sum(sizes),
+                "max_day_bytes": max(sizes, default=0), "day_budget_bytes": limit,
+                "retention_days": self.declaration.retention_days,
+                "alarms": [] if limit is None or max(sizes, default=0) <= limit else [f"{self.declaration.dataset}_day_over_budget"]}
+
+
+class DailyBudgetError(KeyedDatasetError):
+    def __init__(self, dataset: str, partition: str, size: int, limit: int) -> None:
+        super().__init__(f"{dataset} partition {partition} is {size} bytes, over the section 6A budget of {limit} bytes; nothing was published")
+
+
+def keyed_dataset_store(root: str | Path, dataset: str) -> KeyedDatasetStore | None:
+    decl = KEYED_DATASETS.get(dataset)
+    return KeyedDatasetStore(root, decl) if decl else None

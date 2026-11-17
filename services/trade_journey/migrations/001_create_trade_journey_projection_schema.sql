@@ -48,12 +48,23 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.event_receipts (
     projected_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE INDEX IF NOT EXISTS idx_event_receipts_ingested_seq
-    ON trade_journey_projection.event_receipts (ingested_seq);
+-- NOTE: no secondary B-tree on event_receipts(ingested_seq). The UNIQUE
+-- constraint above (event_receipts_ingested_seq_key) already indexes it.
+-- Creating a second index here made every bootstrap rebuild it (001) and then
+-- drop it (002_drop_redundant_event_receipts_index) on large tables, deadlocking
+-- with live projector writers (PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117).
 
-CREATE INDEX IF NOT EXISTS idx_event_receipts_tenant_env_journey
-    ON trade_journey_projection.event_receipts (tenant_id, environment, journey_id)
-    WHERE journey_id != '';
+-- Guarded: a bare CREATE INDEX IF NOT EXISTS takes a ShareLock on event_receipts
+-- (blocking live writers) before it notices the index already exists.
+DO $mig$
+BEGIN
+    IF to_regclass('trade_journey_projection.idx_event_receipts_tenant_env_journey') IS NULL THEN
+        CREATE INDEX idx_event_receipts_tenant_env_journey
+            ON trade_journey_projection.event_receipts (tenant_id, environment, journey_id)
+            WHERE journey_id != '';
+    END IF;
+END
+$mig$;
 
 -- 3. Identity links table
 CREATE TABLE IF NOT EXISTS trade_journey_projection.identity_links (

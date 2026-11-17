@@ -25,7 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .market_data_storage import _iter_normalized_rows, _slug, daily_price_reader_mode
+from .market_data_storage import _iter_normalized_rows, _slug, daily_price_reader_mode, normalized_dataset_base
 from .survivorship_attestation import ALL_MARKET_BUNDLES, HOLIDAY_DATASET, SUSPENSION_DATASET, attest_survivorship
 
 SCHEMA_VERSION = "candidate_pool_market.v1"
@@ -48,7 +48,7 @@ class CandidatePoolMarketNeedsData(RuntimeError):
 
 
 def _partitions(root: Path, dataset: str) -> list[Path]:
-    base = root / "normalized" / _slug(dataset)
+    base = normalized_dataset_base(root, _slug(dataset))
     return sorted(base.glob("date=*/*.jsonl*")) if base.is_dir() else []
 
 
@@ -181,18 +181,18 @@ def _read_bars_from_daily_bars(root: Path) -> tuple[dict[str, list[dict[str, Any
     paged by symbol chunks (reader cap) inside one date window (reader cap). Daily bars carry no
     ``available_time`` or traded value: availability is the regular 14:30 Taipei publish time of the
     trade date and ``traded_value`` is absent."""
-    from .daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, DailyBarsReader
-    from .daily_bars_store import DailyBarsError, DailyBarsStore
+    from .daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, PRICE_COLUMNS, DailyBarsReader
+    from .daily_bars_store import DailyBarsError
 
     reader = DailyBarsReader(root)
     dates = reader.trade_dates()[-min(MAX_BARS_PER_SYMBOL, MAX_RANGE_DAYS):]
     if not dates:
         return {}, set()
     try:
-        names = sorted(DailyBarsStore(root).symbol_stats(dates[0], dates[-1]))
+        names = sorted(reader.list_symbols(dates[0], dates[-1]))
         bars: dict[str, list[dict[str, Any]]] = {}
         for i in range(0, len(names), MAX_SYMBOLS):
-            for raw_symbol, rows in reader.read_range(names[i:i + MAX_SYMBOLS], dates[0], dates[-1]).items():
+            for raw_symbol, rows in reader.read_range(names[i:i + MAX_SYMBOLS], dates[0], dates[-1], columns=PRICE_COLUMNS).items():
                 symbol = _canonical(raw_symbol)
                 if symbol is None:
                     continue

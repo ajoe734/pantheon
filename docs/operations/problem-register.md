@@ -40,13 +40,24 @@ doing and by the first eight characters of its session id.
 | WP1.3 steady-service helpers | ROOT-COMPENSATION-STEADY-SERVICES-20261117 (PR #7481) | merged; workflow not wired |
 | WP1.3 stack completeness from compose, wired into deploy, compensation and restore | DEV-DEPLOY-STACK-COMPLETENESS-20261117 | open |
 | WP1.4 deploy the newest green commit | DEV-AUTO-DEPLOY-NEWEST-GREEN-20261117 | open |
+| Persisted config that a rollback cannot read: OpenClaw persona-tools plugin paths | OPENCLAW-PERSONA-TOOLS-PLUGIN-ROLLBACK-SAFE-20261117 | open |
+| Integrator re-dispatches the review gate and cancels its own queued run | AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117 (PR #7478) | merged |
+| Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 | open |
 
 The workflow and deploy-script tasks are serialised in this order: no probe
 input, advisory checks, stack completeness, newest green, acceptance stage.
 
 Instances: 40 failed dev deploys 11/10 to 11/17; scheduler left stopped by
-compensation 11/16 19:19Z; restore check compares only `/bff/version`; deployer
-window of about 3 minutes after a green tip.
+compensation 11/16 19:19Z and again 11/17 02:42Z, 06:19Z and 09:13Z; restore
+check compares only `/bff/version`; deployer window of about 3 minutes after a
+green tip; OpenClaw gateway crash-looped after the 11/17 06:18Z compensation
+because the candidate wrote plugin paths into the shared volume config (hosted
+rescue: back up `openclaw.json`, remove the two persona-tools entries); a
+baseline scheduler started on candidate-written connector state fails every
+tick with HTTP 400, so intake returns only with a release; Root 44023618158
+rejected by an execute-plans unit test in the gate
+(FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117, #1036 merged); Root 44049970156
+failed at projection_bootstrap with a Postgres deadlock on event_receipts.
 
 ## RC2. Done means merged, not working
 
@@ -57,10 +68,13 @@ window of about 3 minutes after a green tip.
 | WP2.2 three delivery states in reporting | rule in AGENTS.md | in force |
 | WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 | open |
 | Health that lies: source-ingest readiness | SOURCE-INGEST-READINESS-TRUTHFUL-20261117 | open |
+| Same-day close: official rows never fetched for a collector-covered session | TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117 (PR #7479) | merged |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
-consultation since 11/01; pools with one member.
+consultation since 11/01; pools with one member; held-symbol priority for the
+collector pull merged (#7438, #7459) and not deployed; TPEx same-day close took
+62 minutes on 11/16.
 
 ## RC3. Nobody owns data volume
 

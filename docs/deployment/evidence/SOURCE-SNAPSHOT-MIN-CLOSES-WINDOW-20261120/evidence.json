@@ -1,0 +1,16 @@
+{
+  "task": "SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW-20261120",
+  "design_ref": "SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16 section 5.4 E1",
+  "reproduction": "test_producer_against_real_endpoint_before_and_after: an endpoint ignoring min_closes gives market_input_insufficient 'requires 120 closes, got 60'",
+  "change": "snapshots/latest accepts min_closes 1..504 (422 outside); above 60 joins the record's 60 closes with the older part from read_close_window, checked contiguous against the stored trading calendar; history_insufficient returns closes=[] with requested/available/first_available_date; window_source states counts; 60 or less or absent is unchanged and opens no partition",
+  "stores_touched": {"snapshot_current_record": "read only, 60 closes unchanged", "daily_bars": "read only"},
+  "stores_not_touched": ["minute bars", "warrants", "run files", "candidate pool market"],
+  "bytes_written_by_read": 0,
+  "latency": {"shape": "500 symbols x 520 trading days; 50 symbols at min_closes=504", "per_call_seconds_3_runs": [0.364, 0.369, 0.374], "bound_seconds": 2.0, "p95_60_or_fewer_bound_ms": 100, "cache_added": false, "note": "measured on tmp-path hosted-shaped data, not the hosted host"},
+  "compatibility": "old producer on new endpoint and new producer on old endpoint covered in test_snapshot_min_closes_window.py and test_pool_market_inputs.py",
+  "notes": "Stored snapshot event times are UTC and are converted to Asia/Taipei trade dates for the join. The daily bars symbol is the snapshot's stored symbol (X.TWSE). A symbol missing a bar on a stored day is reported as a gap and not filled.",
+  "commands": [
+    "pytest services/source_ingestion/tests/test_snapshot_min_closes_window.py -> 8 passed",
+    "pytest test_daily_bars_reader test_latest_market_snapshot test_daily_bars_store test_pool_market_inputs test_pool_market_inputs_integration test_paper_signal_producer test_snapshot_min_closes_window -> 181 passed, 15 subtests passed"
+  ]
+}

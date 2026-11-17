@@ -71,7 +71,8 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
     assert "os.environ.get('PORT','8097')" in healthcheck
-    assert "/readyz" in healthcheck
+    assert "/livez" in healthcheck
+    assert "/readyz" not in healthcheck
 
     migration = services["source-ingest-controller-migrate"]
     assert migration["command"] == ["bash", "scripts/db_migrate.sh"]

@@ -116,6 +116,20 @@ class ByteLimitTests(unittest.TestCase):
             res = cmb.evaluate(self.rows, only={"tw_index_daily"})
         self.assertEqual(res[0]["status"], "fail")
 
+    def test_keyed_dataset_measured_through_real_store_and_declaration_checked(self) -> None:
+        from services.source_ingestion.daily_bars_store import KEYED_DATASETS
+
+        for name in ("tw_margin_short_balance", "collector_news"):
+            m = cmb.measure_dataset(name)
+            self.assertEqual(m["keyed"], 1.0)
+            res = cmb.check_dataset(name)(self.rows[name]["cells"], m)
+            self.assertEqual({r["metric"] for r in res}, {"day_bytes", "declared_budget_bytes"})
+            self.assertTrue(all(r["status"] == "pass" for r in res), res)
+        loose = {"day_bytes": 1.0, "keyed": 1.0, "declared_budget_bytes": 10**12}
+        res = cmb.check_dataset("tw_margin_short_balance")(self.rows["tw_margin_short_balance"]["cells"], loose)
+        self.assertEqual([r["status"] for r in res], ["pass", "fail"])
+        self.assertTrue(set(cmb.DATASET_ROWS) <= set(KEYED_DATASETS))
+
     def test_live_stats_over_limit_fails_and_unknown_store_fails(self) -> None:
         res = cmb.check_live(self.rows, {"daily_bars": {"day_bytes": 2_600_000}, "ghost_store": {"day_bytes": 1}})
         failed = {(r["store"], r["metric"]) for r in res if r["status"] == "fail"}

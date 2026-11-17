@@ -2204,7 +2204,7 @@ def test_migration_002_drops_redundant_ingested_seq_index_and_previous_release_t
 
     try:
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
-            # 1. Apply 001 alone: both indexes on ingested_seq exist.
+            # 1. Apply 001 alone: only the UNIQUE index on ingested_seq exists.
             cur.execute(migration_001)
             cur.execute(
                 """
@@ -2217,7 +2217,12 @@ def test_migration_002_drops_redundant_ingested_seq_index_and_previous_release_t
             )
             indexes_after_001 = {row[0] for row in cur.fetchall()}
             assert "event_receipts_ingested_seq_key" in indexes_after_001
-            assert "idx_event_receipts_ingested_seq" in indexes_after_001
+            # 001 no longer creates the redundant index.
+            assert "idx_event_receipts_ingested_seq" not in indexes_after_001
+            # Simulate a legacy database that still carries it.
+            cur.execute(
+                f"CREATE INDEX idx_event_receipts_ingested_seq ON {schema_name}.event_receipts (ingested_seq)"
+            )
 
             # 2. Apply 002 (and re-apply 002 for idempotency): redundant index is gone.
             cur.execute(migration_002)

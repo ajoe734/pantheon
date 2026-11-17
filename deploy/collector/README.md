@@ -225,6 +225,12 @@ Design of record: `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16` section 4.3 (dec
 - **Rollback.** `COLLECTOR_WARRANTS_MODE=off` (or `CollectorRunner(warrants_mode="off")`) removes the filter and
   restores the previous behaviour; nothing already stored becomes unreadable (the filter only decides what is
   newly written). Deleted warrant rows are not recoverable by design (nothing is archived).
+- **Hosted reads the same listing.** After a successful refresh the runner publishes the state file as
+  `<root>/bundles/security-listing.jsonl` (`CollectorRunner.publish_security_listing`, same bytes, replaced in one step,
+  at most 20 MB; the live shape of 57,531 rows is about 3.2 MB). The read only bundle server already serves
+  `bundles/*`, so hosted reads it through the bundle transport it already uses and never fetches the exchange pages.
+  Hosted keeps it as one file replaced per listing day and runs it in `SOURCE_INGEST_SECURITY_LISTING_MODE`
+  `off` | `shadow` (default, counts only) | `enforce`.
 - **Deployment note.** The Dockerfile copies only `collector_stack/`; shipping `security_listing.py` into the image
   and scheduling the daily `refresh_security_listing` call is a separate Human/Ops step.
 

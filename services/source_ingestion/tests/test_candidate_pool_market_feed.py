@@ -182,3 +182,26 @@ def test_daily_bars_mode_cache_follows_the_manifests(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
     first = feed.build_candidate_pool_market(tmp_path, INPUTS)
     assert feed.build_candidate_pool_market(tmp_path, INPUTS) is first
+
+
+def test_switched_feed_lists_symbols_through_the_reader_not_the_store(tmp_path, monkeypatch):
+    from services.source_ingestion import daily_bars_store as dbs
+
+    _backfilled(tmp_path)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    monkeypatch.setattr(dbs.DailyBarsStore, "symbol_stats",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("DailyBarsStore.symbol_stats used")))
+    market = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    assert set(market["symbols"]) == {"2330.TW", "2317.TW"}
+    assert all(len(p["bars"]) == 2 for p in market["symbols"].values())
+
+
+def test_survivorship_attestation_still_reads_run_files_and_the_cleanup_guard_names_it(tmp_path, monkeypatch):
+    """G2: in daily_bars mode the attestation reads the capture rows of the normalized run files; with them
+    gone it is false (fail closed), so the cleanup guard lists this part as an unswitched reader."""
+    from scripts.cleanup_market_run_files import KNOWN_RUN_FILE_READERS
+
+    parts = [r for r in KNOWN_RUN_FILE_READERS if r["file"].endswith("candidate_pool_market_feed.py")]
+    assert {r["part"]: r["switched"] for r in parts} == {"bars and sessions": True, "survivorship attestation (G2)": False}
+    text = open(feed.__file__, encoding="utf-8").read()
+    assert "captures_only=True" in text and "_read_bars_from_daily_bars" in text

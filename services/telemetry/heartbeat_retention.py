@@ -1,6 +1,6 @@
-"""Runtime heartbeat retention and permanent hourly summary aggregation.
+"""Runtime heartbeat and infrastructure_health retention and permanent hourly summary aggregation.
 
-TELEMETRY-HEARTBEAT-RETENTION-20261117:
+TELEMETRY-HEARTBEAT-RETENTION-20261117 & TELEMETRY-INFRA-HEALTH-RETENTION-20261117:
 - Keeps raw ``event_type = 'heartbeat'`` rows in ``public.telemetry_events``
   for ``PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS`` (default 3 days).
 - Summarises each ``(runtime_id, hour_bucket)`` in UTC into
@@ -8,12 +8,19 @@ TELEMETRY-HEARTBEAT-RETENTION-20261117:
   ``first_heartbeat_at``, ``last_heartbeat_at``, ``largest_gap_seconds``, and
   ``last_connectivity_status``) BEFORE any raw heartbeat row of that hour is
   deleted. Summary rows are permanent and never deleted.
-- Never touches any non-heartbeat ``event_type``.
+- Keeps ``event_type = 'infrastructure_health'`` rows in ``public.telemetry_events``
+  for ``PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS`` (default 7 days), and
+  protects any ``infrastructure_health`` event ID referenced by an IncidentCase
+  or Postmortem so ``GET /api/telemetry/events/<event_id>`` and
+  ``GET /api/telemetry/lineage/events/<event_id>/trace`` stay resolvable for as
+  long as that incident or postmortem can be validated.
+- Never touches any other ``event_type``.
 - Never deletes a row whose ``ingested_seq`` has not yet been passed by every
   consumer reading ``public.telemetry_events`` by ``ingested_seq``.
-- Verifies that no registered heartbeat reader requires raw heartbeats older
-  than the configured retention window; if any reader does, refuses to delete
-  and raises ``HeartbeatRetentionReaderBlocker`` naming that reader.
+- Verifies that no registered heartbeat or infrastructure_health reader requires
+  unreferenced raw rows older than its configured retention window; if any reader
+  does, refuses to delete and raises ``HeartbeatRetentionReaderBlocker`` naming
+  that reader.
 """
 
 from __future__ import annotations
@@ -25,6 +32,9 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
+import re
+import sqlite3
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -37,14 +47,20 @@ log = logging.getLogger(__name__)
 CANONICAL_TELEMETRY_TABLE = "public.telemetry_events"
 HEARTBEAT_SUMMARY_TABLE = "public.telemetry_heartbeat_hourly_summaries"
 HEARTBEAT_EVENT_TYPE = "heartbeat"
+INFRA_HEALTH_EVENT_TYPE = "infrastructure_health"
 
 DEFAULT_RAW_RETENTION_DAYS = 3.0
+DEFAULT_INFRA_HEALTH_RETENTION_DAYS = 7.0
 DEFAULT_BATCH_SIZE = 5000
 DEFAULT_MAX_BATCHES_PER_RUN = 20
 DEFAULT_INTERVAL_SECONDS = 300.0
 DEFAULT_STATEMENT_TIMEOUT_MS = 15000
 
+DEFAULT_INCIDENT_CASES_TABLE = "incident.incident_cases"
+DEFAULT_POSTMORTEMS_TABLE = "incident.postmortems"
+
 RAW_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS"
+INFRA_HEALTH_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS"
 RETENTION_ENABLED_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_ENABLED"
 RETENTION_BATCH_SIZE_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_BATCH_SIZE"
 RETENTION_MAX_BATCHES_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_MAX_BATCHES_PER_RUN"
@@ -247,6 +263,84 @@ HEARTBEAT_READERS: tuple[dict[str, Any], ...] = (
 )
 
 
+INFRASTRUCTURE_HEALTH_READERS: tuple[dict[str, Any], ...] = (
+    {
+        "reader_id": "telemetry_accepted_event_lookup",
+        "module": "services/telemetry/main.py & services/telemetry/ingest_svc.py",
+        "surface": "GET /api/telemetry/events/<event_id> (services/telemetry/main.py:1281, TelemetryIngestService.get_accepted_event)",
+        "reads_raw_telemetry_events": True,
+        "oldest_infra_health_needed_seconds": 86400,
+        "oldest_infra_health_needed_description": (
+            "24h admission ledger dedupe horizon (TELEMETRY_INFRASTRUCTURE_HEALTH_DEDUPE_HORIZON_SECONDS=86400) for unreferenced "
+            "rows; event IDs referenced by any incident or postmortem are protected from deletion for as long as that incident or "
+            "postmortem can be validated."
+        ),
+    },
+    {
+        "reader_id": "telemetry_lineage_event_trace",
+        "module": "services/telemetry/main.py & services/telemetry/lineage_read/service.py",
+        "surface": "GET /api/telemetry/lineage/events/<event_id>/trace (services/telemetry/main.py:1457, LineageReadService._hydrate_event)",
+        "reads_raw_telemetry_events": True,
+        "oldest_infra_health_needed_seconds": 86400,
+        "oldest_infra_health_needed_description": (
+            "Hydrates telemetry_event nodes from public.telemetry_events on trace lookup; event IDs referenced by any incident or "
+            "postmortem are excluded from deletion indefinitely while that incident or postmortem exists."
+        ),
+    },
+    {
+        "reader_id": "incident_and_postmortem_reference_validation",
+        "module": "services/incident/reference_validation.py, services/incidents/main.py, services/postmortems/main.py",
+        "surface": "CanonicalReferenceValidator.validate_incident (services/incident/reference_validation.py:200-202, services/incidents/main.py:436, services/postmortems/main.py:198,:335)",
+        "reads_raw_telemetry_events": True,
+        "oldest_infra_health_needed_seconds": 0,
+        "oldest_infra_health_needed_description": (
+            "Validates at most 8 telemetry_event_ids per incident via GET /api/telemetry/events/<event_id> and "
+            "GET /api/telemetry/lineage/events/<event_id>/trace; all event IDs referenced by incident.incident_cases, "
+            "incident.postmortems, on-disk incident stores, or BFF incident mappings/outbox are protected from deletion."
+        ),
+    },
+    {
+        "reader_id": "incidents_consume_infrastructure_health",
+        "module": "services/incidents/main.py & services/incidents/consumer.py",
+        "surface": "POST /api/incidents/consume-infrastructure-health (services/incidents/main.py:606) & InfrastructureHealthIncidentConsumer (services/incidents/consumer.py:482)",
+        "reads_raw_telemetry_events": False,
+        "oldest_infra_health_needed_seconds": 0,
+        "oldest_infra_health_needed_description": (
+            "Route-specific consumer validates pantheon.infrastructure-incident/1 payloads directly without calling "
+            "CanonicalReferenceValidator and records source_event_id in trace_id, telemetry_event_ids, and evidence_summary on the IncidentCase."
+        ),
+    },
+    {
+        "reader_id": "bff_downstream_health_monitor",
+        "module": "services/control-plane/bff/downstream_health_monitor.py",
+        "surface": "DownstreamHealthMonitor (services/control-plane/bff/downstream_health_monitor.py:2868,:3126,:3679)",
+        "reads_raw_telemetry_events": False,
+        "oldest_infra_health_needed_seconds": 86400,
+        "oldest_infra_health_needed_description": (
+            "Producer that stores opening_event_id and resolving event_id in BFF SQLite incident_mappings/delivery_outbox and "
+            "forwards them as source_event_id and telemetry_event_ids to incident-svc within its 24h retry window."
+        ),
+    },
+    {
+        "reader_id": "trade_journey_lifecycle_projector",
+        "module": "services/trade_journey/lifecycle_projector.py",
+        "surface": "RelationalLifecycleProjector",
+        "reads_raw_telemetry_events": True,
+        "oldest_infra_health_needed_seconds": 0,
+        "oldest_infra_health_needed_description": (
+            "infrastructure_health is not in LIFECYCLE_EVENT_TYPES and is marked disposition='ignored' once "
+            "ingested_seq <= controller.checkpoint_seq; retention never deletes rows above safe_ingested_seq."
+        ),
+    },
+)
+
+
+_SUMMARY_EVENT_ID_KV_RE = re.compile(
+    r"(?:source_event_id|telemetry_event_id|opening_event_id|resolving_event_id)=([^;\s,]+)"
+)
+_SUMMARY_EVENT_IDS_LIST_RE = re.compile(r"telemetry_event_ids=([^;\s]+)")
+
+
 class HeartbeatRetentionError(RuntimeError):
     """Base error for heartbeat retention failures."""
 
@@ -284,6 +378,26 @@ def parse_retention_days(raw: Any = None) -> float:
         raise ValueError(f"{RAW_RETENTION_DAYS_ENV} must be a positive number, got {raw!r}") from exc
     if not math.isfinite(days) or days <= 0.0:
         raise ValueError(f"{RAW_RETENTION_DAYS_ENV} must be > 0, got {raw!r}")
+    return days
+
+
+def parse_infra_health_retention_days(raw: Any = None) -> float:
+    """Parse and validate PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS (default 7)."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raw = os.getenv(
+            INFRA_HEALTH_RETENTION_DAYS_ENV,
+            str(int(DEFAULT_INFRA_HEALTH_RETENTION_DAYS)),
+        )
+    if isinstance(raw, bool):
+        raise ValueError(f"{INFRA_HEALTH_RETENTION_DAYS_ENV} must be a positive number")
+    try:
+        days = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{INFRA_HEALTH_RETENTION_DAYS_ENV} must be a positive number, got {raw!r}"
+        ) from exc
+    if not math.isfinite(days) or days <= 0.0:
+        raise ValueError(f"{INFRA_HEALTH_RETENTION_DAYS_ENV} must be > 0, got {raw!r}")
     return days
 
 
@@ -327,6 +441,215 @@ def check_readers_against_retention_window(
         "blocking_reader": None,
         "readers": checked,
     }
+
+
+def check_infra_health_readers_against_retention_window(
+    retention_days: float,
+    readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+) -> dict[str, Any]:
+    """Verify every infrastructure_health reader's unreferenced age fits within retention_days.
+
+    Raises HeartbeatRetentionReaderBlocker if any reader requires unreferenced
+    infrastructure_health rows older than the configured retention window.
+    """
+    window_seconds = float(retention_days) * 86400.0
+    max_required = 0.0
+    checked: list[dict[str, Any]] = []
+    for reader in readers:
+        reader_id = str(reader.get("reader_id") or "unknown")
+        module = str(reader.get("module") or "")
+        raw_required = reader.get("oldest_infra_health_needed_seconds")
+        if raw_required is None:
+            raw_required = reader.get("oldest_heartbeat_needed_seconds")
+        required_seconds = float(raw_required or 0.0)
+        max_required = max(max_required, required_seconds)
+        checked.append(
+            {
+                "reader_id": reader_id,
+                "module": module,
+                "oldest_infra_health_needed_seconds": required_seconds,
+                "within_retention_window": required_seconds <= window_seconds,
+            }
+        )
+        if required_seconds > window_seconds:
+            raise HeartbeatRetentionReaderBlocker(
+                reader_id=reader_id,
+                required_seconds=required_seconds,
+                retention_window_seconds=window_seconds,
+                module=module,
+            )
+    return {
+        "all_readers_within_window": True,
+        "retention_days": float(retention_days),
+        "retention_window_seconds": window_seconds,
+        "max_reader_required_age_seconds": max_required,
+        "blocking_reader": None,
+        "readers": checked,
+    }
+
+
+def _validate_qualified_table_identifier(table: str) -> str:
+    clean = str(table or "").strip()
+    parts = clean.split(".")
+    if not parts or len(parts) > 2 or any(not part.isidentifier() for part in parts):
+        raise ValueError(f"Invalid table identifier: {table!r}")
+    return clean
+
+
+def extract_referenced_event_ids_from_record(record: Mapping[str, Any] | str) -> set[str]:
+    """Extract all telemetry event IDs referenced by an IncidentCase or Postmortem record."""
+    if isinstance(record, str):
+        try:
+            record = json.loads(record)
+        except ValueError:
+            return set()
+    if not isinstance(record, Mapping):
+        return set()
+
+    event_ids: set[str] = set()
+
+    def _add_token(value: Any) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        if text.startswith(("merged_incident_id:", "resolution_reason:")):
+            return
+        if text.startswith("merged_event:"):
+            parts = text.split(":", 2)
+            if len(parts) == 3 and parts[2].strip():
+                event_ids.add(parts[2].strip())
+            return
+        event_ids.add(text)
+
+    raw_list = record.get("telemetry_event_ids")
+    if isinstance(raw_list, (list, tuple, set)):
+        for item in raw_list:
+            _add_token(item)
+
+    for key in (
+        "trace_id",
+        "source_event_id",
+        "telemetry_event_id",
+        "opening_event_id",
+        "resolving_event_id",
+        "last_event_id",
+    ):
+        val = record.get(key)
+        if isinstance(val, str) and val.strip():
+            _add_token(val)
+
+    for summary_key in ("evidence_summary", "incident_evidence_summary"):
+        summary = str(record.get(summary_key) or "")
+        if not summary:
+            continue
+        for match in _SUMMARY_EVENT_ID_KV_RE.finditer(summary):
+            _add_token(match.group(1))
+        for match in _SUMMARY_EVENT_IDS_LIST_RE.finditer(summary):
+            for part in match.group(1).split(","):
+                _add_token(part)
+
+    return event_ids
+
+
+async def resolve_protected_infrastructure_health_event_ids(
+    conn: Any,
+    *,
+    incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
+    postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
+    incident_store_paths: Sequence[str | Path] | None = None,
+    bff_health_sqlite_path: str | Path | None = None,
+    extra_protected_event_ids: Iterable[str] | None = None,
+) -> set[str]:
+    """Return all infrastructure_health event IDs referenced by incidents, postmortems, or BFF state.
+
+    Checks:
+    1. PostgreSQL ``incident.incident_cases`` and ``incident.postmortems`` tables (when present).
+    2. Configured or discovered JSON IncidentStore files (``incidents.json``).
+    3. Configured or discovered BFF downstream health SQLite database (``incident_mappings`` and
+       ``delivery_outbox``).
+    4. Any explicit ``extra_protected_event_ids`` supplied by the caller.
+    """
+    protected: set[str] = set()
+
+    if extra_protected_event_ids is not None:
+        for item in extra_protected_event_ids:
+            clean = str(item or "").strip()
+            if clean:
+                protected.add(clean)
+
+    for raw_table in (incident_cases_table, postmortems_table):
+        if not raw_table:
+            continue
+        table_name = _validate_qualified_table_identifier(raw_table)
+        regclass = await conn.fetchval("SELECT to_regclass($1)", table_name)
+        if regclass is None:
+            continue
+        rows = await conn.fetch(f"SELECT payload FROM {table_name}")
+        for row in rows:
+            protected.update(extract_referenced_event_ids_from_record(row["payload"]))
+
+    candidate_json_paths: list[Path] = []
+    if incident_store_paths is not None:
+        for p in incident_store_paths:
+            if p:
+                candidate_json_paths.append(Path(p))
+    else:
+        for env_dir in ("INCIDENTS_DATA_DIR", "POSTMORTEMS_DATA_DIR"):
+            raw_dir = os.getenv(env_dir, "").strip()
+            if raw_dir:
+                candidate_json_paths.append(Path(raw_dir) / "incidents.json")
+        raw_file = os.getenv("PANTHEON_BFF_INCIDENT_STORE", "").strip()
+        if raw_file:
+            candidate_json_paths.append(Path(raw_file))
+
+    seen_paths: set[Path] = set()
+    for json_path in candidate_json_paths:
+        if json_path in seen_paths or not json_path.is_file():
+            continue
+        seen_paths.add(json_path)
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(data, Mapping):
+            for section in ("incidents", "postmortems"):
+                items = data.get(section)
+                if isinstance(items, list):
+                    for rec in items:
+                        if isinstance(rec, Mapping):
+                            protected.update(extract_referenced_event_ids_from_record(rec))
+
+    sqlite_candidates: list[Path] = []
+    if bff_health_sqlite_path:
+        sqlite_candidates.append(Path(bff_health_sqlite_path))
+    else:
+        for env_sqlite in ("PANTHEON_BFF_DOWNSTREAM_HEALTH_DB", "PANTHEON_BFF_HEALTH_DB_PATH"):
+            raw_sq = os.getenv(env_sqlite, "").strip()
+            if raw_sq:
+                sqlite_candidates.append(Path(raw_sq))
+
+    for sq_path in sqlite_candidates:
+        if not sq_path.is_file():
+            continue
+        try:
+            with sqlite3.connect(f"file:{sq_path}?mode=ro", uri=True, timeout=1.0) as sq_conn:
+                cur = sq_conn.cursor()
+                for query in (
+                    "SELECT opening_event_id, last_event_id FROM incident_mappings",
+                    "SELECT event_id FROM delivery_outbox WHERE channel IN ('incident_open', 'incident_resolve')",
+                ):
+                    try:
+                        for sq_row in cur.execute(query).fetchall():
+                            for col in sq_row:
+                                clean_col = str(col or "").strip()
+                                if clean_col and not clean_col.startswith("orphan-reconcile:"):
+                                    protected.add(clean_col)
+                    except sqlite3.Error:
+                        continue
+        except Exception:  # noqa: BLE001
+            continue
+
+    return protected
 
 
 def _utc_now() -> datetime:
@@ -824,7 +1147,7 @@ async def _summarize_hours_before_delete(
 
 @dataclass
 class RetentionRunResult:
-    """Result of one bounded heartbeat retention execution."""
+    """Result of one bounded heartbeat and infrastructure_health retention execution."""
 
     status: str
     retention_days: float
@@ -839,6 +1162,14 @@ class RetentionRunResult:
     consumer_checkpoints: dict[str, int] = field(default_factory=dict)
     blocking_reader: str | None = None
     error: str | None = None
+    heartbeat_rows_deleted: int = 0
+    infra_health_rows_deleted: int = 0
+    infra_health_retention_days: float = DEFAULT_INFRA_HEALTH_RETENTION_DAYS
+    infra_health_cutoff_at: str = ""
+    heartbeat_batches_executed: int = 0
+    infra_health_batches_executed: int = 0
+    protected_infra_health_event_ids_count: int = 0
+    protected_infra_health_event_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -855,6 +1186,14 @@ class RetentionRunResult:
             "consumer_checkpoints": dict(self.consumer_checkpoints),
             "blocking_reader": self.blocking_reader,
             "error": self.error,
+            "heartbeat_rows_deleted": self.heartbeat_rows_deleted,
+            "infra_health_rows_deleted": self.infra_health_rows_deleted,
+            "infra_health_retention_days": self.infra_health_retention_days,
+            "infra_health_cutoff_at": self.infra_health_cutoff_at,
+            "heartbeat_batches_executed": self.heartbeat_batches_executed,
+            "infra_health_batches_executed": self.infra_health_batches_executed,
+            "protected_infra_health_event_ids_count": self.protected_infra_health_event_ids_count,
+            "protected_infra_health_event_ids": list(self.protected_infra_health_event_ids),
         }
 
 
@@ -863,6 +1202,7 @@ async def run_heartbeat_retention_on_connection(
     *,
     now: datetime | None = None,
     retention_days: float | None = None,
+    infra_health_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -870,17 +1210,30 @@ async def run_heartbeat_retention_on_connection(
     extra_consumer_checkpoints: Mapping[str, int] | None = None,
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
+    infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
+    postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
+    incident_store_paths: Sequence[str | Path] | None = None,
+    bff_health_sqlite_path: str | Path | None = None,
+    extra_protected_event_ids: Iterable[str] | None = None,
 ) -> RetentionRunResult:
-    """Run bounded heartbeat summarization and raw deletion on an open asyncpg connection."""
+    """Run bounded heartbeat summarization and raw heartbeat + infrastructure_health deletion on an open asyncpg connection."""
     t0 = time.monotonic()
     effective_days = parse_retention_days(retention_days)
+    effective_infra_days = parse_infra_health_retention_days(infra_health_retention_days)
     effective_batch_size = max(1, int(batch_size))
     effective_timeout_ms = max(100, int(statement_timeout_ms))
     reference_now = _coerce_utc(now) if now is not None else _utc_now()
     cutoff_dt = reference_now - timedelta(days=effective_days)
     cutoff_iso = _format_rfc3339(cutoff_dt) or ""
+    infra_cutoff_dt = reference_now - timedelta(days=effective_infra_days)
+    infra_cutoff_iso = _format_rfc3339(infra_cutoff_dt) or ""
 
     check_readers_against_retention_window(effective_days, readers=readers)
+    check_infra_health_readers_against_retention_window(
+        effective_infra_days,
+        readers=infra_health_readers,
+    )
     await ensure_heartbeat_summary_schema(conn)
 
     ceiling_info = await resolve_safe_ingested_seq_ceiling(
@@ -891,6 +1244,17 @@ async def run_heartbeat_retention_on_connection(
     )
     safe_seq = int(ceiling_info["safe_ingested_seq"])
     checkpoints = dict(ceiling_info["consumer_checkpoints"])
+
+    protected_ids = sorted(
+        await resolve_protected_infrastructure_health_event_ids(
+            conn,
+            incident_cases_table=incident_cases_table,
+            postmortems_table=postmortems_table,
+            incident_store_paths=incident_store_paths,
+            bff_health_sqlite_path=bff_health_sqlite_path,
+            extra_protected_event_ids=extra_protected_event_ids,
+        )
+    )
 
     if safe_seq <= 0:
         return RetentionRunResult(
@@ -905,13 +1269,21 @@ async def run_heartbeat_retention_on_connection(
             batch_size=effective_batch_size,
             duration_ms=(time.monotonic() - t0) * 1000.0,
             consumer_checkpoints=checkpoints,
+            heartbeat_rows_deleted=0,
+            infra_health_rows_deleted=0,
+            infra_health_retention_days=effective_infra_days,
+            infra_health_cutoff_at=infra_cutoff_iso,
+            heartbeat_batches_executed=0,
+            infra_health_batches_executed=0,
+            protected_infra_health_event_ids_count=len(protected_ids),
+            protected_infra_health_event_ids=protected_ids,
         )
 
-    total_deleted = 0
+    total_hb_deleted = 0
     total_hours_summarized = 0
-    batches_run = 0
+    hb_batches_run = 0
 
-    while max_batches is None or batches_run < max_batches:
+    while max_batches is None or hb_batches_run < max_batches:
         query_timeout = (effective_timeout_ms / 1000.0) + 5.0
         async with conn.transaction():
             await conn.execute(
@@ -970,10 +1342,75 @@ async def run_heartbeat_retention_on_connection(
             )
             deleted_in_batch = len(deleted_rows)
 
-        batches_run += 1
-        total_deleted += deleted_in_batch
+        hb_batches_run += 1
+        total_hb_deleted += deleted_in_batch
         total_hours_summarized += hours_upserted
         if deleted_in_batch < effective_batch_size:
+            break
+
+    total_infra_deleted = 0
+    infra_batches_run = 0
+
+    while max_batches is None or infra_batches_run < max_batches:
+        query_timeout = (effective_timeout_ms / 1000.0) + 5.0
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('statement_timeout', $1, true)",
+                f"{effective_timeout_ms}ms",
+                timeout=query_timeout,
+            )
+            protected_ids = sorted(
+                await resolve_protected_infrastructure_health_event_ids(
+                    conn,
+                    incident_cases_table=incident_cases_table,
+                    postmortems_table=postmortems_table,
+                    incident_store_paths=incident_store_paths,
+                    bff_health_sqlite_path=bff_health_sqlite_path,
+                    extra_protected_event_ids=extra_protected_event_ids,
+                )
+            )
+            infra_candidates = await conn.fetch(
+                """
+                SELECT event_id
+                FROM public.telemetry_events
+                WHERE event_type = 'infrastructure_health'
+                  AND created_at < $1
+                  AND ingested_seq <= $2
+                  AND NOT (event_id = ANY($3::text[]))
+                ORDER BY ingested_seq ASC
+                LIMIT $4
+                """,
+                infra_cutoff_dt,
+                safe_seq,
+                protected_ids,
+                effective_batch_size,
+                timeout=query_timeout,
+            )
+            if not infra_candidates:
+                break
+
+            candidate_infra_ids = [str(row["event_id"]) for row in infra_candidates]
+            deleted_infra_rows = await conn.fetch(
+                """
+                DELETE FROM public.telemetry_events
+                WHERE event_id = ANY($1::text[])
+                  AND event_type = 'infrastructure_health'
+                  AND created_at < $2
+                  AND ingested_seq <= $3
+                  AND NOT (event_id = ANY($4::text[]))
+                RETURNING event_id
+                """,
+                candidate_infra_ids,
+                infra_cutoff_dt,
+                safe_seq,
+                protected_ids,
+                timeout=query_timeout,
+            )
+            deleted_infra_in_batch = len(deleted_infra_rows)
+
+        infra_batches_run += 1
+        total_infra_deleted += deleted_infra_in_batch
+        if deleted_infra_in_batch < effective_batch_size:
             break
 
     return RetentionRunResult(
@@ -981,13 +1418,21 @@ async def run_heartbeat_retention_on_connection(
         retention_days=effective_days,
         cutoff_at=cutoff_iso,
         safe_ingested_seq=safe_seq,
-        batches_executed=batches_run,
-        rows_deleted=total_deleted,
+        batches_executed=hb_batches_run + infra_batches_run,
+        rows_deleted=total_hb_deleted + total_infra_deleted,
         hours_summarized=total_hours_summarized,
         statement_timeout_ms=effective_timeout_ms,
         batch_size=effective_batch_size,
         duration_ms=(time.monotonic() - t0) * 1000.0,
         consumer_checkpoints=checkpoints,
+        heartbeat_rows_deleted=total_hb_deleted,
+        infra_health_rows_deleted=total_infra_deleted,
+        infra_health_retention_days=effective_infra_days,
+        infra_health_cutoff_at=infra_cutoff_iso,
+        heartbeat_batches_executed=hb_batches_run,
+        infra_health_batches_executed=infra_batches_run,
+        protected_infra_health_event_ids_count=len(protected_ids),
+        protected_infra_health_event_ids=protected_ids,
     )
 
 
@@ -996,6 +1441,7 @@ async def run_heartbeat_retention(
     *,
     now: datetime | None = None,
     retention_days: float | None = None,
+    infra_health_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -1003,8 +1449,14 @@ async def run_heartbeat_retention(
     extra_consumer_checkpoints: Mapping[str, int] | None = None,
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
+    infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
+    postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
+    incident_store_paths: Sequence[str | Path] | None = None,
+    bff_health_sqlite_path: str | Path | None = None,
+    extra_protected_event_ids: Iterable[str] | None = None,
 ) -> RetentionRunResult:
-    """Connect to PostgreSQL and run a bounded heartbeat retention pass."""
+    """Connect to PostgreSQL and run a bounded heartbeat + infrastructure_health retention pass."""
     import asyncpg  # type: ignore[import]
 
     conn = await asyncpg.connect(dsn)
@@ -1013,6 +1465,7 @@ async def run_heartbeat_retention(
             conn,
             now=now,
             retention_days=retention_days,
+            infra_health_retention_days=infra_health_retention_days,
             batch_size=batch_size,
             max_batches=max_batches,
             statement_timeout_ms=statement_timeout_ms,
@@ -1020,6 +1473,12 @@ async def run_heartbeat_retention(
             extra_consumer_checkpoints=extra_consumer_checkpoints,
             require_controller_checkpoint=require_controller_checkpoint,
             readers=readers,
+            infra_health_readers=infra_health_readers,
+            incident_cases_table=incident_cases_table,
+            postmortems_table=postmortems_table,
+            incident_store_paths=incident_store_paths,
+            bff_health_sqlite_path=bff_health_sqlite_path,
+            extra_protected_event_ids=extra_protected_event_ids,
         )
     finally:
         await conn.close()
@@ -1089,13 +1548,14 @@ async def rebuild_runtime_summaries_from_db(
 
 
 class HeartbeatRetentionJob:
-    """Periodic background job inside services/telemetry that enforces heartbeat retention."""
+    """Periodic background job inside services/telemetry that enforces heartbeat and infrastructure_health retention."""
 
     def __init__(
         self,
         dsn: str,
         *,
         retention_days: float | None = None,
+        infra_health_retention_days: float | None = None,
         batch_size: int | None = None,
         max_batches_per_run: int | None = None,
         interval_seconds: float | None = None,
@@ -1104,6 +1564,9 @@ class HeartbeatRetentionJob:
     ) -> None:
         self._dsn = str(dsn or "").strip()
         self._retention_days = parse_retention_days(retention_days)
+        self._infra_health_retention_days = parse_infra_health_retention_days(
+            infra_health_retention_days
+        )
         self._batch_size = max(
             1,
             int(
@@ -1142,6 +1605,8 @@ class HeartbeatRetentionJob:
         self._runs_completed = 0
         self._runs_failed = 0
         self._total_rows_deleted = 0
+        self._total_heartbeat_rows_deleted = 0
+        self._total_infra_health_rows_deleted = 0
         self._total_hours_summarized = 0
         self._last_run_at: str | None = None
         self._last_result: dict[str, Any] | None = None
@@ -1158,11 +1623,12 @@ class HeartbeatRetentionJob:
     async def run_once(self, *, now: datetime | None = None) -> RetentionRunResult:
         """Execute a single bounded retention pass."""
         if not self._dsn:
+            ref_now = _coerce_utc(now) if now else _utc_now()
             result = RetentionRunResult(
                 status="skipped_no_dsn",
                 retention_days=self._retention_days,
                 cutoff_at=_format_rfc3339(
-                    (_coerce_utc(now) if now else _utc_now()) - timedelta(days=self._retention_days)
+                    ref_now - timedelta(days=self._retention_days)
                 )
                 or "",
                 safe_ingested_seq=0,
@@ -1172,6 +1638,11 @@ class HeartbeatRetentionJob:
                 statement_timeout_ms=self._statement_timeout_ms,
                 batch_size=self._batch_size,
                 duration_ms=0.0,
+                infra_health_retention_days=self._infra_health_retention_days,
+                infra_health_cutoff_at=_format_rfc3339(
+                    ref_now - timedelta(days=self._infra_health_retention_days)
+                )
+                or "",
             )
             self._last_result = result.to_dict()
             return result
@@ -1181,12 +1652,15 @@ class HeartbeatRetentionJob:
                 self._dsn,
                 now=now,
                 retention_days=self._retention_days,
+                infra_health_retention_days=self._infra_health_retention_days,
                 batch_size=self._batch_size,
                 max_batches=self._max_batches_per_run,
                 statement_timeout_ms=self._statement_timeout_ms,
             )
             self._runs_completed += 1
             self._total_rows_deleted += result.rows_deleted
+            self._total_heartbeat_rows_deleted += result.heartbeat_rows_deleted
+            self._total_infra_health_rows_deleted += result.infra_health_rows_deleted
             self._total_hours_summarized += result.hours_summarized
             self._last_run_at = _format_rfc3339(_utc_now())
             self._last_result = result.to_dict()
@@ -1211,8 +1685,9 @@ class HeartbeatRetentionJob:
         self._running = True
         self._task = asyncio.create_task(self._loop(), name="telemetry-heartbeat-retention")
         log.info(
-            "HeartbeatRetentionJob started (retention_days=%s, batch_size=%s, interval=%ss, statement_timeout_ms=%s)",
+            "HeartbeatRetentionJob started (retention_days=%s, infra_health_retention_days=%s, batch_size=%s, interval=%ss, statement_timeout_ms=%s)",
             self._retention_days,
+            self._infra_health_retention_days,
             self._batch_size,
             self._interval_seconds,
             self._statement_timeout_ms,
@@ -1249,6 +1724,7 @@ class HeartbeatRetentionJob:
             "enabled": self._enabled,
             "running": self.is_running(),
             "retention_days": self._retention_days,
+            "infra_health_retention_days": self._infra_health_retention_days,
             "batch_size": self._batch_size,
             "max_batches_per_run": self._max_batches_per_run,
             "interval_seconds": self._interval_seconds,
@@ -1256,6 +1732,8 @@ class HeartbeatRetentionJob:
             "runs_completed": self._runs_completed,
             "runs_failed": self._runs_failed,
             "total_rows_deleted": self._total_rows_deleted,
+            "total_heartbeat_rows_deleted": self._total_heartbeat_rows_deleted,
+            "total_infra_health_rows_deleted": self._total_infra_health_rows_deleted,
             "total_hours_summarized": self._total_hours_summarized,
             "last_run_at": self._last_run_at,
             "last_result": self._last_result,

@@ -633,3 +633,172 @@ def test_direct_dataset_dir_root_uses_canonical_component_root(tmp_path):
                           "--official-root", str(root / "normalized" / "tw_price_daily")],
                          capture_output=True, text=True, check=True, cwd=tmp_path)
     assert json.loads(out.stdout)["summary"]["outcome_counts"] == {"already_quarantined": 1}
+
+
+# --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: OfficialDaily.from_snapshot through DailyBarsReader -------------
+def _hosted_official(root, days=5, codes=("2330", "2317", "6488")):
+    """Run files in the hosted shape (body.symbol bare, normalized_row.symbol_canonical venue qualified), their
+    daily bars through the real backfill, and a fixed seed for the values. Returns the sorted days."""
+    pytest.importorskip("pyarrow")
+    import random
+
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    rng = random.Random(20261118)
+    day0 = datetime(2026, 11, 2)
+    out = []
+    for i in range(days):
+        day = (day0 + timedelta(days=i)).date().isoformat()
+        out.append(day)
+        d = root / "normalized" / "tw_price_daily" / f"date={day}"
+        d.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for code in codes:
+            close = round(10 + rng.random() * 900, 2)
+            body = {"symbol": code, "date": day, "market": "TWSE", "open": close, "high": round(close * 1.01, 2),
+                    "low": round(close * 0.99, 2), "close": close, "volume": rng.randrange(1000, 90_000_000),
+                    "available_time": f"{day}T14:30:00+08:00"}
+            lines.append(json.dumps({"source_id": f"s-{code}-{day}", "metadata": {
+                "body": json.dumps(body), "normalized_row": {**body, "symbol_canonical": f"{code}.TWSE", "trade_date": day}}}))
+        (d / "a.jsonl").write_text("\n".join(lines) + "\n")
+    state = ListingState(last_success_date="2026-11-17")
+    for code in codes:
+        state.allowlist[code] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                                 "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    bf.backfill(root, state, today="2026-11-17", apply=True)
+    return out
+
+
+def _view(off):
+    return {(r.symbol, r.date): (r.open, r.high, r.low, r.close, r.volume, r.available_at)
+            for rows in off._rows.values() for r in rows}
+
+
+def test_official_daily_from_daily_bars_equals_the_run_file_read(tmp_path):
+    days = _hosted_official(tmp_path)
+    old = OfficialDaily.from_snapshot(tmp_path, reader="run_files")
+    new = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars")
+    assert len(_view(old)) == 15 and _view(new) == _view(old)  # zero mismatches: values and available_time
+    assert new.dates_present == old.dates_present == frozenset(days)
+    for sym in ("2330", "2317", "6488"):
+        for day in days:
+            assert [r.ohlcv() for r in new.rows_for(sym, day)] == [r.ohlcv() for r in old.rows_for(sym, day)]
+    assert new.skipped_without_volume == 0
+    assert {r.market for rows in new._rows.values() for r in rows} == {r.market for rows in old._rows.values() for r in rows} == {"TWSE"}
+
+
+def test_official_daily_symbol_forms_find_the_same_rows(tmp_path):
+    days = _hosted_official(tmp_path)
+    for reader in ("run_files", "daily_bars"):
+        off = OfficialDaily.from_snapshot(tmp_path, reader=reader)
+        assert off.rows_for("2330.TWSE", days[0]) == off.rows_for("2330", days[0]) != []
+        assert off.rows_for("2330.TW", days[0]) == off.rows_for("2330", days[0])
+
+
+def test_official_daily_provenance_is_the_named_replacement_and_tracks_the_stored_bar(tmp_path):
+    days = _hosted_official(tmp_path)
+    old = OfficialDaily.from_snapshot(tmp_path, reader="run_files").rows_for("2330", days[0])[0]
+    new = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars").rows_for("2330", days[0])[0]
+    assert set(old.ref) == {"path", "line", "line_sha256", "source_id"}
+    assert new.ref["reader"] == "daily_bars" and new.ref["line"] is None and new.ref["source_id"] is None
+    assert new.ref["path"] == f"daily_bars/_manifest/date={days[0]}.json"
+    assert len(new.ref["line_sha256"]) == 64 and new.ref["content_digest"]
+    again = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars").rows_for("2330", days[0])[0]
+    assert again.ref == new.ref  # stable: the idempotence check compares it
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    stored = DailyBarsStore(tmp_path)
+    rows = stored._read_day_rows(stored.read_manifest(days[0]))
+    bumped = [dict(r, close=r["close"] + 1.0, high=r["high"] + 1.0, content_hash="changed") for r in rows.values()]
+    stored.write_day(days[0], bumped, ingest_run_id="bump")
+    changed = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars").rows_for("2330", days[0])[0]
+    assert changed.ref["line_sha256"] != new.ref["line_sha256"] and changed.close == new.close + 1
+
+
+def test_official_daily_from_daily_bars_survives_run_file_deletion_and_reports_a_missing_store(tmp_path):
+    import shutil
+
+    days = _hosted_official(tmp_path)
+    shutil.rmtree(tmp_path / "normalized")
+    off = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars")
+    assert len(off.rows_for("2330", days[0])) == 1
+    shutil.rmtree(tmp_path / "daily_bars")
+    with pytest.raises(ReconcileError, match="governed daily bars directory missing"):
+        OfficialDaily.from_snapshot(tmp_path, reader="daily_bars")
+    with pytest.raises(ReconcileError, match="not one of run_files, daily_bars"):
+        OfficialDaily.from_snapshot(tmp_path, reader="typo")
+
+
+def test_official_daily_reads_the_named_setting_and_defaults_to_run_files(tmp_path, monkeypatch):
+    days = _hosted_official(tmp_path)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    default = OfficialDaily.from_snapshot(tmp_path)
+    assert default.rows_for("2330", days[0])[0].ref.get("reader") is None  # run files
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    assert OfficialDaily.from_snapshot(tmp_path).rows_for("2330", days[0])[0].ref["reader"] == "daily_bars"
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "typo")
+    with pytest.raises(ValueError, match="PANTHEON_DAILY_PRICE_READER"):
+        OfficialDaily.from_snapshot(tmp_path)
+
+
+def test_a_volume_lots_only_row_is_not_an_official_bar_in_daily_bars_mode_and_is_counted(tmp_path):
+    """Named difference: TPEx monthly history carries only ``volume_lots``; daily bars hold no such column."""
+    pytest.importorskip("pyarrow")
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    day = "2026-11-10"
+    d = tmp_path / "normalized" / "tw_price_daily" / f"date={day}"
+    d.mkdir(parents=True)
+    body = {"symbol": "6488", "date": day, "market": "TPEX", "open": 10, "high": 11, "low": 9, "close": 10,
+            "volume": None, "volume_lots": 5, "available_time": AVAIL}
+    (d / "a.jsonl").write_text(json.dumps({"metadata": {"body": json.dumps(body)}}) + "\n")
+    assert OfficialDaily.from_snapshot(tmp_path, reader="run_files").rows_for("6488", day)[0].volume == Decimal(5000)
+    from scripts.backfill_daily_bars import effective_metadata
+
+    rec = SimpleNamespace(metadata={**effective_metadata({"metadata": {"body": json.dumps(body)}}), "symbol_canonical": "6488.TWO"},
+                          source_id="s", is_rejected=False)
+    DailyBarsStore(tmp_path).write_records([rec], ingest_run_id="x", default_market="TW")
+    new = OfficialDaily.from_snapshot(tmp_path, reader="daily_bars")
+    assert new.rows_for("6488", day) == [] and new.skipped_without_volume == 1
+
+
+def _backfilled_named_day(tmp_path, **kw):
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+    from services.source_ingestion.security_listing import ListingState
+
+    off = _write_snapshot(tmp_path / "off", **kw)
+    path = next((off / "normalized" / "tw_price_daily" / DAY).glob("a.jsonl"))
+    rec = json.loads(path.read_text())
+    body = json.loads(rec["metadata"]["body"])
+    rec["metadata"]["normalized_row"] = {**body, "symbol_canonical": "2330.TWSE", "trade_date": DAY}
+    path.write_text(json.dumps(rec) + "\n")
+    # the backfill reads write-date partitions (date=*); this fixture's snapshot dir is named by the day
+    partition = off / "normalized" / "tw_price_daily" / f"date={DAY}"
+    partition.mkdir()
+    (partition / "a.jsonl").write_text(path.read_text())
+    state = ListingState(last_success_date="2026-11-17")
+    state.allowlist["2330"] = {"venue": "TWSE", "category": "x", "cfi": "ESVUFR", "is_warrant": False,
+                               "first_seen": "2026-01-01", "last_seen": "2026-11-17"}
+    bf.backfill(off, state, today="2026-11-17", apply=True)
+    return off
+
+
+def test_reconcile_outcome_and_volume_basis_are_the_same_from_daily_bars(tmp_path):
+    off = _backfilled_named_day(tmp_path)
+    store = _store(tmp_path / "store")
+    store.put_symbol_day("2330", DAY, _bars())
+    results = {}
+    for reader in ("run_files", "daily_bars"):
+        results[reader] = _run(store, OfficialDaily.from_snapshot(off, reader=reader), write=False)
+    old, new = results["run_files"], results["daily_bars"]
+    assert old.outcome == new.outcome == "pass"
+    assert old.official == new.official and old.observed == new.observed
+    assert old.official_available_at == new.official_available_at
+    ob, nb = old.source_refs["volume_basis"], new.source_refs["volume_basis"]
+    assert ob["comparable_volume"] == nb["comparable_volume"] == str(REGULAR)
+    assert {c["market"] for c in nb["components"]} == {"TWSE"}
+    # the named provenance difference: the official ref is the manifest and row hash instead of file and line
+    assert old.source_refs["official"]["path"] != new.source_refs["official"]["path"]
+    assert new.source_refs["official"]["reader"] == "daily_bars"
