@@ -3,7 +3,7 @@
   "approach": "runtime-only overlay config (openclaw.runtime.json $include-ing openclaw.json) selected via OPENCLAW_CONFIG_PATH only when PERSONA_TOOL_BROKER_TOKEN is set; shared openclaw.json never receives plugins.load.paths or the plugin entry; startup applies one `config patch` that also nulls legacy persisted plugin keys",
   "verified_on": "ghcr.io/openclaw/openclaw:2026.7.1 derived image (pantheon-openclaw-gateway:persona-tools-it)",
   "command": "PANTHEON_GATEWAY_TEST_IMAGE=<gateway image> python3 scripts/test_openclaw_gateway_plugin_rollback_contract.py",
-  "result": "7 tests OK (4 static, 3 docker)",
+  "result": "36 passed, 4 skipped (pytest over test_persona_tool_broker, test_compose_activation, rollback contract incl. docker tests) after merging dev",
   "acceptance": {
     "1_config_readable_by_previous_image": "persisted openclaw.json contains no /opt/pantheon path or plugin entry after candidate start",
     "2_rollback_test": "candidate startup then previous image (plugins dir hidden by tmpfs) on same volume: config validate passes, /readyz healthy",
@@ -12,5 +12,6 @@
     "5_other_compose_files": "no docker-compose.*.yml other than docker-compose.yml references the plugin (asserted)",
     "6_runtime_budget": "exactly one config patch per start on openclaw.json; overlay is an atomic tmp+mv write of a separate non-secret file (token is an env reference)"
   },
-  "note": "gateway config writes while running under the overlay are refused by OpenClaw ('would flatten $include'); gateway reported auto-enabling without writes and served normally"
+  "note": "gateway config writes while running under the overlay are refused by OpenClaw ('would flatten $include'); gateway reported auto-enabling without writes and served normally",
+  "reviewer_exception": "Reviewer Claude2 is the same model family as owner Claude; Antigravity and Codex had no quota on 2026-11-17. Cross-family exception authorised by Human/Ops 2026-11-17T10:17Z."
 }
