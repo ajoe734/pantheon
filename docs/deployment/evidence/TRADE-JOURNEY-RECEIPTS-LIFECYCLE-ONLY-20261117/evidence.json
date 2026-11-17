@@ -1,0 +1,156 @@
+{
+  "task_id": "TRADE-JOURNEY-RECEIPTS-LIFECYCLE-ONLY-20261117",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "source_base_sha": "ede3b803594a7121b40d096b1f9bc50a6955704a",
+  "hosted_context_measured_by_coordinator": {
+    "measured_at": "2026-11-16",
+    "table": "trade_journey_projection.event_receipts",
+    "total_rows": 13710000,
+    "total_size_gb": 4.4,
+    "recent_window_telemetry_rows": 400000,
+    "recent_window_applied_lifecycle_rows": 8,
+    "receipts_written_on_2026_11_16": 337596,
+    "root_cause": "run_worker constructed PostgresLifecycleSource(include_non_lifecycle=True) and project_records wrote disposition='ignored' receipts for every heartbeat and infrastructure_health event, even after LIFECYCLE-COMMITTED-FRONTIER-20261006 (f235cf2f6) moved checkpoint advancement to the writer-fenced source frontier."
+  },
+  "runtime_budget": {
+    "writer": "services/trade_journey/lifecycle_projector.py (RelationalLifecycleProjector) & services/trade_journey/projection_store.py (ProjectionStore)",
+    "table": "trade_journey_projection.event_receipts",
+    "cadence": "Event-driven per committed lifecycle batch (1s poll interval + pantheon_lifecycle_events LISTEN/NOTIFY wakeup); non-lifecycle events produce 0 receipt writes in live worker mode.",
+    "size_and_count_at_hosted_scale": {
+      "bytes_per_row_with_indexes": 225,
+      "observed_lifecycle_events_per_day_2026_11_16": 8,
+      "full_three_persona_daily_cycle_lifecycle_events_per_day": 72
+    },
+    "growth_per_day": {
+      "before_fix_rows_per_day": 337596,
+      "before_fix_bytes_per_day": 108000000,
+      "after_fix_rows_per_day_on_2026_11_16_shape": 8,
+      "after_fix_bytes_per_day_on_2026_11_16_shape": 1800,
+      "after_fix_max_rows_per_day_at_full_three_persona_scale": 200,
+      "after_fix_max_bytes_per_day_at_full_three_persona_scale": 45000
+    },
+    "cap": {
+      "non_lifecycle_ignored_receipts_cap": 0,
+      "lifecycle_receipts_retained": "permanent (bounded by lifecycle event rate: <= 73,000 rows / <= 16.5 MB per year at full 3-persona daily cycle)"
+    },
+    "cleanup": {
+      "job": "NonLifecycleReceiptPruneJob / ProjectionStore.prune_non_lifecycle_receipts",
+      "safe_ceiling_helper": "services.telemetry.heartbeat_retention.resolve_safe_ingested_seq_ceiling(require_controller_checkpoint=True)",
+      "predicate": "disposition = 'ignored' AND NOT (source_event_type = ANY(LIFECYCLE_EVENT_TYPES)) AND ingested_seq <= min_controller_checkpoint_seq AND journey_id = '' AND loop_run_id = ''",
+      "batch_size_default": 5000,
+      "max_batches_per_run_default": 20,
+      "interval_seconds_default": 10.0,
+      "statement_timeout_ms_default": 15000,
+      "drain_rate_rows_per_run": 100000,
+      "estimated_time_to_drain_13_71m_rows_minutes": 23,
+      "filesystem_reclaim": "Handled on hosted by the reclaim script extended in TELEMETRY-INFRA-HEALTH-RETENTION-20261117 (scripts/telemetry_heartbeat_reclaim.py not modified here)."
+    }
+  },
+  "changes": {
+    "live_worker_source_filter": "run_worker builds PostgresLifecycleSource(include_non_lifecycle=False) by default (configurable via LIFECYCLE_PROJECTOR_INCLUDE_NON_LIFECYCLE for rollback); fetch_after queries WHERE ingested_seq > $1 AND event_type = ANY(LIFECYCLE_EVENT_TYPE_QUERY) and establishes last_frontier_seq = max(row_frontier, COALESCE(MAX(ingested_seq), 0)) under _source_writer_fence whenever len(rows) < limit.",
+    "projector_receipt_suppression": "RelationalLifecycleProjector.project_records skips appending EventReceiptRow for non-lifecycle event types when a proven source_frontier_seq > 0 is supplied (unless persist_non_lifecycle_receipts=True), while preserving receipts permanently for all LIFECYCLE_EVENT_TYPES (applied, quarantined, and superseded-retry ignored).",
+    "callers_without_proven_frontier": "_backfill CLI (backfill and replay commands) passes source_frontier_seq=0 by default and keeps writing ignored receipts so the contiguous CTE advances checkpoint_seq; lifecycle_projector_capacity.run_capacity_benchmark supplies source_frontier_seq=high_watermark.",
+    "pruning_job": "ProjectionStore.prune_non_lifecycle_receipts, prune_non_lifecycle_receipts_on_connection, run_non_lifecycle_receipt_prune, NonLifecycleReceiptPruneJob, and lifecycle_projector.py prune-receipts CLI delete existing non-lifecycle ignored receipts at or below the minimum controller checkpoint in bounded batches under transaction-local statement_timeout.",
+    "redundant_index_drop_migration": "services/trade_journey/migrations/002_drop_redundant_event_receipts_index.sql drops trade_journey_projection.idx_event_receipts_ingested_seq while keeping the UNIQUE constraint index event_receipts_ingested_seq_key on (ingested_seq)."
+  },
+  "event_receipts_readers_inventory": [
+    {
+      "reader": "ProjectionStore.get_receipts",
+      "location": "services/trade_journey/projection_store.py:883",
+      "query": "SELECT ... FROM event_receipts WHERE event_id = ANY(%s)",
+      "index_used": "event_receipts_pkey",
+      "compatibility": "Queries by event_id PK; unaffected by pruning non-lifecycle ignored receipts <= checkpoint_seq or dropping idx_event_receipts_ingested_seq."
+    },
+    {
+      "reader": "ProjectionStore.execute_batch_transaction preflight & lost-claim checks",
+      "location": "services/trade_journey/projection_store.py:1181,1253",
+      "query": "SELECT event_id, fingerprint FROM event_receipts WHERE event_id = ANY(%s)",
+      "index_used": "event_receipts_pkey",
+      "compatibility": "Checks fingerprint conflicts and idempotent retries for lifecycle receipts (retained permanently)."
+    },
+    {
+      "reader": "ProjectionStore.execute_batch_transaction contiguous CTE & frontier",
+      "location": "services/trade_journey/projection_store.py:1597-1631",
+      "query": "WITH RECURSIVE contiguous(seq) AS (...) SELECT MAX(seq) FROM contiguous; plus proven_frontier = mutation.source_frontier_seq",
+      "index_used": "event_receipts_ingested_seq_key (UNIQUE on ingested_seq)",
+      "compatibility": "Starts at curr_checkpoint_seq and steps forward (> curr_checkpoint_seq) using event_receipts_ingested_seq_key; proven_frontier advances checkpoint_seq across sequence holes left by skipped types and heartbeat retention."
+    },
+    {
+      "reader": "ProjectionStore.adopt_legacy_baseline",
+      "location": "services/trade_journey/projection_store.py:659",
+      "query": "SELECT COUNT(*) FROM event_receipts WHERE ...",
+      "index_used": "table/index scan during one-time legacy baseline seed before live controller exists",
+      "compatibility": "Pruning refuses to delete any row when no controller checkpoint > 0 exists (safe_ingested_seq = 0)."
+    },
+    {
+      "reader": "Capacity harness",
+      "location": "services/trade_journey/lifecycle_projector_capacity.py",
+      "query": "run_capacity_benchmark and fault scenarios",
+      "compatibility": "Supplies source_frontier_seq=high_watermark in run_capacity_benchmark; all 10 fault scenarios pass."
+    }
+  ],
+  "hosted_shape_13_7m_benchmark_measurement": {
+    "dataset_description": "PostgreSQL 16 database seeded with 13,710,000 existing event_receipts rows (250 historical lifecycle receipts across applied, quarantined, and superseded-retry ignored dispositions + 13,709,750 ignored heartbeat and infrastructure_health receipts through ingested_seq=13,710,000) plus 1 full hosted day of public.telemetry_events (337,596 rows: 8 lifecycle events and 337,588 non-lifecycle heartbeat/infrastructure_health events through ingested_seq=14,047,596).",
+    "initial_receipt_count": 13710000,
+    "storage_before_migration_002_bytes": {
+      "total_relation_bytes": 3388915712,
+      "heap_bytes": 2339840000,
+      "indexes_bytes": 1048461312,
+      "redundant_idx_event_receipts_ingested_seq_bytes": 307970048,
+      "unique_event_receipts_ingested_seq_key_bytes": 307970048
+    },
+    "storage_after_migration_002_bytes": {
+      "total_relation_bytes": 3080937472,
+      "indexes_bytes": 740483072,
+      "immediate_index_bytes_saved": 307978240
+    },
+    "daily_projection_measurement": {
+      "telemetry_rows_in_day": 337596,
+      "lifecycle_rows_in_day": 8,
+      "non_lifecycle_rows_in_day": 337588,
+      "new_receipt_rows_written_for_day": 8,
+      "non_lifecycle_receipt_rows_written_for_day": 0,
+      "single_poll_duration_ms": 267.073,
+      "controller_checkpoint_after_poll": 14047596,
+      "controller_backlog_after_poll": 0,
+      "controller_status_after_poll": "ready"
+    },
+    "bounded_prune_pass_on_13_7m_table": {
+      "batch_size": 5000,
+      "max_batches": 20,
+      "statement_timeout_ms": 15000,
+      "batches_executed": 20,
+      "rows_deleted": 100000,
+      "duration_ms": 9857.324,
+      "retained_historical_lifecycle_receipts": 250,
+      "remaining_total_after_one_pass": 13610008
+    }
+  },
+  "residual_findings_outside_scope": [
+    {
+      "file": "services/trade_journey/test_projection_migration.py",
+      "line": 265,
+      "test": "test_sealed_upgrade_refuses_unsafe_layout_without_changes[ddl_rollback]",
+      "finding": "Executes `DROP INDEX trade_journey_projection.idx_event_receipts_ingested_seq` without `IF EXISTS` after `ProjectionStore(runtime, bootstrap=True)` has already applied `002_drop_redundant_event_receipts_index.sql` and dropped that index. When run with TEST_DATABASE_ADMIN_URL and TEST_PROJECTION_CONTAINER set, line 265 should use `DROP INDEX IF EXISTS` or target `idx_event_receipts_tenant_env_journey`.",
+      "proposed_register_class": "RC3 / WP3.1 trade_journey receipt index cleanup follow-up"
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
+      "exit_code": 0,
+      "result": "212 passed in 75.78s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/telemetry/test_heartbeat_retention.py",
+      "exit_code": 0,
+      "result": "7 passed in 27.76s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_capacity.py",
+      "exit_code": 0,
+      "result": "22 passed, 13 skipped in 3.11s"
+    }
+  ]
+}

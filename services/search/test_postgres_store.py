@@ -15,6 +15,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from datetime import datetime, timezone
+
+_NOW = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +75,14 @@ class _FakeEvidenceConnection:
         self.statements.append(sql)
         normalized = " ".join(sql.split()).upper()
         if normalized.startswith("SELECT"):
+            if params:
+                record_type, after = params[0], params[1]
+                rows = [
+                    (index, row[1])
+                    for index, row in enumerate(self.evidence_rows, start=1)
+                    if row[0] == record_type and index > after
+                ]
+                return _FakeCursor(rows[: params[2]])
             return _FakeCursor([(row[0], row[1]) for row in self.evidence_rows])
         return _FakeCursor([])
 
@@ -275,7 +286,7 @@ def test_postgres_search_index_store_append_and_get():
                     "matched_items": ["evi-1"],
                 }
             ],
-            created_at="2026-04-29T00:00:00Z",
+            created_at=_NOW,
         )
         returned = pg_store.append_snapshot(snapshot)
 
@@ -304,7 +315,7 @@ def test_postgres_search_index_store_reload():
                 "matched_items": [],
             }
         ],
-        "created_at": "2026-04-29T00:00:00Z",
+        "created_at": _NOW,
     }
 
     _FakeSnapshotConnection.rows = [("req-reload-001", snapshot_payload)]
