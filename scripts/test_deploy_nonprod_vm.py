@@ -4431,3 +4431,152 @@ def test_one_shot_service_is_restart_no_with_declared_profiles() -> None:
     start = compose.index("  source-ingest-agora-projector:")
     block = compose[start : compose.index("\n\n", start)]
     assert 'restart: "no"' in block and 'profiles: ["source-ingest-scheduler", "workers"]' in block
+
+
+# ---- DEV-DEPLOY-STACK-CHECK-REVISION-SCOPE-20261117 -------------------------
+
+_RELEASE_SHA = "9ab80dd2528e4bbb15f3947fdcb61c6828f2ef03"
+_GATEWAY_OLD_REV = "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4"
+
+
+def _extract_release_labelled_services_func() -> str:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index("release_labelled_services() {")
+    return text[start : text.index("\n}\n", start) + 3]
+
+
+def _run_stack_check(tmp_path: Path, containers: dict[str, dict], config_services: dict | None):
+    """Run verify_exact_component_deployment over mocked containers (18:35Z replay shape)."""
+    import json
+    import os
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    data = tmp_path / "containers.json"
+    data.write_text(json.dumps({"containers": containers, "config": config_services}), encoding="utf-8")
+    (bin_dir / "docker").write_text(
+        f"""#!/usr/bin/env python3
+import json, sys
+d = json.load(open({str(data)!r}))
+a = sys.argv[1:]
+C = d["containers"]
+IMG = "sha256:" + "b" * 64
+if a[0] == "compose":
+    if "config" in a:
+        if d["config"] is None:
+            sys.exit(1)
+        print(json.dumps({{"services": d["config"]}}))
+    elif "images" in a:
+        print(IMG)
+    else:
+        print("cid_" + a[-1])
+elif a[0] == "inspect":
+    fmt, cid = a[2], a[3]
+    c = C[cid[4:]]
+    if fmt == "{{{{.State.Status}}}}": print("running")
+    elif fmt == "{{{{.State.StartedAt}}}}": print("2026-11-17T18:00:00.000000000Z")
+    elif fmt == "{{{{.RestartCount}}}}": print("0")
+    elif "State.Health.Status" in fmt: print(c.get("health", "healthy"))
+    elif fmt == "{{{{.Config.Image}}}}": print("img:" + cid)
+    elif fmt == "{{{{.Image}}}}": print(IMG)
+    elif "image.revision" in fmt: print(c["rev"])
+    elif "json .Config.Cmd" in fmt: print('["run"]')
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "docker").chmod(0o755)
+    _write_mock_git(bin_dir, _RELEASE_SHA)
+    services = " ".join(containers)
+    runner = tmp_path / "run.sh"
+    runner.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+REQUIRED_LOOP_WORKERS=()
+{_extract_release_labelled_services_func()}
+{_extract_verify_exact_component_deployment_func()}
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{tmp_path / 'receipt.json'}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="{_RELEASE_SHA}"
+verify_exact_component_deployment {services}
+""",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    return subprocess.run(["bash", str(runner)], capture_output=True, text=True, cwd=tmp_path, env=env, timeout=240)
+
+
+_GIT_SHA_BUILD = {"build": {"context": ".", "args": {"GIT_SHA": _RELEASE_SHA}}}
+_STACK_CONFIG = {
+    "operator-bff": _GIT_SHA_BUILD,
+    "dev-paper-principal-issuer": _GIT_SHA_BUILD,
+    "openclaw-gateway": {"build": {"context": ".", "args": {"NPM": "1"}}, "image": "pantheon-openclaw-gateway:2026.7.1"},
+    "postgres": {"image": "postgres:16"},
+}
+
+
+def test_stack_check_prebuilt_gateway_with_older_label_passes(tmp_path: Path) -> None:
+    """2026-11-17 18:35Z replay: gateway label names an older commit; the release does not build it."""
+    containers = {
+        "operator-bff": {"rev": _RELEASE_SHA},
+        "dev-paper-principal-issuer": {"rev": _RELEASE_SHA},
+        "openclaw-gateway": {"rev": _GATEWAY_OLD_REV},
+        "postgres": {"rev": ""},
+    }
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "mismatched image revision" not in proc.stderr
+    import json
+
+    receipt = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
+    gateway = json.dumps(receipt)
+    assert _GATEWAY_OLD_REV not in gateway  # no revision claim for an image the release does not build
+
+
+def test_stack_check_built_service_on_other_revision_still_fails_with_name(tmp_path: Path) -> None:
+    containers = {
+        "operator-bff": {"rev": _GATEWAY_OLD_REV},
+        "openclaw-gateway": {"rev": _GATEWAY_OLD_REV},
+    }
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode != 0
+    assert "operator-bff: image_rev=" in proc.stderr
+    assert "openclaw-gateway: image_rev" not in proc.stderr
+
+
+def test_stack_check_prebuilt_service_still_needs_health(tmp_path: Path) -> None:
+    containers = {"openclaw-gateway": {"rev": _GATEWAY_OLD_REV, "health": "unhealthy"}}
+    proc = _run_stack_check(tmp_path, containers, _STACK_CONFIG)
+    assert proc.returncode != 0
+    assert "openclaw-gateway: health" in proc.stderr
+
+
+def test_stack_check_requires_revision_for_all_when_scope_not_derivable(tmp_path: Path) -> None:
+    containers = {"openclaw-gateway": {"rev": _GATEWAY_OLD_REV}}
+    proc = _run_stack_check(tmp_path, containers, None)
+    assert proc.returncode != 0
+    assert "openclaw-gateway: image_rev=" in proc.stderr
+
+
+def test_release_labelled_services_cover_every_compose_service_that_receives_git_sha() -> None:
+    """Derived from the real Compose file; fails when a built, labelled service is missing."""
+    import yaml
+
+    out = subprocess.run(
+        ["bash", "-c", _extract_release_labelled_services_func() + "\nGIT_SHA=" + _RELEASE_SHA + " release_labelled_services"],
+        capture_output=True, text=True, cwd=ROOT, timeout=120, check=True,
+    ).stdout.split()
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    expected = {
+        name
+        for name, svc in compose.items()
+        if isinstance(svc.get("build"), dict)
+        and ("GIT_SHA" in (svc["build"].get("args") or {})
+             or "org.opencontainers.image.revision" in (svc["build"].get("labels") or {}))
+    }
+    assert expected, "no GIT_SHA-labelled builds found in docker-compose.yml"
+    assert set(out) == expected
+    assert "dev-paper-principal-issuer" in out
+    assert "openclaw-gateway" not in out
