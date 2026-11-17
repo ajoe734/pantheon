@@ -2557,14 +2557,26 @@ def test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots(steady
     assert {r.metadata["collector_close"]["trade_date"] for r in records} == {"2026-11-12", _CLOSE_DATE}
 
 
+@pytest.mark.parametrize("schedule", [
+    "overlapped",
+    "budget_spent_by_last_read",
+    # Forced non-overlapping reader model: ~70s of wall time, so it only runs on request.
+    pytest.param("sequential", marks=pytest.mark.skipif(
+        os.environ.get("PANTHEON_CLOSE_TEST_SEQUENTIAL") != "1", reason="set PANTHEON_CLOSE_TEST_SEQUENTIAL=1")),
+])
 def test_full_size_close_through_controller_main_with_persistence(
-    steady_stack, monkeypatch, tmp_path, capsys,
+    steady_stack, monkeypatch, tmp_path, capsys, schedule,
 ) -> None:
     """Captured cardinalities; finite 270ms reads, actual loop sleeps and real disk stores.
 
-    Network time is virtual: overlapping transport calls share a start time and
-    charge the maximum finish time. A short real wait allows actual reader threads
-    to overlap; sequential implementations still pay the full 270ms per item.
+    Network time is virtual and computed from the call structure, never from how real
+    reader threads happen to overlap: every raw read charges a fixed amount (a quarter of
+    270ms when the readers run LATEST_CLOSE_RAW_READ_CONCURRENCY wide, the full 270ms when
+    they run one after another). A barrier on the first group forces genuine thread overlap
+    for the peak-concurrency assertion; no real waiting is involved afterwards.
+    The ``budget_spent_by_last_read`` schedule forces the boundary case: the read that
+    delivers the last row of a source also spends the whole request budget, so the ordered
+    (history) sweep behind it cannot run on that same pull.
     All real API/controller/normalization/disk time is added conservatively, as is
     50ms per local API round trip and a worst-phase 600s source-cadence delay.
     The real registered definitions are provisioned by reconciliation. No hosted claim.
@@ -2599,6 +2611,11 @@ def test_full_size_close_through_controller_main_with_persistence(
     files["status.json"] = json.dumps({"sources": statuses}).encode()
     clock, reads, peak, active = [600.0], [], [0], [0]
     lock = threading.Lock()
+    width = cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
+    read_cost = _CLOSE_READ_SECONDS if schedule == "sequential" else _CLOSE_READ_SECONDS / width
+    raw_total = {f"collector-tw-{x.lower()}-price-history": n for n, x in sessions}
+    raw_seen = {cid: set() for cid in raw_total}
+    overlap, raw_ordinal = threading.Barrier(width), [0]
     # Persisted run/schedule timestamps (second resolution) come from an injected stamp clock that
     # advances exactly one second per controller sleep, never from wall time. Consecutive ticks
     # therefore always get distinct, ordered timestamps without any real wait, and staleness is
@@ -2622,16 +2639,29 @@ def test_full_size_close_through_controller_main_with_persistence(
     class LatencyTransport(FakeTransport):
         def read(self, relative_path, *, max_bytes):
             with lock:
-                start = clock[0]
                 active[0] += 1
                 peak[0] = max(peak[0], active[0])
                 reads.append(relative_path)
+                if "/raw/" in relative_path:
+                    raw_ordinal[0] += 1
+                    forced = raw_ordinal[0] <= width
+                else:
+                    forced = False
             try:
-                time.sleep(0.002)  # actual overlapping I/O; no executor/worker mocked
-                return super().read(relative_path, max_bytes=max_bytes)
+                if forced:
+                    overlap.wait(timeout=60)  # forces the first reader group to be in flight together
+                data = super().read(relative_path, max_bytes=max_bytes)
+                with lock:
+                    clock[0] += read_cost if "/raw/" in relative_path else 0.0
+                    if schedule == "budget_spent_by_last_read" and "/raw/" in relative_path:
+                        for cid, seen in raw_seen.items():
+                            if f"/{cid}/" in relative_path and relative_path not in seen:
+                                seen.add(relative_path)
+                                if len(seen) == raw_total[cid]:  # the read that completes this source's delivery
+                                    clock[0] += cb.COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+                return data
             finally:
                 with lock:
-                    clock[0] = max(clock[0], start + _CLOSE_READ_SECONDS)
                     active[0] -= 1
 
     transport = LatencyTransport(files)
@@ -2658,7 +2688,7 @@ def test_full_size_close_through_controller_main_with_persistence(
     monkeypatch.setattr(cw, "_request_json", timed_request)
     sleeps, progress, completed_at, receipts = [], {cid: [] for cid in paths}, {}, []
     tick_request = cw._request_json
-    schedule_elapsed = []
+    schedule_elapsed, finish_ticks = [], []
 
     def record_receipts(*args, **kwargs):
         model_started = clock[0]
@@ -2687,9 +2717,17 @@ def test_full_size_close_through_controller_main_with_persistence(
             if state["done"]:
                 completed_at.setdefault(cid, clock[0])
         if len(completed_at) == len(paths):
-            # Every row in these newest-only bundles is acknowledged; restore cadence.
-            assert seconds == config.interval_seconds
-            raise SessionFinished
+            # Every row in these newest-only bundles is acknowledged. A pull whose request budget is
+            # already spent when its last row lands cannot run the ordered (history) sweep behind it
+            # (collector_bundle._pull_bounded), so that source reports continuation_pending once more
+            # and is re-pulled on a short tick. That is at most one extra short tick per source, it
+            # delivers no row, and the tick after the last of them restores the cadence.
+            finish_ticks.append((seconds, len(receipts)))
+            assert seconds in (cw.CONTINUATION_PAUSE_SECONDS, config.interval_seconds), seconds
+            if seconds == config.interval_seconds:
+                raise SessionFinished
+            assert len(finish_ticks) <= len(paths), finish_ticks
+            return
         assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
 
     monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
@@ -2702,6 +2740,13 @@ def test_full_size_close_through_controller_main_with_persistence(
         assert counts[-1] == n_rows and all(a < b for a, b in zip(counts, counts[1:]))
         assert len(counts) > 1
     assert not cb._DEFER_ACK.get()
+    assert finish_ticks[-1][0] == config.interval_seconds
+    extra = finish_ticks[:-1]  # short ticks taken after every row was already acknowledged
+    assert all(seconds == cw.CONTINUATION_PAUSE_SECONDS for seconds, _ in extra)
+    # Those follow-up pulls only evaluate the ordered sweep: no row, no duplicate evidence.
+    assert all(receipt["normalized_count"] == 0 for receipt in receipts[finish_ticks[0][1]:])
+    if schedule == "budget_spent_by_last_read":
+        assert len(extra) == len(paths), finish_ticks  # forced boundary: every source needs its follow-up tick
     ack_ids = [receipt["ingest_run_id"] for receipt in receipts]
     assert len(ack_ids) == len(sleeps) == len(set(ack_ids))
     assert all(receipt["status"] == "completed" for receipt in receipts)
@@ -2746,7 +2791,10 @@ def test_full_size_close_through_controller_main_with_persistence(
     print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
            "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2),
            "max_schedule_request_seconds": max(schedule_elapsed)})
-    assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"
+    if schedule != "sequential":  # a reader that never overlaps is exactly what the 30-minute deadline rules out
+        assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"
+    else:
+        assert elapsed > 1800, "the sequential model must be visibly slower than the overlapped one"
 
 
 # COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113 ------------------------------------
