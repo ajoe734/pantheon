@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from ..active_universe import DEFAULT_SOURCE_UPDATE_RULES
 from ..api_models import (
@@ -30,8 +30,38 @@ if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
 
 
+def _retention_sweeper(runtime: Any) -> Any:
+    """One RetentionSweeper per runtime, built from the stores the runtime already owns (adds no store)."""
+    sweeper = getattr(runtime, "_retention_sweeper", None)
+    if sweeper is None:
+        from ..pin_source import PinSource
+        from ..retention import REPORT_FILENAME, RetentionSweeper
+
+        writer = runtime.market_data_storage_writer
+        sweeper = RetentionSweeper(
+            daily_bars_store=writer.daily_bars_store,
+            report_path=runtime.DATA_DIR / REPORT_FILENAME,
+            listing_provider=runtime.hosted_listing,
+            snapshot_store=runtime.latest_market_snapshot_store,
+            pin_source=PinSource.from_env(run_files_root=runtime.MARKET_DATA_STORAGE_ROOT),
+            keyed_root=runtime.MARKET_DATA_STORAGE_ROOT,
+        )
+        runtime._retention_sweeper = sweeper
+    return sweeper
+
+
 def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
     router = APIRouter(tags=["source-observability"])
+
+    @router.post("/api/source-ingest/retention/run")
+    def run_retention(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """Controller cadence entry: runs the retention sweeper when it has not run today (dry run unless enabled)."""
+        runtime._require_controller_authorization(authorization, operation="retention sweep")
+        return _retention_sweeper(runtime).run_if_due()
+
+    @router.get("/api/source-ingest/retention")
+    def retention_health() -> dict[str, Any]:
+        return _retention_sweeper(runtime).health()
 
     @router.get("/api/source-ingest/health")
     def list_source_health(source_kind: str | None = None) -> dict[str, Any]:
@@ -41,6 +71,7 @@ def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
             "health_records": [r.to_dict() for r in records],
             "count": len(records),
             "daily_bars": runtime.market_data_storage_writer.daily_bars_store.health(),
+            "retention": _retention_sweeper(runtime).health(),
         }
 
     @router.get("/api/source-ingest/health/{source_id}")
