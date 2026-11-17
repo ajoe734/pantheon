@@ -58,6 +58,10 @@ manifest entry id, owner, register class and task for each finding:
 | `unbounded` | warning | an `unbounded` entry is measured but has no numeric budget yet |
 | `unknown_state_file` | warning | file under `/data` older than 7 days that no manifest entry covers (grouped by directory) |
 
+Per container memory (limit, `memory.peak`, `memory.events` max and oom_kill, restart count) is also reported with
+findings `container_oom_killed` and `container_restarts_grew` (red) and `memory_limit_reached`,
+`memory_peak_near_limit`, `memory_limit_missing` (warning); see docs/deployment/dev-container-memory-budget.md.
+
 The run is red only for the red findings. The report also carries filesystem free space,
 `docker system df`, and the top containers by memory. When you bound a writer, add its numeric
 budget to `BUDGETS` (keyed by manifest name) in the same change.
