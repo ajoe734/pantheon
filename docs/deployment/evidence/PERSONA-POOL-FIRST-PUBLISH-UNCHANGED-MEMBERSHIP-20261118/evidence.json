@@ -1,0 +1,9 @@
+{
+  "task_id": "PERSONA-POOL-FIRST-PUBLISH-UNCHANGED-MEMBERSHIP-20261118",
+  "rule": "first publish runs when no binding is on a persona pool envelope and current membership (artifact_ref, checksum, stage, risk_weight) equals seeded v1; otherwise deferred as pool_membership_changed_since_seed:vN",
+  "legacy_readback": "steps.publish deferred with reason pool_advanced_past_seed* is unsettled once, so the reconciler re-evaluates it once; new deferral reason is settled",
+  "runtime_budget": "no new writer; reconciler overwrites one readback per persona in place and re-evaluates each legacy deferred readback once; one extra owner GET of pool v1 per unsettled evaluation (only when version != 1)",
+  "owner_port": "no port change (outside artifact contract): uses owner get_strategy_pool_version if present else the owner read-only _request GET of /strategy-pool/versions/1; neither => deferred (safe)",
+  "tests": "services/control-plane/bff/tests/test_persona_paper_enrollment.py: 35 passed",
+  "hosted_proof": "pending deploy: expect persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241 steps.publish published/current and active runtime binding artifact_id starting artifact-persona-pool-; coordinator records if task closes before deploy"
+}
