@@ -239,3 +239,17 @@ def test_owner_configuration_missing_is_explicit(cycle_stack, monkeypatch):
     view = response.json()["data"]["personaCycle"]
     assert view["cycle"] and all(view[k] is None for k in ("memorySummary", "harnessExperiences", "harness", "consultationMemos"))
     assert calls == []
+
+
+@pytest.mark.parametrize("route", PATHS)
+def test_detail_exposes_probe_day_status(cycle_stack, route):
+    """RC2: the page shows the per-persona day status the acceptance probe computes."""
+    client, *_ = cycle_stack
+    view = client.get(route, headers=headers()).json()["data"]["personaCycle"]
+    day = view["dayStatus"]
+    assert day["persona_id"] == PID and day["passed"] is False
+    names = [c["name"] for c in day["preconditions"]]
+    from acceptance.persona_day import PRECONDITIONS
+    assert tuple(names) == PRECONDITIONS
+    assert day["first_failed_precondition"] in PRECONDITIONS
+    assert "PRIVATE_CASE_FILE" not in str(day)

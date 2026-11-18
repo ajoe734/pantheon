@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117
+set -euo pipefail
+exec python3 -I "$(dirname "$0")/../persona_day.py"

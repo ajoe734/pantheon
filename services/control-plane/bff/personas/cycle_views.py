@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -75,7 +76,8 @@ def read_fleet_cycle_health(read_store, tenant_id, persona_ids):
     return result
 
 
-def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization, snapshot_at):
+def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization, snapshot_at,
+                     lifecycle_state=None):
     surfaces = {}
 
     def section(name, source, read):
@@ -194,5 +196,16 @@ def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization,
                               "created_at", "created_by", "content_digest")} for v in versions]}
 
     harness_view = section("persona_harness", "persona_owner", harness)
-    return {"cycle": cycle, "memorySummary": summary, "consultationMemos": memo,
+    day_status = None
+    if records is not None:
+        try:
+            # Same evaluator as the daily acceptance probe (acceptance/persona_day.py).
+            from acceptance.persona_day import evaluate_persona_day
+            day_status = evaluate_persona_day(
+                persona_id, lifecycle_state=lifecycle_state, cron_jobs=None, packets=records,
+                now=datetime.now(timezone.utc),
+                consultations=[{"at": m.get("created_at")} for m in (memo or [])])
+        except Exception:
+            day_status = None
+    return {"dayStatus": day_status, "cycle": cycle, "memorySummary": summary, "consultationMemos": memo,
             "harness": harness_view, "harnessExperiences": experience}, surfaces
