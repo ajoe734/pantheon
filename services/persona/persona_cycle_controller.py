@@ -290,6 +290,21 @@ def _summarize_regime_record(strategy_id: str, rec: Mapping[str, Any]) -> dict[s
     }
 
 
+_PENDING_RESULT_STATUS = {"skipped", "deferred", "risk_review_unavailable", "risk_review_not_recorded",
+                          "memory_owner_unavailable", "endorse_refused"}
+
+
+def pending_lesson_count(governance: Any) -> int | None:
+    """Own candidates still proposed/pending_review after this cycle's lesson step; None when unreadable."""
+    if not isinstance(governance, Mapping) or governance.get("status") != "completed":
+        return None
+    results = governance.get("results")
+    if not isinstance(results, list):
+        return None
+    return sum(1 for r in results if isinstance(r, Mapping) and r.get("status") in _PENDING_RESULT_STATUS
+               and r.get("reason") != "foreign_candidate")
+
+
 def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
     """Evaluate for the session, then read the active record of each strategy. Never raises."""
     if transport is None:
@@ -596,6 +611,9 @@ class PersonaCycleController:
                 cycle["lesson_governance"] = self._lesson_step(lambda lc: lc.govern(persona), degraded={
                     "status": "unavailable", "results": []})
             if run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                if isinstance(observe, dict):
+                    # count from the read the lesson step already made this cycle (no extra memory read)
+                    observe["pending_lesson_candidates"] = pending_lesson_count(cycle.get("lesson_governance"))
                 cycle["meetings"] = self._meeting_step(persona, observe, packet, snapshots)
             cycle["harness_loop"] = self._harness_loop().run(persona, packet)
             cycle.update(phase="terminal", failure_reason=failure)
