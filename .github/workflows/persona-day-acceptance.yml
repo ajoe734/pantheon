@@ -2,7 +2,7 @@ name: Persona Day Acceptance (daily, read-only)
 
 on:
   schedule:
-    - cron: "30 6 * * 1-5"   # 14:30 Taipei; the persona daily cycle fires at 10:00
+    - cron: "30 11 * * 1-5"  # after the persona daily cycle (10:00Z, window over 10:45Z); judges that UTC day
   workflow_dispatch:
 
 permissions:
@@ -19,10 +19,13 @@ jobs:
     timeout-minutes: 10
     env:
       ACCEPTANCE_BFF_URL: ${{ vars.DEV_BFF_URL }}
-      ACCEPTANCE_BFF_TOKEN: ${{ secrets.DEV_ACCEPTANCE_READ_TOKEN }}
+      # Read-only viewer dev-login identity (existing dev secret); exchanged in memory, never printed.
+      ACCEPTANCE_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - name: Probe (GET only; writes nothing on hosted)
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: python3 -I acceptance/persona_day.py | tee persona-day.json
       - uses: actions/upload-artifact@v4
         if: always()

@@ -3,7 +3,7 @@
 Read-only. ``evaluate_persona_day`` is a pure function shared with the BFF
 Management cycle view (services/control-plane/bff/personas/cycle_views.py), so the
 probe and the page cannot disagree. ``main`` is the acceptance-stage probe
-(contract: acceptance/README.md): exit 0 passed, 1 failed, 77 skipped.
+(contract: acceptance/README.md): exit 0 passed, 1 failed, 77 only when the BFF URL is unset.
 Output lists per persona and per precondition passed/failed with an evidence
 reference. It never prints tokens, case files, prompts or memory content.
 """
@@ -12,11 +12,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
-# acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117
+# acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117 / PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118
 
 PRECONDITIONS = (
     "lifecycle_paper_owner",
@@ -27,25 +28,36 @@ PRECONDITIONS = (
     "pool_cycle_ok",
     "cycle_health_completed",
 )
-TAIPEI = timezone(timedelta(hours=8))
-CYCLE_READY_HOUR = 12  # the cron fires 10:00; before this hour today's cycle is not yet due
+UTC = timezone.utc
+# The persona daily cycle fires at 10:00 UTC (18:00 Taipei) every day; hosted last packets were
+# observed at 10:01Z and the deploy hold window ends 10:45Z. The BFF has no cron reader, so the
+# due time is this constant, stated in every report (cycle_due_at_utc) rather than assumed.
+CYCLE_DUE_UTC = (10, 0)
+CYCLE_SETTLE_MINUTES = 45  # the cycle window is over by 10:45Z; before that the day is not judged
 CONSULT_WINDOW_DAYS = 7
 
 
-def trading_day(now: datetime) -> str:
-    """Taipei trading day the cycle is due for: today after CYCLE_READY_HOUR, else the previous weekday."""
-    local = now.astimezone(TAIPEI)
-    day = local.date() if local.hour >= CYCLE_READY_HOUR else local.date() - timedelta(days=1)
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return day.isoformat()
+def cycle_day(now: datetime) -> str:
+    """UTC date of the cycle being judged: today once its window ended (10:45Z), else yesterday."""
+    utc = now.astimezone(UTC)
+    ready = utc.replace(hour=CYCLE_DUE_UTC[0], minute=CYCLE_DUE_UTC[1], second=0, microsecond=0) \
+        + timedelta(minutes=CYCLE_SETTLE_MINUTES)
+    return (utc.date() if utc >= ready else utc.date() - timedelta(days=1)).isoformat()
+
+
+def cycle_due_at(day: str) -> str:
+    return datetime.fromisoformat(day).replace(hour=CYCLE_DUE_UTC[0], minute=CYCLE_DUE_UTC[1],
+                                               tzinfo=UTC).isoformat()
+
+
+trading_day = cycle_day  # kept name for callers
 
 
 def _packet_day(packet: Mapping[str, Any]) -> Optional[str]:
     ms = (packet.get("producer") or {}).get("cron_run_at_ms")
     if type(ms) is not int:
         return None
-    return (datetime.fromtimestamp(ms / 1000, timezone.utc) + timedelta(hours=8)).date().isoformat()
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).date().isoformat()
 
 
 def _latest(packets: Iterable[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
@@ -128,7 +140,7 @@ def evaluate_persona_day(persona_id: str, *, lifecycle_state: Optional[str], cro
         except (TypeError, ValueError, AttributeError):
             continue
     last = max(stamps, default=None)
-    return {"persona_id": persona_id, "trading_day": day, "passed": first is None,
+    return {"persona_id": persona_id, "trading_day": day, "cycle_day": day, "cycle_due_at_utc": cycle_due_at(day), "passed": first is None,
             "first_failed_precondition": first, "preconditions": checks,
             "last_consultation_at": last.isoformat() if last else None,
             "no_consultation_in_7_days": last is None or last < now - timedelta(days=CONSULT_WINDOW_DAYS)}
@@ -136,15 +148,43 @@ def evaluate_persona_day(persona_id: str, *, lifecycle_state: Optional[str], cro
 
 def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     ok = bool(results) and all(r["passed"] for r in results)
+    days = {r.get("cycle_day") for r in results if r.get("cycle_day")}
     return {"verdict": "passed" if ok else "failed", "personas": results,
+            "cycle_day": min(days) if days else None,
+            "cycle_due_at_utc": cycle_due_at(min(days)) if days else None,
             "reason": None if results else "no_active_trading_persona"}
+
+
+class ProbeHttpError(Exception):
+    """Carries only a safe reason (never a body or header)."""
+
+
+def _call(request: urllib.request.Request, kind: str) -> Any:
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise ProbeHttpError(f"{kind}_failed:{exc.code}") from None
+    except Exception as exc:
+        raise ProbeHttpError(f"{kind}_failed:{type(exc).__name__}") from None
+
+
+def _login(base: str, client_id: str, client_secret: str) -> str:
+    """Read-only viewer dev-login exchange (same as the other hosted workflows); token stays in memory."""
+    body = json.dumps({"grant_type": "client_credentials", "client_id": client_id,
+                       "client_secret": client_secret}).encode()
+    request = urllib.request.Request(base.rstrip("/") + "/bff/auth/dev-login", data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "Accept": "application/json"})
+    token = str((_call(request, "auth") or {}).get("access_token") or "")
+    if not token:
+        raise ProbeHttpError("auth_failed:no_access_token")
+    return token
 
 
 def _get(base: str, path: str, token: str) -> Any:
     request = urllib.request.Request(base.rstrip("/") + path, method="GET",
                                      headers={"Authorization": "Bearer " + token} if token else {})
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
-        return json.load(response)
+    return _call(request, "read")
 
 
 def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
@@ -171,17 +211,27 @@ def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
     return aggregate(results)
 
 
+def _fail(reason: str) -> int:
+    print(json.dumps({"verdict": "failed", "reason": reason}))
+    return 1
+
+
 def main() -> int:
     base = os.environ.get("ACCEPTANCE_BFF_URL", "").strip()
     if not base:
         print("skipped: ACCEPTANCE_BFF_URL not set")
         return 77
-    token = os.environ.get("ACCEPTANCE_BFF_TOKEN", "")
+    client_id = os.environ.get("ACCEPTANCE_VIEWER_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("ACCEPTANCE_VIEWER_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return _fail("credential_missing:viewer_client")  # never green, never skipped
     try:
+        token = _login(base, client_id, client_secret)
         report = run(lambda path: _get(base, path, token))
+    except ProbeHttpError as exc:
+        return _fail(str(exc))
     except Exception as exc:  # never echo bodies or headers
-        print(json.dumps({"verdict": "failed", "reason": "read_failed:" + type(exc).__name__}))
-        return 1
+        return _fail("read_failed:" + type(exc).__name__)
     print(json.dumps(report, sort_keys=True))
     return 0 if report["verdict"] == "passed" else 1
 
