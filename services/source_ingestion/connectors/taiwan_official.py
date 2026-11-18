@@ -2420,6 +2420,85 @@ def _taifex_text_rows(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(dict(item) for item in value if isinstance(item, Mapping))
 
 
+# Required columns per TAIFEX OpenAPI dataset the normalizers read. Each entry is a group
+# of accepted spellings (JSON key or comma separated text header); a response must carry
+# one spelling of every group. The attachment form (JSON or comma separated text) of a
+# dataset changes without notice, so every dataset is read through the same reader.
+_TAIFEX_FUTURES_CHIP_REQUIRED: tuple[tuple[str, ...], ...] = (
+    ("日期", "Date", "date", "TradingDate"),
+    ("商品名稱", "Contract", "契約名稱", "商品代號", "contract", "ContractCode"),
+    ("身份別", "身分別", "ParticipantGroup", "participant_group", "Identity", "Item"),
+    ("多方交易口數", "LongVolume", "buy_volume", "買進口數", "TradingVolume(Long)"),
+    ("空方交易口數", "ShortVolume", "sell_volume", "賣出口數", "TradingVolume(Short)"),
+    ("多空交易口數淨額", "NetVolume", "net_volume", "買賣超口數", "TradingVolume(Net)"),
+    ("多方未平倉口數", "LongOpenInterest", "long_oi", "OpenInterest(Long)"),
+    ("空方未平倉口數", "ShortOpenInterest", "short_oi", "OpenInterest(Short)"),
+    ("多空未平倉口數淨額", "NetOpenInterest", "net_oi", "OpenInterest(Net)"),
+)
+_TAIFEX_OPTIONS_CHIP_REQUIRED: tuple[tuple[str, ...], ...] = (
+    ("Date", "日期", "date", "TradingDate"),
+    ("PutVolume", "賣權成交量", "put_volume"),
+    ("CallVolume", "買權成交量", "call_volume"),
+    ("PutOI", "賣權未平倉量", "PutOpenInterest", "put_open_interest"),
+    ("CallOI", "買權未平倉量", "CallOpenInterest", "call_open_interest"),
+)
+
+
+def _taifex_body_head(raw_bytes: bytes) -> str:
+    return repr(bytes(raw_bytes[:80]))
+
+
+def _parse_taifex_dataset_body(
+    dataset_name: str,
+    raw_bytes: bytes,
+    required: Sequence[Sequence[str]],
+) -> list[dict[str, Any]]:
+    """Read one TAIFEX OpenAPI body in either served form, failing closed.
+
+    Accepts the JSON array and the comma separated text (BOM tolerated) through the
+    shared ``_taifex_text_rows``. A body that is neither form raises
+    ``OfficialBodyNotParseable`` naming the dataset and the first bytes; a response
+    missing a required column raises a format changed error naming the dataset and
+    the columns. Nothing is guessed and an empty body is never a success.
+    """
+    try:
+        text = _decode_taifex_bytes(raw_bytes)
+    except UnicodeDecodeError as exc:
+        raise OfficialBodyNotParseable(
+            f"{dataset_name}: not UTF-8 text ({exc.reason}); first bytes {_taifex_body_head(raw_bytes)}"
+        ) from exc
+    rows = _taifex_text_rows(text)
+    if not rows:
+        raise OfficialBodyNotParseable(
+            f"{dataset_name}: neither a JSON array of rows nor a comma separated table; "
+            f"first bytes {_taifex_body_head(raw_bytes)}"
+        )
+    present = set().union(*(r.keys() for r in rows))
+    missing = [list(group) for group in required if not any(name in present for name in group)]
+    if missing:
+        raise SourceEvidenceError(
+            f"{dataset_name} format changed: missing required columns {[g[0] for g in missing]} "
+            f"(accepted spellings {missing}); columns found {sorted(map(str, present))}"
+        )
+    return list(rows)
+
+
+def _parse_taifex_futures_chip_body(raw_bytes: bytes) -> list[dict[str, Any]]:
+    return _parse_taifex_dataset_body(
+        "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
+        raw_bytes,
+        _TAIFEX_FUTURES_CHIP_REQUIRED,
+    )
+
+
+def _parse_taifex_options_chip_body(raw_bytes: bytes) -> list[dict[str, Any]]:
+    return _parse_taifex_dataset_body("PutCallRatio", raw_bytes, _TAIFEX_OPTIONS_CHIP_REQUIRED)
+
+
+def _parse_taifex_ssf_body(raw_bytes: bytes) -> tuple[dict[str, Any], ...]:
+    return _taifex_text_rows(_decode_taifex_bytes(raw_bytes))
+
+
 def parse_taifex_stock_lists_units(page: str) -> dict[str, dict[str, Any]]:
     """Map contract family (``QF``) to underlying code, name, unit and ETF flag.
 
@@ -2781,6 +2860,18 @@ def _parse_tx_daily_body(raw_bytes: bytes) -> tuple[dict[str, Any], ...]:
     return rows
 
 
+# Every TAIFEX OpenAPI endpoint name the module can request -> the reader of its body.
+# A test walks the module and fails when an endpoint is requested without an entry here.
+TAIFEX_OPENAPI_BODY_READERS: Mapping[str, Callable[[bytes], Any]] = {
+    "PutCallRatio": _parse_taifex_options_chip_body,
+    "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate": _parse_taifex_futures_chip_body,
+    "DailyMarketReportFut": _parse_tx_daily_body,
+    "SingleStockFuturesMargining": _parse_taifex_ssf_body,
+    "SingleStockFuturesETFMargining": _parse_taifex_ssf_body,
+    "FinalSettlementPriceSSF": _parse_taifex_ssf_body,
+}
+
+
 def taifex_tx_daily_select_rows(
     payload: Any, contracts: Sequence[str] | None = None
 ) -> tuple[dict[str, Any], ...]:
@@ -3004,11 +3095,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             caller="source_ingest.taifex_derivatives",
             timeout_seconds=timeout_seconds,
             max_bytes=2097152,
-            parse=(
-                _parse_tx_daily_body
-                if resolved_ds == TAIFEX_TX_DAILY_DATASET
-                else (lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")))
-            ),
+            parse=TAIFEX_OPENAPI_BODY_READERS[url.rsplit("/", 1)[-1]],
         )
         if resolved_ds == TAIFEX_TX_DAILY_DATASET:
             # Filter to TX/MTX first: the response lists ~2300 contracts and a cap
@@ -3039,7 +3126,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 timeout_seconds=timeout_seconds,
                 max_bytes=2097152,
                 # The ETF margin table is served as CSV with a BOM on some reads.
-                parse=lambda raw_bytes: _taifex_text_rows(_decode_taifex_bytes(raw_bytes)),
+                parse=TAIFEX_OPENAPI_BODY_READERS[name],
             )
         request = urllib.request.Request(
             TAIFEX_SSF_STOCK_LISTS_URL,
@@ -3405,7 +3492,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "raw_row": dict(raw),
                 })
             else:
-                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "contract", "ContractCode"), "TX")
+                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品名稱", "商品代號", "contract", "ContractCode"), "TX")
                 if not _matches_taifex_contract(raw_contract, resolved_contracts):
                     continue
                 contract = _TAIFEX_CONTRACT_ALIASES.get(raw_contract, raw_contract)
