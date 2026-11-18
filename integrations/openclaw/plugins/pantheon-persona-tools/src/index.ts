@@ -309,8 +309,19 @@ export function createPlugin(deps: PluginDeps = {}) {
           const sessionKey = ctx.sessionKey;
           const runId = event.runId ?? ctx.runId;
           const toolCallId = event.toolCallId;
-          if (!agentId || !sessionKey || !runId || !toolCallId) {
-            return { block: true, blockReason: "missing host identity (agent, session, run or tool call id)" };
+          const missing = [
+            !agentId ? "agent_id" : "",
+            !sessionKey ? "session_key" : "",
+            !runId ? "run_id" : "",
+            !toolCallId ? "tool_call_id" : "",
+          ].filter(Boolean);
+          if (missing.length > 0 || !agentId || !sessionKey || !runId || !toolCallId) {
+            // Name exactly which host-provided field is absent; identity is never taken from model params.
+            api.logger?.warn?.(`${PLUGIN_ID}: ${tool} blocked, missing host identity: ${missing.join(",")}`);
+            return {
+              block: true,
+              blockReason: `persona_tools_blocked:missing_host_identity:${missing.join(",")} (missing host identity: agent, session, run or tool call id)`,
+            };
           }
           try {
             const result = await post(

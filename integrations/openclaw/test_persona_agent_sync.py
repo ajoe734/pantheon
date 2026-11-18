@@ -320,14 +320,15 @@ def test_agora_servant_adapter_raises_on_failed_sync():
 def test_desired_spec_propagates_declared_runtime_profile_fallback_models_and_modes():
     default_spec = sync.desired_agent_spec(PERSONA_CRYPTO)
     assert default_spec.model == "anthropic/claude-opus-4-8"
+    # claude-cli sonnet blocks every persona tool (no host identity): never a fallback
     assert default_spec.fallback_models == [
-        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5.6-sol",
         "openai/gpt-5.5",
     ]
     assert default_spec.routing_mode == "pool_default"
     assert default_spec.model_policy() == {
         "primary": "anthropic/claude-opus-4-8",
-        "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+        "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
     }
 
     preferred_spec = sync.desired_agent_spec(
@@ -336,7 +337,7 @@ def test_desired_spec_propagates_declared_runtime_profile_fallback_models_and_mo
     assert preferred_spec.model == "openai/gpt-5.5"
     assert preferred_spec.fallback_models == [
         "anthropic/claude-opus-4-8",
-        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5.6-sol",
     ]
     assert preferred_spec.routing_mode == "preferred_pool_model"
 
@@ -415,7 +416,7 @@ def test_sync_persists_and_updates_model_policy_in_agents_list_for_new_and_exist
     by_id = {item["id"]: item for item in agents_list}
     expected_default_policy = {
         "primary": "anthropic/claude-opus-4-8",
-        "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+        "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
     }
     assert by_id["persona-crypto"]["model"] == expected_default_policy
     assert by_id["persona-existing-single-string"]["model"] == expected_default_policy

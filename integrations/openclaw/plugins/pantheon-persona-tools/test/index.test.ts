@@ -141,6 +141,17 @@ test("hook blocks on handler error, timeout, broker 5xx and a non-allowed answer
   }
 });
 
+test("a CLI-backend hook context without identity fields is blocked naming each missing field", async () => {
+  const { hook, calls } = harness();
+  const cli = { agentId: "persona-alpha" } as any; // no sessionKey, no runId
+  const blocked = await hook({ toolName: TOOL_RECALL, params: { agent_id: "forged" } }, cli);
+  assert.equal(blocked.block, true);
+  assert.match(blocked.blockReason, /^persona_tools_blocked:missing_host_identity:session_key,run_id,tool_call_id/);
+  assert.equal(calls.length, 0); // model-supplied identity is never accepted
+  const noAgent = await hook({ toolName: TOOL_RECALL, runId: "r", toolCallId: "t" }, { sessionKey: "s" } as any);
+  assert.match(noAgent.blockReason, /missing_host_identity:agent_id\b/);
+});
+
 test("hook blocks when host identity is incomplete and invalid config blocks everything", async () => {
   const { hook, calls } = harness();
   for (const ctx of [{ ...HOOK_CTX, agentId: undefined }, { ...HOOK_CTX, sessionKey: undefined }, { ...HOOK_CTX, runId: undefined }]) {
