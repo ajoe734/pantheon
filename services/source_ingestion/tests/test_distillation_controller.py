@@ -1320,3 +1320,181 @@ def test_card_dataset_binding_from_env_is_reference_only_and_fail_closed() -> No
     assert binding == {"dataset_id": "dataset:x", "source_dataset_refs": ["dataset:x"],
                        "symbols": ["2330.TW", "2317.TW"], "bar_frequency": "1d"}
     assert "records" not in binding
+
+
+AUTH_401_REASON = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"
+
+
+def _hosted_shape_auth_dead_letters(tmp_path):
+    """260 unresolved 401 dead letters: 153 latest of their source (15 of them
+    with a dead-lettered older version), 92 older with a done newer version."""
+    import sqlite3
+
+    queue = DistillationJobQueue(tmp_path / "job_queue.jsonl", default_max_attempts=3)
+    records = []
+
+    def dead(job):
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE distillation_outbox SET status='dead_letter', attempts=3, last_error=?, processed_at=1 WHERE job_id=?",
+                (AUTH_401_REASON, job.job_id),
+            )
+            conn.execute(
+                "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+                " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (job.job_id, event_id, job.source_id, job.source_digest, "{}", 3, AUTH_401_REASON, 1.0),
+            )
+
+    for i in range(138):  # latest only
+        rec = _normalized_source(f"only-{i}", tenant_id="test")
+        records.append(rec)
+        dead(queue.enqueue_source_record(rec, enqueued_at=100.0))
+    for i in range(15):  # older + newer both dead-lettered
+        old = _normalized_source(f"both-{i}", title="v1", tenant_id="test")
+        new = _normalized_source(f"both-{i}", title="v2", tenant_id="test")
+        records.append(new)
+        dead(queue.enqueue_source_record(old, enqueued_at=100.0))
+        dead(queue.enqueue_source_record(new, enqueued_at=200.0))
+    for i in range(92):  # older dead, newer already delivered
+        old = _normalized_source(f"done-{i}", title="v1", tenant_id="test")
+        new = _normalized_source(f"done-{i}", title="v2", tenant_id="test")
+        records.append(new)
+        dead(queue.enqueue_source_record(old, enqueued_at=100.0))
+        newjob = queue.enqueue_source_record(new, enqueued_at=200.0)
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute("UPDATE distillation_outbox SET status='done' WHERE job_id=?", (newjob.job_id,))
+    assert queue.dead_letter_count() == 260
+    return queue, records
+
+
+def test_controller_converges_hosted_shape_auth_dead_letters(tmp_path, monkeypatch) -> None:
+    queue, records = _hosted_shape_auth_dead_letters(tmp_path)
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text(
+        "".join(json.dumps({"record_type": "source_record", "payload": r.to_dict()}) + "\n" for r in records),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+        max_attempts=3,
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    registry = {"auth": False, "entries": {}, "gets": 0, "posts": 0, "posted_titles": []}
+
+    def get_entry(url, registry_id):
+        import urllib.error
+
+        registry["gets"] += 1
+        if not registry["auth"]:
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        return registry["entries"].get(registry_id)
+
+    def register(url, payload):
+        registry["posts"] += 1
+        registry["posted_titles"].append((payload.get("metadata") or {}).get("source_title"))
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry["entries"][payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
+
+    # Credential still rejected: nothing is redriven, no write reaches the Registry.
+    with pytest.raises(Exception, match="degraded"):
+        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert queue.dead_letter_count() == 260
+    assert registry["posts"] == 0
+
+    registry["auth"] = True
+    registry["gets"] = 0
+    ticks = 0
+    per_tick_calls = []
+    size_before = (tmp_path / "job_queue.jsonl").stat().st_size
+    res = None
+    while ticks < 10:
+        ticks += 1
+        before = registry["gets"] + registry["posts"]
+        try:
+            res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+        except Exception:
+            res = None
+        per_tick_calls.append(registry["gets"] + registry["posts"] - before)
+        if res is not None and res["status"] == "success":
+            break
+    assert res is not None and res["status"] == "success", per_tick_calls
+    assert queue.dead_letter_count() == 0
+    assert queue.metrics()["dead_letter"] == 0
+    # 153 latest versions delivered exactly once; the 107 stale versions never written.
+    assert registry["posts"] == 153
+    assert max(per_tick_calls) <= 1 + 3 * 100  # probe + (get, post, readback) per job, 100-job catch_up
+    print("HOSTED_SHAPE ticks", ticks, "calls_per_tick", per_tick_calls, "posts", registry["posts"],
+          "size_before", size_before, "size_after", (tmp_path / "job_queue.jsonl").stat().st_size)
+
+
+def test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected(tmp_path, monkeypatch) -> None:
+    queue, records = _hosted_shape_auth_dead_letters(tmp_path)
+    mod = "services.source_ingestion.distillation_controller"
+
+    def rejected(url, registry_id):
+        import urllib.error
+
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(f"{mod}._get_registry_entry", rejected)
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    with pytest.raises(Exception, match="degraded"):
+        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert queue.dead_letter_count() == 260

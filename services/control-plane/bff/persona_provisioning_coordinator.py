@@ -685,7 +685,24 @@ class PersonaProvisioningCoordinator:
                 "lifecycle_state": None,
                 "steps": {},
             }
-        if record.references.get("paper_enrollment") == outcome:
+        previous = record.references.get("paper_enrollment")
+        if (
+            isinstance(previous, dict)
+            and previous.get("status") == "enrolled"
+            and outcome.get("status") in {"not_eligible", "refused", "unavailable"}
+        ):
+            # Never overwrite an enrolled readback; keep why this pass could not finish.
+            kept = dict(previous)
+            steps = dict(kept.get("steps") or {})
+            steps["publish"] = {
+                "status": "unfinished",
+                "reason": f"{outcome.get('status')}:{outcome.get('reason')}"[:300],
+                "attempted_at": outcome.get("attempted_at"),
+            }
+            kept["steps"] = steps
+            kept["attempted_at"] = outcome.get("attempted_at") or kept.get("attempted_at")
+            outcome = kept
+        if previous == outcome:
             return record
         record.references["paper_enrollment"] = outcome
         return self._checkpoint(record)

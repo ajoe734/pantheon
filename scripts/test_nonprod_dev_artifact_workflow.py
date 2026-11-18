@@ -159,7 +159,7 @@ def evaluate(expression, values, cancelled=False):
 
 # The stack-safety set. Functional checks (market refresh, paper baseline,
 # probes, Agora smoke) are advisory and deliberately absent: see ADVISORY.
-MANDATORY = ("heartbeat", "deploy", "public_smoke",
+MANDATORY = ("heartbeat", "deploy", "public_smoke", "steady_restart_loop",
              "deploy-posture-evidence", "artifact_baseline_upload",
              "artifact_candidate_seal", "artifact_candidate_upload")
 ADVISORY = ("market_refresh", "paper_bootstrap", "evolution-dispatch-probe",
@@ -892,3 +892,40 @@ def test_guarded_advisory_never_makes_the_lease_guard_see_a_failure(tmp_path, st
         assert guard_saw == 0 and not (tmp_path / "quarantine").exists()
     else:
         assert guard_saw == child_rc
+
+
+def test_steady_restart_loop_step_gates_compensation_and_release():
+    import re
+    body = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert "id: steady_restart_loop" in body
+    assert body.count("steps.steady_restart_loop.outcome != 'success'") == 2
+    assert "STEADY_RESTART_LOOP_OUTCOME" in body
+    step = body[body.index("id: steady_restart_loop\n"):body.index("Upload steady restart-loop evidence")]
+    assert "sleep 90" in step and "--mode verify-restart-loop" in step
+    assert ".State.Health" not in step and "readiness" not in step.split("run: |")[1].lower()
+
+
+def test_job_script_paths_have_a_matching_checkout():
+    """A job that checks out only into sub-directories has no scripts/ at the
+    workspace root. Root 44172901470 passed the stack check and was rolled back
+    because the restart-loop step ran ${GITHUB_WORKSPACE}/scripts/... in the
+    deploy-dev job, which checks out only .target, .agora-gate-controller,
+    .agora-frontend and .lease-controller."""
+    workflow = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+    document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    reference = re.compile(r"\$\{?GITHUB_WORKSPACE\}?/((?:\.[A-Za-z0-9_-]+/)?)scripts\b")
+    problems = []
+    for job_name, job in document["jobs"].items():
+        steps = job.get("steps") or []
+        checkout_paths = {
+            str((step.get("with") or {}).get("path") or "")
+            for step in steps
+            if str(step.get("uses") or "").startswith("actions/checkout@")
+        }
+        if not checkout_paths:
+            continue  # the job fetches the repository itself with git
+        for step in steps:
+            for match in reference.finditer(str(step.get("run") or "")):
+                if match.group(1).rstrip("/") not in checkout_paths:
+                    problems.append(f"{job_name} / {step.get('name')}: {match.group(0)}")
+    assert not problems, "script path without a matching checkout in the same job: " + "; ".join(problems)

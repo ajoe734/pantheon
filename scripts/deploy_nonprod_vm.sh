@@ -4882,6 +4882,37 @@ verify_steady_stack_complete() {
   verify_exact_component_deployment "${stack_services[@]}"
 }
 
+# Services whose image this release builds AND labels with the release SHA,
+# derived from docker-compose.yml (never a hand-kept list): a service with a
+# build section that passes GIT_SHA as a build arg or sets the
+# org.opencontainers.image.revision label. All profiles are rendered so the
+# bounded dev-paper-principals issuer is covered. A service on a prebuilt or
+# third-party image (e.g. openclaw-gateway, fixed tag, no GIT_SHA arg) is not
+# listed, so its older revision label is not a release mismatch. Prints nothing
+# when the Compose config cannot be rendered; callers then fail closed and
+# require the revision for every service.
+release_labelled_services() {
+  GIT_SHA="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}" \
+    docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    services = json.load(sys.stdin).get("services") or {}
+except Exception:
+    raise SystemExit(0)
+for name in sorted(services):
+    build = services[name].get("build")
+    if not isinstance(build, dict):
+        continue
+    args = build.get("args") or {}
+    labels = build.get("labels") or {}
+    if isinstance(labels, list):
+        labels = dict(item.split("=", 1) for item in labels if "=" in item)
+    if "GIT_SHA" in args or "org.opencontainers.image.revision" in labels:
+        print(name)
+' || true
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -4928,6 +4959,18 @@ verify_exact_component_deployment() {
     fi
     seen_target_services["$service"]=1
   done
+
+  # Revision equality applies only to images this release builds and labels.
+  local revision_scope_derived=false
+  declare -A release_labelled=()
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    release_labelled["$service"]=1
+    revision_scope_derived=true
+  done < <(release_labelled_services)
+  if [[ "$revision_scope_derived" != true ]]; then
+    info "release-built service set not derivable; requiring the revision label for every component" >&2
+  fi
 
   info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
 
@@ -5043,8 +5086,16 @@ verify_exact_component_deployment() {
       elif [[ "$image_id" != "$compose_image_id" ]]; then
         identity_errors+=("${service}: container image ID ${image_id:-missing} != Compose image ID ${compose_image_id}")
       fi
-      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
+      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]] \
+        && { [[ "$revision_scope_derived" != true ]] || [[ -n "${release_labelled[$service]:-}" ]]; }; then
         wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
+      fi
+
+      # An image this release does not build carries no revision claim in the
+      # receipt (same contract as an unlabelled image).
+      local receipt_rev="$image_rev"
+      if [[ "$revision_scope_derived" == true && -z "${release_labelled[$service]:-}" ]]; then
+        receipt_rev=""
       fi
 
       if ! entry_json="$(python3 -c '
@@ -5108,7 +5159,7 @@ print(json.dumps({
         "stable": stable,
     },
 }))
-' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$receipt_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
     "$started_at" "${observation_count[$service]}" "${baseline_container_id[$service]}" \
     "${baseline_image_id[$service]}" "${baseline_started_at[$service]}" \
     "${baseline_restart_count[$service]}" "${baseline_health[$service]}" "${service_bad_health[$service]:-0}")"; then
@@ -6431,6 +6482,31 @@ for service, image in sorted(expected.items()):
 ' "${baseline}"
 }
 
+# Recreates one steady service on the image recorded in the baseline. A service
+# the candidate rebuilt under the same tag (e.g. dev-paper-principal-issuer, which
+# is built and started by its own section) keeps the candidate image after the
+# sealed restore; the baseline image is still present by ID, so re-point the
+# Compose tag at it and recreate without building. Prints the failure reason and
+# returns 1 when the service cannot be brought back.
+recreate_steady_service_on_baseline_image() {
+  local service="$1" image_id="$2" ref
+  [[ -n "${image_id}" ]] || { echo "no baseline image recorded"; return 1; }
+  docker image inspect "${image_id}" >/dev/null 2>&1 || { echo "baseline image ${image_id} is not retained"; return 1; }
+  ref="$(docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | SERVICE="${service}" python3 -c '
+import json, os, sys
+try:
+    print((json.load(sys.stdin).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or "")
+except Exception:
+    print("")
+')" || ref=""
+  [[ -n "${ref}" ]] || { echo "compose image reference for ${service} is unavailable"; return 1; }
+  docker tag "${image_id}" "${ref}" >/dev/null 2>&1 || { echo "could not re-point ${ref} at the baseline image"; return 1; }
+  docker compose -p pantheon -f docker-compose.yml --profile '*' \
+    up -d --no-deps --force-recreate --no-build "${service}" >/dev/null 2>&1 \
+    || { echo "recreate on the baseline image failed"; return 1; }
+}
+
 verify_steady_services_restored() {
   local baseline="${1:-}" problems line service cid problem attempt
   [[ -n "${baseline}" && -s "${baseline}" ]] || { info "no steady service baseline recorded; steady services not verified"; return 0; }
@@ -6449,9 +6525,36 @@ verify_steady_services_restored() {
     problems="$(steady_service_problems "${baseline}")"
   fi
   [[ -z "${problems}" ]] && return 0
+  # A service on a non-baseline image (or gone) is recreated on its baseline image.
+  local base_image reason detail="" restored_any=false
+  declare -A restore_failure=()
+  while IFS='|' read -r service cid problem; do
+    [[ "${problem}" == image-mismatch || "${problem}" == missing ]] || continue
+    base_image="$(awk -F'|' -v s="${service}" '$1 == s { print $2; exit }' "${baseline}")"
+    info "compensation: recreating steady service ${service} on its baseline image"
+    if reason="$(recreate_steady_service_on_baseline_image "${service}" "${base_image}")"; then
+      restored_any=true
+    else
+      restore_failure["${service}"]="${reason}"
+    fi
+  done <<<"${problems}"
+  if [[ "${restored_any}" == true ]]; then
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+    [[ -z "${problems}" ]] && return 0
+  fi
   local names
   names="$(cut -d'|' -f1 <<<"${problems}" | paste -sd, -)"
-  info "steady_service_compensation_incomplete: ${names} ($(paste -sd';' - <<<"${problems}"))" >&2
+  while IFS='|' read -r service cid problem; do
+    [[ -n "${service}" ]] || continue
+    detail+="${detail:+;}${service}|${cid}|${problem}"
+    [[ -z "${restore_failure[${service}]:-}" ]] || detail+="|restore: ${restore_failure[${service}]}"
+  done <<<"${problems}"
+  info "steady_service_compensation_incomplete: ${names} (${detail})" >&2
   return 1
 }
 

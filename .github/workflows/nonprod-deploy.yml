@@ -2482,12 +2482,61 @@ jobs:
             exit 1
           fi
 
+      - name: Steady stack restart-loop check (two samples, read-only)
+        id: steady_restart_loop
+        # A restart-looping steady service is an unhealthy stack: restart count
+        # growth, OOMKilled or a restarting state fails this step and follows the
+        # same compensation path as a stopped steady service. Container healthcheck
+        # status and readiness contents are not criteria. Budget: <= 100 s.
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.deploy.outcome == 'success' }}
+        timeout-minutes: 6
+        env:
+          RESTART_EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/steady-restart
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # This job has no checkout at the workspace root: every script comes
+          # from the controller checkout (.agora-gate-controller).
+          controller_scripts="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts"
+          transport="${controller_scripts}/dev_vm_ssh.sh"
+          for required in dev_steady_state_rows.py fetch_dev_artifact_evidence.py; do
+            [[ -f "${controller_scripts}/${required}" ]] || { echo "controller script missing: ${required}" >&2; exit 1; }
+          done
+          [[ -f "${transport}" && ! -L "${transport}" && -f "${credentials_dir}/deploy_key" ]] || { echo "ssh transport missing" >&2; exit 1; }
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          mkdir -p "${RESTART_EVIDENCE_DIR}"
+          sample() {
+            timeout --kill-after=5 30 "${transport}" exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+              | python3 "${controller_scripts}/dev_steady_state_rows.py" > "$1"
+          }
+          sample "${RESTART_EVIDENCE_DIR}/sample-1.json" || exit 1
+          t1="$(date +%s)"
+          sleep 90
+          sample "${RESTART_EVIDENCE_DIR}/sample-2.json" || exit 1
+          gap=$(( $(date +%s) - t1 ))
+          python3 "${controller_scripts}/fetch_dev_artifact_evidence.py" \
+            --mode verify-restart-loop \
+            --steady-state-file "${RESTART_EVIDENCE_DIR}/sample-1.json" \
+            --steady-state-second-file "${RESTART_EVIDENCE_DIR}/sample-2.json" \
+            --sample-gap-seconds "${gap}" | tee "${RESTART_EVIDENCE_DIR}/result.json"
+
+      - name: Upload steady restart-loop evidence
+        id: steady_restart_loop_upload
+        if: ${{ always() && steps.steady_restart_loop.conclusion != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-steady-restart-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/steady-restart
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Retire this run's dev paper release case before deploy compensation
         id: retire_release_cases
         # Pre-restore preparation only: retire this run's ephemeral probe case
         # before baseline restore waits on health; never marks compensation
         # successful before exact image/FE/health readback.
-        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
+        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.steady_restart_loop.outcome != 'success' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
         continue-on-error: true
         timeout-minutes: 6
         env:
@@ -2526,7 +2575,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.steady_restart_loop.outcome != 'success' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
         timeout-minutes: 100
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
@@ -3004,6 +3053,7 @@ jobs:
           HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           FUNCTIONAL_GATE_OUTCOME: ${{ steps.functional_gate.outcome }}
+          STEADY_RESTART_LOOP_OUTCOME: ${{ steps.steady_restart_loop.outcome }}
           PAPER_BOOTSTRAP_REQUESTED: ${{ env.PAPER_BOOTSTRAP_REQUESTED }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
@@ -3066,7 +3116,7 @@ jobs:
           [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]] && expected_gate=success
           case "${TARGET_COMPONENT}" in
             auto|root|bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${FUNCTIONAL_GATE_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}" == "success:success:${expected_gate}:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${FUNCTIONAL_GATE_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${STEADY_RESTART_LOOP_OUTCOME}" == "success:success:${expected_gate}:success:success:success" ]] && complete_success=true
               ;;
           esac
 
@@ -5599,7 +5649,7 @@ jobs:
           export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
           export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
           collect_steady_state() {
-            scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}'" \
+            scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
               | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "$1"
             chmod 0600 "$1"
           }
@@ -5870,12 +5920,22 @@ jobs:
           lease_token=""
           # Same completeness check after the restore: every steady baseline service
           # running on its baseline image, or the restore is not reported as proven.
-          scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}'" \
+          scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
             | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "${EVIDENCE_DIR}/steady-state-after.json"
           python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
             --mode verify-steady-state \
             --baseline-file "${EVIDENCE_DIR}/baseline/artifact-baseline.json" \
             --steady-state-file "${EVIDENCE_DIR}/steady-state-after.json"
+          # Restart-loop check after the restore: second sample >= 90 s later.
+          t1="$(date +%s)"
+          sleep 90
+          scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+            | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "${EVIDENCE_DIR}/steady-state-after-2.json"
+          python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
+            --mode verify-restart-loop \
+            --steady-state-file "${EVIDENCE_DIR}/steady-state-after.json" \
+            --steady-state-second-file "${EVIDENCE_DIR}/steady-state-after-2.json" \
+            --sample-gap-seconds "$(( $(date +%s) - t1 ))"
           actual_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL%/}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
           [[ "${actual_bff}" == "${ACCEPTED_BACKEND_SHA}" ]]
           curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL%/}/deployment.json" > "${EVIDENCE_DIR}/frontend-deployment-after.json"

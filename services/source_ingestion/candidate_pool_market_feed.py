@@ -178,12 +178,14 @@ def _daily_bars_digest(root: Path) -> str:
 
 def _read_bars_from_daily_bars(root: Path) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
     """Bars and sessions of the newest ``MAX_BARS_PER_SYMBOL`` stored trade dates through DailyBarsReader,
-    paged by symbol chunks (reader cap) inside one date window (reader cap). Daily bars carry no
-    ``available_time`` or traded value: availability is the regular 14:30 Taipei publish time of the
-    trade date and ``traded_value`` is absent."""
+    paged by symbol chunks (reader cap) inside one date window (reader cap). ``available_time`` is the
+    stored instant (UTC; a date only source was pinned to 14:30 +08:00 when it was written) and
+    ``traded_value`` is the stored value, absent when the source gave none. A row with no stored available
+    time is omitted, as the run file read omits a bar without one: 14:30 is never invented."""
     from .daily_bars_reader import MAX_RANGE_DAYS, MAX_SYMBOLS, PRICE_COLUMNS, DailyBarsReader
     from .daily_bars_store import DailyBarsError
 
+    columns = [*PRICE_COLUMNS, "traded_value", "available_time"]
     reader = DailyBarsReader(root)
     dates = reader.trade_dates()[-min(MAX_BARS_PER_SYMBOL, MAX_RANGE_DAYS):]
     if not dates:
@@ -192,18 +194,22 @@ def _read_bars_from_daily_bars(root: Path) -> tuple[dict[str, list[dict[str, Any
         names = sorted(reader.list_symbols(dates[0], dates[-1]))
         bars: dict[str, list[dict[str, Any]]] = {}
         for i in range(0, len(names), MAX_SYMBOLS):
-            for raw_symbol, rows in reader.read_range(names[i:i + MAX_SYMBOLS], dates[0], dates[-1], columns=PRICE_COLUMNS).items():
+            for raw_symbol, rows in reader.read_range(names[i:i + MAX_SYMBOLS], dates[0], dates[-1], columns=columns).items():
                 symbol = _canonical(raw_symbol)
                 if symbol is None:
                     continue
                 for row in rows:
                     close = _number(row.get("close"))
-                    if close is None or close <= 0:
+                    available = row.get("available_time")
+                    if close is None or close <= 0 or available is None:
                         continue
                     bar: dict[str, Any] = {
                         "event_time": f"{row['trade_date']}T13:30:00+08:00",
-                        "available_time": f"{row['trade_date']}T14:30:00+08:00", "close": close,
+                        "available_time": available.isoformat().replace("+00:00", "Z"), "close": close,
                     }
+                    value = _number(row.get("traded_value"))
+                    if value is not None:
+                        bar["traded_value"] = value
                     for field in ("open", "high", "low", "volume"):
                         value = _number(row.get(field))
                         if value is not None:
@@ -217,6 +223,49 @@ def _read_bars_from_daily_bars(root: Path) -> tuple[dict[str, list[dict[str, Any
         rows.sort(key=lambda b: b["event_time"])
     sessions = {b["event_time"][:10] for rows in bars.values() for b in rows}
     return {s: rows[-MAX_BARS_PER_SYMBOL:] for s, rows in bars.items()}, sessions
+
+
+def _read_captures_from_daily_bars(root: Path, sessions: Sequence[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    """The all-market captures of the sessions from daily bars, in the shape ``_read_bars`` returns them.
+
+    The capture identity (venue, collector source id, upstream endpoint, bundle sha) is read from the lineage
+    entry of each run (once per run), and the listed securities that did not trade from the status only files
+    of the day (``trading_status = not_traded``). A capture whose rows carried a status is ``non_traded`` known;
+    one without is unknown (``non_traded`` absent), as the run file read reports an older capture."""
+    from .daily_bars_reader import DailyBarsReader
+    from .daily_bars_store import DailyBarsError
+    from .security_listing import bare_symbol
+
+    reader = DailyBarsReader(root)
+    captures: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        for session in sessions:
+            runs = (reader.read_lineage(session).get("runs") or {})
+
+            def valid(cap: Mapping[str, Any]) -> bool:
+                venue = str(cap.get("venue") or "")
+                return (venue in _ALL_MARKET_UPSTREAM and ALL_MARKET_BUNDLES.get(venue) == f"bundle://{cap.get('collector_source_id')}"
+                        and str(cap.get("upstream_endpoint") or "") == _ALL_MARKET_UPSTREAM[venue])
+
+            for run_id in sorted(runs):
+                for cap in runs[run_id].get("captures", ()):
+                    if not valid(cap):
+                        continue
+                    held = captures.setdefault((session, cap["venue"]), {"ref": (
+                        f"bundle://{cap['collector_source_id']}/{DAILY_BAR_DATASET}/{session}@{cap['upstream_endpoint']}"
+                        f"#{str(cap.get('bundle_sha12') or '')[:12]}")})
+                    if cap.get("status_known"):
+                        held.setdefault("non_traded", set())
+            for row in reader.read_not_traded(session):
+                venues = {cap["venue"] for cap in (runs.get(row["lineage_ref"]) or {}).get("captures", ())
+                          if valid(cap) and cap.get("row_source_id") == row["source_id"]}
+                if len(venues) == 1:  # a row that cannot be tied to one venue's capture is not counted
+                    venue = next(iter(venues))
+                    captures.setdefault((session, venue), {"ref": ""}).setdefault("non_traded", set()).add(
+                        f"{bare_symbol(row['symbol'])}.{venue}")
+    except DailyBarsError as exc:
+        raise CandidatePoolMarketNeedsData(DAILY_BAR_DATASET, f"daily bars read refused: {exc}") from exc
+    return captures
 
 
 _HOLIDAY_ENDPOINT = {"TWSE": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?",
@@ -388,7 +437,7 @@ def build_candidate_pool_market(
     holiday_paths = _partitions(root, HOLIDAY_DATASET)
     signature = (
         str(root), tuple(declared), decision_day, from_bars,
-        _daily_bars_signature(root) if from_bars else None, _signature(bar_paths),
+        _daily_bars_signature(root) if from_bars else None, None if from_bars else _signature(bar_paths),
         _signature(suspension_paths), _signature(holiday_paths),
         tuple((d, _signature(p)) for d, p in sorted(paths_by_dataset.items())),
     )
@@ -398,11 +447,9 @@ def build_candidate_pool_market(
         return cached
 
     if from_bars:
-        # Bars and sessions from daily_bars. The all-market captures that the survivorship attestation
-        # needs are not part of daily bars: they are read from run files while those exist; without them
-        # the attestation is false (fail closed), never assumed.
+        # Bars, sessions and the all-market captures (status and lineage) from daily_bars: no run file is read.
         bars, sessions = _read_bars_from_daily_bars(root)
-        _, _, price_captures = _read_bars(bar_paths, captures_only=True)
+        price_captures = _read_captures_from_daily_bars(root, sorted(sessions)[-MAX_BARS_PER_SYMBOL:])
     else:
         bars, sessions, price_captures = _read_bars(bar_paths)
     if not bars:

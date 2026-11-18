@@ -1,0 +1,85 @@
+{
+ "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+ "reproduction_before_change": {
+  "code": "06ffe30c3 (dev before this task)",
+  "method": "generated hosted shape written as run files, backfilled to daily bars, feed read in run_files vs daily_bars mode; a bar differs when available_time instant or traded_value differs",
+  "five_days_300_symbols": {
+   "bars": 1500,
+   "rows_differing_from_run_file_read": 1500
+  },
+  "two_years_500_days_40_symbols": {
+   "bars": 20000,
+   "rows_differing_from_run_file_read": 20000
+  },
+  "note": "every row differed: daily bars carried no traded value and a synthetic available time"
+ },
+ "parity_after_change": {
+  "five_days_300_symbols": {
+   "trading_days": 5,
+   "symbols": 300,
+   "bars_compared": 1500,
+   "mismatches": 0,
+   "sessions_equal": true,
+   "attestation_equal": true,
+   "attestation_keys": [
+    "delisted",
+    "includes_delisted",
+    "includes_suspended",
+    "schema_version",
+    "suspended",
+    "window"
+   ]
+  },
+  "two_years_500_days_40_symbols": {
+   "trading_days": 500,
+   "symbols": 40,
+   "bars_compared": 20000,
+   "mismatches": 0,
+   "sessions_equal": true,
+   "attestation_equal": true,
+   "attestation_keys": [
+    "delisted",
+    "includes_delisted",
+    "includes_suspended",
+    "schema_version",
+    "suspended",
+    "window"
+   ]
+  },
+  "scope": "feed bars (all keys incl. traded_value, suspended), available_time instant, sessions, survivorship attestation object (includes_delisted, includes_suspended, delisted, suspended, window). Source ids and upstream endpoints on the real recorded pages: test_daily_bars_captures_equal_the_run_file_captures_on_the_real_pages and test_survivorship_attestation_in_daily_bars_mode_equals_the_run_file_read_without_run_files. Evaluator vwap/timestamp: test_alpha_template_snapshot_loader.py::test_daily_bars_read_matches_run_file_read_and_rollback_setting",
+  "known_divergence": "a run file row whose available_time is a bare date: the feed run file read passes the text through (parsed as 00:00Z); daily bars apply the design 4.1 rule (14:30 +08:00, same as evaluator.py). Not present in hosted rows (real timestamps); generated rows with bare dates differ in 20% of bars."
+ },
+ "budget": {
+  "generated_rows": 52958,
+  "bytes_per_row_before": 48.59,
+  "bytes_per_row_after": 54.14,
+  "day_bytes_after": 2867076,
+  "day_limit": 4000000,
+  "day_alarm": 6000000,
+  "total_500_days_bytes": 1433538000,
+  "total_ceiling": 2500000000,
+  "lineage_day_bytes": 5779,
+  "lineage_limit": 400000,
+  "design_estimate_bytes_per_row": 75,
+  "scripts": "scripts/check_market_data_budget.py now writes 52,958 rows (50,883 warrants) with the three columns; test fails above 4.0 MB/day, 0.4 MB lineage, 2.5 GB total"
+ },
+ "previous_release": {
+  "proof": "scripts/previous_release_reader.py --revision 06ffe30c3 read a v2 manifest partition (including a not_traded status-only file) written by this code: no error, close bars returned",
+  "caveat": "the previous reader returns a not_traded row as a bar with null close (it does not skip status-only files); therefore rollout order: dual write stays on, old readers and the default setting stay on run files until all readers are on this release"
+ },
+ "defaults": "PANTHEON_DAILY_PRICE_READER default run_files, dual write on, nothing deleted (test_nothing_is_switched_or_deleted_by_default_and_dual_write_stays_on)",
+ "storage_manifest": "docs/operations/storage-manifest.json runtime_budgets: daily_bars and lineage (this task only)",
+ "validation": {
+  "environment": "python3.12 venv with pyarrow 26.0.1, pytest; pyarrow absent from system python so the store tests skip there",
+  "test_daily_bars_store.py": "29 passed",
+  "test_daily_bars_reader.py": "14 passed",
+  "test_candidate_pool_market_feed.py": "19 passed",
+  "scripts/test_backfill_daily_bars.py": "17 passed",
+  "scripts/test_cleanup_market_run_files.py": "52 passed",
+  "test_market_data_storage.py": "12 passed",
+  "test_alpha_template_snapshot_loader.py": "16 passed",
+  "test_alpha_template_evaluation.py": "21 passed",
+  "scripts/test_check_market_data_budget.py": "18 passed (unittest, includes 53k hosted-shaped run)",
+  "scripts/check_storage_manifest.py": "passed"
+ }
+}

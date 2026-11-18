@@ -443,19 +443,22 @@
    "task": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "def compact_receipt_storage_refs",
+    "file": "services/source_ingestion/scheduler.py"
+   },
+   "bound_status": "bounded",
+   "cap": "every receipt line is at most 16384 bytes (RECEIPT_LINE_BUDGET_BYTES, alarm ingest_receipt_line_over_16kb): evidence_refs and storage_refs keep counts, first and last date and a digest, never a per-record or per-date list; measured 2721 bytes for a 500 record batch and 2549 bytes for a 500 date history pull (was 626895 bytes for 500 dates in the hosted shape; hosted max 177021 bytes on 2026-11-18); retention by SOURCE_INGEST_RECEIPT_RETENTION_DAYS unchanged",
+   "cleanup": "in-service rewrite at start compacts oversize receipt lines (evidence_refs and storage_refs) and drops rows past retention, keeping the previous file 7 days (<journal>.pre-migrate.bak); scripts/migrate_ingest_receipts.py does the same rows",
+   "growth_driver": "one run row and one or two receipt rows per ingest run, each at most 16 KB",
+   "growth_per_day": "measured on hosted 13a08deaa 2026-11-18: about 34 KB per hour (about 0.8 MB/day) with 70 lines over the bound before this change; after it the line size no longer grows with dates or records",
    "kind": "jsonl",
    "name": "ingest_schedule.jsonl",
    "owner": "source_ingestion",
    "readers": [
     "services/source_ingestion/runtime.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "SOURCE-RECEIPT-STORAGE-REFS-BOUND-20261118"
   },
   {
    "bound_status": "unreviewed",
@@ -2020,19 +2023,26 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "state file on the /data volume of the compose service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "PANTHEON_OODA_PACKET_RETENTION_DAYS",
+    "file": "services/persona/cron_ooda_closure.py"
+   },
+   "bound_status": "bounded",
+   "cap": "persisted observe bundle drops quarter_equity_observations and any list above PACKET_LIST_BOUND (64); retention PANTHEON_OODA_PACKET_RETENTION_DAYS (default 30) and PANTHEON_OODA_PACKET_MAX_RECORDS (default 1000) applied at write time; per-job replay watermark kept in ooda_packets.json.index",
+   "cleanup": "append_ooda_packet and the first-start compact_ooda_packet_store prune records past the window or cap and dedupe by packet_id; pruned runs stay unconsumable through the watermark",
+   "growth_driver": "one daily-cycle packet per persona per day (claim record and final record collapse to one by packet_id), plus retries",
+   "growth_per_day": "3 personas x at most about 10 KB bounded packet (measured about 1 KB synthetic) = about 30 KB/day (was about 3.5 MB per packet); about 0.9 MB at the 30-day window",
    "kind": "compose_path",
    "name": "/data/bff/ooda_packets.json",
-   "owner": "compose:bff",
+   "owner": "persona",
    "readers": [
-    "docker-compose.yml"
+    "docker-compose.yml",
+    "services/persona/persona_cycle_controller.py",
+    "services/persona/cron_ooda_closure.py",
+    "services/control-plane/bff/personas/cycle_views.py",
+    "services/control-plane/bff/ports/persona_pool.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117"
   },
   {
    "bound_status": "unreviewed",
@@ -2758,6 +2768,16 @@
     ],
     "size": "at most about 6.7 KB added with 50 ids (50 x (128 + 4) bytes); whole file asserted below 64 KiB in services/source_ingestion/tests/test_reconcile_tolerates_newer_state.py",
     "task": "SOURCE-RECONCILE-TOLERATES-NEWER-STATE-20261117"
+   },
+   "changed_fields_liveness": {
+    "cadence": "rewritten in place once per controller tick (same single file, atomic replace, no append)",
+    "cap": "one integer, counted only for controller level failure stages (CONNECTOR_OUTCOME_STAGES in services/source_ingestion/controller_state.py)",
+    "cleanup": "reset to 0 by a successful tick or a connector-outcome failure; no history is kept",
+    "fields": [
+     "consecutive_controller_failures"
+    ],
+    "size": "one integer, under 30 bytes",
+    "task": "SOURCE-INGEST-SCHEDULER-HEALTH-LIVENESS-20261117"
    },
    "readers": [
     "docker-compose.yml"
@@ -5662,6 +5682,39 @@
    "kind": "sqlite",
    "name": ".hex}.sqlite3",
    "reason": "regex fragment of an f-string temp name in downstream_health_monitor.py; the database is downstream_health.sqlite3"
+  }
+ ],
+ "runtime_budgets": [
+  {
+   "bound_proof": {
+    "contains": "DAILY_BARS_TOTAL_CEILING_BYTES",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "cadence": "one write per ingest batch (about 106 batches of 500 per day); a re-run with an unchanged day digest writes nothing",
+   "cap": "DAILY_BARS_DAY_TARGET_BYTES 4,000,000; DAILY_BARS_DAY_ALARM_BYTES 6,000,000; DAILY_BARS_TOTAL_CEILING_BYTES 2,500,000,000 (health payload alarm fields)",
+   "cleanup": "superseded generation parts deleted after each manifest swap; interrupted temp files swept by sweep_interrupted; date retention by SOURCE-RETENTION-SWEEPER-20261118-R2; nothing is deleted by this task",
+   "columns": "13 old + traded_value, available_time, trading_status (manifest daily_bars_manifest.v2; v1 partitions read with nulls)",
+   "growth": "2.87 MB x 500 days = 1.43 GB at two years",
+   "name": "daily_bars (parquet parts + _manifest)",
+   "owner": "source_ingestion",
+   "size_per_day": "measured on 52,958 generated rows: 2,867,076 B = 54.1 B per row (before: 48.6 B per row on 22,500 rows); limit 4,000,000 B (design section 6 amended), alarm 6,000,000 B",
+   "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+   "writer": "services/source_ingestion/daily_bars_store.py DailyBarsStore.write_day (one manifest swap per date and market; not discovered by the static inventory because parquet is not a discovered kind)"
+  },
+  {
+   "bound_proof": {
+    "contains": "LINEAGE_TOTAL_CEILING_BYTES",
+    "file": "services/source_ingestion/daily_bars_store.py"
+   },
+   "cadence": "rewritten with each daily bars write of the date; unchanged content writes nothing",
+   "cap": "LINEAGE_DAY_TARGET_BYTES 400,000; LINEAGE_DAY_ALARM_BYTES 600,000; LINEAGE_TOTAL_CEILING_BYTES 200,000,000",
+   "cleanup": "same date retention as daily bars; nothing is deleted by this task",
+   "growth": "at most 0.4 MB x 500 days = 200 MB",
+   "name": "lineage (date=YYYY-MM-DD.json)",
+   "owner": "source_ingestion",
+   "size_per_day": "measured 5,779 B on the generated run (calendar evidence only); limit 400,000 B, alarm 600,000 B",
+   "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+   "writer": "services/source_ingestion/daily_bars_store.py (calendar evidence and run refs with source id and upstream endpoint)"
   }
  ]
 }

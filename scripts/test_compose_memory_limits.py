@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-EVIDENCE = ROOT / "docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-20261117/evidence.json"
+EVIDENCE = ROOT / "docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117/evidence.json"
 PATTERN = re.compile(r"^\$\{([A-Z0-9_]+):-(\d+)([mg])\}$")
 HOST_MIB = 32086
 
@@ -33,17 +33,33 @@ class ComposeMemoryLimits(unittest.TestCase):
         missing = [n for n, s in self.root.items() if not PATTERN.match(str(s.get("mem_limit", "")))]
         self.assertEqual(missing, [], "root services without ${VAR:-default} mem_limit")
 
-    def test_limits_match_evidence_and_floor(self):
+    def test_limits_match_evidence_and_peak_rule(self):
         ev = {r["service"]: r for r in self.evidence["services"]}
         self.assertEqual(set(ev), set(self.root))
-        exceptions = set(self.evidence["floor_exceptions"])
+        exceptions = self.evidence["floor_exceptions"]
+        ratio = self.evidence["min_ratio"]
+        self.assertEqual(ratio, 1.5)
         for name, svc in self.root.items():
             limit = _mib(svc["mem_limit"])
             self.assertEqual(limit, ev[name]["limit_mib"], name)
             self.assertGreaterEqual(limit, 128, name)
-            rss = ev[name]["measured_rss_mib"] or ev[name]["rss_upper_bound_mib"]
-            if rss and name not in exceptions:
-                self.assertGreaterEqual(limit, 2 * rss, name)
+            peak = ev[name].get("peak_mib")
+            if peak is None:
+                self.assertTrue(ev[name].get("not_measured_reason"), f"{name}: no peak and no reason")
+            elif name not in exceptions:
+                self.assertGreaterEqual(limit, ratio * peak, name)
+        for name, reason in exceptions.items():
+            self.assertIn(name, self.root)
+            self.assertTrue(reason)
+
+    def test_minimum_limits_from_incident(self):
+        floors = {
+            "openclaw-gateway-adapter": 3072, "postgres": 8192,
+            "paper-fleet-reconciler": 1280, "alpha-replication-worker": 512,
+            "hindsight": 8192, "persona": 512, "postmortems": 512,
+        }
+        for name, floor in floors.items():
+            self.assertGreaterEqual(_mib(self.root[name]["mem_limit"]), floor, name)
 
     def test_search_svc_above_measured_peak(self):
         self.assertGreater(_mib(self.root["search-svc"]["mem_limit"]), int(11.5 * 1024))
@@ -53,6 +69,8 @@ class ComposeMemoryLimits(unittest.TestCase):
         self.assertEqual(total, self.evidence["sum_limits_mib"])
         doc = (ROOT / "docs/deployment/dev-container-memory-budget.md").read_text()
         self.assertIn(f"{total / HOST_MIB:.2f}x", doc)
+        self.assertIn("memory.peak", doc)
+        self.assertIn("no concurrency cap", doc)
 
     def test_staging_production_untouched(self):
         for f in ROOT.glob("docker-compose.*.yml"):

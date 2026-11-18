@@ -355,3 +355,73 @@ services that were running at capture.
   matches the accepted backend but whose steady service is stopped is restored
   instead of refused. After the restore, `--mode verify-steady-state` re-checks
   the stack and exits non-zero on any drift.
+
+### Steady-state restart-loop check (DEV-DEPLOY-STEADY-STATE-RESTART-LOOP-20261117)
+
+Recorded incident: deploy run 44097697049 concluded success while
+`pantheon-openclaw-gateway-adapter-1` was OOM-killed about every 45 seconds
+(54 restarts); each sampled instant showed `running`. A restart loop is an
+unhealthy stack.
+
+- **When.** Step `steady_restart_loop` after the deploy switch (before
+  compensation is decided) and, in the restore job, after the restored stack is
+  verified.
+- **How.** Two read-only `docker inspect` samples of every non-one-off Compose
+  container at least 90 s apart (`--mode verify-restart-loop`, which refuses a
+  gap under 90 s). A service is restart-looping when its restart count grew
+  between the samples, either sample reports `OOMKilled`, or either state is
+  `restarting`. One restart during start-up that ended before the first sample
+  (same count in both) is not a failure. Services that are neither running nor
+  restarting (exited one-shots) are ignored.
+- **Outcome.** `steady_service_restart_loop: <service,...>` (exit 76), the same
+  path as a steady service that is not running: rollback after a switch;
+  incomplete after a restore. The release-completion gate also requires the step
+  to have succeeded.
+- **Not criteria.** No functional gate: container healthcheck status and readiness
+  contents are not inputs. The source-ingest scheduler healthcheck reports
+  functional tick failures and must not roll a release back through this check.
+- **Evidence and budget.** `steady-restart/sample-{1,2}.json` and `result.json`
+  (restart count and OOMKilled per service, both samples) are uploaded as
+  `pantheon-dev-steady-restart-<run>-<attempt>`; about 1-2 KB per sample on the
+  current stack (~4 KB per release). Nothing is written on the host. Added
+  runtime about 92 s per deploy and per restore (limit 100 s). No recurring job;
+  no new workflow_dispatch input.
+
+### Stack check revision scope and full restore (DEV-DEPLOY-STACK-CHECK-REVISION-SCOPE-20261117)
+
+Recorded incident: run 44144749607 (candidate 9ab80dd25) verified 57 components
+and failed on `openclaw-gateway: image_rev=2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4
+!= expected=9ab80dd2528e4bbb15f3947fdcb61c6828f2ef03` and on
+`source-ingest-scheduler: health is unhealthy`; the restore then left
+`dev-paper-principal-issuer` on a candidate image
+(`steady_service_compensation_incomplete`, exit 75, lease quarantined).
+
+- **Revision equality only where the release labels the image.**
+  `release_labelled_services` renders `docker compose config` (all profiles) and
+  lists the services whose `build` section passes `GIT_SHA` as a build arg or sets
+  `org.opencontainers.image.revision`. The set is derived from the Compose file,
+  not a hand-kept list; a test compares it with an independent parse of
+  `docker-compose.yml` and fails when a built, labelled service is missing.
+  `openclaw-gateway` builds under a fixed tag with no `GIT_SHA`, so it is not in
+  the set. If the set cannot be derived, the check fails closed and requires the
+  revision for every component (previous behaviour).
+- **Every steady service keeps the other criteria:** one container, running, not
+  restarting, health `healthy` (or no healthcheck), on the image Compose resolves.
+  A built service on another revision still fails, named with its revision.
+  Receipt entries for images the release does not build carry no revision claim.
+- **Healthcheck rule.** The healthcheck of a steady service must report liveness
+  of the container, not functional tick results. `source-ingest-scheduler` is the
+  case that failed the 18:09Z release (fixed separately by PR 7532); the stack
+  check still treats `unhealthy` as failing for every steady service.
+- **Restore brings every steady service back.** After the sealed restore,
+  `verify_steady_services_restored` starts stopped services and, for a service
+  that is on a non-baseline image or missing, re-points its Compose tag at the
+  baseline image ID recorded in the baseline file and recreates it with
+  `up -d --no-deps --force-recreate --no-build`. When it cannot (baseline image
+  not retained, no Compose image reference, recreate failed) it still reports
+  `steady_service_compensation_incomplete: <service> (<service>|<id>|<problem>|restore: <reason>)`.
+- **Rollback.** Deploy script only; the previously accepted release is untouched.
+  A release run on the old script verifies 57 components with revision equality
+  for all; a release run on the new script verifies the same components with
+  revision equality for the release-labelled subset only. No functional gate is
+  added; `nonprod-deploy.yml` is unchanged.

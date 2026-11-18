@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from acceptance import persona_day as pd
@@ -83,3 +84,12 @@ def test_run_aggregates_and_is_get_only():
     report = pd.run(fetch, NOW)
     assert report["verdict"] == "failed" and seen == ["/bff/personas?page_size=200"]
     assert pd.aggregate([])["verdict"] == "failed"
+
+
+def test_tool_use_survives_packet_store_compaction():
+    from services.persona.cron_ooda_closure import bound_packet_payload
+    packet = {"persona_cycle": {"tool_use": {"memory_recall_ok": 1, "proposals_recorded": 2},
+                                "observe_bundle": {"quarter_equity_observations": list(range(5000))}}}
+    out = bound_packet_payload(packet)
+    assert out["persona_cycle"]["tool_use"] == {"memory_recall_ok": 1, "proposals_recorded": 2}
+    assert len(json.dumps(out["persona_cycle"]["tool_use"])) < 200

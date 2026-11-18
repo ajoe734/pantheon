@@ -594,3 +594,12 @@ run and the lease ends as it does for any other pre-mutation failure.
 recorded as failed and the next tick dispatches the same pair again. A failure
 in any later step returns `failed_pair_not_retried`. The GitHub schedule itself
 is unchanged.
+
+## Dev steady-state restart-loop check
+
+After the dev switch and after a restore, every steady Compose service is sampled
+twice (>= 90 s apart, read-only `docker inspect`). Restart-count growth, OOMKilled
+or a restarting state fails the deploy as `steady_service_restart_loop` and
+triggers the normal compensation path. Healthcheck status and readiness contents
+are deliberately not criteria. Details:
+`docs/deployment/dev-exact-artifact-rollback.md`.

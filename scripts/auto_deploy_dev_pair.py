@@ -32,45 +32,71 @@ CLOSEOUT_REPORT_PATHS = frozenset({
 })
 
 
-def closeout_reports_only(backend, base_sha, head_sha):
-    if not base_sha or not head_sha or base_sha == head_sha:
+# The one rule for "this path is not a release build input". Conservative on purpose:
+# every Dockerfile does `COPY . ...` (build context is the repo root), so a path only
+# qualifies when it is in .dockerignore or when no runtime code, compose file or deploy
+# script reads it. docs/ as a whole does NOT qualify: services read docs/contracts,
+# docs/deployment/loop-catalog.registry.json, docs/deployment/evidence/**, docs/04,
+# docs/research/notes and more. See docs/deployment/evidence/DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117.
+NON_BUILD_INPUT_PREFIXES = (".orchestrator/", "ai-task-archive/")  # both in .dockerignore
+NON_BUILD_INPUT_MARKDOWN_PREFIXES = ("docs/operations/", "docs/reviews/")  # referenced as strings only
+
+
+def is_non_build_input(path):
+    if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
         return False
+    if path in CLOSEOUT_REPORT_PATHS or path.startswith(NON_BUILD_INPUT_PREFIXES):
+        return True
+    if path.endswith(".md") and ("/" not in path or path.startswith(NON_BUILD_INPUT_MARKDOWN_PREFIXES)):
+        return True
+    return False
+
+
+def non_runtime_change_count(backend, base_sha, head_sha):
+    """Number of changed files when every one is outside the release build inputs, else None
+    (fail open: any doubt returns None so the release is dispatched as before)."""
+    if not base_sha or not head_sha or base_sha == head_sha:
+        return None
     try:
         comparison = backend.request("GET", f"/repos/{backend.repository}/compare/{base_sha}...{head_sha}")
     except Exception:
-        return False
+        return None
     if not isinstance(comparison, dict) or comparison.get("truncated"):
-        return False
+        return None
     if comparison.get("status") != "ahead" or comparison.get("behind_by", 0) != 0:
-        return False
+        return None
     ahead_by = comparison.get("ahead_by", comparison.get("total_commits"))
     total_commits = comparison.get("total_commits", ahead_by)
     if (type(ahead_by) is not int or type(total_commits) is not int
             or ahead_by <= 0 or total_commits != ahead_by):
-        return False
+        return None
     commits = comparison.get("commits")
     if commits is not None and (not isinstance(commits, list) or len(commits) != total_commits):
-        return False
+        return None
     files = comparison.get("files")
     if not isinstance(files, list) or not (1 <= len(files) < 300):
-        return False
+        return None
     if comparison.get("total_files") not in (None, len(files)):
-        return False
+        return None
     for item in files:
         if not isinstance(item, dict) or item.get("truncated"):
-            return False
+            return None
         status = item.get("status")
         if status not in {"added", "modified", "removed", "renamed"}:
-            return False
+            return None
         filename = item.get("filename")
         previous = item.get("previous_filename")
-        if filename not in CLOSEOUT_REPORT_PATHS:
-            return False
+        if not is_non_build_input(filename):
+            return None
         if status == "renamed" and not previous:
-            return False
-        if previous is not None and previous not in CLOSEOUT_REPORT_PATHS:
-            return False
-    return True
+            return None
+        if previous is not None and not is_non_build_input(previous):
+            return None
+    return len(files)
+
+
+def closeout_reports_only(backend, base_sha, head_sha):
+    return non_runtime_change_count(backend, base_sha, head_sha) is not None
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -232,10 +258,11 @@ def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
                 (backend, candidate_backend, backend_sha), (frontend, candidate_frontend, frontend_sha))
             if cand != tip]}
     if (coherent_served and served_frontend == candidate_frontend
-            and closeout_reports_only(backend, served_backend, candidate_backend)):
+            and (skipped := non_runtime_change_count(backend, served_backend, candidate_backend)) is not None):
         return {
             **result,
             "served_backend_sha": served_backend,
+            "changed_file_count": skipped,
             "state": "report_only_no_deploy",
         }
     failed_url = failed_pair_run(backend, candidate_backend, candidate_frontend)
@@ -295,6 +322,10 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
 def summary_lines(result):
     """Deployed and acceptance are reported separately; acceptance is the verdict of the run's
     dev-acceptance-stage job, and a release is 'accepted' only when that verdict is 'passed'."""
+    if result.get("state") == "report_only_no_deploy":
+        return (f"- skipped: no release build input changed ({result.get('changed_file_count')} file(s) between "
+                f"served {result.get('served_backend_sha')} and {result.get('backend_sha')}); "
+                "the commits stay merged and ride the next release that changes a build input\n")
     if result.get("state") != "dispatched":
         return ""
     return ("- deployed: pending (follow run_url)\n"

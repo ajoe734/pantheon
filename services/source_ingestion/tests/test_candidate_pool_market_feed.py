@@ -196,12 +196,104 @@ def test_switched_feed_lists_symbols_through_the_reader_not_the_store(tmp_path, 
     assert all(len(p["bars"]) == 2 for p in market["symbols"].values())
 
 
-def test_survivorship_attestation_still_reads_run_files_and_the_cleanup_guard_names_it(tmp_path, monkeypatch):
-    """G2: in daily_bars mode the attestation reads the capture rows of the normalized run files; with them
-    gone it is false (fail closed), so the cleanup guard lists this part as an unswitched reader."""
+def test_survivorship_attestation_reads_daily_bars_and_the_cleanup_guard_marks_it_switched():
+    """G2 closed: in daily_bars mode the attestation reads status and lineage from daily bars; the guard lists
+    the part as switched, and the old read stays in the file for rollback."""
     from scripts.cleanup_market_run_files import KNOWN_RUN_FILE_READERS
 
     parts = [r for r in KNOWN_RUN_FILE_READERS if r["file"].endswith("candidate_pool_market_feed.py")]
-    assert {r["part"]: r["switched"] for r in parts} == {"bars and sessions": True, "survivorship attestation (G2)": False}
+    assert {r["part"]: r["switched"] for r in parts} == {"bars and sessions": True, "survivorship attestation (G2)": True}
     text = open(feed.__file__, encoding="utf-8").read()
-    assert "captures_only=True" in text and "_read_bars_from_daily_bars" in text
+    assert "def _read_bars(" in text and "_read_captures_from_daily_bars" in text and "_read_bars_from_daily_bars" in text
+
+
+# --- SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118: traded value and available time -----------------------
+
+def _instant(text):
+    from services.registry.factor_rule import _parse_timestamp_utc
+
+    return _parse_timestamp_utc(text)
+
+
+def test_daily_bars_feed_available_time_and_traded_value_equal_the_run_file_read(tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    from scripts import backfill_daily_bars as bf
+
+    rows = [_row("2330.TW", "2026-10-29", 100, volume=10, value=1234.5, available="2026-10-29T18:05:07.250000+08:00"),
+            _row("2330.TW", "2026-10-30", 101, volume=0, value=0.0),  # a suspended day: zero value is a value
+            _row("2317.TW", "2026-10-29", 50, volume=5, available="2026-10-29T16:00:00Z"),
+            _row("2317.TW", "2026-10-30", 51, volume=5)]
+    del rows[3]["metadata"]["normalized_row"]["value"]  # the source gave no value: no traded_value, never zero
+    _write(tmp_path, rows)
+    bf.backfill(tmp_path, _bars_state(), today="2026-11-17", apply=True)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    old = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    feed._CACHE.clear()
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    new = feed.build_candidate_pool_market(tmp_path, INPUTS)
+    mismatches = 0
+    for symbol, entry in old["symbols"].items():
+        for a, b in zip(entry["bars"], new["symbols"][symbol]["bars"]):
+            mismatches += _instant(a["available_time"]) != _instant(b["available_time"]) or a.get("traded_value") != b.get("traded_value")
+    assert mismatches == 0
+    assert new["symbols"]["2330.TW"]["bars"][0]["traded_value"] == 1234.5
+    assert new["symbols"]["2330.TW"]["bars"][1]["traded_value"] == 0.0
+    assert "traded_value" not in new["symbols"]["2317.TW"]["bars"][1]
+    assert _instant(new["symbols"]["2330.TW"]["bars"][0]["available_time"]) == _instant("2026-10-29T10:05:07.250000Z")
+
+
+def test_daily_bars_feed_omits_a_bar_with_no_available_time_and_never_invents_1430(tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    from services.source_ingestion import daily_bars_store as dbs
+
+    store = dbs.DailyBarsStore(tmp_path)
+    store.write_day("2026-10-30", [{"market": "TW", "symbol": "2330.TW", "trade_date": "2026-10-30", "open": 1.0, "high": 1.0,
+                                    "low": 1.0, "close": 1.0, "volume": 1.0, "adjusted": False, "source_id": "s",
+                                    "ingest_run_id": "r", "lineage_ref": "r", "content_hash": "h"}], ingest_run_id="r")
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    with pytest.raises(feed.CandidatePoolMarketNeedsData, match="no usable daily bars"):
+        feed.build_candidate_pool_market(tmp_path, INPUTS)
+
+
+# --- the real collector pages (recorded official responses) through the production storage writer -------------
+
+@pytest.fixture(scope="module")
+def _official_files(tmp_path_factory):
+    from services.source_ingestion.tests import test_tw_suspension_holidays_intake as intake
+
+    return intake.collector_files(tmp_path_factory.mktemp("official"))
+
+
+def test_daily_bars_captures_equal_the_run_file_captures_on_the_real_pages(_official_files, tmp_path, monkeypatch):
+    """G2: the attestation reads status and lineage from daily bars; ref, source id, upstream endpoint and the
+    not traded sets equal the run file read."""
+    pytest.importorskip("pyarrow")
+    from services.source_ingestion.tests import test_tw_suspension_holidays_intake as intake
+
+    root = tmp_path / "store"
+    intake.store_all(_official_files, root, tmp_path, monkeypatch, sources=(intake.TWSE_PRICE, intake.TPEX_PRICE))
+    _, _, old = feed._read_bars(feed._partitions(root, "tw_price_daily"), captures_only=True)
+    new = feed._read_captures_from_daily_bars(root, sorted({session for session, _ in old}))
+    assert set(new) == set(old) == {("2026-11-10", "TWSE"), ("2026-06-18", "TPEx")}
+    for key in old:
+        assert new[key]["ref"] == old[key]["ref"], key
+        assert new[key]["non_traded"] == old[key]["non_traded"], key
+    assert len(new[("2026-11-10", "TWSE")]["non_traded"]) == 14
+    assert "@MI_INDEX#" in new[("2026-11-10", "TWSE")]["ref"] and "@dailyQuotes#" in new[("2026-06-18", "TPEx")]["ref"]
+
+
+def test_survivorship_attestation_in_daily_bars_mode_equals_the_run_file_read_without_run_files(_official_files, tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    import shutil
+
+    from services.source_ingestion.tests import test_tw_suspension_holidays_intake as intake
+
+    root = tmp_path / "store"
+    intake.store_all(_official_files, root, tmp_path, monkeypatch)
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    old = feed.build_candidate_pool_market(root, INPUTS)["survivorship_attestation"]
+    feed._CACHE.clear()
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
+    shutil.rmtree(root / "normalized" / "tw_price_daily")  # the price run files are gone; the others stay
+    new = feed.build_candidate_pool_market(root, INPUTS)["survivorship_attestation"]
+    assert new == old

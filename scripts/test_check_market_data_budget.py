@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,7 +112,7 @@ class ByteLimitTests(unittest.TestCase):
         self.assertIn("exceeds", flow[0]["reason"])
 
     def test_oversized_generated_dataset_fails_through_evaluate(self) -> None:
-        big = lambda: [[f"{i}", "x" * 400, str(hash((i, "n")))] for i in range(40_000)]  # noqa: E731
+        big = lambda: [[f"{i}", os.urandom(200).hex(), str(hash((i, "n")))] for i in range(6_000)]  # noqa: E731
         with mock.patch.dict(cmb.DATASET_ROWS, {"tw_index_daily": big}):
             res = cmb.evaluate(self.rows, only={"tw_index_daily"})
         self.assertEqual(res[0]["status"], "fail")
@@ -153,7 +154,10 @@ class HostedShapedTests(unittest.TestCase):
         stores = {r["store"] for r in report["results"] if r["status"] == "pass"}
         self.assertTrue({"daily_bars", "lineage", "market_snapshot_current", "listing_allowlist"} <= stores)
         daily = cmb.measure_daily_bars()
-        self.assertEqual(daily["rows"], 22_500)
+        self.assertEqual(daily["rows"], 52_958)
+        self.assertLessEqual(daily["day_bytes"], 4_000_000)
+        self.assertLessEqual(daily["lineage_day_bytes"], 400_000)
+        self.assertLessEqual(daily["bytes_per_row"] * 53_000, 4_000_000)
 
     def test_a_store_row_shrunk_in_the_design_fails_the_run(self) -> None:
         text = cmb.DESIGN_PATH.read_text(encoding="utf-8").replace("<= 4.0 MB (per day: 53,000", "<= 0.5 MB (per day: 53,000", 1)

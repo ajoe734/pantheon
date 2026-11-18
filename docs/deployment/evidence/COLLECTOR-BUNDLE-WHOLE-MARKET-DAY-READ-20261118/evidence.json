@@ -1,0 +1,52 @@
+{
+  "task": "COLLECTOR-BUNDLE-WHOLE-MARKET-DAY-READ-20261118",
+  "generated_data": "local, fixed seed 20261118, 13870 rows TPEx shape (test_collector_bundle_whole_market_day.make_market_day); no credential used",
+  "hosted_measured_by_coordinator": {"items_jsonl_bytes": 16175460, "rows": 13870, "bytes_per_row": 1166, "path": "bundles/collector-tw-tpex-price-history/2026-11-18/run-20261118T001529Z/items.jsonl"},
+  "reproduce_first": {
+    "generated_shape": {"rows": 13870, "items_jsonl_bytes": 16180343, "manifest_json_bytes": 4577572},
+    "result_before": "pull fails: 'Payload exceeded max byte limit (8388608 bytes)'; 6 ticks, 0 rows delivered, cursor not advanced, 12966180 bytes of manifest+items fetched per failed tick (77797080 over 6 ticks)",
+    "test": "test_old_limit_reproduces_the_hosted_failure"
+  },
+  "capped_reads_by_MAX_JSON_BYTES_before": [
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "line_before": "473", "what": "manifest.json", "size_13870_rows": 4577572, "size_27740_rows": 9240472, "note": "above 8 MiB from about 25400 rows"},
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "line_before": "516", "what": "items.jsonl", "size_13870_rows": 16180343, "size_27740_rows": 32663894},
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "line_before": "809/1003/1123", "what": "status.json and bundles/index.json (small, one object per source/bundle; unchanged, still 8 MiB)", "size": "not row-scaled"},
+    {"file": "services/source_ingestion/connectors/collector_bundle.py", "line_before": "raw files", "what": "MAX_RAW_BYTES 32 MiB per raw file, unchanged"}
+  ],
+  "bounds": {
+    "derivation": "WHOLE_MARKET_DAY_MAX_ROWS 28000 (twice the ~14000 rows of a venue day) x per-row ceiling; items 2048 B/row vs measured 1166 hosted; manifest 512 B/entry vs ~330 measured on the generated shape (hosted manifest size NOT measured: residual)",
+    "MAX_ITEMS_JSONL_BYTES": 57344000,
+    "MAX_MANIFEST_BYTES": 14336000,
+    "VERIFIED_METADATA_CACHE_BYTES": 71680000,
+    "over_bound": "SourceEvidenceError: 'collector bundle file <path> is <size> bytes (or more than N when only a lower bound is known), above its read bound of <bound> bytes'; HTTP with a declared Content-Length above the bound is refused before the body is read",
+    "tests_at_and_above_bound": "test_file_at_the_bound_reads_and_just_above_fails_closed_with_reason[items.jsonl|manifest.json]"
+  },
+  "memory": {
+    "retained_resident_increase_MiB_before": {"13870_rows": 54.9, "27740_rows": 110.4},
+    "retained_resident_increase_MiB_after": {"13870_rows": 39.4, "28000_rows": 79.0},
+    "stated_bound": "tracemalloc peak while reading+parsing one day <= 6 KiB per row (<= 83 MiB at 13870 rows, <= 162 MiB at 27740); test_memory_of_reading_one_whole_day_is_within_the_stated_increase",
+    "change": "items parsed from bytes per line (no whole-file decoded copy, no per-line re-encode)"
+  },
+  "no_quadratic_reread": {
+    "delivery": "13870 rows over 3 ticks (cap 5000) via the existing process-local verified metadata cache",
+    "bytes_fetched_manifest_plus_items_per_day_before": "12966180 per tick, never delivers (fails every tick)",
+    "bytes_fetched_manifest_plus_items_per_day_after": "20757915 total = 1.0x file size (3 ticks); acceptance <= 2x; test_hosted_shape_day_is_delivered_over_ticks_with_linear_bytes",
+    "cache_change": "VERIFIED_METADATA_CACHE_BYTES raised from 64 MiB to the sum of the two bounds so one day at the bound is cacheable; size accounted from bytes read instead of re-serialising every row",
+    "restart_note": "the cache is process-local: a worker restart costs one more read of the two files (still <= 2x for one restart)",
+    "cursor_format": "unchanged (same partial cursor mark and resume_cursor.json keys; previous release reads it identically)"
+  },
+  "integrity": "unchanged: bundle_sha256 over manifest content hashes, ids coverage between items.jsonl and manifest, per-raw content_sha256 and size for every ingested item; tests: test_truncated_and_altered_files_are_refused, test_altered_or_truncated_raw_file_is_refused_for_ingested_item",
+  "runtime_budget": "nothing is kept on disk and no new persistent writer: the only retention is the existing in-memory cache (cap 71680000 file bytes, at most 16 bundles, cleared on older trade dates); docs/operations/storage-manifest.json needs no entry and is not edited",
+  "residual_findings": [
+    "Collector side: a venue day ships ~1166 B/row of which rows with close null (listed securities that did not trade) are a share; filtering or compressing on the collector (deploy/collector, other live tasks) would cut bytes. Not changed here.",
+    "The hosted manifest.json size was not measured; the 512 B/entry ceiling rests on the generated shape (~330 B).",
+    "Resident memory with the cache full (one bundle at the bound) is about 2.6x file bytes, about 190 MiB; it is held only while a day is being delivered."
+  ],
+  "hosted_statement": "NOT yet verified on hosted. After this release is served, the TPEx price history cursor should advance and its 28 pending dead letters stop growing; to be checked under MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117.",
+  "validation": [
+    {"cmd": "pytest services/source_ingestion/tests/test_collector_bundle_whole_market_day.py", "result": "15 passed"},
+    {"cmd": "pytest test_collector_bundle_whole_market_day.py test_scheduled_connector.py -k 'whole_market_day or full_size or collector or close'", "result": "38 passed, 1 skipped (includes test_full_size_close_through_controller_main_with_persistence)"},
+    {"cmd": "pytest test_bounded_reader, test_taiwan_official_fetch_retry, lean_runtime/test_instrument_candidates, test_collector_bundle_connector, test_collector_market_provenance_bound, test_collector_outcome_truth", "result": "308 passed, 7 skipped"},
+    {"cmd": "pytest test_collector_bundle_connector + test_collector_newest_session_hosted_throughput + test_collector_newest_session_progress (before the new tests)", "result": "134 passed, 4 skipped"}
+  ]
+}

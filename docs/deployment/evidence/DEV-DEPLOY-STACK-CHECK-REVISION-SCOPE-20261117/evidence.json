@@ -1,0 +1,20 @@
+{
+  "task_id": "DEV-DEPLOY-STACK-CHECK-REVISION-SCOPE-20261117",
+  "incident_runs": ["44144749607"],
+  "revision_scope": {
+    "derivation": "release_labelled_services in scripts/deploy_nonprod_vm.sh renders docker compose config (all profiles) and lists services whose build passes GIT_SHA or sets org.opencontainers.image.revision",
+    "fail_closed": "revision required for all components when the set cannot be derived",
+    "drift_test": "scripts/test_deploy_nonprod_vm.py::test_release_labelled_services_cover_every_compose_service_that_receives_git_sha"
+  },
+  "restore": {
+    "mechanism": "recreate_steady_service_on_baseline_image re-tags the compose image to the baseline image ID and recreates with --no-build",
+    "failure_report": "steady_service_compensation_incomplete with service, problem and restore reason"
+  },
+  "tests": {
+    "passed": ["scripts/test_compensation_restores_steady_services.py", "scripts/test_dev_steady_state_rows.py", "scripts/test_deploy_nonprod_vm.py"],
+    "environment_failures": "6 tests in scripts/test_deploy_nonprod_artifact_restore.py open a real ssh connection (dev_remote_guarded_exec transport) and fail in the worker sandbox; not exercised by this change; 244 other tests in the two large files pass"
+  },
+  "old_script_verifies": "57 components, revision equality for every labelled component",
+  "new_script_verifies": "same 57 components, revision equality for release-labelled services only; health, running, single container, compose image unchanged for all",
+  "residual_findings": ["Receipt consumers: images not built by the release now report image_revision null / deploy_checkout_and_compose_image_id", "Retag of a shared compose tag during restore affects any other service using the same tag (intended: baseline image)"]
+}
