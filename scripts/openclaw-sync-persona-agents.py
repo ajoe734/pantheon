@@ -37,8 +37,6 @@ except Exception:  # noqa: BLE001 - script must stay self-contained in the gatew
     _shared_runtime_profile = None
 
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
-DEFAULT_PERSONA_MODEL = "anthropic/claude-opus-4-8"
-KNOWN_MODELS = {"anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6", "openai/gpt-5.5"}
 
 
 def persona_id(p: Mapping[str, Any]) -> str:
@@ -47,39 +45,6 @@ def persona_id(p: Mapping[str, Any]) -> str:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
-
-
-def _first_model_ref(source: Mapping[str, Any]) -> str:
-    for key in ("model", "model_ref", "modelRef", "primary_model", "primaryModel", "preferred_model", "preferredModel"):
-        value = str(source.get(key) or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _fallback_runtime_profile(p: Mapping[str, Any]) -> Dict[str, Any]:
-    metadata = _mapping(p.get("metadata"))
-    runtime = _mapping(metadata.get("runtime_profile") or metadata.get("runtimeProfile"))
-    routing = _mapping(
-        metadata.get("model_routing")
-        or metadata.get("modelRouting")
-        or runtime.get("model_routing")
-        or runtime.get("modelRouting")
-    )
-    model = _first_model_ref(routing) or _first_model_ref(metadata) or _first_model_ref(p)
-    if model and model not in KNOWN_MODELS:
-        raise ValueError(
-            "persona_runtime_profile_model_routing_degraded "
-            f"reason=unknown_model_ref invalid_refs={model} "
-            "repair_action=fix_persona_route_policy_or_provider_pool"
-        )
-    workspace = (
-        p.get("workspace_ref")
-        or metadata.get("workspace_ref")
-        or _mapping(metadata.get("openclaw_agent")).get("workspace_ref")
-        or f"{PERSONA_WORKSPACE_ROOT}/{persona_id(p)}"
-    )
-    return {"model": model or DEFAULT_PERSONA_MODEL, "workspace": str(workspace), "sync_generation": 1}
 
 
 def runtime_profile(p: Mapping[str, Any]) -> Dict[str, Any]:
@@ -99,7 +64,9 @@ def runtime_profile(p: Mapping[str, Any]) -> Dict[str, Any]:
             "workspace": str(profile["workspace_ref"]),
             "sync_generation": int(profile.get("sync_generation") or 1),
         }
-    return _fallback_runtime_profile(p)
+    # No local model list: routing is owned by services.persona.runtime_profile
+    # (chain from OPENCLAW_MODEL_CHAIN / the gateway). Without it, fail closed.
+    raise RuntimeError("shared_runtime_profile_unavailable")
 
 
 def resolve_model(p: Mapping[str, Any]) -> str:

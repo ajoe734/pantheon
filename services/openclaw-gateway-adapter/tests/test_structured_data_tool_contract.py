@@ -24,6 +24,17 @@ from assistant_openclaw_provider import (  # noqa: E402
 )
 
 
+import os as _os_chain
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not _os_chain.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
 def _sse_bytes(events: list) -> list:
     lines = [("data: " + json.dumps(evt) + "\n").encode("utf-8") for evt in events]
     lines.append(b"data: [DONE]\n")
@@ -876,13 +887,13 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
         agent_id = admission["agent_id"]
 
         # Pre-seed an already-provisioned agent in `agents.list` with a bare
-        # single-string `"model": "anthropic/claude-opus-4-8"` (matching the H2
+        # single-string `"model": "fx-a/model-1"` (matching the H2
         # failure condition on `persona-opinion-cc717e9a40ac3b5f7883bf62`).
         runtime_agents = [
             {
                 "id": agent_id,
                 "workspace": admission["workspace_ref"],
-                "model": "anthropic/claude-opus-4-8",
+                "model": "fx-a/model-1",
             }
         ]
         written_souls = {}
@@ -995,18 +1006,18 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert ensured["execution_authority"] == "none"
             assert ensured["agent"]["agent_id"] == agent_id
             assert ensured["agent"]["status"] == "updated"
-            assert ensured["agent"]["model"] == "anthropic/claude-opus-4-8"
+            assert ensured["agent"]["model"] == "fx-a/model-1"
             assert ensured["agent"]["fallback_models"] == [
-                "openai/gpt-5.6-sol",
-                "openai/gpt-5.5",
+                "fx-b/model-2",
+                "fx-b/model-3",
             ]
             assert ensured["agent"]["model_policy"] == {
-                "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
+                "primary": "fx-a/model-1",
+                "fallbacks": ["fx-b/model-2", "fx-b/model-3"],
             }
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
+                "primary": "fx-a/model-1",
+                "fallbacks": ["fx-b/model-2", "fx-b/model-3"],
             }
             assert runtime_agents[0]["tools"] == {
                 "allow": [],
@@ -1028,19 +1039,19 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                         "model_routing": {
                             "mode": "fallback",
                             "fallback_models": [
-                                "anthropic/claude-opus-4-8",
-                                "openai/gpt-5.5",
+                                "fx-a/model-1",
+                                "fx-b/model-3",
                             ],
                         }
                     },
                 },
             )
-            assert ensured_routed["agent"]["model"] == "anthropic/claude-opus-4-8"
-            assert ensured_routed["agent"]["fallback_models"] == ["openai/gpt-5.5"]
+            assert ensured_routed["agent"]["model"] == "fx-a/model-1"
+            assert ensured_routed["agent"]["fallback_models"] == ["fx-b/model-3"]
             assert ensured_routed["agent"]["routing_mode"] == "fallback"
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["openai/gpt-5.5"],
+                "primary": "fx-a/model-1",
+                "fallbacks": ["fx-b/model-3"],
             }
 
             # Attempting to drift the existing agent's primary model must fail
@@ -1052,14 +1063,14 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                         "persona_id": admission["persona_id"],
                         "name": admission["display_name"],
                         "mandate": admission["mandate"],
-                        "preferred_model": "openai/gpt-5.5",
+                        "preferred_model": "fx-b/model-3",
                     },
                 )
             assert drift_exc.value.status_code == 503
             assert "model_drift_update_unavailable" in drift_exc.value.message
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["openai/gpt-5.5"],
+                "primary": "fx-a/model-1",
+                "fallbacks": ["fx-b/model-3"],
             }
 
             # Verify that governed `/invoke` still accepts the unchanged frozen
@@ -1128,7 +1139,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             {
                 "id": agent_id,
                 "workspace": admission["workspace_ref"],
-                "model": "anthropic/claude-opus-4-8",
+                "model": "fx-a/model-1",
             }
         )
         with adapter_main.sqlite3.connect(str(db_path)) as conn:
@@ -1156,7 +1167,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                             "agent": {
                                 "agent_id": agent_id,
                                 "status": "created",
-                                "model": "anthropic/claude-opus-4-8",
+                                "model": "fx-a/model-1",
                                 "runtime_policy": adapter_main._PERSONA_OPINION_RUNTIME_POLICY,
                             },
                         },
@@ -1174,7 +1185,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
         }
         payload = {
             **admission,
-            "model_routing": {"mode": "hard_pin", "model": "anthropic/claude-opus-4-8"},
+            "model_routing": {"mode": "hard_pin", "model": "fx-a/model-1"},
         }
         with (
             patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "adapter-secret"),
@@ -1201,8 +1212,8 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             )
             assert legacy_replay.status_code == 201, legacy_replay.text
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
+                "primary": "fx-a/model-1",
+                "fallbacks": ["fx-b/model-2", "fx-b/model-3"],
             }
 
             first = client.post(
@@ -1212,12 +1223,12 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             )
             assert first.status_code == 200, first.text
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
+                "primary": "fx-a/model-1",
                 "fallbacks": [],
             }
             # Simulate an external config downgrade back to a bare string and
             # verify that even a cached replay restores the structured model policy:
-            runtime_agents[0]["model"] = "anthropic/claude-opus-4-8"
+            runtime_agents[0]["model"] = "fx-a/model-1"
             replay = client.post(
                 "/api/openclaw-adapter/agents/persona-opinion/ensure",
                 json=payload,
@@ -1225,7 +1236,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             )
             assert replay.status_code == 200, replay.text
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
+                "primary": "fx-a/model-1",
                 "fallbacks": [],
             }
             # Reusing the same Idempotency-Key with a different explicitly present
@@ -1238,8 +1249,8 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                     "model_routing": {
                         "mode": "fallback",
                         "fallback_models": [
-                            "anthropic/claude-opus-4-8",
-                            "openai/gpt-5.5",
+                            "fx-a/model-1",
+                            "fx-b/model-3",
                         ],
                     },
                 },
@@ -1248,7 +1259,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert conflict.status_code == 409, conflict.text
             assert conflict.json()["error_code"] == "AGENT_SYNC_IDEMPOTENCY_CONFLICT"
             assert runtime_agents[0]["model"] == {
-                "primary": "anthropic/claude-opus-4-8",
+                "primary": "fx-a/model-1",
                 "fallbacks": [],
             }
 

@@ -944,7 +944,9 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
         assert reconcile["consumer"] == "scripts/openclaw-sync-persona-agents.py"
 
 
-def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> None:
+def test_bff_persona_runtime_profile_exposes_route_policy_model_contract(monkeypatch) -> None:
+    # Fixture value of the chain variable; BFF validates pins against the chain.
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2")
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         create = client.post(
@@ -961,7 +963,7 @@ def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> No
                 "personaId": pid,
                 "model_routing": {
                     "mode": "hard_pin",
-                    "model": "openai/gpt-5.5",
+                    "model": "fx-b/model-2",
                 },
             }
 
@@ -973,7 +975,7 @@ def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> No
         assert data["workspace_ref"].endswith(f"/{persona_id}")
         assert data["model_routing"]["mode"] == "hard_pin"
         assert data["model_routing"]["status"] == "ready"
-        assert data["model_routing"]["primary_model"] == "openai/gpt-5.5"
+        assert data["model_routing"]["primary_model"] == "fx-b/model-2"
         assert data["model_routing"]["fallback_models"] == []
         assert data["memory_policy"]["source"] == "canonical_persona_memory_plane"
         assert data["memory_policy"]["cache_mutation_policy"] == "memory_bridge_only"
