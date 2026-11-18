@@ -463,9 +463,26 @@
   ],
   "validation": {
     "commands": [
-      "bash -n scripts/deploy_nonprod_vm.sh",
-      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
-      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py"
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
+        "exit_code": 0,
+        "result": "51 passed in 4.30s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+        "exit_code": 0,
+        "result": "192 passed, 2 skipped (194 collected)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-tw-chip.json",
+        "exit_code": 0,
+        "result": "passed=true, failures=[]"
+      }
     ]
   }
 }
