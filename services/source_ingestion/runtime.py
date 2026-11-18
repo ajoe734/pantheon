@@ -6,6 +6,7 @@ narrow operations and dependencies for routers and entrypoints.
 
 from __future__ import annotations
 
+import atexit
 import fcntl
 import hmac
 import json
@@ -369,6 +370,9 @@ class SourceIngestionRuntime:
             self._warm_snapshot_lookup()
         finally:
             self.snapshot_lookup_ready = True
+        # The hourly sweep runs on this one background thread, never inside a lookup.
+        self.snapshot_universe.start_background_sweeps()
+        atexit.register(self.snapshot_universe.stop_background_sweeps)
         self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()

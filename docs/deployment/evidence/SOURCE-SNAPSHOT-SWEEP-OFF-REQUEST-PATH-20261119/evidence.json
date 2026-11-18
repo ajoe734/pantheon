@@ -1,0 +1,48 @@
+{
+  "task": "SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119",
+  "wait_cause": {
+    "summary": "Lookups waited on the universe RLock held by the sweep; the store lock inside the sweep is a second wait only for seeding lookups. store.get is lock-free in journal mode so a stored lookup never needs the store lock.",
+    "base_(parent of 2b486e7ed)": {
+      "snapshot_universe.py:106": "self._lock = threading.RLock() (universe lock)",
+      "snapshot_universe.py:218,235-236": "snapshot_for_request takes self._lock and runs maybe_sweep() in finally",
+      "snapshot_universe.py:420-460": "sweep() holds self._lock across store.withdraw_symbols and the seed loop"
+    },
+    "store_side": {
+      "requirement_state.py:1813-1836": "LatestMarketSnapshotStore.get: lock-free in journal mode",
+      "requirement_state.py:1963-2031": "withdraw_symbols holds store._lock; commits via _commit_locked (1455) -> _maybe_compact_locked (1471) -> _compact_journal_in_place (1168)",
+      "requirement_state.py:2229": "append_normalized_records (seeding path) also takes store._lock"
+    },
+    "head_2b486e7ed": {
+      "snapshot_universe.py:217-259": "snapshot_for_request: no sweep call; non-blocking acquire at 230, deferred touch at 231; seeding lookup takes the lock at 241",
+      "snapshot_universe.py:446-477": "start_background_sweeps (one daemon thread)",
+      "snapshot_universe.py:479-515": "sweep: lock at 481, withdraw_symbols at 500, deferred touches applied at 515"
+    }
+  },
+  "change": {
+    "request_path": "snapshot_for_request no longer calls sweep/maybe_sweep; stored snapshot lookup uses non-blocking lock acquire and defers the recency touch if the lock is busy (applied by next lookup or the sweep); a lookup that must seed takes the lock and waits for a sweep in progress (tested).",
+    "schedule": "SnapshotUniverse.start_background_sweeps: one daemon thread per process, 3600 s cadence, first wait a full interval after the PR 7589 startup sweep; started from runtime after _warm_snapshot_lookup; stopped via atexit/stop_background_sweeps. Sweep semantics unchanged."
+  },
+  "validation": {
+    "command": "pytest -q services/source_ingestion/tests/test_snapshot_sweep_off_request_path.py services/source_ingestion/tests/test_ready_covers_snapshot_lookup.py services/source_ingestion/tests/test_snapshot_universe.py",
+    "result": "18 passed, 4 skipped, exit 0",
+    "new_tests": "5 (event/barrier based, no elapsed-time assertion)",
+    "rework_note": "Prior run: 18 passed, 4 skipped. The rework added test_router_request_handlers_never_call_sweep; this worker env has no pytest/fastapi/httpx, so that test was only checked as an AST scan equivalent (0 violations) and not executed under pytest; CI must run it."
+  },
+  "measurement": {
+    "script": "import sys,types\nf=types.ModuleType('fastapi')\nclass HTTPException(Exception): pass\nf.HTTPException=HTTPException\nsys.modules['fastapi']=f\nimport sys, time, json, threading, tempfile, datetime as dt\nfrom pathlib import Path\nfrom services.source_ingestion import requirement_state as m, snapshot_universe as su\nfrom services.source_ingestion.tests.bench_market_snapshot_incremental_read import _line\nd = Path(tempfile.mkdtemp()); j = d/\"latest_market_snapshots.jsonl\"\nwith j.open(\"w\") as f:\n    for i in range(10700): f.write(_line(f\"{10000+i}.TWSE\",0)+\"\\n\")\ntoday=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(hours=8)).date().isoformat()\nmembers={str(10000+i):{\"symbol\":f\"{10000+i}.TWSE\",\"last_requested_date\":today,\"origin\":\"request\"} for i in range(300)}\nst=d/\"latest_market_snapshots.jsonl.universe.json\"\nst.write_text(json.dumps({\"schema_version\":su.STATE_SCHEMA_VERSION,\"updated_at\":\"2026-11-18T00:00:00Z\",\"members\":members,\"transitions\":[],\"transitions_total\":0}))\nstore=m.LatestMarketSnapshotStore(j,max_closes=60)\nu=su.SnapshotUniverse(store,state_path=st,storage_root=d/\"s\")\nu._seed_from_run_files=lambda *a,**k: None  # synthetic copy has no run files; avoids heavy imports\ndone=threading.Event(); res={}\ndef sw():\n    t=time.perf_counter(); u.sweep(force=True); res[\"sweep_s\"]=time.perf_counter()-t; done.set()\nth=threading.Thread(target=sw); th.start(); time.sleep(0.05)\nworst=0; n=0\nwhile not done.is_set():\n    t=time.perf_counter(); u.snapshot_for_request(\"10299.TWSE\" if n%2 else \"10100.TWSE\"); worst=max(worst,time.perf_counter()-t); n+=1; time.sleep(0.01)\nth.join()\nprint(json.dumps({\"sweep_s\":round(res[\"sweep_s\"],3),\"lookup_during_sweep_max_s\":round(worst,6),\"lookups\":n}))\n",
+    "shape": "hosted-shaped synthetic copy: 10700 keys x 60 closes (bench_market_snapshot_incremental_read._line), 300 members, seeding stubbed (no run files); one sweep(force=True) in a thread, stored-member lookups every 10 ms during it",
+    "before_base": {
+      "sweep_s": 17.01,
+      "lookup_during_sweep_max_s": 16.938877,
+      "lookups_completed": 1
+    },
+    "after_head": {
+      "sweep_s": 17.624,
+      "lookup_during_sweep_max_s": 0.000195,
+      "lookups_completed": 386
+    },
+    "note": "local host is faster than the hosted one (reviewer measured 30.008 s sweep / 29.92636 s lookup before; 34.447 s / 0.000037 s after). A stored non member lookup after the sweep withdrew it must seed and still waits for the sweep (stated and tested). Hosted 65 minute sampler remains for the coordinator after deploy.",
+    "run": "python3 bench.py with PYTHONPATH=<tree>; fastapi stubbed (not installed in worker); base = git archive of 2b486e7ed^ services, head = this branch"
+  },
+  "new_tests": "5 existing + router handler check (test_no_request_handler_calls_sweep extended)"
+}
