@@ -1,0 +1,55 @@
+{
+ "task": "SOURCE-UNIVERSE-SEED-READS-DAILY-BARS-20261118",
+ "default_unchanged": "PANTHEON_DAILY_PRICE_READER default stays run_files; no store and no writer changed; nothing changes on hosted until the setting is switched under MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117",
+ "generated_shape": {
+  "seed": 20261118, "trade_dates": 62, "run_files_per_date": 36, "symbols_per_run": 120, "raw_run_files": 2232,
+  "method": "MarketDataStorageWriter.write_run (dual write fills daily bars); one new process per measurement; timer around SnapshotUniverse.seed after imports",
+  "host": "12 cpu, load average 3.31 2.68 2.65 before and 2.51 2.66 2.65 after the runs"
+ },
+ "acceptance_1_reproduction_run_files": {
+  "symbol_not_member": "1101.TWSE",
+  "files_opened": 2160, "records": 2160, "seconds_one_run": 0.8058,
+  "cold_25_runs_p50_s": 0.9399, "cold_25_runs_p95_s": 1.0728,
+  "hosted_2026_11_17_for_comparison": "symbol 2317, 2158 files, 10.98 s",
+  "finding": "the file count reproduces (every run file of the newest 60 dates is opened, cost grows with run files per date) but the 5 second reader timeout is NOT reproduced on this host: the generated files sit on a fast local disk in the page cache, about 0.4 ms per file against about 5 ms per file on hosted. The bound is evidenced by file count, not by exceeding 5 s locally"
+ },
+ "acceptance_2_equivalence": {
+  "closes_equal": true, "opens_equal": true, "market_equal": true, "source_ids_equal": true, "connector_ids_equal": true,
+  "calendar_evidence_equal": "generated data holds none; the lineage file path is covered by the test only when one proof exists (several proofs fall back)",
+  "snapshot_id_equal": false,
+  "named_differences": {
+   "event_time": "run files keep the stored event time (05:30:00Z in the generated data); daily bars hold only the trade date, so the seed uses the 14:30 +08:00 publish time (06:30:00Z). Same Taipei trade date; changes event_time, points and snapshot_id",
+   "content_ref": "not stored in daily bars; the seed writes daily_bars://<symbol>/<date> (60 of 60 differ)",
+   "ingest_run_id": "the run file seed takes the newest run of a date (ingest-<date>-35); daily bars keep the run that first wrote the bar (ingest-<date>-00) (60 of 60 differ)",
+   "observed_at": "newest file mtime vs newest run observed_at of the lineage",
+   "collector_close": "provisional relay lineage is not stored in daily bars: a provisional close would read as a plain close. Residual finding: the daily bars store needs a collector_close column (or a lineage entry) before the setting is switched for symbols that have provisional closes",
+   "snapshot_id": "follows from the differences above"
+  },
+  "differing_fields": [".event_time", ".lineage.content_refs[]", ".lineage.ingest_run_ids[]", ".observed_at", ".opens[].event_time", ".snapshot_id", ".source_ref"]
+ },
+ "acceptance_3_cold_bound_daily_bars": {
+  "runs": 25, "p50_s": 0.2881, "p95_s": 0.3263, "max_s": 0.3324, "bound_s": 1.0,
+  "partitions_opened": 60, "run_files_opened": 0, "asserted_in_test": "test_daily_bars_seed_equals_run_file_seed_except_named_differences (len(opened) <= 60)"
+ },
+ "acceptance_4_fallback": {
+  "tests": ["test_daily_bars_seed_falls_back_when_fewer_dates_or_closes_than_needed", "test_run_files_setting_changes_nothing"],
+  "paths": "last_seed.path is daily_bars or run_files; fallback_reason names why (30 trade dates < 60; 10 closes in the newest 60 dates; unreadable store; missing lineage; several calendar proofs)",
+  "unknown_setting": "ValueError naming PANTHEON_DAILY_PRICE_READER (fail closed)"
+ },
+ "acceptance_5_missing_symbol": {
+  "symbol": "9999.TWSE", "daily_bars_p50_s": 0.1141, "daily_bars_p95_s": 0.1217, "run_files_opened": 0, "partitions_opened": 60,
+  "run_files_for_comparison_p95_s": 0.5985, "run_files_opened_for_comparison": 2232,
+  "cached_miss": "test_daily_bars_seed_miss_is_bounded_and_cached (no _partition_dates call; second request is a cached miss)",
+  "named_difference": "a symbol with no close in the newest 60 stored dates is a miss without reading run files; a symbol that last traded before that window is found by the run file read only"
+ },
+ "acceptance_6_cleanup_guard": {
+  "snapshot_universe_entry": "stays switched=false: the run file read remains as fallback, so reading daily bars ONLY is not true and the default is run_files",
+  "scheduler_py": "scripts/cleanup_market_run_files.py SCAN_FALSE_POSITIVES gained services/source_ingestion/scheduler.py (receipt storage_refs compaction, opens no run file). test_every_run_file_reader_in_the_code_is_listed failed on the branch base before this task because of that file",
+  "reader_change": "DailyBarsReader may now select source_id, ingest_run_id, lineage_ref"
+ },
+ "acceptance_8_validation": {
+  "interpreter_with_pyarrow": "pytest services/source_ingestion/tests/test_snapshot_universe.py services/source_ingestion/tests/test_daily_bars_reader.py scripts/test_cleanup_market_run_files.py -> 78 passed",
+  "worker_dependency_python": "test_snapshot_universe.py -> 8 passed, 4 skipped (no pyarrow in the worker interpreter; the four new tests skip)",
+  "not_counted": "a wider pytest services/source_ingestion/tests -k snapshot/daily_bars/market_data run timed out at 120 s and is not counted as passed"
+ }
+}
