@@ -1164,7 +1164,7 @@ async def run_controller(controller: PersonaCycleController, stop: asyncio.Event
                                              "source": "openclaw_cron", "checked_at": now},
                     evidence_refs=["services/persona/persona_cycle_controller.py"],
                     payload={"persona_cycle_health": health, "failures": failures,
-                             "daily_cycle_jobs": {pid: report["jobs"].get(pid) for pid in sorted(owned)}})
+                             "daily_cycle_jobs": {pid: (report.get("jobs") or {}).get(pid) for pid in sorted(owned)}})
         except Exception:
             log.exception("Persona daily-cycle reconciliation failed")
         try:
