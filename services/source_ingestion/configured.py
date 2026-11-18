@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -128,7 +129,7 @@ class JsonlConnectorScheduleStore:
                 and existing.interval_seconds == interval_seconds
                 and existing.enabled == enabled
             ):
-                return existing
+                return self._copy_config(existing)
             config = ConnectorScheduleConfig(
                 connector_id=connector_id,
                 interval_seconds=interval_seconds,
@@ -197,46 +198,103 @@ class JsonlConfiguredConnectorStore:
         self._lock = threading.RLock()
         self._configs: dict[str, ConfiguredConnector] = {}
         self._states: dict[str, dict[str, Any]] = {}
+        self._read_key: tuple[int, int, int] | None = None
+        self._read_offset = 0
+        self._read_line_no = 0
         self.reload()
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
+            self._read_key = None  # explicit reload is always a full replay
             self._reload_unlocked()
 
+    def _stat_key(self) -> tuple[int, int, int] | None:
+        try:
+            stat = self.path.stat()
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
     def _reload_unlocked(self) -> None:
-        self._configs = {}
-        self._states = {}
-        if not self.path.exists():
+        """Bring the projections up to date with the journal.
+
+        Same file identity and unchanged stat: nothing to read. Same inode that only grew: apply the
+        appended complete lines. Anything else (replaced, truncated, same-size rewrite, missing):
+        full replay. The result always equals a full replay of the file.
+        """
+        key = self._stat_key()
+        if key is None:
+            self._configs = {}
+            self._states = {}
+            self._read_key = None
+            self._read_offset = 0
+            self._read_line_no = 0
             return
-        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise SourceEvidenceError(f"Invalid connector config JSONL at {self.path}:{line_no}: {exc.msg}") from exc
-            record_type = str(entry.get("record_type") or "")
-            payload = entry.get("payload")
-            if not isinstance(payload, Mapping):
-                raise SourceEvidenceError(f"Invalid connector config payload at {self.path}:{line_no}")
-            if record_type == "connector_config":
-                connector_payload = payload.get("connector")
-                fetch_payload = payload.get("fetch")
-                if not isinstance(connector_payload, Mapping) or not isinstance(fetch_payload, Mapping):
-                    raise SourceEvidenceError(f"Invalid connector config record at {self.path}:{line_no}")
-                connector = validate_external_source_connector(SourceConnector.from_dict(connector_payload))
-                self._configs[connector.connector_id] = ConfiguredConnector(
-                    connector=connector,
-                    fetch=dict(fetch_payload),
-                    updated_at=str(payload.get("updated_at") or _utc_now()),
-                )
-            elif record_type == "connector_fetch_state":
-                connector_id = str(payload.get("connector_id") or "")
-                if not connector_id:
-                    raise SourceEvidenceError(f"Invalid connector fetch state at {self.path}:{line_no}")
-                self._states[connector_id] = dict(payload)
-            else:
-                raise SourceEvidenceError(f"Unsupported connector config record: {record_type or '<missing>'}")
+        previous = self._read_key
+        if previous is not None and key == previous:
+            return
+        if (
+            previous is None
+            or key[0] != previous[0]
+            or key[1] < previous[1]
+            or key[1] == previous[1]
+        ):
+            self._configs = {}
+            self._states = {}
+            self._read_offset = 0
+            self._read_line_no = 0
+        with self.path.open("rb") as handle:
+            handle.seek(self._read_offset)
+            while raw := handle.readline():
+                complete = raw.endswith(b"\n")
+                try:
+                    line = raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise SourceEvidenceError(
+                        f"Invalid connector config JSONL at {self.path}:{self._read_line_no + 1}: {exc.reason}"
+                    ) from exc
+                self._apply_line_unlocked(line, self._read_line_no + 1)
+                if not complete:
+                    break  # unterminated tail: applied like a full replay, re-read once completed
+                self._read_offset = handle.tell()
+                self._read_line_no += 1
+        self._read_key = key
+
+    def _apply_line_unlocked(self, line: str, line_no: int) -> None:
+        if not line.strip():
+            return
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SourceEvidenceError(f"Invalid connector config JSONL at {self.path}:{line_no}: {exc.msg}") from exc
+        record_type = str(entry.get("record_type") or "")
+        payload = entry.get("payload")
+        if not isinstance(payload, Mapping):
+            raise SourceEvidenceError(f"Invalid connector config payload at {self.path}:{line_no}")
+        if record_type == "connector_config":
+            connector_payload = payload.get("connector")
+            fetch_payload = payload.get("fetch")
+            if not isinstance(connector_payload, Mapping) or not isinstance(fetch_payload, Mapping):
+                raise SourceEvidenceError(f"Invalid connector config record at {self.path}:{line_no}")
+            connector = validate_external_source_connector(SourceConnector.from_dict(connector_payload))
+            self._configs[connector.connector_id] = ConfiguredConnector(
+                connector=connector,
+                fetch=dict(fetch_payload),
+                updated_at=str(payload.get("updated_at") or _utc_now()),
+            )
+        elif record_type == "connector_fetch_state":
+            connector_id = str(payload.get("connector_id") or "")
+            if not connector_id:
+                raise SourceEvidenceError(f"Invalid connector fetch state at {self.path}:{line_no}")
+            self._states[connector_id] = dict(payload)
+        else:
+            raise SourceEvidenceError(f"Unsupported connector config record: {record_type or '<missing>'}")
+
+    @staticmethod
+    def _copy_config(config: ConfiguredConnector) -> ConfiguredConnector:
+        return ConfiguredConnector(
+            connector=config.connector, fetch=copy.deepcopy(dict(config.fetch)), updated_at=config.updated_at
+        )
 
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
         connector = validate_external_source_connector(connector)
@@ -253,7 +311,7 @@ class JsonlConfiguredConnectorStore:
             config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
             self._append("connector_config", connector.connector_id, config.to_dict())
             self._configs[connector.connector_id] = config
-            return config
+            return self._copy_config(config)
 
     def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         """Return the persisted fetch contract without mutating the store."""
@@ -262,19 +320,20 @@ class JsonlConfiguredConnectorStore:
     def get_config(self, connector_id: str) -> ConfiguredConnector | None:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            return self._configs.get(connector_id)
+            config = self._configs.get(connector_id)
+            return None if config is None else self._copy_config(config)
 
     def list_configs(self) -> list[ConfiguredConnector]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            return list(self._configs.values())
+            return [self._copy_config(c) for c in self._configs.values()]
 
     def read_snapshot(self) -> tuple[list[ConfiguredConnector], dict[str, dict[str, Any]]]:
         """Read configured connectors and their fetch states in one replay."""
 
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            configs = list(self._configs.values())
+            configs = [self._copy_config(c) for c in self._configs.values()]
             fetch_states = {
                 config.connector.connector_id: self._fetch_state_unlocked(
                     config.connector.connector_id
@@ -289,7 +348,7 @@ class JsonlConfiguredConnectorStore:
             return self._fetch_state_unlocked(connector_id)
 
     def _fetch_state_unlocked(self, connector_id: str) -> dict[str, Any]:
-        return dict(
+        return copy.deepcopy(
             self._states.get(
                 connector_id,
                 {
@@ -323,7 +382,7 @@ class JsonlConfiguredConnectorStore:
             state["updated_at"] = _utc_now()
             self._append("connector_fetch_state", connector_id, state)
             self._states[connector_id] = state
-            return dict(state)
+            return copy.deepcopy(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         _reject_inline_fetch_secrets(fetch)
