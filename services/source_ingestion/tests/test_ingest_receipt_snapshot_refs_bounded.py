@@ -488,3 +488,53 @@ def test_reader_controller_readback_gets_what_it_needs_from_a_compact_receipt(tm
         path.unlink()  # a removed partition is absent, not an error, and the other days still resolve
     gone = store.get_receipt("ingest-gone").storage_refs.get("normalized_refs", ())
     assert len(gone) == 30 - 9
+
+
+# ---- previous release proof through scripts/previous_release_reader.py ---------------------------------
+
+_JOURNAL_DRIVER = r"""
+import json, sys
+from services.source_ingestion.scheduler import JsonlIngestScheduleStore, IngestReceipt
+path, mode, receipt_file = sys.argv[1], sys.argv[2], sys.argv[3]
+store = JsonlIngestScheduleStore(path)
+if mode == "write":
+    store.upsert_receipt(IngestReceipt.from_dict(json.load(open(receipt_file))))
+out = {"module_file": sys.modules[JsonlIngestScheduleStore.__module__].__file__,
+       "max_line": store.journal_stats()["max_receipt_line_bytes"], "receipts": {}}
+for receipt in store.list_receipts():
+    out["receipts"][receipt.ingest_run_id] = {
+        "normalized": len(receipt.storage_refs.get("normalized_refs", ())),
+        "raw": len(receipt.storage_refs.get("raw_refs", ()))}
+print(json.dumps(out))
+"""
+
+
+def _run_journal_driver(revision: str, tmp_path: Path, journal: Path, mode: str, receipt_file: Path) -> dict[str, Any]:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    import previous_release_reader as harness
+    driver = tmp_path / "journal_driver.py"
+    driver.write_text(_JOURNAL_DRIVER, encoding="utf-8")
+    result = harness.run_driver(revision, driver, modules=["services.source_ingestion.scheduler"],
+                                driver_args=[str(journal), mode, str(receipt_file)], check=False)
+    assert result.returncode == 0, result.stderr[-2000:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_previous_release_reader_proof_both_directions_through_the_harness(tmp_path):
+    receipt = _history_receipt(tmp_path / "data", "ingest-hist-driver", 120)
+    receipt_file = tmp_path / "receipt.json"
+    receipt_file.write_text(json.dumps(receipt.to_dict()))
+    # New code (HEAD) writes; the release served on hosted when this task opened reads it.
+    written_by_new = tmp_path / "new.jsonl"
+    new = _run_journal_driver("HEAD", tmp_path, written_by_new, "write", receipt_file)
+    assert new["max_line"] <= STORAGE_LINE_BOUND and new["receipts"]["ingest-hist-driver"]["normalized"] == 120
+    old_reads = _run_journal_driver(PRE_STORAGE_REFS_SHA, tmp_path, written_by_new, "read", receipt_file)
+    assert "ingest-hist-driver" in old_reads["receipts"]  # the previous release reads the compact row without error
+    assert old_reads["receipts"]["ingest-hist-driver"] == {"normalized": 0, "raw": 0}  # difference, named: it has no lists to read
+    # Previous release writes; new code reads and compacts.
+    written_by_old = tmp_path / "old.jsonl"
+    old = _run_journal_driver(PRE_STORAGE_REFS_SHA, tmp_path, written_by_old, "write", receipt_file)
+    assert old["max_line"] > STORAGE_LINE_BOUND and old["receipts"]["ingest-hist-driver"]["normalized"] == 120
+    new_reads = _run_journal_driver("HEAD", tmp_path, written_by_old, "read", receipt_file)
+    assert new_reads["receipts"]["ingest-hist-driver"]["normalized"] == 120
+    assert new_reads["max_line"] > 0 and written_by_old.stat().st_size < 100_000  # rewritten in place
