@@ -68,7 +68,7 @@ echo "@@free"; free -b 2>/dev/null
 echo "@@docker_df"; docker system df --format '{{json .}}' 2>/dev/null
 echo "@@docker_stats"; docker stats --no-stream --format '{{json .}}' 2>/dev/null
 echo "@@memory"
-# One line per running container: name|service|restarts|limit|peak|max|oom_kill.
+# One line per running container: name|service|restarts|limit|peak|max|oom_kill|created.
 # Reads docker inspect and world-readable cgroup files only; "-" when a value is unavailable.
 for id in $(docker ps -q --no-trunc 2>/dev/null); do
   meta="$(docker inspect -f '{{.Name}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.RestartCount}}' "$id" 2>/dev/null)" || continue
@@ -78,7 +78,8 @@ for id in $(docker ps -q --no-trunc 2>/dev/null); do
   read -r peak < "$d/memory.peak" 2>/dev/null || peak=-
   mx="$(awk '$1=="max"{print $2}' "$d/memory.events" 2>/dev/null)"
   oom="$(awk '$1=="oom_kill"{print $2}' "$d/memory.events" 2>/dev/null)"
-  printf '%s|%s|%s|%s|%s\n' "$meta" "$lim" "$peak" "${mx:--}" "${oom:--}" | sed 's/^\///'
+  created="$(docker inspect -f '{{.Created}}' "$id" 2>/dev/null)"
+  printf '%s|%s|%s|%s|%s|%s\n' "$meta" "$lim" "$peak" "${mx:--}" "${oom:--}" "${created:--}" | sed 's/^\///'
 done
 echo "@@files"
 for c in $(docker ps --format '{{.Names}}' 2>/dev/null); do
@@ -143,15 +144,16 @@ def _int_or_none(text: str) -> int | None:
 
 
 def parse_memory(lines: list[str]) -> list[dict]:
-    """Lines: name|service|restarts|limit|peak|max|oom_kill."""
+    """Lines: name|service|restarts|limit|peak|max|oom_kill[|created]."""
     out = []
     for line in lines:
         p = line.split("|")
-        if len(p) != 7:
+        if len(p) not in (7, 8):
             continue
         out.append({"name": p[0], "service": p[1] or p[0], "restarts": _int_or_none(p[2]),
                     "limit": _int_or_none(p[3]), "peak": _int_or_none(p[4]),
-                    "max_events": _int_or_none(p[5]), "oom_kill": _int_or_none(p[6])})
+                    "max_events": _int_or_none(p[5]), "oom_kill": _int_or_none(p[6]),
+                    "created": p[7].strip() if len(p) == 8 and p[7].strip() not in ("", "-") else None})
     return out
 
 
@@ -172,6 +174,13 @@ def memory_findings(rows: list[dict], previous: dict | None) -> tuple[list[dict]
         if r["restarts"] is not None and old_restarts is not None and r["restarts"] > old_restarts:
             findings.append({**base, "finding": "container_restarts_grew", "restarts": r["restarts"],
                              "previous_restarts": old_restarts, "severity": "red"})
+        # A restart resets cgroup memory.peak and oom_kill, so oom_kill 0 next to restarts > 0 does not
+        # prove that no kill happened. Reported on every report, with or without a previous report.
+        if r["restarts"]:
+            findings.append({**base, "finding": "container_restarted_since_creation", "restarts": r["restarts"],
+                             "created": r.get("created"), "oom_kill": r["oom_kill"], "severity": "warning",
+                             "note": "cgroup oom_kill and peak are reset by a restart; oom_kill 0 with restarts above 0 "
+                                     "is not evidence that no kill happened"})
         old_max = old.get("max_events")
         if r["max_events"] is not None and old_max is not None and r["max_events"] > old_max:
             findings.append({**base, "finding": "memory_limit_reached", "max_events": r["max_events"],
