@@ -2,7 +2,11 @@
   "task": "PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118",
   "shared_definition": "services/persona/persona_cycle_controller.py ELIGIBLE_STATES literal and is_daily_cycle_persona; the probe reads the literal by ast from the controller source so `python3 -I` still works",
   "rule": "lifecycle_state in {paper_running, paper_owner} (ELIGIBLE_STATES minus consultable) and status active",
-  "tests": {"command": "pytest acceptance/test_persona_day.py services/persona/test_persona_cycle_controller.py services/control-plane/bff/tests/test_persona_cycle_views.py", "result": "107 passed, 4 skipped"},
+  "tests": {
+    "command": "pytest acceptance/test_persona_day.py services/persona/test_persona_cycle_controller.py services/control-plane/bff/tests/test_persona_cycle_views.py",
+    "result": "107 passed, 4 skipped"
+  },
   "hosted_run": "NOT run by the worker. The coordinator dispatches persona-day-acceptance once after merge and records the persona list of its artifact; do not report accepted before that.",
-  "runtime_budget": "no new writer, no new recurring job"
+  "runtime_budget": "no new writer, no new recurring job",
+  "ci_note": "PR #7577 Smoke acceptance failed only on services/source_ingestion/tests/test_snapshot_current_record_store.py::test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers (p99 279.6 ms latency timing assertion), a file this task does not touch; the three focused suites re-run locally pass (acceptance 14 passed; controller/BFF-view suites pass except two lifespan tests needing asyncpg, absent from the local venv). New head pushed to retrigger CI."
 }
