@@ -13,6 +13,7 @@ import pytest
 from services.knowledge.evidence.models import EvidenceItem, summarize_evidence_items_collection
 from services.knowledge.evidence.repository import InMemoryEvidenceRepository
 from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.tests.test_quarter_evidence_owner_read import (
     Q1, TENANT, _item, _put, client_for,
 )
@@ -118,7 +119,7 @@ def test_real_pg_summary_exact_fast_and_updated_by_independent_writes(volume_rep
         start = time.monotonic()
         assert repo.summarize_evidence_items(VOLUME_TENANT) == expected
         durations.append(time.monotonic() - start)
-    assert max(durations) < 0.5, durations
+    wall_clock_bounds.check("evidence_read.summary_max", max(durations), 0.5, unit="s", strict=True)
     record_measurement("summary_seconds", durations)
     with repo._get_connection() as conn:
         plan = conn.execute(

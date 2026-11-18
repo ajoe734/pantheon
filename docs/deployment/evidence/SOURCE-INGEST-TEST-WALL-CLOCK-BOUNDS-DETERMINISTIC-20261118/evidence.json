@@ -1,0 +1,276 @@
+{
+  "task": "SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118",
+  "summary": "Wall-clock thresholds (values unchanged) are judged only with PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1; the default required check asserts counters that do not depend on host speed and proves with three injected faults that those counters catch what the bounds were for. No production code changed.",
+  "honest_gaps": [
+    "AC1 sample sizes: 9 'idle' and 4 loaded baseline runs (not 30/30). One run of this test is 45 s idle and ~95 s loaded; foreground batches are capped at 10 min. The host is a shared 12-core machine (load average ~5 from other workers) so 'idle' is 'shared-host baseline'.",
+    "AC1 harness caveat: baseline runs use a harness that builds the hosted-shaped fixture once and runs the test function on a fresh copy of the seeded sqlite file each run. Its reader_process values (median 140 ms) are higher than the same test under pytest (5-46 ms), so the reader_process failure counts below overstate; write txn p99 and maintenance step are not affected by that difference.",
+    "AC2/3: test_retention.py (needs pyarrow) and test_evidence_read_cost.py (needs real PostgreSQL) are skipped on this host so their maxima could not be measured; they are gated by the class rule (same fsync/DB-wait class, bounds 250/100 ms and 0.5 s) and listed as 'not measured'.",
+    "AC2 inventory maxima for the 4 fast files come from 17-18 runs under load (30 s per run), not 30.",
+    "AC6: the opt-in path did NOT pass on this host in 2 of 2 runs (write txn p99 287.9 ms and 279.0 ms vs 250 ms; every other bound passed). The same single slow fsync class as the CI failure; the bound is not raised. The opt-in command itself works and printed the values below.",
+    "AC6 default path: 203 clean runs (50 + 3x34 + 3x17, run in separate processes in series/parallel under load) with 0 failures; not a single uninterrupted 200-run process."
+  ],
+  "ac1_measure_before": {
+    "ci_failure": "run 44310853467 / job 134826340879 (PR 7579, Smoke acceptance 2026-11-18T13:33Z): write txn p99 318.8 ms > 250; 503 other tests passed; test took 54.5 s",
+    "dev_host_failure_in_commit_6b4d3dbab": "1 of 3 isolated runs failed on txn p99 387 ms",
+    "first_baseline_run_under_pytest_this_task": "failed on write txn p99 328.5 ms (22 batches: 24..328 ms, p50 74.4); reader process 9.65 ms, thread 73.3 ms, maintenance 81.7 ms",
+    "bounds_ms": {
+      "reader_process": 100,
+      "reader_thread": 100,
+      "write_txn_p99": 250,
+      "maintenance_step": 200
+    },
+    "idle_shared_host_n9": {
+      "reader_process_ms": {
+        "min": 21.4,
+        "median": 140.1,
+        "max": 229.7,
+        "fails": 8
+      },
+      "reader_thread_ms": {
+        "min": 43.8,
+        "median": 101.0,
+        "max": 159.2,
+        "fails": 5
+      },
+      "write_txn_p99_ms": {
+        "min": 49.5,
+        "median": 94.6,
+        "max": 194.2,
+        "fails": 0
+      },
+      "maintenance_step_ms": {
+        "min": 6.1,
+        "median": 7.6,
+        "max": 10.8,
+        "fails": 0
+      }
+    },
+    "loaded_n4_10_cpu_spinners_plus_2_fsync_writers": {
+      "reader_process_ms": {
+        "min": 22.8,
+        "median": 226.3,
+        "max": 328.3,
+        "fails": 3
+      },
+      "reader_thread_ms": {
+        "min": 102.4,
+        "median": 116.8,
+        "max": 152.7,
+        "fails": 4
+      },
+      "write_txn_p99_ms": {
+        "min": 183.2,
+        "median": 251.4,
+        "max": 352.4,
+        "fails": 2
+      },
+      "maintenance_step_ms": {
+        "min": 33.8,
+        "median": 38.8,
+        "max": 141.5,
+        "fails": 0
+      }
+    },
+    "also_observed_in_harness_idle_runs_before_sync_fix": "write txn p99 up to 969.7 ms, maintenance up to 237.3 ms"
+  },
+  "ac2_inventory": [
+    {
+      "file": "test_snapshot_current_record_store.py",
+      "line_before": 391,
+      "bound": "reader process 100 ms",
+      "protects": "WAL reader not blocked by writer",
+      "max_loaded": 328.3,
+      "gated": true
+    },
+    {
+      "file": "test_snapshot_current_record_store.py",
+      "line_before": 392,
+      "bound": "reader thread 100 ms",
+      "protects": "in-process reader not blocked",
+      "max_loaded": 152.7,
+      "gated": true
+    },
+    {
+      "file": "test_snapshot_current_record_store.py",
+      "line_before": 393,
+      "bound": "write txn p99 250 ms",
+      "protects": "500-key batch is one short transaction",
+      "max_loaded": 352.4,
+      "gated": true
+    },
+    {
+      "file": "test_snapshot_current_record_store.py",
+      "line_before": 394,
+      "bound": "maintenance step 200 ms",
+      "protects": "bounded incremental_vacuum/checkpoint step",
+      "max_loaded": 141.5,
+      "gated": true,
+      "note": "0.71 of bound under load"
+    },
+    {
+      "file": "test_retention.py",
+      "line_before": 663,
+      "bound": "snapshot delete txn <250 ms; reader <100 ms",
+      "protects": "retention sweep lock hold",
+      "gated": true,
+      "measured": false,
+      "why": "pyarrow missing on host"
+    },
+    {
+      "file": "test_retention.py",
+      "line_before": 664,
+      "bound": "writer probe <250 ms",
+      "protects": "writer wait during sweep",
+      "gated": true,
+      "measured": false,
+      "why": "pyarrow missing on host"
+    },
+    {
+      "file": "test_evidence_read_cost.py",
+      "line_before": 121,
+      "bound": "summary <0.5 s",
+      "protects": "evidence summary read cost",
+      "gated": true,
+      "measured": false,
+      "why": "real PostgreSQL required"
+    },
+    {
+      "file": "test_semantic_extraction.py",
+      "line_before": 660,
+      "bound": "trickle timeout <0.15 s",
+      "protects": "timeout honoured near 0.05 s",
+      "max_loaded_s": 0.058,
+      "ratio": 0.39,
+      "gated": true,
+      "why": "absolute bound 150 ms, margin only 2.6x under load"
+    },
+    {
+      "file": "test_semantic_extraction.py",
+      "line_before": 703,
+      "bound": "remaining budget timeout <0.25 s",
+      "protects": "deadline budget shared across attempts",
+      "max_loaded_s": 0.124,
+      "ratio": 0.496,
+      "gated": true
+    },
+    {
+      "file": "test_semantic_extraction.py",
+      "line_before": 505,
+      "bound": "timeout abstain <0.2 s",
+      "max_loaded_s": 0.055,
+      "ratio": 0.27,
+      "gated": false
+    },
+    {
+      "file": "test_semantic_extraction.py",
+      "line_before": 577,
+      "bound": "keep-alive early return <0.4 s",
+      "max_loaded_s": 0.01,
+      "ratio": 0.02,
+      "gated": false
+    },
+    {
+      "file": "test_source_readiness_bounded.py",
+      "line_before": 113,
+      "bound": "readyz+health <1.0 s",
+      "max_loaded_s": 0.134,
+      "ratio": 0.13,
+      "gated": false
+    },
+    {
+      "file": "test_snapshot_universe.py",
+      "line_before": 125,
+      "bound": "first request seed <2.0 s",
+      "max_loaded_s": 0.087,
+      "ratio": 0.04,
+      "gated": false
+    },
+    {
+      "file": "test_ingest_schedule_incremental_replay.py",
+      "line_before": 361,
+      "bound": "registry p50 <300 ms",
+      "max_loaded_ms": 79.1,
+      "ratio": 0.26,
+      "gated": false
+    }
+  ],
+  "ac2_not_affected_other_files": "test_collector_* (1800 s, 120 s, 20 s, 17 s), test_scheduled_connector (1800 s, 48 h), test_pg_connection_reuse (<5.0 s, not below 5 s), test_finmind_kbar (computed seconds) are above 5 s, or computed rather than measured. If any of these should also be gated, the coordinator can add them; none was edited.",
+  "ac3_switch": "PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 defined once in services/source_ingestion/tests/wall_clock_bounds.py (check / check_many); no bound value changed.",
+  "ac4_default_guarantees": {
+    "readers_not_blocked": "test_default_path_counts_... reads another thread's committed rows while a write transaction is open: completes, no busy/locked error, returns the last committed version, journal_mode == wal (counter: reads==10, errors==[]).",
+    "one_txn_per_500_keys": "backend.transaction entries == 22 for 10,700 keys (also asserted inside the hosted 22-batch test: transactions=22).",
+    "no_full_rewrite": "WAL bytes written per batch <= 4 x encoded record bytes of that batch; measured max 2.13 (fresh keys) and 1.13 (hosted full-day replacement).",
+    "maintenance_bounded_in_pages": "one maintenance step reclaims <= VACUUM_STEP_PAGES (200) free pages from a freelist > 600 pages; measured exactly 200 in 203 of 203 runs and max 8 in the hosted replacement."
+  },
+  "ac5_faults_10_of_10": {
+    "idle_each": {
+      "exclusive_lock": "10/10 failed (read failed: database is locked)",
+      "rewrite_table": "10/10 failed (batch 2 wrote 839944 WAL bytes for 169185 record bytes)",
+      "whole_file_maintenance": "10/10 failed (maintenance step freed 1632 pages)"
+    },
+    "under_load_each": "10/10, same messages",
+    "committed_as": "test_default_path_catches_each_fault_the_wall_clock_bounds_were_for (3 params)"
+  },
+  "ac6_stability": {
+    "default_path_clean_runs_under_load": 203,
+    "failures": 0,
+    "load": "10 CPU spinner processes + 2 fsync writers on a 12-core shared host",
+    "opt_in_run_1": "failed: write txn p99 287.9 ms > 250 (others in bound)",
+    "opt_in_run_2": [
+      {
+        "bound": 100.0,
+        "judged": true,
+        "measured": 5.119,
+        "name": "snapshot.reader_process_call_max",
+        "operator": "<=",
+        "unit": "ms",
+        "within_bound": true
+      },
+      {
+        "bound": 100.0,
+        "judged": true,
+        "measured": 67.639,
+        "name": "snapshot.reader_thread_call_max",
+        "operator": "<=",
+        "unit": "ms",
+        "within_bound": true
+      },
+      {
+        "bound": 250.0,
+        "judged": true,
+        "measured": 279.044,
+        "name": "snapshot.write_txn_500_keys_p99",
+        "operator": "<=",
+        "unit": "ms",
+        "within_bound": false
+      },
+      {
+        "bound": 200.0,
+        "judged": true,
+        "measured": 110.476,
+        "name": "snapshot.maintenance_step_max",
+        "operator": "<=",
+        "unit": "ms",
+        "within_bound": true
+      }
+    ]
+  },
+  "ac7_command": "PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 python -m services.source_ingestion.tests.wall_clock_bounds -- services/source_ingestion/tests/test_snapshot_current_record_store.py -k full_day_replacement -q   (prints JSON {judged, exit_code, measurements[]}; also in the module docstring)",
+  "ac8": "No correctness assertion removed or loosened; no skip/slow marker; tests stay in the same files.",
+  "ac9_durations_dev_host": {
+    "snapshot_full_day_test_before": "45-56 s per run in the harness (54.5 s in CI)",
+    "after_default": "46.3 s call (pytest --durations); new fast tests 4.4 s + 3 fault params (~1 s each); whole file 39 passed in 445.8 s"
+  },
+  "ac10": "No production file touched; new tests write only under tmp_path (pytest) .",
+  "ac11_validation": {
+    "snapshot_file_default": "pytest services/source_ingestion/tests/test_snapshot_current_record_store.py -> 39 passed",
+    "other_changed_files": "pytest test_semantic_extraction test_source_readiness_bounded test_snapshot_universe test_ingest_schedule_incremental_replay test_retention test_evidence_read_cost -> 62 passed, 8 skipped (retention: pyarrow missing; evidence_read: no PostgreSQL DSN)",
+    "after_default_measured": {
+      "maintenance_pages_freed_max": 8,
+      "transactions": 22,
+      "wal_bytes_per_batch_max": 2045408,
+      "wal_bytes_per_payload_byte_max": 1.13
+    }
+  },
+  "finding_for_store_owner_not_changed": "A thread's FIRST read takes backend._lock (to register its read connection), so a brand-new reader thread blocks while a writer transaction is open; the tests warm the connection first, as the hosted test already did."
+}
