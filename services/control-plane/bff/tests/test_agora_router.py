@@ -470,7 +470,7 @@ def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
             "status": "created",
             "agent_id": persona_id,
             "model_id": f"openclaw/{persona_id}",
-            "model": "anthropic/claude-opus-4-8",
+            "model": "fx-a/model-1",
             "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
         }
 

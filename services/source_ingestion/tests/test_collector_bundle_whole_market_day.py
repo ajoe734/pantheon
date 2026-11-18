@@ -242,25 +242,33 @@ def test_altered_or_truncated_raw_file_is_refused_for_ingested_item():
         cb.verify_bundle(FakeTransport(files), expected_source_id=SOURCE, entry=entry, item_window=(0, 20))
 
 
-def deliver_day(root, transport, cap, *, limit_ticks=2000):
+def deliver_day(root, transport, cap, *, limit_ticks=50):
+    """Pull until the day is delivered, then pull once more to prove nothing is re-delivered.
+
+    Returns (ticks, delivered, after_done_records). Stops on the first tick that returns no records once
+    the priority day was reported done, or when no priority key remains (the product's state after the
+    day). The tick limit is only a safety bound; reaching it fails the test.
+    """
     a = adapter(root, transport, cap)
-    ticks, delivered = 0, 0
+    ticks, delivered, done_seen = 0, 0, False
     while ticks < limit_ticks:
         ticks += 1
         result = a.pull()
         a.save_resume_cursor(result)
         delivered += len(result.records)
-        if result.priority_done and not result.records:
-            break
-    return ticks, delivered
+        done_seen = done_seen or bool(result.priority_done)
+        if not result.records and (done_seen or result.priority_key is None):
+            return ticks, delivered, len(result.records)
+    raise AssertionError(f"day not delivered within {limit_ticks} ticks (delivered {delivered})")
 
 
 def test_hosted_shape_day_is_delivered_over_ticks_with_linear_bytes(tmp_path):
     files, entry = make_market_day()
     base = base_of(entry)
     transport = CountingTransport(files)
-    ticks, delivered = deliver_day(tmp_path, transport, cap=5000)
+    ticks, delivered, after_done = deliver_day(tmp_path, transport, cap=5000)
     assert delivered == HOSTED_ROWS and ticks >= 3
+    assert after_done == 0  # the tick after the day is done re-delivers nothing
     metadata_size = len(files[f"{base}/items.jsonl"]) + len(files[f"{base}/manifest.json"])
     # Acceptance: bytes fetched for the day's metadata files <= twice their size, whatever the tick count.
     assert transport.metadata_bytes() <= 2 * metadata_size

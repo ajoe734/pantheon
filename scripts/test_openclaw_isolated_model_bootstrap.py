@@ -12,6 +12,8 @@ API_KEY = bootstrap.API_KEY_SOURCE_ENV
 WORKSPACE = bootstrap.WORKSPACE_SOURCE_ENV
 TOKEN = bootstrap.TOKEN_SOURCE_ENV
 OPENAI_OAUTH = bootstrap.OPENAI_OAUTH_TOKEN_SOURCE_ENV
+# Fixture values of the OPENCLAW_MODEL_CHAIN variable.
+CHAIN = ["fx-a/model-1", "fx-b/model-2", "fx-b/model-3"]
 
 
 def test_missing_credential_fails_closed() -> None:
@@ -38,26 +40,14 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
             WORKSPACE: "wrkspc_sentinel_value",
             TOKEN: "sentinel-secret-value",
             OPENAI_OAUTH: "sentinel-openai-oauth-value",
+            "OPENCLAW_MODEL_CHAIN": ",".join(CHAIN),
         }
     )
     values = {str(item["path"]): item["value"] for item in batch}
-    assert values["agents.defaults.model.primary"] == "anthropic/claude-opus-4-8"
-    assert values["agents.defaults.model.fallbacks"] == [
-        "openai/gpt-5.6-sol",
-        "openai/gpt-5.5",
-    ]
-    assert values['agents.defaults.models["anthropic/claude-opus-4-8"]'] == {
-        "alias": "opus",
-        "agentRuntime": {"id": "openclaw"},
-    }
-    assert values['agents.defaults.models["openai/gpt-5.6-sol"]'] == {
-        "alias": "codex-sol",
-        "agentRuntime": {"id": "openclaw"},
-    }
-    assert values['agents.defaults.models["openai/gpt-5.5"]'] == {
-        "alias": "codex-5.5",
-        "agentRuntime": {"id": "openclaw"},
-    }
+    assert values["agents.defaults.model.primary"] == CHAIN[0]
+    assert values["agents.defaults.model.fallbacks"] == CHAIN[1:]
+    for ref in CHAIN:
+        assert values[f'agents.defaults.models["{ref}"]'] == {"agentRuntime": {"id": "openclaw"}}
     assert values["models.providers.openai"] == {
         "baseUrl": "https://chatgpt.com/backend-api/codex",
         "api": "openai-chatgpt-responses",
@@ -84,10 +74,11 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
     assert values["agents.list"] == [
         {"id": "main"},
         {"id": "structured-extraction",
-         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}},
+         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
+         "model": {"primary": CHAIN[0], "fallbacks": CHAIN[1:]}},
         {"id": "memory-index",
          "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
-         "model": {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]}},
+         "model": {"primary": CHAIN[0], "fallbacks": CHAIN[1:]}},
     ]
     # Same global ToolSearch-only launch as the shared deploy path.
     assert values['agents.defaults.cliBackends["claude-cli"].args'][-2:] == ["--tools", "ToolSearch"]
@@ -114,3 +105,30 @@ def test_invalid_or_refresh_token_openai_oauth_fails_closed(bad_oauth: str) -> N
         bootstrap.render_batch(
             {API_KEY: "sk-ant-test", WORKSPACE: "wrkspc_test", OPENAI_OAUTH: bad_oauth}
         )
+
+
+def _base_env(**extra: str) -> dict[str, str]:
+    return {API_KEY: "k", WORKSPACE: "w", OPENAI_OAUTH: "oauth-test", **extra}
+
+
+def test_api_route_providers_ride_the_batch_when_secrets_present() -> None:
+    batch = bootstrap.render_batch(_base_env(
+        PANTHEON_OPENCLAW_OPENAI_API_KEY="sk-proj-sentinel-1",
+        PANTHEON_OPENCLAW_OPENAI_API_KEY_2="sk-proj-sentinel-2",
+    ))
+    values = {str(i["path"]): i["value"] for i in batch}
+    assert values["agents.defaults.model.fallbacks"][:2] == ["openai-api/gpt-6.2-sol", "openai-api-2/gpt-6.2-sol"]
+    for pid, env_name in (("openai-api", "OPENCLAW_API_ROUTE_KEY_1"), ("openai-api-2", "OPENCLAW_API_ROUTE_KEY_2")):
+        assert values[f"models.providers.{pid}"]["apiKey"] == {"source": "env", "provider": "default", "id": env_name}
+        assert values[f"models.providers.{pid}"]["models"] == [{"id": "gpt-6.2-sol", "name": "gpt-6.2-sol"}]
+    assert values["models.providers.openai"]["baseUrl"] == "https://chatgpt.com/backend-api/codex"
+    assert "sk-proj-sentinel" not in json.dumps(batch)
+
+
+def test_api_route_absent_keeps_batch_valid_without_route_refs() -> None:
+    batch = bootstrap.render_batch(_base_env(PANTHEON_OPENCLAW_OPENAI_API_KEY_2="  "))
+    values = {str(i["path"]): i["value"] for i in batch}
+    assert not any(p.startswith("models.providers.openai-api") for p in values)
+    chain = [values["agents.defaults.model.primary"], *values["agents.defaults.model.fallbacks"]]
+    assert not any(r.startswith("openai-api") for r in chain)
+    assert "openai/gpt-5.6-sol" in chain

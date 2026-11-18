@@ -29,6 +29,7 @@ class Client:
         self.dispatches = []
         self.move_on_read = False
         self.reads = 0
+        self.dispatch_head = None  # dev tip at dispatch time, as GitHub reports it
 
     def get_ref(self, ref):
         self.reads += 1
@@ -55,7 +56,7 @@ class Client:
                 "status": "completed", "conclusion": conclusion} for rid, sha, conclusion in self.extra_ci]
             return {"workflow_runs": [item for item in ci_runs
                 if query.get("head_sha", [item["head_sha"]])[0] == item["head_sha"]]}
-        dispatched = [{"id": 99, "head_sha": inputs["ref"], "status": "queued",
+        dispatched = [{"id": 99, "head_sha": self.dispatch_head or inputs["ref"], "status": "queued",
             "display_title": f"Dev release {inputs['ref']} + {inputs['frontend_sha']}",
             "html_url": "https://github.test/99"} for _, inputs, _ in self.dispatches[:1]]
         history = self.deploys + dispatched
@@ -151,6 +152,37 @@ def test_failed_pair_is_reported_and_not_redispatched(conclusion):
         assert result["state"] == "failed_pair_not_retried"
         assert result["run_url"] == "https://github.test/10"
     assert not backend.dispatches
+
+
+def test_dispatch_is_correlated_by_title_when_dev_advanced_past_selected_backend():
+    backend, _, _, _, run = setup_pair()
+    backend.dispatch_head = "d" * 40  # workflow_dispatch head_sha is the dev tip, not the selected backend
+    result = run(apply=True)
+    assert result["state"] == "dispatched" and result["run_url"] == "https://github.test/99"
+
+
+def test_failed_pair_whose_run_head_is_a_later_dev_tip_is_not_redispatched():
+    backend, _, _, _, run = setup_pair()
+    failed = deploy_run(10, "failure")
+    failed["head_sha"] = "d" * 40
+    backend.deploys = [failed]
+    for apply in (False, True):
+        result = run(apply=apply)
+        assert result["state"] == "failed_pair_not_retried"
+        assert result["run_url"] == "https://github.test/10"
+    assert not backend.dispatches
+
+
+def test_correlation_refuses_preexisting_or_other_pair_runs():
+    backend, _, _, _, run = setup_pair()
+    backend.dispatch_head = "d" * 40
+    backend.deploys = [{**deploy_run(10, "success", OLD, F), "status": "queued"}]
+    other = backend.request
+    backend.request = lambda m, path: ({"workflow_runs": backend.deploys}
+        if "nonprod-deploy" in path and "status" not in path else other(m, path))
+    backend.dispatch = lambda *a, **k: backend.dispatches.append(a)
+    with pytest.raises(ControllerError, match="could not be correlated"):
+        run(apply=True)
 
 
 def test_attempt_that_never_acquired_the_dev_lease_does_not_fail_the_pair():

@@ -1,0 +1,26 @@
+{
+  "task": "DEV-DEPLOY-DISPATCH-CORRELATION-BY-PAIR-TITLE-20261118",
+  "diagnosis": {
+    "finding": "workflow_dispatch runs carry the dev tip at dispatch time as head_sha, not the selected backend commit",
+    "examples": [
+      {"root_run": 44349573838, "selected_backend": "5c0463e3b", "head_sha": "3c9e949a3"},
+      {"root_run": 44223565679, "selected_backend": "638f5b1bd", "head_sha": "f61b09205"}
+    ],
+    "source": "values recorded in the task brief; not re-fetched from the GitHub API in this worker",
+    "code_before": "scripts/auto_deploy_dev_pair.py required run.head_sha == selected backend in reconcile() correlation and in failed_pair_run() (head_sha query filter)"
+  },
+  "change": "reconcile() correlates by unseen run id + full pair display title; failed_pair_run() lists workflow_dispatch runs of the deploy workflow on dev without head_sha filter and matches by pair title. No extra API call, no change to selection, quiet windows, busy check or dispatch inputs.",
+  "tests_added": [
+    "test_dispatch_is_correlated_by_title_when_dev_advanced_past_selected_backend",
+    "test_failed_pair_whose_run_head_is_a_later_dev_tip_is_not_redispatched",
+    "test_correlation_refuses_preexisting_or_other_pair_runs"
+  ],
+  "before_change": {
+    "command": "python -m pytest scripts/test_auto_deploy_dev_pair.py -q (new tests, old script)",
+    "result": "2 failed, 93 passed; failing: the correlation test and the failed-pair test (the refusal test passes before and after, guarding acceptance 5)"
+  },
+  "after_change": {
+    "command": "python -m pytest scripts/test_auto_deploy_dev_pair.py -q",
+    "result": "95 passed"
+  }
+}

@@ -289,7 +289,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); f=h.get('functional_health') or {}; age=time.time()-os.path.getmtime(p); sys.exit(0 if f.get('ready') is True and int(f.get('blocked_count') or 0)==0 and int(f.get('dead_letter_count') or 0)==0 and age<=90 else 1)\"",
+          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); age=time.time()-os.path.getmtime(p); sys.exit(0 if isinstance(h,dict) and age<=90 else 1)\"",
         ]
       interval: 10s
       timeout: 5s
@@ -1039,6 +1039,12 @@ services:
       # Optional long-lived credential (`claude setup-token`) for Claude CLI.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}
+      # OpenAI API route keys (per-token billing). Deliberately NOT the ambient
+      # OpenAI/Codex key names: the gateway, its OpenAI plugin and bundled CLIs read those
+      # ambiently and the subscription route would silently move to per-token billing.
+      # Only models.providers.openai-api[-2] reference these through SecretRef env.
+      OPENCLAW_API_ROUTE_KEY_1: ${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}
+      OPENCLAW_API_ROUTE_KEY_2: ${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}
       ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}
       OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
@@ -1054,13 +1060,13 @@ services:
       # stays disabled. The config value is an unresolved env reference, so the secret is never
       # written to the openclaw-data volume.
       PERSONA_TOOL_BROKER_TOKEN: ${PERSONA_TOOL_BROKER_TOKEN:-}
-      # Rollback-safe: the plugin path/entry are NEVER persisted into openclaw.json on the shared
-      # openclaw-data volume (a previous gateway image without /opt/pantheon fails config validation and
-      # restart-loops). With the token, startup writes a runtime-only overlay (openclaw.runtime.json, read only
-      # via OPENCLAW_CONFIG_PATH, $include-ing the real config); without it the overlay is deleted.
-      # BASE_PATCH also strips any plugin path/entry an earlier candidate persisted (one config write per start).
+      # The plugin ships as a stock plugin in the image (enabledByDefault) and reads these two env vars, so
+      # openclaw.json stays a plain writable file (no $include overlay: that made every config.patch fail with
+      # "would flatten $include-owned config"). Rollback-safe: nothing plugin-related is persisted on the
+      # shared openclaw-data volume. BASE_PATCH still strips any plugin path/entry an earlier candidate
+      # persisted (one config write per start), and startup deletes the legacy overlay file.
+      PERSONA_TOOL_BROKER_URL: http://openclaw-gateway-adapter:8104/internal/persona-tools/v1
       PANTHEON_OPENCLAW_BASE_PATCH: '{"gateway":{"http":{"endpoints":{"responses":{"enabled":true}}}},"plugins":{"load":{"paths":null},"entries":{"pantheon-persona-tools":null}}}'
-      PANTHEON_PERSONA_TOOLS_OVERLAY: '{"$$include":"./openclaw.json","plugins":{"load":{"paths":["/opt/pantheon/plugins/pantheon-persona-tools"]},"entries":{"pantheon-persona-tools":{"enabled":true,"config":{"brokerUrl":"http://openclaw-gateway-adapter:8104/internal/persona-tools/v1","brokerToken":"$${PERSONA_TOOL_BROKER_TOKEN}"}}}}}'
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -1074,7 +1080,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && if [ -n \"$$PERSONA_TOOL_BROKER_TOKEN\" ]; then printf '%s' \"$$PANTHEON_PERSONA_TOOLS_OVERLAY\" > /home/node/.openclaw/openclaw.runtime.json.tmp && mv /home/node/.openclaw/openclaw.runtime.json.tmp /home/node/.openclaw/openclaw.runtime.json && export OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.runtime.json; else rm -f /home/node/.openclaw/openclaw.runtime.json; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && rm -f /home/node/.openclaw/openclaw.runtime.json /home/node/.openclaw/openclaw.runtime.json.tmp && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -1114,7 +1120,9 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
-      OPENCLAW_PRIMARY_MODEL: ${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}
+      # One deployment variable holds the ordered model chain (first = primary);
+      # unset keeps the shipped default chain (services/persona/model-chain.default).
+      OPENCLAW_MODEL_CHAIN: ${OPENCLAW_MODEL_CHAIN:-}
       # Agent ensure/reconcile runs in this authenticated adapter container but
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw

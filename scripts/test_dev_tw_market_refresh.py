@@ -134,7 +134,11 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
         state = json.loads(state_file.read_text(encoding="utf-8")) if (state_file and state_file.exists()) else {}
         if self.path == "/readyz":
             failures = state.get("readiness_failures_remaining", 0)
-            status = 503 if failures or state.get("readiness_always_fails") else 200
+            restore_always_fails = bool(
+                state.get("readiness_fails_on_restore")
+                and state.get("source_ingest_cid") == state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+            )
+            status = 503 if failures or state.get("readiness_always_fails") or restore_always_fails else 200
             state["readiness_failures_remaining"] = max(0, failures - 1)
             state_file.write_text(json.dumps(state), encoding="utf-8")
             with self.server.events_file.open("a", encoding="utf-8") as f:
@@ -938,7 +942,7 @@ def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
 def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
     proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
     assert proc.returncode != 0
-    assert len([e for e in events if e["event"] == "readyz"]) == 13  # unchanged retry budget
+    assert len([e for e in events if e["event"] == "readyz"]) == 37  # 1 initial + 36 retries (180s readiness budget)
     assert not any(e["event"] == "connector_readback" for e in events)
 
 
@@ -971,7 +975,7 @@ def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tm
     initial = {
         "image_id": "sha256:" + "a" * 64, "compose_image_id": "sha256:" + "a" * 64,
         "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
-        "readiness_always_fails": True,
+        "readiness_fails_on_restore": True,
     }
     bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
     (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
@@ -989,7 +993,7 @@ def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tm
     assert proc.returncode != 0
     assert json.loads(output.read_text())["status"] == "failed"
     events = [json.loads(line) for line in events_file.read_text().splitlines()]
-    assert len([e for e in events if e["event"] == "readyz"]) == 13
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200, 200] + [503] * 37
     assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
 
 
@@ -1123,7 +1127,7 @@ def test_preflight_chip_without_equity_snapshot(profile):
 @pytest.mark.parametrize("now,session", [
     ("2026-11-16T00:30:00+00:00", "2026-11-13"),  # Monday walks over weekend.
     ("2026-10-27T00:30:00+00:00", "2026-10-22"),  # Governed emergency Friday + Monday holiday.
-    ("2026-11-12T16:30:00+00:00", "2026-11-12"),  # Taipei date already Friday.
+    ("2026-11-12T22:50:00+00:00", "2026-11-12"),  # Taipei date already Friday (06:50 Taipei).
 ])
 def test_preflight_morning_calendar_boundaries(profile, now, session):
     dt = datetime.fromisoformat(now)
@@ -1145,10 +1149,10 @@ def test_preflight_chip_nontrading_day_safety(profile, now, reason):
 
 
 @pytest.mark.parametrize("now,taifex_session,broker_session", [
-    ("2026-11-13T05:29:59+00:00", "2026-11-12", "2026-11-12"),
-    ("2026-11-13T05:30:00+00:00", "2026-11-13", "2026-11-12"),
-    ("2026-11-13T09:59:59+00:00", "2026-11-13", "2026-11-12"),
-    ("2026-11-13T10:00:00+00:00", "2026-11-13", "2026-11-13"),
+    ("2026-11-12T16:30:00+00:00", "2026-11-11", "2026-11-12"),
+    ("2026-11-13T05:30:00+00:00", "2026-11-12", "2026-11-12"),
+    ("2026-11-13T09:59:59+00:00", "2026-11-12", "2026-11-12"),
+    ("2026-11-13T10:00:00+00:00", "2026-11-12", "2026-11-13"),
 ])
 def test_preflight_distinct_close_and_publication_cutoffs(now, taifex_session, broker_session):
     for profile, expected in zip(CHIP_PROFILES, (taifex_session, broker_session)):
@@ -3115,7 +3119,9 @@ def test_finmind_prepare_and_missing_secret_paths_exist():
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     assert "FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)" in script
     assert '=~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then\n    extra_bounded_env_args' in script
-    guard = script.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    guard = script.index(
+        '=~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"'
+    )
     assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
     assert '"skipped" "missing_credential"' in script[guard:guard + 600]
 
@@ -3386,10 +3392,22 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
     body = DEPLOY_SCRIPT.read_text().split('verify_bounded_source_refresh_readback() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         dataset = profile['dataset']
-        prefix = 'tw-taifex' if profile['base'] == 'tw-taifex-futures-options-chip' else 'tw-official'
+        is_fund = profile['base'] == 'tw-finmind-fundamentals'
+        prefix = 'finmind' if is_fund else ('tw-taifex' if profile['base'] == 'tw-taifex-futures-options-chip' else 'tw-official')
+        default_date = (
+            '2026-10-31' if dataset == 'tw_monthly_revenue'
+            else '2026-09-30' if dataset == 'tw_financial_statement'
+            else '2026-11-13'
+        )
+        stale_date = (
+            '2026-09-30' if dataset == 'tw_monthly_revenue'
+            else '2026-03-31' if dataset == 'tw_financial_statement'
+            else '2026-11-12' if dataset == 'tw_valuation_bwibbu'
+            else '2026-11-11'
+        )
         record = {'source_id': f'{prefix}:{dataset}:recorded',
                   'metadata': {'dataset': dataset, 'schema_hash': profile['schema_hash'],
-                               'date': '2026-11-13', 'venue': profile.get('venues', ['TAIFEX'])[0]},
+                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0]},
                   'provenance': {'dataset': dataset, 'source_ingest_run_id': 'chip-run'}}
         receipts = {'receipts': [{'connector_id': cid, 'status': 'completed', 'typed_failure': None,
                                  'source_timestamp': '2026-11-13T10:00:00Z', 'source_timestamp_status': 'valid',
@@ -3397,8 +3415,18 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
         (tmp_path / 'receipts.json').write_text(json.dumps(receipts))
         (tmp_path / 'projection.json').write_text('{}')
         cases = [({}, {}, True), ({'dataset': 'other'}, {}, False), ({'schema_hash': 'wrong'}, {}, False),
-                 ({'date': ''}, {}, False), ({'date': '2026-11-12'}, {}, False),
+                 ({'date': ''}, {}, False), ({'date': stale_date}, {}, False),
                  ({}, {'source_ingest_run_id': 'old-run'}, False)]
+        if is_fund:
+            cases.append(({'as_of_date': '2026-11-13'}, {}, True))
+            cases.append(({'as_of_date': '2026-11-12'}, {}, False))
+            if dataset in ('tw_monthly_revenue', 'tw_financial_statement'):
+                # Session date in period_end field must fail same-kind comparison.
+                cases.append(({'date': '2026-11-13'}, {}, False))
+        else:
+            # Scheduled session (2026-11-12) is published; unclosed future day (2026-11-14) fails.
+            cases.append(({'date': '2026-11-12'}, {}, True))
+            cases.append(({'date': '2026-11-14'}, {}, False))
         if 'venues' in profile:
             cases.append(({'venue': 'TAIFEX'}, {}, False))
         for meta_patch, provenance_patch, accepted in cases:
@@ -3416,6 +3444,85 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
                                    str(tmp_path / 'projection.json'), '', dataset],
                                   cwd=ROOT, text=True, capture_output=True, timeout=20)
             assert (proc.returncode == 0) is accepted, (cid, meta_patch, proc.stderr)
+
+
+def test_finmind_fundamentals_preflight_uses_1800_taipei_rule_and_same_kind_dates():
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    for cid, expected_period, stale_period in (
+        ("tw-finmind-monthly-revenue", "2026-10-31", "2026-09-30"),
+        ("tw-finmind-quarterly-statements", "2026-09-30", "2026-06-30"),
+        ("tw-finmind-valuation", "2026-11-17", "2026-11-16"),
+    ):
+        prof = TW_CHIP_REFRESH_PROFILES[cid]
+        ds = prof["dataset"]
+        # 1. Before 18:00 Taipei on 2026-11-17 (09:59:59Z -> 17:59:59 Taipei), expected session is 2026-11-16.
+        before_1800 = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T09:59:59+00:00"),
+            None,
+            profile=(cid, ds),
+            readback={"connectors": []},
+        )
+        assert (before_1800["status"], before_1800["session_date"]) == ("proceed", "2026-11-16")
+
+        # 2. At/after 18:00 Taipei on 2026-11-17 (19:26:06Z -> 2026-11-18 03:26:06 Taipei),
+        # expected session is 2026-11-17; hosted record with finmind: prefix and period-end date noops.
+        fresh_readback = {
+            "connectors": [
+                {
+                    "connector_id": cid,
+                    "freshness": {
+                        "last_success_at": "2026-11-17T19:26:06Z",
+                        "latest_receipt": {"ingest_run_id": "ingest-6950e836ee63", "finished_at": "2026-11-17T19:26:06Z"},
+                    },
+                    "latest_source_record": {
+                        "source_id": f"finmind:{ds}:TWSE:2330:3cc25dbbec5d8679",
+                        "status": "normalized",
+                        "metadata": {
+                            "dataset": ds,
+                            "schema_hash": prof["schema_hash"],
+                            "venue": "TWSE",
+                            "date": expected_period,
+                            "as_of_date": "2026-11-17",
+                        },
+                        "provenance": {
+                            "dataset": ds,
+                            "schema_hash": prof["schema_hash"],
+                            "source_ingest_run_id": "ingest-6950e836ee63",
+                        },
+                    },
+                }
+            ]
+        }
+        fresh = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T19:30:00+00:00"),
+            None,
+            profile=(cid, ds),
+            readback=fresh_readback,
+        )
+        assert (fresh["status"], fresh["reason"], fresh["session_date"]) == (
+            "noop",
+            "already_fresh",
+            "2026-11-17",
+        ), (cid, fresh)
+
+        # 3. Stale period-end or stale as_of_date proceeds with closed_session_missing.
+        stale_readback = json.loads(json.dumps(fresh_readback))
+        stale_readback["connectors"][0]["latest_source_record"]["metadata"]["date"] = stale_period
+        stale = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T19:30:00+00:00"),
+            None,
+            profile=(cid, ds),
+            readback=stale_readback,
+        )
+        assert (stale["status"], stale["reason"], stale["session_date"]) == (
+            "proceed",
+            "closed_session_missing",
+            "2026-11-17",
+        ), (cid, stale)
 
 
 def test_chip_preflight_does_not_require_equity_price_snapshots():

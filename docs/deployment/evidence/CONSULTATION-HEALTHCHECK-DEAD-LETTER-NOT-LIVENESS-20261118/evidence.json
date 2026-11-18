@@ -1,0 +1,8 @@
+{
+  "task": "CONSULTATION-HEALTHCHECK-DEAD-LETTER-NOT-LIVENESS-20261118",
+  "change": "consultation-svc compose healthcheck now exits 0 iff /readyz answers and the executor health file parses as a JSON object and is <=90s old; ready/blocked_count/dead_letter_count no longer gate container health.",
+  "unchanged": "workflow_executor.py still writes status=degraded, blocked_count and dead_letter_count to the health file; replay endpoint and dead letters untouched; no new deploy gate.",
+  "runtime_budget": "no new writer",
+  "tests": "scripts/test_consultation_healthcheck_contract.py runs the exact compose command via shell against dead_letter_count 1, blocked, stale mtime, missing, unparsable files and a failing /readyz: 6 passed",
+  "hosted_proof": "pending deploy: consultation-svc healthy while dead letter for mtg-0f7fa4993625ca47 remains recorded; coordinator records if task closes first"
+}
