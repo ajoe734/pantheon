@@ -782,7 +782,7 @@ class IngestReceipt:
             "source_timestamp": self.source_timestamp,
             "source_timestamp_status": self.source_timestamp_status,
             "evidence_refs": dict(self.evidence_refs),
-            "storage_refs": dict(self.storage_refs),
+            "storage_refs": _wrap_storage_refs(self.storage_refs),
             "typed_failure": dict(self.typed_failure) if self.typed_failure is not None else None,
             "created_at": self.created_at,
         }
