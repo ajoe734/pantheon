@@ -92,8 +92,8 @@ fi
 # error must never replace the whole registry.
 # memory-index model slots come from existing pool entries by configuration
 # only; no new model or credential is introduced.
-memory_index_primary="${OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL:-openai/gpt-5.5}"
-memory_index_fallbacks="${OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS:-anthropic/claude-sonnet-4-6}"
+memory_index_primary="${OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL:-openai/gpt-5.6-sol}"
+memory_index_fallbacks="${OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS:-openai/gpt-5.5,anthropic/claude-opus-4-8,anthropic/claude-sonnet-4-6}"
 agents_cfg="$(openclaw config get agents --json)"
 agents_list="$(jq -ce --arg mi_primary "$memory_index_primary" --arg mi_fallbacks "$memory_index_fallbacks" \
   '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end

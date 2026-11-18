@@ -1,0 +1,59 @@
+{
+  "task": "TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118",
+  "register_class": "RC1",
+  "diagnosis": {
+    "run": "44273374890",
+    "job": "134695292946",
+    "source": "GitHub Actions job step timings and job log read with gh api",
+    "confirmed": [
+      "Step 'Execute bounded Taiwan chip refresh' started 09:21:12Z and failed 09:56:25Z with: The action ... has timed out after 35 minutes.",
+      "The last log lines before the timeout are the fifth profile (tw-taifex-put-call, preflight passed 09:55:40Z) at ' Container pantheon-source-ingest-1  Recreate' (09:56:14Z), i.e. the cut came inside the Compose recreate of source-ingest.",
+      "The log has a 'restoring steady collector-host egress posture' line after each of profiles 1-4 (09:29:10Z, 09:38:40Z, 09:48:03Z, 09:54:02Z) and none after 09:56:14Z: the remote restore never ran for profile 5.",
+      "scripts/deploy_nonprod_vm.sh installed restore_bounded_source_refresh on EXIT and handle_bounded_refresh_signal only on INT and TERM; HUP and PIPE had no handler, so a dropped SSH session (HUP, or SIGPIPE on the next write to the dead pipe) terminated the remote shell without a restore.",
+      "A killed Compose recreate leaves a Created rename leftover (reported by the operator as 62f4371e62ff_pantheon-source-ingest-1) that later made Root run 44295978076 fail at capture with 'expected exactly one Compose container'."
+    ],
+    "not_observable_by_a_worker": "Workers have no SSH to hosted; the HUP versus PIPE choice and the 09:56-12:40Z outage window come from the operator report, not from the log. Both signals are handled, so the fix does not depend on which one arrived."
+  },
+  "measured_per_profile_minutes": {
+    "profile_start_to_next_profile_preflight_seconds": [571, 559, 545],
+    "profile_5_preflight_to_timeout": "recreate in progress at 09:56:14Z",
+    "average_minutes": 9.3,
+    "range_minutes": "9.1-9.5",
+    "components": "51-67s steady lease wait, two bounded one-shot containers up to SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=300 each, two source-ingest recreates with /readyz waits, restore",
+    "six_profiles_estimate_minutes": 56,
+    "conclusion": "35 minutes fit only four profiles. Step budget is now 6 x 15 = 90 minutes, each profile is also wrapped in timeout --kill-after=60 900 so a timeout stops at a profile boundary, and the job limit is 150 minutes."
+  },
+  "changes": {
+    "scripts/deploy_nonprod_vm.sh": [
+      "HUP (129) and PIPE (141) now run the same restore as INT and TERM; for HUP and PIPE the restore ignores further HUP/PIPE and logs to PANTHEON_BOUNDED_REFRESH_RESTORE_LOG (default /tmp/pantheon-bounded-refresh-restore.log) so a dead SSH pipe cannot kill it.",
+      "remove_source_ingest_compose_leftovers removes only containers with status=created for the source-ingest family services (project pantheon), logging each id; it runs before and after the steady restore. Running and exited containers are never removed.",
+      "verify_source_ingest_container_counts fails the restore (reason source_ingest_container_count) when any family service has more than one container.",
+      "New --refresh-only --steady-check mode (execute_steady_posture_check): one SSH call; verifies source-ingest and source-ingest-scheduler are running, healthy, scheduler in collector_steady_pull, no bounded or created leftovers; waits up to 90s for an in-flight restore; otherwise runs the existing manage_source_ingest_refresh_runtime restore and starts the stopped scheduler/projector; writes {mode, reason, status} with status healthy, restored or failed."
+    ],
+    ".github/workflows/dev-tw-market-refresh.yml": [
+      "New step 'Verify and restore steady source-ingest posture' with if: always() && lease succeeded, so it runs after failure, timeout and cancellation; it merges steady_restore_check {status, reason} into tw-refresh-outcome.json and fails the run with ::error::steady_restore_check_<status>: <reason> unless healthy.",
+      "Upload step now always runs after the lease (was skipped when the refresh step was cancelled) and also uploads steady-restore-check.json; lease release additionally requires the check to succeed.",
+      "Chip step timeout 35 -> 90 minutes with a 15 minute per-profile bound; job timeout 60 -> 150 minutes."
+    ]
+  },
+  "tests": {
+    "scripts/test_deploy_nonprod_vm.py": [
+      "test_interrupted_bounded_refresh_restores_steady_services_for_real[HUP|TERM|PIPE]: runs the real entrypoint against a stateful fake docker, interrupts it mid-recreate, asserts restore ran, steady containers started, bounded containers removed, Created leftover removed by id, steady containers never removed",
+      "test_restore_removes_only_created_leftovers_and_flags_duplicates",
+      "test_steady_check_reports_healthy_without_touching_services",
+      "test_steady_check_restores_stopped_services_and_reports_named_reason"
+    ],
+    "scripts/test_dev_tw_market_refresh_workflow.py": [
+      "test_steady_check_step_* : runs the real step script from the workflow YAML in a job checkout layout with a fake lease wrapper and fake deploy script for healthy, restored and transport-failure outcomes",
+      "test_steady_check_step_runs_after_refresh_steps_and_before_upload_and_release (always() ordering)",
+      "test_chip_step_budget_covers_six_profiles_at_measured_time"
+    ],
+    "result": "scripts/test_dev_tw_market_refresh_workflow.py 24 passed; scripts/test_deploy_nonprod_vm.py 167 passed, 14 failed, all 14 are finmind tests failing on ModuleNotFoundError: pydantic in this worker environment (unrelated to this change)."
+  },
+  "limits": [
+    "The steady check requires the scheduler to be in collector_steady_pull as the task specifies; a host intentionally steady in reconcile_only would be reported restored/failed.",
+    "The check's restore reuses the env of the existing source-ingest container minus the bounded-only keys; non-controlled bounded keys such as SOURCE_INGEST_MAX_RECORDS would carry over if source-ingest was left in the bounded environment.",
+    "A worker cannot run the real hosted path; the first scheduled run's steady_restore_check field in the tw-refresh-outcome artifact is the live acceptance probe."
+  ],
+  "runtime_budget": "No new job or persistent writer; one extra SSH call per run and one steady_restore_check field in the existing outcome artifact."
+}
