@@ -15,7 +15,7 @@ from collector_stack.fetchers import FetchResponse, FixtureTransport
 from collector_stack.privacy import AuthorHasher
 from collector_stack.runner import LISTING_FILTERED_SOURCES, LISTING_SOURCE_ID, CollectorRunner
 
-FIX = Path(__file__).parent / "fixtures" / "security_listing"
+FIX = Path(__file__).resolve().parents[3] / "services" / "source_ingestion" / "tests" / "fixtures" / "security_listing"
 SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 SL = runner_mod.load_security_listing_module()
 DAY = "2026-11-17"  # Tuesday
