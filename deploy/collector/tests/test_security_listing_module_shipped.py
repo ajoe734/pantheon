@@ -20,17 +20,25 @@ def _dockerfile() -> str:
     return (COLLECTOR_DIR / "Dockerfile").read_text(encoding="utf-8")
 
 
-def test_dockerfile_copies_shared_module_from_repo_root_context() -> None:
+VENDORED = COLLECTOR_DIR / "vendor" / "security_listing.py"
+
+
+def test_vendored_module_byte_identical_to_shared_module() -> None:
+    assert VENDORED.is_file() and SHARED.is_file()
+    assert VENDORED.read_bytes() == SHARED.read_bytes(), (
+        "drift: cp services/source_ingestion/security_listing.py deploy/collector/vendor/"
+    )
+
+
+def test_dockerfile_copies_vendored_module_from_collector_context() -> None:
     text = _dockerfile()
     m = re.search(r"^COPY (\S+security_listing\.py) (\S+)$", text, re.M)
     assert m, "Dockerfile must COPY security_listing.py"
     src, dest = m.groups()
-    assert (REPO_ROOT / src) == SHARED and SHARED.is_file()
+    assert (COLLECTOR_DIR / src) == VENDORED
     assert dest == "/app/services/source_ingestion/security_listing.py"
     compose = (COLLECTOR_DIR / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "context: ../.." in compose and "dockerfile: deploy/collector/Dockerfile" in compose
-    for line in re.findall(r"^COPY (?!--)(\S+) ", text, re.M):
-        assert (REPO_ROOT / line.split()[0]).exists(), f"COPY source missing from repo-root context: {line}"
+    assert "context: ." in compose and "dockerfile: Dockerfile" in compose
 
 
 def _image_layout(tmp_path: Path, *, with_module: bool) -> Path:
@@ -39,7 +47,7 @@ def _image_layout(tmp_path: Path, *, with_module: bool) -> Path:
     if with_module:  # exactly what the Dockerfile COPY produces
         dest = app / "services" / "source_ingestion" / "security_listing.py"
         dest.parent.mkdir(parents=True)
-        shutil.copyfile(SHARED, dest)
+        shutil.copyfile(VENDORED, dest)
     return app
 
 
