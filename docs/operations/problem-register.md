@@ -14,12 +14,12 @@ How to use it:
   is merged.
 - State column: `open` (not merged), `merged`, `deployed` (the merge is
   contained in the backend commit hosted serves) or `accepted`. Hosted serves
-  backend `01c51aa69` with frontend `0e886b9ce` since 2026-11-18 07:18Z (Root
-  44247825979). Its acceptance record says failed because the persona-day probe
-  could not read hosted (RC2); the last release whose record passed is
-  `9fcc47112` (Root 44236122369). Root 44295978076 (`89b0b0695`, 11:34Z) failed
-  before the switch (RC1). The source for a release's state is the hosted
-  `acceptance/latest.json`. Changes that only run in GitHub Actions or on the
+  backend `5c0463e3b` with frontend `0e886b9ce` since 2026-11-18 about 17:00Z
+  (Root 44349573838, finished 18:02Z; release accepted: the record passed with
+  its one check, the deployed pair identity). Before that `01c51aa69` from
+  07:18Z. The source for a release's state is the hosted
+  `acceptance/latest.json` (`managed-deploy-worktrees/dev-root/acceptance/`
+  under the deploy root). Changes that only run in GitHub Actions or on the
   collector host stay `merged` here.
 
 ## Domains and owners
@@ -58,18 +58,19 @@ doing and by the first eight characters of its session id.
 | Persisted config that a rollback cannot read: OpenClaw persona-tools plugin paths | OPENCLAW-PERSONA-TOOLS-PLUGIN-ROLLBACK-SAFE-20261117 (#7510) | deployed |
 | Integrator re-dispatches the review gate and cancels its own queued run | AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117 (#7478) | merged |
 | Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 (#7518) | deployed |
-| Required check that fails under CI load | SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117 (#7501, did not hold: same assertion failed again at 18:56Z); SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-R2-20261118 (#7546, market-data owner); new instance 11/18 13:33Z (Smoke acceptance job 134826340879 failed an unrelated PR on a wall-clock p99 assertion); class task SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 | merged; class task open |
-| Deployer reports failure after a successful dispatch (`dispatch sent but run could not be correlated`, 18:08Z, 20:04Z, 20:46Z) | no task yet | open |
+| Required check that fails under CI load (market-data owner) | SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117 (#7501) and its R2 (#7546); snapshot-store wall-clock bounds made opt-in: SOURCE-SNAPSHOT-STORE-TEST-TIMING-OPT-IN-20261118 (#7595); a test loop that ran to its limit past the 300 s cap: COLLECTOR-WHOLE-MARKET-DAY-TEST-LOOP-EXIT-20261118 (#7596); class task SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 (PR #7593) | merged; class task open |
+| Deployer reports failure after a successful dispatch: correlation compares the run's head commit with the selected backend, and dev has usually advanced; for the same reason a failed pair can be invisible to the retry guard and be dispatched again (release owner) | DEV-DEPLOY-DISPATCH-CORRELATION-BY-PAIR-TITLE-20261118 (#7597) | merged |
+| The stock persona-tools plugin reports `invalid plugin config` on 5c0463e3b: the gateway passes an empty config and the environment fallback never runs, so every persona tool is blocked; the proof of #7579 did not cover an empty config (persona-loop owner) | PERSONA-TOOLS-PLUGIN-EMPTY-CONFIG-ENV-FALLBACK-20261118 | open; needs a release before 11/19 09:05Z |
 | The advisory check summary carries its own `acceptance` field and wrote `failed` on Root 44187386408 because a housekeeping budget check failed (docker build cache cap), while the acceptance record passed; one coordinator reported the release as not accepted from it | no task yet | open |
 | WP1.2 the acceptance stage runs release probes only | ACCEPTANCE-STAGE-RELEASE-PROBES-ONLY-20261118 (#7576) | merged |
-| WP1.3 capture is blocked by a never-started replacement container; the failure line names no service | DEV-DEPLOY-CAPTURE-NEVER-STARTED-CONTAINER-20261118 | open |
-| WP1.3 container health encodes a durable functional failure: consultation-svc is unhealthy for as long as a dead letter is recorded (persona-loop owner) | CONSULTATION-HEALTHCHECK-DEAD-LETTER-NOT-LIVENESS-20261118 (PR #7582) | open; approved, then reopened for rework at about 13:10Z because `scripts/test_current_l12_compose_wiring.py` fails at the approved head and no CI workflow runs that test |
+| WP1.3 capture removes a never-started replacement container and the failure line names the service | DEV-DEPLOY-CAPTURE-NEVER-STARTED-CONTAINER-20261118 (#7587) | deployed |
+| WP1.3 container health encodes a durable functional failure: consultation-svc was unhealthy for as long as a dead letter was recorded (persona-loop owner) | CONSULTATION-HEALTHCHECK-DEAD-LETTER-NOT-LIVENESS-20261118 (#7582) | deployed; consultation-svc is healthy on 5c0463e3b |
 | WP1.3 same shape, recovered by itself: the shared outbox-worker health of paper-signal-producer fails on `status=degraded` (reported by the persona-loop owner, not verified by the register owner) | no task yet | open |
 | WP1.4 a change that touches no runtime path does not trigger a release | DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117 (#7550) | merged; not yet observed on a real change |
-| WP1.4 the deployer holds a dispatch during the Taiwan session and the persona daily cycle | DEV-DEPLOY-QUIET-WINDOWS-20261118 (#7566) | merged; not yet observed holding; until then timers on the development host pause the publish-cut workflow in both windows; the workflow is also paused since 11/18 13:06Z (release owner, operator approved) until the consultation-svc fix is green on dev |
+| WP1.4 the deployer holds a dispatch during the Taiwan session and the persona daily cycle | DEV-DEPLOY-QUIET-WINDOWS-20261118 (#7566) | merged; not yet observed holding; until then timers on the development host pause the publish-cut workflow in both windows |
 | An interrupted refresh run leaves source-ingest stopped and a leftover container (release owner) | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 (#7585) | merged 13:35Z; the workflow runs from the dev checkout; first real run 23:30Z; the timer slot moved from 09:10Z to 10:50Z, out of the persona window |
-| Refresh preflight allows 3 s for a call made 40 to 46 s after the run's own recreate of source-ingest (market-data owner) | SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118: `/readyz` reports ready before a snapshot lookup can answer; the fix is in the service | open |
-| Gateway provider credentials are hand-made hosted state: the stored auth profile shadows the deployed secret, so a new secret never reaches the gateway (persona-loop owner) | no task yet | open |
+| Refresh preflight allows 3 s, and the first snapshot lookup after a restart ran a 20 s sweep before answering (market-data owner) | SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118 (#7589) | deployed |
+| Gateway provider credentials are hand-made hosted state: a stored auth profile shadows the deployed secret; since 11/18 the volume also holds the operator's two OpenAI API keys, stored by hand for the live repair (persona-loop owner; remediation coordinator for the OpenAI keys) | OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (PR #7594) replaces the two OpenAI profiles with environment references; the Anthropic and OAuth profiles have no task yet | open |
 | Scheduled workflows start hours late or not at all, so the daily measurement and the probes do not run on time | no task yet (dispatch on time from the development host) | open |
 | Which step of a failed release invalidates the distillation worker's Registry credential (bursts of 401 inside failed-deploy windows) | release owner; no task yet | open |
 | Frontend unit test red inside the integration gate (execute-plans) | FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117 (execute-plans #1036) | merged |
@@ -126,6 +127,17 @@ container for source-ingest; source-ingest itself was down from 09:56:45Z to
 exists; the market-data owner removed it at 13:06Z on the operator's
 instruction. Behind it consultation-svc has been unhealthy since 06:14Z. All
 five refresh runs between 11/17 23:30Z and 11/18 09:10Z failed (RC2).
+Evening of 11/18: the publish-cut workflow was paused from 13:06Z until about
+16:30Z so that no release would switch and roll back on consultation-svc
+health. The fix merged at 15:10Z, but required checks kept failing on two tests
+that have nothing to do with the changes under test: a wall-clock bound in the
+snapshot-store test (at least seven failures between 10:20Z and 14:42Z with
+values from 300 to 773 ms against 250 ms; one documentation PR needed four
+runs) and a test loop that ran to its 2,000-tick limit and passed the 300 s
+per-test cap. The 16:17Z cron did not fire; Root 44349573838 (5c0463e3b) was
+dispatched at 16:38Z by the completion of a dev CI run, finished at 18:02Z and
+is accepted. Its configure step wrote the model chain from the dev variable, so
+the order set by hand at 14:16Z did not have to be re-applied.
 
 ## RC2. Done means merged, not working
 
@@ -139,19 +151,21 @@ five refresh runs between 11/17 23:30Z and 11/18 09:10Z failed (RC2).
 | Same-day close: official rows never fetched for a collector-covered session | TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117 (#7479) | deployed |
 | Distillation dead letters from Registry 401 responses | DISTILLATION-AUTH-DEAD-LETTER-RECOVERY-20261117 (#7552) | deployed; 257 of 260 recovered without a manual hosted write |
 | Three distillation dead letters with a Registry content mismatch keep the loop reporting failed; 1268 pending rows belong to a retired runtime | no task yet | open |
-| A persona turn that falls back to a model backend without host identity loses every Pantheon tool and still counts as a success (persona-loop owner) | PERSONA-TOOLS-MODEL-FALLBACK-IDENTITY-20261118 (PR #7578) | open; blocked from 10:31Z until the operator approved a wider artifact contract at about 13:05Z; in rework |
-| Operator requirement 2026-11-18: every model provider must work as a fallback for the others, and one stuck provider must not stop everything (persona-loop owner) | same class as the row above; the persona chain was Opus, then Sonnet on claude-cli, then gpt-5.5 and never reached the third; operator decision 11/18 13:05Z: the persona order becomes Opus, then Codex, with no claude-cli backend | open |
-| Gateway config writes are refused under the plugin overlay, so the consultation agent cannot be ensured (persona-loop owner) | OPENCLAW-CONFIG-WRITE-UNDER-PLUGIN-OVERLAY-20261118 (PR #7579) | open; blocked from 10:40Z until the operator approved a wider artifact contract at about 13:05Z; in rework |
-| Operator instruction 2026-11-18: gpt-5.6-sol becomes gpt-6.2-sol. No official listing of gpt-6.2-sol was found and the hosted account is untested, so it goes first and gpt-5.6-sol stays directly behind it | OPENCLAW-POOL-FIRST-OPENAI-MODEL-GPT-6-2-SOL-20261118 (gateway pool and memory-index); ADAPTER-ASSISTANT-FIRST-OPENAI-MODEL-GPT-6-2-SOL-20261118 (adapter default); the persona chain is the persona-loop owner's | open |
-| MT-2 meeting never triggers: nothing produced its input (persona-loop owner) | MEETING-MT2-PENDING-LESSONS-PRODUCER-20261118 (#7580) | merged |
-| The daily cycle cannot publish its own pool: owner credential not configured (persona-loop owner) | PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118 | open |
+| A persona turn that falls back to a model backend without host identity loses every Pantheon tool and still counts as a success (persona-loop owner) | PERSONA-TOOLS-MODEL-FALLBACK-IDENTITY-20261118 (#7578) | deployed |
+| Operator requirement 2026-11-18: every model provider must work as a fallback for the others, and one stuck provider must not stop everything; operator decision the same day: the model chain is one deployment setting and no code names models (persona-loop owner) | OPENCLAW-MODEL-CHAIN-SINGLE-SOURCE-20261118 (#7590); dev variable `OPENCLAW_MODEL_CHAIN` | deployed; a test turn on 5c0463e3b was answered by openai-api/gpt-6.2-sol; persona agents take the chain at their next ensure |
+| Gateway config writes are refused under the plugin overlay, so the consultation agent cannot be ensured (persona-loop owner) | OPENCLAW-CONFIG-WRITE-UNDER-PLUGIN-OVERLAY-20261118 (#7579) | deployed; it introduced the plugin config regression listed under RC1 |
+| Operator instruction 2026-11-18: gpt-5.6-sol becomes gpt-6.2-sol; the operator supplied two OpenAI API keys that belong to two organizations | separate providers openai-api and openai-api-2, first by a temporary live repair at 14:16Z, since 17:02Z through the chain variable; OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (PR #7594) turns the hand-stored keys into environment references; two earlier tasks that put gpt-6.2-sol on the subscription provider were superseded | open |
+| MT-2 meeting never triggers: nothing produced its input (persona-loop owner) | MEETING-MT2-PENDING-LESSONS-PRODUCER-20261118 (#7580) | deployed |
+| The daily cycle cannot publish its own pool: owner credential not configured (persona-loop owner) | PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118 (PR #7591) | open; blocked since 14:35Z, needs BFF route files added to its artifact contract |
 | Regime evaluation is refused by Registry for the persona principal and reported as a different error (persona-loop owner) | REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118 | open |
 | Proposals marked `requires_owner_gate` are consumed by nothing (persona-loop owner) | no task yet | open |
 | The cycle records `consult_requests` (trigger `macro_regime_shift`) and nothing reads them; cannot fire while regime is unavailable (persona-loop owner) | attached to REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118; no task until regime evaluates on hosted | open |
 | Paper-to-canary promotion is advisory only: the candidacy is recorded and nothing acts on an approval (persona-loop owner; outside the freeze criteria) | no task yet | open |
-| Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | MEMORY-INDEX-MODEL-CHAIN-PROVEN-PRIMARY-20261118 (PR #7588): the memory-index agent's primary model is openai/gpt-5.5, which answered no call on hosted in the last seven days (615 answers came from gpt-5.6-sol); the coordinator sets the switch after the new chain is deployed | open |
-| Taiwan refresh: profiles do not finish within 300 s because one steady tick costs 87 to 112 s (market-data owner) | SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574) | merged |
-| Taiwan refresh: TAIFEX responses fail to decode (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) | deployed since 07:18Z; one of three TAIFEX datasets seen passing (institutional positions, 09:53Z), two not yet exercised |
+| Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | MEMORY-INDEX-MODEL-CHAIN-PROVEN-PRIMARY-20261118 (#7588) is deployed and the memory-index agent follows the chain variable; the switch stays off until the persona tools work on hosted, so that the first run of the bridge is not in the same release as that fix (remediation coordinator) | open |
+| Taiwan refresh: profiles do not finish within 300 s; partly the cost of a steady tick (87 to 112 s), mainly that the afternoon run asks six chip providers for a session they publish later (market-data owner) | SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574) deployed; TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 (#7592) merged | merged |
+| Taiwan refresh: TAIFEX responses fail to decode; the TAIFEX failures after 07:18Z were the session rule, not decoding (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) deployed; stock-futures contracts were still on the 13:30 rule: TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119 (#7599) merged | merged |
+| The refresh test file `scripts/test_dev_tw_market_refresh.py` runs in no CI workflow and 42 of its 130 tests fail on dev; a provider session newer than scheduled counts as a failure; FinMind fundamentals still use the 13:30 rule (market-data owner) | TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119 | open |
+| Every snapshot reader waits about 13 s once an hour: the hourly universe sweep runs inside a lookup under the lock (measured on hosted at 16:41Z over 3,535 lookups; market-data owner) | SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119 (#7598) | merged |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
@@ -197,6 +211,27 @@ defects (secret missing; exit code masked by a pipe; due time set before the
 44260667906 and 44273374890 failed in four forms: preflight timeout after the
 run's own recreate (RC1), the 300 s bound, TAIFEX decode errors, and
 `market_input_stale` on the same day while TPEx close rows were half delivered.
+Evening of 11/18. OpenAI side: the operator's two API keys answer gpt-6.2-sol
+on api.openai.com; the model is not accepted on the ChatGPT subscription route
+for the development host's login, and the hosted login was not tested. Three
+facts about the pinned gateway (OpenClaw 2026.7.1), found by running its image
+on the development host before touching hosted: a custom provider with one
+stored api_key profile works; a 401 moves the turn to the next provider; a
+model_not_found puts the whole provider profile into cooldown, so later
+candidates on the same provider are skipped without a call. Two tasks that
+would have placed gpt-6.2-sol ahead of gpt-5.6-sol on the subscription provider
+were superseded for that reason. A change of the fallback list needs a gateway
+restart although the CLI reports that it applies without one. On 5c0463e3b the
+default, structured-extraction and memory-index chains are Opus,
+openai-api/gpt-6.2-sol, openai-api-2/gpt-6.2-sol, openai/gpt-5.6-sol,
+openai/gpt-5.5; with Anthropic in billing cooldown a test turn was answered by
+openai-api/gpt-6.2-sol in under a second. The three trading persona agents
+still carry Opus, claude-sonnet-4-6, gpt-5.5 until their next ensure. Whether
+the 11/19 10:00Z cycle has tools depends on the plugin fix under RC1. The
+hourly snapshot stall is the live counterpart of the wall-clock test under RC1:
+the test measured a store mode hosted does not use (`MARKET_SNAPSHOT_STORE` is
+unset, so journal), while the mode hosted does use blocks readers for 13 s
+every hour.
 
 ## RC3. Nobody owns data volume
 
@@ -277,6 +312,12 @@ Two merged tasks cannot be closed because their commit was made after such a
 reassignment: DEV-COMPOSE-MEMORY-LIMITS-20261117 (#7515) and
 SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118 (#7530), which also gates
 SOURCE-UNIVERSE-SEED-READS-DAILY-BARS-20261118.
+On 11/18 OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 sat blocked from
+15:28Z to 18:15Z waiting for one file to be added to its artifact contract; its
+own coordinator did not notice, because a blocked row sends no signal. The 250
+ms bound that stopped the required check all afternoon was written into an
+acceptance item as a bound and accepted although the delivering commit already
+showed one failure in three runs on the development host.
 
 ## RC5. Coordinators each fix their own symptom
 
@@ -317,3 +358,14 @@ runs promotions and announces each one first.
   to a log, an artifact or an evidence file.
 - To compare two credentials, compare their length and the first eight
   characters of their SHA-256; do not print either value.
+- A time bound in an acceptance item is proven by a measurement recorded at
+  delivery or by the daily hosted measurement. It is not written as a
+  wall-clock assertion on the required check path: on shared CI that measures
+  the machine. Where a bound must gate, gate on an event (a read completes
+  while a write transaction is open), not on elapsed time.
+- On the pinned gateway a refused model cools down its whole provider. Never
+  place a model that is not proven for an account ahead of a proven one on the
+  same provider; give it a provider of its own.
+- A coordinator reads the `blocked` rows of its own tasks at least once an
+  hour while work is in flight; a worker that needs a file added to the
+  artifact contract can only say so in the row.
