@@ -462,6 +462,26 @@ class PersonaRegistryHttpWritePort:
             )
         return value
 
+    def get_strategy_pool_version(
+        self, persona_id: str, pool_version: int, *, tenant_id: str
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            value = self._request(
+                "GET",
+                f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/strategy-pool/versions/{int(pool_version)}",
+                dependency="persona_strategy_pool_owner",
+                tenant_id=tenant_id,
+            )
+        except _PersonaHttpResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise PersonaWriteOwnerUnavailable("persona_strategy_pool_owner", exc.reason) from exc
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_strategy_pool_owner", "Persona service returned an invalid pool response"
+            )
+        return value
+
     def seed_strategy_pool(self, persona_id: str, *, tenant_id: str) -> Dict[str, Any]:
         """Version 1 from the owner records; the owner refuses zero or many artifacts."""
         try:

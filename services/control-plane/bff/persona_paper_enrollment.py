@@ -289,6 +289,34 @@ def render_harness_surface_v1(persona: Mapping[str, Any]) -> dict[str, Any]:
 
 PUBLISH_SETTLED = frozenset({"published", "current", "deferred", "skipped"})
 ENVELOPE_ARTIFACT_PREFIX = "artifact-persona-pool-"
+LEGACY_DEFERRED_REASON_PREFIX = "pool_advanced_past_seed"
+
+
+def _membership(pool: Any) -> list[tuple[str, str, str, str]]:
+    """Comparable membership: artifact refs, checksums, stages and weights."""
+
+    members = pool.get("members") if isinstance(pool, Mapping) else None
+    if not isinstance(members, list):
+        return []
+    return sorted(
+        (
+            _text(m.get("artifact_ref")),
+            _text(m.get("checksum")),
+            _text(m.get("stage")),
+            repr(float(m.get("risk_weight") or 0.0)),
+        )
+        for m in members
+        if isinstance(m, Mapping)
+    )
+
+
+def _membership_unchanged_since_seed(owner: Any, persona_id: str, tenant_id: str, pool: Any) -> bool:
+    getter = getattr(owner, "get_strategy_pool_version", None)
+    if not callable(getter):
+        return False
+    seed = getter(persona_id, 1, tenant_id=tenant_id)
+    current = _membership(pool)
+    return bool(current) and current == _membership(seed)
 
 
 def enrollment_settled(existing: Any) -> bool:
@@ -302,6 +330,11 @@ def enrollment_settled(existing: Any) -> bool:
         return False
     steps = existing.get("steps") if isinstance(existing.get("steps"), Mapping) else {}
     publish = steps.get("publish") if isinstance(steps.get("publish"), Mapping) else {}
+    if _text(publish.get("status")) == "deferred" and _text(publish.get("reason")).startswith(
+        LEGACY_DEFERRED_REASON_PREFIX
+    ):
+        # Written under the old version-1-only rule; re-evaluated once under the membership rule.
+        return False
     return _text(publish.get("status")) in PUBLISH_SETTLED
 
 
@@ -480,10 +513,12 @@ class PersonaPaperEnrollment:
         outcome.steps["pool"] = {"status": "seeded", "version": (seeded.get("pool_version") or seeded.get("version"))}
 
     def _ensure_first_publish(self, outcome: EnrollmentOutcome) -> None:
-        """Bind the running paper runtime to the seeded pool v1 envelope (read-before-write).
+        """Bind the running paper runtime to the current pool envelope (read-before-write).
 
-        The seeded v1 has one member, the artifact already trading, so this is not a membership
-        change and needs no risk-panel memo; later versions stay with the pool cycle.
+        Only while the membership still equals the seeded v1 (the artifact already trading), so
+        this is not a membership change and needs no risk-panel memo; a pool whose membership
+        changed stays with the pool cycle.  A refused reweight appends a version with identical
+        members, so the version number alone is not the test.
         """
 
         if self.pool_publisher is None:
@@ -513,10 +548,15 @@ class PersonaPaperEnrollment:
                 return
             pool = self.persona_owner.get_strategy_pool(self.persona_id, tenant_id=self.tenant_id) or {}
             version = int(pool.get("pool_version") or pool.get("version") or 0)
-            if version != 1:
+            if version < 1:
+                outcome.steps["publish"] = {"status": "deferred", "reason": "pool_missing"}
+                return
+            if version != 1 and not _membership_unchanged_since_seed(
+                self.persona_owner, self.persona_id, self.tenant_id, pool
+            ):
                 outcome.steps["publish"] = {
                     "status": "deferred",
-                    "reason": f"pool_advanced_past_seed:v{version}",
+                    "reason": f"pool_membership_changed_since_seed:v{version}",
                 }
                 return
             receipt = self.pool_publisher(version)
