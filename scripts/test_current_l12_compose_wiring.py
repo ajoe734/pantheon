@@ -156,9 +156,12 @@ def test_consultation_provider_and_functional_health_are_explicit() -> None:
 
     healthcheck = " ".join(consultation["healthcheck"]["test"])
     assert "CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE" in healthcheck
-    assert "functional_health" in healthcheck
-    assert "blocked_count" in healthcheck
-    assert "dead_letter_count" in healthcheck
+    assert "readyz" in healthcheck
+    assert "90" in healthcheck
+    # Functional health is not a container-health condition.
+    assert "functional_health" not in healthcheck
+    assert "blocked_count" not in healthcheck
+    assert "dead_letter_count" not in healthcheck
 
 
 def test_deployment_capital_and_evolution_use_component_contracts() -> None:
