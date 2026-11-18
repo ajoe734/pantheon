@@ -420,3 +420,26 @@ def test_script_and_service_share_one_backup_path_and_keep_the_oldest_copy(tmp_p
         handle.write(path.with_name("extra.jsonl").read_bytes())
     assert mig.migrate(path, retention_days=30, now=NOW)["changed"]
     assert backup.read_bytes() == original
+
+
+# ---- SOURCE-RECEIPT-STORAGE-REFS-BOUND-20261118: the script compacts storage_refs rows too ----------
+
+def test_script_compacts_oversize_storage_refs_rows_and_keeps_the_backup(tmp_path):
+    dates = [f"2025-{1 + n // 28:02d}-{1 + n % 28:02d}" for n in range(400)]
+    refs = {"schema_version": "market_data_storage_manifest.v1", "ingest_run_id": "ingest-000007",
+            "raw_refs": [], "feature_refs": [], "summary": {"normalized_row_count": 400},
+            "normalized_refs": [{"ref_type": "normalized_rows", "dataset": "tw_index_daily", "date": d,
+                                 "uri": f"/data/normalized/tw_index_daily/date={d}/ingest-000007.jsonl",
+                                 "row_count": 1, "schema_hash": "h" * 32} for d in dates]}
+    receipt = IngestReceipt(**{**legacy_receipt(7, records=3).__dict__, "evidence_refs": {"evidence_bundle_id": "e"},
+                               "storage_refs": refs})
+    path = tmp_path / "j.jsonl"
+    write_legacy_journal(path, [receipt])
+    assert max(len(r) for r in path.read_bytes().splitlines()) > RECEIPT_LINE_BUDGET_BYTES
+    before = path.read_bytes()
+    report = mig.migrate(path, retention_days=0)
+    assert report["changed"] is True
+    assert max(len(r) for r in path.read_bytes().splitlines()) <= RECEIPT_LINE_BUDGET_BYTES
+    assert path.with_name(path.name + ".pre-migrate.bak").read_bytes() == before
+    stored = json.loads([r for r in path.read_bytes().splitlines() if b"ingest_receipt" in r][0])["payload"]["storage_refs"]
+    assert stored["ref_counts"]["normalized"] == 400 and stored["stores"]["normalized"][0]["first_date"] == "2025-01-01"
