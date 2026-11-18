@@ -29,7 +29,7 @@
     "rework_note": "Prior run: 18 passed, 4 skipped. The rework added test_router_request_handlers_never_call_sweep; this worker env has no pytest/fastapi/httpx, so that test was only checked as an AST scan equivalent (0 violations) and not executed under pytest; CI must run it."
   },
   "measurement": {
-    "script": "docs/deployment/evidence/SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119/bench_sweep_lookup.py",
+    "script": "import sys,types\nf=types.ModuleType('fastapi')\nclass HTTPException(Exception): pass\nf.HTTPException=HTTPException\nsys.modules['fastapi']=f\nimport sys, time, json, threading, tempfile, datetime as dt\nfrom pathlib import Path\nfrom services.source_ingestion import requirement_state as m, snapshot_universe as su\nfrom services.source_ingestion.tests.bench_market_snapshot_incremental_read import _line\nd = Path(tempfile.mkdtemp()); j = d/\"latest_market_snapshots.jsonl\"\nwith j.open(\"w\") as f:\n    for i in range(10700): f.write(_line(f\"{10000+i}.TWSE\",0)+\"\\n\")\ntoday=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(hours=8)).date().isoformat()\nmembers={str(10000+i):{\"symbol\":f\"{10000+i}.TWSE\",\"last_requested_date\":today,\"origin\":\"request\"} for i in range(300)}\nst=d/\"latest_market_snapshots.jsonl.universe.json\"\nst.write_text(json.dumps({\"schema_version\":su.STATE_SCHEMA_VERSION,\"updated_at\":\"2026-11-18T00:00:00Z\",\"members\":members,\"transitions\":[],\"transitions_total\":0}))\nstore=m.LatestMarketSnapshotStore(j,max_closes=60)\nu=su.SnapshotUniverse(store,state_path=st,storage_root=d/\"s\")\nu._seed_from_run_files=lambda *a,**k: None  # synthetic copy has no run files; avoids heavy imports\ndone=threading.Event(); res={}\ndef sw():\n    t=time.perf_counter(); u.sweep(force=True); res[\"sweep_s\"]=time.perf_counter()-t; done.set()\nth=threading.Thread(target=sw); th.start(); time.sleep(0.05)\nworst=0; n=0\nwhile not done.is_set():\n    t=time.perf_counter(); u.snapshot_for_request(\"10299.TWSE\" if n%2 else \"10100.TWSE\"); worst=max(worst,time.perf_counter()-t); n+=1; time.sleep(0.01)\nth.join()\nprint(json.dumps({\"sweep_s\":round(res[\"sweep_s\"],3),\"lookup_during_sweep_max_s\":round(worst,6),\"lookups\":n}))\n",
     "shape": "hosted-shaped synthetic copy: 10700 keys x 60 closes (bench_market_snapshot_incremental_read._line), 300 members, seeding stubbed (no run files); one sweep(force=True) in a thread, stored-member lookups every 10 ms during it",
     "before_base": {
       "sweep_s": 17.01,
@@ -41,7 +41,8 @@
       "lookup_during_sweep_max_s": 0.000195,
       "lookups_completed": 386
     },
-    "note": "local host is faster than the hosted one (reviewer measured 30.008 s sweep / 29.92636 s lookup before; 34.447 s / 0.000037 s after). A stored non member lookup after the sweep withdrew it must seed and still waits for the sweep (stated and tested). Hosted 65 minute sampler remains for the coordinator after deploy."
+    "note": "local host is faster than the hosted one (reviewer measured 30.008 s sweep / 29.92636 s lookup before; 34.447 s / 0.000037 s after). A stored non member lookup after the sweep withdrew it must seed and still waits for the sweep (stated and tested). Hosted 65 minute sampler remains for the coordinator after deploy.",
+    "run": "python3 bench.py with PYTHONPATH=<tree>; fastapi stubbed (not installed in worker); base = git archive of 2b486e7ed^ services, head = this branch"
   },
   "new_tests": "5 existing + router handler check (test_no_request_handler_calls_sweep extended)"
 }
