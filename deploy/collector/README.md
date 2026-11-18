@@ -73,7 +73,8 @@ sudo chmod 0400 /etc/pantheon-collector/youtube_data_api_key /etc/pantheon-colle
 
 ```bash
 sudo mkdir -p /opt/pantheon-collector
-# Copy this directory (deploy/collector/*) into /opt/pantheon-collector/
+# Run from the repo root; the dot-copy carries vendor/security_listing.py (the shared listing module) with the rest
+sudo cp -a deploy/collector/. /opt/pantheon-collector/
 cd /opt/pantheon-collector
 sudo cp .env.example .env
 sudo chmod 0600 .env
@@ -231,11 +232,22 @@ Design of record: `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16` section 4.3 (dec
   `bundles/*`, so hosted reads it through the bundle transport it already uses and never fetches the exchange pages.
   Hosted keeps it as one file replaced per listing day and runs it in `SOURCE_INGEST_SECURITY_LISTING_MODE`
   `off` | `shadow` (default, counts only) | `enforce`.
-- **Deployment note.** The image (`docker compose build collector-worker`, build context is the repo root) ships
-  `security_listing.py` at `/app/services/source_ingestion/`, byte-identical to the repo file at the same commit
-  (a test fails on drift); no host-local Dockerfile edit is needed. If the module is missing the loader raises a
-  `CollectorConfigError` naming the paths it looked for. The remaining step is scheduling the daily
+- **Deployment note.** The build context is the collector directory itself, so the documented host layout
+  (`/opt/pantheon-collector`, the systemd `WorkingDirectory`) builds with `docker compose build collector-worker` and
+  no context outside it. The image ships `vendor/security_listing.py` at `/app/services/source_ingestion/`; that file
+  is a byte-identical copy of `services/source_ingestion/security_listing.py` at the same commit (a test fails on
+  drift; refresh with `cp services/source_ingestion/security_listing.py deploy/collector/vendor/`). No host-local
+  Dockerfile edit is needed (remove any left from the 2026-11-17 live repair). If the module is missing the loader
+  raises a `CollectorConfigError` naming the paths it looked for. The remaining step is scheduling the daily
   `refresh_security_listing` call (Human/Ops).
+- **Upgrade and rollback.** From a checkout of the new commit, run the packaging command, which carries the module
+  with the collector files, then rebuild:
+  `sudo cp -a deploy/collector/. /opt/pantheon-collector/ && cd /opt/pantheon-collector && sudo docker compose build collector-worker`
+  (`cp -a deploy/collector/.` is required: `deploy/collector/*` skips dotfiles). Before
+  upgrading, keep the current image: `sudo docker tag pantheon-collector-worker:1.0.0 pantheon-collector-worker:previous`.
+  Rollback: `sudo docker tag pantheon-collector-worker:previous pantheon-collector-worker:1.0.0`, re-copy the previous
+  commit's `deploy/collector/.` into `/opt/pantheon-collector/`, and run `sudo docker compose run --rm collector-worker validate-config`
+  (never `build` on rollback, so the retagged image is used).
 
 ## Price-history backfill (TWSE / TPEx / T86)
 
