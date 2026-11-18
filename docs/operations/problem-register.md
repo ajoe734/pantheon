@@ -146,9 +146,11 @@ five refresh runs between 11/17 23:30Z and 11/18 09:10Z failed (RC2).
 | The daily cycle cannot publish its own pool: owner credential not configured (persona-loop owner) | PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118 | open |
 | Regime evaluation is refused by Registry for the persona principal and reported as a different error (persona-loop owner) | REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118 | open |
 | Proposals marked `requires_owner_gate` are consumed by nothing (persona-loop owner) | no task yet | open |
-| Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | remediation coordinator; to be set once the Anthropic account has credit | open |
+| The cycle records `consult_requests` (trigger `macro_regime_shift`) and nothing reads them; cannot fire while regime is unavailable (persona-loop owner) | attached to REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118; no task until regime evaluates on hosted | open |
+| Paper-to-canary promotion is advisory only: the candidacy is recorded and nothing acts on an approval (persona-loop owner; outside the freeze criteria) | no task yet | open |
+| Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | remediation coordinator; the memory-index agent's primary model is openai/gpt-5.5, which answered no call on hosted in the last seven days (615 answers came from gpt-5.6-sol), so the switch is set only after that model is shown to resolve | open |
 | Taiwan refresh: profiles do not finish within 300 s because one steady tick costs 87 to 112 s (market-data owner) | SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574) | merged |
-| Taiwan refresh: TAIFEX responses fail to decode (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) | deployed since 07:18Z; not yet seen passing |
+| Taiwan refresh: TAIFEX responses fail to decode (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) | deployed since 07:18Z; one of three TAIFEX datasets seen passing (institutional positions, 09:53Z), two not yet exercised |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
@@ -183,7 +185,9 @@ call 11/01 19:45Z; `credit balance too low` until 11/17 08:53Z; `invalid
 x-api-key` from 11/17 09:24Z. The stored gateway profile and the deployed
 secret were the same key before and after, so the change was at Anthropic and
 not in a deploy. The operator supplied a new key on 11/18 (secret set 12:58Z,
-stored profile 13:00Z); it authenticates and the account has no credit. The
+stored profile 13:00Z); it authenticates and the account has no credit: at
+13:06Z the running gateway reported `billing` for Anthropic and answered
+through openai/gpt-5.6-sol. The
 gateway's OpenAI OAuth profile refreshed by itself at about 12:50Z. The
 persona-day probe merged without ever running against hosted and had four
 defects (secret missing; exit code masked by a pipe; due time set before the
