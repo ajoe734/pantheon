@@ -871,6 +871,29 @@ def test_the_run_is_registered_as_a_daily_cycle_before_dispatch_and_text_proposa
     assert "decisions" not in text_only["persona_cycle"] and state["turns"] == 2
 
 
+def test_blocked_tools_and_auth_failure_are_named_with_the_backend_used(system):
+    controller, state, owner, _ = system
+    from types import SimpleNamespace as NS
+    base = controller.turn_runner
+
+    def blocked(persona_id, prompt, session_user=None):
+        return NS(status="completed", persona_id=persona_id, model="openclaw/x", error=None,
+                  blocked_reason="persona_tools_blocked:missing_host_identity",
+                  model_used="anthropic/claude-sonnet-4-6", provider="claude-cli")
+    state["answer"] = None
+    controller.turn_runner = blocked
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] == (
+        "persona_tools_blocked:missing_host_identity:model=anthropic/claude-sonnet-4-6:provider=claude-cli")
+
+    def denied(persona_id, prompt, session_user=None):
+        return NS(status="error", persona_id=persona_id, model="openclaw/x", error="model_auth_failed")
+    controller.turn_runner = denied
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert packet["persona_cycle"]["failure_reason"] == "persona_tools_blocked:model_auth_failed:model=openclaw/x"
+    controller.turn_runner = base
+
+
 @pytest.mark.parametrize("override,reason", [
     (lambda run: None, "tool_record_missing"),
     (lambda run: {**run, "persona_id": "someone-else"}, "tool_record_ambiguous"),

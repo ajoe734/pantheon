@@ -96,3 +96,29 @@ def test_broker_client_registers_and_reads_the_run_record_with_the_service_token
                       {"persona_id": "persona-crypto", "purpose": "daily_cycle", "session_user": "u-1"}, "svc")]
     with __import__("pytest").raises(rt.ToolBrokerUnavailable):
         rt.AdapterToolBrokerClient("http://adapter:1", "", post=post).register_run("p", "daily_cycle", "u")
+
+
+def test_blocked_tools_report_and_backend_actually_used_are_named():
+    def fake_post(url, body, headers, timeout):
+        return json.dumps({"model": "anthropic/claude-sonnet-4-6", "provider": "claude-cli", "output": [
+            {"type": "message", "content": [{"type": "output_text",
+             "text": "Both tool calls are returning missing host identity"}]}]}).encode()
+
+    turn = rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=fake_post)
+    assert turn.blocked_reason == "persona_tools_blocked:missing_host_identity"
+    assert (turn.model_used, turn.provider) == ("anthropic/claude-sonnet-4-6", "claude-cli")
+
+
+def test_plain_reply_has_no_blocked_reason_and_auth_failure_is_named():
+    import urllib.error
+
+    def ok(url, body, headers, timeout):
+        return json.dumps({"output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}]}).encode()
+
+    assert rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=ok).blocked_reason == ""
+
+    def denied(url, body, headers, timeout):
+        raise urllib.error.HTTPError(url, 401, "unauthorized", {}, None)
+
+    turn = rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=denied)
+    assert turn.status == "error" and turn.error == "model_auth_failed"

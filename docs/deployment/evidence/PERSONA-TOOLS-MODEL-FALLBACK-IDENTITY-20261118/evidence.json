@@ -1,0 +1,20 @@
+{
+  "task": "PERSONA-TOOLS-MODEL-FALLBACK-IDENTITY-20261118",
+  "acceptance": {
+    "1_missing_field_established": {
+      "status": "NOT_ESTABLISHED",
+      "note": "The pinned gateway source and a real gateway run were not available in this worker, so which of agent_id/session_key/run_id/tool_call_id the claude-cli backend omits is not asserted. The plugin now names the exact missing field(s) in blockReason and the plugin log, so the next hosted run establishes it from evidence."
+    },
+    "2_identity_or_no_fallback": {
+      "status": "PARTIAL",
+      "done": "Plugin still fails closed; model-supplied params/identity are never accepted (tested).",
+      "not_done": "No host-verified CLI identity source was identified and persona_agent_sync.py fallbacks were not changed (dropping CLI fallbacks is a pool-policy decision that needs 1 first)."
+    },
+    "3_named_failure_reason": "done: persona_tools_blocked:missing_host_identity:model=<used>:provider=<used> and persona_tools_blocked:model_auth_failed:model=<requested>; tool_record_no_calls kept only for a turn with no blocked report. Blocked cause is classified from the agent's own report text (classification only, never proposal data). model_used/provider come from the gateway response fields when present.",
+    "4_tests": "plugin: CLI-context missing fields named by name + forged params rejected; ooda runtime: blocked report, backend used, 401 -> model_auth_failed, plain reply; controller: blocked and auth-failed reasons. Existing full-identity path tests unchanged and passing. services/persona controller suite: 60 passed, 2 failed (test_deployed_persona_lifespan_consumes_cycle_and_stops) which also fail without these changes.",
+    "5_runtime_budget": "no new writer",
+    "6_hosted_proof": "pending: next hosted daily cycle must record brokered calls or the named cause; coordinator records it."
+  },
+  "scope_note": "services/persona/persona_cycle_controller.py and its test were edited outside the listed artifacts because the failure_reason is assigned there.",
+  "review_independence": "No other model family capacity assessed; reviewer exception to be recorded at review time."
+}
