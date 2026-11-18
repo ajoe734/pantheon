@@ -15,7 +15,8 @@ How to use it:
 - State column: `open` (not merged), `merged`, `deployed` (the merge is
   contained in the backend commit hosted serves) or `accepted`. Hosted serves
   backend `13a08deaa` with frontend `0e886b9ce` since 2026-11-17 23:26Z (Root
-  44187386408; before that `80d4cf2ca` from 15:07Z). Changes that only run in
+  44187386408, release accepted; before that `80d4cf2ca` from 15:07Z). The
+  source for a release's state is the hosted `acceptance/latest.json`. Changes that only run in
   GitHub Actions or on the collector host stay `merged` here.
 
 ## Domains and owners
@@ -56,7 +57,7 @@ doing and by the first eight characters of its session id.
 | Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 (#7518) | deployed |
 | Required check that fails under CI load | SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117 (#7501, did not hold: same assertion failed again at 18:56Z); SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-R2-20261118 (#7546, market-data owner) | merged |
 | Deployer reports failure after a successful dispatch (`dispatch sent but run could not be correlated`, 18:08Z, 20:04Z, 20:46Z) | no task yet | open |
-| Acceptance verdict and advisory check summary disagree (Root 44187386408: verdict passed, advisory summary `acceptance: failed`) | no task yet | open |
+| The advisory check summary carries its own `acceptance` field and wrote `failed` on Root 44187386408 because a housekeeping budget check failed (docker build cache cap), while the acceptance record passed; one coordinator reported the release as not accepted from it | no task yet | open |
 | Frontend unit test red inside the integration gate (execute-plans) | FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117 (execute-plans #1036) | merged |
 
 The workflow and deploy-script tasks are serialised in this order: no probe
@@ -124,10 +125,13 @@ failed because 241 dead letters from Registry 401 responses (enqueued 11/13
 10:51Z to 11/16 17:35Z) are unresolved; infrastructure_health rows fell from
 2991 to 202 per hour; heartbeat cadence cannot be measured until the paper
 runtimes run again (they stop at the 05:30Z close).
-On Root 44187386408 the acceptance stage has a single check (deployed pair
-identity), so `accepted` from it says nothing yet about function; the release
-is reported as deployed, not accepted. Merged and deployed are still the only
-states any task of 11/17 has reached. A workflow change (PR #7540) passed
+Root 44187386408 is `accepted`: the hosted acceptance record
+(`acceptance/latest.json`, 23:26:33Z) says passed with its one check, the
+deployed pair identity, and that record is the source for a release's delivery
+state; the five functional advisory checks of the run passed as well. A release
+being accepted does not make a task accepted: no task of 11/17 has an
+acceptance probe of its own yet, so `merged` and `deployed` are still the only
+states those tasks have reached. A workflow change (PR #7540) passed
 review and its tests and failed on its first real run.
 
 ## RC3. Nobody owns data volume
