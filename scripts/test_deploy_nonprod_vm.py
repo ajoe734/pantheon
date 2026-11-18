@@ -4620,7 +4620,7 @@ manage_source_ingest_refresh_runtime() {{
   echo "manage $2" >> "$CALLS"
   if [[ "$2" == bounded ]]; then
     : > "$READY"
-    command sleep 30 & wait $!   # the interruptible Compose recreate
+    command sleep 30 >/dev/null 2>&1 & wait $!   # the interruptible Compose recreate
   fi
 }}
 docker() {{
@@ -4657,7 +4657,16 @@ kill -{sig} "$pid"
 rc=0; wait "$pid" || rc=$?
 echo "ENTRYPOINT_RC=$rc"
 """
-    proc = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=60, check=False)
+    import signal
+
+    proc = subprocess.run(
+        ["bash", "-c", harness],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_DFL),
+    )
     lines = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return proc, lines
 
@@ -4766,3 +4775,491 @@ def test_steady_check_restores_stopped_services_and_reports_named_reason(tmp_pat
     assert "manage restore sha256:img" in calls
     assert "docker start c-source-ingest-scheduler" in calls
     assert "docker start c-source-ingest-agora-projector" in calls
+
+
+# --- TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 ------------------------------
+
+
+def _chip_readback_entry(
+    connector_id: str,
+    *,
+    session_date: str | None = "2026-11-17",
+    last_success_at: str = "2026-11-18T00:10:00Z",
+    event_time: str | None = None,
+    run_id: str = "chip-run-1",
+) -> dict[str, Any]:
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    profile = TW_CHIP_REFRESH_PROFILES[connector_id]
+    dataset = profile["dataset"]
+    prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+    venue = (profile.get("venues") or ["TAIFEX"])[0]
+    metadata: dict[str, Any] = {
+        "dataset": dataset,
+        "schema_hash": profile["schema_hash"],
+        "venue": venue,
+        "date": session_date,
+        "available_time": event_time or last_success_at,
+        "normalized_row": {"date": session_date, "venue": venue},
+    }
+    provenance: dict[str, Any] = {
+        "dataset": dataset,
+        "schema_hash": profile["schema_hash"],
+        "source_ingest_run_id": run_id,
+    }
+    if event_time:
+        provenance["event_time"] = event_time
+    return {
+        "connector_id": connector_id,
+        "freshness": {
+            "last_success_at": last_success_at,
+            "latest_receipt": {"ingest_run_id": run_id, "source_timestamp": event_time or last_success_at},
+            "source_timestamp": event_time or last_success_at,
+            "source_timestamp_status": "valid",
+            "status": "fresh",
+        },
+        "latest_source_record": {
+            "source_id": f"{prefix}:{dataset}:{venue}:2330:hash1",
+            "status": "normalized",
+            "metadata": metadata,
+            "provenance": provenance,
+        },
+    }
+
+
+@pytest.mark.parametrize("now_utc", ["2026-11-18T06:40:00Z", "2026-11-18T07:40:00Z", "2026-11-18T10:50:00Z"])
+def test_chip_preflight_at_afternoon_timer_dispatches_returns_noop_for_all_six_profiles(now_utc: str) -> None:
+    """At 14:40, 15:40, and 18:50 Taipei on session T (2026-11-18), prior session T-1 (2026-11-17) is already fresh."""
+    from services.source_ingestion.chip_publication_schedule import CHIP_PUBLICATION_SCHEDULES
+
+    fresh_twse = _stored_tw_snapshot("2026-11-18", "2026-11-18T06:35:00Z")
+    for cid, schedule in CHIP_PUBLICATION_SCHEDULES.items():
+        # Test dated prior-session record for every profile.
+        entry = _chip_readback_entry(cid, session_date="2026-11-17", last_success_at="2026-11-18T00:10:00Z")
+        res = _run_pinned_taiwan_preflight(
+            now_utc,
+            {"2330.TW": fresh_twse},
+            connector_id=cid,
+            dataset=schedule.dataset,
+            readback_connectors=[entry],
+        )
+        assert (res["status"], res["reason"], res["session_date"]) == ("noop", "already_fresh", "2026-11-17"), (cid, res)
+
+    # Also test undated TWSE MI_MARGN record where metadata.date is None and event_time is the morning fetch timestamp.
+    undated_twse = _chip_readback_entry(
+        "tw-official-twse-margin-balances",
+        session_date=None,
+        last_success_at="2026-11-18T00:10:00Z",
+        event_time="2026-11-18T00:10:00Z",
+    )
+    res_undated = _run_pinned_taiwan_preflight(
+        now_utc,
+        {"2330.TW": fresh_twse},
+        connector_id="tw-official-twse-margin-balances",
+        dataset="tw_margin_short_balance",
+        readback_connectors=[undated_twse],
+    )
+    assert (res_undated["status"], res_undated["reason"], res_undated["session_date"]) == (
+        "noop",
+        "already_fresh",
+        "2026-11-17",
+    )
+
+
+def test_chip_preflight_morning_dispatches_proceed_once_and_noop_after_refresh() -> None:
+    """At 07:30 Taipei on T+1 (2026-11-19), T-1 (2026-11-17) triggers proceed for T (2026-11-18); at 08:30 Taipei T noops."""
+    from services.source_ingestion.chip_publication_schedule import CHIP_PUBLICATION_SCHEDULES
+
+    fresh_twse = _stored_tw_snapshot("2026-11-18", "2026-11-18T07:00:00Z")
+    for cid, schedule in CHIP_PUBLICATION_SCHEDULES.items():
+        stale_entry = _chip_readback_entry(cid, session_date="2026-11-17", last_success_at="2026-11-18T00:10:00Z")
+        at_0730 = _run_pinned_taiwan_preflight(
+            "2026-11-18T23:30:00Z",  # 2026-11-19 07:30 Taipei
+            {"2330.TW": fresh_twse},
+            connector_id=cid,
+            dataset=schedule.dataset,
+            readback_connectors=[stale_entry],
+        )
+        assert (at_0730["status"], at_0730["reason"], at_0730["session_date"]) == (
+            "proceed",
+            "closed_session_missing",
+            "2026-11-18",
+        )
+
+        refreshed_entry = _chip_readback_entry(cid, session_date="2026-11-18", last_success_at="2026-11-18T23:35:00Z")
+        at_0830 = _run_pinned_taiwan_preflight(
+            "2026-11-19T00:30:00Z",  # 2026-11-19 08:30 Taipei
+            {"2330.TW": fresh_twse},
+            connector_id=cid,
+            dataset=schedule.dataset,
+            readback_connectors=[refreshed_entry],
+        )
+        assert (at_0830["status"], at_0830["reason"], at_0830["session_date"]) == (
+            "noop",
+            "already_fresh",
+            "2026-11-18",
+        )
+
+
+def _run_chip_entrypoint_harness(
+    tmp_path: Path,
+    *,
+    connector_id: str,
+    dataset: str,
+    now_utc: str,
+    preflight_readback: list[dict[str, Any]],
+    post_refresh_readback: list[dict[str, Any]] | None = None,
+    post_refresh_receipts: list[dict[str, Any]] | None = None,
+    force: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any], list[str]]:
+    import http.server
+    import threading
+    import urllib.parse
+
+    fresh_twse = _stored_tw_snapshot("2026-11-18", "2026-11-18T06:35:00Z")
+    phase = {"mutated": False}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, payload: dict[str, Any], code: int = 200) -> None:
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self) -> None:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/readyz":
+                self._send({"ready": True})
+            elif parsed.path == "/api/source-ingest/snapshots/latest":
+                self._send(fresh_twse)
+            elif parsed.path == "/api/source-ingest/controller/readback":
+                connectors = (
+                    post_refresh_readback
+                    if phase["mutated"] and post_refresh_readback is not None
+                    else preflight_readback
+                )
+                self._send({"connectors": connectors})
+            elif parsed.path == "/api/source-ingest/receipts":
+                self._send({"receipts": post_refresh_receipts or []})
+            else:
+                self._send({}, 404)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    calls_file = tmp_path / "calls.log"
+    outcome_file = tmp_path / "outcome.json"
+    mutated_flag = tmp_path / "mutated"
+    fns = "\n".join(
+        _prune_shell_function(name)
+        for name in (
+            "redact_bounded_refresh_log",
+            "dump_bounded_refresh_container_logs",
+            "wait_for_bounded_source_refresh_service",
+            "verify_bounded_source_refresh_readback",
+            "check_taiwan_refresh_preflight",
+            "source_ingest_family_services",
+            "remove_source_ingest_compose_leftovers",
+            "verify_source_ingest_container_counts",
+            "execute_bounded_source_refresh_entrypoint",
+        )
+    )
+    harness = f"""
+set -euo pipefail
+export PATH="{os.environ['PATH']}"
+export PYTHONPATH="{ROOT}"
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{server.server_port}"
+export PANTHEON_REFRESH_PREFLIGHT_NOW="{now_utc}"
+export SOURCE_INGEST_BOUNDED_CONNECTOR_ID="{connector_id}"
+export SOURCE_INGEST_BOUNDED_DATASET="{dataset}"
+export PANTHEON_COLLECTOR_HOST="collector.example.test"
+CALLS="{calls_file}"
+info() {{ echo "[remote-deploy] $*"; }}
+error() {{ LAST_REMOTE_DEPLOY_ERROR="$*"; echo "[remote-deploy] ERROR: $*" >&2; exit 1; }}
+sleep() {{ :; }}
+date() {{
+  if [[ "${{1:-}}" == "-u" ]]; then
+    echo "{now_utc}"
+  else
+    command date "$@"
+  fi
+}}
+validate_source_refresh_profile() {{ :; }}
+curl_with_retry() {{ :; }}
+resolve_bounded_source_refresh_active_symbols() {{ SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="2330.TW"; }}
+recover_bounded_source_refresh_dlq() {{ :; }}
+prepare_bounded_source_refresh_dataset() {{ :; }}
+manage_source_ingest_refresh_runtime() {{
+  echo "manage $2" >> "$CALLS"
+}}
+docker() {{
+  echo "docker $*" >> "$CALLS"
+  case "$*" in
+    "compose -p pantheon -f docker-compose.yml ps -q source-ingest") echo cid-src ;;
+    "inspect --format {{{{.Image}}}} cid-src") echo {_SHA_A} ;;
+    "compose -p pantheon -f docker-compose.yml images -q source-ingest") echo {'a' * 64} ;;
+    "inspect --format {{{{json .Config.Env}}}} cid-src") echo '["A=1"]' ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler") echo steady-sched ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-agora-projector") echo steady-proj ;;
+    "inspect --format {{{{json .Config.Env}}}} steady-sched") echo '["PANTHEON_TENANT_ID=t","PANTHEON_ENV=dev","GIT_SHA=gitsha1","SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull"]' ;;
+    "inspect --format {{{{.Id}}}} pantheon-source-ingest-agora-projector:latest") echo img-proj ;;
+    "inspect --format "*image.revision*" img-proj") echo gitsha1 ;;
+    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) echo cid-bounded ;;
+    "inspect --format {{{{.State.Status}}}} cid-bounded") echo exited ;;
+    "inspect --format {{{{.State.ExitCode}}}} cid-bounded") echo 0 ;;
+    "cp cid-bounded:/data/bff/agora_watchlist.json "*)
+      echo '{{}}' > "${{@: -1}}" ;;
+    "ps -a -q --filter label=com.docker.compose.project=pantheon"*)
+      case "$*" in
+        *"status=created"*) : ;;
+        *) echo cid-single ;;
+      esac ;;
+  esac
+  return 0
+}}
+{fns}
+execute_bounded_source_refresh_entrypoint "{'true' if force else 'false'}" "{outcome_file}"
+"""
+    try:
+        if post_refresh_readback is not None:
+            phase["mutated"] = True
+        proc = subprocess.run(
+            ["bash", "-c", harness],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+    outcome = json.loads(outcome_file.read_text(encoding="utf-8")) if outcome_file.is_file() else {}
+    calls = calls_file.read_text(encoding="utf-8").splitlines() if calls_file.is_file() else []
+    return proc, outcome, calls
+
+
+@pytest.mark.parametrize("now_utc", ["2026-11-18T06:40:00Z", "2026-11-18T07:40:00Z", "2026-11-18T10:50:00Z"])
+def test_chip_entrypoint_at_afternoon_dispatches_does_not_recreate_source_ingest_or_stop_steady_controller(
+    tmp_path: Path, now_utc: str
+) -> None:
+    from services.source_ingestion.chip_publication_schedule import CHIP_PUBLICATION_SCHEDULES
+
+    for cid, schedule in CHIP_PUBLICATION_SCHEDULES.items():
+        case_dir = tmp_path / f"{cid}-{now_utc.replace(':', '')}"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        entry = _chip_readback_entry(cid, session_date="2026-11-17", last_success_at="2026-11-18T00:10:00Z")
+        proc, outcome, calls = _run_chip_entrypoint_harness(
+            case_dir,
+            connector_id=cid,
+            dataset=schedule.dataset,
+            now_utc=now_utc,
+            preflight_readback=[entry],
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert outcome["status"] == "noop"
+        assert outcome["reason"] == "already_fresh"
+        assert outcome["session_date"] == "2026-11-17"
+        # No container mutation: source-ingest was never recreated and steady controller was never stopped.
+        assert calls == []
+
+
+def test_chip_entrypoint_not_yet_published_within_delay_bound_restores_steady_and_exits_zero(
+    tmp_path: Path,
+) -> None:
+    """Within max_publication_delay after scheduled publication time, T-1 yields not_yet_published (rc=0) and restores steady stack."""
+    cid = "tw-taifex-institutional-positions"
+    dataset = "taifex_futures_chip"
+    # Scheduled publication for 2026-11-18 is 2026-11-19 06:50 Taipei (2026-11-18T22:50:00Z).
+    # At 07:30 Taipei (2026-11-18T23:30:00Z), delay is 40m <= 150m max_publication_delay.
+    now_utc = "2026-11-18T23:30:00Z"
+    provider_still_t_minus_1 = _chip_readback_entry(
+        cid,
+        session_date="2026-11-17",
+        last_success_at="2026-11-18T23:31:00Z",
+        run_id="run-pending-1",
+    )
+    receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T23:31:00Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T23:31:00Z",
+            "ingest_run_id": "run-pending-1",
+        }
+    ]
+    proc, outcome, calls = _run_chip_entrypoint_harness(
+        tmp_path,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc=now_utc,
+        preflight_readback=[],
+        post_refresh_readback=[provider_still_t_minus_1],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert outcome["status"] == "not_yet_published"
+    assert outcome["reason"] == "not_yet_published"
+    assert outcome["provider_session"] == "2026-11-17"
+    assert outcome["expected_session"] == "2026-11-18"
+    assert "2026-11-17" in outcome["detail"] and "2026-11-18" in outcome["detail"]
+    assert "not_yet_published" in outcome["log"]
+    # Steady stack was restored cleanly.
+    assert "manage bounded" in calls
+    assert "manage restore" in calls
+    assert "docker start steady-sched steady-proj" in calls
+
+
+def test_chip_entrypoint_provider_publication_late_past_delay_bound_restores_steady_and_fails(
+    tmp_path: Path,
+) -> None:
+    """Past max_publication_delay after scheduled publication time, T-1 fails with provider_publication_late and restores steady stack."""
+    cid = "tw-taifex-institutional-positions"
+    dataset = "taifex_futures_chip"
+    # Scheduled publication for 2026-11-18 is 2026-11-19 06:50 Taipei (2026-11-18T22:50:00Z).
+    # At 09:30 Taipei (2026-11-19T01:30:00Z), delay is 160m > 150m max_publication_delay.
+    now_utc = "2026-11-19T01:30:00Z"
+    provider_still_t_minus_1 = _chip_readback_entry(
+        cid,
+        session_date="2026-11-17",
+        last_success_at="2026-11-19T01:31:00Z",
+        run_id="run-late-1",
+    )
+    receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-19T01:31:00Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-19T01:31:00Z",
+            "ingest_run_id": "run-late-1",
+        }
+    ]
+    proc, outcome, calls = _run_chip_entrypoint_harness(
+        tmp_path,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc=now_utc,
+        preflight_readback=[],
+        post_refresh_readback=[provider_still_t_minus_1],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc.returncode != 0
+    assert outcome["status"] == "failed"
+    assert outcome["reason_code"] == "provider_publication_late"
+    assert outcome["provider_session"] == "2026-11-17"
+    assert outcome["expected_session"] == "2026-11-18"
+    assert "provider_publication_late" in outcome["reason"]
+    assert "2026-11-17" in outcome["reason"] and "2026-11-18" in outcome["reason"]
+    assert "provider_publication_late" in outcome["log"]
+    # Steady stack was still restored on failure.
+    assert "manage bounded" in calls
+    assert "manage restore" in calls
+    assert "docker start steady-sched steady-proj" in calls
+
+
+def test_bounded_refresh_timeout_dumps_container_logs_before_error_and_records_in_captured_file(
+    tmp_path: Path,
+) -> None:
+    """When wait_for_bounded_source_refresh_service times out, it dumps redacted container logs before error."""
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("redact_bounded_refresh_log() {")
+    end = source.index("\nresolve_bounded_source_refresh_active_symbols()")
+    functions = source[start:end]
+    captured = tmp_path / "captured.log"
+    (tmp_path / "container.log").write_text(
+        "tick-progress line 1\ntick-progress Authorization: Bearer secret123\n",
+        encoding="utf-8",
+    )
+    # Fake date increments epoch on each call so the timeout loop exits after one iteration.
+    epoch_file = tmp_path / "epoch"
+    epoch_file.write_text("1000", encoding="utf-8")
+    script = tmp_path / "timeout_harness.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'LOG_FILE="{tmp_path / "container.log"}"\n'
+        f'BOUNDED_REFRESH_CAPTURED_LOG_FILE="{captured}"\n'
+        f'EPOCH_FILE="{epoch_file}"\n'
+        "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=5\n"
+        "SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX=pantheon-bounded-refresh\n"
+        'error() { echo "[remote-deploy] ERROR: $*" >&2; exit 1; }\n'
+        "sleep() { :; }\n"
+        "date() {\n"
+        "  n=$(cat \"$EPOCH_FILE\")\n"
+        "  echo $((n + 3)) > \"$EPOCH_FILE\"\n"
+        "  echo \"$n\"\n"
+        "}\n"
+        "docker() {\n"
+        '  case "$1" in\n'
+        "    ps) echo cid-timeout ;;\n"
+        '    inspect) echo "running" ;;\n'
+        '    logs) shift; [[ "$1" == "--tail" ]] && tail -n "$2" "$LOG_FILE" ;;\n'
+        "  esac\n"
+        "}\n"
+        + functions
+        + "\nwait_for_bounded_source_refresh_service source-ingest-scheduler\n",
+        encoding="utf-8",
+    )
+    res = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30, check=False)
+    assert res.returncode == 1
+    assert "last 200 log lines (redacted)" in res.stderr
+    assert "did not reach terminal state within 5s" in res.stderr
+    assert res.stderr.index("last 200 log lines") < res.stderr.index("did not reach terminal state within 5s")
+    assert "Bearer [REDACTED]" in res.stderr
+    assert "secret123" not in res.stderr
+    assert captured.is_file()
+    captured_text = captured.read_text(encoding="utf-8")
+    assert "tick-progress line 1" in captured_text
+    assert "Bearer [REDACTED]" in captured_text
+
+
+def test_verify_bounded_source_refresh_readback_records_specific_failed_check_and_compared_values(
+    tmp_path: Path,
+) -> None:
+    """Readback failures preserve the specific failed check and compared values in LAST_REMOTE_DEPLOY_ERROR and outcome."""
+    cid = "tw-official-tpex-institutional-flow"
+    dataset = "tw_institutional_flow"
+    bad_schema_entry = _chip_readback_entry(
+        cid,
+        session_date="2026-11-18",
+        last_success_at="2026-11-18T12:20:00Z",
+        run_id="run-schema-1",
+    )
+    bad_schema_entry["latest_source_record"]["metadata"]["schema_hash"] = "wrong_schema.v0"
+    bad_schema_entry["latest_source_record"]["provenance"]["schema_hash"] = "wrong_schema.v0"
+    receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T12:20:00Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T12:20:00Z",
+            "ingest_run_id": "run-schema-1",
+        }
+    ]
+    proc, outcome, _ = _run_chip_entrypoint_harness(
+        tmp_path,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc="2026-11-18T12:16:00Z",
+        preflight_readback=[],
+        post_refresh_readback=[bad_schema_entry],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc.returncode != 0
+    assert outcome["status"] == "failed"
+    assert outcome["reason"].startswith("bounded_source_refresh_readback_failed: bounded chip schema mismatch:")
+    assert "wrong_schema.v0" in outcome["reason"]
+    assert "tw_institutional_flow.v1" in outcome["reason"]
+    assert "wrong_schema.v0" in outcome["log"]
+

@@ -1656,11 +1656,20 @@ wait_for_bounded_source_refresh_service() {
         sleep 5
         ;;
       *)
+        dump_bounded_refresh_container_logs "${service}" "${container_id}"
         error "bounded source refresh service ${service} has unexpected state ${state}"
         ;;
     esac
   done
 
+  if [[ -z "${container_id}" ]]; then
+    if [[ -n "${container_name}" ]]; then
+      container_id="$(docker ps -a -q --filter "name=^${container_name}\$" 2>/dev/null || true)"
+    else
+      container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    fi
+  fi
+  dump_bounded_refresh_container_logs "${service}" "${container_id}"
   error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
 }
 
@@ -1797,14 +1806,20 @@ verify_bounded_source_refresh_readback() {
     finmind_records_file="$(mktemp)"
     fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
   fi
-  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - \
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
+  local readback_verdict_file="" readback_err_file="" readback_py_rc=0
+  readback_verdict_file="$(mktemp)"
+  readback_err_file="$(mktemp)"
+  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    BOUNDED_REFRESH_VERDICT_PATH="${readback_verdict_file}" \
+    python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
     "${evidence_dir}/readback.json" \
     "${evidence_dir}/agora_watchlist.json" \
     "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+    "${SOURCE_INGEST_BOUNDED_DATASET:-}" 2>"${readback_err_file}" <<'PY'
 import json
 import math
 import os
@@ -1841,7 +1856,10 @@ expected_dataset = bounded_dataset or (
 from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
 profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
 if profile is not None and expected_dataset != profile["dataset"]:
-    raise SystemExit("bounded chip dataset is outside the governed profile")
+    raise SystemExit(
+        f"bounded chip dataset is outside the governed profile: "
+        f"connector={connector_id!r} actual={expected_dataset!r} != expected={profile['dataset']!r}"
+    )
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1858,7 +1876,10 @@ candidates = [
     )
 ]
 if not candidates:
-    raise SystemExit("bounded source refresh produced no new successful source-time-valid receipt")
+    raise SystemExit(
+        f"bounded source refresh produced no new successful source-time-valid receipt: "
+        f"connector={connector_id!r} deploy_started_at={started.isoformat()!r} total_receipts={len(receipts)}"
+    )
 receipt = max(candidates, key=lambda item: timestamp(item.get("finished_at") or item.get("created_at")))
 run_id = str(receipt["ingest_run_id"])
 
@@ -1868,7 +1889,11 @@ connector = next(
     None,
 )
 if connector is None:
-    raise SystemExit("bounded source refresh connector is absent from controller readback")
+    present_ids = [item.get("connector_id") for item in connectors if isinstance(item, dict)]
+    raise SystemExit(
+        f"bounded source refresh connector is absent from controller readback: "
+        f"expected={connector_id!r} present={present_ids!r}"
+    )
 freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
 latest_receipt = freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), dict) else {}
 latest_record = connector.get("latest_source_record") if isinstance(connector.get("latest_source_record"), dict) else {}
@@ -1876,11 +1901,20 @@ provenance = latest_record.get("provenance") if isinstance(latest_record.get("pr
 record_metadata = latest_record.get("metadata") if isinstance(latest_record.get("metadata"), dict) else {}
 source_id = str(latest_record.get("source_id") or "")
 if latest_receipt.get("ingest_run_id") != run_id:
-    raise SystemExit("controller freshness does not bind the new ingest receipt")
+    raise SystemExit(
+        f"controller freshness does not bind the new ingest receipt: "
+        f"latest_receipt.ingest_run_id={latest_receipt.get('ingest_run_id')!r} != expected_run_id={run_id!r}"
+    )
 if freshness.get("source_timestamp_status") != "valid":
-    raise SystemExit("controller freshness does not report valid provider source time")
+    raise SystemExit(
+        f"controller freshness does not report valid provider source time: "
+        f"source_timestamp_status={freshness.get('source_timestamp_status')!r} != 'valid'"
+    )
 if provenance.get("source_ingest_run_id") != run_id or not source_id:
-    raise SystemExit("controller source record does not bind the new ingest run")
+    raise SystemExit(
+        f"controller source record does not bind the new ingest run: "
+        f"provenance.source_ingest_run_id={provenance.get('source_ingest_run_id')!r} expected_run_id={run_id!r} source_id={source_id!r}"
+    )
 actual_dataset = str(provenance.get("dataset") or record_metadata.get("dataset") or "").strip()
 if expected_dataset and (profile is not None or connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
     if actual_dataset != expected_dataset:
@@ -1888,28 +1922,78 @@ if expected_dataset and (profile is not None or connector_id == "tw-taifex-futur
             f"controller source record dataset mismatch for {connector_id}: "
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
+chip_verdict = None
 if profile is not None:
     expected_schema = profile["schema_hash"]
-    if (provenance.get("schema_hash") or record_metadata.get("schema_hash")) != expected_schema:
-        raise SystemExit("bounded chip schema mismatch")
-    row = record_metadata.get("normalized_row") or {}
-    from datetime import time as _time, timedelta
-    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
-    taipei = started.astimezone(timezone(timedelta(hours=8)))
-    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
-    for _ in range(20):
-        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=cursor.isoformat())
-        if cursor.weekday() < 5 and not (calendar and cursor.isoformat() in (calendar.get("holidays") or {})):
-            break
-        cursor -= timedelta(days=1)
-    record_date = str(row.get("date") or record_metadata.get("date") or "")
-    if record_date != cursor.isoformat():
-        raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
+    actual_schema = provenance.get("schema_hash") or record_metadata.get("schema_hash")
+    if actual_schema != expected_schema:
+        raise SystemExit(
+            f"bounded chip schema mismatch: connector={connector_id!r} actual={actual_schema!r} != expected={expected_schema!r}"
+        )
     prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
-    if not source_id.startswith(f"{prefix}:{expected_dataset}:"):
-        raise SystemExit("bounded chip source identity does not bind the dataset")
+    expected_prefix = f"{prefix}:{expected_dataset}:"
+    if not source_id.startswith(expected_prefix):
+        raise SystemExit(
+            f"bounded chip source identity does not bind the dataset: "
+            f"source_id={source_id!r} expected_prefix={expected_prefix!r}"
+        )
     if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
-        raise SystemExit("bounded chip venue is outside the governed profile")
+        raise SystemExit(
+            f"bounded chip venue is outside the governed profile: "
+            f"venue={record_metadata.get('venue')!r} allowed={profile['venues']!r}"
+        )
+    row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
+    from datetime import time as _time, timedelta
+    from services.source_ingestion.chip_publication_schedule import (
+        CHIP_PUBLICATION_SCHEDULES,
+        evaluate_chip_provider_session,
+        latest_published_chip_session,
+    )
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def _is_session_day(day):
+        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
+
+    raw_date = row.get("date") if row.get("date") is not None else record_metadata.get("date")
+    if raw_date is None:
+        raw_date = provenance.get("trade_date")
+    record_date = str(raw_date or "").strip()[:10]
+    if connector_id in CHIP_PUBLICATION_SCHEDULES:
+        if not record_date and raw_date is None and connector_id == "tw-official-twse-margin-balances":
+            ev_raw = (
+                provenance.get("event_time")
+                or record_metadata.get("available_time")
+                or latest_receipt.get("source_timestamp")
+                or freshness.get("source_timestamp")
+            )
+            if ev_raw and "T" in str(ev_raw):
+                record_date = latest_published_chip_session(
+                    connector_id, timestamp(ev_raw), is_session_day=_is_session_day
+                ).isoformat()
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_date,
+            now=started,
+            is_session_day=_is_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
+    else:
+        taipei = started.astimezone(timezone(timedelta(hours=8)))
+        cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+        for _ in range(20):
+            if _is_session_day(cursor):
+                break
+            cursor -= timedelta(days=1)
+        if record_date != cursor.isoformat():
+            raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
 if connector_id == "tw-taifex-futures-options-chip":
     req_ds = expected_dataset or "taifex_ssf_contracts"
     expected_source_prefix = f"tw-taifex:{req_ds}:"
@@ -1969,7 +2053,10 @@ projected = next(
     None,
 )
 if projected is None and connector_id == "tw-twse-tpex-official-market":
-    raise SystemExit("Agora projection does not bind the new receipt/run/source")
+    raise SystemExit(
+        f"Agora projection does not bind the new receipt/run/source: "
+        f"connector={connector_id!r} expected_run={run_id!r} expected_source={source_id!r}"
+    )
 if projected is not None:
     projected_freshness = projected.get("freshness") if isinstance(projected.get("freshness"), dict) else {}
     if (
@@ -1979,7 +2066,10 @@ if projected is not None:
         or projected_freshness.get("status") not in {"fresh", "stale"}
         or not isinstance(projected_freshness.get("stale"), bool)
     ):
-        raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
+        raise SystemExit(
+            f"Agora projection is missing explicit source-time/freshness truth: "
+            f"asOf={projected.get('asOf')!r} freshness={projected_freshness!r}"
+        )
 else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
 
@@ -2136,6 +2226,10 @@ for requested_symbol in spot_symbols:
         f"event_time={snapshot.get('event_time')} closes={len(closes)} "
         f"snapshot={snapshot.get('snapshot_id')}"
     )
+if chip_verdict is not None and chip_verdict.status == "not_yet_published":
+    print(chip_verdict.detail, file=sys.stderr)
+    print(chip_verdict.detail)
+    raise SystemExit(0)
 print(
     "bounded source refresh accepted "
     f"connector={connector_id} run={run_id} source={source_id} "
@@ -2143,12 +2237,35 @@ print(
 )
 PY
   then
+    readback_py_rc=1
+  fi
+  if [[ -s "${readback_verdict_file}" ]]; then
+    BOUNDED_REFRESH_READBACK_OUTCOME_JSON="$(cat "${readback_verdict_file}")"
+  fi
+  if [[ -s "${readback_err_file}" ]]; then
+    cat "${readback_err_file}" >&2
+    if [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" ]]; then
+      redact_bounded_refresh_log < "${readback_err_file}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
+    fi
+  fi
+  if (( readback_py_rc != 0 )); then
+    local readback_err_msg=""
+    if [[ -s "${readback_err_file}" ]]; then
+      readback_err_msg="$(tr '\n' ' ' < "${readback_err_file}" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    fi
     rm -rf "${evidence_dir}"
+    rm -f "${readback_verdict_file}" "${readback_err_file}"
     [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
-    LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    if [[ -n "${readback_err_msg}" ]]; then
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed: ${readback_err_msg}"
+      echo "[remote-deploy] ERROR: ${LAST_REMOTE_DEPLOY_ERROR}" >&2
+    else
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    fi
     return 1
   fi
   rm -rf "${evidence_dir}"
+  rm -f "${readback_verdict_file}" "${readback_err_file}"
   [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
   info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
@@ -2360,10 +2477,17 @@ for _ in range(20):
     cursor -= timedelta(days=1)
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+from services.source_ingestion.chip_publication_schedule import (
+    CHIP_PUBLICATION_SCHEDULES,
+    latest_published_chip_session,
+)
 if connector_id == "tw-finmind-broker-daily-report":
     from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
     session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
     session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
+elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+    session_date = latest_published_chip_session(connector_id, now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
@@ -2447,7 +2571,19 @@ if connector_id in CHIP_CONNECTORS:
             record_session_date = None
     if record_session_date is None and ev_raw:
         try:
-            record_session_date = datetime.fromisoformat(str(ev_raw).replace("Z", "+00:00")).astimezone(tz).date()
+            ev_text = str(ev_raw).strip()
+            if "T" not in ev_text and len(ev_text) >= 10:
+                record_session_date = date.fromisoformat(ev_text[:10])
+            else:
+                ev_dt = datetime.fromisoformat(ev_text.replace("Z", "+00:00"))
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                if connector_id in CHIP_PUBLICATION_SCHEDULES:
+                    record_session_date = latest_published_chip_session(
+                        connector_id, ev_dt, is_session_day=is_session_day
+                    )
+                else:
+                    record_session_date = ev_dt.astimezone(tz).date()
         except ValueError:
             record_session_date = None
     obs_dt = None
@@ -3456,9 +3592,10 @@ execute_bounded_source_refresh_entrypoint() {
   export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS SOURCE_INGEST_MAX_RECORDS
   validate_source_refresh_profile
   BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
   write_bounded_refresh_outcome() {
     [[ -n "${output_path:-}" ]] || return 0
-    local out_status="$1" out_reason="$2" base_json="${3:-}"
+    local out_status="$1" out_reason="$2" base_json="${3:-${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}}"
     python3 - "${output_path}" "${out_status}" "${out_reason}" "${base_json}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'OUTCOME_PY'
 import json, pathlib, sys
 out_path, status, reason, base_raw, log_file, connector_id, dataset = sys.argv[1:8]
@@ -3776,6 +3913,11 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
   restore_bounded_source_refresh "${refresh_rc}" || post_restore_rc=$?
   (( post_restore_rc == 0 )) || return "${post_restore_rc}"
   if (( refresh_rc != 0 )); then
+    return 0
+  fi
+  if [[ -n "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}" ]]; then
+    write_bounded_refresh_outcome "not_yet_published" "not_yet_published" "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON}"
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
   write_bounded_refresh_outcome "completed" "refreshed" "{\"status\": \"completed\", \"refreshed_at\": \"${refresh_started_at}\"}"
