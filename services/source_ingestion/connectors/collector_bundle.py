@@ -60,7 +60,7 @@ from .base import (
     SourceRecord,
     SourceType,
 )
-from .bounded_reader import read_bounded_response
+from .bounded_reader import PayloadTooLarge, read_bounded_response
 
 COLLECTOR_BUNDLE_ADAPTER_TOKEN = "CollectorBundleAdapter.records_from_bundle"
 COLLECTOR_BUNDLE_TOKEN_ENV = "PANTHEON_COLLECTOR_BUNDLE_TOKEN"
@@ -71,7 +71,20 @@ COLLECTOR_HOST_PLACEHOLDER = "collector.pantheon-collector.invalid"
 SUPPORTED_BUNDLE_SCHEMA_VERSIONS = frozenset({"collector_bundle.v1"})
 BUNDLE_STATUSES = frozenset({"complete", "partial", "paused"})
 CURSOR_LAG_DEGRADED_DAYS = 7
-MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_JSON_BYTES = 8 * 1024 * 1024  # index.json, status.json: one small object per bundle / source
+# A bundle carries one whole market day, so manifest.json and items.jsonl scale with the number of
+# listed securities of a venue, not with a fixed 8 MiB. The bound is derived, not a large guess:
+#   rows:   a venue day is up to about 14000 rows today (hosted TPEx 2026-11-17: 13870 rows, warrants
+#           included); the bound allows twice that, WHOLE_MARKET_DAY_MAX_ROWS = 28000.
+#   items:  measured 16175460 bytes / 13870 rows = 1166 bytes per row (hosted); ceiling 2048 per row.
+#   manifest: about 330 bytes per item entry (generated hosted shape; hosted size not measured);
+#           ceiling 512 per entry.
+# A file above its bound still fails closed with a message naming the file, its size and the bound.
+WHOLE_MARKET_DAY_MAX_ROWS = 28000
+ITEMS_JSONL_ROW_BYTES_CEILING = 2048
+MANIFEST_ITEM_BYTES_CEILING = 512
+MAX_ITEMS_JSONL_BYTES = WHOLE_MARKET_DAY_MAX_ROWS * ITEMS_JSONL_ROW_BYTES_CEILING  # 57,344,000
+MAX_MANIFEST_BYTES = WHOLE_MARKET_DAY_MAX_ROWS * MANIFEST_ITEM_BYTES_CEILING  # 14,336,000
 MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
@@ -104,7 +117,10 @@ _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", def
 # No serialized trust marker survives a restart. Bounds apply to both population
 # and encoded metadata size; raw bodies are never cached here.
 VERIFIED_METADATA_CACHE_ENTRIES = 16
-VERIFIED_METADATA_CACHE_BYTES = 64 * 1024 * 1024
+# Counted in collector file bytes (manifest.json + items.jsonl as read). One bundle at the
+# whole-market-day bound must be cacheable, otherwise every continuation tick re-reads the day.
+# Measured resident cost of a parsed day is about 2.6x its file bytes.
+VERIFIED_METADATA_CACHE_BYTES = MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES
 _METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
 _METADATA_CACHE_LOCK = RLock()
 
@@ -308,7 +324,9 @@ class LocalDirectoryBundleTransport(BundleTransport):
             raise SourceEvidenceError(f"collector bundle file not found: {target}")
         data = target.read_bytes()
         if len(data) > max_bytes:
-            raise SourceEvidenceError(f"collector bundle file exceeds max_bytes={max_bytes}: {target}")
+            error = PayloadTooLarge(f"collector bundle file exceeds max_bytes={max_bytes}: {target}")
+            error.limit, error.size, error.size_is_exact = max_bytes, len(data), True
+            raise error
         return data
 
 
@@ -326,6 +344,8 @@ class VerifiedBundle:
     # Absolute items.jsonl row index up to which raw files were verified this pull;
     # None means the whole requested window was verified (no read-budget cut).
     verified_through: int | None = None
+    # manifest.json + items.jsonl bytes read for this bundle (cache accounting).
+    source_bytes: int = 0
 
     @property
     def status(self) -> str:
@@ -432,6 +452,21 @@ def _loads(data: bytes, what: str) -> Any:
         raise SourceEvidenceError(f"collector bundle {what} is not valid JSON") from exc
 
 
+def _read_whole_file(transport: BundleTransport, path: str, *, max_bytes: int) -> bytes:
+    """Read one bundle file within its stated bound; an oversized file fails with a readable reason."""
+    try:
+        data = transport.read(path, max_bytes=max_bytes)
+    except PayloadTooLarge as exc:
+        size = exc.size if exc.size is not None else max_bytes
+        shown = f"{size} bytes" if exc.size_is_exact else f"more than {size} bytes"
+        raise SourceEvidenceError(
+            f"collector bundle file {path} is {shown}, above its read bound of {max_bytes} bytes") from exc
+    if len(data) > max_bytes:
+        raise SourceEvidenceError(
+            f"collector bundle file {path} is {len(data)} bytes, above its read bound of {max_bytes} bytes")
+    return data
+
+
 def verify_bundle(
     transport: BundleTransport,
     *,
@@ -470,7 +505,8 @@ def verify_bundle(
     if not (source_id and date and run_id) or any("/" in x or ".." in x for x in (source_id, date, run_id)):
         raise SourceEvidenceError(f"collector bundle index entry is malformed: {dict(entry)!r}")
     base = f"bundles/{source_id}/{date}/{run_id}"
-    manifest = _loads(transport.read(f"{base}/manifest.json", max_bytes=MAX_JSON_BYTES), "manifest.json")
+    manifest_bytes = _read_whole_file(transport, f"{base}/manifest.json", max_bytes=MAX_MANIFEST_BYTES)
+    manifest = _loads(manifest_bytes, "manifest.json")
     if not isinstance(manifest, dict):
         raise SourceEvidenceError("collector bundle manifest must be an object")
 
@@ -513,11 +549,12 @@ def verify_bundle(
     if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
         raise SourceEvidenceError("collector index bundle_sha256 mismatch")
 
-    items_text = transport.read(f"{base}/items.jsonl", max_bytes=MAX_JSON_BYTES).decode("utf-8")
+    items_bytes = _read_whole_file(transport, f"{base}/items.jsonl", max_bytes=MAX_ITEMS_JSONL_BYTES)
+    source_bytes = len(manifest_bytes) + len(items_bytes)
     items: list[Mapping[str, Any]] = []
-    for line in items_text.splitlines():
+    for line in items_bytes.splitlines():
         if line.strip():
-            row = _loads(line.encode("utf-8"), "items.jsonl line")
+            row = _loads(line, "items.jsonl line")
             if not isinstance(row, dict):
                 raise SourceEvidenceError("collector bundle items.jsonl lines must be objects")
             items.append(row)
@@ -538,7 +575,7 @@ def verify_bundle(
             item_ids = [str(row.get("id") or "").strip() for row in items]
 
     bundle = VerifiedBundle(source_id, date, run_id, finished_at, manifest, tuple(items), manifest_items,
-                            {}, _cursor_key(finished_at, run_id))
+                            {}, _cursor_key(finished_at, run_id), source_bytes=source_bytes)
     return _verify_raw_window(transport, bundle, item_window=item_window, deadline=deadline,
                               raw_read_concurrency=raw_read_concurrency)
 
@@ -946,7 +983,7 @@ class CollectorBundleAdapter:
                 _METADATA_CACHE.move_to_end(key)
                 return cached[1]
         bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
-        size = len(json.dumps(bundle.manifest).encode()) + sum(len(json.dumps(row).encode()) for row in bundle.items)
+        size = bundle.source_bytes
         if size <= VERIFIED_METADATA_CACHE_BYTES:
             with _METADATA_CACHE_LOCK:
                 # A changed digest/identity for this run supersedes its old entry.
