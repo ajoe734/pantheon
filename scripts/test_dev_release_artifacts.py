@@ -1806,3 +1806,101 @@ def test_qualify_source_writer_projection_mismatch_on_equal_journal_fails_closed
                                         writer_image=writer, check_lease=lambda: None)
     assert caught.value.services == (artifacts.API_SERVICE,)
     assert calls == [retained, writer]
+
+
+# --- never-started replacement container (interrupted Compose recreate) ---------
+
+class LeftoverDocker:
+    """One service ('worker') with arbitrary containers; records removals."""
+
+    ZERO = artifacts.NEVER_STARTED
+
+    def __init__(self, containers):
+        self.containers = containers   # cid -> dict(status, started_at, exit_code)
+        self.removed = []
+        self.image = _sid("d", 1)
+
+    def call(self, *args):
+        if args[0] == "ps":
+            return "".join(cid + "\n" for cid in self.containers)
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT:
+            row = self.containers[args[-1]]
+            return json.dumps({"service": "worker", "oneoff": "False", "image_id": self.image,
+                               "status": row["status"], "exit_code": row.get("exit_code", 0),
+                               "started_at": row["started_at"], "health_test": ["CMD", "true"],
+                               "health": "healthy" if row["status"] == "running" else None})
+        if args[0] == "inspect" and args[2] == artifacts.CONTAINER_FORMAT:
+            row = self.containers[args[-1]]
+            return json.dumps({"image_id": self.image, "status": row["status"], "health": "healthy"})
+        if args[0] == "inspect" and args[2] == artifacts.STACK_ENV_FORMAT:
+            return json.dumps("GIT_SHA=" + SOURCE) + "\n"
+        if args[:2] == ("image", "inspect"):
+            return json.dumps({"id": self.image, "revision": SOURCE, "repo_digests": None})
+        if args[0] == "tag":
+            return ""
+        if args[0] == "rm":
+            assert args[1] == "--force"
+            self.removed.append(args[2])
+            del self.containers[args[2]]
+            return ""
+        raise AssertionError(args)
+
+
+STARTED = "2026-11-18T09:54:05.000000000Z"
+OLD, NEW = "a" * 12, "b" * 12
+
+
+def _two(old, new):
+    return LeftoverDocker({OLD: old, NEW: new})
+
+
+def test_capture_removes_never_started_leftover_and_lists_it(capsys):
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": LeftoverDocker.ZERO})
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert docker.removed == [NEW] and list(docker.containers) == [OLD]
+    assert stack["services"]["worker"]["state"] == "running"
+    assert f"removed never-started container {NEW} of service worker" in capsys.readouterr().out
+
+
+def test_capture_still_fails_for_two_started_containers():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "exited", "started_at": STARTED, "exit_code": 1})
+    with pytest.raises(artifacts.StackError, match="worker: expected exactly one") as caught:
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert caught.value.services == ("worker",) and docker.removed == []
+
+
+def test_lone_never_started_container_is_kept():
+    docker = LeftoverDocker({NEW: {"status": "created", "started_at": LeftoverDocker.ZERO}})
+    rows = artifacts._stack_rows(docker)
+    assert artifacts._drop_never_started(docker, rows) == [] and docker.removed == []
+
+
+def test_removal_never_touches_a_started_container():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": STARTED})
+    with pytest.raises(artifacts.StackError):
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert docker.removed == []
+
+
+def test_current_handles_the_same_leftover():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": LeftoverDocker.ZERO})
+    assert artifacts._current(docker, "worker", require_healthy=False)["image_id"] == docker.image
+    assert docker.removed == [NEW]
+    both = _two({"status": "running", "started_at": STARTED}, {"status": "running", "started_at": STARTED})
+    with pytest.raises(artifacts.StackError) as caught:
+        artifacts._current(both, "worker")
+    assert caught.value.services == ("worker",)
+
+
+def test_failure_record_names_services_without_exception_text():
+    error = artifacts.StackError("worker: secret-detail", ["worker"])
+    row = artifacts.failure_record(error, "capture")
+    assert row["services"] == ["worker"] and "secret-detail" not in json.dumps(row)
+    assert artifacts.remote_failure_record(json.dumps(row).encode()) == row
+    bad = {**row, "services": ["bad name!"]}
+    assert artifacts.remote_failure_record(json.dumps(bad).encode()) is None
+    assert "services" not in artifacts.failure_record(artifacts.ArtifactError("x"), "capture")

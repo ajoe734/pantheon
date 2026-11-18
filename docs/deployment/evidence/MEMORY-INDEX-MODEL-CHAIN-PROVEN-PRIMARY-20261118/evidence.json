@@ -1,0 +1,7 @@
+{
+  "task_id": "MEMORY-INDEX-MODEL-CHAIN-PROVEN-PRIMARY-20261118",
+  "change": "memory-index default chain: openai/gpt-5.6-sol, openai/gpt-5.5, anthropic/claude-opus-4-8 (API), anthropic/claude-sonnet-4-6 (CLI)",
+  "hosted_facts_2026-11-18T13:15Z": {"gateway_session_files_7d": 576, "openai/gpt-5.6-sol_answers": 615, "cli_sonnet_answers": 6, "openai/gpt-5.5_answers": 0, "anthropic/claude-opus-4-8_failures": 295},
+  "unchanged": ["main agent", "structured-extraction", "persona agents", "memory bridge daily budget", "no new model or credential", "no recurring job or writer"],
+  "pending_after_deploy": "coordinator sets DEV_MEMORY_LLM_BRIDGE_ENABLED, reads hosted gateway config, and finds a memory-index call answered by a model in hosted session files"
+}

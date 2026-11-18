@@ -231,7 +231,11 @@ interface Binding {
 export interface PluginDeps {
   fetchImpl?: FetchLike;
   now?: () => number;
+  env?: Record<string, string | undefined>;
 }
+
+export const ENV_BROKER_URL = "PERSONA_TOOL_BROKER_URL";
+export const ENV_BROKER_TOKEN = "PERSONA_TOOL_BROKER_TOKEN";
 
 class BrokerRefused extends Error {
   constructor(readonly status: number, readonly reason: string) {
@@ -242,6 +246,7 @@ class BrokerRefused extends Error {
 export function createPlugin(deps: PluginDeps = {}) {
   const doFetch: FetchLike = deps.fetchImpl ?? ((url, init) => fetch(url, init) as ReturnType<FetchLike>);
   const now = deps.now ?? Date.now;
+  const env = deps.env ?? process.env;
 
   return {
     id: PLUGIN_ID,
@@ -249,7 +254,20 @@ export function createPlugin(deps: PluginDeps = {}) {
     description: "Brokered persona agent tools: memory recall, standing-question read, proposal submit.",
     configSchema: { safeParse: parseConfig, jsonSchema: CONFIG_JSON_SCHEMA },
     register(api: PluginApi): void {
-      const parsed = parseConfig(api.pluginConfig);
+      // Shipped as a stock plugin (enabled by default, no entry in openclaw.json) so the gateway config
+      // stays a plain writable file. With no plugin config the broker comes from the process env; with
+      // no broker token at all the plugin is inert (no hook, no tools).
+      let rawConfig = api.pluginConfig;
+      // The gateway validates a missing plugin entry as {} (applyDefaults), so an object with no keys is
+      // the same "no config" case as undefined/null.
+      const isEmptyObject =
+        typeof rawConfig === "object" && rawConfig !== null && !Array.isArray(rawConfig) && Object.keys(rawConfig).length === 0;
+      if (rawConfig === undefined || rawConfig === null || isEmptyObject) {
+        const token = (env[ENV_BROKER_TOKEN] ?? "").trim();
+        if (!token) return;
+        rawConfig = { brokerUrl: env[ENV_BROKER_URL] ?? "", brokerToken: token };
+      }
+      const parsed = parseConfig(rawConfig);
       const config = parsed.success ? parsed.data : null;
       if (!config) {
         api.logger?.error?.(`${PLUGIN_ID}: invalid plugin config; every Pantheon persona tool call will be blocked`);
@@ -309,8 +327,19 @@ export function createPlugin(deps: PluginDeps = {}) {
           const sessionKey = ctx.sessionKey;
           const runId = event.runId ?? ctx.runId;
           const toolCallId = event.toolCallId;
-          if (!agentId || !sessionKey || !runId || !toolCallId) {
-            return { block: true, blockReason: "missing host identity (agent, session, run or tool call id)" };
+          const missing = [
+            !agentId ? "agent_id" : "",
+            !sessionKey ? "session_key" : "",
+            !runId ? "run_id" : "",
+            !toolCallId ? "tool_call_id" : "",
+          ].filter(Boolean);
+          if (missing.length > 0 || !agentId || !sessionKey || !runId || !toolCallId) {
+            // Name exactly which host-provided field is absent; identity is never taken from model params.
+            api.logger?.warn?.(`${PLUGIN_ID}: ${tool} blocked, missing host identity: ${missing.join(",")}`);
+            return {
+              block: true,
+              blockReason: `persona_tools_blocked:missing_host_identity:${missing.join(",")} (missing host identity: agent, session, run or tool call id)`,
+            };
           }
           try {
             const result = await post(

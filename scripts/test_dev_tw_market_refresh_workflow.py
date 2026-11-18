@@ -207,6 +207,9 @@ def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_
         "dump_bounded_refresh_container_logs",
         "wait_for_bounded_source_refresh_service",
         "prepare_bounded_source_refresh_dataset",
+        "source_ingest_family_services",
+        "remove_source_ingest_compose_leftovers",
+        "verify_source_ingest_container_counts",
         "execute_bounded_source_refresh_entrypoint",
     )
     functions = []
@@ -358,9 +361,9 @@ def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> No
 def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures(tmp_path):
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
     wf = _load_workflow()
-    assert wf['jobs']['refresh']['timeout-minutes'] == 60
+    assert wf['jobs']['refresh']['timeout-minutes'] == 150
     step = next(s for s in wf['jobs']['refresh']['steps'] if s.get('id') == 'chip_refresh')
-    assert step['timeout-minutes'] == 35
+    assert step['timeout-minutes'] == 90
     assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
     assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 300
     assert step.get('continue-on-error', False) is False
@@ -557,3 +560,88 @@ sys.exit(1)
     assert "--non-blocking" in recorded_calls[0] and "--force" in recorded_calls[0]
     assert "--non-blocking" in recorded_calls[1] and "--force" in recorded_calls[1]
 
+
+
+# --- TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 -------------------------
+
+
+def _steps() -> list[dict[str, Any]]:
+    return _load_workflow()["jobs"]["refresh"]["steps"]
+
+
+def _step(name_part: str) -> dict[str, Any]:
+    return next(s for s in _steps() if name_part in s.get("name", ""))
+
+
+def test_steady_check_step_runs_after_refresh_steps_and_before_upload_and_release() -> None:
+    names = [s.get("name", "") for s in _steps()]
+    check = next(i for i, n in enumerate(names) if "steady source-ingest posture" in n)
+    for refresh in ("Taiwan chip refresh", "FinMind fundamentals refresh", "bounded Taiwan market refresh"):
+        assert names.index(next(n for n in names if refresh in n)) < check
+    assert check < next(i for i, n in enumerate(names) if "Upload refresh outcome" in n)
+    assert check < next(i for i, n in enumerate(names) if "Stop heartbeat" in n)
+    # always() is what makes a step run after failure, timeout and cancellation.
+    assert _step("steady source-ingest posture")["if"] == "${{ always() && steps.lease.outcome == 'success' }}"
+    assert "always()" in _step("Upload refresh outcome")["if"]
+    assert "cancelled" not in _step("Upload refresh outcome")["if"]
+
+
+def test_chip_step_budget_covers_six_profiles_at_measured_time() -> None:
+    chip = _step("Taiwan chip refresh")
+    profiles = [ln for ln in chip["run"].splitlines() if ln.startswith("tw-") or ln.strip().startswith("tw-")]
+    assert len(profiles) == 6
+    per_profile_minutes = 9.5  # measured in run 44273374890
+    assert chip["timeout-minutes"] >= len(profiles) * per_profile_minutes
+    assert "timeout --kill-after=60 900 ./scripts/deploy_nonprod_vm.sh" in chip["run"]
+    job = _load_workflow()["jobs"]["refresh"]
+    assert job["timeout-minutes"] > chip["timeout-minutes"] + 15 + 10
+
+
+def _run_check_step(tmp_path: Path, deploy_body: str, existing_outcome: str | None) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    """Run the real step script in the job checkout layout against fake scripts."""
+    step = _step("steady source-ingest posture")
+    (tmp_path / ".lease-controller" / "scripts").mkdir(parents=True)
+    wrapper = tmp_path / ".lease-controller" / "scripts" / "run_with_dev_environment_lease.sh"
+    wrapper.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    deploy = tmp_path / "scripts" / "deploy_nonprod_vm.sh"
+    deploy.write_text("#!/usr/bin/env bash\n" + deploy_body, encoding="utf-8")
+    for f in (wrapper, deploy):
+        f.chmod(0o755)
+    runner_temp = tmp_path / "temp"
+    runner_temp.mkdir()
+    outcome = runner_temp / "tw-refresh-outcome.json"
+    if existing_outcome is not None:
+        outcome.write_text(existing_outcome, encoding="utf-8")
+    env = {
+        "PATH": os.environ["PATH"],
+        "STEADY_CHECK_OUTPUT_PATH": str(runner_temp / "steady-restore-check.json"),
+        "REFRESH_OUTCOME_PATH": str(outcome),
+    }
+    proc = subprocess.run(["bash", "--noprofile", "--norc", "-c", step["run"]], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    return proc, json.loads(outcome.read_text(encoding="utf-8"))
+
+
+WRITE = 'out=""; while [[ $# -gt 0 ]]; do [[ "$1" == --output ]] && out="$2"; shift; done\n'
+
+
+def test_steady_check_step_passes_and_records_probe_when_healthy(tmp_path: Path) -> None:
+    body = WRITE + 'echo \'{"mode":"collector_steady_pull","reason":"","status":"healthy"}\' > "$out"\n'
+    proc, outcome = _run_check_step(tmp_path, body, '{"status":"failed","reason":"timeout"}')
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert outcome["steady_restore_check"] == {"reason": "", "status": "healthy"}
+    assert outcome["status"] == "failed"  # existing fields preserved
+
+
+def test_steady_check_step_fails_with_named_reason_after_restore(tmp_path: Path) -> None:
+    body = WRITE + 'echo \'{"mode":"collector_steady_pull","reason":"source-ingest_not_running","status":"restored"}\' > "$out"\n'
+    proc, outcome = _run_check_step(tmp_path, body, None)
+    assert proc.returncode == 1
+    assert "::error::steady_restore_check_restored: source-ingest_not_running" in proc.stdout
+    assert outcome["steady_restore_check"] == {"reason": "source-ingest_not_running", "status": "restored"}
+
+
+def test_steady_check_step_fails_closed_when_transport_produces_nothing(tmp_path: Path) -> None:
+    proc, outcome = _run_check_step(tmp_path, "exit 255\n", "not json")
+    assert proc.returncode == 1
+    assert outcome["steady_restore_check"] == {"reason": "steady_check_transport_exit_255", "status": "failed"}

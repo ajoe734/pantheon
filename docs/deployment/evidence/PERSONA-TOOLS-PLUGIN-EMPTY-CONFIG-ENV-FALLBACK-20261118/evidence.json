@@ -1,0 +1,17 @@
+{
+  "task": "PERSONA-TOOLS-PLUGIN-EMPTY-CONFIG-ENV-FALLBACK-20261118",
+  "change": "integrations/openclaw/plugins/pantheon-persona-tools/src/index.ts register(): an object with no keys is treated like undefined/null, so brokerUrl/brokerToken come from PERSONA_TOOL_BROKER_URL/PERSONA_TOOL_BROKER_TOKEN. Non-empty config is unchanged (validated, takes precedence, fails closed). Empty/missing config with no token stays inert. docker-compose.yml and Dockerfile untouched.",
+  "acceptance": {
+    "1_real_gateway_empty_config": "done: real pinned image ghcr.io/openclaw/openclaw:2026.7.1 (digest sha256:6a31d44b...) with the built plugin mounted at /app/dist/extensions/pantheon-persona-tools, no plugins.entries, env broker vars only. Gateway log: plugin listed among 9 plugins, 0 'invalid plugin config' lines. Negative control with the previous src/index.ts on the same image logs 'pantheon-persona-tools: invalid plugin config; every Pantheon persona tool call will be blocked'.",
+    "2_precedence_and_inert": "done: new unit test 'an empty validated plugin config object ...' covers empty+env -> broker used, empty+no token -> no hook/no tools, non-empty invalid config -> fail closed without using env. Plugin suite 18/18 pass.",
+    "3_real_gateway_tool_call": "done: stub OpenAI-compatible model returned a persona_mental_model_read tool call for agent persona-x via POST /v1/responses; stub broker received POST /internal/persona-tools/v1/authorize at the env URL with Authorization Bearer env token and host identity agent_id=persona-x, run_id=resp_..., session_key=agent:persona-x:openresponses:.... Direct POST /tools/invoke carries no run_id and is blocked by the plugin as missing_host_identity:run_id (host behaviour, not this scope). The stub broker log showed only the authorize call, not a /call request; not investigated (stub model replied 'done' after a tool result).",
+    "4_rollback_contract": "partial: static tier passes; docker tier run against the upstream base image with PANTHEON_GATEWAY_TEST_PLUGIN_DIR: 8 of 9 pass (incl. consult-agent config.patch + restart + rollback). test_legacy_persisted_config_is_normalised_then_rollback_becomes_ready fails in seed_legacy because the upstream base image has no /opt/pantheon/plugins/pantheon-persona-tools path (environmental; needs the Pantheon-built image, which CI/Dockerfile build provides). Test file itself not modified.",
+    "5_runtime_budget": "no new writer",
+    "6_hosted_proof": "pending: after deploy the gateway log must have no invalid plugin config line and the next persona daily cycle must record brokered calls or name the blocking cause; coordinator records it."
+  },
+  "residual_findings": [
+    "Stub broker saw no /call after authorize in the real-gateway run; verify execute() reaches the broker in the hosted cycle.",
+    "persona_tools_blocked:missing_host_identity:run_id for /tools/invoke direct calls is expected host behaviour.",
+    "Rollback contract legacy-seed test cannot run on the plain upstream image."
+  ]
+}

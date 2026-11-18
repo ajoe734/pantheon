@@ -1,0 +1,16 @@
+{
+  "task": "DEV-DEPLOY-CAPTURE-NEVER-STARTED-CONTAINER-20261118",
+  "date": "2026-11-18",
+  "real_docker_reproduction": {
+    "environment": "owner worktree host, Docker Compose v5.5.0, project name pantheon, service worker (redis:7-alpine with healthcheck)",
+    "setup": "compose up --wait gave running container 66e44c5ec2cc; then docker create of 66e44c5ec2cc_pantheon-worker-1 with the same compose project/service labels (label replace set) to give the interrupted-recreate shape: state created, StartedAt zero",
+    "before_capture": ["242a96c802e9 66e44c5ec2cc_pantheon-worker-1 created", "66e44c5ec2cc pantheon-worker-1 running"],
+    "capture_output": "removed never-started container 242a96c802e9 of service worker; services: {worker: running}",
+    "after_capture": ["66e44c5ec2cc pantheon-worker-1 running"],
+    "current_lookup": "_current(worker) with a fresh leftover returned running and removed it; one container left",
+    "note": "The leftover was created by docker create with Compose labels, not by killing a real Compose recreate mid-flight. The host-side reproduction against the hosted dev VM is left to the coordinator.",
+    "cleanup": "compose down; no pantheon-project containers remain"
+  },
+  "tests": {"test_dev_release_artifacts.py": "182 passed (new leftover tests included)", "test_dev_release_artifact_driver.py": "295 passed"},
+  "failure_output": "failure_record now carries services (validated names, no exception text) for StackError; remote_failure_record accepts it"
+}
