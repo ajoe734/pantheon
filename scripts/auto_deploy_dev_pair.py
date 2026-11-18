@@ -293,7 +293,7 @@ def lost_lease_race(backend, run_id):
 
 
 def failed_pair_run(backend, backend_sha, frontend_sha):
-    attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch", head_sha=backend_sha)
+    attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch")
                 if run.get("display_title") == pair_title(backend_sha, frontend_sha)
                 and run.get("status") == "completed"]
     if not attempts:
@@ -425,8 +425,9 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
     expected_title = pair_title(result["backend_sha"], result["frontend_sha"])
     for _ in range(20):
         for run in runs(backend, DEPLOY, event="workflow_dispatch"):
-            if (run["id"] not in previous_ids and run.get("head_sha") == result["backend_sha"]
-                    and run.get("display_title") == expected_title):
+            # workflow_dispatch head_sha is the dev tip at dispatch time, not the selected
+            # backend, so the full-pair title and an unseen run id identify this dispatch.
+            if run["id"] not in previous_ids and run.get("display_title") == expected_title:
                 return {**result, "state": "dispatched", "run_url": run["html_url"]}
         sleep(3)
     raise ControllerError("dispatch sent but run could not be correlated; inspect Nonprod Deploy before retrying")
