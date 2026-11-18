@@ -1,0 +1,21 @@
+{
+ "csv_recorded": {
+  "file": "DailyMarketReportFut_csv_recorded.csv",
+  "url": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+  "fetched_at": "2026-11-18T00:26:25Z",
+  "http_status": 200,
+  "content_type": "application/octet-stream",
+  "byte_count": 181749,
+  "sha256": "004549a14ad0c2059269420a3b85167bd3d5f6da7ee1db3e74b3a59cfef3e1cf",
+  "header_line": "日期,契約代號,到期月份(週別),開盤價,最高價,最低價,最後成交價,漲跌價,漲跌%,合計成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量",
+  "byte_order_mark": true,
+  "note": "Full body stored verbatim (3 fetches at 00:26Z were byte-identical)."
+ },
+ "json_recorded": {
+  "file": "DailyMarketReportFut_json_recorded.json",
+  "url": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut",
+  "fetched_at": "2026-11-14",
+  "note": "Copied from ../taifex_daily_market_report_fut_tx_20261113.json recorded by REGIME-DATA-TAIFEX-TX-DAILY-20261114 (source date 20261113); on 2026-11-18 the endpoint no longer served the JSON form to this client, so the same-trade-date JSON/CSV equality is proven by the column mapping, not by recordings of one date.",
+  "file_sha256": "249469fcf2845a8b4a4dce0854c436affb681760a338cec514cd628e19218022"
+ }
+}
