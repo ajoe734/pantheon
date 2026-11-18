@@ -13,6 +13,7 @@ from services.source_ingestion.chip_publication_schedule import (
     TAIPEI_TZ,
     evaluate_chip_provider_session,
     expected_chip_publication_datetime,
+    expected_finmind_fundamental_period_ends,
     get_chip_publication_schedule,
     latest_published_chip_session,
 )
@@ -281,8 +282,8 @@ def test_evaluate_chip_provider_session_distinguishes_not_yet_published_from_lat
     assert "provider_publication_late" in late.detail
     assert "2026-11-17" in late.detail and "2026-11-18" in late.detail
 
-    # 4. Missing or future provider session -> session_mismatch (red failure).
-    for bad_session in ("", None, "2026-11-19"):
+    # 4. Missing provider session -> session_mismatch (red failure); unclosed today -> future_session.
+    for bad_session in ("", None):
         mismatch = evaluate_chip_provider_session(
             connector_id,
             provider_session=bad_session,
@@ -292,3 +293,112 @@ def test_evaluate_chip_provider_session_distinguishes_not_yet_published_from_lat
         assert mismatch.status == "session_mismatch"
         assert mismatch.is_failure is True
         assert "2026-11-18" in mismatch.detail
+
+    future = evaluate_chip_provider_session(
+        connector_id,
+        provider_session="2026-11-19",
+        now=at_30m,
+        is_session_day=_twse_session_day,
+    )
+    assert future.status == "future_session"
+    assert future.reason == "future_session"
+    assert future.is_failure is True
+    assert "2026-11-18" in future.detail
+
+
+@pytest.mark.parametrize("connector_id", tuple(CHIP_PUBLICATION_SCHEDULES))
+def test_evaluate_chip_provider_session_accepts_published_early_and_rejects_future_session(
+    connector_id: str,
+) -> None:
+    # 1. On session day T (2026-11-13) after 13:30 Taipei close (at 13:30:00, 19:00:00 Taipei,
+    # and 10 minutes before T's scheduled publication time), scheduled session is T-1 (2026-11-12),
+    # so provider serving T (2026-11-13) is published_early.
+    pub_t = expected_chip_publication_datetime(connector_id, date(2026, 11, 13))
+    for now_t in (
+        _taipei_dt(2026, 11, 13, 13, 30, 0),
+        _taipei_dt(2026, 11, 13, 19, 0, 0),
+        pub_t - timedelta(minutes=10),
+    ):
+        early = evaluate_chip_provider_session(
+            connector_id,
+            provider_session="2026-11-13",
+            now=now_t.astimezone(timezone.utc),
+            is_session_day=_twse_session_day,
+        )
+        assert early.status == "published_early"
+        assert early.reason == "published_early"
+        assert early.is_failure is False
+        assert early.provider_session == "2026-11-13"
+        assert early.expected_session == date(2026, 11, 12)
+        assert early.delay_seconds == 0
+        assert "published_early" in early.detail
+
+    # 2. On session day T (2026-11-13) BEFORE 13:30 Taipei close (at 10:48:00 and 13:29:59 Taipei),
+    # provider serving T (2026-11-13) is future_session and fails.
+    for now_t in (
+        _taipei_dt(2026, 11, 13, 10, 48, 0),
+        _taipei_dt(2026, 11, 13, 13, 29, 59),
+    ):
+        unclosed = evaluate_chip_provider_session(
+            connector_id,
+            provider_session="2026-11-13",
+            now=now_t.astimezone(timezone.utc),
+            is_session_day=_twse_session_day,
+        )
+        assert unclosed.status == "future_session"
+        assert unclosed.reason == "future_session"
+        assert unclosed.is_failure is True
+        assert unclosed.provider_session == "2026-11-13"
+        assert unclosed.expected_session == date(2026, 11, 12)
+        assert "requested session '2026-11-12'" in unclosed.detail
+
+    # 3. A session date after the Taipei date of now is future_session even after today's 13:30 close.
+    after_today = evaluate_chip_provider_session(
+        connector_id,
+        provider_session="2026-11-16",
+        now=_taipei_dt(2026, 11, 13, 19, 0, 0).astimezone(timezone.utc),
+        is_session_day=_twse_session_day,
+    )
+    assert after_today.status == "future_session"
+    assert after_today.reason == "future_session"
+    assert after_today.is_failure is True
+
+    # 4. A non-session day (weekend or holiday) newer than expected_session and <= latest closed date
+    # is rejected as session_mismatch.
+    weekend_early = evaluate_chip_provider_session(
+        connector_id,
+        provider_session="2026-11-14",  # Saturday
+        now=_taipei_dt(2026, 11, 14, 15, 0, 0).astimezone(timezone.utc),
+        is_session_day=_twse_session_day,
+    )
+    assert weekend_early.status == "session_mismatch"
+    assert weekend_early.is_failure is True
+
+
+def test_expected_finmind_fundamental_period_ends_compares_same_kind() -> None:
+    # Monthly revenue: after the 10th of the month, only the prior month-end is expected;
+    # before the 10th, both the statutorily due month-end and the newly closed prior month-end are accepted.
+    assert expected_finmind_fundamental_period_ends("tw_monthly_revenue", date(2026, 11, 17)) == (
+        date(2026, 10, 31),
+    )
+    assert expected_finmind_fundamental_period_ends("tw_monthly_revenue", date(2026, 11, 10)) == (
+        date(2026, 10, 31),
+    )
+    assert expected_finmind_fundamental_period_ends("tw_monthly_revenue", date(2026, 11, 9)) == (
+        date(2026, 9, 30),
+        date(2026, 10, 31),
+    )
+
+    # Quarterly statements: Q3 (2026-09-30) is statutorily due on 2026-11-14.
+    assert expected_finmind_fundamental_period_ends("tw_financial_statement", date(2026, 11, 17)) == (
+        date(2026, 9, 30),
+    )
+    assert expected_finmind_fundamental_period_ends("tw_financial_statement", date(2026, 11, 13)) == (
+        date(2026, 6, 30),
+        date(2026, 9, 30),
+    )
+
+    # Valuation is session-granularity.
+    assert expected_finmind_fundamental_period_ends("tw_valuation_bwibbu", date(2026, 11, 17)) == (
+        date(2026, 11, 17),
+    )

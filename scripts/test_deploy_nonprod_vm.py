@@ -4981,6 +4981,7 @@ export PANTHEON_REFRESH_PREFLIGHT_NOW="{now_utc}"
 export SOURCE_INGEST_BOUNDED_CONNECTOR_ID="{connector_id}"
 export SOURCE_INGEST_BOUNDED_DATASET="{dataset}"
 export PANTHEON_COLLECTOR_HOST="collector.example.test"
+export FINMIND_API_TOKEN="test-finmind-token"
 CALLS="{calls_file}"
 info() {{ echo "[remote-deploy] $*"; }}
 error() {{ LAST_REMOTE_DEPLOY_ERROR="$*"; echo "[remote-deploy] ERROR: $*" >&2; exit 1; }}
@@ -5343,4 +5344,194 @@ def test_verify_bounded_source_refresh_readback_records_specific_failed_check_an
     assert "wrong_schema.v0" in outcome["reason"]
     assert "tw_institutional_flow.v1" in outcome["reason"]
     assert "wrong_schema.v0" in outcome["log"]
+
+
+@pytest.mark.parametrize(
+    "cid,dataset",
+    [
+        ("tw-taifex-institutional-positions", "taifex_futures_chip"),
+        ("tw-taifex-futures-options-chip", "taifex_ssf_contracts"),
+    ],
+)
+def test_chip_entrypoint_published_early_completes_and_future_session_fails(
+    tmp_path: Path, cid: str, dataset: str
+) -> None:
+    """Provider serving today's closed session after 13:30 Taipei succeeds as published_early; before 13:30 fails as future_session."""
+    early_entry = _chip_readback_entry(
+        cid,
+        session_date="2026-11-18",
+        last_success_at="2026-11-18T10:51:00Z",
+        run_id="run-early-1",
+    )
+    early_receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T10:51:00Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T10:51:00Z",
+            "ingest_run_id": "run-early-1",
+        }
+    ]
+    early_dir = tmp_path / "early"
+    early_dir.mkdir()
+    proc_early, outcome_early, _ = _run_chip_entrypoint_harness(
+        early_dir,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc="2026-11-18T10:50:00Z",  # 2026-11-18 18:50 Taipei (>= 13:30 close, before next-morning 06:50 schedule)
+        preflight_readback=[],
+        post_refresh_readback=[early_entry],
+        post_refresh_receipts=early_receipts,
+        force=True,
+    )
+    assert proc_early.returncode == 0, proc_early.stdout + proc_early.stderr
+    assert outcome_early["status"] == "completed"
+    assert outcome_early["reason"] == "refreshed"
+
+    unclosed_entry = _chip_readback_entry(
+        cid,
+        session_date="2026-11-18",
+        last_success_at="2026-11-18T05:30:05Z",
+        run_id="run-future-1",
+    )
+    unclosed_receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T05:30:05Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T05:30:05Z",
+            "ingest_run_id": "run-future-1",
+        }
+    ]
+    future_dir = tmp_path / "future"
+    future_dir.mkdir()
+    proc_future, outcome_future, _ = _run_chip_entrypoint_harness(
+        future_dir,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc="2026-11-18T05:29:59Z",  # 2026-11-18 13:29:59 Taipei (1s before 13:30 close)
+        preflight_readback=[],
+        post_refresh_readback=[unclosed_entry],
+        post_refresh_receipts=unclosed_receipts,
+        force=True,
+    )
+    assert proc_future.returncode != 0
+    assert outcome_future["status"] == "failed"
+    assert outcome_future["reason_code"] == "future_session"
+    assert outcome_future["provider_session"] == "2026-11-18"
+    assert outcome_future["expected_session"] == "2026-11-17"
+
+
+def test_finmind_fundamentals_preflight_and_readback_use_1800_taipei_rule_and_same_kind_dates(
+    tmp_path: Path,
+) -> None:
+    """FinMind fundamentals preflight and readback use the 18:00 Taipei broker session rule and compare period-end vs period-end."""
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    fresh_twse = _stored_tw_snapshot("2026-11-17", "2026-11-17T06:35:00Z")
+    for cid, valid_period, stale_period in (
+        ("tw-finmind-monthly-revenue", "2026-10-31", "2026-09-30"),
+        ("tw-finmind-quarterly-statements", "2026-09-30", "2026-06-30"),
+        ("tw-finmind-valuation", "2026-11-17", "2026-11-16"),
+    ):
+        prof = TW_CHIP_REFRESH_PROFILES[cid]
+        dataset = prof["dataset"]
+        record_entry = {
+            "connector_id": cid,
+            "desired_state": {"dataset": dataset},
+            "freshness": {
+                "last_success_at": "2026-11-17T19:26:06Z",
+                "source_timestamp": "2026-11-10T10:00:00Z",
+                "source_timestamp_status": "valid",
+                "status": "stale",
+                "latest_receipt": {
+                    "ingest_run_id": "ingest-6950e836ee63",
+                    "finished_at": "2026-11-17T19:26:06Z",
+                },
+            },
+            "latest_source_record": {
+                "source_id": f"finmind:{dataset}:TWSE:2330:3cc25dbbec5d8679",
+                "status": "normalized",
+                "metadata": {
+                    "dataset": dataset,
+                    "schema_hash": prof["schema_hash"],
+                    "venue": "TWSE",
+                    "date": valid_period,
+                    "as_of_date": "2026-11-17",
+                    "ingest_job": {"run_date": "2026-11-17"},
+                    "refresh_coverage": {"window_end": "2026-11-17"},
+                },
+                "provenance": {
+                    "dataset": dataset,
+                    "schema_hash": prof["schema_hash"],
+                    "source_ingest_run_id": "ingest-6950e836ee63",
+                    "event_time": valid_period,
+                },
+            },
+        }
+        # 1. Preflight at 2026-11-17T19:30:00Z (03:30 Taipei on 2026-11-18) sees 2026-11-17 18:00 Taipei
+        # session as already_fresh when period_end and as_of_date match.
+        preflight_ok = _run_pinned_taiwan_preflight(
+            "2026-11-17T19:30:00Z",
+            {"2330.TW": fresh_twse},
+            connector_id=cid,
+            dataset=dataset,
+            readback_connectors=[record_entry],
+        )
+        assert (preflight_ok["status"], preflight_ok["reason"], preflight_ok["session_date"]) == (
+            "noop",
+            "already_fresh",
+            "2026-11-17",
+        ), (cid, preflight_ok)
+
+        # 2. Readback verifier accepts the hosted FinMind record shape.
+        receipts = [
+            {
+                "connector_id": cid,
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-10T10:00:00Z",
+                "source_timestamp_status": "valid",
+                "finished_at": "2026-11-17T19:26:06Z",
+                "ingest_run_id": "ingest-6950e836ee63",
+            }
+        ]
+        ok_dir = tmp_path / f"{cid}-ok"
+        ok_dir.mkdir()
+        proc_ok, outcome_ok, _ = _run_chip_entrypoint_harness(
+            ok_dir,
+            connector_id=cid,
+            dataset=dataset,
+            now_utc="2026-11-17T19:22:27Z",
+            preflight_readback=[],
+            post_refresh_readback=[record_entry],
+            post_refresh_receipts=receipts,
+            force=True,
+        )
+        assert proc_ok.returncode == 0, (cid, proc_ok.stdout, proc_ok.stderr)
+        assert outcome_ok["status"] == "completed"
+        assert outcome_ok["reason"] == "refreshed"
+
+        # 3. Stale period_end fails readback.
+        stale_entry = json.loads(json.dumps(record_entry))
+        stale_entry["latest_source_record"]["metadata"]["date"] = stale_period
+        bad_dir = tmp_path / f"{cid}-stale"
+        bad_dir.mkdir()
+        proc_bad, outcome_bad, _ = _run_chip_entrypoint_harness(
+            bad_dir,
+            connector_id=cid,
+            dataset=dataset,
+            now_utc="2026-11-17T19:22:27Z",
+            preflight_readback=[],
+            post_refresh_readback=[stale_entry],
+            post_refresh_receipts=receipts,
+            force=True,
+        )
+        assert proc_bad.returncode != 0
+        assert outcome_bad["status"] == "failed"
+
 

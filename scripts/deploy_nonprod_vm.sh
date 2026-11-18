@@ -1939,9 +1939,14 @@ if profile is not None:
         raise SystemExit(
             f"bounded chip schema mismatch: connector={connector_id!r} actual={actual_schema!r} != expected={expected_schema!r}"
         )
-    prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
-    expected_prefix = f"{prefix}:{expected_dataset}:"
-    if not source_id.startswith(expected_prefix):
+    if profile["base"] == "tw-finmind-fundamentals":
+        allowed_prefixes = (f"finmind:{expected_dataset}:", f"tw-official:{expected_dataset}:")
+        expected_prefix = allowed_prefixes[0]
+    else:
+        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        expected_prefix = f"{prefix}:{expected_dataset}:"
+        allowed_prefixes = (expected_prefix,)
+    if not source_id.startswith(allowed_prefixes):
         raise SystemExit(
             f"bounded chip source identity does not bind the dataset: "
             f"source_id={source_id!r} expected_prefix={expected_prefix!r}"
@@ -1956,6 +1961,7 @@ if profile is not None:
     from services.source_ingestion.chip_publication_schedule import (
         CHIP_PUBLICATION_SCHEDULES,
         evaluate_chip_provider_session,
+        expected_finmind_fundamental_period_ends,
         latest_published_chip_session,
     )
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
@@ -1987,13 +1993,45 @@ if profile is not None:
             is_session_day=_is_session_day,
         )
         verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
-        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late"}:
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
             Path(verdict_path).write_text(
                 json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         if chip_verdict.is_failure:
             raise SystemExit(chip_verdict.detail)
+    elif profile["base"] == "tw-finmind-fundamentals":
+        from services.source_ingestion.connectors.finmind_taiwan import (
+            latest_published_broker_session,
+        )
+
+        expected_session = latest_published_broker_session(started, is_session_day=_is_session_day)
+        expected_period_ends = tuple(
+            d.isoformat() for d in expected_finmind_fundamental_period_ends(expected_dataset, expected_session)
+        )
+        run_session_raw = (
+            record_metadata.get("as_of_date")
+            or (record_metadata.get("ingest_job") or {}).get("run_date")
+            or (record_metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session = str(run_session_raw or "").strip()[:10]
+        if run_session and run_session != expected_session.isoformat():
+            raise SystemExit(
+                f"bounded FinMind fundamentals session {run_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+            )
+        if expected_dataset == "tw_valuation_bwibbu":
+            effective_session = record_date or run_session
+            if effective_session != expected_session.isoformat():
+                raise SystemExit(
+                    f"bounded FinMind fundamentals session {effective_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+                )
+        else:
+            if record_date not in expected_period_ends:
+                raise SystemExit(
+                    f"bounded FinMind fundamentals period_end {record_date!r} not in expected {expected_period_ends!r} "
+                    f"for session {expected_session.isoformat()!r} ({connector_id})"
+                )
     else:
         taipei = started.astimezone(timezone(timedelta(hours=8)))
         cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
@@ -2034,7 +2072,7 @@ if connector_id == "tw-taifex-futures-options-chip":
             is_session_day=_is_ssf_session_day,
         )
         verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
-        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late"}:
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
             Path(verdict_path).write_text(
                 json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -2495,9 +2533,13 @@ session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 from services.source_ingestion.chip_publication_schedule import (
     CHIP_PUBLICATION_SCHEDULES,
+    evaluate_chip_provider_session,
+    expected_finmind_fundamental_period_ends,
     latest_published_chip_session,
 )
-if connector_id == "tw-finmind-broker-daily-report":
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+is_finmind_fundamental = profile is not None and profile.get("base") == "tw-finmind-fundamentals"
+if connector_id == "tw-finmind-broker-daily-report" or is_finmind_fundamental:
     from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
     session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
     session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
@@ -2547,11 +2589,14 @@ if connector_id in CHIP_CONNECTORS:
     source_id = str(latest_record.get("source_id") or "")
     record_dataset = str(provenance.get("dataset") or metadata.get("dataset") or "")
     schema_hash = str(provenance.get("schema_hash") or metadata.get("schema_hash") or "")
-    profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
     if profile is not None:
-        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        if is_finmind_fundamental:
+            allowed_prefixes = (f"finmind:{bounded_dataset}:", f"tw-official:{bounded_dataset}:")
+        else:
+            prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+            allowed_prefixes = (f"{prefix}:{bounded_dataset}:",)
         if (schema_hash != profile["schema_hash"]
-                or not source_id.startswith(f"{prefix}:{bounded_dataset}:")
+                or not source_id.startswith(allowed_prefixes)
                 or (profile.get("venues") and metadata.get("venue") not in profile["venues"])):
             emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if (
@@ -2608,7 +2653,48 @@ if connector_id in CHIP_CONNECTORS:
             obs_dt = datetime.fromisoformat(str(obs_raw).replace("Z", "+00:00"))
         except ValueError:
             obs_dt = None
-    if record_session_date != session_date or obs_dt is None or obs_dt < session_close:
+    if is_finmind_fundamental:
+        expected_periods = set(expected_finmind_fundamental_period_ends(bounded_dataset, session_date))
+        run_session_raw = (
+            metadata.get("as_of_date")
+            or (metadata.get("ingest_job") or {}).get("run_date")
+            or (metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session_date = None
+        if run_session_raw:
+            try:
+                run_session_date = date.fromisoformat(str(run_session_raw)[:10])
+            except ValueError:
+                run_session_date = None
+        if bounded_dataset == "tw_valuation_bwibbu":
+            effective_session = record_session_date or run_session_date
+            session_ok = (
+                effective_session == session_date
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        else:
+            session_ok = (
+                record_session_date in expected_periods
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        if not session_ok or obs_dt is None or obs_dt < session_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+        verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_session_date,
+            now=now_u,
+            is_session_day=is_session_day,
+        )
+        effective_close = (
+            datetime(record_session_date.year, record_session_date.month, record_session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+            if record_session_date is not None and verdict.status == "published_early"
+            else session_close
+        )
+        if verdict.status not in {"published", "published_early"} or obs_dt is None or obs_dt < effective_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif record_session_date != session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if connector_id == "tw-finmind-broker-daily-report":
         records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
@@ -7154,7 +7240,9 @@ if [[ "${PANTHEON_DEPLOY_COMPONENT}" == refresh-only ]]; then
     || error "no managed deploy worktree containing docker-compose.yml at '${PANTHEON_REMOTE_DIR:-}' (set DEV_DEPLOY_WORKTREE_ROOT)"
 fi
 cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
-git rev-parse --is-inside-work-tree >/dev/null
+if [[ "${PANTHEON_DEPLOY_COMPONENT}" != refresh-only ]]; then
+  git rev-parse --is-inside-work-tree >/dev/null
+fi
 
 case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
