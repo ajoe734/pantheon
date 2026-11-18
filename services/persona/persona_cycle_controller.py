@@ -47,7 +47,14 @@ from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
+# Single definition of eligibility. acceptance/persona_day.py reads this assignment from this file's
+# source (ast, no import: the probe runs under ``python3 -I`` without the repo on sys.path); keep it a literal.
 ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
+DAILY_CYCLE_STATES = ELIGIBLE_STATES - {"consultable"}  # daily-cycle registrar and meeting step enrol these
+
+
+def is_daily_cycle_persona(persona: Mapping[str, Any]) -> bool:
+    return persona.get("lifecycle_state") in DAILY_CYCLE_STATES and persona.get("status", "active") == "active"
 
 
 # Proposal kind -> case-file decision type. harness_patch and no_action have no
@@ -670,7 +677,7 @@ class PersonaCycleController:
             enrolled_personas = [
                 p for p in self.owners.personas()
                 if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
-                and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"}
+                and p.get("lifecycle_state") in DAILY_CYCLE_STATES
             ]
             enrolled = sorted(p["persona_id"] for p in enrolled_personas)
             if isinstance(observe, dict):
