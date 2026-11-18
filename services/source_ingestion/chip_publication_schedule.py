@@ -1,9 +1,10 @@
-"""Measured provider publication schedule for Taiwan official & TAIFEX chip profiles.
+"""Measured provider publication schedule for Taiwan official & TAIFEX chip and contract profiles.
 
 Each of the six governed Taiwan chip refresh profiles in ``TW_CHIP_REFRESH_PROFILES``
-fetches an unparameterized "current snapshot" endpoint from TWSE OpenAPI, TPEx OpenAPI,
-or TAIFEX OpenAPI. None of those endpoints publishes session ``T`` at the ``13:30``
-Asia/Taipei cash close:
+and the TAIFEX stock-futures contract refresh (``tw-taifex-futures-options-chip`` with
+dataset ``taifex_ssf_contracts``) fetches an unparameterized "current snapshot" endpoint
+from TWSE OpenAPI, TPEx OpenAPI, or TAIFEX OpenAPI. None of those endpoints publishes
+session ``T`` at the ``13:30`` Asia/Taipei cash close:
 
 - TPEx ``tpex_3insti_daily_trading`` publishes session ``T`` around ``20:00:17`` Taipei
   on day ``T`` (scheduled with a 15-minute margin at ``20:15`` Taipei on ``T``).
@@ -18,6 +19,13 @@ Asia/Taipei cash close:
   ``PutCallRatio``, and ``DailyMarketReportFut`` publish session ``T`` in the
   next-morning OpenAPI rebuild around ``06:36:02``–``06:36:26`` Taipei on ``T+1``
   (scheduled with a 14-minute margin at ``06:50`` Taipei on ``T+1``).
+- TAIFEX stock-futures contracts (``tw-taifex-futures-options-chip`` /
+  ``taifex_ssf_contracts``) join ``DailyMarketReportFut`` (``06:36:02`` Taipei ``T+1``),
+  ``SingleStockFuturesMargining`` (``06:37:00`` Taipei ``T+1``),
+  ``SingleStockFuturesETFMargining`` (``06:37:02`` Taipei ``T+1``), and
+  ``FinalSettlementPriceSSF`` (``06:39:14`` Taipei ``T+1``); scheduled with an
+  11-minute margin after final settlement (13 minutes after margin tables) at ``06:50``
+  Taipei on ``T+1``.
 
 Asking these providers for session ``T`` during the afternoon (``14:40``, ``15:40``,
 ``18:50`` Taipei) guaranteed a session mismatch after stopping the steady collector
@@ -38,9 +46,16 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 DEFAULT_MAX_PUBLICATION_DELAY = timedelta(hours=2, minutes=30)
 
 OFFICIAL_CHIP_REFRESH_PROFILES: dict[str, dict[str, Any]] = {
-    connector_id: dict(profile)
-    for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
-    if profile.get("base") != "tw-finmind-fundamentals"
+    **{
+        connector_id: dict(profile)
+        for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
+        if profile.get("base") != "tw-finmind-fundamentals"
+    },
+    "tw-taifex-futures-options-chip": {
+        "base": "tw-taifex-futures-options-chip",
+        "dataset": "taifex_ssf_contracts",
+        "schema_hash": "tw_taifex_ssf_contracts.v1",
+    },
 }
 
 
@@ -204,11 +219,31 @@ CHIP_PUBLICATION_SCHEDULES: dict[str, ChipPublicationSchedule] = {
             "22:12 Taipei the endpoint still served Date=20261117)."
         ),
     ),
+    "tw-taifex-futures-options-chip": ChipPublicationSchedule(
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_ssf_contracts",
+        provider="TAIFEX",
+        endpoint="https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining",
+        earliest_observed_publication_time_taipei=time(6, 39, 14),
+        safety_margin_minutes=11,
+        publication_time_taipei=time(6, 50),
+        publication_day_offset=1,
+        max_publication_delay=DEFAULT_MAX_PUBLICATION_DELAY,
+        body_date_field="Date",
+        notes=(
+            "TAIFEX OpenAPI rebuilds the stock-futures contract tables in the next-morning batch on "
+            "calendar day T+1: DailyMarketReportFut at 06:36:02 Taipei (22:36:02 GMT), "
+            "SingleStockFuturesMargining at 06:37:00 Taipei (22:37:00 GMT, Date=20261117, 301 rows), "
+            "SingleStockFuturesETFMargining at 06:37:02 Taipei (22:37:02 GMT, Date=20261117, 25 rows), "
+            "and FinalSettlementPriceSSF at 06:39:14 Taipei (22:39:14 GMT, 330 rows). "
+            "Scheduled at 06:50 Taipei on T+1 (13m margin after margin tables, 11m after final settlement)."
+        ),
+    ),
 }
 
 if set(CHIP_PUBLICATION_SCHEDULES) != set(OFFICIAL_CHIP_REFRESH_PROFILES):
     raise RuntimeError(
-        "CHIP_PUBLICATION_SCHEDULES must cover every non-fundamental profile in TW_CHIP_REFRESH_PROFILES: "
+        "CHIP_PUBLICATION_SCHEDULES must cover every official/TAIFEX chip and contract refresh profile: "
         f"scheduled={sorted(CHIP_PUBLICATION_SCHEDULES)} != expected={sorted(OFFICIAL_CHIP_REFRESH_PROFILES)}"
     )
 
@@ -225,6 +260,7 @@ MEASURED_CHIP_PROVIDER_PROBES: tuple[dict[str, Any], ...] = (
             "tw-taifex-institutional-positions": {"http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:26 GMT", "row_count": 66, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
             "tw-taifex-put-call": {"http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:08 GMT", "row_count": 21, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
             "tw-taifex-tx-daily": {"http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:02 GMT", "row_count": 2305, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
+            "tw-taifex-futures-options-chip": {"http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:37:00 GMT", "etf_margin_last_modified": "Fri, 13 Nov 2026 22:37:02 GMT", "final_settlement_last_modified": "Fri, 13 Nov 2026 22:39:14 GMT", "row_count": 301, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
         },
     },
     {
@@ -239,6 +275,7 @@ MEASURED_CHIP_PROVIDER_PROBES: tuple[dict[str, Any], ...] = (
             "tw-taifex-institutional-positions": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
             "tw-taifex-put-call": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
             "tw-taifex-tx-daily": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
+            "tw-taifex-futures-options-chip": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "etf_margin_last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "final_settlement_last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "row_count": 301, "etf_margin_row_count": 25, "final_settlement_row_count": 330, "body_date_raw": "20261117", "final_settlement_day_raw": "20261021", "resolved_session": "2026-11-17"},
         },
     },
     {
@@ -253,6 +290,7 @@ MEASURED_CHIP_PROVIDER_PROBES: tuple[dict[str, Any], ...] = (
             "tw-taifex-institutional-positions": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
             "tw-taifex-put-call": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
             "tw-taifex-tx-daily": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
+            "tw-taifex-futures-options-chip": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "etf_margin_last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "final_settlement_last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "row_count": 301, "etf_margin_row_count": 25, "final_settlement_row_count": 330, "body_date_raw": "20261117", "final_settlement_day_raw": "20261021", "resolved_session": "2026-11-17"},
         },
     },
     {
@@ -267,6 +305,7 @@ MEASURED_CHIP_PROVIDER_PROBES: tuple[dict[str, Any], ...] = (
             "tw-taifex-institutional-positions": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 13:59:47 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "be8c544b86debbba683ce7195079d6598f614c17a78e67bcba3dc8a316db583a"},
             "tw-taifex-put-call": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 13:59:47 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "f053b1661d507dd6b235e9d918b5f5c0020816f617ca3a8bbbc169a38513c8eb"},
             "tw-taifex-tx-daily": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 13:59:47 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "43343da3fc5dd9f3c3363b81fb4cf16060b0f6e2793de1de0fc4c7bc4c587de3"},
+            "tw-taifex-futures-options-chip": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "etf_margin_last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "final_settlement_last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "row_count": 301, "etf_margin_row_count": 25, "final_settlement_row_count": 330, "body_date_raw": "20261117", "final_settlement_day_raw": "20261021", "resolved_session": "2026-11-17", "sha256": "961ddabbd98ba1c70e0f83fb59bad76d0f4c848444c593eb91a4614b9075762d"},
         },
     },
     {
@@ -281,6 +320,7 @@ MEASURED_CHIP_PROVIDER_PROBES: tuple[dict[str, Any], ...] = (
             "tw-taifex-institutional-positions": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 14:12:54 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "be8c544b86debbba683ce7195079d6598f614c17a78e67bcba3dc8a316db583a"},
             "tw-taifex-put-call": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 14:12:54 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "f053b1661d507dd6b235e9d918b5f5c0020816f617ca3a8bbbc169a38513c8eb"},
             "tw-taifex-tx-daily": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 14:12:54 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "43343da3fc5dd9f3c3363b81fb4cf16060b0f6e2793de1de0fc4c7bc4c587de3"},
+            "tw-taifex-futures-options-chip": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 16:39:26 GMT", "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "etf_margin_last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "final_settlement_last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "row_count": 301, "etf_margin_row_count": 25, "final_settlement_row_count": 330, "body_date_raw": "20261117", "final_settlement_day_raw": "20261021", "resolved_session": "2026-11-17", "sha256": "961ddabbd98ba1c70e0f83fb59bad76d0f4c848444c593eb91a4614b9075762d"},
         },
     },
 )

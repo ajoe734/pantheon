@@ -1,0 +1,193 @@
+{
+  "task_id": "TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119",
+  "title": "TAIFEX stock-futures contract refresh asks only for a session TAIFEX has published and decides before stopping steady intake",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_state": "merged",
+  "problem_register": {
+    "class": "RC1 / RC2",
+    "work_package": "WP2.3",
+    "domain": "market-data",
+    "owner_conversation": "cb4f6795",
+    "follows_up": "TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 (PR #7592, merged 3c9e949a3)"
+  },
+  "runtime_budget": {
+    "statement": "none",
+    "details": "No workflow or dev host timer changes, no connector_definitions.py or finmind_taiwan.py edits, no snapshots/latest preflight changes, the six existing chip publication schedules keep their exact values, and no new recurring job, emitter, or persistent writer is introduced."
+  },
+  "taifex_ssf_contract_publication_measurement": {
+    "earliest_observed_taipei_times": {
+      "DailyMarketReportFut": "06:36:02 Taipei on T+1 (22:36:02 GMT on T)",
+      "SingleStockFuturesMargining": "06:37:00 Taipei on T+1 (22:37:00 GMT on T)",
+      "SingleStockFuturesETFMargining": "06:37:02 Taipei on T+1 (22:37:02 GMT on T)",
+      "FinalSettlementPriceSSF": "06:39:14 Taipei on T+1 (22:39:14 GMT on T)"
+    },
+    "earliest_taipei_time_session_t_is_served": "06:37:02 Taipei on T+1 for the session-dated margin and market report tables (06:39:14 Taipei on T+1 when FinalSettlementPriceSSF also completes its overnight rebuild)",
+    "safety_margin_used": "11 minutes after 06:39:14 Taipei FinalSettlementPriceSSF rebuild (13 minutes after 06:37:02 Taipei SingleStockFuturesETFMargining rebuild)",
+    "scheduled_publication_time_taipei": "06:50 Taipei on calendar day T+1 (publication_day_offset=1, max_publication_delay=9000s / 2h30m)",
+    "read_only_probes_across_taipei_hours": [
+      {
+        "probe_id": "2026-11-18-morning-1156-taipei",
+        "probed_at_utc": "2026-11-18T03:56:02Z",
+        "probed_at_taipei": "2026-11-18T11:56:02+08:00",
+        "latest_closed_session": "2026-11-17",
+        "source": "docs/deployment/evidence/TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118/evidence.json",
+        "SingleStockFuturesMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "body_date": "20261117", "row_count": 301, "bytes": 85586, "form": "json"},
+        "SingleStockFuturesETFMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "last_modified_taipei": "2026-11-18T06:37:02+08:00", "body_date": "20261117", "row_count": 25, "bytes": 3221, "form": "csv"},
+        "FinalSettlementPriceSSF": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "last_modified_taipei": "2026-11-18T06:39:14+08:00", "body_date": "20261021 (TheFinalSettlementDay)", "row_count": 330, "bytes": 14389, "form": "csv"},
+        "DailyMarketReportFut": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "body_date": "20261117", "row_count": 2342, "bytes": 886392, "form": "json"}
+      },
+      {
+        "probe_id": "2026-11-18-afternoon-1445-1546-1718-taipei-refresh-runs",
+        "probed_at_utc": "2026-11-18T06:45:06Z / 2026-11-18T07:46:03Z / 2026-11-18T09:18:30Z",
+        "probed_at_taipei": "2026-11-18T14:45:06+08:00 / 2026-11-18T15:46:03+08:00 / 2026-11-18T17:18:30+08:00",
+        "latest_closed_session": "2026-11-18",
+        "source": "GitHub Actions runs 44253021385 (06:45:06Z), 44260667906 (07:46:03Z), and 44273374890 (09:13:15Z preflight -> 09:14:58Z lease wait -> 09:18:30Z readback/restore)",
+        "SingleStockFuturesMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "body_date": "20261117", "row_count": 301},
+        "SingleStockFuturesETFMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "body_date": "20261117", "row_count": 25},
+        "FinalSettlementPriceSSF": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "body_date": "20261021 (TheFinalSettlementDay)", "row_count": 330},
+        "observed_pre_fix_failure": "controller source record session '2026-11-17' != requested session '2026-11-18' after stopping steady intake for ~5 minutes per run"
+      },
+      {
+        "probe_id": "2026-11-19-early-morning-0033-taipei-coordinator",
+        "probed_at_utc": "2026-11-18T16:33:55Z",
+        "probed_at_taipei": "2026-11-19T00:33:55+08:00",
+        "latest_closed_session": "2026-11-18",
+        "source": "Coordinator read-only GET probe in task brief",
+        "SingleStockFuturesMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "body_date": "20261117", "row_count": 301},
+        "SingleStockFuturesETFMargining": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "last_modified_taipei": "2026-11-18T06:37:02+08:00", "body_date": "20261117", "row_count": 25},
+        "FinalSettlementPriceSSF": {"http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "last_modified_taipei": "2026-11-18T06:39:14+08:00", "body_date": "20261021 (TheFinalSettlementDay)", "row_count": 330}
+      },
+      {
+        "probe_id": "2026-11-19-early-morning-0039-taipei-worker-verification",
+        "probed_at_utc": "2026-11-18T16:39:26Z",
+        "probed_at_taipei": "2026-11-19T00:39:26+08:00",
+        "latest_closed_session": "2026-11-18",
+        "source": "Worker live read-only GET probe with SHA-256 body verification",
+        "SingleStockFuturesMargining": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 16:39:26 GMT", "last_modified": "Tue, 17 Nov 2026 22:37:00 GMT", "last_modified_taipei": "2026-11-18T06:37:00+08:00", "body_date": "20261117", "row_count": 301, "form": "json", "sha256": "961ddabbd98ba1c70e0f83fb59bad76d0f4c848444c593eb91a4614b9075762d"},
+        "SingleStockFuturesETFMargining": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 16:39:26 GMT", "last_modified": "Tue, 17 Nov 2026 22:37:02 GMT", "last_modified_taipei": "2026-11-18T06:37:02+08:00", "body_date": "20261117", "row_count": 25, "form": "csv", "sha256": "41a83accb7778dd6a427cf158375daf0933d071524c7eaab69bdceea9a377f01"},
+        "FinalSettlementPriceSSF": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 16:39:26 GMT", "last_modified": "Tue, 17 Nov 2026 22:39:14 GMT", "last_modified_taipei": "2026-11-18T06:39:14+08:00", "body_date": "20261021", "row_count": 330, "form": "csv", "sha256": "f3962c5f9908f0f45d5b3347a144f8ad1ca6cccd3a3df415234bc80586f2283a"},
+        "DailyMarketReportFut": {"http_status": 200, "date_header": "Wed, 18 Nov 2026 16:39:26 GMT", "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "body_date": "20261117", "row_count": 2342, "form": "json", "sha256": "87536d1588cc9d234dad9dedb0960e7ece5a8ea5c22771f937a69a2256af0c00"}
+      }
+    ]
+  },
+  "dev_refresh_connector_and_dataset_inventory": [
+    {
+      "workflow_step": "Execute bounded TAIFEX contract refresh (taifex_refresh)",
+      "connector_id": "tw-taifex-futures-options-chip",
+      "dataset": "taifex_ssf_contracts",
+      "provider": "TAIFEX",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES['tw-taifex-futures-options-chip'] (06:50 Taipei on T+1, publication_day_offset=1, max_publication_delay=2h30m); returns noop before stopping steady intake when T-1 is already stored during afternoon runs",
+      "measured_publication_time_justification": "DailyMarketReportFut 06:36:02 Taipei T+1, SingleStockFuturesMargining 06:37:00 Taipei T+1, SingleStockFuturesETFMargining 06:37:02 Taipei T+1, FinalSettlementPriceSSF 06:39:14 Taipei T+1 (11m/13m safety margin -> 06:50 Taipei T+1)"
+    },
+    {
+      "workflow_step": "Execute bounded FinMind broker branch refresh (finmind_refresh)",
+      "connector_id": "tw-finmind-broker-daily-report",
+      "dataset": "tw_broker_top",
+      "provider": "FinMind",
+      "session_rule_after_change": "latest_published_broker_session (BROKER_PUBLICATION_TIME_TAIPEI = 18:00 Taipei on T) in preflight and dataset preparation, plus union symbol coverage check; workflow skips 07:00/08:00 UTC crons and skips when FINMIND_API_TOKEN is unset",
+      "measured_publication_time_justification": "FinMind TaiwanStockTradingDailyReport publishes daily broker branch tables after 18:00 Taipei (10:00 UTC) on session day T"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan market refresh (refresh)",
+      "connector_id": "tw-twse-tpex-official-market",
+      "dataset": "tw_price_daily",
+      "provider": "TWSE / TPEx (and steady collector-twse-market / collector-tpex-market)",
+      "session_rule_after_change": "13:30 Asia/Taipei cash close rule in check_taiwan_refresh_preflight and evaluate_taiwan_market_freshness on /api/source-ingest/snapshots/latest",
+      "measured_publication_time_justification": "Steady collector close capture covers active symbols after the 13:30 Taipei cash close. NAMED FOR COORDINATOR: when snapshots/latest is not yet covered by collector and bounded refresh falls back to direct OpenAPI fetch, TPEx tpex_mainboard_daily_close_quotes publishes in the afternoon/evening (Last-Modified: Wed, 18 Nov 2026 15:30:06 GMT = 23:30:06 Taipei for Date=1151118) and TWSE OpenAPI STOCK_DAY_ALL can lag until the overnight rebuild (Last-Modified: Tue, 17 Nov 2026 21:20:45 GMT = 05:20:45 Taipei T+1, still serving Date=1151117 at 00:47 Taipei on 2026-11-19)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-official-twse-margin-balances",
+      "dataset": "tw_margin_short_balance",
+      "provider": "TWSE",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (05:40 Taipei on T+1, publication_day_offset=1, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TWSE OpenAPI MI_MARGN rebuilds at 05:23:16 Taipei on T+1 (Last-Modified: Tue, 17 Nov 2026 21:23:16 GMT; 17m margin -> 05:40 Taipei T+1)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-official-tpex-margin-balances",
+      "dataset": "tw_margin_short_balance",
+      "provider": "TPEx",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (22:15 Taipei on T, publication_day_offset=0, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TPEx tpex_mainboard_margin_balance switches JSON body Date to T at 22:00:07 Taipei on T (Last-Modified: Wed, 18 Nov 2026 14:00:07 GMT; 15m margin -> 22:15 Taipei T)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-official-tpex-institutional-flow",
+      "dataset": "tw_institutional_flow",
+      "provider": "TPEx",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (20:15 Taipei on T, publication_day_offset=0, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TPEx tpex_3insti_daily_trading publishes Date=T at 20:00:17 Taipei on T (Last-Modified: Wed, 18 Nov 2026 12:00:17 GMT; 15m margin -> 20:15 Taipei T)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-taifex-institutional-positions",
+      "dataset": "taifex_futures_chip",
+      "provider": "TAIFEX",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (06:50 Taipei on T+1, publication_day_offset=1, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TAIFEX MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate rebuilds at 06:36:26 Taipei on T+1 (Last-Modified: Tue, 17 Nov 2026 22:36:26 GMT; 14m margin -> 06:50 Taipei T+1)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-taifex-put-call",
+      "dataset": "taifex_options_chip",
+      "provider": "TAIFEX",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (06:50 Taipei on T+1, publication_day_offset=1, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TAIFEX PutCallRatio rebuilds at 06:36:08 Taipei on T+1 (Last-Modified: Tue, 17 Nov 2026 22:36:08 GMT; 14m margin -> 06:50 Taipei T+1)"
+    },
+    {
+      "workflow_step": "Execute bounded Taiwan chip refresh (chip_refresh)",
+      "connector_id": "tw-taifex-tx-daily",
+      "dataset": "taifex_tx_daily",
+      "provider": "TAIFEX",
+      "session_rule_after_change": "latest_published_chip_session & evaluate_chip_provider_session via CHIP_PUBLICATION_SCHEDULES (06:50 Taipei on T+1, publication_day_offset=1, max_publication_delay=2h30m)",
+      "measured_publication_time_justification": "TAIFEX DailyMarketReportFut rebuilds at 06:36:02 Taipei on T+1 (Last-Modified: Tue, 17 Nov 2026 22:36:02 GMT; 14m margin -> 06:50 Taipei T+1)"
+    },
+    {
+      "workflow_step": "Execute bounded FinMind fundamentals refresh (finmind_fundamentals_refresh)",
+      "connector_id": "tw-finmind-monthly-revenue / tw-finmind-quarterly-statements / tw-finmind-valuation",
+      "dataset": "tw_monthly_revenue / tw_financial_statement / tw_valuation_bwibbu",
+      "provider": "FinMind",
+      "session_rule_after_change": "NAMED FOR COORDINATOR (not changed in this task): prepare_bounded_source_refresh_dataset (scripts/deploy_nonprod_vm.sh:3113-3115) uses latest_published_broker_session (18:00 Taipei T), but check_taiwan_refresh_preflight (lines 2473-2491) and verify_bounded_source_refresh_readback (lines 1989-1996) still fall through to the 13:30 Taipei rule",
+      "measured_publication_time_justification": "FinMind TaiwanStockPER (tw_valuation_bwibbu) publishes after 18:00 Taipei on T; TaiwanStockMonthRevenue (tw_monthly_revenue) and TaiwanStockFinancialStatements/TaiwanStockBalanceSheet (tw_financial_statement) are periodic datasets whose normalized records stamp metadata.date with the period-end date (month-end or quarter-end) rather than the trading session date T, so 13:30 session-date equality in preflight/readback cannot match when FINMIND_API_TOKEN is configured"
+    }
+  ],
+  "connectors_named_for_coordinator_on_1330_rule": [
+    {
+      "connector_ids": ["tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation"],
+      "datasets": ["tw_monthly_revenue", "tw_financial_statement", "tw_valuation_bwibbu"],
+      "where": "scripts/deploy_nonprod_vm.sh:1989-1996 (verify_bounded_source_refresh_readback) and scripts/deploy_nonprod_vm.sh:2473-2491 (check_taiwan_refresh_preflight)",
+      "finding": "While prepare_bounded_source_refresh_dataset (line 3115) uses latest_published_broker_session (18:00 Taipei) for is_finmind, preflight and readback only branch on connector_id == 'tw-finmind-broker-daily-report' or connector_id in CHIP_PUBLICATION_SCHEDULES, leaving the three FinMind fundamentals profiles on the 13:30 Taipei rule. In addition, dev host timer workflow_dispatch runs at 14:40 and 15:40 Taipei bypass the workflow schedule filter (github.event.schedule != '0 7 * * 1-5'), and tw_monthly_revenue / tw_financial_statement records carry period-end dates (month-end / quarter-end) in metadata.date rather than the trading session date."
+    },
+    {
+      "connector_ids": ["tw-twse-tpex-official-market"],
+      "datasets": ["tw_price_daily"],
+      "where": "scripts/deploy_nonprod_vm.sh:2473-2479, 2636-2675 (preflight) and 2143-2228 (readback)",
+      "finding": "Uses the 13:30 Taipei close rule on /api/source-ingest/snapshots/latest. When the steady collector close pull has not yet covered a symbol and the bounded refresh falls back to direct OpenAPI fetch (TaiwanOfficialExchangeAdapter), TWSE OpenAPI STOCK_DAY_ALL (observed Last-Modified: Tue, 17 Nov 2026 21:20:45 GMT = 05:20:45 Taipei T+1) and TPEx OpenAPI tpex_mainboard_daily_close_quotes (observed Last-Modified: Wed, 18 Nov 2026 15:30:06 GMT = 23:30:06 Taipei T) publish later than 13:30 Taipei."
+    }
+  ],
+  "residual_findings": [
+    {
+      "finding_id": "RF-TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119-01",
+      "problem_register_class": "RC1 / RC2 (WP2.3)",
+      "file": "scripts/deploy_nonprod_vm.sh:1989-1996,2473-2491",
+      "summary": "The three FinMind fundamentals profiles (tw-finmind-monthly-revenue, tw-finmind-quarterly-statements, tw-finmind-valuation) use latest_published_broker_session (18:00 Taipei) in prepare_bounded_source_refresh_dataset but still fall through to the 13:30 Taipei session rule in check_taiwan_refresh_preflight and verify_bounded_source_refresh_readback (and monthly/quarterly records stamp metadata.date with month-end/quarter-end dates rather than the session date)."
+    },
+    {
+      "finding_id": "RF-TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119-02",
+      "problem_register_class": "RC1 / RC2 (WP2.3)",
+      "file": "scripts/test_dev_tw_market_refresh.py:3363-3419",
+      "summary": "Legacy tests test_taifex_terminal_verifier_binds_requested_session_and_scope and test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session in scripts/test_dev_tw_market_refresh.py (outside the 5 scoped files for this task) still assert the pre-PR-#7592 13:30 Taipei rule for tw-taifex-futures-options-chip and TW_CHIP_REFRESH_PROFILES."
+    }
+  ],
+  "validation": {
+    "commands": [
+      {"command": "bash -n scripts/deploy_nonprod_vm.sh", "exit_code": 0, "result": "passed"},
+      {"command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py", "exit_code": 0, "result": "59 passed"},
+      {"command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py", "exit_code": 0, "result": "195 passed, 2 skipped (197 collected)"},
+      {"command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-tw-taifex-ssf.json", "exit_code": 0, "result": "passed=true, failures=[]"},
+      {"command": "python3 scripts/git/diff_budget.py --base origin/dev", "exit_code": 0, "result": "within diff budget"}
+    ]
+  }
+}
