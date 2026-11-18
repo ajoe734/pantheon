@@ -71,3 +71,5 @@ Task: PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118. Workflow `.github/workflow
   earlier clocks judge the previous UTC day. Reports state `cycle_day` and `cycle_due_at_utc`, so a late-started run
   still judges the stated day. The workflow cron is `30 11 * * 1-5` (one run per weekday, no hosted writer).
 - Artifact `persona-day.json`: a few KB (one line per persona report), 30-day retention.
+- **Persona set (PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118).** The probe judges exactly the personas the daily cycle
+  runs for, via `services/persona/cycle_eligibility.py` (shared with the controller; lifecycle paper_running/paper_owner, status active).

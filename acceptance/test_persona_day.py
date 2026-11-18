@@ -156,3 +156,43 @@ def test_auth_and_read_failures_carry_http_status(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert json.loads(out)["reason"] == "read_failed:503" and "TOKEN-VALUE" not in out
     assert [m for m, _ in calls] == ["POST", "GET"]
+
+
+def _hosted_1118():
+    def p(pid, state, status="active", kind="trading"):
+        return {"persona_id": pid, "state": state, "status": status, "archetype": kind}
+    return [p("t-2448c7", "paper_owner"), p("t-ee7112", "paper_owner"), p("t-650775", "paper_owner"),
+            p("agora-a", "consultable", kind="agora_servant"), p("agora-b", "consultable", kind="agora_servant"),
+            p("s-draft", "draft"), p("s-research", "research_only"), p("s-draft2", "draft"),
+            p("persona-dev-lifecycle", "development"), p("risk-officer", "draft"), p("red-team", "draft"),
+            p("s-retired-owner", "paper_owner", status="retired")]
+
+
+def test_probe_set_equals_controller_set_for_same_list():
+    from services.persona import persona_cycle_controller as ctl
+    items = _hosted_1118()
+    probe_ids = {x["persona_id"] for x in pd.daily_cycle_personas(items)}
+    controller_ids = {x["persona_id"] for x in items
+                      if x["state"] in ctl.DAILY_CYCLE_STATES and x["status"] == "active"}
+    assert probe_ids == controller_ids == {"t-2448c7", "t-ee7112", "t-650775"}
+    assert ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
+
+
+def test_hosted_replay_evaluates_exactly_the_three_trading_personas():
+    seen = []
+
+    def fetch(path):
+        seen.append(path)
+        if path.startswith("/bff/personas?"):
+            return {"items": _hosted_1118()}
+        return {"data": {"personaCycle": {"dayStatus": {"persona_id": path.rsplit("/", 1)[1], "passed": True,
+                                                         "preconditions": [{}]}}}}
+
+    report = pd.run(fetch, NOW)
+    assert [r["persona_id"] for r in report["personas"]] == ["t-2448c7", "t-ee7112", "t-650775"]
+    assert report["verdict"] == "passed"
+
+
+def test_eligible_persona_without_cron_is_failed_not_dropped():
+    r = pd.evaluate_persona_day("t-1", lifecycle_state="paper_running", cron_jobs=0, packets=[], now=NOW)
+    assert status(r)["daily_cycle_cron_job"] == "failed" and status(r)["lifecycle_paper_owner"] == "passed"

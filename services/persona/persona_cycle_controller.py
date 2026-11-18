@@ -38,6 +38,7 @@ from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
 from services.knowledge import case_file as case_files
 from services.memory import mental_models
+from services.persona.cycle_eligibility import DAILY_CYCLE_STATES, ELIGIBLE_STATES, is_daily_cycle_persona  # noqa: F401
 from services.persona.consult_triggers import macro_regime_shift_requirement
 from services.persona.cron_ooda_closure import (
     append_ooda_packet, compact_ooda_packet_store, load_packet_index, resolve_ooda_packet_store_path, _utc_now,
@@ -47,7 +48,6 @@ from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
-ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
 
 
 # Proposal kind -> case-file decision type. harness_patch and no_action have no
@@ -670,7 +670,7 @@ class PersonaCycleController:
             enrolled_personas = [
                 p for p in self.owners.personas()
                 if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
-                and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"}
+                and p.get("lifecycle_state") in DAILY_CYCLE_STATES
             ]
             enrolled = sorted(p["persona_id"] for p in enrolled_personas)
             if isinstance(observe, dict):

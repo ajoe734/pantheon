@@ -17,6 +17,22 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
+
+def _load_eligibility():
+    """Load the controller's own eligibility rule by path (the probe runs under ``python3 -I``)."""
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "services" / "persona" / "cycle_eligibility.py"
+    spec = importlib.util.spec_from_file_location("_pantheon_cycle_eligibility", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_eligibility = _load_eligibility()
+daily_cycle_personas = _eligibility.daily_cycle_personas
+DAILY_CYCLE_STATES = _eligibility.DAILY_CYCLE_STATES
+
 # acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117 / PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118
 
 PRECONDITIONS = (
@@ -100,7 +116,7 @@ def evaluate_persona_day(persona_id: str, *, lifecycle_state: Optional[str], cro
 
     checks = []
     checks.append(_result("lifecycle_paper_owner",
-                          None if lifecycle_state is None else lifecycle_state == "paper_owner",
+                          None if lifecycle_state is None else lifecycle_state in DAILY_CYCLE_STATES,
                           pid_ref + "#lifecycle_state", f"lifecycle_state={lifecycle_state}"))
     if cron_jobs is None:
         inferred = any((p.get("producer") or {}).get("cron_run_at_ms") for p in mine)
@@ -192,14 +208,12 @@ def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     listing = fetch("/bff/personas?page_size=200")
     items = listing.get("items") or listing.get("data") or []
-    trading = [p for p in items if str(p.get("archetype") or p.get("kind") or "trading").lower() != "consultable"
-               and str(p.get("status") or "active").lower() == "active"
-               and str(p.get("state") or p.get("lifecycle_state") or "") not in ("consultable", "retired", "archived")]
+    trading = daily_cycle_personas(items)  # the controller's own rule, shared by file
     results = []
     for p in trading:
         pid = p.get("persona_id") or p.get("id")
         state = p.get("state") or p.get("lifecycle_state")
-        if state != "paper_owner":  # first precondition fails; later ones need no read
+        if state not in DAILY_CYCLE_STATES:  # first precondition fails; later ones need no read
             base = evaluate_persona_day(pid, lifecycle_state=state, cron_jobs=None, packets=[], now=now)
             results.append(base)
             continue
