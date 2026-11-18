@@ -360,6 +360,13 @@ class SourceIngestionRuntime:
             storage_root=self.MARKET_DATA_STORAGE_ROOT,
             connector_market=self._connector_market_for_snapshot,
         )
+        # The first due universe sweep runs here, before the app can answer /readyz, not inside the first
+        # snapshot lookup (SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118).
+        self.snapshot_lookup_ready = False
+        try:
+            self.snapshot_universe.warm_start()
+        finally:
+            self.snapshot_lookup_ready = True
         self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()

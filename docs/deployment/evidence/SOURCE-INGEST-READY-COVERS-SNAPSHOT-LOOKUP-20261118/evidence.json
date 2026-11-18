@@ -1,0 +1,24 @@
+{
+  "task_id": "SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118",
+  "hosted_behavior_claimed": false,
+  "shape": {"journal_keys": 10700, "closes_per_key": 60, "journal_mb": 168.2, "universe_members": 300, "store_mode": "journal", "symbols": ["1001.TWSE","1002.TWSE","2330.TWSE","1003.TWSE"], "note": "synthetic copy built from the store's own line serializer on a shared GCP VM; not the hosted file"},
+  "measured_cause": {
+    "coordinator_hypothesis": "cold journal reload at the first lookup (requirement_state.py LatestMarketSnapshotStore)",
+    "hypothesis_result": "not the cause. In journal/dual/sqlite the store loads in __init__ (requirement_state.py:1319-1325) before uvicorn binds; with no universe state the first lookup after /readyz was 0.044-0.109 s in all three modes, with the controller readback/registry/frontier/run-scheduled calls running in parallel, and with a CPU-bound writer appending 2140 symbols per batch in the same process (max 0.115 s).",
+    "cause": "SnapshotUniverse._last_sweep starts at 0, so the first snapshot_for_request after a start finds the hourly sweep due and runs it in its finally block (snapshot_universe.py maybe_sweep/sweep) while holding the universe lock. With an active-universe state present and most journal keys non-members, sweep -> store.withdraw_symbols (requirement_state.py:1963) -> _commit_locked (1455) -> _maybe_compact_locked (1471) -> _compact_journal_in_place (1168) re-parses the whole journal.",
+    "evidence": "cProfile of the first snapshot_for_request: 99.9 percent cumulative in maybe_sweep -> sweep -> withdraw_symbols -> _compact_journal_in_place (profile inflates wall time ~3.5x: 74.6 s profiled). py-spy was denied permission on the VM, so the stack is the profile call tree, not a live sample.",
+    "scheduler_tick_question": "Neither the store load nor the busy process: the scheduler tick (run via the controller HTTP calls) did not slow lookups; the wait is the in-request sweep. A real hosted tick with live connector work was not reproduced."
+  },
+  "before": {"start_to_ready_s": [27.6, 28.5, 28.3], "first_lookup_s": [19.6, 21.0, 20.3], "next_20_lookups_s": "0.002-0.003 each", "rss_kb_after": 324124},
+  "after": {"start_to_ready_s": 45.0, "first_lookup_s": 0.053, "next_20_lookups_s": "0.002-0.003 each", "rss_kb_after": 250540},
+  "startup_growth": "about +17 s (the sweep now runs before the port binds); 45 s is inside the compose start_period 180s (docker-compose.yml source-ingest healthcheck) and the 180 s readiness wait (36 x 5 s) of the refresh script. Healthcheck definition unchanged. A restart that has nothing to withdraw pays almost nothing.",
+  "fix": "SnapshotUniverse.warm_start() runs the first due sweep once during SourceIngestionRuntime construction (before /readyz can answer) and sets _last_sweep; runtime.snapshot_lookup_ready flag and a fixed-cost snapshot_lookup dependency in /readyz (503 while a warm start is running). Chose 'finish before ready' because the lookup already reads only the requested key; the cost was the sweep, not the read. The hourly in-request sweep is unchanged (cheap once the first one has withdrawn non-members).",
+  "not_changed": ["scripts/deploy_nonprod_vm.sh", "preflight timeout (script line ~2308 timeout=3)", "container healthcheck", "no persistent writer added"],
+  "script_note_for_coordinator": "The script is not the cause. preflight symbols come from SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS or the baseline (script lines ~2290-2300) and the lookup at ~2308 is a plain read.",
+  "tests": {
+    "new": "services/source_ingestion/tests/test_ready_covers_snapshot_lookup.py: 5 passed (journal, dual, sqlite counters: zero reload/compact/sweep/sync after readiness, readyz reads no journal; 503 while warm; first request runs no sweep). Fails without the fix (5 failed).",
+    "regression_command": "pytest test_ready_covers_snapshot_lookup.py test_snapshot_current_record_store.py test_snapshot_universe.py services/source_ingestion/test_compose_activation.py test_active_universe.py",
+    "regression_result": "66 passed, 1 failed: test_snapshot_current_record_store.py::test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers (wall-clock bound, 379 ms vs 250 ms; also fails on the unmodified baseline with 100.7 ms vs 100 ms). That file is owned by SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and was not edited."
+  },
+  "json_parity": "the lookup path is unchanged; the same four symbols return 200 with the same bodies in journal, dual and sqlite modes"
+}

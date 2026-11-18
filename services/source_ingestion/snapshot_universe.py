@@ -114,6 +114,7 @@ class SnapshotUniverse:
         self._last_seed: dict[str, Any] | None = None
         self._last_fallback_reason: str | None = None
         self._reader: Any = None
+        self.warm_start_count = 0
         self._load()
         store.admission = self.admits
         store.stats_extra = self.stats
@@ -413,6 +414,23 @@ class SnapshotUniverse:
         return self.store.get(symbol, DAILY_SNAPSHOT_DATASET)
 
     # ----- sweep ---------------------------------------------------------------------------
+    def warm_start(self) -> dict[str, Any] | None:
+        """Run the first due sweep once, before readiness is reported, instead of inside the first lookup.
+
+        ``_last_sweep`` starts at 0, so the first request after a start used to find the sweep due and ran it
+        (withdrawals, journal compaction, static seeds) in its ``finally`` while holding the universe lock.
+        Returns the sweep result, or ``None`` when the state is not ready or the sweep could not run.
+        """
+        self.warm_start_count += 1
+        with self._lock:
+            self._last_sweep = time.monotonic()
+            if not self.ready:
+                return None
+            try:
+                return self.sweep()
+            except (MarketSnapshotStateError, OSError):
+                return None
+
     def maybe_sweep(self) -> None:
         if time.monotonic() - self._last_sweep >= _SWEEP_INTERVAL_SECONDS:
             try:
