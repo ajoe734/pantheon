@@ -1,0 +1,21 @@
+{
+  "task": "COLLECTOR-WHOLE-MARKET-DAY-TEST-LOOP-EXIT-20261118",
+  "reproduction_before": {
+    "shape": "13870 rows, cap 5000",
+    "ticks": [
+      {"tick": 1, "records": 5000, "priority_done": false, "priority_key": "2026-11-17T16:15:29Z#run-20261118T001529Z", "seconds": 2.689},
+      {"tick": 2, "records": 5000, "priority_done": false, "priority_key": "2026-11-17T16:15:29Z#run-20261118T001529Z", "seconds": 2.595},
+      {"tick": 3, "records": 3870, "priority_done": true, "priority_key": "2026-11-17T16:15:29Z#run-20261118T001529Z", "seconds": 2.121},
+      {"tick": "4..", "records": 0, "priority_done": false, "priority_key": null, "seconds": "0.07-0.09 each"}
+    ],
+    "tick_count_before": 2000,
+    "test_seconds_before": 178.22
+  },
+  "after": {
+    "tick_count": 4,
+    "test_seconds_after": 17.97,
+    "file_result": "15 passed in 41.47s",
+    "after_done_records": 0
+  },
+  "production_code_changed": false
+}
