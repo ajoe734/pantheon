@@ -12270,6 +12270,150 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     "REG-002: z\n\nReviewer: Claude2")
                 ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
 
+    def _owner_trailer_repo(
+        self,
+        tmpdir: str,
+        messages: list[str],
+        commit_date: str = "2026-11-18T05:00:00Z",
+    ) -> tuple[Path, str, str]:
+        repo = Path(tmpdir) / "repo"
+        repo.mkdir()
+
+        def git(*a: str) -> str:
+            return subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q")
+        ident = ("-c", "user.name=Claude2", "-c", "user.email=c2@t")
+        env = {**os.environ, "GIT_COMMITTER_DATE": commit_date, "GIT_AUTHOR_DATE": commit_date}
+
+        def commit(message: str) -> None:
+            subprocess.run(
+                ["git", *ident, "commit", "-q", "--allow-empty", "-m", message],
+                cwd=repo, check=True, capture_output=True, text=True, env=env,
+            )
+
+        commit("base")
+        base = git("rev-parse", "HEAD")
+        for message in messages:
+            commit(message)
+        return repo, base, git("rev-parse", "HEAD")
+
+    def test_handoff_rejects_owner_trailer_replay_taifex_shape(self) -> None:
+        # Real shape: PR 7554, author Claude2, `LLM-Agent: Claude`, owner never changed
+        # away from Claude2 and no task_reassigned event exists.
+        task_id = "TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: deliver\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            binding = {"head_sha": head, "base_sha": base}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, rf"commit {head}.*LLM-Agent: Claude.*owner is Claude2.*`Claude2`"
+                ):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(task, binding)
+
+    def test_handoff_owner_trailer_checks_whole_range_and_amend(self) -> None:
+        task_id = "COLLECTOR-LISTING-MODULE-SHIPPED-20261117"
+        good = f"{task_id}: a\n\nLLM-Agent: Claude2\nTask-ID: {task_id}\nReviewer: Codex"
+        bad = good.replace("LLM-Agent: Claude2", "LLM-Agent: Claude")
+        unrelated = "OTHER-1: z\n\nLLM-Agent: Codex\nTask-ID: OTHER-1"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(tmpdir, [bad, unrelated, good])
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                # An earlier commit in the range is caught even though the head is clean.
+                with self.assertRaisesRegex(SystemExit, "LLM-Agent: Claude`"):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+                # Head-only binding (no base) sees only the clean head.
+                ai_status.reject_owner_trailer_mismatch_at_handoff(task, {"head_sha": head})
+
+    def test_handoff_accepts_prior_owner_trailer_with_audited_chain(self) -> None:
+        task_id = "REG-002"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: a\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+            )
+            event = audited_reassignment_event(
+                task_id=task_id, old_owner="Claude", new_owner="Claude2",
+                old_reviewer="Codex", new_reviewer="Codex",
+                timestamp="2026-11-18T06:00:00Z",
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                ai_status.reject_owner_trailer_mismatch_at_handoff(
+                    task, {"head_sha": head, "base_sha": base}
+                )
+
+    def test_handoff_refuses_prior_owner_trailer_after_reassignment(self) -> None:
+        task_id = "REG-002"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: a\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+                commit_date="2026-11-18T07:00:00Z",
+            )
+            event = audited_reassignment_event(
+                task_id=task_id, old_owner="Claude", new_owner="Claude2",
+                old_reviewer="Codex", new_reviewer="Codex",
+                timestamp="2026-11-18T06:00:00Z",
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(SystemExit, "LLM-Agent: Claude.*owner is Claude2"):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+
+    def test_handoff_rejects_owner_trailer_replay_collector_listing_shape(self) -> None:
+        # Real shape: PR 7551 head ff5784500, owner Claude2, reviewer Antigravity,
+        # git author Codex, trailers Task-ID / LLM-Agent: Claude / Reviewer: Antigravity,
+        # no task_reassigned event.
+        task_id = "COLLECTOR-LISTING-MODULE-SHIPPED-20261117"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: ship\n\nTask-ID: {task_id}\nLLM-Agent: Claude\nReviewer: Antigravity"],
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Antigravity"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, rf"commit {head}.*LLM-Agent: Claude.*owner is Claude2"
+                ):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+
     def test_same_family_reassignment_records_independence_exception(self) -> None:
         event = ai_status.attach_review_independence_exception(
             audited_reassignment_event(

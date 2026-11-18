@@ -268,8 +268,11 @@ class MeetingTriggers:
             window_id = str(window["window_id"])
             reasons.append("counterfactual_window:" + window_id)
         if not reasons:
-            ctx["record"]["not_fired"].append({"meeting_type": "MT-2", "reason": "no_optimisation_condition",
-                                               "pending_lesson_candidates": pending})
+            if type(pending) is int:
+                ctx["record"]["not_fired"].append({"meeting_type": "MT-2", "reason": "no_optimisation_condition",
+                                                   "pending_lesson_candidates": pending})
+            else:  # name the missing input instead of carrying null
+                ctx["record"]["not_fired"].append({"meeting_type": "MT-2", "reason": "pending_lesson_count_unavailable"})
             return
         # one meeting per distinct condition set, never one per day while a patch stays open
         self._convene(ctx, "MT-2", ";".join(reasons), f"Optimisation review for {pid}: {'; '.join(reasons)}",

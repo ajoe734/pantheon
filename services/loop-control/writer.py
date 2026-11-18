@@ -152,7 +152,11 @@ class LoopControllerWriter:
         evidence_refs: Optional[List[str]] = None,
         lease_duration_seconds: Optional[int] = None,
         payload: Optional[Dict[str, Any]] = None,
+        last_tick_at: Optional[datetime] = None,
+        last_success_at: Optional[datetime] = None,
     ) -> None:
+        """Liveness heartbeat. A loop that consumes discrete runs (per_persona_ooda) passes the
+        time of its last consumed run / last successful cycle explicitly; the store keeps the newer value."""
         now = datetime.now(timezone.utc)
         # Observed-probe success inference is only valid for Loop12, whose
         # heartbeat carries a completed downstream probe. Other loops call
@@ -175,8 +179,8 @@ class LoopControllerWriter:
             desired_state=desired_state,
             downstream_actual_state=downstream_actual_state,
             last_heartbeat_at=now,
-            last_tick_at=now if reconciled_probe_ok else None,
-            last_success_at=now if reconciled_probe_ok else None,
+            last_tick_at=now if reconciled_probe_ok else last_tick_at,
+            last_success_at=now if reconciled_probe_ok else last_success_at,
             backlog=backlog,
             lag=lag,
             dlq_count=dlq_count,

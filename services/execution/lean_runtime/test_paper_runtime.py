@@ -2454,6 +2454,105 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(sent), 2)
         self.assertEqual(sent[0], sent[1])
 
+    # --- PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118 ---
+
+    def _count(self, telemetry, event_type):
+        return self._types(telemetry).count(event_type)
+
+    def _hosted_perf(self, tick, **over):
+        # hosted-shaped: attempted_at / pair_id differ on every tick
+        base = {
+            "status": "emitted",
+            "code": "performance_snapshots_emitted",
+            "attempted_at": f"2026-11-18T09:{tick // 240:02d}:{(tick % 240) // 4:02d}Z",
+            "pair_id": f"pair-{tick}",
+            "as_of": "2026-11-17T21:00:00Z",
+            "pnl": 0.0,
+            "drawdown_pct": 0.0,
+            "fill_count": 0,
+            "pnl_snapshot_sent": True,
+            "drawdown_snapshot_sent": True,
+        }
+        base.update(over)
+        return base
+
+    def test_attempted_at_only_difference_emits_no_snapshot(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._performance_telemetry = self._hosted_perf(0)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(1)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        self.assertEqual(self._count(telemetry, "heartbeat"), 2)
+
+    def test_pre_open_hour_replay_one_snapshot_and_heartbeats_within_240(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for tick in range(3600):  # one full hour, 1 s poll
+                service._performance_telemetry = self._hosted_perf(tick)
+                service._maybe_emit_heartbeat()
+                clock["t"] += 1.0
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        self.assertLessEqual(self._count(telemetry, "heartbeat"), 240)
+        self.assertGreaterEqual(self._count(telemetry, "heartbeat"), 239)
+
+    def test_real_changes_are_sent_at_next_tick(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._performance_telemetry = self._hosted_perf(0)
+        service._maybe_emit_heartbeat()
+        n = self._count(telemetry, "runtime_state_snapshot")
+        # fill
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(1, fill_count=1)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 1)
+        # position change
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(2, fill_count=1, positions={"AAPL.US": 5})
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 2)
+        # member book change (new fill in a member book)
+        clock["t"] += 15.0
+        book = {"member_id": "m1", "binding_id": "b", "fills": [{"price": 1.0}], "fill_gaps": [], "underlyings": []}
+        with patch.object(service, "_member_book_snapshot", return_value=[book]):
+            service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 3)
+        self.assertEqual(telemetry.events[-1]["metadata"]["member_virtual_books"][0]["member_id"], "m1")
+
+    def test_mark_to_market_only_changes_are_rate_limited_per_hour(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for tick in range(3600):
+                service._performance_telemetry = self._hosted_perf(tick, pnl=float(tick), drawdown_pct=tick / 1e4)
+                service._maybe_emit_heartbeat()
+                clock["t"] += 1.0
+        # start snapshot plus at most STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT per hour
+        self.assertLessEqual(self._count(telemetry, "runtime_state_snapshot"), 4)
+        self.assertGreaterEqual(self._count(telemetry, "runtime_state_snapshot"), 2)
+
+    def test_concurrent_heartbeat_callers_emit_once_per_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        real_emit = telemetry.emit_heartbeat
+
+        def slow_emit(metadata=None, extra_metrics=None):
+            time.sleep(0.15)  # a slow ingest POST: the window in which a second caller used to pass the gate
+            return real_emit(metadata=metadata)
+
+        telemetry.emit_heartbeat = slow_emit
+        threads = [threading.Thread(target=service._maybe_emit_heartbeat) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self._count(telemetry, "heartbeat"), 1)
+
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):

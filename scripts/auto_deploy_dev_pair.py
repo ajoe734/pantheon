@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 import sys
+import re
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -97,6 +99,111 @@ def non_runtime_change_count(backend, base_sha, head_sha):
 
 def closeout_reports_only(backend, base_sha, head_sha):
     return non_runtime_change_count(backend, base_sha, head_sha) is not None
+
+
+# ---- quiet windows (DEV-DEPLOY-QUIET-WINDOWS-20261118) ----
+# No release is dispatched while a window is open, nor when its backend switch would land in
+# one. Measured: backend containers are recreated about 17 minutes after dispatch and a
+# rollback follows about 12 minutes later (29 minutes after dispatch); only the switch lead
+# is held, a rollback is not predicted. A running release is never cancelled (busy() wins).
+BACKEND_SWITCH_LEAD_MINUTES = 17
+DEFAULT_QUIET_WINDOWS = "mon-fri 00:30-05:30; daily 09:05-10:45"  # UTC: Taiwan session; persona daily cycle
+QUIET_WINDOWS_VARIABLE = "DEV_DEPLOY_QUIET_WINDOWS"
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _parse_days(text):
+    days = set()
+    for part in text.split(","):
+        part = part.strip().lower()
+        if part == "daily":
+            days.update(range(7))
+        elif "-" in part:
+            first, _, last = part.partition("-")
+            if first not in _DAYS or last not in _DAYS or _DAYS.index(first) > _DAYS.index(last):
+                raise ValueError(f"bad day range {part!r}")
+            days.update(range(_DAYS.index(first), _DAYS.index(last) + 1))
+        elif part in _DAYS:
+            days.add(_DAYS.index(part))
+        else:
+            raise ValueError(f"bad day {part!r}")
+    return frozenset(days)
+
+
+def _parse_minute(text):
+    match = _TIME.match(text.strip())
+    if not match:
+        raise ValueError(f"bad time {text!r}")
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def parse_quiet_windows(text):
+    """'<days> HH:MM-HH:MM; ...' in UTC, days = daily | mon-fri | mon,wed. Raises ValueError.
+    Returns [(days, start_minute, end_minute, label)]; a window never crosses midnight."""
+    windows = []
+    for entry in text.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        days_text, _, span = entry.rpartition(" ")
+        start_text, _, end_text = span.partition("-")
+        if not days_text or not end_text:
+            raise ValueError(f"bad window {entry!r}")
+        start, end = _parse_minute(start_text), _parse_minute(end_text)
+        if start >= end:
+            raise ValueError(f"window {entry!r} must end after it starts (UTC, no midnight crossing)")
+        windows.append((_parse_days(days_text), start, end, entry))
+    if not windows:
+        raise ValueError("no windows")
+    return windows
+
+
+def load_quiet_windows(value):
+    """(windows, source). Unset or blank -> defaults; malformed -> defaults, flagged (fail closed)."""
+    if value is None or not value.strip():
+        return parse_quiet_windows(DEFAULT_QUIET_WINDOWS), "default"
+    try:
+        return parse_quiet_windows(value), "variable"
+    except ValueError as exc:
+        return parse_quiet_windows(DEFAULT_QUIET_WINDOWS), f"malformed_defaults_used: {exc}"
+
+
+def _open_window(windows, instant):
+    minute = instant.hour * 60 + instant.minute
+    for days, start, end, label in windows:
+        if instant.weekday() in days and start <= minute < end:
+            return label, instant.replace(hour=end // 60, minute=end % 60, second=0, microsecond=0)
+    return None
+
+
+def quiet_window_hold(windows, now, lead_minutes=BACKEND_SWITCH_LEAD_MINUTES):
+    """None when a dispatch at `now` is allowed; else why it is held and the first allowed minute."""
+    now = now.astimezone(timezone.utc).replace(second=0, microsecond=0) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+
+    def blocking(at):
+        # Dispatch instant, and every minute up to the backend switch, must be outside windows.
+        for offset in range(lead_minutes + 1):
+            hit = _open_window(windows, at + timedelta(minutes=offset))
+            if hit:
+                return offset, hit
+        return None
+
+    first = blocking(now)
+    if not first:
+        return None
+    offset, (label, ends) = first
+    resume = now
+    for _ in range(8 * 24 * 60):
+        resume += timedelta(minutes=1)
+        if not blocking(resume):
+            break
+    return {
+        "reason": "dispatch_inside_window" if offset == 0 else "backend_switch_inside_window",
+        "window": label, "window_ends_at": ends.strftime("%Y-%m-%dT%H:%MZ"),
+        "dispatch_allowed_from": resume.strftime("%Y-%m-%dT%H:%MZ"),
+        "backend_switch_lead_minutes": lead_minutes,
+    }
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -285,10 +392,16 @@ def select_pair(backend, frontend, backend_tip, frontend_tip, served_backend, se
     return tuple(picked)
 
 
-def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_url_json, sleep=time.sleep):
+def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_url_json, sleep=time.sleep,
+              quiet_windows=None, now=None):
     result = inspect_pair(backend, frontend, fe_url=fe_url, bff_url=bff_url, fetch=fetch)
     if result["state"] != "ready" or not apply:
         return result
+    if quiet_windows:
+        hold = quiet_window_hold(quiet_windows, now or datetime.now(timezone.utc))
+        if hold:
+            # Nothing is queued: the next trigger or the fallback cron re-selects the newest green pair.
+            return {**result, "state": "held_quiet_window", **hold}
     # A fresh read catches merges during CI/host checks. Admission in the child
     # checks again before any mutation; later merges belong to the next tick.
     # Re-select against the current tips: only a different (newer) selected pair, or a
@@ -326,6 +439,11 @@ def summary_lines(result):
         return (f"- skipped: no release build input changed ({result.get('changed_file_count')} file(s) between "
                 f"served {result.get('served_backend_sha')} and {result.get('backend_sha')}); "
                 "the commits stay merged and ride the next release that changes a build input\n")
+    if result.get("state") == "held_quiet_window":
+        return (f"- held: quiet window `{result.get('window')}` ({result.get('reason')}); no release dispatched, "
+                f"window ends {result.get('window_ends_at')}, dispatch allowed from {result.get('dispatch_allowed_from')} "
+                f"(backend switch lead {result.get('backend_switch_lead_minutes')} min); "
+                "the next trigger or hourly fallback dispatches the newest green commit; this is not a broken trigger\n")
     if result.get("state") != "dispatched":
         return ""
     return ("- deployed: pending (follow run_url)\n"
@@ -344,14 +462,21 @@ def main():
         parser.error("GH_TOKEN is required")
     clients = [GitHubClient(api_url="https://api.github.com", token=token, repository=repo)
                for repo in (BACKEND, FRONTEND)]
+    windows, windows_source = load_quiet_windows(os.environ.get(QUIET_WINDOWS_VARIABLE))
     try:
-        result = reconcile(*clients, fe_url=args.fe_url, bff_url=args.bff_url, apply=args.apply)
+        result = reconcile(*clients, fe_url=args.fe_url, bff_url=args.bff_url, apply=args.apply,
+                           quiet_windows=windows)
     except Exception as exc:
         result = {"state": "inspection_or_dispatch_failed", "reason": str(exc)}
+    result["quiet_windows_source"] = windows_source
     print(json.dumps(result, indent=2))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("\n## Automatic dev pair check\n\n```json\n" + json.dumps(result, indent=2) + "\n```\n")
+            handle.write(f"- state: {result['state']}\n")
+            if windows_source.startswith("malformed"):
+                handle.write(f"- WARNING: {QUIET_WINDOWS_VARIABLE} is malformed; default windows "
+                             f"({DEFAULT_QUIET_WINDOWS}) are in force ({windows_source})\n")
             handle.write(summary_lines(result))
     return 1 if result["state"] == "inspection_or_dispatch_failed" else 0
 

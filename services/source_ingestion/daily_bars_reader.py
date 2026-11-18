@@ -21,7 +21,8 @@ MAX_WINDOW_CLOSES = 504  # design 5.4 E1
 MAX_RANGE_DAYS = 800  # about 3 years of trading days
 MAX_SYMBOLS = 500
 _COLUMNS = ["market", "symbol", "trade_date", "open", "high", "low", "close", "volume", "adjusted", "content_hash"]
-EXTRA_COLUMNS = list(NEW_COLUMNS)  # traded_value, available_time, trading_status: read only when asked for
+# Read only when asked for: traded_value, available_time, trading_status, and the row lineage (which run wrote the bar).
+EXTRA_COLUMNS = [*NEW_COLUMNS, "source_id", "ingest_run_id", "lineage_ref"]
 PRICE_COLUMNS = ["symbol", "trade_date", "open", "high", "low", "close", "volume"]  # what the price readers use
 _VENUE_SUFFIXES = ("TW", "TWSE", "TWO", "TPEX")
 

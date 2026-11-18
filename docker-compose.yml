@@ -1414,7 +1414,7 @@ services:
 
   incidents:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_INCIDENTS:-1024m}
+    mem_limit: ${DEV_MEM_LIMIT_INCIDENTS:-2g}
     build:
       context: .
       dockerfile: services/incidents/Dockerfile

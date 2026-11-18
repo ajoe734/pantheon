@@ -48,9 +48,17 @@ CANONICAL_TELEMETRY_TABLE = "public.telemetry_events"
 HEARTBEAT_SUMMARY_TABLE = "public.telemetry_heartbeat_hourly_summaries"
 HEARTBEAT_EVENT_TYPE = "heartbeat"
 INFRA_HEALTH_EVENT_TYPE = "infrastructure_health"
+STATE_SNAPSHOT_EVENT_TYPE = "runtime_state_snapshot"
 
 DEFAULT_RAW_RETENTION_DAYS = 3.0
 DEFAULT_INFRA_HEALTH_RETENTION_DAYS = 7.0
+# PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118: raw runtime_state_snapshot
+# rows older than this are deleted, except the latest row per runtime and rows
+# whose performance_telemetry.status is a quarter-equity "unknown" observation
+# (the runtime summary keeps those as history). The oldest row per runtime
+# is kept too: the summary's binding first-event time derives from it.
+DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS = 3.0
+STATE_SNAPSHOT_KEEP_STATUSES = ("marks_unavailable", "invalid_ledger", "invalid_drawdown_series")
 DEFAULT_BATCH_SIZE = 5000
 DEFAULT_MAX_BATCHES_PER_RUN = 20
 DEFAULT_INTERVAL_SECONDS = 300.0
@@ -61,6 +69,7 @@ DEFAULT_POSTMORTEMS_TABLE = "incident.postmortems"
 
 RAW_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS"
 INFRA_HEALTH_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS"
+STATE_SNAPSHOT_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS"
 RETENTION_ENABLED_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_ENABLED"
 RETENTION_BATCH_SIZE_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_BATCH_SIZE"
 RETENTION_MAX_BATCHES_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_MAX_BATCHES_PER_RUN"
@@ -398,6 +407,23 @@ def parse_infra_health_retention_days(raw: Any = None) -> float:
         ) from exc
     if not math.isfinite(days) or days <= 0.0:
         raise ValueError(f"{INFRA_HEALTH_RETENTION_DAYS_ENV} must be > 0, got {raw!r}")
+    return days
+
+
+def parse_state_snapshot_retention_days(raw: Any = None) -> float:
+    """Parse and validate PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS (default 3)."""
+    if raw is None:
+        raw = os.getenv(
+            STATE_SNAPSHOT_RETENTION_DAYS_ENV, str(int(DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS))
+        )
+    try:
+        days = float(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{STATE_SNAPSHOT_RETENTION_DAYS_ENV} must be a positive number, got {raw!r}"
+        ) from None
+    if not math.isfinite(days) or days <= 0:
+        raise ValueError(f"{STATE_SNAPSHOT_RETENTION_DAYS_ENV} must be > 0, got {raw!r}")
     return days
 
 
@@ -1170,6 +1196,9 @@ class RetentionRunResult:
     infra_health_batches_executed: int = 0
     protected_infra_health_event_ids_count: int = 0
     protected_infra_health_event_ids: list[str] = field(default_factory=list)
+    state_snapshot_rows_deleted: int = 0
+    state_snapshot_retention_days: float = DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS
+    state_snapshot_batches_executed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1194,6 +1223,9 @@ class RetentionRunResult:
             "infra_health_batches_executed": self.infra_health_batches_executed,
             "protected_infra_health_event_ids_count": self.protected_infra_health_event_ids_count,
             "protected_infra_health_event_ids": list(self.protected_infra_health_event_ids),
+            "state_snapshot_rows_deleted": self.state_snapshot_rows_deleted,
+            "state_snapshot_retention_days": self.state_snapshot_retention_days,
+            "state_snapshot_batches_executed": self.state_snapshot_batches_executed,
         }
 
 
@@ -1203,6 +1235,7 @@ async def run_heartbeat_retention_on_connection(
     now: datetime | None = None,
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
+    state_snapshot_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -1221,6 +1254,7 @@ async def run_heartbeat_retention_on_connection(
     t0 = time.monotonic()
     effective_days = parse_retention_days(retention_days)
     effective_infra_days = parse_infra_health_retention_days(infra_health_retention_days)
+    effective_snapshot_days = parse_state_snapshot_retention_days(state_snapshot_retention_days)
     effective_batch_size = max(1, int(batch_size))
     effective_timeout_ms = max(100, int(statement_timeout_ms))
     reference_now = _coerce_utc(now) if now is not None else _utc_now()
@@ -1228,6 +1262,7 @@ async def run_heartbeat_retention_on_connection(
     cutoff_iso = _format_rfc3339(cutoff_dt) or ""
     infra_cutoff_dt = reference_now - timedelta(days=effective_infra_days)
     infra_cutoff_iso = _format_rfc3339(infra_cutoff_dt) or ""
+    snapshot_cutoff_dt = reference_now - timedelta(days=effective_snapshot_days)
 
     check_readers_against_retention_window(effective_days, readers=readers)
     check_infra_health_readers_against_retention_window(
@@ -1413,13 +1448,77 @@ async def run_heartbeat_retention_on_connection(
         if deleted_infra_in_batch < effective_batch_size:
             break
 
+    total_snapshot_deleted = 0
+    snapshot_batches_run = 0
+    snapshot_runtime_expr = """COALESCE(
+                           NULLIF(trim({a}.payload->>'runtime_id'), ''),
+                           NULLIF(trim({a}.payload->'metadata'->>'runtime_id'), ''),
+                           'unknown')"""
+    while max_batches is None or snapshot_batches_run < max_batches:
+        query_timeout = (effective_timeout_ms / 1000.0) + 5.0
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('statement_timeout', $1, true)",
+                f"{effective_timeout_ms}ms",
+                timeout=query_timeout,
+            )
+            # Keep: the newest and the oldest snapshot per runtime (the summary's
+            # binding first-event bookkeeping reads the oldest) and any
+            # snapshot the runtime summary keeps as quarter-equity history.
+            snapshot_deleted_rows = await conn.fetch(
+                f"""
+                WITH candidates AS (
+                    SELECT e.event_id
+                    FROM public.telemetry_events e
+                    WHERE e.event_type = 'runtime_state_snapshot'
+                      AND e.created_at < $1
+                      AND e.ingested_seq <= $2
+                      AND COALESCE(e.payload->'metadata'->'performance_telemetry'->>'status', '')
+                          <> ALL($4::text[])
+                      AND EXISTS (
+                          SELECT 1 FROM public.telemetry_events n
+                          WHERE n.event_type = 'runtime_state_snapshot'
+                            AND {snapshot_runtime_expr.format(a="n")}
+                                = {snapshot_runtime_expr.format(a="e")}
+                            AND (n.created_at, n.ingested_seq) > (e.created_at, e.ingested_seq)
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM public.telemetry_events o
+                          WHERE o.event_type = 'runtime_state_snapshot'
+                            AND {snapshot_runtime_expr.format(a="o")}
+                                = {snapshot_runtime_expr.format(a="e")}
+                            AND (o.created_at, o.ingested_seq) < (e.created_at, e.ingested_seq)
+                      )
+                    ORDER BY e.ingested_seq ASC
+                    LIMIT $3
+                )
+                DELETE FROM public.telemetry_events d
+                USING candidates c
+                WHERE d.event_id = c.event_id
+                  AND d.event_type = 'runtime_state_snapshot'
+                RETURNING d.event_id
+                """,
+                snapshot_cutoff_dt,
+                safe_seq,
+                effective_batch_size,
+                list(STATE_SNAPSHOT_KEEP_STATUSES),
+                timeout=query_timeout,
+            )
+            deleted_snap_in_batch = len(snapshot_deleted_rows)
+        if deleted_snap_in_batch == 0:
+            break
+        snapshot_batches_run += 1
+        total_snapshot_deleted += deleted_snap_in_batch
+        if deleted_snap_in_batch < effective_batch_size:
+            break
+
     return RetentionRunResult(
         status="ok",
         retention_days=effective_days,
         cutoff_at=cutoff_iso,
         safe_ingested_seq=safe_seq,
-        batches_executed=hb_batches_run + infra_batches_run,
-        rows_deleted=total_hb_deleted + total_infra_deleted,
+        batches_executed=hb_batches_run + infra_batches_run + snapshot_batches_run,
+        rows_deleted=total_hb_deleted + total_infra_deleted + total_snapshot_deleted,
         hours_summarized=total_hours_summarized,
         statement_timeout_ms=effective_timeout_ms,
         batch_size=effective_batch_size,
@@ -1433,6 +1532,9 @@ async def run_heartbeat_retention_on_connection(
         infra_health_batches_executed=infra_batches_run,
         protected_infra_health_event_ids_count=len(protected_ids),
         protected_infra_health_event_ids=protected_ids,
+        state_snapshot_rows_deleted=total_snapshot_deleted,
+        state_snapshot_retention_days=effective_snapshot_days,
+        state_snapshot_batches_executed=snapshot_batches_run,
     )
 
 
@@ -1442,6 +1544,7 @@ async def run_heartbeat_retention(
     now: datetime | None = None,
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
+    state_snapshot_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -1466,6 +1569,7 @@ async def run_heartbeat_retention(
             now=now,
             retention_days=retention_days,
             infra_health_retention_days=infra_health_retention_days,
+            state_snapshot_retention_days=state_snapshot_retention_days,
             batch_size=batch_size,
             max_batches=max_batches,
             statement_timeout_ms=statement_timeout_ms,
@@ -1556,6 +1660,7 @@ class HeartbeatRetentionJob:
         *,
         retention_days: float | None = None,
         infra_health_retention_days: float | None = None,
+    state_snapshot_retention_days: float | None = None,
         batch_size: int | None = None,
         max_batches_per_run: int | None = None,
         interval_seconds: float | None = None,
@@ -1566,6 +1671,9 @@ class HeartbeatRetentionJob:
         self._retention_days = parse_retention_days(retention_days)
         self._infra_health_retention_days = parse_infra_health_retention_days(
             infra_health_retention_days
+        )
+        self._state_snapshot_retention_days = parse_state_snapshot_retention_days(
+            state_snapshot_retention_days
         )
         self._batch_size = max(
             1,
@@ -1653,6 +1761,7 @@ class HeartbeatRetentionJob:
                 now=now,
                 retention_days=self._retention_days,
                 infra_health_retention_days=self._infra_health_retention_days,
+                state_snapshot_retention_days=self._state_snapshot_retention_days,
                 batch_size=self._batch_size,
                 max_batches=self._max_batches_per_run,
                 statement_timeout_ms=self._statement_timeout_ms,
@@ -1725,6 +1834,7 @@ class HeartbeatRetentionJob:
             "running": self.is_running(),
             "retention_days": self._retention_days,
             "infra_health_retention_days": self._infra_health_retention_days,
+            "state_snapshot_retention_days": self._state_snapshot_retention_days,
             "batch_size": self._batch_size,
             "max_batches_per_run": self._max_batches_per_run,
             "interval_seconds": self._interval_seconds,

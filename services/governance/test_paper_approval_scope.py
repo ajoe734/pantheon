@@ -1100,3 +1100,99 @@ def test_no_widening_or_other_target_type_is_never_stamped(tmp_path, monkeypatch
         assert stored is None or stored.to_dict()["authorization_scope"] is None
     else:
         assert created.status_code in (400, 403, 422), created.text
+
+
+# ---------------------------------------------------------------------------
+# persona pool envelope (persona_portfolio_v1) approval by member verification
+# ---------------------------------------------------------------------------
+
+def _pool_world(*, pool_version=2):
+    from services.registry.portfolio_envelope import build_portfolio_envelope
+
+    spec = _spec_entry(strategy_id="tw_session_momentum", state="approved")
+    member = _bundle_entry(spec)
+    member["artifact_state"] = "approved"
+    child = member["metadata"]["strategy_artifact"]
+    digest = "sha256:" + "c" * 64
+    envelope = build_portfolio_envelope(
+        artifact_id="artifact-persona-pool-x-v2", strategy_id=child["strategy_id"], version=f"1.{pool_version}.0",
+        members=[{"member_id": child["artifact_id"], "artifact": child, "risk_weight": 1.0, "virtual_only": False}],
+        pool_snapshot={"pool_version": pool_version, "pool_digest": digest},
+        parent_envelope_id=child["artifact_id"],
+    )
+    entry = {
+        "registry_id": envelope["artifact_id"], "artifact_type": "execution_bundle",
+        "strategy_id": envelope["strategy_id"], "version": envelope["version"],
+        "artifact_state": "candidate", "owner_tenant": TENANT,
+        "checksum": strategy_artifact_checksum(envelope),
+        "lineage": copy.deepcopy(envelope["lineage"]),
+        "metadata": {"execution_context": "paper", "capital_scale_pct": 0.0, "persona_id": PERSONA,
+                     "capital_pool_id": POOL, "tenant_id": TENANT, "pool_version": pool_version,
+                     "pool_digest": digest, "previous_envelope_id": child["artifact_id"],
+                     "strategy_artifact": envelope},
+    }
+    return entry, member, spec
+
+
+def _pool_verify(entry, member, spec):
+    views = {member["registry_id"]: {"entry": member}, spec["registry_id"]: {"entry": spec}}
+    return _verify(entry, views)
+
+
+def test_pool_envelope_is_admitted_by_verifying_its_members_without_a_source_spec():
+    entry, member, spec = _pool_world()
+    report = _pool_verify(entry, member, spec)
+    assert report["kind"] == "execution_bundle" and "source_strategy_spec_id" not in report
+    assert report["pool_members"][0]["source_strategy_spec_id"] == spec["registry_id"]
+    assert report["pool_members"][0]["checksum"] == member["checksum"]
+    assert report["capital_scale_pct"] == 0 and report["execution_context"] == "paper"
+
+
+@pytest.mark.parametrize("mutate,text", [
+    (lambda e, m, s: _tamper(m, ("artifact_state",), "candidate"), "approved execution_bundle"),
+    (lambda e, m, s: _tamper(m, ("owner_tenant",), "tenant-other"), "different tenant"),
+    (lambda e, m, s: _tamper(m, ("version",), "9.9.9"), "version does not match"),
+    (lambda e, m, s: _tamper(m, ("checksum",), "sha256:" + "d" * 64), "checksum does not match"),
+    (lambda e, m, s: _tamper(m, ("metadata", "persona_id"), "persona-other"), "persona"),
+    (lambda e, m, s: _tamper(m, ("metadata", "capital_scale_pct"), 5), "capital_scale_pct"),
+    (lambda e, m, s: _tamper(s, ("artifact_state",), "candidate"), "approved strategy_spec"),
+    (lambda e, m, s: _tamper(e, ("metadata", "pool_digest"), "sha256:" + "e" * 64), "digest"),
+    (lambda e, m, s: _tamper(e, ("metadata", "pool_version"), 7), "digest"),
+    (lambda e, m, s: e["metadata"].pop("pool_digest"), "pool_version and pool_digest"),
+    (lambda e, m, s: _tamper(e, ("metadata", "capital_scale_pct"), 1), "capital_scale_pct"),
+    (lambda e, m, s: _tamper(e, ("metadata", "tenant_id"), "tenant-other"), "tenant"),
+])
+def test_pool_envelope_refuses_unsound_members_or_binding(mutate, text):
+    entry, member, spec = _pool_world()
+    mutate(entry, member, spec)
+    with pytest.raises(PaperCandidateInvalid, match=text):
+        _pool_verify(entry, member, spec)
+
+
+def test_pool_envelope_with_unreadable_member_is_refused():
+    entry, member, spec = _pool_world()
+    with pytest.raises(PaperCandidateInvalid, match="could not be read exactly"):
+        _verify(entry, {member["registry_id"]: {"entry": {"registry_id": "other"}}})
+
+
+def test_empty_pool_envelope_must_continue_the_approved_previous_envelope():
+    from services.registry.portfolio_envelope import build_portfolio_envelope
+
+    entry, member, spec = _pool_world()
+    template = entry["metadata"]["strategy_artifact"]
+    flat = build_portfolio_envelope(
+        artifact_id="artifact-persona-pool-x-v3", strategy_id=template["strategy_id"], version="1.3.0",
+        members=[], empty_template=template, parent_envelope_id=entry["registry_id"],
+        pool_snapshot={"pool_version": 3, "pool_digest": "sha256:" + "f" * 64},
+    )
+    flat_entry = copy.deepcopy(entry)
+    flat_entry.update(registry_id=flat["artifact_id"], version="1.3.0", checksum=strategy_artifact_checksum(flat),
+                      lineage=copy.deepcopy(flat["lineage"]))
+    flat_entry["metadata"].update(strategy_artifact=flat, pool_version=3, pool_digest="sha256:" + "f" * 64,
+                                  previous_envelope_id=entry["registry_id"])
+    previous = copy.deepcopy(entry)
+    previous["artifact_state"] = "approved"
+    assert _verify(flat_entry, {previous["registry_id"]: {"entry": previous}})["pool_members"] == []
+    previous["artifact_state"] = "candidate"
+    with pytest.raises(PaperCandidateInvalid, match="approved execution_bundle"):
+        _verify(flat_entry, {previous["registry_id"]: {"entry": previous}})

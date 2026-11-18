@@ -1,0 +1,20 @@
+{
+  "task": "PERSONA-DAY-ACCEPTANCE-PROBE-20261117",
+  "remediation_class": "RC2",
+  "kind": "fixture_tests_only",
+  "hosted_run": "not_performed: requires the deployed pair and DEV_ACCEPTANCE_READ_TOKEN secret; first scheduled run produces it",
+  "growth_and_cap": {
+    "writes_on_hosted_by_probe": 0,
+    "per_persona_ooda_record": "one upserted row per tenant+loop; unchanged row count",
+    "packet_additions": "persona_cycle.tool_use adds <200 bytes per daily packet (one packet per persona per trading day, 3 personas)",
+    "workflow_artifact": "one small JSON per weekday, 30-day retention (~22 files)"
+  },
+  "compat": "dayStatus is an added key; packets without tool_use evaluate as memory_read_via_broker=failed. last_tick_at/last_success_at were NULL before; older readers ignore them.",
+  "residual_findings": [
+    "Cron job count is not exposed by the BFF; the BFF view infers the job from a consumed cron run, so a duplicate job is only caught if the probe is given cron_jobs. per_persona_ooda payload now carries daily_cycle_jobs for a later reader.",
+    "Timezone OpenClaw applies to '0 10 * * 1-5' is unconfirmed; probe treats a trading day as due after 12:00 Taipei.",
+    "Meeting-this-week (acceptance 2) uses consultation memos only; committee meetings are not read.",
+    "test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker errors in this sandbox (npm ci offline), also on the unmodified branch."
+  ],
+  "tests": "acceptance/test_persona_day.py, services/loop-control/test_writer.py, services/persona/test_persona_cycle_controller.py, services/control-plane/bff/tests/test_persona_cycle_views.py"
+}

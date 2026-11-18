@@ -871,6 +871,11 @@ def _verify_paper_bundle_payload(
         not isinstance(binding_intent, Mapping) or binding_intent.get("persona_id") != expectation.persona_id
     ):
         raise PaperCandidateInvalid("bundle binding_intent.persona_id does not match the approval persona")
+    if is_portfolio_artifact(artifact):
+        return _verify_pool_envelope(
+            entry, metadata, artifact, computed,
+            expectation=expectation, read_entry_view=read_entry_view,
+        )
     artifact_lineage = artifact.get("lineage")
     entry_lineage = entry.get("lineage")
     source_spec_id = artifact_lineage.get("source_strategy_spec_id") if isinstance(artifact_lineage, Mapping) else None
@@ -900,6 +905,115 @@ def _verify_paper_bundle_payload(
         "checksum": computed,
         "source_strategy_spec_id": source_spec_id,
         "source_strategy_spec_checksum": spec_report["checksum"],
+    }
+
+
+def is_portfolio_artifact(artifact: Mapping[str, Any]) -> bool:
+    from services.registry.portfolio_envelope import is_portfolio
+
+    return is_portfolio(artifact)
+
+
+def _read_approved_bundle(
+    registry_id: str, label: str, *, expectation: PaperCandidateExpectation,
+    read_entry_view: Callable[[str], Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    view = read_entry_view(registry_id)
+    found = view.get("entry") if isinstance(view, Mapping) else None
+    if not isinstance(found, Mapping) or found.get("registry_id") != registry_id:
+        raise PaperCandidateInvalid(f"{label} {registry_id!r} entry could not be read exactly")
+    if found.get("artifact_type") != "execution_bundle" or found.get("artifact_state") != "approved":
+        raise PaperCandidateInvalid(f"{label} {registry_id!r} must be an approved execution_bundle entry")
+    if found.get("owner_tenant") != expectation.tenant_id:
+        raise PaperCandidateInvalid(f"{label} {registry_id!r} belongs to a different tenant")
+    return found
+
+
+def _verify_pool_envelope(
+    entry: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    artifact: Mapping[str, Any],
+    computed: str,
+    *,
+    expectation: PaperCandidateExpectation,
+    read_entry_view: Callable[[str], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """A persona_portfolio_v1 pool envelope is approved through its members.
+
+    The envelope has no single source spec (its lineage is parent_registry_ids),
+    so none is required or invented.  Instead the pool version/digest pinned in
+    the checksummed parameters must equal the owner metadata, and every pinned
+    member must be an approved paper bundle in the same tenant/persona/pool at
+    the pinned version and checksum under the single-spec rules.
+    """
+    params = artifact.get("parameters")
+    params = params if isinstance(params, Mapping) else {}
+    pool_version, pool_digest = metadata.get("pool_version"), metadata.get("pool_digest")
+    if (
+        isinstance(pool_version, bool) or not isinstance(pool_version, int) or pool_version < 1
+        or not isinstance(pool_digest, str) or not pool_digest.strip()
+    ):
+        raise PaperCandidateInvalid("pool envelope metadata.pool_version and pool_digest are required")
+    if params.get("pool_version") != pool_version or params.get("pool_digest") != pool_digest:
+        raise PaperCandidateInvalid("pool envelope digest does not bind the metadata pool version")
+    meta_tenant = metadata.get("tenant_id")
+    if meta_tenant is not None and meta_tenant != expectation.tenant_id:
+        raise PaperCandidateInvalid("pool envelope metadata.tenant_id does not match the approval tenant")
+    lineage = artifact.get("lineage")
+    parents = lineage.get("parent_registry_ids") if isinstance(lineage, Mapping) else None
+    if not isinstance(parents, list) or not parents or not all(isinstance(p, str) for p in parents):
+        raise PaperCandidateInvalid("pool envelope lineage.parent_registry_ids is required")
+    entry_lineage = entry.get("lineage")
+    if isinstance(entry_lineage, Mapping) and "parent_registry_ids" in entry_lineage and (
+        sorted(entry_lineage["parent_registry_ids"]) != sorted(parents)
+    ):
+        raise PaperCandidateInvalid("pool envelope entry lineage does not match the artifact lineage")
+
+    reports: list[dict[str, Any]] = []
+    members = artifact["strategy_logic"].get("members") or []
+    seen: set[str] = set()
+    for pinned in members:
+        member_id = pinned.get("artifact_id")
+        if member_id in seen:
+            raise PaperCandidateInvalid(f"pool envelope member {member_id!r} is listed twice")
+        seen.add(member_id)
+        if member_id not in parents:
+            raise PaperCandidateInvalid(f"pool envelope lineage omits member {member_id!r}")
+        if is_portfolio_artifact(pinned.get("artifact") or {}):
+            raise PaperCandidateInvalid("pool envelope member must not be another envelope")
+        member = _read_approved_bundle(
+            member_id, "pool member", expectation=expectation, read_entry_view=read_entry_view
+        )
+        if member.get("version") != pinned.get("version"):
+            raise PaperCandidateInvalid(f"pool member {member_id!r} version does not match the envelope")
+        if member.get("checksum") != pinned.get("checksum"):
+            raise PaperCandidateInvalid(f"pool member {member_id!r} checksum does not match the envelope")
+        member_meta = _require_paper_metadata(member, "pool member", expectation=expectation)
+        member_report = _verify_paper_bundle_payload(
+            member, member_meta, expectation=expectation, read_entry_view=read_entry_view
+        )
+        reports.append({
+            "artifact_id": member_id,
+            "version": member["version"],
+            "checksum": member_report["checksum"],
+            "source_strategy_spec_id": member_report.get("source_strategy_spec_id"),
+        })
+    if not members:
+        # A flat (all-removed) envelope pins no members; it must continue from
+        # the approved paper envelope it replaces.
+        previous = metadata.get("previous_envelope_id")
+        if not isinstance(previous, str) or previous not in parents:
+            raise PaperCandidateInvalid("empty pool envelope must name its previous envelope in lineage")
+        parent = _read_approved_bundle(
+            previous, "previous envelope", expectation=expectation, read_entry_view=read_entry_view
+        )
+        _require_paper_metadata(parent, "previous envelope", expectation=expectation)
+    return {
+        "kind": "execution_bundle",
+        "checksum": computed,
+        "pool_version": pool_version,
+        "pool_digest": pool_digest,
+        "pool_members": reports,
     }
 
 

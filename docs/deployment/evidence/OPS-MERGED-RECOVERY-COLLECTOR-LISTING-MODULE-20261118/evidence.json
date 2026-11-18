@@ -1,0 +1,24 @@
+{
+  "task_id": "OPS-MERGED-RECOVERY-COLLECTOR-LISTING-MODULE-20261118",
+  "source_task_id": "COLLECTOR-LISTING-MODULE-SHIPPED-20261117",
+  "record": ".orchestrator/review-evidence/collector_listing_module_shipped_merged_recovery_20261118.md",
+  "read_only_sources": [
+    {
+      "command": "python3 over ~/pantheon-ci-deploy/runtime/task-state/task-state-events-v2.jsonl: events for the source id",
+      "output": "line 74737 2026-11-17T23:41:05Z assign (Human/Ops; owner Claude2, reviewer Antigravity); 74741 start Claude2; 74743 23:44:25Z handoff Claude2 (delivery_binding PR 7551 head ff57845009c676f4462d29358c0f782a1234b471, manifest blob 14adac28291c1233917372cd05c3c6c458e05f6a); 74752 23:51:50Z review_approved Antigravity (review_binding base dev, pr 7551, head ff57845009c676f4462d29358c0f782a1234b471; GitHub review 5948601938); 74772 2026-11-18T00:08:18Z blocker Claude2; no task_reassigned event for the task"
+    },
+    {
+      "command": "zcat coordination-root/archive/logs/ai-activity-log.jsonl-{e74c59f6...,ca77aea2...}.gz | filter source id, skip permission_hook/watchdog_probe",
+      "output": "assign Human/Ops 23:41:05Z; handoff Claude2 23:44:25Z; review_approved Antigravity 23:51:50Z; blocker Claude2 00:08:18Z (done rejected: prior-owner LLM-Agent trailer on merged commit ff5784500 requires an exact canonical audited task_reassigned event); no task_reassigned"
+    },
+    {
+      "command": "git log --no-merges --format='%H %an' 13a08deaa318e1ad9777de90c38f1425789fb4f7..ff57845009c676f4462d29358c0f782a1234b471; git show -s ff57845009c6",
+      "output": "single commit ff57845009c676f4462d29358c0f782a1234b471, author Codex, trailers LLM-Agent: Claude, Reviewer: Antigravity"
+    },
+    {
+      "command": "git merge-base --is-ancestor ff57845009c676f4462d29358c0f782a1234b471 origin/dev; git log -1 --format='%H %P %cI' 72fc1b861",
+      "output": "ancestor yes; 72fc1b861c7a06067bfc934ed5c29953ac136bfa parents 13a08deaa318e1ad9777de90c38f1425789fb4f7 ff57845009c676f4462d29358c0f782a1234b471, 2026-11-18T08:05:20+08:00"
+    }
+  ],
+  "scope": "two artifact files only; no product code, no source task row, reconcile_merged_done not run"
+}

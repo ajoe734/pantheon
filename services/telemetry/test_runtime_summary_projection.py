@@ -4649,3 +4649,47 @@ def test_summary_keeps_last_state_without_new_snapshot_and_survives_heartbeat_re
     assert without_hb["member_virtual_books"][-1]["member_id"] == "m2"
     # A later liveness-only heartbeat does not erase state.
     assert with_hb["member_virtual_books"] == without_hb["member_virtual_books"]
+
+
+# --- PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118 ---
+
+
+def _valued_snapshots(count):
+    # a long run of change-detected snapshots followed by a final state
+    events = []
+    for i in range(count):
+        events.append(
+            _state_event(
+                "runtime_state_snapshot", i, f"2026-11-{2 + i:02d}T00:00:00Z",
+                {"status": "valued", "attempted_at": f"2026-11-{2 + i:02d}T00:00:00Z", "fill_count": i + 1},
+                [{"member_id": "m1", "cash": 100.0 - i}],
+            )
+        )
+    return events
+
+
+def test_summary_unchanged_when_retention_keeps_oldest_newest_and_unknown_status_snapshots(tmp_path):
+    events = _valued_snapshots(6)
+    events[2]["metadata"]["performance_telemetry"]["status"] = "marks_unavailable"
+    # retention rule: keep oldest, newest and quarter-equity "unknown" history per runtime
+    kept = [e for i, e in enumerate(events) if i in (0, 2, 5)]
+    full = _fold(tmp_path, "full.json", events)
+    retained = _fold(tmp_path, "kept.json", kept)
+    for key in _COMPARED_KEYS:
+        assert full.get(key) == retained.get(key), key
+
+
+def test_rollback_release_summarises_reduced_snapshot_stream(tmp_path):
+    # The projection is unchanged by this task, so the previously accepted
+    # release reads the reduced stream (only real changes) like a full one.
+    full = _valued_snapshots(6)
+    # a no-change duplicate carrying only a new attempted_at, which this change stops emitting
+    duplicate = _state_event(
+        "runtime_state_snapshot", 99, "2026-11-08T00:00:00Z",
+        {"status": "valued", "attempted_at": "2026-11-08T00:00:00Z", "fill_count": 6},
+        [{"member_id": "m1", "cash": 95.0}],
+    )
+    with_dup = _fold(tmp_path, "dup.json", full + [duplicate])
+    reduced = _fold(tmp_path, "reduced.json", full)
+    for key in ("member_virtual_books", "ledger_fill_count"):
+        assert with_dup.get(key) == reduced.get(key), key

@@ -7,7 +7,7 @@
   "metric": "cgroup memory.peak (anonymous + page cache + kernel memory of every process in the container)",
   "min_ratio": 1.5,
   "host_total_mib": 32086,
-  "sum_limits_mib": 83200,
+  "sum_limits_mib": 84224,
   "sum_peaks_mib": 24740,
   "floor_exceptions": {
     "postgres": "peak is capped by the old 2g limit (reached 1127463 times); true demand is higher. 8g bounds the database page cache, not process memory (anon 22 MiB, file cache 1984 MiB at the limit)",
@@ -49,7 +49,7 @@
     {"service": "runtime-manager", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 85, "limit_reached_count": 0},
     {"service": "governance", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 87, "limit_reached_count": 0},
     {"service": "telemetry", "limit": "4g", "limit_mib": 4096, "old_limit_mib": 4096, "peak_mib": 694, "limit_reached_count": 0},
-    {"service": "incidents", "limit": "1024m", "limit_mib": 1024, "old_limit_mib": 1024, "peak_mib": 631, "limit_reached_count": 0},
+    {"service": "incidents", "limit": "2g", "limit_mib": 2048, "old_limit_mib": 1024, "peak_mib": 1045, "steady_peak_mib": 631, "startup_peak_mib": 1045, "limit_reached_count": 0},
     {"service": "postmortems", "limit": "512m", "limit_mib": 512, "old_limit_mib": 384, "peak_mib": 280, "limit_reached_count": 0},
     {"service": "operator-bff", "limit": "3g", "limit_mib": 3072, "old_limit_mib": 3072, "peak_mib": 705, "limit_reached_count": 0},
     {"service": "agora-interaction-worker", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 80, "limit_reached_count": 0},

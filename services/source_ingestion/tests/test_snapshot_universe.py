@@ -233,3 +233,95 @@ def test_snapshot_route_seeds_through_runtime_universe(tmp_path, clock):
     assert response.status_code == 200 and response.json()["snapshot_id"].startswith("mss-")
     assert client.get("/api/source-ingest/snapshots/latest", params={"symbol": "1101.TWSE"}).status_code == 404
     assert client.post("/api/source-ingest/snapshots/universe/sweep").json()["swept"] is True
+
+
+# ----- SOURCE-UNIVERSE-SEED-READS-DAILY-BARS-20261118: the seed reads daily bars behind the named setting -----
+def _bars_universe(tmp_path, clock, monkeypatch, mode="daily_bars"):
+    pytest.importorskip("pyarrow")  # the daily bars store needs it
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", mode)
+    return _universe(tmp_path, clock)
+
+
+def _spy_partitions(monkeypatch):
+    from services.source_ingestion.daily_bars_reader import DailyBarsReader
+
+    opened: list[str] = []
+    original = DailyBarsReader._read_one_date
+
+    def spy(self, trade_date, wanted, columns=None):
+        opened.append(trade_date)
+        return original(self, trade_date, wanted, columns)
+
+    monkeypatch.setattr(DailyBarsReader, "_read_one_date", spy)
+    return opened
+
+
+def test_daily_bars_seed_equals_run_file_seed_except_named_differences(tmp_path, clock, monkeypatch):
+    pytest.importorskip("pyarrow")
+    _build(tmp_path, noise=5, n=65)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    _s0, uni0 = _universe(tmp_path, clock, name="old")
+    old = uni0.snapshot_for_request(TARGET)
+    assert uni0._last_seed["path"] == "run_files" and uni0._last_seed["files_read"] >= 60
+    opened = _spy_partitions(monkeypatch)
+    _s1, uni1 = _bars_universe(tmp_path, clock, monkeypatch)
+    opened.clear()  # activation seeded the governed static members; count the request alone
+    new = uni1.snapshot_for_request("3008.TW")
+    assert uni1._last_seed["path"] == "daily_bars", str(uni1._last_seed)
+    assert uni1._last_seed["files_read"] == 0
+    assert len(opened) <= 60
+    assert uni1._last_seed["partitions_read"] == 60
+    assert new.closes == old.closes and len(new.points) == 60
+    assert [p.open for p in new.points] == [p.open for p in old.points]
+    assert [p.ingest_run_id for p in new.points] == [p.ingest_run_id for p in old.points]
+    assert [p.source_id for p in new.points] == [p.source_id for p in old.points]
+    assert [p.market for p in new.points] == [p.market for p in old.points]
+    assert [p.event_time[:10] for p in new.points] == [p.event_time[:10] for p in old.points]
+    assert new.calendar_evidence == old.calendar_evidence and new.market == old.market
+    assert uni1.is_member(TARGET)
+
+
+def test_daily_bars_seed_falls_back_when_fewer_dates_or_closes_than_needed(tmp_path, clock, monkeypatch):
+    pytest.importorskip("pyarrow")
+    _build(tmp_path, n=30)  # 30 stored dates < 60 needed
+    _store, uni = _bars_universe(tmp_path, clock, monkeypatch)
+    snap = uni.snapshot_for_request(TARGET)
+    assert snap is not None and len(snap.points) == 30
+    assert uni._last_seed["path"] == "run_files" and "30 trade dates" in uni._last_seed["fallback_reason"]
+
+    other = tmp_path / "second"
+    other.mkdir()
+    for i, day in enumerate(_days(65)):  # the symbol trades on only 10 of the 65 stored dates
+        symbols = [TARGET] if i % 6 == 0 else ["2330.TWSE"]
+        _ingest(other / "store", None, symbols, day, i)
+    store2 = LatestMarketSnapshotStore(other / "c.jsonl")
+    uni2 = SnapshotUniverse(store2, state_path=other / "c.json", storage_root=other / "store",
+                            connector_market=lambda _c: "TW", clock=clock)
+    uni2.initialize()
+    snap2 = uni2.snapshot_for_request(TARGET)
+    assert snap2 is not None and len(snap2.points) == 11
+    assert uni2._last_seed["path"] == "run_files" and "holds 10 closes" in uni2._last_seed["fallback_reason"]
+
+
+def test_run_files_setting_changes_nothing(tmp_path, clock, monkeypatch):
+    _build(tmp_path, n=65)
+    opened = _spy_partitions(monkeypatch)
+    _store, uni = _bars_universe(tmp_path, clock, monkeypatch, mode="run_files")
+    assert uni.snapshot_for_request(TARGET) is not None
+    assert uni._last_seed["path"] == "run_files" and "fallback_reason" not in uni._last_seed and not opened
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "bogus")
+    with pytest.raises(ValueError, match="PANTHEON_DAILY_PRICE_READER"):
+        uni.seed("3008.TWSE")  # an unknown value fails closed with a readable reason
+
+
+def test_daily_bars_seed_miss_is_bounded_and_cached(tmp_path, clock, monkeypatch):
+    pytest.importorskip("pyarrow")
+    _build(tmp_path, n=65)
+    opened = _spy_partitions(monkeypatch)
+    _store, uni = _bars_universe(tmp_path, clock, monkeypatch)
+    opened.clear()
+    monkeypatch.setattr(SnapshotUniverse, "_partition_dates", lambda self: pytest.fail("run files scanned"))
+    assert uni.snapshot_for_request("1101.TWSE") is None and not uni.is_member("1101.TWSE")
+    assert uni._last_seed["path"] == "daily_bars" and uni._last_seed["records"] == 0 and len(opened) <= 60
+    uni._last_seed = None
+    assert uni.snapshot_for_request("1101.TWSE") is None and uni._last_seed is None  # cached miss

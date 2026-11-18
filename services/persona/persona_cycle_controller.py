@@ -47,7 +47,14 @@ from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
+# Single definition of eligibility. acceptance/persona_day.py reads this assignment from this file's
+# source (ast, no import: the probe runs under ``python3 -I`` without the repo on sys.path); keep it a literal.
 ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
+DAILY_CYCLE_STATES = ELIGIBLE_STATES - {"consultable"}  # daily-cycle registrar and meeting step enrol these
+
+
+def is_daily_cycle_persona(persona: Mapping[str, Any]) -> bool:
+    return persona.get("lifecycle_state") in DAILY_CYCLE_STATES and persona.get("status", "active") == "active"
 
 
 # Proposal kind -> case-file decision type. harness_patch and no_action have no
@@ -283,6 +290,21 @@ def _summarize_regime_record(strategy_id: str, rec: Mapping[str, Any]) -> dict[s
     }
 
 
+_PENDING_RESULT_STATUS = {"skipped", "deferred", "risk_review_unavailable", "risk_review_not_recorded",
+                          "memory_owner_unavailable", "endorse_refused"}
+
+
+def pending_lesson_count(governance: Any) -> int | None:
+    """Own candidates still proposed/pending_review after this cycle's lesson step; None when unreadable."""
+    if not isinstance(governance, Mapping) or governance.get("status") != "completed":
+        return None
+    results = governance.get("results")
+    if not isinstance(results, list):
+        return None
+    return sum(1 for r in results if isinstance(r, Mapping) and r.get("status") in _PENDING_RESULT_STATUS
+               and r.get("reason") != "foreign_candidate")
+
+
 def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
     """Evaluate for the session, then read the active record of each strategy. Never raises."""
     if transport is None:
@@ -491,8 +513,9 @@ class PersonaCycleController:
                     failure = "case_file_unavailable:" + str(getattr(exc, "reason", None) or type(exc).__name__)[:120]
             if not failure:
                 try:
+                    tool_use = cycle.setdefault("tool_use", {})
                     turn, output, returned = self._brokered_turn(
-                        persona, build_case_file_prompt(persona, observe, cycle_case))
+                        persona, build_case_file_prompt(persona, observe, cycle_case), tool_use)
                     cycle["turn"] = turn.to_dict()
                     cycle["output"] = output.model_dump(mode="json")
                     check_case_file_citations(output, cycle_case, returned)
@@ -511,7 +534,8 @@ class PersonaCycleController:
                     if unseen:
                         # The agent has not seen these decision-specific cases: show them, then re-decide.
                         revised_turn, revised, revised_returned = self._brokered_turn(
-                            persona, build_proposal_case_prompt(persona, observe, cycle_case, output, unseen))
+                            persona, build_proposal_case_prompt(persona, observe, cycle_case, output, unseen),
+                            tool_use)
                         cycle["revision_turn"] = revised_turn.to_dict()
                         returned = sorted(set(returned) | set(revised_returned))
                         if not _same_proposals(output, revised, live_refs):
@@ -587,6 +611,9 @@ class PersonaCycleController:
                 cycle["lesson_governance"] = self._lesson_step(lambda lc: lc.govern(persona), degraded={
                     "status": "unavailable", "results": []})
             if run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                if isinstance(observe, dict):
+                    # count from the read the lesson step already made this cycle (no extra memory read)
+                    observe["pending_lesson_candidates"] = pending_lesson_count(cycle.get("lesson_governance"))
                 cycle["meetings"] = self._meeting_step(persona, observe, packet, snapshots)
             cycle["harness_loop"] = self._harness_loop().run(persona, packet)
             cycle.update(phase="terminal", failure_reason=failure)
@@ -610,7 +637,8 @@ class PersonaCycleController:
                 url, env.get("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""))
         return self.tool_broker
 
-    def _brokered_turn(self, persona: Mapping[str, Any], prompt: str) -> tuple[Any, CaseFileTurnOutput, list[str]]:
+    def _brokered_turn(self, persona: Mapping[str, Any], prompt: str,
+                       tool_use: dict | None = None) -> tuple[Any, CaseFileTurnOutput, list[str]]:
         """Register the run with the broker as a daily cycle run, dispatch one turn, read that run's record.
 
         Proposals come only from the broker's per-run tool record; the turn's text is never parsed and an
@@ -623,7 +651,14 @@ class PersonaCycleController:
         turn = self.turn_runner(persona_id, prompt, session_user=session_user)
         if turn.status != "completed" or turn.persona_id != persona_id:
             raise ValueError("agent_turn_unavailable")
-        output, returned = output_from_tool_record(broker.run_record(run["run_ref"]), persona_id, run["run_ref"])
+        record = broker.run_record(run["run_ref"])
+        if tool_use is not None and isinstance(record, Mapping):
+            calls = [c for c in (record.get("calls") or []) if isinstance(c, Mapping)]
+            tool_use["memory_recall_ok"] = tool_use.get("memory_recall_ok", 0) + sum(
+                1 for c in calls if c.get("tool") == "persona_memory_recall" and c.get("outcome") == "ok")
+            tool_use["proposals_recorded"] = tool_use.get("proposals_recorded", 0) + sum(
+                1 for c in calls if c.get("tool") == "persona_proposal_submit" and c.get("outcome") == "recorded")
+        output, returned = output_from_tool_record(record, persona_id, run["run_ref"])
         return turn, output, returned
 
     def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:
@@ -660,7 +695,7 @@ class PersonaCycleController:
             enrolled_personas = [
                 p for p in self.owners.personas()
                 if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
-                and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"}
+                and p.get("lifecycle_state") in DAILY_CYCLE_STATES
             ]
             enrolled = sorted(p["persona_id"] for p in enrolled_personas)
             if isinstance(observe, dict):
@@ -1102,6 +1137,23 @@ class CycleOwners:
                 "receipt_ref": f"/api/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/versions/{result['pool_version']}"}
 
 
+def _run_times(healths) -> tuple[datetime | None, datetime | None]:
+    """Newest consumed (terminal) cycle and newest successful cycle across personas, from packet updated_at."""
+    tick = success = None
+    for h in healths:
+        if h.get("status") not in {"completed", "failed"}:
+            continue
+        try:
+            at = datetime.fromisoformat(str(h["updated_at"]).replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        tick = max(tick, at) if tick else at
+        if h["status"] == "completed":
+            success = max(success, at) if success else at
+    return tick, success
+
+
 def controller_interval_seconds(env: Mapping[str, str] | None = None) -> float:
     raw = (env if env is not None else os.environ).get("PANTHEON_PERSONA_CYCLE_POLL_SECONDS", "")
     try:
@@ -1127,14 +1179,17 @@ async def run_controller(controller: PersonaCycleController, stop: asyncio.Event
                 health = {pid: h for pid, h in report["personas"].items() if pid in owned}
                 failures = [f for f in report["failures"] if f.get("persona_id") in owned]
                 now = _utc_now()
+                last_tick, last_success = _run_times(health.values())
                 await writers[tenant].record_heartbeat("per_persona_ooda",
+                    last_tick_at=last_tick, last_success_at=last_success,
                     desired_state_query="persona owner eligible lifecycle records",
                     actual_state_query="OpenClaw daily-cycle jobs, terminal runs and persisted packets",
                     desired_state={"present": bool(owned), "source": "persona_owner", "checked_at": now},
                     downstream_actual_state={"status": "degraded" if failures else "ready",
                                              "source": "openclaw_cron", "checked_at": now},
                     evidence_refs=["services/persona/persona_cycle_controller.py"],
-                    payload={"persona_cycle_health": health, "failures": failures})
+                    payload={"persona_cycle_health": health, "failures": failures,
+                             "daily_cycle_jobs": {pid: (report.get("jobs") or {}).get(pid) for pid in sorted(owned)}})
         except Exception:
             log.exception("Persona daily-cycle reconciliation failed")
         try:

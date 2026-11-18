@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 # Runtime validation must not create the bytecode it is about to inspect.
 # The supervisor also exports PYTHONDONTWRITEBYTECODE, but this executable is a
@@ -1114,6 +1114,22 @@ def validate_worker_entry_binding(
                 isinstance(bridge, dict) and bridge.get("work_class") in {"security", "hosted", "live"})}
 
 
+def build_worker_child_env(
+    base_env: Mapping[str, str], worker_temp_dir: Path, agent: str
+) -> dict[str, str]:
+    """Child environment: private temp dir plus the canonical agent identity.
+
+    `PANTHEON_WORKER_AGENT` lets the commit path refuse an `LLM-Agent` trailer
+    that names anyone else (scripts/git/worker_commit.py).
+    """
+
+    child_env = dict(base_env)
+    for var in ("TMPDIR", "TMP", "TEMP"):
+        child_env[var] = str(worker_temp_dir)
+    child_env["PANTHEON_WORKER_AGENT"] = str(agent)
+    return child_env
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -1272,9 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
         from rewrite import worker_workspace as _ww
         worker_temp_dir = _ww.create_worker_temp_dir(args.run_id, os.getpid())
         status["worker_temp_dir"] = str(worker_temp_dir)
-        child_env = dict(os.environ)
-        for _var in ("TMPDIR", "TMP", "TEMP"):
-            child_env[_var] = str(worker_temp_dir)
+        child_env = build_worker_child_env(os.environ, worker_temp_dir, agent)
         sandboxed_command = bind_worker_sandbox(
             command,
             command_root=command_root,
