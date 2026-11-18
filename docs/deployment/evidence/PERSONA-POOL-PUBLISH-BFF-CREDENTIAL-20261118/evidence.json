@@ -1,0 +1,18 @@
+{
+  "task": "PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118",
+  "root_cause": "PERSONA_POOL_PUBLISH_BFF_TOKEN was read by pool_autonomy_cycle but never issued or mounted (RC2 residual); hosted 2026-11-18 cycle failed owner_credential_unconfigured:bff",
+  "change": {
+    "issuer": "scripts/issue_dev_paper_principals.py READERS PERSONA_POOL_PUBLISH_BFF_TOKEN -> sub persona-pool-cycle, role persona_pool_publisher, scope pantheon:dev-owner-read, delivered to the persona consumer file volume",
+    "compose": "persona service sets PERSONA_POOL_PUBLISH_BFF_TOKEN_FILE=/run/pantheon-principals/... (existing dev-paper-persona-tokens volume, :ro); no env value",
+    "cycle": "unchanged code path: configured_service_token reads _FILE first, fails closed if file unreadable, never falls back to env",
+    "bff": "strategy-pool/publish route accepts role persona_pool_publisher in addition to operator roles; no shared read/write role set includes it, so all other routes refuse it",
+    "memo": "membership-changing publish memo gate lives in the cycle (envelope_publication_consultation) and is untouched"
+  },
+  "runtime_budget": "one principal file per issue run (PERSONA_POOL_PUBLISH_BFF_TOKEN in the existing persona volume, atomic 0400 write by the existing issuer); no new writer, volume, service or schedule",
+  "tests": {
+    "passed": ["scripts/test_issue_dev_paper_principals.py", "services/persona/test_pool_autonomy_cycle.py", "services/control-plane/bff/tests/test_persona_pool_publish_route.py", "scripts/test_persona_cycle_owner_ports_compose_contract.py (all but one)"],
+    "preexisting_failure": "scripts/test_persona_cycle_owner_ports_compose_contract.py::test_dev_persona_tool_broker_resolves_enabled_with_shared_token asserts the openclaw-gateway command contains PERSONA_TOOL_BROKER_TOKEN; this diff does not touch the gateway service. Could not re-run on a clean HEAD (read-only git metadata in sandbox); attributed by diff scope, not proven.",
+    "added": ["issuance+mount+least-privilege claims", "cycle reads file first / fails closed / unconfigured", "BFF accepts principal on publish route only; shared guards refuse it; viewer refused"]
+  },
+  "hosted_proof": "pending: next daily cycle publication step must not fail on the credential; coordinator to record if task closes first"
+}

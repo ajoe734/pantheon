@@ -49,6 +49,10 @@ log = logging.getLogger(__name__)
 
 _POOL_PUBLISH_RECORDS: Any = None
 
+# Host-issued least-privilege role for the persona daily pool cycle. It is accepted by the strategy-pool
+# publish route ONLY: no shared role set (read/write helpers) includes it, so every other route refuses it.
+POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
+
 
 def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
     """Real coordinator + owner pool reader; only owner HTTP is external."""
@@ -471,7 +475,8 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         identity = _extract_identity(authorization, mfa_token=x_mfa_token)
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        _require_operator_role(identity)
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_operator_role(identity)
         unknown = set(payload) - {"pool_version", "stage"}
         if unknown:
             raise _bff_error(

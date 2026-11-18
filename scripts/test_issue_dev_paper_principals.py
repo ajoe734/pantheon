@@ -478,6 +478,7 @@ def test_persona_cycle_owner_port_principals_are_dedicated_least_privilege_and_m
         "PERSONA_MEMORY_WRITE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_PUBLISH_BFF_TOKEN",
     }
     assert set(CONSUMER_FILES["persona"]) == expected_persona_files
     jti_by_var = {}
@@ -681,3 +682,21 @@ def test_broker_token_survives_compensation_and_baseline_restore(tmp_path, monke
     assert compensated["PERSONA_TOOL_BROKER_TOKEN"] == first["PERSONA_TOOL_BROKER_TOKEN"]
     assert restored["PERSONA_TOOL_BROKER_TOKEN"] == first["PERSONA_TOOL_BROKER_TOKEN"]
     assert secret.read_text().strip() == first["PERSONA_TOOL_BROKER_TOKEN"]
+
+
+def test_persona_pool_publish_bff_principal_is_least_privilege_file_delivered_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "PERSONA_POOL_PUBLISH_BFF_TOKEN"
+    assert variable in CONSUMER_FILES["persona"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "persona")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "persona-pool-cycle" and claims["roles"] == ["persona_pool_publisher"]
+    assert claims["scope"] == "pantheon:dev-owner-read"
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    persona = compose["services"]["persona"]
+    assert "dev-paper-persona-tokens:/run/pantheon-principals:ro" in persona["volumes"]
+    assert persona["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert variable not in persona["environment"]  # never an env value, so it cannot appear in env dumps
