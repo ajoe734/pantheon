@@ -641,6 +641,7 @@ while [[ $# -gt 0 ]]; do
     --strict-functional-checks) STRICT_FUNCTIONAL_CHECKS=true; shift ;;
     --force) FORCE_REFRESH=true; shift ;;
     --preflight-only) PREFLIGHT_ONLY=true; shift ;;
+    --steady-check) STEADY_CHECK=true; shift ;;
     --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
     --connector-id) export SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${2:-}"; SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"; shift 2 ;;
     --allowed-hosts) export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${2:-}"; SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}"; shift 2 ;;
@@ -959,6 +960,7 @@ ssh_bash() {
     command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
     command_prefix+=" NON_BLOCKING_REFRESH=$(shell_quote "${NON_BLOCKING_REFRESH:-false}")"
     command_prefix+=" PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")"
+    command_prefix+=" STEADY_CHECK=$(shell_quote "${STEADY_CHECK:-false}")"
     command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
@@ -1156,6 +1158,7 @@ ssh_bash() {
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
       NON_BLOCKING_REFRESH="${NON_BLOCKING_REFRESH:-false}" \
       PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}" \
+      STEADY_CHECK="${STEADY_CHECK:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
       SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" \
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
@@ -3306,6 +3309,125 @@ execute_taiwan_refresh_preflight_only() {
   return 0
 }
 
+# Compose services of the source-ingest family. Exactly one container must exist
+# for each after a restore.
+source_ingest_family_services() {
+  printf '%s\n' source-ingest source-ingest-scheduler source-ingest-agora-projector
+}
+
+# Removes only containers that were created and never started (the leftover of
+# an interrupted Compose recreate/rename). Running and exited steady containers
+# are never touched. Every removal is logged with its container id.
+remove_source_ingest_compose_leftovers() {
+  local service cid
+  for service in $(source_ingest_family_services); do
+    while read -r cid; do
+      [[ -n "${cid}" ]] || continue
+      info "removing never-started Compose leftover container ${cid} (service=${service}, status=created)"
+      docker rm -f "${cid}" >/dev/null 2>&1 || info "could not remove Compose leftover container ${cid}" >&2
+    done < <(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" \
+      --filter "label=com.docker.compose.service=${service}" --filter "status=created" 2>/dev/null || true)
+  done
+  return 0
+}
+
+verify_source_ingest_container_counts() {
+  local service count rc=0
+  for service in $(source_ingest_family_services); do
+    count="$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" \
+      --filter "label=com.docker.compose.service=${service}" 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' ' || true)"
+    if [[ "${count:-0}" =~ ^[0-9]+$ ]] && (( count > 1 )); then
+      info "expected exactly one ${service} container after restore, found ${count}" >&2
+      rc=1
+    fi
+  done
+  return "${rc}"
+}
+
+# Probe and, when needed, repair the steady posture after a refresh run ended
+# (including by timeout or cancellation). Writes a small JSON outcome.
+# status: healthy | restored | failed.
+execute_steady_posture_check() {
+  local output_path="${1:-}" grace="${STEADY_CHECK_GRACE_SECONDS:-90}"
+  local reason="" status="healthy" attempt=0 svc cid state mode health
+  steady_posture_problem() {
+    reason=""
+    local s c st md hl
+    for s in source-ingest source-ingest-scheduler; do
+      c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${s}" 2>/dev/null | head -n1 || true)"
+      [[ -n "${c}" ]] || { reason="${s}_not_running"; return 0; }
+      hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+      if [[ -n "${hl}" && "${hl}" != "healthy" ]]; then reason="${s}_${hl}"; return 0; fi
+    done
+    c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
+    md="$(docker inspect --format '{{json .Config.Env}}' "${c}" 2>/dev/null | python3 -c 'import json,sys
+try:
+    env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
+except Exception:
+    env={}
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' || true)"
+    [[ "${md}" == "collector_steady_pull" ]] || { reason="scheduler_mode_${md:-unknown}"; return 0; }
+    if [[ -n "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]]; then
+      reason="bounded_refresh_containers_present"; return 0
+    fi
+    if [[ -n "$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=source-ingest" --filter status=created 2>/dev/null || true)" ]]; then
+      reason="created_leftover_present"; return 0
+    fi
+    verify_source_ingest_container_counts >/dev/null 2>&1 || reason="source_ingest_container_count"
+    return 0
+  }
+  steady_posture_problem
+  # An orphaned remote refresh may still be finishing its own restore: give it time.
+  while [[ -n "${reason}" ]] && (( attempt * 15 < grace )); do
+    sleep 15; attempt=$((attempt + 1)); steady_posture_problem
+  done
+  if [[ -n "${reason}" ]]; then
+    local first_reason="${reason}" restore_rc=0
+    info "steady posture check failed: ${first_reason}; running the steady restore"
+    local env_file; env_file="$(mktemp)"
+    local src_cid running_image
+    src_cid="$(docker compose -p pantheon -f docker-compose.yml ps -a -q source-ingest 2>/dev/null | head -n1 || true)"
+    if [[ -z "${src_cid}" ]]; then
+      restore_rc=1; reason="steady_service_missing"
+    else
+      docker inspect --format '{{json .Config.Env}}' "${src_cid}" 2>/dev/null | python3 -c 'import json,sys
+drop=("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS","SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS","SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS","SOURCE_INGEST_BOUNDED_DATASET")
+env=[x for x in json.load(sys.stdin) if x.split("=",1)[0] not in drop]
+json.dump(env,sys.stdout)' > "${env_file}" || restore_rc=1
+      running_image="$(docker inspect --format '{{.Image}}' "${src_cid}" 2>/dev/null || true)"
+      local bounded; bounded="$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)"
+      # shellcheck disable=SC2086
+      [[ -z "${bounded}" ]] || docker rm -f ${bounded} >/dev/null 2>&1 || true
+      remove_source_ingest_compose_leftovers
+      export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="collector_steady_pull"
+      if (( restore_rc == 0 )); then
+        manage_source_ingest_refresh_runtime "${env_file}" restore "${running_image}" || restore_rc=$?
+      fi
+      for svc in source-ingest-scheduler source-ingest-agora-projector; do
+        cid="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${svc}" 2>/dev/null | head -n1 || true)"
+        [[ -n "${cid}" ]] && { docker start "${cid}" >/dev/null 2>&1 || restore_rc=1; }
+      done
+      remove_source_ingest_compose_leftovers
+      if (( restore_rc != 0 )); then
+        reason="steady_restore_failed:${first_reason}"
+      else
+        steady_posture_problem
+        if [[ -n "${reason}" ]]; then restore_rc=1; reason="steady_restore_incomplete:${reason}"; fi
+      fi
+    fi
+    rm -f "${env_file}"
+    if (( restore_rc == 0 )); then status="restored"; reason="${first_reason}"; else status="failed"; fi
+  fi
+  [[ -n "${output_path}" ]] && python3 - "${output_path}" "${status}" "${reason}" <<'STEADY_PY'
+import json, sys
+path, status, reason = sys.argv[1:4]
+with open(path, "w", encoding="utf-8") as f:
+    f.write(json.dumps({"mode": "collector_steady_pull", "reason": reason, "status": status}, sort_keys=True) + "\n")
+STEADY_PY
+  info "steady posture check: status=${status} reason=${reason:-none}"
+  [[ "${status}" != "failed" ]]
+}
+
 execute_bounded_source_refresh_entrypoint() {
   local force="${1:-false}" output_path="${2:-}" preflight_output preflight_status default_allowed_hosts default_bounded_dataset
   default_allowed_hosts="openapi.twse.com.tw,www.tpex.org.tw"
@@ -3501,7 +3623,9 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
   restore_bounded_source_refresh() {
     local rc="${1:-$?}" invoked_from_trap="false" restore_rc=0
     (( $# == 0 )) && invoked_from_trap="true"
-    trap - EXIT INT TERM
+    trap - EXIT INT TERM HUP PIPE
+    # A restore must finish even if the SSH session dies while it runs.
+    trap '' HUP PIPE
     if (( rc != 0 )) && [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" && ! -s "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" ]]; then
       local sched_cid="" sched_log=""
       sched_cid="$(docker ps -a -q --filter "name=^${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX:-pantheon-bounded-refresh}-source-ingest-scheduler\$" 2>/dev/null || true)"
@@ -3511,6 +3635,9 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
       fi
     fi
     info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode:-reconcile_only}"
+    # An interrupted Compose recreate leaves a Created rename leftover that
+    # would make the recreate below (and later captures) see two containers.
+    remove_source_ingest_compose_leftovers
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
@@ -3523,6 +3650,8 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
     if (( ${#steady_ids[@]} )); then
       docker start "${steady_ids[@]}" >/dev/null 2>&1 || restore_rc=$?
     fi
+    remove_source_ingest_compose_leftovers
+    verify_source_ingest_container_counts || { restore_rc=1; LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
     (( restore_rc == 0 )) || rc="${restore_rc}"
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}"
@@ -3547,12 +3676,22 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
   # later success outcome. restore clears the EXIT trap, so exit is not re-run.
   handle_bounded_refresh_signal() {
     local signal_rc="$1"
+    if (( signal_rc == 129 || signal_rc == 141 )); then
+      # The SSH peer is gone: a further write to it would raise SIGPIPE inside
+      # the restore itself. Ignore both and keep the restore log on the host.
+      trap '' HUP PIPE
+      exec >>"${PANTHEON_BOUNDED_REFRESH_RESTORE_LOG:-/tmp/pantheon-bounded-refresh-restore.log}" 2>&1 || exec >/dev/null 2>&1
+    fi
     restore_bounded_source_refresh "${signal_rc}" || true
     exit "${signal_rc}"
   }
   trap restore_bounded_source_refresh EXIT
   trap 'handle_bounded_refresh_signal 130' INT
   trap 'handle_bounded_refresh_signal 143' TERM
+  # A dropped or timed-out SSH session reaches the remote shell as HUP or as a
+  # broken pipe on its next write; both must run the same restore.
+  trap 'handle_bounded_refresh_signal 129' HUP
+  trap 'handle_bounded_refresh_signal 141' PIPE
 
   # Stop (not remove) the steady controller/projector so only one controller owns the window.
   (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
@@ -7065,7 +7204,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   refresh-only)
-    if [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
+    if [[ "${STEADY_CHECK:-false}" == "true" ]]; then
+      execute_steady_posture_check "${REFRESH_OUTPUT_PATH:-}"
+    elif [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
       execute_taiwan_refresh_preflight_only "${REFRESH_OUTPUT_PATH:-}"
     else
       execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
