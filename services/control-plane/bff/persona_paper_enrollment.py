@@ -312,9 +312,25 @@ def _membership(pool: Any) -> list[tuple[str, str, str, str]]:
 
 def _membership_unchanged_since_seed(owner: Any, persona_id: str, tenant_id: str, pool: Any) -> bool:
     getter = getattr(owner, "get_strategy_pool_version", None)
-    if not callable(getter):
-        return False
-    seed = getter(persona_id, 1, tenant_id=tenant_id)
+    if callable(getter):
+        seed = getter(persona_id, 1, tenant_id=tenant_id)
+    else:
+        # The write-owner port has no version getter (outside this task's artifact contract):
+        # use its read-only GET helper for the same owner path; anything else defers safely.
+        request = getattr(owner, "_request", None)
+        if not callable(request):
+            return False
+        try:
+            seed = request(
+                "GET",
+                f"/api/personas/{quote(persona_id, safe='')}/strategy-pool/versions/1",
+                dependency="persona_strategy_pool_owner",
+                tenant_id=tenant_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 404/unavailable: leave it to the pool cycle
+            if getattr(exc, "status_code", None) == 404:
+                return False
+            raise
     current = _membership(pool)
     return bool(current) and current == _membership(seed)
 
