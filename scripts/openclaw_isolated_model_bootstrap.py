@@ -17,6 +17,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from services.persona.runtime_profile import configured_chain  # noqa: E402
+
 POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh")
 API_KEY_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"
 WORKSPACE_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"
@@ -49,12 +52,11 @@ STRUCTURED_AGENT = {
     "id": "structured-extraction",
     "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
 }
-# Hindsight background-model agent (adapter memory LLM bridge): deny-all, model
-# slots are existing pool entries only.
+# Hindsight background-model agent (adapter memory LLM bridge): deny-all. Both
+# deny-all agents carry a copy of the one model chain (added in render_batch).
 MEMORY_INDEX_AGENT = {
     "id": "memory-index",
     "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
-    "model": {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]},
 }
 MAIN_AGENT = {"id": "main"}  # existing ordinary consumer identity; native policy
 
@@ -103,8 +105,23 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
         )
     _validate_openai_oauth_token(str(env.get(OPENAI_OAUTH_TOKEN_SOURCE_ENV) or ""))
     source = POOL_SCRIPT.read_text(encoding="utf-8")
+    chain = configured_chain(env)
+    if not chain:
+        raise BootstrapError("OPENCLAW_MODEL_CHAIN is empty and no default chain file is readable")
+    chain_policy = {"primary": chain[0], "fallbacks": chain[1:]}
     batch = (
         _script_batch(source, "MODEL_POOL_BATCH")
+        + [
+            {"path": "agents.defaults.model.primary", "value": chain[0]},
+            {"path": "agents.defaults.model.fallbacks", "value": chain[1:]},
+        ]
+        + [
+            {
+                "path": f'agents.defaults.models["{ref}"]',
+                "value": {"agentRuntime": {"id": "openclaw"}},
+            }
+            for ref in chain
+        ]
         + ANTHROPIC_WORKSPACE_BATCH
         + OPENAI_OAUTH_TOKEN_BATCH
         + _script_batch(source, "CLAUDE_TOOLSEARCH_BATCH")
@@ -113,7 +130,11 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
         batch += _script_batch(source, "CLAUDE_TOKEN_BATCH")
     # A fresh isolated volume has no agents; register the existing main identity
     # (no tools override) plus the deny-all structured and memory-index agents, each exactly once.
-    batch.append({"path": "agents.list", "value": [MAIN_AGENT, STRUCTURED_AGENT, MEMORY_INDEX_AGENT]})
+    batch.append({"path": "agents.list", "value": [
+        MAIN_AGENT,
+        {**STRUCTURED_AGENT, "model": dict(chain_policy)},
+        {**MEMORY_INDEX_AGENT, "model": dict(chain_policy)},
+    ]})
     return batch
 
 
