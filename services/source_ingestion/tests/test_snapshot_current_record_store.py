@@ -295,7 +295,6 @@ _READER_SCRIPT = textwrap.dedent(
 )
 
 
-WAL_BYTES_PER_PAYLOAD_BYTE = 4  # a batch writes at most 4x its encoded record bytes to the WAL (measured 1.8x for new keys)
 LIVENESS_SECONDS = 30  # "the read finished while a write transaction was open"; not a latency bound
 
 
@@ -307,24 +306,29 @@ class _Counters:
         self.transactions: list[dict] = []
         self.maintenance: list[dict] = []
         self._payload = 0
+        self._keys = 0
         self._original = (backend.transaction, backend.maintain, scs.SnapshotTransaction.put_many)
         wal = Path(str(backend.path) + "-wal")
         counters, (txn, maintain, put_many) = self, self._original
 
         def counted_put_many(tx, rows):
             counters._payload += sum(len(row[1]) for _prior, row in rows.values())
+            counters._keys += len(rows)
             return put_many(tx, rows)
 
         class _Txn:
             def __enter__(self_inner):
                 counters._payload = 0
+                counters._keys = 0
                 self_inner.cm = txn()
+                self_inner.changes_before = backend.total_changes()
                 return self_inner.cm.__enter__()
 
             def __exit__(self_inner, *exc):
                 result = self_inner.cm.__exit__(*exc)  # COMMIT done: the WAL holds exactly this batch
                 counters.transactions.append(
-                    {"payload_bytes": counters._payload, "wal_bytes": wal.stat().st_size if wal.exists() else 0}
+                    {"keys": counters._keys, "rows_changed": backend.total_changes() - self_inner.changes_before,
+                     "payload_bytes": counters._payload, "wal_bytes": wal.stat().st_size if wal.exists() else 0}
                 )
                 return result
 
@@ -356,8 +360,10 @@ def _assert_counter_guarantees(counters: _Counters, keys: int) -> None:
     assert len(counters.transactions) == expected, f"{len(counters.transactions)} transactions for {keys} keys"
     for number, txn in enumerate(counters.transactions):
         assert txn["payload_bytes"] > 0
-        assert txn["wal_bytes"] <= WAL_BYTES_PER_PAYLOAD_BYTE * txn["payload_bytes"], (
-            f"batch {number} wrote {txn['wal_bytes']} WAL bytes for {txn['payload_bytes']} record bytes: the table was rewritten"
+        # host independent "no rewrite": rows changed per transaction equal that batch's key count (WAL size is only
+        # reported, it depends on reader snapshots and checkpoint scheduling)
+        assert txn["rows_changed"] == txn["keys"], (
+            f"batch {number} changed {txn['rows_changed']} rows for {txn['keys']} keys: the table was rewritten"
         )
     assert counters.maintenance, "maintenance never ran"
     for step in counters.maintenance:
