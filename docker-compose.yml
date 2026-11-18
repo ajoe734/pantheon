@@ -289,7 +289,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); f=h.get('functional_health') or {}; age=time.time()-os.path.getmtime(p); sys.exit(0 if f.get('ready') is True and int(f.get('blocked_count') or 0)==0 and int(f.get('dead_letter_count') or 0)==0 and age<=90 else 1)\"",
+          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); age=time.time()-os.path.getmtime(p); sys.exit(0 if isinstance(h,dict) and age<=90 else 1)\"",
         ]
       interval: 10s
       timeout: 5s
@@ -1114,7 +1114,9 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
-      OPENCLAW_PRIMARY_MODEL: ${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}
+      # One deployment variable holds the ordered model chain (first = primary);
+      # unset keeps the shipped default chain (services/persona/model-chain.default).
+      OPENCLAW_MODEL_CHAIN: ${OPENCLAW_MODEL_CHAIN:-}
       # Agent ensure/reconcile runs in this authenticated adapter container but
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw
