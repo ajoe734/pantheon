@@ -142,6 +142,26 @@ class WorkerCommitPreflightTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(author, "Claude <claude-agent@pantheon.local>")
 
+    def test_worker_commit_refuses_trailer_naming_another_identity(self) -> None:
+        (self.repo / "file1.py").write_text("print('x')\n", encoding="utf-8")
+        msg_file = self.repo / "msg.txt"
+        msg_file.write_text(
+            "TASK-001: commit\n\nLLM-Agent: Claude\nTask-ID: TASK-001\n", encoding="utf-8"
+        )
+        argv = [
+            "worker_commit.py", "--task-id", "TASK-001", "--message-file",
+            str(msg_file), "--scope", str(self.repo / "file1.py"),
+        ]
+        for agent, expected in (("Claude2", 6), ("Claude", 0)):
+            with self.subTest(agent=agent), (
+                mock.patch.object(sys, "argv", argv)
+            ), mock.patch.object(worker_commit, "ROOT", self.repo), mock.patch.object(
+                worker_commit, "STATUS_ROOT", self.repo
+            ), mock.patch.object(worker_commit, "_append_audit"), mock.patch.dict(
+                os.environ, {"PANTHEON_WORKER_AGENT": agent}, clear=False
+            ):
+                self.assertEqual(worker_commit.main(), expected)
+
     def test_worker_commit_accepts_bounded_prefix_for_long_task_id(self) -> None:
         """OPS-COMMIT-IDENTITY-001: a generated task_id can exceed 72 chars.
 

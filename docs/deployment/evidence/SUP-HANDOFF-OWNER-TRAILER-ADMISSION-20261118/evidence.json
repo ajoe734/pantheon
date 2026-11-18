@@ -1,0 +1,14 @@
+{
+  "task_id": "SUP-HANDOFF-OWNER-TRAILER-ADMISSION-20261118",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "delivery": "scripts/ai_status.py (reject_owner_trailer_mismatch_at_handoff), scripts/git/worker_commit.py, .orchestrator/worker_runner.py, docs/operations/reviewer-reassignment-and-done-gate.md",
+  "verification": [
+    "python3 -m unittest scripts.test_ai_status: 531 tests OK (incl. replay of TW-TAIFEX shape, range/amend, audited-chain acceptance)",
+    ".orchestrator: python3 -m unittest test_worker_runner: OK",
+    "scripts/git: python3 -m unittest test_worker_commit: 17 tests OK (commit-time identity refusal)"
+  ],
+  "live_activation": "requires governed runtime promotion",
+  "residual_findings": ["raw git commit in a worker worktree bypasses the commit-time check; the handoff check is the backstop"],
+  "review_decision": "pending"
+}

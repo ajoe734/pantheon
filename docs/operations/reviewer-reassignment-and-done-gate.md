@@ -65,3 +65,63 @@ AI_NAME=<Owner> "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done <TASK> "final
 
 No task or queue JSON is edited by hand. If the approval binding head is not the
 merged head, `done` stays refused and the task needs a fresh review.
+
+## 5. Owner `LLM-Agent` trailer admission
+
+Handoff now also checks the **owner** trailer
+(`reject_owner_trailer_mismatch_at_handoff`, next to the Reviewer check). It
+reads only the commit messages of the delivered range (frozen
+`base_sha..head_sha`, no merges; the head alone if the binding has no base) and
+considers commits whose `Task-ID` trailer is this task. A commit whose
+`LLM-Agent` trailer is not the task owner is refused unless an audited
+`task_reassigned` owner chain links that agent to the current owner (the same
+chain walk as the done-time rule). The refusal names the commit, the trailer
+found and the expected owner. Because the check runs on the head the review will
+bind, an amend is re-checked at the next handoff. A trailer that is simply
+absent is left to the existing required-trailer checks; done-time refusals are
+unchanged, and an already-merged row with the mismatch is still refused at done.
+
+**Commit time.** The worker launch (`worker_runner.build_worker_child_env`) sets
+`PANTHEON_WORKER_AGENT` to the canonical agent identity; `worker_commit.py`
+refuses (exit 6) a message whose `LLM-Agent` trailer names another identity and
+prints the value to use. Raw `git commit` in a worktree is not covered by this
+variable; the handoff check is the backstop there.
+
+**Activation.** Development tooling: takes effect on the live supervisor only
+after a runtime promotion.
+
+### Recovery of merged rows with an owner trailer mismatch
+
+Blocked today: TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118 (PR 7554; author
+Claude2, trailer `LLM-Agent: Claude`, owner never reassigned) and
+COLLECTOR-LISTING-MODULE-SHIPPED-20261117 (merged commit ff5784500; recovery via
+OPS-MERGED-RECOVERY-COLLECTOR-LISTING-MODULE-20261118). Earlier case:
+FE-MANAGEMENT-ATTRIBUTION-VIEWS-20261116. Do not finalize them by hand; do not
+edit task JSON.
+
+1. A small recovery task writes a reviewed record under
+   `.orchestrator/review-evidence/<TASK>.md` (example: PR 7560 for
+   SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118). Everything
+   `validate_merged_done_evidence` requires must be in it:
+   - `# Task Brief: <TASK>`
+   - `- Status: review_approved`
+   - `- Owner: <Owner>` (the canonical owner; if it differs from the task row
+     it needs an audited reassignment)
+   - `- Reviewer: <Reviewer>` (independent of the owner)
+   - the repository slug `ajoe734/pantheon` and the full 40-hex delivery commit
+     SHA (both must appear verbatim)
+   - the merged PR, the trailer found (`LLM-Agent: <wrong>`), the expected
+     owner, and the recorded review approval.
+   Merge the record to the target ref.
+2. The coordinator (Human/Ops or the task's current reviewer) runs the
+   reconcile command with the full environment:
+
+   ```bash
+   RECONCILE_EVIDENCE_FILE=.orchestrator/review-evidence/<TASK>.md \
+   RECONCILE_EVIDENCE_COMMIT=<merge commit of the record> \
+   RECONCILE_DELIVERY_REPOSITORY=ajoe734/pantheon \
+   RECONCILE_DELIVERY_ROOT=<local checkout of the delivery repository> \
+   RECONCILE_DELIVERY_COMMIT=<full 40-hex merged delivery commit> \
+   AI_NAME=<Human/Ops or current reviewer> \
+   "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" reconcile_merged_done <TASK> "<message>"
+   ```
