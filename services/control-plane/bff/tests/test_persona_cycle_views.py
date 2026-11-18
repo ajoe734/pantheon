@@ -270,9 +270,8 @@ def test_detail_day_matches_probe_cycle_day(cycle_stack, route):
 
 def test_view_and_probe_share_the_daily_cycle_rule():
     from acceptance import persona_day
-    from services.persona import cycle_eligibility
-    assert persona_day.daily_cycle_personas is cycle_eligibility.daily_cycle_personas or \
-        persona_day.DAILY_CYCLE_STATES == cycle_eligibility.DAILY_CYCLE_STATES
+    from services.persona import persona_cycle_controller as ctl
     rows = [{"persona_id": "a", "state": "paper_owner"}, {"persona_id": "b", "state": "consultable"},
             {"persona_id": "c", "state": "draft"}]
     assert [r["persona_id"] for r in persona_day.daily_cycle_personas(rows)] == ["a"]
+    assert persona_day.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES

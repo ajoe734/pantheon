@@ -53,23 +53,3 @@ lease; otherwise it is `skipped` with `lease_required` and the verdict stays
   `deployment.json`, not a field inside it, because the FE manifest and its release
   directory are digest-pinned by the exact-artifact capture and verify path.
 - Run evidence: artifact `dev-acceptance-verdict-<run>-<attempt>`, 30-day retention.
-
-## Persona-day probe (`acceptance/persona_day.py`)
-
-Task: PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118. Workflow `.github/workflows/persona-day-acceptance.yml`.
-
-- **Green only on verdict `passed`.** The step runs under `pipefail`, so the probe exit code reaches the job:
-  `failed`, an unreadable BFF or a missing credential all make the run red. A test
-  (`scripts/test_acceptance_workflows_truthful.py`) fails if an acceptance workflow pipes a probe without `pipefail`.
-- **Reads the BFF as the read-only viewer.** The probe exchanges the existing dev-login viewer identity
-  (`DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID` var / `DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET` dev secret, passed as
-  `ACCEPTANCE_VIEWER_CLIENT_ID/SECRET`) at `/bff/auth/dev-login`; the token lives in memory only and is never
-  printed or written. No new secret. GET only apart from that exchange.
-- **Failure reasons carry the status:** `auth_failed:401`, `read_failed:503`, `credential_missing:viewer_client`.
-  Exit 77 is only for an unset `ACCEPTANCE_BFF_URL`.
-- **Cycle day is UTC.** The persona cycle fires at 10:00 UTC; a day is judged once its window ended (10:45 UTC),
-  earlier clocks judge the previous UTC day. Reports state `cycle_day` and `cycle_due_at_utc`, so a late-started run
-  still judges the stated day. The workflow cron is `30 11 * * 1-5` (one run per weekday, no hosted writer).
-- Artifact `persona-day.json`: a few KB (one line per persona report), 30-day retention.
-- **Persona set (PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118).** The probe judges exactly the personas the daily cycle
-  runs for, via `services/persona/cycle_eligibility.py` (shared with the controller; lifecycle paper_running/paper_owner, status active).

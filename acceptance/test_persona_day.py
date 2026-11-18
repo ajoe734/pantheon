@@ -173,9 +173,9 @@ def test_probe_set_equals_controller_set_for_same_list():
     items = _hosted_1118()
     probe_ids = {x["persona_id"] for x in pd.daily_cycle_personas(items)}
     controller_ids = {x["persona_id"] for x in items
-                      if x["state"] in ctl.DAILY_CYCLE_STATES and x["status"] == "active"}
+                      if ctl.is_daily_cycle_persona({"lifecycle_state": x["state"], "status": x["status"]})}
     assert probe_ids == controller_ids == {"t-2448c7", "t-ee7112", "t-650775"}
-    assert ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
+    assert pd.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
 
 
 def test_hosted_replay_evaluates_exactly_the_three_trading_personas():

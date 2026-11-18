@@ -1,6 +1,6 @@
 {
   "task": "PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118",
-  "shared_definition": "services/persona/cycle_eligibility.py (stdlib only; controller imports it, probe loads it by path so `python3 -I` still works)",
+  "shared_definition": "services/persona/persona_cycle_controller.py ELIGIBLE_STATES literal and is_daily_cycle_persona; the probe reads the literal by ast from the controller source so `python3 -I` still works",
   "rule": "lifecycle_state in {paper_running, paper_owner} (ELIGIBLE_STATES minus consultable) and status active",
   "tests": {"command": "pytest acceptance/test_persona_day.py services/persona/test_persona_cycle_controller.py services/control-plane/bff/tests/test_persona_cycle_views.py", "result": "107 passed, 4 skipped"},
   "hosted_run": "NOT run by the worker. The coordinator dispatches persona-day-acceptance once after merge and records the persona list of its artifact; do not report accepted before that.",

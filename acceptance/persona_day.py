@@ -18,20 +18,29 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 
-def _load_eligibility():
-    """Load the controller's own eligibility rule by path (the probe runs under ``python3 -I``)."""
-    import importlib.util
+def _controller_eligible_states() -> frozenset:
+    """The controller's own ELIGIBLE_STATES literal, read from its source (the probe runs under ``python3 -I``)."""
+    import ast
     from pathlib import Path
-    path = Path(__file__).resolve().parent.parent / "services" / "persona" / "cycle_eligibility.py"
-    spec = importlib.util.spec_from_file_location("_pantheon_cycle_eligibility", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    path = Path(__file__).resolve().parent.parent / "services" / "persona" / "persona_cycle_controller.py"
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "ELIGIBLE_STATES" for t in node.targets):
+            return frozenset(ast.literal_eval(node.value))
+    raise RuntimeError("ELIGIBLE_STATES not found in persona_cycle_controller.py")
 
 
-_eligibility = _load_eligibility()
-daily_cycle_personas = _eligibility.daily_cycle_personas
-DAILY_CYCLE_STATES = _eligibility.DAILY_CYCLE_STATES
+DAILY_CYCLE_STATES = _controller_eligible_states() - {"consultable"}
+
+
+def daily_cycle_personas(personas: Iterable[Mapping[str, Any]]) -> list:
+    """Same rule as the controller's is_daily_cycle_persona (BFF rows carry ``state``, controller rows ``lifecycle_state``)."""
+    out = []
+    for p in personas:
+        state = p.get("lifecycle_state") if p.get("lifecycle_state") is not None else p.get("state")
+        if state in DAILY_CYCLE_STATES and p.get("status", "active") == "active":
+            out.append(p)
+    return out
+
 
 # acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117 / PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118
 
