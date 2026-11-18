@@ -123,6 +123,7 @@ def test_toolsearch_override_matches_adapter_admission_and_keeps_defaults() -> N
 def _run_model_pool_script(
     tmp_path, *, token_present: bool, workspace_present: bool = False,
     reject_binding: bool = False, agents=None, get_fail: bool = False, raw_state=None,
+    extra_env=None,
 ):
     state = tmp_path / "agents-state.json"
     state.write_text(raw_state if raw_state is not None else json.dumps(agents) if agents is not None else "")
@@ -192,6 +193,7 @@ elif cli[:2] == ["config", "get"]:
             "TEST_AGENTS_GET_FAIL": "1" if get_fail else "0",
             "CLAUDE_CODE_OAUTH_TOKEN": "test-secret-never-in-argv-or-output",
             "ANTHROPIC_WORKSPACE_ID": "test-workspace-never-in-argv-or-output",
+            **(extra_env or {}),
         },
         capture_output=True, text=True, timeout=10, check=False,
     )
@@ -297,8 +299,10 @@ def test_memory_index_agent_is_deny_all_with_pool_slot_models(tmp_path) -> None:
     assert result.returncode == 0, result.stderr
     agent = next(a for a in result.final_agents if a["id"] == "memory-index")
     assert agent["tools"] == {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}
-    assert agent["model"] == {"primary": "openai/gpt-5.5",
-                              "fallbacks": ["anthropic/claude-sonnet-4-6"]}
+    assert agent["model"] == {
+        "primary": "openai/gpt-5.6-sol",
+        "fallbacks": ["openai/gpt-5.5", "anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6"],
+    }
     assert sum(a["id"] == "memory-index" for a in result.final_agents) == 1
     # Same admission assertions as structured-extraction.
     _admission(result.final_agents)
@@ -319,6 +323,20 @@ def test_memory_index_agent_is_deny_all_with_pool_slot_models(tmp_path) -> None:
         adapter._OPENCLAW_AGENT_PROVIDER = saved
     result2, _ = _run_model_pool_script(tmp_path, token_present=False, agents=result.final_agents)
     assert result2.final_agents == result.final_agents
+
+
+def test_memory_index_env_override_works_and_out_of_pool_is_refused(tmp_path) -> None:
+    ok, _ = _run_model_pool_script(
+        tmp_path, token_present=False, agents=[{"id": "main"}],
+        extra_env={"OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL": "openai/gpt-5.5",
+                   "OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS": "anthropic/claude-sonnet-4-6"})
+    assert ok.returncode == 0, ok.stderr
+    agent = next(a for a in ok.final_agents if a["id"] == "memory-index")
+    assert agent["model"] == {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]}
+    for env in ({"OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL": "openai/not-in-pool"},
+                {"OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS": "openai/gpt-5.5,openai/not-in-pool"}):
+        bad, _ = _run_model_pool_script(tmp_path, token_present=False, agents=[{"id": "main"}], extra_env=env)
+        assert bad.returncode != 0
 
 
 def test_admission_still_rejects_agent_without_deny_all() -> None:
