@@ -3,15 +3,16 @@
   "acceptance": {
     "1_missing_field_established": {
       "status": "NOT_ESTABLISHED",
-      "note": "The pinned gateway source and a real gateway run were not available in this worker, so which of agent_id/session_key/run_id/tool_call_id the claude-cli backend omits is not asserted. The plugin now names the exact missing field(s) in blockReason and the plugin log, so the next hosted run establishes it from evidence."
+      "note": "The pinned gateway source and a real gateway run were not available in this worker, so which of agent_id/session_key/run_id/tool_call_id the claude-cli backend omits is not asserted. The plugin now names the exact missing field(s) in blockReason and the plugin log, so the next hosted run establishes it from evidence. Not established from pinned gateway source in this worker; AC2 is met by avoiding the backend instead."
     },
     "2_identity_or_no_fallback": {
-      "status": "PARTIAL",
-      "done": "Plugin still fails closed; model-supplied params/identity are never accepted (tested).",
-      "not_done": "No host-verified CLI identity source was identified and persona_agent_sync.py fallbacks were not changed (dropping CLI fallbacks is a pool-policy decision that needs 1 first)."
+      "status": "done_by_no_fallback",
+      "done": "services/persona/runtime_profile.py: PERSONA_TOOLS_BLOCKED_MODEL_REFS (anthropic/claude-sonnet-4-6, agentRuntime claude-cli) is never an automatic persona fallback; pool order is opus -> openai/gpt-5.6-sol -> openai/gpt-5.5 (gpt-5.6-sol observed 200 on hosted 2026-11-18; gpt-5.5 not observed on hosted so it is only the last slot). Every provider remains a fallback for the others except the CLI backend. Model-supplied identity still never accepted.",
+      "hosted_apply_path": "persona_agent_sync rewrites agents.list {primary,fallbacks} for existing persona agents on the next sync after deploy; existing agents keep the old fallbacks until that sync runs.",
+      "operator_pin_note": "an operator may still hard-pin the sonnet model as primary; that case yields persona_tools_blocked:missing_host_identity via AC3."
     },
     "3_named_failure_reason": "done: persona_tools_blocked:missing_host_identity:model=<used>:provider=<used> and persona_tools_blocked:model_auth_failed:model=<requested>; tool_record_no_calls kept only for a turn with no blocked report. Blocked cause is classified from the agent's own report text (classification only, never proposal data). model_used/provider come from the gateway response fields when present.",
-    "4_tests": "plugin: CLI-context missing fields named by name + forged params rejected; ooda runtime: blocked report, backend used, 401 -> model_auth_failed, plain reply; controller: blocked and auth-failed reasons. Existing full-identity path tests unchanged and passing. services/persona controller suite: 60 passed, 2 failed (test_deployed_persona_lifespan_consumes_cycle_and_stops) which also fail without these changes.",
+    "4_tests": "plugin: CLI-context missing fields named by name + forged params rejected; ooda runtime: blocked report, backend used, 401 -> model_auth_failed, plain reply; controller: blocked and auth-failed reasons. Existing full-identity path tests unchanged and passing. services/persona controller suite: 60 passed, 2 failed (test_deployed_persona_lifespan_consumes_cycle_and_stops) which also fail without these changes. Plus runtime_profile fallback exclusion test; persona_agent_sync expectations updated. 46 passed (runtime_profile, persona_agent_sync, ooda_runtime).",
     "5_runtime_budget": "no new writer",
     "6_hosted_proof": "pending: next hosted daily cycle must record brokered calls or the named cause; coordinator records it."
   },

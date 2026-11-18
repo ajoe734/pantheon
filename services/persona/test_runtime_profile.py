@@ -127,3 +127,12 @@ def test_runtime_profile_payload_does_not_expose_auth_material() -> None:
 
     forbidden = ("api_key", "secret", "token", "credential", "oauth")
     assert not any(term in payload.lower() for term in forbidden)
+
+
+def test_pool_default_fallbacks_exclude_tool_blocked_cli_model():
+    from services.persona.runtime_profile import PERSONA_TOOLS_BLOCKED_MODEL_REFS
+
+    routing = build_persona_runtime_profile({"persona_id": "persona-x"}).to_dict()["model_routing"]
+    assert routing["primary_model"] == "anthropic/claude-opus-4-8"
+    assert routing["fallback_models"] == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]
+    assert not PERSONA_TOOLS_BLOCKED_MODEL_REFS & set(routing["fallback_models"])
