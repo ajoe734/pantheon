@@ -147,6 +147,11 @@ class PersonaOodaTurn:
     elapsed_ms: int
     model: str
     error: Optional[str] = None
+    # What the gateway reports it actually ran (response `model` / `provider`), not what was requested.
+    model_used: str = ""
+    provider: str = ""
+    # Named cause when the agent says its Pantheon tools were blocked; classification only, never proposal data.
+    blocked_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -182,6 +187,21 @@ def build_ooda_prompt(persona: Mapping[str, Any], context_bundle: Mapping[str, A
 
 
 HttpPost = Callable[[str, bytes, Dict[str, str], float], bytes]
+
+
+_BLOCK_MARKER = "persona_tools_blocked:"
+
+
+def detect_blocked_reason(text: str) -> str:
+    """Name why persona tools were blocked from the agent's own report; "" when it reports no block."""
+    low = text.lower()
+    i = low.find(_BLOCK_MARKER)
+    if i >= 0:
+        tail = text[i:].split()[0].rstrip(".,;)\"'`")
+        return tail[:120]
+    if "missing host identity" in low:
+        return "persona_tools_blocked:missing_host_identity"
+    return ""
 
 
 def _default_post(url: str, body: bytes, headers: Dict[str, str], timeout: float) -> bytes:
@@ -238,8 +258,9 @@ def run_persona_ooda_turn(
     try:
         raw = do_post(f"{base}/v1/responses", body, headers, timeout_seconds)
     except urllib.error.HTTPError as exc:
+        err = "model_auth_failed" if exc.code in (401, 403) else f"/v1/responses HTTP {exc.code}"
         return PersonaOodaTurn(persona_id, "error", "", int((time.monotonic() - started) * 1000), model,
-                               error=f"/v1/responses HTTP {exc.code}")
+                               error=err)
     except Exception as exc:  # noqa: BLE001
         return PersonaOodaTurn(persona_id, "error", "", int((time.monotonic() - started) * 1000), model,
                                error=f"/v1/responses failed: {exc}")
@@ -251,4 +272,9 @@ def run_persona_ooda_turn(
     text = _extract_text(data)
     if not text:
         return PersonaOodaTurn(persona_id, "error", "", elapsed, model, error="empty decision text")
-    return PersonaOodaTurn(persona_id, "completed", text, elapsed, model)
+    used = data.get("model") if isinstance(data, dict) else None
+    prov = data.get("provider") if isinstance(data, dict) else None
+    return PersonaOodaTurn(persona_id, "completed", text, elapsed, model,
+                           model_used=used if isinstance(used, str) else "",
+                           provider=prov if isinstance(prov, str) else "",
+                           blocked_reason=detect_blocked_reason(text))

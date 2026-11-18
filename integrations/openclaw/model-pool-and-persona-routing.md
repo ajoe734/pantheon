@@ -227,8 +227,11 @@ repo config to simulate an extra account.
 `scripts/openclaw-configure-shared-model-pool.sh` and the isolated bootstrap add
 a second deny-all agent, `memory-index` (tools deny `*`, exec security deny/ask
 always), under the same adapter policy assertions as `structured-extraction`.
-Its model is `agents.list[].model`: primary `openai/gpt-5.5` and fallback
-`anthropic/claude-sonnet-4-6`, set by `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` and
+Its model is `agents.list[].model`: primary `openai/gpt-5.6-sol` and fallbacks
+`openai/gpt-5.5`, `anthropic/claude-opus-4-8` (API, alias opus), then
+`anthropic/claude-sonnet-4-6` (CLI, alias sonnet) in that order, set by `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` and
 `OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS`. Only existing pool slots are valid; no
-model or credential is added. Reached only through the adapter's internal
+model or credential is added. Hosted evidence 2026-11-18 (7 days, 576 sessions):
+gpt-5.6-sol answered 615 calls, CLI sonnet 6, gpt-5.5 none (unproven), opus-4-8
+failed 295 times; hence gpt-5.6-sol is primary. The persona and default chains are unchanged. Reached only through the adapter's internal
 memory LLM bridge (see `deploy/hindsight/README.md`).
