@@ -59,6 +59,7 @@ doing and by the first eight characters of its session id.
 | Deployer reports failure after a successful dispatch (`dispatch sent but run could not be correlated`, 18:08Z, 20:04Z, 20:46Z) | no task yet | open |
 | The advisory check summary carries its own `acceptance` field and wrote `failed` on Root 44187386408 because a housekeeping budget check failed (docker build cache cap), while the acceptance record passed; one coordinator reported the release as not accepted from it | no task yet | open |
 | Frontend unit test red inside the integration gate (execute-plans) | FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117 (execute-plans #1036) | merged |
+| A Taiwan refresh interrupted by its step timeout leaves source-ingest and its scheduler stopped and a Compose rename leftover that fails the next Root capture | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 | open |
 
 The workflow and deploy-script tasks are serialised in this order: no probe
 input, advisory checks, newest green, stack completeness, docker maintenance
@@ -97,7 +98,14 @@ the step in that job's checkout layout); Root 44187386408 (13a08deaa) succeeded
 at 23:26Z. Since PR #7541 every green dev commit dispatches a release, so
 hosted is redeployed about every 75 minutes while merges continue. The Smoke
 acceptance step for source ingestion takes about 880 s; its cap was 900 s and
-is 25 minutes since PR #7541; the suite duration has no budget.
+is 25 minutes since PR #7541; the suite duration has no budget. On 11/18 the
+Taiwan refresh run 44273374890 (dispatched 09:10Z by the dev-host timer of the
+release owner, inside the persona quiet window) hit the 35-minute timeout of the
+chip refresh step at 09:56Z during a Compose recreate; its restore traps EXIT,
+INT and TERM but not the dropped SSH session, so source-ingest and the steady
+scheduler stayed stopped until a manual start at 12:40Z, and the Created rename
+leftover made Root 44295978076 fail at capture (`expected exactly one Compose
+container`). The dev-host timer slot moved from 09:10Z to 10:50Z.
 
 ## RC2. Done means merged, not working
 
