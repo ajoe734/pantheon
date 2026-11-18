@@ -7,6 +7,26 @@ Its result is the **acceptance verdict**: `pending`, `passed` or `failed`.
 A release is `accepted` only when `acceptance=passed`; `deploymentState` of the
 hosted manifest keeps its meaning (the deployed pair of record).
 
+## Release probes only
+
+The release acceptance stage judges **the release itself**. It runs only probes that can be
+answered from the release right after the switch (identity of the deployed pair, a read of
+the just-deployed `/bff/version` or a feature route). A probe that asks about daily system
+state (for example "did the personas finish yesterday's cycle?") is **not** a release probe:
+the answer does not depend on this release, so it would mark every later release `failed`
+until that state recovers. Such daily state probes live outside `acceptance/probes/`, run from
+their own daily workflow and report their verdict there. The persona-day probe
+(`acceptance/persona_day.py`, workflow `persona-day-acceptance.yml`) is a daily state probe;
+it is not discovered by the stage.
+
+### Accepted baseline of record
+
+A release becomes the accepted baseline of record only when its acceptance verdict is `passed`
+(`acceptance/latest.json`, see Verdict). A `failed` or `pending` verdict does not advance it, so
+the baseline stays on the last release whose stage passed until the next release passes.
+The deploy itself, its compensation and the restore of a captured baseline are unchanged:
+acceptance never gates or rolls back a deploy.
+
 ## Feature acceptance probes
 
 One executable, **read-only** probe per feature chain, placed directly in
@@ -32,7 +52,7 @@ curl --fail --silent --show-error --max-time 30 "${ACCEPTANCE_BFF_URL%/}/bff/ver
 ```
 
 The directory may be empty or absent; the stage then runs only the built-in check.
-Each feature task adds its own probe (remediation plan RC2); this task ships none.
+Each feature task adds its own probe (remediation plan RC2); the directory currently ships none.
 
 ## Declared checks
 
@@ -54,7 +74,7 @@ lease; otherwise it is `skipped` with `lease_required` and the verdict stays
   directory are digest-pinned by the exact-artifact capture and verify path.
 - Run evidence: artifact `dev-acceptance-verdict-<run>-<attempt>`, 30-day retention.
 
-## Persona-day probe (`acceptance/persona_day.py`)
+## Persona-day probe (`acceptance/persona_day.py`) — daily workflow only
 
 Task: PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118. Workflow `.github/workflows/persona-day-acceptance.yml`.
 

@@ -98,6 +98,13 @@ back: the run conclusion measures deploys, the verdict measures acceptance.
 - A check declared `mutates: true` runs only while the job holds the qualification
   lease (same pinned controller as the hosted chain job); without it the check is
   skipped and the verdict stays `pending`.
+- Release probes only: the stage runs what the release itself can answer. Daily state
+  probes (the persona-day probe, `acceptance/persona_day.py`) run from their own daily
+  workflow and never decide a release verdict (`acceptance/README.md`, "Release probes only").
+- Accepted baseline: the accepted baseline of record is the latest release whose verdict in
+  `acceptance/latest.json` is `passed`; a `failed` or `pending` verdict leaves it where it was,
+  and the next release whose stage passes advances it. No gate is added to the deploy path and
+  nothing rolls back because of the acceptance stage.
 - Reporting: a release is `deployed` after the deploy; it is `accepted` only when
   `acceptance=passed`. The run summary and the automatic checker report both separately.
 
