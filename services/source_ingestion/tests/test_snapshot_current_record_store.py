@@ -647,7 +647,10 @@ def test_second_writer_gets_a_retryable_error_after_two_seconds(tmp_path):
             store.append_normalized_records([_record(0, 4)], ingest_run_id="r2", observed_at="2026-11-17T11:00:00Z")
         waited = time.monotonic() - began
         assert raised.value.retryable is True
-        assert 1.8 <= waited <= 4.0, waited
+        assert waited >= 1.8, waited  # it really waited out the busy timeout (a slow host only makes this longer)
+        # Counter that does not depend on host speed: the wait is the configured busy timeout, which is 2 s, never more than 4 s.
+        assert store._backend.busy_timeout_ms == scs.DEFAULT_BUSY_TIMEOUT_MS == 2000
+        wall_clock_bounds.check("snapshot.second_writer_wait_max", waited, 4.0, unit="s")
         MEASURED["second_writer"] = {"waited_seconds": round(waited, 2), "error": type(raised.value).__name__}
         # readers are not blocked by the held writer lock
         assert store.get(_symbol(0)).closes == (round(20 + 3 * 0.05, 2),)

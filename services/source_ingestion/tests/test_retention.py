@@ -28,7 +28,6 @@ from services.source_ingestion.daily_bars_store import DailyBarsStore, KeyedData
 from services.source_ingestion.pin_source import PinSource
 from services.source_ingestion.retention import RetentionSweeper
 from services.source_ingestion.security_listing import ListingState
-from services.source_ingestion.tests import wall_clock_bounds
 
 TODAY = "2026-11-17"  # Tuesday
 LAST_LISTING = "2026-11-16"
@@ -661,11 +660,8 @@ def test_hosted_shape_sweep_of_300_expired_warrants_is_bounded_and_never_blocks_
     assert warrant_rows <= listed_warrants * days
     # The sweep's snapshot deletes are the only part that takes the snapshot writer lock, in transactions of at most
     # SNAPSHOT_BATCH symbols: a writer waits at most one transaction (< 250 ms) and WAL readers wait for none (< 100 ms).
-    wall_clock_bounds.check_many(
-        ("retention.snapshot_delete_txn_max", max(batch_ms), 250, {"strict": True}),
-        ("retention.reader_during_snapshot_delete_max", max(snap_r, default=0), 100, {"strict": True}),
-        ("retention.writer_probe_during_snapshot_delete_max", max(snap_w, default=0), 250, {"strict": True}),
-    )
+    assert max(batch_ms) < 250 and max(snap_r, default=0) < 100
+    assert max(snap_w, default=0) < 250
     assert real["report_bytes"] <= ret.REPORT_MAX_BYTES
 
 

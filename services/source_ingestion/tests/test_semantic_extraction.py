@@ -16,7 +16,6 @@ from typing import Any, Dict
 import uuid
 import pytest
 
-from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.interaction_intent_classifier import (
     InteractionPrimaryIntent,
 )
@@ -658,7 +657,7 @@ class TestSemanticExtractionClientBoundedFailures:
             assert res.is_abstained is True
             assert res.failure_code == ExtractionFailureCode.TIMEOUT.value
             # Must timeout near 0.05s rather than taking >= 0.20s
-            wall_clock_bounds.check("semantic_extraction.trickle_timeout", elapsed, 0.15, unit="s", strict=True)
+            assert elapsed < 0.15
         finally:
             server.shutdown()
             t.join()
@@ -701,7 +700,7 @@ class TestSemanticExtractionClientBoundedFailures:
         # Since policy (0.06s) + invoke (0.06s) = 0.12s > 0.1s budget, result must be timeout
         assert res.is_abstained is True
         assert res.failure_code == ExtractionFailureCode.TIMEOUT.value
-        wall_clock_bounds.check("semantic_extraction.remaining_budget_timeout", elapsed, 0.25, unit="s", strict=True)
+        assert elapsed < 0.25
 
     def test_strict_support_validation_rejects_non_canonical_and_invalid_spans(self):
         client = SemanticExtractionClient(

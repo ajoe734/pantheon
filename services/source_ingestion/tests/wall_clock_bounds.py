@@ -67,6 +67,7 @@ def check(name: str, measured: float, bound: float, *, unit: str = "ms", strict:
     within = measured < bound if strict else measured <= bound
     row = {
         "name": name,
+        "test": os.environ.get("PYTEST_CURRENT_TEST", "").split(" ")[0],
         "measured": round(float(measured), 3),
         "bound": bound,
         "unit": unit,
@@ -84,6 +85,29 @@ def check(name: str, measured: float, bound: float, *, unit: str = "ms", strict:
             f"{name}: {measured:.1f} {unit} is not {row['operator']} {bound} {unit} ({ENV_SWITCH} is set)"
         )
     return within
+
+
+def count_parquet_reads(monkeypatch) -> dict[str, int]:
+    """Count what a parquet read really does, in files and row groups, not seconds (the counter behind a latency bound).
+
+    ``opens`` is the number of ``ParquetFile`` objects created and ``row_groups`` the number of row groups decoded.
+    """
+    import pyarrow.parquet as pq
+
+    counts = {"opens": 0, "row_groups": 0}
+    original_open, original_read = pq.ParquetFile, pq.ParquetFile.read_row_groups
+
+    class CountingParquetFile(original_open):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            counts["opens"] += 1
+            super().__init__(*args, **kwargs)
+
+        def read_row_groups(self, row_groups, *args, **kwargs):
+            counts["row_groups"] += len(row_groups)
+            return original_read(self, row_groups, *args, **kwargs)
+
+    monkeypatch.setattr(pq, "ParquetFile", CountingParquetFile)
+    return counts
 
 
 def main(argv: list[str]) -> int:
