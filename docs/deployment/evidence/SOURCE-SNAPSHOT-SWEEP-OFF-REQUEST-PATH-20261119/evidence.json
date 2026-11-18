@@ -1,0 +1,14 @@
+{
+  "task": "SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119",
+  "wait_cause": "services/source_ingestion/snapshot_universe.py snapshot_for_request took self._lock (universe RLock) and ran maybe_sweep() in finally; sweep() holds the same lock across store.withdraw_symbols (journal compaction). store.get is lock-free in journal mode (requirement_state.py LatestMarketSnapshotStore.get), so the universe lock is what every reader waited on.",
+  "change": {
+    "request_path": "snapshot_for_request no longer calls sweep/maybe_sweep; stored snapshot lookup uses non-blocking lock acquire and defers the recency touch if the lock is busy (applied by next lookup or the sweep); a lookup that must seed takes the lock and waits for a sweep in progress (tested).",
+    "schedule": "SnapshotUniverse.start_background_sweeps: one daemon thread per process, 3600 s cadence, first wait a full interval after the PR 7589 startup sweep; started from runtime after _warm_snapshot_lookup; stopped via atexit/stop_background_sweeps. Sweep semantics unchanged."
+  },
+  "validation": {
+    "command": "pytest -q services/source_ingestion/tests/test_snapshot_sweep_off_request_path.py services/source_ingestion/tests/test_ready_covers_snapshot_lookup.py services/source_ingestion/tests/test_snapshot_universe.py",
+    "result": "18 passed, 4 skipped, exit 0",
+    "new_tests": "5 (event/barrier based, no elapsed-time assertion)"
+  },
+  "not_measured_here": "Hosted shaped before/after longest-lookup measurement (acceptance 5) was not run in this worker (no hosted copy access); coordinator repeats the 65 minute 1 s sampler after deploy, expecting no lookup above 3 s outside a restart."
+}
