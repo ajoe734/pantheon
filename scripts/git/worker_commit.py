@@ -329,22 +329,6 @@ def main() -> int:
             print(f"ERROR: {p}", file=sys.stderr)
         return 5
 
-    # The worker launch publishes the canonical identity; a trailer naming any
-    # other agent would only be caught at handoff (or worse, at done).
-    canonical_agent = (os.environ.get("PANTHEON_WORKER_AGENT") or "").strip()
-    if canonical_agent:
-        from check_commit_trailers import parse_trailers
-
-        found_agent = parse_trailers(clean_msg).get("LLM-Agent", "").strip()
-        if found_agent and found_agent.casefold() != canonical_agent.casefold():
-            print(
-                f"ERROR: `LLM-Agent: {found_agent}` does not match this worker's "
-                f"canonical identity `{canonical_agent}`; use `LLM-Agent: "
-                f"{canonical_agent}` in the commit message.",
-                file=sys.stderr,
-            )
-            return 6
-
     # Step 1: clear any existing staging. With a private index this is a no-op,
     # but stays cheap and idempotent.
     _git("restore", "--staged", "--", ".", env=env, check=False)

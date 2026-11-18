@@ -82,10 +82,11 @@ absent is left to the existing required-trailer checks; done-time refusals are
 unchanged, and an already-merged row with the mismatch is still refused at done.
 
 **Commit time.** The worker launch (`worker_runner.build_worker_child_env`) sets
-`PANTHEON_WORKER_AGENT` to the canonical agent identity; `worker_commit.py`
-refuses (exit 6) a message whose `LLM-Agent` trailer names another identity and
-prints the value to use. Raw `git commit` in a worktree is not covered by this
-variable; the handoff check is the backstop there.
+`PANTHEON_WORKER_AGENT` to the canonical agent identity, so the identity is
+available to the commit path. Enforcing it inside `worker_commit.py` is outside
+this task's artifact contract, so today only the handoff check is feasible: it
+runs on the exact head the review will bind and refuses the mismatch before
+review, which is the backstop for both `worker_commit.py` and raw `git commit`.
 
 **Activation.** Development tooling: takes effect on the live supervisor only
 after a runtime promotion.
