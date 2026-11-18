@@ -140,6 +140,109 @@ def test_returned_values_do_not_alias_the_cache(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------------------------------
+# Hosted-shaped data root builder (test code, not production code).
+# Hosted facts (reported by other coordinators, 2026-11-18): 39 connectors, 32 requirements, a 41 MB receipt
+# journal (ingest_schedule.jsonl), about 440 pending DLQ entries, connector_config.jsonl of 4.3 MB / 4512 lines.
+# Workers have no hosted access, so every row is generated from the runtime's own rows after real ticks:
+# finished run / receipt / frontier rows are cloned with fresh ids and older times; fetch-state rows are cloned
+# with higher attempt counters. The journals are appended raw (the stores catch up by stat key), as another
+# writer would.
+# --------------------------------------------------------------------------------------------------
+import uuid  # noqa: E402
+from datetime import timedelta  # noqa: E402
+from typing import Any  # noqa: E402
+
+HOSTED_JOURNAL_BYTES = 41_000_000
+HOSTED_CONNECTOR_LINES = 4512
+HOSTED_PENDING_DLQ = 440
+
+
+def _line(obj: dict[str, Any]) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def _stamp(moment: datetime) -> str:
+    return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def grow_receipt_journal(path: Path, target_bytes: int = HOSTED_JOURNAL_BYTES) -> int:
+    """Append finished run/receipt/frontier row sets cloned from the last real ones until ``target_bytes``."""
+    finals: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        row = json.loads(raw)
+        if row["record_type"] in {"ingest_run", "ingest_receipt", "crawl_frontier_item"}:
+            finals[(row["record_type"], row["record_id"])] = row
+    runs = [r for (t, _), r in finals.items() if t == "ingest_run" and r["payload"]["status"] == "completed"]
+    assert runs, "grow_receipt_journal needs at least one completed run from a real tick"
+    template = runs[-1]
+    run_id = template["record_id"]
+    receipt = finals[("ingest_receipt", run_id)]
+    frontier = next((r for r in finals.values() if r["record_type"] == "crawl_frontier_item"
+                     and r["payload"].get("ingest_run_id") == run_id), None)
+    base = datetime.now(timezone.utc) - timedelta(hours=1)
+    written = count = 0
+    with path.open("a", encoding="utf-8") as handle:
+        start_size = path.stat().st_size
+        while start_size + written < target_bytes:
+            chunk: list[str] = []
+            for _ in range(200):
+                count += 1
+                new_id = f"ingest-{uuid.uuid4().hex[:12]}"
+                when = _stamp(base - timedelta(seconds=86 * count))
+                text = json.dumps(template).replace(run_id, new_id)
+                run_row = json.loads(text)
+                for event in run_row["payload"]["events"]:
+                    event["created_at"] = when
+                run_row["payload"].update(started_at=when, finished_at=when)
+                receipt_row = json.loads(json.dumps(receipt).replace(run_id, new_id))
+                receipt_row["payload"].update(created_at=when, started_at=when, finished_at=when)
+                chunk += [_line(run_row), _line(receipt_row)]
+                if frontier is not None:
+                    frontier_row = json.loads(json.dumps(frontier).replace(run_id, new_id))
+                    fid = f"frontier-{uuid.uuid4().hex[:12]}"
+                    frontier_row["payload"].update(frontier_id=fid, created_at=when, updated_at=when)
+                    frontier_row["record_id"] = fid
+                    chunk.append(_line(frontier_row))
+            blob = "".join(chunk)
+            handle.write(blob)
+            handle.flush()
+            written += len(blob.encode("utf-8"))
+    return count
+
+
+def grow_connector_journal(path: Path, total_lines: int = HOSTED_CONNECTOR_LINES) -> int:
+    """Append fetch-state rows (cloned, attempts increased) until the journal has ``total_lines`` rows."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    states = [json.loads(x) for x in lines if '"connector_fetch_state"' in x]
+    assert states, "grow_connector_journal needs at least one fetch state from a real tick"
+    added = 0
+    with path.open("a", encoding="utf-8") as handle:
+        while len(lines) + added < total_lines:
+            row = json.loads(json.dumps(states[added % len(states)]))
+            row["payload"]["attempts"] = int(row["payload"].get("attempts") or 0) + added + 1
+            row["payload"]["successful_attempts"] = int(row["payload"].get("successful_attempts") or 0) + added + 1
+            handle.write(_line(row))
+            added += 1
+    return added
+
+
+def add_pending_dlq(runtime: Any, connector_ids: list[str], count: int = HOSTED_PENDING_DLQ) -> None:
+    from services.foundation.envelopes import TraceContext
+    from services.foundation.outbox import EventEnvelope
+
+    scheduler = runtime.scheduler
+    for index in range(count):
+        trace = TraceContext(trace_id=f"steady-{index}", correlation_id=f"steady-{index}",
+                             environment=scheduler.environment, actor_ref=scheduler.actor_ref)
+        event = EventEnvelope.new(
+            event_type="source_ingestion.scheduled_run_failed", aggregate_type="source_ingest_run",
+            aggregate_id=f"ingest-dlq-{index}", sequence_no=1, trace=trace, producer_service="source-ingestion",
+            payload={"ingest_run_id": f"ingest-dlq-{index}", "connector_id": connector_ids[index % len(connector_ids)]},
+        )
+        runtime.dead_letter_queue.reject(event, reason="steady-tick fixture", tags=("steady-tick",))
+
+
+# --------------------------------------------------------------------------------------------------
 # Hosted-shape steady tick: the reconcile that changes nothing and the readback must not replay the
 # connector journal per call, and their payloads must equal what a full replay per call returns.
 # --------------------------------------------------------------------------------------------------
@@ -151,7 +254,6 @@ from datetime import datetime, timezone  # noqa: E402
 from services.source_ingestion import controller_worker as cw  # noqa: E402
 from services.source_ingestion import runtime as runtime_module  # noqa: E402
 from services.source_ingestion.api_models import PersonaSourceProvisioningRequest  # noqa: E402
-from services.source_ingestion.tests import steady_tick_hosted_shape as shape  # noqa: E402
 from services.source_ingestion.tests import test_controller_worker as tcw  # noqa: E402
 from services.source_ingestion.tests.test_collector_newest_session_hosted_throughput import (  # noqa: E402,F401
     TPEX, TWSE, hosted_index, hosted_run, isolated_cache,
@@ -195,9 +297,9 @@ def hosted(admission_stack, monkeypatch):
 
     for _ in range(3):
         assert tick()["status"] == "ok"
-    shape.grow_receipt_journal(runtime.SCHEDULE_STORE_PATH)
-    shape.grow_connector_journal(runtime.CONNECTOR_STORE_PATH)
-    shape.add_pending_dlq(runtime, [c.connector.connector_id for c in runtime.connector_store.list_configs()])
+    grow_receipt_journal(runtime.SCHEDULE_STORE_PATH)
+    grow_connector_journal(runtime.CONNECTOR_STORE_PATH)
+    add_pending_dlq(runtime, [c.connector.connector_id for c in runtime.connector_store.list_configs()])
     personas, _meta = cw.load_desired_state()
     return types_namespace(runtime=runtime, tick=tick, personas=list(personas))
 
@@ -255,7 +357,7 @@ def test_unchanged_reconcile_parses_no_journal_and_returns_the_same_payload(host
     monkeypatch.setattr(runtime_module, "datetime", _FixedDatetime)
     _reconcile(hosted, dry_run=False)  # catches up with the large journals once
     journal_lines = len(hosted.runtime.CONNECTOR_STORE_PATH.read_text(encoding="utf-8").splitlines())
-    assert journal_lines >= shape.HOSTED_CONNECTOR_LINES
+    assert journal_lines >= HOSTED_CONNECTOR_LINES
     size_before = hosted.runtime.CONNECTOR_STORE_PATH.stat().st_size
 
     with monkeypatch.context() as scoped:
@@ -302,4 +404,4 @@ def test_controller_readback_payload_equals_full_replay_payload(hosted, monkeypa
         _ReplayCounter(scoped, full=True)
         slow = runtime._controller_readback_payload()
     assert _strip_time(fast) == _strip_time(slow)
-    assert fast["connector_count"] >= 20 and fast["pending_dlq_count"] >= shape.HOSTED_PENDING_DLQ
+    assert fast["connector_count"] >= 20 and fast["pending_dlq_count"] >= HOSTED_PENDING_DLQ
