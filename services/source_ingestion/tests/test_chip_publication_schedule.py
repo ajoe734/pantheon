@@ -32,13 +32,13 @@ def _taipei_dt(year: int, month: int, day: int, hour: int, minute: int, second: 
 def test_schedule_covers_all_six_official_and_taifex_chip_profiles_and_probes() -> None:
     expected_ids = {
         cid for cid, prof in TW_CHIP_REFRESH_PROFILES.items() if prof.get("base") != "tw-finmind-fundamentals"
-    }
-    assert len(expected_ids) == 6
+    } | {"tw-taifex-futures-options-chip"}
+    assert len(expected_ids) == 7
     assert set(OFFICIAL_CHIP_REFRESH_PROFILES) == expected_ids
     assert set(CHIP_PUBLICATION_SCHEDULES) == expected_ids
 
     for cid, schedule in CHIP_PUBLICATION_SCHEDULES.items():
-        profile = TW_CHIP_REFRESH_PROFILES[cid]
+        profile = OFFICIAL_CHIP_REFRESH_PROFILES[cid]
         assert schedule.connector_id == cid
         assert schedule.dataset == profile["dataset"]
         assert schedule.endpoint.startswith("https://")
@@ -49,6 +49,12 @@ def test_schedule_covers_all_six_official_and_taifex_chip_profiles_and_probes() 
         earliest_dt = datetime.combine(date(2026, 11, 18), schedule.earliest_observed_publication_time_taipei)
         scheduled_dt = datetime.combine(date(2026, 11, 18), schedule.publication_time_taipei)
         assert scheduled_dt >= earliest_dt + timedelta(minutes=schedule.safety_margin_minutes - 1)
+
+    ssf_schedule = get_chip_publication_schedule("tw-taifex-futures-options-chip")
+    assert ssf_schedule.dataset == "taifex_ssf_contracts"
+    assert ssf_schedule.provider == "TAIFEX"
+    assert ssf_schedule.publication_day_offset == 1
+    assert ssf_schedule.publication_time_taipei == time(6, 50)
 
     assert len(MEASURED_CHIP_PROVIDER_PROBES) >= 5
     probe_ids = {probe["probe_id"] for probe in MEASURED_CHIP_PROVIDER_PROBES}
@@ -85,6 +91,7 @@ def test_naive_datetime_and_unknown_profile_are_rejected() -> None:
         ("tw-taifex-institutional-positions", 1, 6, 50),
         ("tw-taifex-put-call", 1, 6, 50),
         ("tw-taifex-tx-daily", 1, 6, 50),
+        ("tw-taifex-futures-options-chip", 1, 6, 50),
     ],
 )
 def test_exact_publication_boundary_and_utc_taipei_date_conversion(
@@ -164,6 +171,7 @@ def test_tpex_staggered_evening_window_between_2015_and_2215_taipei() -> None:
         "tw-taifex-institutional-positions",
         "tw-taifex-put-call",
         "tw-taifex-tx-daily",
+        "tw-taifex-futures-options-chip",
     ):
         assert (
             latest_published_chip_session(next_morning_cid, probe_2159_utc, is_session_day=_twse_session_day)
