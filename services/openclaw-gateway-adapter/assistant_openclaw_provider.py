@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from assistant_provider_usage import provider_usage_snapshot
+from services.persona.model_chain import configured_chain
 
 
 OPENCLAW_PROVIDER = "openclaw"
@@ -58,8 +59,6 @@ DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
 # 5.0s matches the per-candidate budget already reserved for fallbacks below.
 _PRIMARY_CANDIDATE_MAX_SECONDS = 5.0
 DEFAULT_OPENCLAW_BIN = "openclaw"
-DEFAULT_PRIMARY_MODEL = "anthropic/claude-opus-4-8"
-DEFAULT_FALLBACK_MODELS = ("openai/gpt-5.6-sol", "openai/gpt-5.5")
 CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
@@ -851,11 +850,17 @@ class AssistantOpenClawProvider:
     ) -> List[str]:
         if requested_model:
             return [requested_model]
-        primary = (
-            os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip()
-            or DEFAULT_PRIMARY_MODEL
-        )
-        return [primary]
+        # The primary is the first entry of the one deployment model chain
+        # (OPENCLAW_MODEL_CHAIN, else the shared default file); no model is
+        # named in this module.
+        chain = configured_chain()
+        if not chain:
+            raise OpenClawProviderError(
+                "OPENCLAW_MODEL_CHAIN is empty and no default chain is readable",
+                status_code=503,
+                error_code="OPENCLAW_MODEL_CHAIN_UNAVAILABLE",
+            )
+        return [chain[0]]
 
     def _resolve_effective_model(
         self, requested_model: Optional[str], agent_id: str
@@ -1612,7 +1617,7 @@ class AssistantOpenClawProvider:
         # The pinned Gateway's OpenAI-compat model resolver
         # (`resolveOpenAiCompatModelOverride`) only accepts `openclaw` or
         # `openclaw/<agentId>` as the JSON `model` — a raw provider/model id
-        # (e.g. "anthropic/claude-opus-4-8") is rejected with HTTP 400. Any
+        # (e.g. "<provider>/<model>") is rejected with HTTP 400. Any
         # requested provider/model override belongs in the `x-openclaw-model`
         # header instead, which the Gateway validates separately against the
         # agent's allowed model visibility policy.

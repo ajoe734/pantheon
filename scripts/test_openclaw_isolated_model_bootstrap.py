@@ -12,6 +12,8 @@ API_KEY = bootstrap.API_KEY_SOURCE_ENV
 WORKSPACE = bootstrap.WORKSPACE_SOURCE_ENV
 TOKEN = bootstrap.TOKEN_SOURCE_ENV
 OPENAI_OAUTH = bootstrap.OPENAI_OAUTH_TOKEN_SOURCE_ENV
+# Fixture values of the OPENCLAW_MODEL_CHAIN variable.
+CHAIN = ["fx-a/model-1", "fx-b/model-2", "fx-b/model-3"]
 
 
 def test_missing_credential_fails_closed() -> None:
@@ -38,26 +40,14 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
             WORKSPACE: "wrkspc_sentinel_value",
             TOKEN: "sentinel-secret-value",
             OPENAI_OAUTH: "sentinel-openai-oauth-value",
+            "OPENCLAW_MODEL_CHAIN": ",".join(CHAIN),
         }
     )
     values = {str(item["path"]): item["value"] for item in batch}
-    assert values["agents.defaults.model.primary"] == "anthropic/claude-opus-4-8"
-    assert values["agents.defaults.model.fallbacks"] == [
-        "openai/gpt-5.6-sol",
-        "openai/gpt-5.5",
-    ]
-    assert values['agents.defaults.models["anthropic/claude-opus-4-8"]'] == {
-        "alias": "opus",
-        "agentRuntime": {"id": "openclaw"},
-    }
-    assert values['agents.defaults.models["openai/gpt-5.6-sol"]'] == {
-        "alias": "codex-sol",
-        "agentRuntime": {"id": "openclaw"},
-    }
-    assert values['agents.defaults.models["openai/gpt-5.5"]'] == {
-        "alias": "codex-5.5",
-        "agentRuntime": {"id": "openclaw"},
-    }
+    assert values["agents.defaults.model.primary"] == CHAIN[0]
+    assert values["agents.defaults.model.fallbacks"] == CHAIN[1:]
+    for ref in CHAIN:
+        assert values[f'agents.defaults.models["{ref}"]'] == {"agentRuntime": {"id": "openclaw"}}
     assert values["models.providers.openai"] == {
         "baseUrl": "https://chatgpt.com/backend-api/codex",
         "api": "openai-chatgpt-responses",
@@ -84,10 +74,11 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
     assert values["agents.list"] == [
         {"id": "main"},
         {"id": "structured-extraction",
-         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}},
+         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
+         "model": {"primary": CHAIN[0], "fallbacks": CHAIN[1:]}},
         {"id": "memory-index",
          "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
-         "model": {"primary": "openai/gpt-5.5", "fallbacks": ["anthropic/claude-sonnet-4-6"]}},
+         "model": {"primary": CHAIN[0], "fallbacks": CHAIN[1:]}},
     ]
     # Same global ToolSearch-only launch as the shared deploy path.
     assert values['agents.defaults.cliBackends["claude-cli"].args'][-2:] == ["--tools", "ToolSearch"]

@@ -196,7 +196,7 @@ kernel delegation retain their existing owners.
 The request selects `openclaw/<agentId>` and carries an admitted explicit model
 in `X-OpenClaw-Model`. A successful explicit override does not change the next
 ordinary request's model. Invoke, stream, and readiness resolve the main agent
-to `OPENCLAW_PRIMARY_MODEL` (or the provider default); non-default agents retain
+to the first entry of the one model chain (`OPENCLAW_MODEL_CHAIN`, else the shipped default file); non-default agents retain
 their Gateway-configured model unless an admitted explicit override is given.
 Readiness neither retries on another model nor changes future routing. Tenant, actor,
 and conversation components are positionally encoded and escaped in the

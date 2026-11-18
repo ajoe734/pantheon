@@ -1659,7 +1659,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             "status": "created",
             "agent_id": self._PERSONA_ID,
             "model_id": f"openclaw/{self._PERSONA_ID}",
-            "model": "anthropic/claude-opus-4-8",
+            "model": "fx-a/model-1",
             "workspace_ref": self._PAYLOAD["workspace_ref"],
         }
         with (
@@ -2373,7 +2373,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                     "metadata": {"allowed_tools": []},
                     "agent_id": payload["agent_id"],
                     "persona_admission": invocation_admission,
-                    "model": "anthropic/claude-opus-4-8",
+                    "model": "fx-a/model-1",
                 },
                 headers={
                     "X-Pantheon-Service-Token": "adapter-secret",
@@ -2387,7 +2387,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
         # The explicit override reaches the provider verbatim -- no
         # fallback candidate substituted in front of it.
-        self.assertEqual(invoke.call_args.kwargs["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(invoke.call_args.kwargs["model"], "fx-a/model-1")
 
     def test_admitted_invoke_and_stream_preserve_effective_model_over_http(self):
         from assistant_openclaw_provider import AssistantOpenClawProvider
@@ -2722,7 +2722,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         instead of being silently dropped."""
         resp = client.post(
             "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
-            json={"mode": "user", "prompt": "hi", "model": "anthropic/claude-opus-4-8"},
+            json={"mode": "user", "prompt": "hi", "model": "fx-a/model-1"},
             headers={"X-Operator-Id": "operator-1"},
         )
         self.assertEqual(resp.status_code, 422, resp.text)
