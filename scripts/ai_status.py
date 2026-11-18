@@ -6116,6 +6116,79 @@ def reject_stale_reviewer_trailer_at_handoff(
     )
 
 
+def reject_owner_trailer_mismatch_at_handoff(
+    task: Mapping[str, Any], binding: Mapping[str, Any]
+) -> None:
+    """Refuse a delivered head whose task commits name an agent other than the owner.
+
+    Reads only the commit messages of the delivered range (frozen base..head,
+    or the head alone when the binding carries no base). A non-owner
+    `LLM-Agent` trailer is tolerated only when the audited owner reassignment
+    chain carries that agent to the current owner. Runs on the exact head the
+    review will bind, so an amend is re-checked at the next handoff. Best
+    effort on unavailable git data; done-time verification stays unchanged.
+    """
+
+    head = str(binding.get("head_sha") or "").strip().lower()
+    owner = canonical_agent_name(task.get("owner"))
+    task_id = str(task.get("id") or "").strip()
+    if not APPROVAL_HEAD_SHA_RE.fullmatch(head) or not owner or not task_id:
+        return
+    base = str(binding.get("base_sha") or "").strip().lower()
+    checker = _commit_trailer_checker()
+    try:
+        repository_root = Path.cwd()
+        if APPROVAL_HEAD_SHA_RE.fullmatch(base):
+            listing = run_git_command(
+                ["rev-list", "--no-merges", f"{base}..{head}"],
+                cwd=repository_root,
+                required=False,
+            )
+            commits = listing.split()
+        else:
+            commits = [head]
+        commit_messages = [
+            (
+                sha,
+                run_git_command(
+                    ["show", "-s", "--format=%b", sha],
+                    cwd=repository_root,
+                    required=False,
+                ),
+                run_git_command(
+                    ["show", "-s", "--format=%cI", sha],
+                    cwd=repository_root,
+                    required=False,
+                ).strip(),
+            )
+            for sha in commits
+        ]
+    except OSError:
+        return
+    for sha, body, commit_ts in commit_messages:
+        trailers = checker.parse_trailers(body)
+        if str(trailers.get("Task-ID") or "").strip() != task_id:
+            continue
+        found = str(trailers.get("LLM-Agent") or "").strip()
+        if not found or canonical_agent_name(found) == owner:
+            continue
+        try:
+            _verified_done_owner_reassignment(
+                dict(task),
+                commit_owner=found,
+                current_owner=owner,
+                commit_timestamp=commit_ts,
+            )
+        except SystemExit:
+            raise SystemExit(
+                f"Cannot hand off {task_id}: commit {sha} has `LLM-Agent: {found}` "
+                f"but the task owner is {owner} and no audited task_reassigned "
+                f"chain (following the commit time {commit_ts or 'unknown'}) explains "
+                f"it; amend the commit so its LLM-Agent trailer is `{owner}` "
+                f"before review."
+            ) from None
+
+
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
@@ -6141,6 +6214,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     ):
         raise SystemExit(f"{task_id} review admission returned no evidence manifest identity")
     reject_stale_reviewer_trailer_at_handoff(task, binding)
+    reject_owner_trailer_mismatch_at_handoff(task, binding)
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
     task.pop(REVIEW_REQUEUE_INTENT_KEY, None)

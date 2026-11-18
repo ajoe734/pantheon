@@ -16073,11 +16073,12 @@ class PersonaService:
             read_store=self.get_read_store(), authorization=authorization,
         ).read(persona_id, tenant_id, snapshot_at=snapshot_at)
 
-    def read_persona_cycle(self, persona_id, tenant_id, *, identity, authorization, snapshot_at):
+    def read_persona_cycle(self, persona_id, tenant_id, *, identity, authorization, snapshot_at,
+                           lifecycle_state=None):
         """Compose authorized detail reads from the existing owning services."""
         from .cycle_views import read_cycle_views
         return read_cycle_views(self.get_read_store(), persona_id, tenant_id, identity,
-                                authorization, snapshot_at)
+                                authorization, snapshot_at, lifecycle_state=lifecycle_state)
 
     def read_persona_cycle_health(self, tenant_id, persona_ids):
         """One controller owner read for the authorized Management page."""

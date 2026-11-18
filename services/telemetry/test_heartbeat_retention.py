@@ -1572,3 +1572,116 @@ def test_heartbeat_retention_job_lifecycle_and_main_wiring(pg_cluster: str, monk
         assert not job.is_running()
 
     asyncio.run(_exercise_job())
+
+
+def test_runtime_state_snapshot_retention_keeps_latest_and_summary_inputs(
+    pg_cluster: str,
+    tmp_path: Path,
+) -> None:
+    """PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118 AC 5: old snapshots are deleted, the
+    newest per runtime and quarter-equity "unknown" history stay, the rebuilt summary is unchanged."""
+    db_dsn = asyncio.run(
+        _create_migrated_db(pg_cluster, "test_state_snapshot_ret", with_trade_journey=False)
+    )
+    now = datetime(2026, 11, 18, 0, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 11, 8, 0, 0, 0, tzinfo=timezone.utc)  # 10 days old
+    write_fn = build_postgres_write_fn(db_dsn)
+
+    def snap(runtime_id: str, i: int, created_at: datetime, status: str, fill_count: int):
+        return _build_hosted_event(
+            "runtime_state_snapshot",
+            runtime_id=runtime_id,
+            created_at=created_at,
+            event_id=f"evt-snap-{runtime_id}-{i}",
+            metrics={"state_snapshot": 1},
+            metadata_extra={
+                "performance_telemetry": {
+                    "status": status,
+                    "attempted_at": created_at.isoformat().replace("+00:00", "Z"),
+                    "fill_count": fill_count,
+                },
+                "member_virtual_books": [
+                    {"member_id": f"m-{runtime_id}", "cash": 100.0 - i, "fills": []}
+                ],
+            },
+        )
+
+    events = []
+    expected_deleted = []
+    for runtime_id in ("rt-a", "rt-b"):
+        for i in range(6):  # six old snapshots; the sixth is the newest of that runtime
+            status = "marks_unavailable" if i == 2 else "valued"
+            ev = snap(runtime_id, i, t0 + timedelta(hours=i), status, fill_count=i // 2)
+            events.append(ev)
+            if i not in (0, 2, 5):  # i=0 oldest, i=2 summary history, i=5 newest per runtime
+                expected_deleted.append(ev["event_id"])
+    # a recent snapshot for rt-b (inside window) becomes its newest
+    events.append(snap("rt-b", 9, now - timedelta(hours=2), "valued", 3))
+    events.append(
+        _build_hosted_event(
+            "pnl_snapshot", runtime_id="rt-a", created_at=t0, event_id="evt-pnl-keep",
+            metrics={"pnl": 1.0},
+        )
+    )
+    events.sort(key=lambda e: (e["created_at"], e["event_id"]))
+    assert asyncio.run(write_fn(events)).success
+
+    before, _ = asyncio.run(
+        rebuild_runtime_summaries_from_db(db_dsn, summary_store_path=str(tmp_path / "b.json"))
+    )
+    summaries_before = [
+        _strip_volatile_summary_fields(s) for s in before.list(tenant_id="tenant-dev", now=now)
+    ]
+
+    result = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn, now=now, retention_days=3, state_snapshot_retention_days=3,
+            batch_size=3, max_batches=50, statement_timeout_ms=15000,
+        )
+    )
+    assert result.status == "ok"
+    # rt-b i=5 is no longer the newest (recent one is) so it is deleted too
+    expected = set(expected_deleted) | {"evt-snap-rt-b-5"}
+    assert result.state_snapshot_rows_deleted == len(expected)
+    assert result.state_snapshot_batches_executed >= 2  # bounded batches of 3
+
+    async def remaining() -> set[str]:
+        import asyncpg  # type: ignore[import]
+
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            rows = await conn.fetch(
+                "SELECT event_id FROM public.telemetry_events WHERE event_type='runtime_state_snapshot'"
+            )
+            other = await conn.fetchval(
+                "SELECT count(*) FROM public.telemetry_events WHERE event_id='evt-pnl-keep'"
+            )
+            assert other == 1
+            return {r["event_id"] for r in rows}
+        finally:
+            await conn.close()
+
+    kept = asyncio.run(remaining())
+    assert kept == {
+        "evt-snap-rt-a-0", "evt-snap-rt-a-2", "evt-snap-rt-a-5",
+        "evt-snap-rt-b-0", "evt-snap-rt-b-2", "evt-snap-rt-b-9",
+    }
+
+    after, _ = asyncio.run(
+        rebuild_runtime_summaries_from_db(db_dsn, summary_store_path=str(tmp_path / "a.json"))
+    )
+    summaries_after = [
+        _strip_volatile_summary_fields(s) for s in after.list(tenant_id="tenant-dev", now=now)
+    ]
+    assert summaries_after == summaries_before
+    assert summaries_after
+
+
+def test_state_snapshot_retention_days_parsing() -> None:
+    from services.telemetry.heartbeat_retention import parse_state_snapshot_retention_days
+
+    assert parse_state_snapshot_retention_days(None) == 3.0
+    assert parse_state_snapshot_retention_days("1.5") == 1.5
+    for bad in ("0", "-1", "abc", "nan"):
+        with pytest.raises(ValueError):
+            parse_state_snapshot_retention_days(bad)

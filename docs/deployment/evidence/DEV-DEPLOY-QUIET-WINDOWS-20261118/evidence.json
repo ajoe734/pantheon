@@ -1,0 +1,20 @@
+{
+  "task": "DEV-DEPLOY-QUIET-WINDOWS-20261118",
+  "state": "held_quiet_window",
+  "config": "repository variable DEV_DEPLOY_QUIET_WINDOWS read by dev-pair job; no new workflow_dispatch input",
+  "default_windows_utc": "mon-fri 00:30-05:30; daily 09:05-10:45",
+  "malformed_value": "fails closed to defaults; run summary prints a WARNING",
+  "backend_switch_lead_minutes": 17,
+  "lead_basis": "measured: backend containers recreated about 17 minutes after dispatch; rollback about 12 minutes later (29 minutes after dispatch), not predicted",
+  "lead_tests": "00:13Z held for 00:30Z window; 00:12Z allowed; 08:48Z held for 09:05Z window",
+  "running_release": "never cancelled; deployment_in_progress is decided before the window check",
+  "no_backlog": "nothing queued; after the window the next trigger or fallback cron selects the newest green commit (test: greens inside window, single dispatch of newest)",
+  "cut_job": "unchanged and not gated",
+  "runtime_budget": "no new writer, no new recurring job",
+  "host_timers_to_remove_by_coordinator_after_merge": [
+    "claude-deploy-hold-pause-20261118",
+    "claude-deploy-hold-resume-20261118",
+    "claude-trading-hold-resume-20261118"
+  ],
+  "verification": "pytest scripts/test_auto_deploy_dev_pair.py scripts/test_dev_green_commit_deploy_trigger.py scripts/test_nonprod_dev_artifact_workflow.py: 351 passed"
+}

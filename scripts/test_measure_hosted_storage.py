@@ -164,6 +164,26 @@ class MemoryBudget(unittest.TestCase):
         self.assertEqual(r["memory_table"][0]["percent"], 50.0)
         self.assertEqual(r["findings"], [])
 
+    def test_restarted_service_reported_without_previous_report(self):
+        # replay of 2026-11-18 05:40Z: incidents restarts 1, oom_kill 0, no previous report
+        r = mem_report([f"c1|incidents|1|1073741824|541327360|0|0|2026-11-18T04:46:20Z"])
+        f = kinds(r)[("container_restarted_since_creation", "incidents")]
+        self.assertEqual((f["restarts"], f["created"], f["oom_kill"]), (1, "2026-11-18T04:46:20Z", 0))
+        self.assertIn("not evidence", f["note"])
+        self.assertEqual(r["status"], "green")
+
+    def test_restarted_service_reported_when_count_did_not_grow(self):
+        line = "c1|incidents|1|1073741824|541327360|0|0|2026-11-18T04:46:20Z"
+        r = mem_report([line], [line])
+        self.assertIn(("container_restarted_since_creation", "incidents"), kinds(r))
+        self.assertNotIn(("container_restarts_grew", "incidents"), kinds(r))
+
+    def test_no_restart_finding_at_zero_and_one_per_service(self):
+        r = mem_report(["c1|a|0|268435456|1000|0|0|2026-11-18T04:46:20Z", "c2|b|2|268435456|1000|0|0"])
+        found = [f for f in r["findings"] if f["finding"] == "container_restarted_since_creation"]
+        self.assertEqual([f["service"] for f in found], ["b"])
+        self.assertIsNone(found[0]["created"])
+
     def test_remote_script_is_read_only(self):
         self.assertIn("memory.peak", mhs.REMOTE_SCRIPT)
         for bad in (" > ", " rm ", "docker restart", "docker exec -u root"):

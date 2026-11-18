@@ -239,3 +239,39 @@ def test_owner_configuration_missing_is_explicit(cycle_stack, monkeypatch):
     view = response.json()["data"]["personaCycle"]
     assert view["cycle"] and all(view[k] is None for k in ("memorySummary", "harnessExperiences", "harness", "consultationMemos"))
     assert calls == []
+
+
+@pytest.mark.parametrize("route", PATHS)
+def test_detail_exposes_probe_day_status(cycle_stack, route):
+    """RC2: the page shows the per-persona day status the acceptance probe computes."""
+    client, *_ = cycle_stack
+    view = client.get(route, headers=headers()).json()["data"]["personaCycle"]
+    day = view["dayStatus"]
+    assert day["persona_id"] == PID and day["passed"] is False
+    names = [c["name"] for c in day["preconditions"]]
+    from acceptance.persona_day import PRECONDITIONS
+    assert tuple(names) == PRECONDITIONS
+    assert day["first_failed_precondition"] in PRECONDITIONS
+    assert "PRIVATE_CASE_FILE" not in str(day)
+
+
+@pytest.mark.parametrize("route", PATHS)
+def test_detail_day_matches_probe_cycle_day(cycle_stack, route):
+    """The page judges the same UTC cycle day and due time as the probe for the same clock."""
+    from datetime import datetime, timezone
+    from acceptance.persona_day import cycle_day, cycle_due_at
+    client, *_ = cycle_stack
+    before = cycle_day(datetime.now(timezone.utc))
+    day = client.get(route, headers=headers()).json()["data"]["personaCycle"]["dayStatus"]
+    after = cycle_day(datetime.now(timezone.utc))
+    assert day["cycle_day"] in {before, after} and day["trading_day"] == day["cycle_day"]
+    assert day["cycle_due_at_utc"] == cycle_due_at(day["cycle_day"])
+
+
+def test_view_and_probe_share_the_daily_cycle_rule():
+    from acceptance import persona_day
+    from services.persona import persona_cycle_controller as ctl
+    rows = [{"persona_id": "a", "state": "paper_owner"}, {"persona_id": "b", "state": "consultable"},
+            {"persona_id": "c", "state": "draft"}]
+    assert [r["persona_id"] for r in persona_day.daily_cycle_personas(rows)] == ["a"]
+    assert persona_day.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES

@@ -84,3 +84,12 @@ def test_triggered_run_for_served_commit_while_tip_not_green_dispatches_nothing(
     backend.comparisons[f"{A1}...{B}"] = ahead()
     assert run(apply=True)["state"] == "waiting_for_ci"
     assert not backend.dispatches
+
+
+def test_publish_cut_reads_quiet_windows_from_one_repo_variable_and_cut_job_is_not_gated():
+    doc = _load(PUBLISH)
+    assert set(_on(doc)["workflow_dispatch"]["inputs"]) == {"force"}  # no new dispatch input
+    step = next(s for s in doc["jobs"]["dev-pair"]["steps"] if s.get("name", "").startswith("Check both"))
+    assert step["env"]["DEV_DEPLOY_QUIET_WINDOWS"] == "${{ vars.DEV_DEPLOY_QUIET_WINDOWS }}"
+    assert "DEV_DEPLOY_QUIET" not in PUBLISH.read_text(encoding="utf-8").split("  dev-pair:")[0]
+    assert "needs" not in doc["jobs"]["cut"] and "needs" not in doc["jobs"]["dev-pair"]

@@ -1,0 +1,24 @@
+{
+  "task_id": "OPS-MERGED-RECOVERY-COLLECTOR-BUILD-HOST-LAYOUT-20261118",
+  "source_task_id": "COLLECTOR-BUILD-HOST-LAYOUT-20261118",
+  "record": ".orchestrator/review-evidence/collector_build_host_layout_merged_recovery_20261118.md",
+  "read_only_sources": [
+    {
+      "command": "python3 over ~/pantheon-ci-deploy/runtime/task-state/task-state-events-v2.jsonl: events for the source id",
+      "output": "line 74931 2026-11-18T03:45:40Z assign (Human/Ops; owner Claude2, reviewer Antigravity); 74946 03:49:13Z handoff Claude2 (delivery_binding PR 7563 head 1dc962dc6eea41bf0cf3ee72bfd9aa96395a0c27, manifest blob a644e45934668abaf57842660a377ede507e8926); 74957 03:52:22Z review_approved Antigravity (review_binding base dev, pr 7563, head 1dc962dc6eea41bf0cf3ee72bfd9aa96395a0c27; GitHub review 5950549705); 75042 04:38:04Z blocker Claude2; no task_reassigned event for the task"
+    },
+    {
+      "command": "python3 over coordination-root/ai-activity-log.jsonl filtered to the source id, excluding permission_hook",
+      "output": "assign Human/Ops 03:45:40Z (line 116); handoff Claude2 03:49:13Z (225); review_approved Antigravity 03:52:22Z (264); blocker Claude2 04:38:04Z (854: done refused, LLM-Agent: Claude trailer vs owner Claude2, no canonical audited task_reassigned event); zero task_reassigned events"
+    },
+    {
+      "command": "git log --no-merges --format='%H %an' 2ac3f8591..1dc962dc6; git show -s 1dc962dc6",
+      "output": "single commit 1dc962dc6eea41bf0cf3ee72bfd9aa96395a0c27, author Codex, trailers LLM-Agent: Claude, Reviewer: Antigravity"
+    },
+    {
+      "command": "git merge-base --is-ancestor 1dc962dc6 origin/dev; git log -1 --format='%H %P %cI' 84dcda85e",
+      "output": "ancestor yes; 84dcda85e0767b1c06a9a1a0a448baaf32b840ed parents 55eb4829ffbd1456fb483be70376facf0a0cab83 1dc962dc6eea41bf0cf3ee72bfd9aa96395a0c27, 2026-11-18T12:35:44+08:00"
+    }
+  ],
+  "scope": "two artifact files only; no product code, no source task row, reconcile_merged_done not run"
+}

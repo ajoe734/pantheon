@@ -50,6 +50,7 @@ TRIGGERED_BY = "snapshot_universe"
 MAX_TRANSITIONS_KEPT = 500
 _SWEEP_INTERVAL_SECONDS = 3600
 _MISS_TTL_SECONDS = 600
+_FALLBACK = object()  # the daily bars seed cannot answer: the run file read runs instead
 _DATE_DIR = re.compile(r"^date=(\d{4}-\d{2}-\d{2})$")
 
 
@@ -111,6 +112,8 @@ class SnapshotUniverse:
         self._misses: dict[str, float] = {}
         self._last_sweep = 0.0
         self._last_seed: dict[str, Any] | None = None
+        self._last_fallback_reason: str | None = None
+        self._reader: Any = None
         self._load()
         store.admission = self.admits
         store.stats_extra = self.stats
@@ -256,10 +259,112 @@ class SnapshotUniverse:
                     yield line
 
     def seed(self, symbol: str) -> LatestMarketSnapshot | None:
-        """Build ``symbol``'s snapshot from stored governed daily partitions and append it."""
-        from .pipeline import is_index_breadth_record, is_minute_bar_record
+        """Build ``symbol``'s snapshot from stored governed daily partitions and append it.
+
+        With ``PANTHEON_DAILY_PRICE_READER=daily_bars`` the newest ``max_closes`` closes come from the daily
+        bars store (one partition per trade date); when it cannot answer (see ``_seed_from_daily_bars``) the run
+        file read below runs exactly as before.  ``last_seed["path"]`` says which path answered.
+        """
+        from .market_data_storage import daily_price_reader_mode
 
         started = time.monotonic()
+        fallback: str | None = None
+        if daily_price_reader_mode() == "daily_bars":
+            outcome = self._seed_from_daily_bars(symbol, started)
+            if outcome is not _FALLBACK:
+                return outcome  # type: ignore[return-value]
+            fallback = self._last_fallback_reason
+        snapshot = self._seed_from_run_files(symbol, started)
+        if fallback is not None and self._last_seed is not None:
+            self._last_seed["fallback_reason"] = fallback
+        return snapshot
+
+    def _bars_reader(self) -> Any:
+        from .daily_bars_reader import DailyBarsReader
+
+        if self._reader is None:
+            self._reader = DailyBarsReader(self.storage_root)
+        return self._reader
+
+    def _seed_from_daily_bars(self, symbol: str, started: float) -> Any:
+        """Seed from the newest ``max_closes`` stored trade dates; ``_FALLBACK`` when that cannot answer.
+
+        Falls back (run file read, reason in ``last_seed``) when: the store holds fewer trade dates than needed,
+        the symbol holds closes on some but fewer than ``needed`` of them (older run files may hold more), a
+        form of the code is ambiguous, a lineage run or the observed time is missing, the day carries several
+        calendar proofs, or the store cannot be read.  A symbol with NO close in a window the store fully covers
+        is a miss (``None``) without any run file read.
+
+        Named differences from the run file seed (closes, opens and market are equal; see the evidence file):
+        ``event_time`` is the 14:30 +08:00 publish time of the trade date, ``content_ref`` is
+        ``daily_bars://<symbol>/<date>``, ``collector_close`` (provisional relay lineage) is not stored in daily
+        bars so a provisional close reads as a plain close, and ``observed_at`` is the newest run time of the
+        lineage instead of the newest file mtime.
+        """
+        from .daily_bars_store import DailyBarsError
+
+        target = member_key(symbol)
+        needed = self.store.max_closes
+        columns = ["symbol", "trade_date", "open", "close", "market", "source_id", "ingest_run_id"]
+        try:
+            reader = self._bars_reader()
+            dates = reader.trade_dates()
+            if len(dates) < needed:
+                return self._fallback(f"daily bars hold {len(dates)} trade dates, {needed} needed")
+            window = dates[-needed:]
+            rows = reader.read_close_window(target, dates[-1], needed, any_form=True, columns=columns)
+            lineage = {d: reader.read_lineage(d) for d in sorted({r["trade_date"] for r in rows})}
+        except (DailyBarsError, ImportError, OSError, ValueError) as exc:
+            return self._fallback(f"daily bars unreadable: {type(exc).__name__}: {exc}")
+        rows = [r for r in rows if r.get("close") is not None and member_key(r["symbol"]) == target]
+        partitions = len(window)
+        if not rows:
+            self._last_seed = {"symbol": str(symbol).upper(), "records": 0, "files_read": 0, "partitions_read": partitions,
+                               "path": "daily_bars", "seconds": round(time.monotonic() - started, 4)}
+            return None
+        if len(rows) < needed:
+            return self._fallback(f"symbol holds {len(rows)} closes in the newest {needed} stored dates")
+        records: list[SourceRecord] = []
+        context: list[tuple[str, str | None]] = []
+        observed_times: list[str] = []
+        for number, row in enumerate(rows):
+            day = row["trade_date"]
+            run_id = str(row.get("ingest_run_id") or "")
+            run = (lineage.get(day) or {}).get("runs", {}).get(run_id)
+            if not run_id or not isinstance(run, dict) or not run.get("connector_id") or not run.get("observed_at"):
+                return self._fallback(f"lineage of run {run_id or '?'} on {day} is missing")
+            observed_times.append(str(run["observed_at"]))
+            normalized: dict[str, Any] = {
+                "symbol": row["symbol"], "close": row["close"], "open": row.get("open"), "market": row.get("market"),
+                "trade_date": day, "event_time": f"{day}T06:30:00Z",
+            }
+            if number == len(rows) - 1:  # the snapshot keeps the newest governed calendar proof
+                proofs = list(((lineage.get(day) or {}).get("calendar_evidence") or {}).values())
+                if len(proofs) > 1:
+                    return self._fallback(f"{len(proofs)} calendar proofs on {day}")
+                if proofs:
+                    normalized["calendar_evidence"] = proofs[0]
+            records.append(SourceRecord(
+                source_id=str(row.get("source_id") or run_id), connector_id=str(run["connector_id"]),
+                source_type="market", title=f"{row['symbol']} {day}",
+                content_ref=f"daily_bars://{row['symbol']}/{day}",
+                metadata={"dataset": DAILY_PRICE_DATASET, "normalized_row": normalized}, created_at=f"{day}T06:30:00Z"))
+            context.append((run_id, self._connector_market(str(run["connector_id"]))))
+        self.store.append_normalized_records(
+            records, ingest_run_id=context[-1][0], observed_at=max(observed_times), record_context=context,
+            enforce_admission=False)
+        self._last_seed = {"symbol": str(symbol).upper(), "records": len(records), "files_read": 0,
+                           "partitions_read": partitions, "path": "daily_bars",
+                           "seconds": round(time.monotonic() - started, 4)}
+        return self.store.get(symbol, DAILY_SNAPSHOT_DATASET)
+
+    def _fallback(self, reason: str) -> Any:
+        self._last_fallback_reason = reason
+        return _FALLBACK
+
+    def _seed_from_run_files(self, symbol: str, started: float) -> LatestMarketSnapshot | None:
+        from .pipeline import is_index_breadth_record, is_minute_bar_record
+
         target = member_key(symbol)
         code = target.split(".")[0]
         needed = self.store.max_closes
@@ -293,7 +398,8 @@ class SnapshotUniverse:
             if days_with_rows >= needed:
                 break
         elapsed = round(time.monotonic() - started, 4)
-        self._last_seed = {"symbol": str(symbol).upper(), "records": len(records), "files_read": files_read, "seconds": elapsed}
+        self._last_seed = {"symbol": str(symbol).upper(), "records": len(records), "files_read": files_read,
+                           "path": "run_files", "seconds": elapsed}
         if not records:
             return None
         observed = _utc_iso(datetime.fromtimestamp(newest_mtime, tz=timezone.utc))

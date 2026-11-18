@@ -1,0 +1,9 @@
+{
+  "task_id": "ACCEPTANCE-STAGE-RELEASE-PROBES-ONLY-20261118",
+  "change": "acceptance/probes/persona-day removed; the persona-day probe runs only from persona-day-acceptance.yml (acceptance/persona_day.py, untouched)",
+  "replay": "Root 44247825979 (backend 01c51aa69 + frontend 0e886b9ce): deployed-pair-identity passed; persona-day (read_failed:HTTPError) is no longer run by the stage, so the verdict is passed (test_replay_root_44247825979_daily_probe_failure_does_not_fail_release)",
+  "accepted_baseline_at_time_of_change": "9fcc47112",
+  "baseline_advance": "the next release whose acceptance stage passes advances the accepted baseline of record; failed or pending verdicts do not",
+  "unchanged": ["no gate added to deploy path", "no rollback from acceptance", "no new writer", "no new recurring job", ".github/workflows untouched"],
+  "tests": "scripts/test_dev_acceptance_stage.py, acceptance/test_persona_day.py, scripts/test_acceptance_workflows_truthful.py passed"
+}

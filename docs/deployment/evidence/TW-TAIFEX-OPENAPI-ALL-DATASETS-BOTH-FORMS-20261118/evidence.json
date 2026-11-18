@@ -1,0 +1,86 @@
+{
+ "task": "TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118",
+ "recorded_before_change": {
+  "fetched_at": "2026-11-18T03:56:02Z",
+  "source": "fresh fetch from https://openapi.taifex.com.tw/v1/ (coordinator recordings not needed)",
+  "datasets": {
+   "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate.csv",
+    "first_bytes": "b'\\xef\\xbb\\xbf\\xe6\\x97\\xa5\\xe6\\x9c\\x9f,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe5\\x90\\x8d\\xe7\\xa8\\xb1,\\xe8\\xba\\xab\\xe4\\xbb\\xbd\\xe5\\x88\\xa5,\\xe5\\xa4\\x9a\\xe6\\x96\\xb9\\xe4\\xba\\xa4\\xe6\\x98\\x93\\xe5\\x8f\\xa3\\xe6\\x95\\xb8,\\xe5\\xa4\\x9a\\xe6\\x96\\xb9\\xe4\\xba'",
+    "bytes": 6319,
+    "form": "csv"
+   },
+   "PutCallRatio": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=PutCallRatio.json",
+    "first_bytes": "b'[{\"Date\":\"20261117\",\"PutVolume\":\"218602\",\"CallVolume\":\"27689'",
+    "bytes": 3080,
+    "form": "json"
+   },
+   "DailyMarketReportFut": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=DailyMarketReportFut.json",
+    "first_bytes": "b'[{\"Date\":\"20261117\",\"Contract\":\"ZFF\",\"ContractMonth(Week)\":\"'",
+    "bytes": 886392,
+    "form": "json"
+   },
+   "SingleStockFuturesMargining": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=SingleStockFuturesMargining.json",
+    "first_bytes": "b'[{\"Contract\":\"CAF\",\"UnderlyingSecurityCode\":\"1303\",\"Contract'",
+    "bytes": 85586,
+    "form": "json"
+   },
+   "SingleStockFuturesETFMargining": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=SingleStockFuturesETFMargining.csv",
+    "first_bytes": "b'\\xef\\xbb\\xbf\\xe8\\x82\\xa1\\xe7\\xa5\\xa8\\xe6\\x9c\\x9f\\xe8\\xb2\\xa8\\xe8\\x8b\\xb1\\xe6\\x96\\x87\\xe4\\xbb\\xa3\\xe7\\xa2\\xbc,\\xe8\\x82\\xa1\\xe7\\xa5\\xa8\\xe6\\x9c\\x9f\\xe8\\xb2\\xa8\\xe6\\xa8\\x99\\xe7\\x9a\\x84\\xe8\\xad\\x89\\xe5\\x88\\xb8\\xe4\\xbb\\xa3\\xe8\\x99\\x9f,\\xe8'",
+    "bytes": 3221,
+    "form": "csv"
+   },
+   "FinalSettlementPriceSSF": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "content_disposition": "attachment; filename=FinalSettlementPriceSSF.csv",
+    "first_bytes": "b'\\xe5\\x88\\xb0\\xe6\\x9c\\x9f\\xe6\\x97\\xa5,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe4\\xbb\\xa3\\xe8\\x99\\x9f,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe5\\x90\\x8d\\xe7\\xa8\\xb1,\\xe5\\xa5\\x91\\xe7\\xb4\\x84\\xe6\\x9c\\x88\\xe4\\xbb\\xbd,\\xe6\\x9c\\x80\\xe5\\xbe\\x8c\\xe7\\xb5\\x90\\xe7\\xae'",
+    "bytes": 14389,
+    "form": "csv"
+   }
+  },
+  "note": "DailyMarketReportFut was JSON at this fetch (CSV at the earlier 2026-11-18 recording): the served form flips, which is why every dataset now reads both."
+ },
+ "change": {
+  "reader": "_parse_taifex_dataset_body (shared _taifex_text_rows + _decode_taifex_bytes) with per-dataset required columns; registry TAIFEX_OPENAPI_BODY_READERS covers all 6 endpoints; fetch_payload and _fetch_ssf_payload use it; json.loads(...) removed from the TAIFEX fetch",
+  "institutional_fix": "normalizer also reads 商品名稱 as the contract; before, the text header had no contract key found so every row would default to TX",
+  "unchanged": [
+   "TX daily reader behaviour",
+   "SSF normalizers (SSF fetch reader behaviour kept as before)",
+   "persistent writers and row identity"
+  ]
+ },
+ "institutional_rows_one_day": {
+  "trade_date": "2026-11-17",
+  "data_rows": 66,
+  "products": 22,
+  "identities_per_product": 3,
+  "text_normalized_equals_json_normalized": true,
+  "distinct_(date,contract,participant)": 66
+ },
+ "validation": {
+  "command": "pytest test_taifex_openapi_response_forms.py test_taifex_tx_daily_response_forms.py test_taiwan_official_connectors.py",
+  "result": "90 passed, 1 skipped",
+  "per_file": {
+   "test_taifex_openapi_response_forms.py": "18 passed",
+   "test_taifex_tx_daily_response_forms.py": "14 passed",
+   "test_taiwan_official_connectors.py": "58 passed, 1 skipped"
+  },
+  "note": "search canary test needs fastapi/httpx/pydantic (supplied via uv --with)"
+ },
+ "hosted": "not part of this task; coordinator checks tw-taifex-institutional-positions leaves stale after deploy"
+}

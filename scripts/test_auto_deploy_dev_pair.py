@@ -533,3 +533,83 @@ def test_over_300_files_and_boundary_rename_fail_open():
     backend.comparisons[f"{OLD}...{B}"] = report_compare(files=[{
         "filename": "docs/operations/a.md", "status": "renamed", "previous_filename": "docs/contracts/a.md"}])
     assert run(apply=True)["state"] == "dispatched"
+
+
+# ---- quiet windows (DEV-DEPLOY-QUIET-WINDOWS-20261118) ----
+from datetime import datetime, timezone
+
+from scripts.auto_deploy_dev_pair import (
+    DEFAULT_QUIET_WINDOWS, load_quiet_windows, parse_quiet_windows, quiet_window_hold)
+
+
+def utc(day, hh, mm):
+    return datetime(2026, 11, day, hh, mm, tzinfo=timezone.utc)  # 11/16 is a Monday, 11/21 Saturday
+
+
+DEFAULTS = parse_quiet_windows(DEFAULT_QUIET_WINDOWS)
+
+
+def test_dispatch_inside_window_is_held_and_names_window_and_end():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    result = run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, 0))  # Wednesday
+    assert result["state"] == "held_quiet_window" and result["reason"] == "dispatch_inside_window"
+    assert result["window_ends_at"] == "2026-11-18T05:30Z" and "00:30-05:30" in result["window"]
+    assert not backend.dispatches
+
+
+def test_outside_windows_and_no_windows_dispatch_as_before():
+    for kwargs in ({"quiet_windows": DEFAULTS, "now": utc(18, 6, 0)}, {}):
+        backend, _, _, _, run = setup_pair(OLD, F)
+        assert run(apply=True, **kwargs)["state"] == "dispatched"
+        assert len(backend.dispatches) == 1
+
+
+def test_dispatch_just_before_window_is_held_by_backend_switch_lead():
+    hold = quiet_window_hold(DEFAULTS, utc(18, 0, 13))  # switch at 00:30
+    assert hold["reason"] == "backend_switch_inside_window" and hold["backend_switch_lead_minutes"] == 17
+    assert quiet_window_hold(DEFAULTS, utc(18, 0, 12)) is None
+    # persona window: 08:48 + 17 = 09:05
+    assert quiet_window_hold(DEFAULTS, utc(18, 8, 48))["window"].endswith("09:05-10:45")
+    assert quiet_window_hold(DEFAULTS, utc(18, 8, 47)) is None
+    # leaving a window: switch must also be outside, so allowed from the window end
+    assert quiet_window_hold(DEFAULTS, utc(18, 5, 30)) is None
+
+
+def test_weekend_trading_window_does_not_apply_but_persona_window_is_daily():
+    assert quiet_window_hold(DEFAULTS, utc(21, 3, 0)) is None  # Saturday
+    assert quiet_window_hold(DEFAULTS, utc(21, 9, 30)) is not None
+
+
+def test_dispatch_resumes_after_window_with_newest_green_and_no_backlog():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.extra_ci = [(0, A1, "success")]  # greens arrived during the window
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{B}"] = ahead()
+    for minute in (0, 1, 2):
+        assert run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, minute))["state"] == "held_quiet_window"
+    assert not backend.dispatches
+    assert run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 5, 30))["state"] == "dispatched"
+    assert [d[1]["ref"] for d in backend.dispatches] == [B]
+
+
+def test_running_release_is_not_cancelled_when_window_starts():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.active = True  # release started before the window
+    result = run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, 0))
+    assert result["state"] == "deployment_in_progress"
+    assert not backend.dispatches and not hasattr(backend, "cancelled")
+
+
+def test_malformed_variable_fails_closed_to_defaults_and_says_so():
+    for bad in ("garbage", "mon-fri 25:00-26:00", "mon-fri 05:00-04:00", "xyz 01:00-02:00", ";"):
+        windows, source = load_quiet_windows(bad)
+        assert windows == DEFAULTS and source.startswith("malformed_defaults_used")
+    assert load_quiet_windows(None) == (DEFAULTS, "default")
+    assert load_quiet_windows("  ") == (DEFAULTS, "default")
+    windows, source = load_quiet_windows("sat,sun 01:00-02:00")
+    assert source == "variable" and quiet_window_hold(windows, utc(21, 1, 30)) is not None
+
+
+def test_summary_shows_held_state():
+    text = summary_lines(quiet_window_hold(DEFAULTS, utc(18, 3, 0)) | {"state": "held_quiet_window"})
+    assert "held: quiet window" in text and "05:30" in text and "not a broken trigger" in text

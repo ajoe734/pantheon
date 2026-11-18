@@ -666,7 +666,9 @@ def test_deployed_persona_lifespan_consumes_cycle_and_stops(system, monkeypatch,
         assert records[0]["loop_id"] == "per_persona_ooda"
         assert records[0]["controller_name"] == "persona_cycle_controller"
         assert records[0]["payload"]["persona_cycle_health"]["persona-cycle-test"]["last_packet_id"] == packet["packet_id"]
-        assert "last_success_at" not in records[0]
+        # RC2: the consumed run and the successful cycle are now visible (they were always NULL).
+        assert records[0]["last_tick_at"] and records[0]["last_success_at"]
+        assert records[0]["payload"]["daily_cycle_jobs"]["persona-cycle-test"]
 
 
 def test_provider_outage_still_removes_member_using_real_deterministic_drawdown_rule(system):
@@ -1729,3 +1731,17 @@ def test_failed_ensure_records_named_reason_and_never_attempts_turn(system):
     assert "persona-cycle-failure:agent_ensure_unavailable:http_503" in packet["audit_refs"]
     from services.control_plane.bff.loop_inventory import project_persona_cycle_health
     assert project_persona_cycle_health(persona, [packet])["status"] != "healthy"
+
+
+def test_pending_lesson_count_from_governance_result():
+    from services.persona.persona_cycle_controller import pending_lesson_count as n
+    skipped = {"status": "skipped", "reason": "human_endorsement_required"}
+    hosted = {"status": "completed", "results": [{"lesson_candidate_id": str(i), **skipped} for i in range(4)]}
+    assert n(hosted) == 4
+    mixed = {"status": "completed", "results": [
+        {"status": "rejected"}, {"status": "merged"}, {"status": "skipped", "reason": "foreign_candidate"},
+        {"status": "deferred", "reason": "review_budget_exhausted"}]}
+    assert n(mixed) == 1
+    assert n({"status": "completed", "results": []}) == 0
+    assert n({"status": "unavailable", "reason": "x", "results": []}) is None
+    assert n(None) is None

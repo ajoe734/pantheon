@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient
 
 from services.source_ingestion.daily_bars_store import DailyBarsStore
 from services.source_ingestion.routers.ingest_operations import create_ingest_operations_router
+from services.source_ingestion.tests.daily_bars_hosted_shape import (
+    HOSTED_SYMBOLS, HOSTED_WARRANTS, build_hosted_shaped,
+)
 from services.source_ingestion.tests.test_daily_bars_reader import trading_days
 from services.source_ingestion.tests.test_daily_bars_store import make_rows
 
@@ -88,9 +91,26 @@ def test_read_only_and_repeat_opens_no_file(tmp_path, monkeypatch):
     assert _tree(tmp_path) == before  # no stored data is added
 
 
+def test_hosted_shape_builder_matches_write_day(tmp_path):
+    """One full hosted-shaped day built by the cheap builder equals the same day written by write_day."""
+    d0, d1 = trading_days(2)
+    fast = tmp_path / "fast"
+    build_hosted_shaped(fast, [d0, d1])
+    real = tmp_path / "real"
+    DailyBarsStore(real).write_day(d1, make_rows(HOSTED_SYMBOLS, trade_date=d1, warrants=HOSTED_WARRANTS),
+                                   ingest_run_id=f"r-{d1}")
+    want = {p.relative_to(real).as_posix(): p.read_bytes() for p in real.rglob("*") if p.is_file() and p.name != ".lock"}
+    got = {p.relative_to(fast).as_posix(): p.read_bytes() for p in fast.rglob("*")
+           if p.is_file() and p.name != ".lock" and d0 not in p.name and f"date={d0}" not in p.as_posix()}
+    assert want.keys() == got.keys() and want == got  # same layout, parts, manifest (row count, digest) and lineage
+    manifest = DailyBarsStore(fast).read_manifest(d1)
+    assert manifest["row_count"] == HOSTED_SYMBOLS and len(manifest["files"]) > 1
+
+
 def test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes(tmp_path):
-    """22,500 symbols per day (20,200 warrant-like), 500 trading days, 50 symbols, warm manifests."""
-    ds = _build(tmp_path, 500, 22500, warrants=20200)
+    """52,958 symbols per day (50,883 warrants: design of record as amended 2026-11-17), 500 trading days, 50 symbols, warm manifests."""
+    ds = trading_days(500)
+    build_hosted_shaped(tmp_path, ds)
     c = _client(tmp_path)
     before = _tree(tmp_path)
     symbols = ",".join(f"{1000 + i * 7}.TW" for i in range(50))
