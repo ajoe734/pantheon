@@ -645,3 +645,125 @@ def test_steady_check_step_fails_closed_when_transport_produces_nothing(tmp_path
     proc, outcome = _run_check_step(tmp_path, "exit 255\n", "not json")
     assert proc.returncode == 1
     assert outcome["steady_restore_check"] == {"reason": "steady_check_transport_exit_255", "status": "failed"}
+
+
+# --- non-blocking step failure visibility (TW-REFRESH-NON-BLOCKING-STEP-FAILURE-VISIBLE-20261118) ---
+
+import importlib.util
+import sys as _sys
+
+_SUMMARY_PATH = ROOT / "scripts" / "tw_refresh_outcome_summary.py"
+_spec = importlib.util.spec_from_file_location("tw_refresh_outcome_summary", _SUMMARY_PATH)
+summary_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(summary_mod)
+
+_FUNDAMENTALS = ("tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation")
+_CHIPS = (
+    "tw-official-twse-margin-balances", "tw-official-tpex-margin-balances", "tw-official-tpex-institutional-flow",
+    "tw-taifex-institutional-positions", "tw-taifex-put-call", "tw-taifex-tx-daily",
+)
+
+
+def _write(d: Path, name: str, **payload: Any) -> None:
+    (d / name).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _real_run(d: Path, overrides: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """Write outcome files shaped like a healthy full run; return all step outcomes."""
+    overrides = overrides or {}
+    files = {"taifex-ssf-refresh-outcome.json": "tw-taifex-futures-options-chip", "finmind-broker-refresh-outcome.json": "tw-finmind-broker-daily-report"}
+    files.update({f"{c}-refresh-outcome.json": c for c in _CHIPS + _FUNDAMENTALS})
+    for fname, connector in files.items():
+        payload = {"connector_id": connector, "log": "", "reason": "refreshed", "status": "completed"}
+        payload.update(overrides.get(connector, {}))
+        _write(d, fname, **payload)
+    _write(d, "tw-refresh-outcome.json", status="completed", reason="refreshed",
+           steady_restore_check={"reason": "", "status": "healthy"})
+    return {k: "success" for k in ("taifex_refresh", "finmind_refresh", "refresh", "chip_refresh", "finmind_fundamentals_refresh", "steady_check")}
+
+
+def _run_summary(tmp_path: Path, steps: dict[str, str]) -> tuple[int, str, str]:
+    summary = tmp_path / "summary.md"
+    args = ["--outcomes-dir", str(tmp_path), "--summary-file", str(summary)]
+    for k, v in steps.items():
+        args += ["--step", f"{k}={v}"]
+    proc = subprocess.run([_sys.executable, str(_SUMMARY_PATH), *args], capture_output=True, text=True, check=False)
+    return proc.returncode, proc.stdout, summary.read_text(encoding="utf-8")
+
+
+def test_summary_all_passing_run_stays_green(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+    assert "tw-finmind-valuation" in table and "steady_restore_check" in table
+    assert "FAILED" not in table
+
+
+def test_summary_failed_fundamentals_step_fails_run_and_names_it(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {c: {"status": "failed", "reason": "exit_1"} for c in _FUNDAMENTALS})
+    steps["finmind_fundamentals_refresh"] = "failure"
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 1
+    assert "Execute bounded FinMind fundamentals refresh" in out
+    for c in _FUNDAMENTALS:
+        assert c in out and c in table
+
+
+def test_summary_failed_step_outcome_alone_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    steps["finmind_fundamentals_refresh"] = "failure"
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "FinMind fundamentals refresh" in out
+
+
+def test_summary_not_yet_published_missing_credential_and_skipped_do_not_fail(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {
+        "tw-taifex-tx-daily": {"status": "not_yet_published", "reason": "not_yet_published"},
+        "tw-finmind-valuation": {"status": "skipped", "reason": "missing_credential"},
+        "tw-finmind-broker-daily-report": {"status": "noop", "reason": "already_fresh"},
+    })
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+
+
+def test_summary_unknown_or_missing_status_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {"tw-taifex-put-call": {"status": "weird"}})
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "tw-taifex-put-call" in out
+    (tmp_path / "tw-taifex-tx-daily-refresh-outcome.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "tw-finmind-valuation-refresh-outcome.json").unlink()
+    rc, out, _ = _run_summary(tmp_path, _real_run_steps_only())
+    assert rc == 1 and "tw-taifex-tx-daily" in out and "tw-finmind-valuation" in out
+
+
+def _real_run_steps_only() -> dict[str, str]:
+    return {k: "success" for k in ("taifex_refresh", "finmind_refresh", "refresh", "chip_refresh", "finmind_fundamentals_refresh", "steady_check")}
+
+
+def test_summary_failing_steady_restore_check_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    _write(tmp_path, "tw-refresh-outcome.json", status="completed", steady_restore_check={"reason": "scheduler_mode_x", "status": "failed"})
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "steady_restore_check" in out
+
+
+def test_summary_schedule_skipped_steps_do_not_fail(tmp_path: Path) -> None:
+    # 07:00/08:00 UTC cron: broker and fundamentals skipped, no files for them.
+    _write(tmp_path, "tw-refresh-outcome.json", status="completed", steady_restore_check={"reason": "", "status": "healthy"})
+    steps = {"taifex_refresh": "skipped", "finmind_refresh": "skipped", "refresh": "success", "chip_refresh": "skipped",
+             "finmind_fundamentals_refresh": "skipped", "steady_check": "success"}
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+
+
+def test_summary_step_is_last_always_and_keeps_continue_on_error() -> None:
+    steps = _steps()
+    final = steps[-1]
+    assert "Summarize refresh outcomes" in final["name"]
+    assert final["if"] == "${{ always() && steps.lease.outcome == 'success' }}"
+    assert "tw_refresh_outcome_summary.py" in final["run"]
+    assert "ssh" not in final["run"].lower() and "deploy_nonprod_vm" not in final["run"]
+    for name in ("TAIFEX contract refresh", "FinMind broker branch refresh", "FinMind fundamentals refresh"):
+        assert _step(name)["continue-on-error"] is True
+    upload = next(i for i, s in enumerate(steps) if "Upload refresh outcome" in s.get("name", ""))
+    assert upload < len(steps) - 1

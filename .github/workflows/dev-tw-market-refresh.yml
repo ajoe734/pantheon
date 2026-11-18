@@ -407,3 +407,24 @@ jobs:
             --path .pantheon/environment-leases/pantheon-dev-environment.json \
             --resource pantheon-dev-environment \
             --state-file "${LD}/state.json"
+
+      - name: Summarize refresh outcomes and fail on any failed step
+        # Reads only local step outcomes and the uploaded outcome files; no SSH, no hosted change.
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        env:
+          OUTCOMES_DIR: ${{ runner.temp }}
+          TAIFEX_REFRESH_OUTCOME: ${{ steps.taifex_refresh.outcome }}
+          FINMIND_REFRESH_OUTCOME: ${{ steps.finmind_refresh.outcome }}
+          REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
+          CHIP_REFRESH_OUTCOME: ${{ steps.chip_refresh.outcome }}
+          FUNDAMENTALS_REFRESH_OUTCOME: ${{ steps.finmind_fundamentals_refresh.outcome }}
+          STEADY_CHECK_OUTCOME: ${{ steps.steady_check.outcome }}
+        run: |
+          python3 scripts/tw_refresh_outcome_summary.py \
+            --outcomes-dir "${OUTCOMES_DIR}" --summary-file "${GITHUB_STEP_SUMMARY}" \
+            --step "taifex_refresh=${TAIFEX_REFRESH_OUTCOME}" \
+            --step "finmind_refresh=${FINMIND_REFRESH_OUTCOME}" \
+            --step "refresh=${REFRESH_OUTCOME}" \
+            --step "chip_refresh=${CHIP_REFRESH_OUTCOME}" \
+            --step "finmind_fundamentals_refresh=${FUNDAMENTALS_REFRESH_OUTCOME}" \
+            --step "steady_check=${STEADY_CHECK_OUTCOME}"

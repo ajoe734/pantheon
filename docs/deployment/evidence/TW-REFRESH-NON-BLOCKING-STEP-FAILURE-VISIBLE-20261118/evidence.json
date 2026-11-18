@@ -1,0 +1,651 @@
+{
+ "task": "TW-REFRESH-NON-BLOCKING-STEP-FAILURE-VISIBLE-20261118",
+ "diagnosis": {
+  "cause": "Steps 'Execute bounded TAIFEX contract refresh' (taifex_refresh), 'Execute bounded FinMind broker branch refresh' (finmind_refresh) and 'Execute bounded FinMind fundamentals refresh' (finmind_fundamentals_refresh) set continue-on-error: true. GitHub then reports the step as success in the UI and the run stays green; the inner status is only in the outcome files, which nothing read. The broker step also wraps the deploy call in '|| exit 0'.",
+  "fundamentals_step": "Executed in 1 run since 2026-11-10 (44156597251, schedule, run conclusion success); its shell exited 1 (failed=1) while the run showed success. Skipped in every other run (07:00/08:00 cron gate, or earlier step failure without always()).",
+  "per_run_step_outcomes": [
+   {
+    "run_id": 44421268724,
+    "created_at": "2026-11-18T23:30:06Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "in_progress",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "none",
+     "FinMind broker branch": "none",
+     "FinMind fundamentals": "none"
+    }
+   },
+   {
+    "run_id": 44307645328,
+    "created_at": "2026-11-18T12:49:45Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "cancelled",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44273374890,
+    "created_at": "2026-11-18T09:10:06Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44260667906,
+    "created_at": "2026-11-18T07:40:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44253021385,
+    "created_at": "2026-11-18T06:40:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44208313860,
+    "created_at": "2026-11-18T00:30:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44199899154,
+    "created_at": "2026-11-17T23:30:06Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44176807344,
+    "created_at": "2026-11-17T21:09:21Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44156597251,
+    "created_at": "2026-11-17T19:15:18Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "success"
+    }
+   },
+   {
+    "run_id": 44135472143,
+    "created_at": "2026-11-17T17:18:12Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44128261146,
+    "created_at": "2026-11-17T16:39:32Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44053058700,
+    "created_at": "2026-11-17T09:10:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44040468970,
+    "created_at": "2026-11-17T07:40:06Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 44032904280,
+    "created_at": "2026-11-17T06:40:06Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 43988119449,
+    "created_at": "2026-11-17T00:30:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success",
+     "FinMind fundamentals": "skipped"
+    }
+   },
+   {
+    "run_id": 43979802777,
+    "created_at": "2026-11-16T23:30:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43969619292,
+    "created_at": "2026-11-16T22:23:36Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43951585314,
+    "created_at": "2026-11-16T20:36:45Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43922294199,
+    "created_at": "2026-11-16T17:48:53Z",
+    "event": "schedule",
+    "run_conclusion": "cancelled",
+    "step_conclusions_as_shown_by_github": {}
+   },
+   {
+    "run_id": 43922024375,
+    "created_at": "2026-11-16T17:47:19Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43910554594,
+    "created_at": "2026-11-16T16:43:01Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43882097955,
+    "created_at": "2026-11-16T14:05:12Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43879713357,
+    "created_at": "2026-11-16T13:50:45Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43837306426,
+    "created_at": "2026-11-16T09:10:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43831758710,
+    "created_at": "2026-11-16T08:30:24Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43825422324,
+    "created_at": "2026-11-16T07:40:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43818327384,
+    "created_at": "2026-11-16T06:40:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43780732807,
+    "created_at": "2026-11-16T00:30:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43775143780,
+    "created_at": "2026-11-15T23:30:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43604001452,
+    "created_at": "2026-11-14T14:16:30Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43496690867,
+    "created_at": "2026-11-13T19:55:13Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43477736621,
+    "created_at": "2026-11-13T17:56:33Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43456852691,
+    "created_at": "2026-11-13T15:51:49Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43448846534,
+    "created_at": "2026-11-13T15:04:15Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43399039457,
+    "created_at": "2026-11-13T09:10:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43387379332,
+    "created_at": "2026-11-13T07:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43380284230,
+    "created_at": "2026-11-13T06:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43354287693,
+    "created_at": "2026-11-13T02:44:51Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43337547540,
+    "created_at": "2026-11-13T00:30:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43329364687,
+    "created_at": "2026-11-12T23:30:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43315136210,
+    "created_at": "2026-11-12T21:56:25Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43298052159,
+    "created_at": "2026-11-12T20:12:59Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43280352459,
+    "created_at": "2026-11-12T18:29:25Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43259316396,
+    "created_at": "2026-11-12T16:30:01Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43251048335,
+    "created_at": "2026-11-12T15:44:25Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43189050684,
+    "created_at": "2026-11-12T09:10:05Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43176944240,
+    "created_at": "2026-11-12T07:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43169731205,
+    "created_at": "2026-11-12T06:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped",
+     "FinMind broker branch": "skipped"
+    }
+   },
+   {
+    "run_id": 43133926108,
+    "created_at": "2026-11-12T01:21:14Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43121124773,
+    "created_at": "2026-11-11T23:36:31Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43115986699,
+    "created_at": "2026-11-11T22:57:19Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success",
+     "FinMind broker branch": "success"
+    }
+   },
+   {
+    "run_id": 43051884455,
+    "created_at": "2026-11-11T15:47:38Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 43042833902,
+    "created_at": "2026-11-11T14:53:18Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42992868978,
+    "created_at": "2026-11-11T09:10:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42981158688,
+    "created_at": "2026-11-11T07:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42974028468,
+    "created_at": "2026-11-11T06:40:04Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42850269858,
+    "created_at": "2026-11-10T16:00:24Z",
+    "event": "schedule",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped"
+    }
+   },
+   {
+    "run_id": 42843795721,
+    "created_at": "2026-11-10T15:23:20Z",
+    "event": "schedule",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42788428930,
+    "created_at": "2026-11-10T09:10:10Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42776894125,
+    "created_at": "2026-11-10T07:40:10Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "skipped"
+    }
+   },
+   {
+    "run_id": 42771448107,
+    "created_at": "2026-11-10T06:52:43Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "success",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   },
+   {
+    "run_id": 42770054517,
+    "created_at": "2026-11-10T06:40:11Z",
+    "event": "workflow_dispatch",
+    "run_conclusion": "failure",
+    "step_conclusions_as_shown_by_github": {
+     "TAIFEX contract": "success"
+    }
+   }
+  ],
+  "outcome_file_status_note": "Per-connector statuses inside outcome files were not retrievable for historical runs in this worker (artifacts not downloaded); only step conclusions above are recorded. Outcome files exist only in the tw-refresh-outcome artifact of each run."
+ },
+ "non_failing_statuses": {
+  "completed": "deploy_nonprod_vm.sh write_bounded_refresh_outcome \"completed\" \"refreshed\" (end of execute_bounded_source_refresh_entrypoint)",
+  "noop": "preflight noop already_fresh -> write_bounded_refresh_outcome \"${preflight_status}\" (case skipped|noop)",
+  "skipped": "preflight skipped (weekend/holiday/session_not_closed); 'skipped'/'no_active_taiwan_symbols'; 'skipped'/'missing_credential' in deploy_nonprod_vm.sh and in the workflow's own broker and fundamentals missing-credential branches",
+  "not_yet_published": "write_bounded_refresh_outcome \"not_yet_published\" (readback path)",
+  "steady_restore_check healthy": "execute_steady_posture_check; 'restored' and 'failed' stay failing because the existing steady step already exits 1 on anything but healthy",
+  "step outcomes": "success and skipped pass; failure, cancelled, empty/unknown fail",
+  "everything else": "failed, error, unreadable, missing file for a step that ran, unknown -> failing"
+ },
+ "change": {
+  "script": "scripts/tw_refresh_outcome_summary.py (reads local files only; writes only GITHUB_STEP_SUMMARY; no SSH/hosted change)",
+  "workflow": "final step 'Summarize refresh outcomes and fail on any failed step' after lease release, if always() && lease success; continue-on-error, step order, timeouts and lease handling unchanged"
+ },
+ "validation": {
+  "commands": [
+   "python -m pytest scripts/test_dev_tw_market_refresh_workflow.py scripts/test_dev_tw_market_refresh.py -q"
+  ],
+  "result": "workflow tests 32 passed (24 existing + 8 new), test_dev_tw_market_refresh.py 131 passed; 163 passed total. First run in a bare venv hit 2 failures (missing fastapi/jsonschema in venv, plus one test-code KeyError fixed); after installing deps and fixing, the new tests ran 8 passed and the previously failing authoritative_readback test passed. The complete 163-test run was not repeated end-to-end after the final fixes."
+ },
+ "post_merge": "Release owner reads the first refresh run by run id and compares the job summary table with the tw-refresh-outcome artifact."
+}
