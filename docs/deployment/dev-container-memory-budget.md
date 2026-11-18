@@ -12,6 +12,8 @@ It used twice one `docker stats` sample taken at 02:10Z. `docker stats` leaves o
 
 Each service gets `mem_limit: ${DEV_MEM_LIMIT_<SERVICE>:-<default>}`. Default >= 1.5 x the cgroup `memory.peak` recorded in the evidence for that service (and >= 128 MiB). `memory.peak` counts anonymous memory, page cache and child processes, so it is the number the kernel actually enforces. A root-profile service with no recorded peak must carry a stated not-measured reason in the evidence (`openclaw-data-init` and `source-ingest-controller-migrate` are one-shot jobs). `scripts/test_compose_memory_limits.py` enforces this.
 
+**Start-up peak (DEV-MEMORY-BUDGET-STARTUP-PEAK-20261118).** The recorded peak of a service must include one start of that service, not only its steady state. Measure it by reading cgroup `memory.peak` after a fresh start (`docker compose up -d --force-recreate <service>`, wait until healthy, then read `memory.peak`); a restart resets `memory.peak`, `memory.events` and `oom_kill`, so a reading taken after a later restart no longer holds the start-up value. Services other than incidents are marked not measured at start in `evidence/DEV-MEMORY-BUDGET-STARTUP-PEAK-20261118/evidence.json`. Incidents: about 1045 MiB anonymous memory in the uvicorn process at start (steady peak 631 MiB); it was killed at the 1024 MiB limit on the releases of 2026-11-17 20:40:48Z and 2026-11-18 04:46:09Z (dmesg), the restart policy brought it back, so the limit is now 2g (1.5 x 1045 = 1568 MiB).
+
 A peak recorded at the limit (limit reached many times) is a lower bound only; those services are exceptions below.
 
 ## Exceptions to the 1.5x rule
@@ -39,7 +41,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 | openclaw-gateway | 658 | 1280 | 1280m | `DEV_MEM_LIMIT_OPENCLAW_GATEWAY` | 1.9x |
 | paper-fleet-reconciler | 640 | 640 | 1280m | `DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER` | 2.0x |
 | retrieval-postgres | 139 | 1024 | 1g | `DEV_MEM_LIMIT_RETRIEVAL_POSTGRES` | 7.4x |
-| incidents | 631 | 1024 | 1024m | `DEV_MEM_LIMIT_INCIDENTS` | 1.6x |
+| incidents | 1045 (start-up; steady 631) | 1024 | 2g | `DEV_MEM_LIMIT_INCIDENTS` | 2.0x |
 | signal-store | 305 | 640 | 640m | `DEV_MEM_LIMIT_SIGNAL_STORE` | 2.1x |
 | strategy-distillation-worker | 423 | 640 | 640m | `DEV_MEM_LIMIT_STRATEGY_DISTILLATION_WORKER` | 1.5x |
 | broker | 377 | 640 | 640m | `DEV_MEM_LIMIT_BROKER` | 1.7x |
@@ -89,7 +91,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 ## Overcommit vs the 32 GiB host
 
-- Sum of all limits: 83200 MiB (81.3 GiB) = 2.59x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
+- Sum of all limits: 84224 MiB (82.3 GiB) = 2.62x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
 - Sum of recorded peaks: 24740 MiB (24.2 GiB), of which search-svc is 4578 MiB.
 - Limits that mostly bound reclaimable page cache rather than process memory: postgres (8g; anon 22 MiB), paper-fleet-reconciler (file 382 of 640 MiB), hindsight and search-svc (large cached data). A page cache ceiling is reclaimed under pressure and does not OOM-kill, but a ceiling that is too low causes IO thrash, which is what happened to postgres.
 - Limits that bound process memory: openclaw-gateway-adapter (3g, six concurrent node pairs), operator-bff, source-ingest, telemetry, loop-run-projector-scheduler (16g).
@@ -107,11 +109,12 @@ The recorded peaks cover about one hour (evening) on release 80d4cf2ca without a
 |---|---|---|
 | `container_oom_killed` | red (RC3) | `oom_kill` above zero: raise the limit or fix the leak |
 | `container_restarts_grew` | red (RC3) | restart count grew since the previous report |
+| `container_restarted_since_creation` | warning | docker restart count above zero since the container was created, reported on every report (also the first, and also when the count did not grow); names the service, the count and the container creation time |
 | `memory_limit_reached` | warning | `max` counter grew since the previous report |
 | `memory_peak_near_limit` | warning | peak is at or above 90 percent of the limit (a page-cache-bound container reaches this without harm) |
 | `memory_limit_missing` | warning | container has no limit |
 
-Counters reset when a container is recreated; a counter lower than in the previous report is treated as a reset and reports nothing. Collection is read-only: `docker ps`, `docker inspect` (needs docker socket access, which the transport user already has) and reads of world-readable files under `/sys/fs/cgroup/system.slice/docker-<id>.scope/`. Nothing is written on hosted.
+cgroup `oom_kill` and `memory.peak` are reset by a restart, so a zero `oom_kill` next to a restart count above zero is not evidence that no kill happened (check dmesg on the host). Counters reset when a container is recreated; a counter lower than in the previous report is treated as a reset and reports nothing. Collection is read-only: `docker ps`, `docker inspect` (needs docker socket access, which the transport user already has) and reads of world-readable files under `/sys/fs/cgroup/system.slice/docker-<id>.scope/`. Nothing is written on hosted.
 
 ## Rollback
 
@@ -121,3 +124,4 @@ Limits live only in the dev compose file. Revert the commit (or set `DEV_MEM_LIM
 
 - The adapter has no concurrency cap on openclaw CLI calls; every cron poll or status poll spawns two node processes of about 400 MiB for 5 to 7 seconds. Owned by the persona-loop coordinator (PERSONA-CYCLE-CONTROLLER-CRON-POLL-BUDGET-20261117 reduces the cron polling).
 - `pantheon-minio-1` and `pantheon-dev-paper-principal-issuer-1` run without a limit.
+- Scheduled workflows on this repository start hours late or not at all (the daily measurement had never run by schedule before the manual run 44245690990 on 2026-11-18). Not fixed here.
