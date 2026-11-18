@@ -42,9 +42,12 @@ CLAUDE_TOOLSEARCH_BATCH='[
 
 cd "$REPO_ROOT"
 
+# Standard input is detached for every compose call: docker compose exec -T
+# still forwards stdin, so inside a `while read` loop it swallows the remaining
+# lines (the second API route was never registered). Nothing here pipes into it.
 compose() {
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}" \
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "$@"
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "$@" </dev/null
 }
 
 openclaw() {

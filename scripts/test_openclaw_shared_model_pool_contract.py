@@ -89,6 +89,19 @@ def test_api_route_registers_one_provider_per_key_with_env_secretref(tmp_path) -
     assert "sk-proj-sentinel" not in blob
 
 
+def test_second_route_is_registered_and_null_apikey_entry_gets_secretref(tmp_path) -> None:
+    stale = {"openai-api-2": {"apiKey": None}}
+    result, _ = _run_model_pool_script(
+        tmp_path, token_present=False, config={"models": {}, "providers": stale},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "", **ROUTE_KEYS},
+    )
+    assert result.returncode == 0, result.stderr
+    providers = result.final_config["providers"]
+    assert set(providers) == {"openai-api", "openai-api-2"}
+    assert providers["openai-api-2"]["apiKey"] == {
+        "source": "env", "provider": "default", "id": "OPENCLAW_API_ROUTE_KEY_2"}
+
+
 def test_missing_or_empty_api_key_drops_its_route_and_gateway_still_configures(tmp_path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from services.persona.runtime_profile import default_chain
@@ -239,6 +252,8 @@ def _run_model_pool_script(
         f"#!{sys.executable}\n" + r'''
 import json, os, sys
 args = sys.argv[1:]
+if "exec" in args and "-T" in args:
+    sys.stdin.read()  # like docker compose exec: forwards and consumes stdin
 with open(os.environ["TEST_DOCKER_LOG"], "a") as stream:
     stream.write(json.dumps(args) + "\n")
 if "-e" in args:
