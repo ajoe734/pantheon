@@ -1,0 +1,37 @@
+{
+  "task": "DISTILLATION-AUTH-DEAD-LETTER-RECOVERY-20261117",
+  "base": "13a08deaa",
+  "change": {
+    "worker": "is_auth_registry_failure; auth failures retry on a long schedule (mark_retry_or_dead_letter); DistillationJobQueue.redrive_auth_dead_letters (no schema change)",
+    "controller": "after an authenticated probe (_get_registry_entry with the worker's own token; 401/403 raise and count as rejected) the tick calls redrive_auth_dead_letters, capped at AUTH_REDRIVE_PER_TICK=100"
+  },
+  "ac1_probe_gate": "test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected (403 probe: 260 stay dead); hosted-shape test tick 1 with 401 probe: 260 stay dead, 0 Registry writes",
+  "ac2_bounds": {"max_redrives_per_dead_letter": 5, "per_tick_cap": 100, "exhausted_budget_stays_dead_lettered": "test_latest_auth_dead_letter_is_redriven_and_delivered"},
+  "ac3_ac4_superseded_and_latest": "TestAuthDeadLetterRecovery: superseded-by-done resolved as skipped with note and never reaches Registry; latest delivered; older+newer both dead -> newest redriven once, older resolved",
+  "ac5_outage_window": {
+    "before": {"max_attempts": 3, "base_seconds": 5, "coverage_seconds": 15, "note": "waits 5s+10s then dead letter"},
+    "after_auth_failures": {"max_attempts": 10, "waits_seconds": [60, 120, 240, 480, 600, 600, 600, 600, 600], "coverage_seconds": 3900, "note": "test_short_auth_outage_does_not_dead_letter asserts >3600s and recovery without dead letter"}
+  },
+  "ac6_hosted_shape_replay": {
+    "shape": "260 unresolved 401 dead letters: 153 latest (15 with a dead-lettered older version), 92 older with newer done",
+    "ticks_after_registry_accepts_credential": 2,
+    "registry_calls_per_tick": [301, 160],
+    "registry_writes_total": 153,
+    "stale_versions_written": 0,
+    "result": "dead letters 0, outbox dead_letter 0, tick status success",
+    "test": "test_controller_converges_hosted_shape_auth_dead_letters"
+  },
+  "ac7_other_failures": "test_non_auth_failure_keeps_three_attempt_behaviour; test_permanent_failure_stays_dead_lettered",
+  "ac8_rollback": "No schema change. Superseded rows become outbox 'skipped' (existing status); redriven rows 'pending' as in the existing transient redrive. HEAD~ worker module opened the post-recovery queue: pending 153, done 92, skipped 107, dead_letter 0.",
+  "ac9_runtime_budget": {
+    "registry_calls_per_recovery_tick": "<= 1 probe + 3 per delivered job (GET, POST, readback GET) x 100 = 301 (measured 301 then 160)",
+    "queue_file_growth": "no rows inserted. One-off in-place page rewrite: 786432 -> 835584 bytes (+49152, 6%) on the 260-row recovery; second call 0 bytes",
+    "note": "growth is SQLite page rewrite of updated rows, not new records; prune/compact reclaims resolved rows"
+  },
+  "ac10_tests": "test_distillation_worker.py, test_distillation_controller.py, test_distillation_queue_lifetime.py, test_l12_dist_001_transactional_distillation.py: 135 passed",
+  "residual_not_fixed": [
+    "1268 pending outbox rows for retired source dev-paper-simulation:SPY (enqueued 10-07..10-08) are never claimed",
+    "The worker's Registry credential is rejected during failed releases and rollbacks; the deploy step causing it is for the release owner"
+  ],
+  "review_independence_exception": "no other model family has capacity today (per task brief)"
+}

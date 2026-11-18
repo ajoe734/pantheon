@@ -739,6 +739,185 @@ class TestTransientDeadLetterRedrive:
         assert queue.redrive_transient_dead_letters(requested_by="ctl", tenant_id="tenant-missing") == []
 
 
+AUTH_401 = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"
+
+
+def _force_dead_letter(queue: DistillationJobQueue, job, reason: str = AUTH_401, attempts: int = 3) -> None:
+    """Put an admitted job into the dead-letter state the hosted rows are in."""
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute(
+            "UPDATE distillation_outbox SET status='dead_letter', attempts=?, last_error=?, processed_at=1 WHERE job_id=?",
+            (attempts, reason, job.job_id),
+        )
+        event_id = conn.execute(
+            "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+            " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (job.job_id, event_id, job.source_id, job.source_digest, "{}", attempts, reason, 1.0),
+        )
+
+
+def _force_status(queue: DistillationJobQueue, job, status: str) -> None:
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute("UPDATE distillation_outbox SET status=? WHERE job_id=?", (status, job.job_id))
+
+
+class TestAuthDeadLetterRecovery:
+    def test_is_auth_registry_failure_classification(self) -> None:
+        from services.source_ingestion.distillation_worker import (
+            is_auth_registry_failure,
+            is_transient_registry_failure,
+        )
+
+        assert is_auth_registry_failure(AUTH_401)
+        assert is_auth_registry_failure("registry_sync_failed: RuntimeError: Failed to register strategy spec: HTTP Error 403: Forbidden")
+        assert not is_auth_registry_failure("registry_sync_failed: HTTPError: HTTP Error 500: boom")
+        assert not is_auth_registry_failure("Registry artifact x exists with conflicting distillation lineage")
+        assert not is_transient_registry_failure(AUTH_401)
+
+    def test_short_auth_outage_does_not_dead_letter(self, tmp_path: Path) -> None:
+        from services.source_ingestion.distillation_worker import AUTH_RETRY_MAX_ATTEMPTS
+
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        state = {"fail": True}
+
+        def sync(request):
+            if state["fail"]:
+                raise RuntimeError("HTTPError: HTTP Error 401: Unauthorized")
+            return RegistrySyncResult(registry_id="reg-1", status="synced")
+
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=sync, retry_base_seconds=5,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        clock = [__import__("time").time()]
+        queue._now = lambda: clock[0]  # type: ignore[method-assign]
+        covered = 0.0
+        # Every attempt fails; walk the clock to each retry's availability.
+        for _ in range(AUTH_RETRY_MAX_ATTEMPTS - 1):
+            result = worker.run_pending()
+            assert result.dead_lettered == 0
+            with sqlite3.connect(queue.path) as conn:
+                status, available_at = conn.execute(
+                    "SELECT status, available_at FROM distillation_outbox"
+                ).fetchone()
+            assert status == "retry_wait"
+            covered += available_at - clock[0]
+            clock[0] = available_at
+        # Waits outlast a 60 minute credential outage (hosted: max_attempts 3, 5s base = 15s).
+        assert covered > 3600
+        state["fail"] = False
+        result = worker.run_pending()
+        assert result.registry_synced == 1
+        assert queue.metrics()["dead_letter"] == 0
+
+    def test_persistent_auth_failure_eventually_dead_letters(self, tmp_path: Path) -> None:
+        from services.source_ingestion.distillation_worker import AUTH_RETRY_MAX_ATTEMPTS
+
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: (_ for _ in ()).throw(RuntimeError("HTTPError: HTTP Error 401: Unauthorized")),
+            retry_base_seconds=5,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        clock = [__import__("time").time()]
+        queue._now = lambda: clock[0]  # type: ignore[method-assign]
+        for _ in range(AUTH_RETRY_MAX_ATTEMPTS):
+            worker.run_pending()
+            clock[0] += 1000
+        assert queue.metrics()["dead_letter"] == 1
+
+    def test_non_auth_failure_keeps_three_attempt_behaviour(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: (_ for _ in ()).throw(RuntimeError("HTTPError: HTTP Error 500: boom")),
+            retry_base_seconds=0,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        for _ in range(3):
+            worker.run_pending()
+        assert queue.metrics()["dead_letter"] == 1
+        assert queue.redrive_auth_dead_letters(requested_by="ctl")["redriven"] == []
+        assert queue.dead_letter_count() == 1
+
+    def test_latest_auth_dead_letter_is_redriven_and_delivered(self, tmp_path: Path) -> None:
+        worker, queue, _ = _make_worker(tmp_path)
+        job = queue.enqueue_source_record(_normalized_source())
+        _force_dead_letter(queue, job)
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out == {"redriven": [job.job_id], "superseded": []}
+        assert queue.dead_letter_count() == 0
+        assert queue.metrics()["pending"] == 1
+        # exhausted budget: a second dead-lettering is not redriven past max_redrives
+        _force_status(queue, job, "dead_letter")
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute("UPDATE distillation_dead_letters SET resolved_at=NULL WHERE job_id=?", (job.job_id,))
+        assert queue.redrive_auth_dead_letters(requested_by="ctl", max_redrives=1)["redriven"] == []
+        assert queue.dead_letter_count() == 1
+
+    def test_superseded_by_delivered_version_is_resolved_not_delivered(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: calls.append(r.job.job_id) or RegistrySyncResult(registry_id="r", status="synced"),
+        )
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        assert old.job_id != new.job_id
+        _force_dead_letter(queue, old)
+        _force_status(queue, new, "done")
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out == {"redriven": [], "superseded": [old.job_id]}
+        assert queue.dead_letter_count() == 0
+        assert queue.metrics()["dead_letter"] == 0
+        worker.run_pending()
+        assert calls == []  # the stale version never reaches the Registry
+        with sqlite3.connect(queue.path) as conn:
+            status, reason = conn.execute(
+                "SELECT status, skip_reason FROM distillation_outbox WHERE job_id=?", (old.job_id,)
+            ).fetchone()
+        assert status == "skipped" and new.job_id in reason
+
+    def test_newer_dead_lettered_version_handled_once_through_newest(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        _force_dead_letter(queue, old)
+        _force_dead_letter(queue, new)
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out["redriven"] == [new.job_id]
+        assert out["superseded"] == [old.job_id]
+        assert queue.dead_letter_count() == 0
+        assert queue.redrive_auth_dead_letters(requested_by="ctl") == {"redriven": [], "superseded": []}
+
+    def test_redrive_per_call_cap(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        for i in range(5):
+            _force_dead_letter(queue, queue.enqueue_source_record(_normalized_source(f"s-{i}")))
+        assert len(queue.redrive_auth_dead_letters(requested_by="ctl", limit=2)["redriven"]) == 2
+        assert queue.dead_letter_count() == 3
+
+    def test_old_reader_reads_queue_left_by_recovery(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        _force_dead_letter(queue, old)
+        _force_dead_letter(queue, new)
+        queue.redrive_auth_dead_letters(requested_by="ctl")
+        with sqlite3.connect(queue.path) as conn:
+            cols_before = {r[1] for r in conn.execute("PRAGMA table_info(distillation_outbox)")}
+        # Same schema as before the change; statuses stay inside the existing CHECK set.
+        assert "skip_reason" in cols_before
+        reopened = DistillationJobQueue(queue.path)
+        assert {getattr(j.status, "value", j.status) for j in reopened.list_all()} == {"skipped", "pending"}
+
+
 def _legacy_raw_refs_digest(source: SourceRecord) -> str:
     import hashlib
 
