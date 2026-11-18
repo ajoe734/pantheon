@@ -39,8 +39,8 @@ def _receipt(captured, index=0, *, large=False, legacy=False):
                       ingest_run_id=f"ingest-incremental-{index:05d}")
     if legacy:  # the deployed writer's shape: snapshot bodies embedded
         return receipt
-    slim, _ = compact_receipt_payload({"evidence_refs": receipt.evidence_refs})
-    return replace(receipt, evidence_refs=slim["evidence_refs"])
+    slim, _ = compact_receipt_payload({"evidence_refs": receipt.evidence_refs, "storage_refs": receipt.storage_refs})
+    return replace(receipt, evidence_refs=slim["evidence_refs"], storage_refs=slim["storage_refs"])
 
 
 def _run(receipt):

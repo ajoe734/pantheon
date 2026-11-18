@@ -47,3 +47,26 @@ inputs, and the decision fixtures (served commit, superseded green commit, serve
 commit while tip is not green). `scripts/test_isolated_l12_provider_workflow.py` and
 `scripts/test_release_gate_current_run.py` do not pin `branch-ci.yml` (they cover
 `nonprod-deploy.yml` and a stage0 workflow), so they are unchanged.
+
+## Commits that change no build input are not released
+
+Task: DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117.
+
+When the frontend commit is unchanged and every file changed between the served
+backend commit and the candidate is outside the release build inputs, the deployer
+returns `report_only_no_deploy` and dispatches nothing. The rule is
+`is_non_build_input` in `scripts/auto_deploy_dev_pair.py` (one place):
+
+- `.orchestrator/` and `ai-task-archive/` (both in `.dockerignore`);
+- Markdown files in the repository root, and `*.md` under `docs/operations/` and `docs/reviews/`;
+- the three closeout report paths already skipped before.
+
+`docs/` as a whole is **not** skipped: services read `docs/contracts`,
+`docs/deployment/loop-catalog.registry.json`, `docs/deployment/evidence/**`,
+`docs/04` and `docs/research/notes`, and every Dockerfile copies the repository root.
+Fail open: a truncated or diverged comparison, 300 or more files, any other path, or a
+rename that crosses the boundary dispatches the release as before. The served commit is
+the comparison base, so the next release that changes a build input carries the skipped
+commits. Skipped commits stay merged on dev; they never become deployed by themselves.
+The publish cut summary prints the skip with the changed file count and the served commit.
+Evidence: `docs/deployment/evidence/DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117/evidence.json`.

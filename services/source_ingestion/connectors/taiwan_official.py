@@ -404,6 +404,10 @@ TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS: Mapping[str, dict[str, Any]] = {
 
 
 OFFICIAL_FETCH_ATTEMPTS = 3
+
+
+class OfficialBodyNotParseable(SourceEvidenceError):
+    """The body is a form the endpoint adapter does not read; retrying cannot change it."""
 OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
 
 
@@ -446,7 +450,18 @@ def _fetch_official(
         try:
             with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
                 raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
-            return parse(raw_bytes)
+                status = getattr(response, "status", None) or getattr(response, "code", None)
+                content_type = (getattr(response, "headers", None) or {}).get("Content-Type")
+            try:
+                return parse(raw_bytes)
+            except OfficialBodyNotParseable as exc:
+                raise OfficialBodyNotParseable(
+                    f"official endpoint {request.full_url} body not parseable: {exc} "
+                    f"(HTTP status {status}; content-type {content_type}; {len(raw_bytes)} bytes; "
+                    f"first 80 bytes {raw_bytes[:80]!r}); not retried"
+                ) from exc
+        except OfficialBodyNotParseable:
+            raise
         except (
             ResponseTruncated,
             TimeoutError,
@@ -2699,10 +2714,71 @@ _TX_DAILY_REQUIRED_COLUMNS = (
 )
 
 
+# The text form of DailyMarketReportFut carries these Chinese header columns, in the
+# same order as the JSON keys (recorded 2026-11-18, see tests/fixtures/taifex_tx_daily).
+_TX_DAILY_TEXT_COLUMNS: Mapping[str, str] = {
+    "日期": "Date",
+    "契約代號": "Contract",
+    "到期月份(週別)": "ContractMonth(Week)",
+    "開盤價": "Open",
+    "最高價": "High",
+    "最低價": "Low",
+    "最後成交價": "Last",
+    "漲跌價": "Change",
+    "漲跌%": "%",
+    "合計成交量": "Volume",
+    "結算價": "SettlementPrice",
+    "未沖銷契約數": "OpenInterest",
+    "最後最佳買價": "BestBid",
+    "最後最佳賣價": "BestAsk",
+    "歷史最高價": "HistoricalHigh",
+    "歷史最低價": "HistoricalLow",
+    "是否因訊息面暫停交易": "TradingHalt",
+    "交易時段": "TradingSession",
+    "價差對單式委託成交量": "Volume(ExecutionsAmongSpreadOrderAndSingleOrderOnly)",
+}
+_TX_DAILY_ENGLISH_TO_TEXT = {v: k for k, v in _TX_DAILY_TEXT_COLUMNS.items()}
+
+
+def _tx_daily_canonical_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Give a text-form row the JSON keys; JSON-form rows pass through unchanged."""
+    if not any(k in row for k in _TX_DAILY_TEXT_COLUMNS):
+        return dict(row)
+    missing = [
+        text_col for json_col, text_col in _TX_DAILY_ENGLISH_TO_TEXT.items()
+        if json_col in _TX_DAILY_REQUIRED_COLUMNS and text_col not in row
+    ]
+    if missing:
+        raise SourceEvidenceError(
+            f"DailyMarketReportFut format changed: missing text columns {missing}"
+        )
+    return {_TX_DAILY_TEXT_COLUMNS.get(k, k): v for k, v in row.items()}
+
+
 def _tx_daily_source_rows(payload: Any) -> tuple[dict[str, Any], ...]:
     if isinstance(payload, Mapping) and "DailyMarketReportFut" in payload:
         payload = payload["DailyMarketReportFut"]
-    return _taifex_text_rows(payload)
+    return tuple(_tx_daily_canonical_row(r) for r in _taifex_text_rows(payload))
+
+
+def _parse_tx_daily_body(raw_bytes: bytes) -> tuple[dict[str, Any], ...]:
+    """Read the JSON array or the comma separated text of DailyMarketReportFut.
+
+    Row reading is the shared ``_taifex_text_rows``; a body that is neither form
+    raises a non-retried error instead of being parsed into guessed rows.
+    """
+    try:
+        text = _decode_taifex_bytes(raw_bytes)
+    except UnicodeDecodeError as exc:
+        raise OfficialBodyNotParseable(f"not UTF-8 text ({exc.reason})") from exc
+    rows = _taifex_text_rows(text)
+    if rows:
+        _tx_daily_canonical_row(rows[0])  # a text header with a missing or renamed column names it
+    if not rows or not any(
+        ("Contract" in r and "Date" in r) or ("契約代號" in r and "日期" in r) for r in rows
+    ):
+        raise OfficialBodyNotParseable("neither a JSON array of rows nor a comma separated table with Date and Contract columns")
+    return rows
 
 
 def taifex_tx_daily_select_rows(
@@ -2922,12 +2998,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
+        # DailyMarketReportFut is served as comma separated text (2026-11-18); read both forms.
         parsed = _fetch_official(
             request,
             caller="source_ingest.taifex_derivatives",
             timeout_seconds=timeout_seconds,
             max_bytes=2097152,
-            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
+            parse=(
+                _parse_tx_daily_body
+                if resolved_ds == TAIFEX_TX_DAILY_DATASET
+                else (lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")))
+            ),
         )
         if resolved_ds == TAIFEX_TX_DAILY_DATASET:
             # Filter to TX/MTX first: the response lists ~2300 contracts and a cap

@@ -1,0 +1,18 @@
+{
+  "task": "DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117",
+  "rule": "scripts/auto_deploy_dev_pair.py:is_non_build_input",
+  "build_context_fact": "docker-compose*.yml build.context is '.', and most Dockerfiles use 'COPY . /workspace' or 'COPY . .'; .dockerignore is the only filter",
+  "accepted_prefixes": {
+    ".orchestrator/": "listed in .dockerignore ('.orchestrator/*'); no compose mount; scripts/deploy_nonprod_vm.sh only preserves host runtime state files there, it does not build from tracked content",
+    "ai-task-archive/": "listed in .dockerignore; no Dockerfile COPY, compose mount or deploy script step reads it",
+    "root *.md": "no runtime code reads root Markdown files (only docstring references); no Dockerfile/compose consumer",
+    "docs/operations/**/*.md and docs/reviews/**/*.md": "grep of services/, deploy/, integrations/, config/ shows only string references (RUNBOOK_REF, docstrings), no file reads",
+    "three closeout report paths": "unchanged from the previous behaviour"
+  },
+  "dropped_prefixes": {
+    "docs/ (whole)": "services read docs/contracts/*.schema.json (research_demand, alpha_template), docs/deployment/loop-catalog.registry.json (loop_inventory), docs/deployment/evidence/** (bff main, personas, lifecycle projector), docs/04/**, docs/research/notes (rglob *.md), and images copy the whole root",
+    "other *.md": "services/research/strategy_spec/production_distillation.py rglobs *.md under docs/research/notes; services/**/*.md such as contract.md are COPY'd explicitly"
+  },
+  "fail_open_tests": "scripts/test_auto_deploy_dev_pair.py: truncated, diverged, behind, 300 files, boundary rename, compare error, non-boundary path",
+  "verification": "pytest scripts/test_auto_deploy_dev_pair.py scripts/test_dev_green_commit_deploy_trigger.py: 90 passed"
+}

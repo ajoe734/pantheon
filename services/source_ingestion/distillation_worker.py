@@ -277,6 +277,32 @@ def is_transient_registry_failure(reason: str) -> bool:
     )
 
 
+# Registry authentication/authorization rejection (HTTP 401/403). The worker's
+# credential is rejected for the duration of a failed release/rollback and
+# accepted again afterwards, so these failures get a long retry schedule and are
+# redriven by the controller once a probe is authenticated.
+_AUTH_FAILURE_MARKERS = (
+    "http error 401",
+    "http error 403",
+)
+# Auth retry schedule: delay = min(cap, max(base, floor) * 2**(attempts-1)).
+# With the 10 attempts below the waits are 60,120,240,480,600x5 = 3900s (65 min),
+# which outlasts a 60 minute credential outage. Hosted rows carry max_attempts 3
+# (5s base: 5s+10s = 15s of coverage), the limit is raised only for auth failures.
+AUTH_RETRY_MAX_ATTEMPTS = 10
+AUTH_RETRY_MIN_BASE_SECONDS = 60.0
+AUTH_RETRY_MAX_DELAY_SECONDS = 600.0
+DEFAULT_AUTH_REDRIVE_LIMIT = 100
+
+
+def is_auth_registry_failure(reason: str) -> bool:
+    """True for Registry delivery errors caused by a 401/403 rejection."""
+    text = str(reason or "").lower()
+    return any(m in text for m in _REGISTRY_FAILURE_MARKERS) and any(
+        m in text for m in _AUTH_FAILURE_MARKERS
+    )
+
+
 class DistillationJobStatus(str, Enum):
     PENDING = "pending"
     LEASED = "leased"
@@ -1603,13 +1629,24 @@ class DistillationJobQueue:
                 ):
                     raise DistillationLeaseError(f"stale distillation lease failure: {job.job_id}")
                 attempts = int(row["attempts"])
-                dead_letter = permanent or attempts >= int(row["max_attempts"])
+                auth_failure = is_auth_registry_failure(error)
+                attempt_limit = int(row["max_attempts"])
+                if auth_failure:
+                    attempt_limit = max(attempt_limit, AUTH_RETRY_MAX_ATTEMPTS)
+                dead_letter = permanent or attempts >= attempt_limit
                 status = (
                     DistillationJobStatus.DEAD_LETTER
                     if dead_letter
                     else DistillationJobStatus.RETRY_WAIT
                 )
-                delay = max(0.0, float(base_delay_seconds)) * (2 ** max(0, attempts - 1))
+                if auth_failure:
+                    delay = min(
+                        AUTH_RETRY_MAX_DELAY_SECONDS,
+                        max(float(base_delay_seconds), AUTH_RETRY_MIN_BASE_SECONDS)
+                        * (2 ** max(0, attempts - 1)),
+                    )
+                else:
+                    delay = max(0.0, float(base_delay_seconds)) * (2 ** max(0, attempts - 1))
                 available_at = effective_now if dead_letter else effective_now + delay
                 connection.execute(
                     """
@@ -1825,6 +1862,184 @@ class DistillationJobQueue:
                 connection.execute("ROLLBACK")
                 raise
         return redriven
+
+    def redrive_auth_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        note: str = "registry accepts worker credential again; auth failure redrive",
+        max_redrives: int = DEFAULT_MAX_TRANSIENT_REDRIVES,
+        limit: int = DEFAULT_AUTH_REDRIVE_LIMIT,
+        tenant_id: str | None = None,
+    ) -> dict[str, list[str]]:
+        """Recover dead letters caused by Registry 401/403 rejections.
+
+        The caller must only invoke this after a Registry probe made with the
+        worker's own credential was answered as authenticated. Per source the
+        decision is made on the LATEST outbox row (never on the dead-lettered
+        job's own source_id lookup): an older version is resolved as
+        superseded (outbox ``skipped``, dead letter resolved with a note) and
+        never delivered; the newest version is redriven when it is itself an
+        auth dead letter with budget left. At most ``limit`` jobs are
+        redriven per call; a dead letter whose ``redrive_count`` reached
+        ``max_redrives`` is not redriven. No schema change and no new rows.
+        Returns ``{"redriven": [...], "superseded": [...]}`` job ids.
+        """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
+        budget = max(0, int(max_redrives))
+        cap = max(0, int(limit))
+        now = self._now()
+        redriven: list[str] = []
+        superseded: list[str] = []
+        tenant_clause = ""
+        params: tuple[Any, ...] = ()
+        if tenant is not None:
+            tenant_clause = """
+               AND EXISTS (
+                   SELECT 1
+                     FROM distillation_outbox AS outbox
+                     JOIN distillation_source_versions AS source_version
+                       ON source_version.source_id = outbox.source_id
+                      AND source_version.source_digest = outbox.source_digest
+                    WHERE outbox.job_id = distillation_dead_letters.job_id
+                      AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?
+               )
+            """
+            params = (tenant,)
+
+        def redrive(connection: sqlite3.Connection, job_id: str) -> bool:
+            changed = connection.execute(
+                """
+                UPDATE distillation_outbox
+                   SET status = 'pending', available_at = ?,
+                       processed_at = NULL, attempts = 0,
+                       lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, lease_expiries = 0,
+                       lease_started = 0, updated_at = ?
+                 WHERE job_id = ? AND status = 'dead_letter'
+                """,
+                (now, now, job_id),
+            ).rowcount
+            if changed != 1:
+                return False
+            connection.execute(
+                """
+                UPDATE distillation_inbox
+                   SET status = 'retry_wait', updated_at = ?
+                 WHERE job_id = ? AND status = 'dead_letter'
+                """,
+                (now, job_id),
+            )
+            connection.execute(
+                """
+                UPDATE distillation_dead_letters
+                   SET redrive_count = redrive_count + 1,
+                       last_redrive_actor = ?, last_redrive_note = ?,
+                       resolved_at = ?
+                 WHERE job_id = ? AND resolved_at IS NULL
+                """,
+                (requested_by, note, now, job_id),
+            )
+            return True
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    f"""
+                    SELECT job_id, source_id, reason, redrive_count
+                      FROM distillation_dead_letters
+                     WHERE resolved_at IS NULL
+                       {tenant_clause}
+                     ORDER BY created_at, job_id
+                    """,
+                    params,
+                ).fetchall()
+                for row in rows:
+                    if not is_auth_registry_failure(str(row["reason"])):
+                        continue
+                    job_id = str(row["job_id"])
+                    if job_id in redriven:
+                        continue
+                    latest = connection.execute(
+                        """
+                        SELECT job_id, status
+                          FROM distillation_outbox
+                         WHERE source_id = ?
+                         ORDER BY enqueued_at DESC, rowid DESC
+                         LIMIT 1
+                        """,
+                        (str(row["source_id"]),),
+                    ).fetchone()
+                    if latest is None:
+                        continue
+                    latest_id = str(latest["job_id"])
+                    if latest_id == job_id:
+                        if (
+                            len(redriven) < cap
+                            and int(row["redrive_count"]) < budget
+                            and redrive(connection, job_id)
+                        ):
+                            redriven.append(job_id)
+                        continue
+                    # A newer version of this source exists: the stale one is
+                    # never delivered. Resolve it, then handle the source once
+                    # through its newest version.
+                    note_text = f"superseded by newer version {latest_id} ({latest['status']})"
+                    changed = connection.execute(
+                        """
+                        UPDATE distillation_outbox
+                           SET status = 'skipped', processed_at = ?,
+                               skip_reason = ?, lease_owner = NULL,
+                               lease_token = NULL, lease_expires_at = NULL,
+                               updated_at = ?
+                         WHERE job_id = ? AND status = 'dead_letter'
+                        """,
+                        (now, note_text, now, job_id),
+                    ).rowcount
+                    if changed == 1:
+                        connection.execute(
+                            """
+                            UPDATE distillation_inbox
+                               SET status = 'skipped', updated_at = ?
+                             WHERE job_id = ? AND status = 'dead_letter'
+                            """,
+                            (now, job_id),
+                        )
+                        connection.execute(
+                            """
+                            UPDATE distillation_dead_letters
+                               SET last_redrive_actor = ?, last_redrive_note = ?,
+                                   resolved_at = ?
+                             WHERE job_id = ? AND resolved_at IS NULL
+                            """,
+                            (requested_by, note_text, now, job_id),
+                        )
+                        superseded.append(job_id)
+                    if str(latest["status"]) != "dead_letter" or len(redriven) >= cap:
+                        continue
+                    newest = connection.execute(
+                        """
+                        SELECT reason, redrive_count
+                          FROM distillation_dead_letters
+                         WHERE job_id = ? AND resolved_at IS NULL
+                        """,
+                        (latest_id,),
+                    ).fetchone()
+                    if (
+                        newest is not None
+                        and is_auth_registry_failure(str(newest["reason"]))
+                        and int(newest["redrive_count"]) < budget
+                        and redrive(connection, latest_id)
+                    ):
+                        redriven.append(latest_id)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {"redriven": redriven, "superseded": superseded}
 
     def count(self) -> int:
         with self._connect() as connection:
