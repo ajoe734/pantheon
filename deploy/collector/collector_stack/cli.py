@@ -84,6 +84,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Explicit ISO-8601 timestamp override for close-window evaluation",
     )
 
+    rl_p = sub.add_parser(
+        "refresh-listing",
+        help="Refresh the security listing for a trading day and publish bundles/security-listing.jsonl",
+    )
+    rl_p.add_argument("--date", default=None, help="Trading day YYYY-MM-DD (default: today, Asia/Taipei)")
+
     prune_p = sub.add_parser("prune", help="Prune bundles older than raw_retention_days (90 days)")
     prune_p.add_argument("--max-age-days", type=int, default=None)
 
@@ -136,6 +142,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(json.dumps({"updated_at": utc_iso(), "sources": {}}, indent=2))
         return 0
+
+    if args.command == "refresh-listing":
+        from datetime import timedelta
+
+        now_dt = datetime.now(timezone.utc)
+        day = args.date or (now_dt + timedelta(hours=8)).date().isoformat()
+        try:
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError as exc:
+            parser.error(str(exc))
+        runner = CollectorRunner(config, root_dir=args.root_dir, hasher=AuthorHasher.from_file(args.salt_file))
+        result = runner.refresh_listing_for_day(day, now=now_dt)
+        print(json.dumps(result, indent=2, sort_keys=True, default=str))
+        return 0 if result.get("ok") else 2
 
     if args.command == "capture-close":
         from .runner import capture_same_day_close

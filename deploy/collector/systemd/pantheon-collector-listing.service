@@ -1,0 +1,15 @@
+[Unit]
+Description=Pantheon Collector Daily Security Listing Refresh and Publish
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pantheon-collector
+ExecStartPre=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
+# Idempotent per trading day: a second tick the same day does not fetch again. Exit 2 = refresh failed, the
+# previous allowlist is kept (at most 3 trading days), so the unit is marked failed and visible.
+ExecStart=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data refresh-listing
+User=root
+Group=root
+NoNewPrivileges=true
