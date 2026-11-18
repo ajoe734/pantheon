@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install from the committed lock only: every package is pinned, so pip does no dependency resolution
 # (no backtracking) and torch comes from the CPU wheel index (no CUDA/triton wheels).
-COPY deploy/collector/requirements.txt deploy/collector/requirements.lock /app/
+COPY requirements.txt requirements.lock /app/
 RUN pip install --no-cache-dir --no-deps \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r /app/requirements.lock
@@ -36,12 +36,13 @@ RUN python -m playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
 
-# Build context is the repository root (docker-compose.yml: context ../.., dockerfile deploy/collector/Dockerfile)
-# so the ONE shared listing parser ships in the image, byte-identical to the repo file at the same commit.
-COPY deploy/collector/collector_stack /app/collector_stack
-COPY deploy/collector/fetch-policy.json /app/fetch-policy.json
-COPY deploy/collector/query_vocabulary.json /app/query_vocabulary.json
-COPY services/source_ingestion/security_listing.py /app/services/source_ingestion/security_listing.py
+# Build context is the collector directory itself (docker-compose.yml: context .), which is exactly what the
+# documented install copies to /opt/pantheon-collector; nothing outside it is needed. vendor/security_listing.py is
+# a byte-identical copy of services/source_ingestion/security_listing.py (a test fails on drift).
+COPY collector_stack /app/collector_stack
+COPY fetch-policy.json /app/fetch-policy.json
+COPY query_vocabulary.json /app/query_vocabulary.json
+COPY vendor/security_listing.py /app/services/source_ingestion/security_listing.py
 
 RUN useradd --create-home --uid 10001 collector \
     && mkdir -p /data/bundles /data/state /data/library \
