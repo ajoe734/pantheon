@@ -2525,14 +2525,15 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     assert (missing_res["status"], missing_res["reason"]) == ("proceed", "dataset_missing")
     assert any("/api/source-ingest/controller/readback" in p for p in missing_res["_requested_paths"])
 
-    # When TAIFEX SSF readback is fresh for the closed session, preflight returns noop/already_fresh
+    # When TAIFEX SSF readback is fresh for the latest published session (2026-11-05 at 16:00 Taipei on 2026-11-06),
+    # preflight returns noop/already_fresh
     fresh_ssf = {
         "connector_id": "tw-taifex-futures-options-chip",
-        "freshness": {"last_success_at": "2026-11-06T07:20:00Z"},
+        "freshness": {"last_success_at": "2026-11-06T00:10:00Z"},
         "latest_source_record": {
             "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc",
             "status": "normalized",
-            "metadata": {"date": "2026-11-06", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+            "metadata": {"date": "2026-11-05", "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
             "provenance": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
         },
     }
@@ -2545,6 +2546,7 @@ def test_taiwan_preflight_taifex_ssf_does_not_skip_when_twse_is_fresh() -> None:
     )
     assert (fresh_res["status"], fresh_res["reason"]) == ("noop", "already_fresh")
     assert fresh_res["dataset"] == "taifex_ssf_contracts"
+    assert fresh_res["session_date"] == "2026-11-05"
 
 
 def _finmind_batch_record(covered: list[str], missing: list[str], trade_date: str = "2026-11-06") -> dict[str, Any]:
@@ -4787,10 +4789,11 @@ def _chip_readback_entry(
     last_success_at: str = "2026-11-18T00:10:00Z",
     event_time: str | None = None,
     run_id: str = "chip-run-1",
+    underlying_code: str = "2330",
 ) -> dict[str, Any]:
-    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.chip_publication_schedule import OFFICIAL_CHIP_REFRESH_PROFILES
 
-    profile = TW_CHIP_REFRESH_PROFILES[connector_id]
+    profile = OFFICIAL_CHIP_REFRESH_PROFILES[connector_id]
     dataset = profile["dataset"]
     prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
     venue = (profile.get("venues") or ["TAIFEX"])[0]
@@ -4799,8 +4802,9 @@ def _chip_readback_entry(
         "schema_hash": profile["schema_hash"],
         "venue": venue,
         "date": session_date,
+        "underlying_code": underlying_code,
         "available_time": event_time or last_success_at,
-        "normalized_row": {"date": session_date, "venue": venue},
+        "normalized_row": {"date": session_date, "venue": venue, "underlying_code": underlying_code},
     }
     provenance: dict[str, Any] = {
         "dataset": dataset,
@@ -5067,12 +5071,17 @@ def test_chip_entrypoint_at_afternoon_dispatches_does_not_recreate_source_ingest
         assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("cid", "dataset"),
+    [
+        ("tw-taifex-institutional-positions", "taifex_futures_chip"),
+        ("tw-taifex-futures-options-chip", "taifex_ssf_contracts"),
+    ],
+)
 def test_chip_entrypoint_not_yet_published_within_delay_bound_restores_steady_and_exits_zero(
-    tmp_path: Path,
+    tmp_path: Path, cid: str, dataset: str
 ) -> None:
     """Within max_publication_delay after scheduled publication time, T-1 yields not_yet_published (rc=0) and restores steady stack."""
-    cid = "tw-taifex-institutional-positions"
-    dataset = "taifex_futures_chip"
     # Scheduled publication for 2026-11-18 is 2026-11-19 06:50 Taipei (2026-11-18T22:50:00Z).
     # At 07:30 Taipei (2026-11-18T23:30:00Z), delay is 40m <= 150m max_publication_delay.
     now_utc = "2026-11-18T23:30:00Z"
@@ -5116,12 +5125,17 @@ def test_chip_entrypoint_not_yet_published_within_delay_bound_restores_steady_an
     assert "docker start steady-sched steady-proj" in calls
 
 
+@pytest.mark.parametrize(
+    ("cid", "dataset"),
+    [
+        ("tw-taifex-institutional-positions", "taifex_futures_chip"),
+        ("tw-taifex-futures-options-chip", "taifex_ssf_contracts"),
+    ],
+)
 def test_chip_entrypoint_provider_publication_late_past_delay_bound_restores_steady_and_fails(
-    tmp_path: Path,
+    tmp_path: Path, cid: str, dataset: str
 ) -> None:
     """Past max_publication_delay after scheduled publication time, T-1 fails with provider_publication_late and restores steady stack."""
-    cid = "tw-taifex-institutional-positions"
-    dataset = "taifex_futures_chip"
     # Scheduled publication for 2026-11-18 is 2026-11-19 06:50 Taipei (2026-11-18T22:50:00Z).
     # At 09:30 Taipei (2026-11-19T01:30:00Z), delay is 160m > 150m max_publication_delay.
     now_utc = "2026-11-19T01:30:00Z"
@@ -5164,6 +5178,73 @@ def test_chip_entrypoint_provider_publication_late_past_delay_bound_restores_ste
     assert "manage bounded" in calls
     assert "manage restore" in calls
     assert "docker start steady-sched steady-proj" in calls
+
+
+def test_taifex_ssf_contract_entrypoint_published_session_completes_and_enforces_active_scope(
+    tmp_path: Path,
+) -> None:
+    """When TAIFEX serves the expected published session for taifex_ssf_contracts, readback succeeds and enforces active underlying scope."""
+    cid = "tw-taifex-futures-options-chip"
+    dataset = "taifex_ssf_contracts"
+    now_utc = "2026-11-18T23:30:00Z"  # 2026-11-19 07:30 Taipei -> expects 2026-11-18
+    published_entry = _chip_readback_entry(
+        cid,
+        session_date="2026-11-18",
+        last_success_at="2026-11-18T23:31:00Z",
+        run_id="run-ssf-ok",
+        underlying_code="2330",
+    )
+    receipts = [
+        {
+            "connector_id": cid,
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T23:31:00Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T23:31:00Z",
+            "ingest_run_id": "run-ssf-ok",
+        }
+    ]
+    ok_dir = tmp_path / "ok"
+    ok_dir.mkdir()
+    proc, outcome, calls = _run_chip_entrypoint_harness(
+        ok_dir,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc=now_utc,
+        preflight_readback=[],
+        post_refresh_readback=[published_entry],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert outcome["status"] == "completed"
+    assert outcome["reason"] == "refreshed"
+    assert "manage bounded" in calls
+    assert "manage restore" in calls
+
+    wrong_scope_entry = _chip_readback_entry(
+        cid,
+        session_date="2026-11-18",
+        last_success_at="2026-11-18T23:31:00Z",
+        run_id="run-ssf-ok",
+        underlying_code="9999",
+    )
+    bad_dir = tmp_path / "bad"
+    bad_dir.mkdir()
+    proc_bad, outcome_bad, _ = _run_chip_entrypoint_harness(
+        bad_dir,
+        connector_id=cid,
+        dataset=dataset,
+        now_utc=now_utc,
+        preflight_readback=[],
+        post_refresh_readback=[wrong_scope_entry],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc_bad.returncode != 0
+    assert outcome_bad["status"] == "failed"
+    assert "outside active scope" in outcome_bad["reason"]
 
 
 def test_bounded_refresh_timeout_dumps_container_logs_before_error_and_records_in_captured_file(

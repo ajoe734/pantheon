@@ -2007,24 +2007,31 @@ if connector_id == "tw-taifex-futures-options-chip":
             f"controller source record schema_hash mismatch for {req_ds}: {schema_hash!r}"
         )
     if req_ds == "taifex_ssf_contracts":
-        # Bind the proof to the session preparation targeted (latest closed Taipei
-        # session at deploy start, same rule/calendar) and to the active underlyings.
-        from datetime import date as _date, time as _time, timedelta
+        # Bind the proof to the latest published TAIFEX stock-futures contract session
+        # at refresh start (evaluate_chip_provider_session) and to the active underlyings.
+        from services.source_ingestion.chip_publication_schedule import evaluate_chip_provider_session
         from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 
-        _taipei = started.astimezone(timezone(timedelta(hours=8)))
-        _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
-        for _ in range(20):
-            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=_cursor.isoformat())
-            if _cursor.weekday() < 5 and not (_ev and _cursor.isoformat() in (_ev.get("holidays") or {})):
-                break
-            _cursor -= timedelta(days=1)
+        def _is_ssf_session_day(day):
+            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+            return day.weekday() < 5 and not (_ev and day.isoformat() in (_ev.get("holidays") or {}))
+
         _row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
         _record_date = str(record_metadata.get("date") or _row.get("date") or provenance.get("trade_date") or "")[:10]
-        if _record_date != _cursor.isoformat():
-            raise SystemExit(
-                f"controller source record session {_record_date!r} != requested session {_cursor.isoformat()!r}"
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=_record_date,
+            now=started,
+            is_session_day=_is_ssf_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
             )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
         _active = {
             item.strip().upper().split(".")[0]
             for item in priority_csv.split(",")
