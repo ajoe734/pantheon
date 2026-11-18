@@ -1,0 +1,9 @@
+{
+  "task": "SOURCE-SNAPSHOT-STORE-TEST-TIMING-OPT-IN-20261118",
+  "change": "four wall-clock assertions (reader process 100ms, reader thread 100ms, write txn p99 250ms, maintenance step 200ms) judged only when PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1; thresholds unchanged; all other assertions unchanged; timing printed always",
+  "interpreter": "/tmp/ssc-venv/bin/python -m pytest <test> -q -p no:cacheprovider",
+  "runs_without_variable": {"consecutive_runs": 5, "results": ["passed (227s, run alone, first run)", "passed 101.9s", "passed 96.4s", "passed 96.6s", "passed 99.0s"]},
+  "run_with_variable_set_to_1": {"result": "FAILED (acceptable per brief)", "failure": "reader thread call blocked 108.5 ms (bound 100)", "measured": {"reader_process_ms_max": 5.82, "reader_process_ms_p99": 2.28, "reader_thread_ms_max": 108.49, "maintenance_step_ms_max": 7.5, "append_call_seconds_max": 2.39, "reader_process_calls": 18220, "reader_thread_calls": 8353, "keys_replaced": 10700}},
+  "whole_file": "35 passed in 316s",
+  "note": "an earlier attempt that ran two invocations in parallel had timeouts from CPU contention; not counted"
+}
