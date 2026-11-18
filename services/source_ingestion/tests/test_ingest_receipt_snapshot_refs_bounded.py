@@ -263,13 +263,13 @@ def test_every_intermediate_file_state_is_a_readable_journal(tmp_path):
 
 # ---- rollback: deployed reader <-> new journal, in both directions -----------------------------
 
-def _previous_scheduler_module():
+def _previous_scheduler_module(sha: str = DEPLOYED_SHA):
     source = subprocess.run(
-        ["git", "show", f"{DEPLOYED_SHA}:services/source_ingestion/scheduler.py"],
+        ["git", "show", f"{sha}:services/source_ingestion/scheduler.py"],
         capture_output=True, text=True, check=False, cwd=Path(__file__).resolve().parents[3])
     if source.returncode != 0:
-        pytest.fail(f"deployed reader {DEPLOYED_SHA} is not available from git: {source.stderr.strip()}")
-    name = "services.source_ingestion._deployed_scheduler"
+        pytest.fail(f"deployed reader {sha} is not available from git: {source.stderr.strip()}")
+    name = f"services.source_ingestion._deployed_scheduler_{sha}"
     module = types.ModuleType(name)
     module.__package__ = "services.source_ingestion"
     module.__file__ = "<deployed scheduler>"
@@ -316,3 +316,175 @@ def test_slim_is_idempotent_and_leaves_non_snapshot_receipts_alone():
     assert changed and not changed_again and twice is once
     plain = {"evidence_refs": {"source_ids": []}}
     assert slim_receipt_payload(plain) == (plain, False)
+
+
+# ---- SOURCE-RECEIPT-STORAGE-REFS-BOUND-20261118: storage_refs as counts, dates and a digest -------------
+
+PRE_STORAGE_REFS_SHA = "638f5b1bd"  # dev head when this task was opened (storage_refs still a full list)
+STORAGE_LINE_BOUND = 16384
+
+
+def _history_storage_refs(root: Path, run_id: str, dates: int, *, write_files: bool = True) -> dict[str, Any]:
+    """Hosted shape, fixed seed: one raw/normalized/feature ref per dataset and date of a history pull."""
+    import random
+    rng = random.Random(20261118)
+    raw_refs, normalized_refs, feature_refs = [], [], []
+    for n in range(dates):
+        date = (datetime(2024, 1, 1) + timedelta(days=n)).strftime("%Y-%m-%d")
+        rows = rng.randint(1, 5)
+        paths = {
+            "raw": root / "raw" / "collector-tw-twse-taiex-history" / "tw_index_daily" / f"date={date}" / f"{run_id}.jsonl.gz",
+            "normalized": root / "normalized" / "tw_index_daily" / f"date={date}" / f"{run_id}.jsonl",
+            "features": root / "features" / "tw_index_feature" / f"date={date}" / f"{run_id}.jsonl",
+        }
+        if write_files:
+            import gzip
+            for kind, path in paths.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if kind == "raw":
+                    with gzip.open(path, "wt") as handle:
+                        handle.write("{}\n" * rows)
+                else:
+                    path.write_text("{}\n" * rows)
+        raw_refs.append({"ref_type": "raw_object", "source": "collector-tw-twse-taiex-history", "dataset": "tw_index_daily",
+                         "date": date, "uri": paths["raw"].as_posix(), "row_count": rows, "compression": "gzip",
+                         "retention_days": 365, "retention_policy_ref": "policy://raw", "storage_class": "standard"})
+        normalized_refs.append({"ref_type": "normalized_rows", "dataset": "tw_index_daily", "date": date,
+                                "uri": paths["normalized"].as_posix(), "row_count": rows, "schema_hash": f"{rng.getrandbits(128):032x}"})
+        feature_refs.append({"ref_type": "feature_rows", "dataset": "tw_index_feature", "source_dataset": "tw_index_daily",
+                             "date": date, "uri": paths["features"].as_posix(), "row_count": rows, "feature_as_of_time": date})
+    return {"schema_version": "market_data_storage_manifest.v1", "ingest_run_id": run_id,
+            "raw_refs": raw_refs, "normalized_refs": normalized_refs, "feature_refs": feature_refs,
+            "summary": {"raw_ref_count": dates, "normalized_ref_count": dates, "feature_ref_count": dates,
+                        "normalized_row_count": sum(r["row_count"] for r in normalized_refs)}}
+
+
+def _history_receipt(root: Path, run_id: str, dates: int, connector: str = "collector-tw-twse-taiex-history") -> IngestReceipt:
+    return IngestReceipt(
+        ingest_run_id=run_id, connector_id=connector, status="completed", trigger_type="scheduled", trace_id="t",
+        started_at="2026-11-17T22:35:00Z", finished_at="2026-11-17T22:35:17Z", raw_count=dates, normalized_count=dates,
+        rejected_count=0, watermark="w", source_timestamp="2026-11-17T00:00:00Z", source_timestamp_status="valid",
+        evidence_refs={"evidence_bundle_id": "eb"}, storage_refs=_history_storage_refs(root, run_id, dates))
+
+
+def _stored_lines(path: Path) -> list[bytes]:
+    return [line for line in path.read_bytes().splitlines() if b'"record_type":"ingest_receipt"' in line]
+
+
+def test_reproduce_previous_release_writes_oversize_storage_refs_line(tmp_path):
+    previous = _previous_scheduler_module(PRE_STORAGE_REFS_SHA)
+    path = tmp_path / "schedule.jsonl"
+    previous.JsonlIngestScheduleStore(path).upsert_receipt(_history_receipt(tmp_path / "data", "ingest-hist-old", 500))
+    size = max(len(line) for line in _stored_lines(path))
+    print("OLD_RECEIPT_LINE_BYTES_500_DATES=" + str(size))
+    assert size > STORAGE_LINE_BOUND * 10
+    alarm = previous.JsonlIngestScheduleStore(path).journal_stats()
+    assert alarm["receipt_lines_over_budget"] >= 1
+
+
+def test_history_pull_of_500_dates_stores_counts_dates_and_digest_under_bound(tmp_path):
+    path = tmp_path / "schedule.jsonl"
+    store = JsonlIngestScheduleStore(path)
+    receipt = _history_receipt(tmp_path / "data", "ingest-hist-new", 500)
+    full = {k: [dict(r) for r in receipt.storage_refs[k]] for k in ("raw_refs", "normalized_refs", "feature_refs")}
+    store.upsert_receipt(receipt)
+    lines = _stored_lines(path)
+    size = max(len(line) for line in lines)
+    print("NEW_RECEIPT_LINE_BYTES_500_DATES=" + str(size))
+    assert size <= STORAGE_LINE_BOUND
+    stored = json.loads(lines[-1])["payload"]["storage_refs"]
+    assert "raw_refs" not in stored and "normalized_refs" not in stored and "feature_refs" not in stored
+    assert stored["ref_counts"] == {"raw": 500, "normalized": 500, "feature": 500}
+    (group,) = stored["stores"]["normalized"]
+    assert (group["dataset"], group["count"], group["first_date"], group["last_date"]) == (
+        "tw_index_daily", 500, "2024-01-01", "2025-05-14")
+    assert group["row_count"] == stored["summary"]["normalized_row_count"]
+    assert len(stored["digest"]) == 64
+    assert store.journal_stats()["receipt_lines_over_budget"] == 0
+    # Idempotent and secret-free (no credential keys ever enter this shape).
+    assert new_scheduler.compact_receipt_storage_refs(stored) == (stored, False)
+    # Readers of the memory copy and of a restarted store get the same lists back from the store itself.
+    for reloaded in (store.get_receipt("ingest-hist-new"), JsonlIngestScheduleStore(path).get_receipt("ingest-hist-new")):
+        refs = reloaded.storage_refs
+        assert [r["uri"] for r in refs.get("normalized_refs", ())] == [r["uri"] for r in full["normalized_refs"]]
+        assert [r["date"] for r in refs.get("raw_refs", ())] == [r["date"] for r in full["raw_refs"]]
+        assert refs["feature_refs"][3]["feature_as_of_time"] == full["feature_refs"][3]["feature_as_of_time"]
+        assert all(r["row_count"] == f["row_count"] for r, f in zip(refs.get("normalized_refs", ()), full["normalized_refs"]))
+        assert refs.get("raw_refs")[0]["retention_days"] == 365
+        assert new_scheduler.IngestReceipt.from_dict(reloaded.to_dict()).to_dict() == reloaded.to_dict()
+
+
+def test_500_record_batch_storage_refs_are_bounded_too(tmp_path):
+    receipt = _history_receipt(tmp_path / "data", "ingest-batch-500", 500)
+    receipt = IngestReceipt.from_dict({**receipt.to_dict(), "evidence_refs": {"source_ids": [f"s{i}" for i in range(500)]}})
+    path = tmp_path / "schedule.jsonl"
+    JsonlIngestScheduleStore(path).upsert_receipt(receipt)
+    assert max(len(line) for line in _stored_lines(path)) <= STORAGE_LINE_BOUND
+
+
+def test_ref_that_does_not_fit_its_pattern_stays_inline_and_is_capped(tmp_path):
+    refs = _history_storage_refs(tmp_path / "d", "r1", 3, write_files=False)
+    refs["normalized_refs"][1]["uri"] = "/elsewhere/odd.jsonl"
+    compact, changed = new_scheduler.compact_receipt_storage_refs(refs)
+    assert changed and compact["ref_counts"]["normalized"] == 3
+    assert [r["uri"] for r in compact["inline_refs"]["normalized"]] == ["/elsewhere/odd.jsonl"]
+    many = _history_storage_refs(tmp_path / "d", "r2", 60, write_files=False)
+    for ref in many["normalized_refs"]:
+        ref["uri"] = f"/odd/{ref['date']}.jsonl"
+    compact, _ = new_scheduler.compact_receipt_storage_refs(many)
+    assert len(compact["inline_refs"]["normalized"]) == 32 and compact["unlisted_ref_count"] == 28
+
+
+def test_existing_oversize_lines_are_compacted_by_the_in_service_rewrite_with_backup(tmp_path):
+    previous = _previous_scheduler_module(PRE_STORAGE_REFS_SHA)
+    path = tmp_path / "schedule.jsonl"
+    writer = previous.JsonlIngestScheduleStore(path)
+    originals = [_history_receipt(tmp_path / "data", f"ingest-hist-{i}", 300) for i in range(4)]
+    for receipt in originals:
+        writer.upsert_receipt(previous.IngestReceipt.from_dict(receipt.to_dict()))
+    before = path.read_bytes()
+    assert max(len(line) for line in _stored_lines(path)) > STORAGE_LINE_BOUND
+    store = JsonlIngestScheduleStore(path)
+    assert max(len(line) for line in _stored_lines(path)) <= STORAGE_LINE_BOUND
+    assert store.journal_stats()["receipt_lines_over_budget"] == 0
+    assert path.with_name(path.name + ".pre-migrate.bak").read_bytes() == before  # previous file kept
+    for original in originals:
+        loaded = store.get_receipt(original.ingest_run_id)
+        assert [r["uri"] for r in loaded.storage_refs.get("normalized_refs", ())] == [
+            r["uri"] for r in original.storage_refs["normalized_refs"]]
+    # The previous release reads the rewritten journal, and the new code reads the previous release's journal.
+    old_view = previous.JsonlIngestScheduleStore(path)
+    assert set(old_view._receipts) == set(store._receipts)
+    assert old_view._receipts["ingest-hist-0"].storage_refs["ref_counts"]["normalized"] == 300
+    assert _state(old_view)["_runs"] == _state(store)["_runs"]
+
+
+def test_reader_replay_reuse_gets_what_it_needs_from_a_compact_receipt(tmp_path):
+    """services/source_ingestion/pipeline.py:1258 reads ref dataset/date/uri, and ref['row_count'] of reused refs."""
+    store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    original = _history_receipt(tmp_path / "data", "ingest-reuse", 40)
+    expected = {(r["dataset"], r["date"]): (r["uri"], r["row_count"]) for r in original.storage_refs["normalized_refs"]}
+    store.upsert_receipt(original)
+    receipt = next(r for r in store.read_freshness_snapshot()["receipts"] if r.ingest_run_id == "ingest-reuse")
+    seen = {}
+    for ref in receipt.storage_refs.get("normalized_refs", ()):  # the reader's exact loop
+        seen[(str(ref.get("dataset") or ""), str(ref.get("date") or ""))] = (str(ref["uri"]), ref["row_count"])
+    assert seen == expected
+    by_uri = {r["uri"]: r for r in receipt.storage_refs.get("raw_refs", ())}
+    assert sum(r["row_count"] for r in receipt.storage_refs.get("normalized_refs", ())) == sum(v[1] for v in expected.values())
+    assert len(by_uri) == 40
+
+
+def test_reader_controller_readback_gets_what_it_needs_from_a_compact_receipt(tmp_path):
+    """services/source_ingestion/runtime.py:1340 filters by ref date and opens ref uri."""
+    store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    store.upsert_receipt(_history_receipt(tmp_path / "data", "ingest-readback", 30))
+    receipt = store.get_receipt("ingest-readback")
+    day = "2024-01-10"
+    uris = [str(ref["uri"]) for ref in receipt.storage_refs.get("normalized_refs", ()) if ref.get("date") == day]
+    assert len(uris) == 1 and Path(uris[0]).is_file() and Path(uris[0]).parent.name == f"date={day}"
+    store.upsert_receipt(_history_receipt(tmp_path / "data", "ingest-gone", 30))
+    for path in (tmp_path / "data" / "normalized" / "tw_index_daily").glob("date=2024-01-0*/ingest-gone.jsonl"):
+        path.unlink()  # a removed partition is absent, not an error, and the other days still resolve
+    gone = store.get_receipt("ingest-gone").storage_refs.get("normalized_refs", ())
+    assert len(gone) == 30 - 9

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import logging
 import os
@@ -319,15 +321,179 @@ def compact_receipt_evidence_refs(refs: Mapping[str, Any]) -> tuple[Mapping[str,
     return (out, True) if changed else (refs, False)
 
 
+STORAGE_REFS_COMPACT_SCHEMA = "source_ingest_receipt_storage_refs.v2"
+_STORAGE_REF_STORES = {"raw_refs": "raw", "normalized_refs": "normalized", "feature_refs": "feature"}
+_STORAGE_GROUP_OMIT = frozenset({"date", "uri", "row_count", "schema_hash", "feature_as_of_time"})
+_STORAGE_INLINE_CAP = 32
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _storage_group_key(ref: Mapping[str, Any]) -> tuple[str, str]:
+    return str(ref.get("dataset") or ""), str(ref.get("source_dataset") or "")
+
+
+def compact_receipt_storage_refs(refs: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Counts per store and dataset, first/last date and one digest; never the full list.
+
+    ``raw_refs`` / ``normalized_refs`` / ``feature_refs`` lists (one entry per dataset and date)
+    become, per store and dataset, ``{count, row_count, first_date, last_date, uri_pattern,
+    fields}``, plus ``digest`` (sha256 of the canonical full list). The partition files are
+    named by pattern, so every reader gets its refs back from the store itself (see
+    ``LazyStorageRefs``). A ref that does not fit its group's pattern stays inline (capped).
+    Idempotent; ``summary`` and every other field are kept.
+    """
+    if refs.get("compact_schema") == STORAGE_REFS_COMPACT_SCHEMA:
+        return refs, False
+    if not any(isinstance(refs.get(key), (list, tuple)) for key in _STORAGE_REF_STORES):
+        return refs, False
+    full = {key: [dict(r) for r in refs.get(key) or () if isinstance(r, Mapping)] for key in _STORAGE_REF_STORES}
+    digest = hashlib.sha256(json.dumps(full, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    out = {k: v for k, v in refs.items() if k not in _STORAGE_REF_STORES}
+    stores: dict[str, list[dict[str, Any]]] = {}
+    inline: dict[str, list[dict[str, Any]]] = {}
+    unlisted = 0
+    for key, store in _STORAGE_REF_STORES.items():
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for ref in full[key]:
+            date, uri = str(ref.get("date") or ""), str(ref.get("uri") or "")
+            fields = {k: v for k, v in ref.items() if k not in _STORAGE_GROUP_OMIT}
+            marker = f"date={date}"
+            pattern = uri.replace(marker, "date={date}", 1) if date and uri and marker in uri else ""
+            group = groups.get(_storage_group_key(ref))
+            fits = bool(pattern) and _DATE_RE.match(date) and "{" not in pattern.replace("{date}", "") and (
+                group is None or (group["uri_pattern"] == pattern and group["fields"] == fields))
+            if not fits:
+                if len(inline.setdefault(store, [])) < _STORAGE_INLINE_CAP:
+                    inline[store].append(ref)
+                else:
+                    unlisted += 1
+                continue
+            if group is None:
+                group = groups[_storage_group_key(ref)] = {
+                    "dataset": ref.get("dataset"), "uri_pattern": pattern, "fields": fields,
+                    "count": 0, "row_count": 0, "first_date": date, "last_date": date}
+                if ref.get("source_dataset") is not None:
+                    group["source_dataset"] = ref.get("source_dataset")
+            group["count"] += 1
+            group["row_count"] += int(ref.get("row_count") or 0)
+            group["first_date"] = min(group["first_date"], date)
+            group["last_date"] = max(group["last_date"], date)
+        if groups:
+            stores[store] = [groups[k] for k in sorted(groups)]
+    out["compact_schema"] = STORAGE_REFS_COMPACT_SCHEMA
+    out["digest"] = digest
+    out["ref_counts"] = {store: sum(g["count"] for g in stores.get(store, ())) + len(inline.get(store, ()))
+                         for store in _STORAGE_REF_STORES.values()}
+    out["stores"] = stores
+    if inline:
+        out["inline_refs"] = inline
+    if unlisted:
+        out["unlisted_ref_count"] = unlisted
+    return out, True
+
+
+class _LazyRef(dict):
+    """A ref whose ``row_count`` is read from its partition file only when asked for."""
+
+    def __missing__(self, key: str) -> Any:
+        if key != "row_count":
+            raise KeyError(key)
+        count = _count_partition_rows(str(self["uri"]))
+        self["row_count"] = count
+        return count
+
+
+def _count_partition_rows(uri: str) -> int:
+    opener = gzip.open if uri.endswith(".gz") else open
+    try:
+        with opener(uri, "rb") as handle:  # type: ignore[operator]
+            return sum(1 for line in handle if line.strip())
+    except OSError:
+        return 0
+
+
+def expand_receipt_storage_refs(compact: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Rebuild the ref lists of a compact receipt from the partition files that exist now.
+
+    Dates come from the store (directory listing inside the recorded first/last date); a partition
+    removed since the receipt was written is simply absent. ``schema_hash`` is not rebuilt.
+    """
+    result: dict[str, list[dict[str, Any]]] = {key: [] for key in _STORAGE_REF_STORES}
+    for key, store in _STORAGE_REF_STORES.items():
+        for group in (compact.get("stores") or {}).get(store, ()):
+            prefix, _, suffix = str(group["uri_pattern"]).partition("{date}")
+            first, last = str(group["first_date"]), str(group["last_date"])
+            parent, _, stem = prefix.rpartition("/")  # stem is the "date=" prefix of the directory
+            try:
+                names = sorted(os.listdir(parent or "."))
+            except OSError:
+                continue
+            for name in names:
+                if not name.startswith(stem):
+                    continue
+                date = name[len(stem):]
+                if not _DATE_RE.match(date) or not first <= date <= last:
+                    continue
+                uri = f"{prefix}{date}{suffix}"
+                if not os.path.exists(uri):
+                    continue
+                ref = _LazyRef({**group["fields"], "dataset": group.get("dataset"), "date": date, "uri": uri})
+                if "source_dataset" in group:
+                    ref["source_dataset"] = group["source_dataset"]
+                if store == "feature":
+                    ref["feature_as_of_time"] = date
+                result[key].append(ref)
+        result[key].extend(dict(r) for r in (compact.get("inline_refs") or {}).get(store, ()))
+    return result
+
+
+class LazyStorageRefs(dict):
+    """Compact receipt ``storage_refs`` that still answers ``.get('normalized_refs')`` and friends.
+
+    Serialises as the compact form only; the full lists are rebuilt from the store on first use.
+    """
+
+    def _expanded(self) -> dict[str, list[dict[str, Any]]]:
+        cached = self.__dict__.get("_cache")
+        if cached is None:
+            cached = self.__dict__["_cache"] = expand_receipt_storage_refs(self)
+        return cached
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        if key in _STORAGE_REF_STORES and not dict.__contains__(self, key):
+            return self._expanded()[key]
+        return dict.get(self, key, default)
+
+    def __missing__(self, key: Any) -> Any:
+        if key in _STORAGE_REF_STORES:
+            return self._expanded()[key]
+        raise KeyError(key)
+
+    def __contains__(self, key: Any) -> bool:
+        return key in _STORAGE_REF_STORES or dict.__contains__(self, key)
+
+
+def _wrap_storage_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
+    if refs.get("compact_schema") == STORAGE_REFS_COMPACT_SCHEMA:
+        return LazyStorageRefs(refs)
+    return dict(refs)
+
+
 def compact_receipt_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
     """Receipt payload with counts and references only; idempotent; other fields untouched."""
+    out = dict(payload)
+    changed = False
     refs = payload.get("evidence_refs")
-    if not isinstance(refs, Mapping):
-        return payload, False
-    compact, changed = compact_receipt_evidence_refs(refs)
-    if not changed:
-        return payload, False
-    return {**payload, "evidence_refs": dict(compact)}, True
+    if isinstance(refs, Mapping):
+        compact, did = compact_receipt_evidence_refs(refs)
+        if did:
+            out["evidence_refs"], changed = dict(compact), True
+    storage = payload.get("storage_refs")
+    if isinstance(storage, Mapping):
+        compact, did = compact_receipt_storage_refs(storage)
+        if did:
+            out["storage_refs"], changed = dict(compact), True
+    return (out, True) if changed else (payload, False)
 
 
 _TAIL_ID_RE = re.compile(rb'"record_id":"((?:[^"\\]|\\.)*)","record_type":"([a-z_]+)"')
@@ -595,7 +761,7 @@ class IngestReceipt:
         if self.source_timestamp_status not in {"valid", "missing", "invalid", "future", "unknown"}:
             raise SourceEvidenceError("receipt source_timestamp_status is invalid")
         object.__setattr__(self, "evidence_refs", dict(self.evidence_refs))
-        object.__setattr__(self, "storage_refs", dict(self.storage_refs))
+        object.__setattr__(self, "storage_refs", _wrap_storage_refs(self.storage_refs))
         if self.typed_failure is not None:
             object.__setattr__(self, "typed_failure", dict(self.typed_failure))
 
@@ -641,7 +807,7 @@ class IngestReceipt:
                 or ("valid" if data.get("source_timestamp") else "unknown")
             ),
             evidence_refs=dict(data.get("evidence_refs") or {}),
-            storage_refs=dict(data.get("storage_refs") or {}),
+            storage_refs=_wrap_storage_refs(data.get("storage_refs") or {}),
             typed_failure=dict(data["typed_failure"]) if isinstance(data.get("typed_failure"), Mapping) else None,
             created_at=str(data.get("created_at") or _utc_now()),
             schema_version=str(data.get("schema_version") or "source_ingest_receipt.v1"),
@@ -1057,6 +1223,9 @@ class JsonlIngestScheduleStore:
         compact_refs, changed = compact_receipt_evidence_refs(receipt.evidence_refs)
         if changed:
             receipt = replace(receipt, evidence_refs=dict(compact_refs))
+        compact_storage, storage_changed = compact_receipt_storage_refs(receipt.storage_refs)
+        if storage_changed:
+            receipt = replace(receipt, storage_refs=dict(compact_storage))
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_if_changed_unlocked()
             self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
