@@ -1,0 +1,50 @@
+{
+ "task": "TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118",
+ "owner": "Claude2",
+ "reviewer": "Antigravity",
+ "reproduction": {
+  "before_fix": "adapter fetch of recorded CSV (HTTP 200, application/octet-stream, BOM, 181749 bytes, sha256 004549a1...e1cf) raised SourceEvidenceError 'failed after 3 attempts: JSONDecodeError: Expecting value: line 1 column 1 (char 0)' x3; open_external_url called 3 times",
+  "after_fix": "same fetch returns 38 TX/MTX rows in 1 call"
+ },
+ "fixtures": {
+  "csv": "services/source_ingestion/tests/fixtures/taifex_tx_daily/DailyMarketReportFut_csv_recorded.csv",
+  "json": "services/source_ingestion/tests/fixtures/taifex_tx_daily/DailyMarketReportFut_json_recorded.json",
+  "provenance": "services/source_ingestion/tests/fixtures/taifex_tx_daily/provenance.json"
+ },
+ "json_vs_csv_equality": "The endpoint served only the text form at 2026-11-18 (3 fetches byte-identical), so no same-date JSON/CSV pair could be recorded. The JSON fixture is the real 2026-11-14 recording of 20261113. Equality is proven by _TX_DAILY_TEXT_COLUMNS (services/source_ingestion/connectors/taiwan_official.py:2719), a 19-column positional map asserted equal to the recorded CSV header and to the recorded JSON keys, and by a test that renders the recorded JSON rows as text and asserts identical normalized rows (ingest_time excluded).",
+ "column_mapping": "services/source_ingestion/connectors/taiwan_official.py:2719 _TX_DAILY_TEXT_COLUMNS; missing/renamed text column raises 'DailyMarketReportFut format changed: missing text columns [...]' naming it (services/source_ingestion/connectors/taiwan_official.py:2743)",
+ "row_selection_rule": "unchanged: Contract in {TX,MTX} selected before any cap; calendar-spread months containing '/' skipped; session 一般->regular, 盤後->after_hours kept as separate rows; '-'/NULL/blank -> None. On the recorded text response: 2342 rows, 38 TX/MTX rows selected.",
+ "single_helper": "_taifex_text_rows reused; no second parser. New code only maps header names, validates, and describes unparseable bodies.",
+ "diagnosability": "OfficialBodyNotParseable is raised by _parse_tx_daily_body and is not retried (1 call); message has HTTP status, content-type, byte count, first 80 bytes.",
+ "other_taifex_openapi_adapters": [
+  {
+   "where": "services/source_ingestion/connectors/taiwan_official.py:3030-3042 SSF tables (SingleStockFuturesMargining, SingleStockFuturesETFMargining, FinalSettlementPriceSSF, DailyMarketReportFut)",
+   "form_served": "JSON for Margining/FinalSettlement, CSV+BOM for ETFMargining, CSV+BOM for DailyMarketReportFut (2026-11-18T00:26:50Z)",
+   "status": "uses _taifex_text_rows already"
+  },
+  {
+   "where": "services/source_ingestion/connectors/taiwan_official.py:3005-3011 taifex_futures_chip dataset (MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate)",
+   "form_served": "CSV with BOM, 6319 bytes (2026-11-18T00:26:50Z)",
+   "status": "RESIDUAL FINDING: still json.loads only; the tw-taifex-futures-options-chip futures chip fetch will fail the same way. Chip normalization of the text header (Chinese columns) is unverified, so left out of this task's scope."
+  },
+  {
+   "where": "services/source_ingestion/connectors/taiwan_official.py:3005-3011 taifex_options_chip dataset (PutCallRatio)",
+   "form_served": "JSON, 3080 bytes (2026-11-18T00:26:50Z)",
+   "status": "JSON only, works today; residual risk if it flips to text"
+  }
+ ],
+ "outside_scope_observations": "DailyMarketReportOpt (JSON, 4184714 bytes) is not called by any adapter in services/source_ingestion. Lines services/source_ingestion/connectors/taiwan_official.py:1093,1205,3850 are TWSE/TPEx fetches, not TAIFEX.",
+ "validation": [
+  {
+   "cmd": "python -m pytest services/source_ingestion/tests/test_taifex_tx_daily_response_forms.py services/source_ingestion/tests/test_taiwan_official_connectors.py -q",
+   "result": "72 passed, 1 skipped (existing assertions unchanged)"
+  },
+  {
+   "cmd": "python -m pytest services/source_ingestion/tests -q -k 'taifex or taiwan or tpex or twse'",
+   "result": "205 passed, 8 skipped"
+  }
+ ],
+ "no_persistent_writer_changed": true,
+ "hosted_statement": "Not yet verified on hosted: once this is merged and served, the 'Execute bounded Taiwan chip refresh' step of Dev Taiwan Market Daily Refresh must no longer fail on tw-taifex-tx-daily. The check is to be recorded under REGIME-DATA-HOSTED-ACCEPTANCE-20261114. NOTE: the futures chip dataset residual above may still fail that step.",
+ "credentials": "none used or recorded"
+}
