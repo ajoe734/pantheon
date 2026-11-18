@@ -1039,6 +1039,12 @@ services:
       # Optional long-lived credential (`claude setup-token`) for Claude CLI.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}
+      # OpenAI API route keys (per-token billing). Deliberately NOT the ambient
+      # OpenAI/Codex key names: the gateway, its OpenAI plugin and bundled CLIs read those
+      # ambiently and the subscription route would silently move to per-token billing.
+      # Only models.providers.openai-api[-2] reference these through SecretRef env.
+      OPENCLAW_API_ROUTE_KEY_1: ${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}
+      OPENCLAW_API_ROUTE_KEY_2: ${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}
       ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}
       OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}

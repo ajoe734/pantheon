@@ -308,3 +308,13 @@ image): `persona_memory_recall`, `persona_mental_model_read` and
 - The registry lookup is cached for `PERSONA_TOOL_BROKER_REGISTRY_TTL_SECONDS`
   (default 10s); the per-call limits are coordinator proposals
   (`PERSONA_TOOL_BROKER_MAX_<TOOL>_PER_RUN`).
+
+### 2026-11-18: OpenAI API key route added (OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118)
+
+**Operator decision (2026-11-18):** add an OpenAI API key route for `gpt-6.2-sol` so the model chain survives one provider refusing. This amends the 2026-06-16 entry above ("subscription OAuth only; no `OPENAI_API_KEY`") for this route only.
+
+- **Billing:** this route is billed **per token** against two OpenAI API keys (two different organizations/projects, independent quotas). The subscription route (`openai/*`, codex plugin, OAuth profile `openai:pantheon-dev`) is unchanged and stays subscription-billed.
+- **Providers:** `openai-api` (key 1) and `openai-api-2` (key 2), refs `openai-api/gpt-6.2-sol` and `openai-api-2/gpt-6.2-sol`; the built-in `openai` provider is never overridden. Key 2 backs key 1 up through model-level fallback in the chain.
+- **Chain position:** directly after the Anthropic API entry and before the subscription entries (`openai/gpt-5.6-sol`, `openai/gpt-5.5`, order kept).
+- **Credentials:** GitHub dev environment secrets `DEV_OPENCLAW_OPENAI_API_KEY` and `DEV_OPENCLAW_OPENAI_API_KEY_2` reach the gateway container only as `OPENCLAW_API_ROUTE_KEY_1` / `OPENCLAW_API_ROUTE_KEY_2`, referenced from `models.providers.<id>.apiKey` as env SecretRefs. They are never `OPENAI_API_KEY` or `CODEX_API_KEY` (read ambiently by the gateway, its OpenAI plugin and bundled CLIs, which would move the subscription route to per-token billing). No key value is written to the volume, repo, log or artifact; no stored auth profile. A missing or empty secret drops that provider and its default-chain refs; the gateway still starts.
+- **Replaces** the stored `api_key` profiles of the temporary live repair (2026-11-18 14:14Z–14:16Z).
