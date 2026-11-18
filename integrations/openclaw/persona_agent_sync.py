@@ -26,8 +26,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
-from services.persona.model_chain import chain_from_gateway_model
-from services.persona.runtime_profile import build_persona_runtime_profile
+from services.persona.runtime_profile import build_persona_runtime_profile, chain_from_gateway_model
 
 # Workspaces for synced persona agents live under the gateway state dir.
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"

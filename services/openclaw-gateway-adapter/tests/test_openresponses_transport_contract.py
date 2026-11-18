@@ -40,6 +40,17 @@ from assistant_openclaw_provider import (  # noqa: E402
 _replay_attempt = threading.local()
 
 
+import os as _os_chain
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not _os_chain.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
 def _observe_replay_subprocess(event, args):
     """Observe actual Popen calls, including pre-imported aliases, without mocks.
 
@@ -258,7 +269,7 @@ def test_mounted_session_user_precedes_legacy_session_id(mounted_http):
 
 @pytest.mark.parametrize("primary", [None, "fixture/configured-primary"])
 def test_mounted_invoke_stream_readiness_share_effective_model(mounted_http, monkeypatch, primary):
-    from services.persona.model_chain import default_chain
+    from services.persona.runtime_profile import default_chain
 
     client, captured = mounted_http
     if primary is None:
@@ -419,7 +430,7 @@ class TestNormalInvokeContract:
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("hi", operator_id="op-1"))
         assert captured["body"]["model"] == "openclaw/main"
-        from services.persona.model_chain import configured_chain
+        from services.persona.runtime_profile import configured_chain
         assert captured["model_header"] == configured_chain()[0]
 
     def test_same_named_conversation_isolates_by_authenticated_tenant_and_actor(self):

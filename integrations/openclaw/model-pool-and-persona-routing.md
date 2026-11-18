@@ -8,8 +8,8 @@
 The ordered model chain (first entry = primary) is held in **one** place: the
 repository/dev-environment **variable** `OPENCLAW_MODEL_CHAIN` (comma separated
 refs, e.g. `<provider>/<model>,<provider>/<model>,...`; never a workflow
-dispatch input). When it is unset or blank the one-line shipped default
-`services/persona/model-chain.default` applies. No other source file names a
+dispatch input). When it is unset or blank the one shipped default
+(`DEFAULT_MODEL_CHAIN` in `services/persona/runtime_profile.py`) applies. No other source file names a
 model as part of a chain or an allowed-model list; tests only use fixture
 values of the variable.
 
@@ -78,7 +78,7 @@ The idempotent route declaration lives in
 root dev deploy (with isolated CI qualification mirrored in
 `scripts/openclaw_isolated_model_bootstrap.py`). Default routing sets
 `agents.defaults.model.primary` and ordered `fallbacks` from the chain above
-(default file when the variable is unset: Opus, then `openai/gpt-5.6-sol`, then
+(shipped default when the variable is unset: Opus, then `openai/gpt-5.6-sol`, then
 `openai/gpt-5.5`). Native provider login
 remains in the persistent OpenClaw volume; Anthropic API/workspace bindings and
 an optional product Claude setup-token come from the gateway environment, as

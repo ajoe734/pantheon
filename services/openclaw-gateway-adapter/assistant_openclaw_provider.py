@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from assistant_provider_usage import provider_usage_snapshot
-from services.persona.model_chain import configured_chain
+from services.persona.runtime_profile import configured_chain
 
 
 OPENCLAW_PROVIDER = "openclaw"
@@ -851,7 +851,7 @@ class AssistantOpenClawProvider:
         if requested_model:
             return [requested_model]
         # The primary is the first entry of the one deployment model chain
-        # (OPENCLAW_MODEL_CHAIN, else the shared default file); no model is
+        # (OPENCLAW_MODEL_CHAIN, else the shared default); no model is
         # named in this module.
         chain = configured_chain()
         if not chain:

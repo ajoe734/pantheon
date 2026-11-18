@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services.persona.model_chain import configured_chain  # noqa: E402
+from services.persona.runtime_profile import configured_chain  # noqa: E402
 
 POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh")
 API_KEY_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"

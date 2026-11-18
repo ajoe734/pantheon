@@ -13,10 +13,3 @@ import pytest
 def _isolated_registry_lock(tmp_path, monkeypatch):
     if not os.getenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK"):
         monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(tmp_path / "registry.lock"))
-
-
-@pytest.fixture(autouse=True)
-def _fixture_model_chain(monkeypatch):
-    """The model chain is a deployment variable; tests only set fixture values."""
-    if not os.getenv("OPENCLAW_MODEL_CHAIN"):
-        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")

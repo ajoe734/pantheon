@@ -45,7 +45,10 @@ def test_chain_is_written_as_primary_and_fallbacks_with_native_runtime(tmp_path)
 
 
 def test_unset_variable_keeps_the_shipped_default_chain(tmp_path) -> None:
-    default = (REPO_ROOT / "services" / "persona" / "model-chain.default").read_text().strip().split(",")
+    sys.path.insert(0, str(REPO_ROOT))
+    from services.persona.runtime_profile import default_chain
+
+    default = default_chain()
     result, _ = _run_model_pool_script(
         tmp_path, token_present=False, config={"models": {}, "providers": {}},
         extra_env={"OPENCLAW_MODEL_CHAIN": ""},

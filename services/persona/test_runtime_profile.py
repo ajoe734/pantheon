@@ -54,7 +54,7 @@ def test_runtime_profile_chain_defaults_from_env_then_default_file(monkeypatch) 
     assert routing["fallback_models"] == ["env-b/two"]
 
     monkeypatch.delenv("OPENCLAW_MODEL_CHAIN")
-    from services.persona.model_chain import default_chain
+    from services.persona.runtime_profile import default_chain
 
     routing = _routing(build_persona_runtime_profile(PERSONA))
     assert [routing["primary_model"], *routing["fallback_models"]] == default_chain()

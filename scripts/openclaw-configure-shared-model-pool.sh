@@ -9,7 +9,7 @@ COMPOSE_FILE="${PANTHEON_COMPOSE_FILE:-docker-compose.yml}"
 # Keep model registration separate from credentials. Auth remains in the
 # persistent OpenClaw agent store and is never embedded in repo configuration.
 # No model is named here: the ordered model chain (first entry = primary) comes
-# from OPENCLAW_MODEL_CHAIN, else the one default file below, and is written by
+# from OPENCLAW_MODEL_CHAIN, else the one shipped default in services/persona/runtime_profile.py, and is written by
 # the chain step further down after it is validated against the gateway.
 MODEL_POOL_BATCH='[
   {"path":"plugins.entries.codex.enabled","value":true},
@@ -20,7 +20,6 @@ MODEL_POOL_BATCH='[
 # Exit status when the requested chain was refused and the previous chain kept.
 # Everything else still completes; the deploy treats this status as advisory.
 CHAIN_REFUSED_EXIT=3
-DEFAULT_CHAIN_FILE="${OPENCLAW_MODEL_CHAIN_DEFAULT_FILE:-services/persona/model-chain.default}"
 
 # OpenClaw 2026.7.1 clears ambient Claude credentials before spawning its CLI.
 # Bind only the explicitly provisioned product token, using an unresolved env
@@ -57,14 +56,14 @@ parse_chain() {
     | jq -R -s -c 'split("\n") | map(select(length > 0)) | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)'
 }
 
-default_chain="$(parse_chain <"$DEFAULT_CHAIN_FILE")"
+default_chain="$(PYTHONPATH="$REPO_ROOT" python3 -m services.persona.runtime_profile default-chain | parse_chain)"
 requested_raw="${OPENCLAW_MODEL_CHAIN:-}"
 if [[ -n "${requested_raw//[[:space:],]/}" ]]; then
   requested_chain="$(printf '%s' "$requested_raw" | parse_chain)"
   chain_source=OPENCLAW_MODEL_CHAIN
 else
   requested_chain="$default_chain"
-  chain_source=default_file
+  chain_source=default
 fi
 
 config_json_or_empty() {

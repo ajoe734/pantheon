@@ -29,6 +29,17 @@ if str(_ROOT) not in sys.path:
 # Minimal stubs so the module can be imported without installed deps
 # ---------------------------------------------------------------------------
 
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not os.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
+
 def _stub_foundation():
     """Inject a minimal services.foundation.health stub if not present."""
     if "services.foundation.health" in sys.modules:

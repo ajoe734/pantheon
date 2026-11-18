@@ -36,6 +36,17 @@ if _ADAPTER_DIR not in sys.path:
 from assistant_openclaw_provider import AssistantOpenClawProvider, OpenClawProviderError
 
 
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not os.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
+
 def _sse_bytes(events: list) -> list:
     lines = [("data: " + json.dumps(evt) + "\n").encode("utf-8") for evt in events]
     lines.append(b"data: [DONE]\n")
