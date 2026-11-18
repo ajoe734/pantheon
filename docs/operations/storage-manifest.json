@@ -4498,8 +4498,8 @@
   },
   {
    "bound_status": "unbounded",
-   "cap": "heartbeat rows only: deleted after hourly summary by HeartbeatRetentionJob; infrastructure_health and other event types have no cap",
-   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); other types: none",
+   "cap": "heartbeat rows: deleted after hourly summary by HeartbeatRetentionJob (raw 3 days); runtime_state_snapshot rows: at most 1 start snapshot + structural changes (fill, position, member book) + 4 mark-to-market-only snapshots per runtime per hour (PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR), measured shape after change: <= 1 per runtime in a pre-open hour (was 286-304 per hour, about 7,000 per runtime per day, about 610 bytes each, about 17 MB/day for 4 runtimes on 2026-11-18); infrastructure_health and other event types have no cap",
+   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); runtime_state_snapshot: same job, bounded batches, rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS (default 3) are deleted except the newest and oldest snapshot per runtime and snapshots whose performance_telemetry.status is marks_unavailable, invalid_ledger or invalid_drawdown_series (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); other types: none",
    "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
    "growth_per_day": "about 0.75 GB/day measured on 2026-11-17 (before the heartbeat cadence fix)",
    "kind": "table",
@@ -5201,8 +5201,8 @@
   },
   {
    "bound_status": "unbounded",
-   "cap": "heartbeat rows only: deleted after hourly summary by HeartbeatRetentionJob; infrastructure_health and other event types have no cap",
-   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); other types: none",
+   "cap": "heartbeat rows: deleted after hourly summary by HeartbeatRetentionJob (raw 3 days); runtime_state_snapshot rows: at most 1 start snapshot + structural changes (fill, position, member book) + 4 mark-to-market-only snapshots per runtime per hour (PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR), measured shape after change: <= 1 per runtime in a pre-open hour (was 286-304 per hour, about 7,000 per runtime per day, about 610 bytes each, about 17 MB/day for 4 runtimes on 2026-11-18); infrastructure_health and other event types have no cap",
+   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); runtime_state_snapshot: same job, bounded batches, rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS (default 3) are deleted except the newest and oldest snapshot per runtime and snapshots whose performance_telemetry.status is marks_unavailable, invalid_ledger or invalid_drawdown_series (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); other types: none",
    "growth_driver": "owner-store or SQL table rows written by the owner service",
    "growth_per_day": "about 0.75 GB/day measured on 2026-11-17 (before the heartbeat cadence fix)",
    "kind": "schema_table",
