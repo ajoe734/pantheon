@@ -231,7 +231,11 @@ interface Binding {
 export interface PluginDeps {
   fetchImpl?: FetchLike;
   now?: () => number;
+  env?: Record<string, string | undefined>;
 }
+
+export const ENV_BROKER_URL = "PERSONA_TOOL_BROKER_URL";
+export const ENV_BROKER_TOKEN = "PERSONA_TOOL_BROKER_TOKEN";
 
 class BrokerRefused extends Error {
   constructor(readonly status: number, readonly reason: string) {
@@ -242,6 +246,7 @@ class BrokerRefused extends Error {
 export function createPlugin(deps: PluginDeps = {}) {
   const doFetch: FetchLike = deps.fetchImpl ?? ((url, init) => fetch(url, init) as ReturnType<FetchLike>);
   const now = deps.now ?? Date.now;
+  const env = deps.env ?? process.env;
 
   return {
     id: PLUGIN_ID,
@@ -249,7 +254,16 @@ export function createPlugin(deps: PluginDeps = {}) {
     description: "Brokered persona agent tools: memory recall, standing-question read, proposal submit.",
     configSchema: { safeParse: parseConfig, jsonSchema: CONFIG_JSON_SCHEMA },
     register(api: PluginApi): void {
-      const parsed = parseConfig(api.pluginConfig);
+      // Shipped as a stock plugin (enabled by default, no entry in openclaw.json) so the gateway config
+      // stays a plain writable file. With no plugin config the broker comes from the process env; with
+      // no broker token at all the plugin is inert (no hook, no tools).
+      let rawConfig = api.pluginConfig;
+      if (rawConfig === undefined || rawConfig === null) {
+        const token = (env[ENV_BROKER_TOKEN] ?? "").trim();
+        if (!token) return;
+        rawConfig = { brokerUrl: env[ENV_BROKER_URL] ?? "", brokerToken: token };
+      }
+      const parsed = parseConfig(rawConfig);
       const config = parsed.success ? parsed.data : null;
       if (!config) {
         api.logger?.error?.(`${PLUGIN_ID}: invalid plugin config; every Pantheon persona tool call will be blocked`);

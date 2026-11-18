@@ -33,7 +33,7 @@ function harness(opts: { respond?: (call: Call) => { status: number; body: unkno
     const out = await respond(call);
     return { status: out.status, json: async () => out.body };
   };
-  const instance = createPlugin({ fetchImpl: fetchImpl as any });
+  const instance = createPlugin({ fetchImpl: fetchImpl as any, env: {} });
   let hook: Handler | undefined;
   let factory: ((ctx: any) => any) | undefined;
   let toolOptions: any;
@@ -58,7 +58,8 @@ test("manifest contracts.tools lists exactly the registered tools and they are o
   assert.deepEqual([...manifest.contracts.tools].sort(), [...PANTHEON_TOOLS].sort());
   assert.deepEqual(Object.keys(manifest.toolMetadata).sort(), [...PANTHEON_TOOLS].sort());
   assert.equal(manifest.id, plugin.id);
-  assert.deepEqual(manifest.configSchema.required, ["brokerUrl", "brokerToken"]);
+  assert.equal(manifest.configSchema.required, undefined); // config may come from the env
+  assert.equal(manifest.enabledByDefault, true);
   assert.ok(!JSON.stringify(manifest).includes("reflect"));
   const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf8"));
   assert.deepEqual(pkg.openclaw.extensions, ["./dist/src/index.js"]);
@@ -151,7 +152,8 @@ test("hook blocks when host identity is incomplete and invalid config blocks eve
   const bad = harness({ config: { brokerUrl: "ftp://x", brokerToken: "" } });
   assert.equal((await bad.hook({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
   const missing = harness({ config: undefined });
-  assert.equal((await missing.hook({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
+  assert.equal(missing.hook, undefined); // no config and no broker token: inert
+  assert.equal(missing.factory, undefined);
 });
 
 test("execute without a hook authorization fails closed and never calls the broker", async () => {
@@ -220,6 +222,32 @@ test("config parsing", () => {
 test("the plugin source holds no memory or persona credential and no SDK import", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, "..", "..", "src", "index.ts"), "utf8");
-  assert.ok(!/MEMORY_AUTH|PERSONA_SERVICE|process\.env|hindsight/i.test(source.replace(/\/\*[\s\S]*?\*\//, "")));
+  const code = source.replace(/\/\*[\s\S]*?\*\//, "");
+  // The only env surface is the broker URL/token pair, read through one default (`deps.env ?? process.env`).
+  assert.equal((code.match(/process\.env/g) ?? []).length, 1);
+  assert.ok(code.includes("deps.env ?? process.env"));
+  assert.ok(!/MEMORY_AUTH|PERSONA_SERVICE|hindsight/i.test(code));
   assert.ok(!/from "openclaw/.test(source));
+});
+
+test("env-provided broker config is used when plugin config is absent", async () => {
+  const calls: any[] = [];
+  const instance = createPlugin({
+    env: { PERSONA_TOOL_BROKER_URL: "http://adapter:8104/internal/persona-tools/v1/", PERSONA_TOOL_BROKER_TOKEN: " env-secret " },
+    fetchImpl: (async (url: string, init: any) => {
+      calls.push({ url, headers: init.headers });
+      return { status: 200, json: async () => ({ allowed: true, allowed_tools: [...PANTHEON_TOOLS] }) };
+    }) as any,
+  });
+  let hook: Handler | undefined;
+  instance.register({ registerTool() {}, on(_n: string, h: Handler) { hook = h; } } as any);
+  const out = await hook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX);
+  assert.equal(out, undefined);
+  assert.equal(calls[0].url, "http://adapter:8104/internal/persona-tools/v1/authorize");
+  assert.equal(calls[0].headers.Authorization, "Bearer env-secret");
+  // a token with an invalid URL fails closed rather than going inert
+  const bad = createPlugin({ env: { PERSONA_TOOL_BROKER_TOKEN: "x" } });
+  let badHook: Handler | undefined;
+  bad.register({ registerTool() {}, on(_n: string, h: Handler) { badHook = h; } } as any);
+  assert.equal((await badHook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
 });
