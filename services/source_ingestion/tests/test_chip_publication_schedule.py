@@ -50,9 +50,10 @@ def test_schedule_covers_all_six_official_and_taifex_chip_profiles_and_probes() 
         scheduled_dt = datetime.combine(date(2026, 11, 18), schedule.publication_time_taipei)
         assert scheduled_dt >= earliest_dt + timedelta(minutes=schedule.safety_margin_minutes - 1)
 
-    assert len(MEASURED_CHIP_PROVIDER_PROBES) >= 4
+    assert len(MEASURED_CHIP_PROVIDER_PROBES) >= 5
     probe_ids = {probe["probe_id"] for probe in MEASURED_CHIP_PROVIDER_PROBES}
     assert "2026-11-14-morning-post-publication" in probe_ids
+    assert "2026-11-18-evening-2154-taipei-coordinator" in probe_ids
     assert "2026-11-18-evening-pre-2200-taipei" in probe_ids
     assert "2026-11-18-evening-post-2200-taipei" in probe_ids
     for probe in MEASURED_CHIP_PROVIDER_PROBES:
