@@ -133,8 +133,12 @@ security deny) whatever model name is sent.
   Refusals and upstream quota errors return 429 with `Retry-After`, which Hindsight
   treats as a defer. Telemetry carries operation label, latency, token usage and
   outcome, never prompt or response content.
-- Models: `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` (default `openai/gpt-5.5`) and
-  `OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS` (default `anthropic/claude-sonnet-4-6`),
+- Models: `OPENCLAW_MEMORY_INDEX_PRIMARY_MODEL` (default `openai/gpt-5.6-sol`) and
+  `OPENCLAW_MEMORY_INDEX_FALLBACK_MODELS` (default
+  `openai/gpt-5.5,anthropic/claude-opus-4-8,anthropic/claude-sonnet-4-6`; the last is the
+  Anthropic CLI backend, acceptable because memory-index needs no tools). Hosted evidence
+  2026-11-18: in 576 gateway sessions of 7 days, openai/gpt-5.6-sol answered 615 calls,
+  the CLI sonnet backend 6, gpt-5.5 none, and opus-4-8 failed 295 times (invalid key/no credit),
   existing pool slots only; the pool script fails if a ref is not in the pool. Numeric
   limits are coordinator proposals.
 - The Hindsight per-operation `*_LLM_BASE_URL` setting names follow the pinned
