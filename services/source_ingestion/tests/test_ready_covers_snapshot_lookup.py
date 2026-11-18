@@ -3,7 +3,7 @@
 Cause (measured, see the evidence file): ``SnapshotUniverse._last_sweep`` started at 0, so the first
 ``snapshot_for_request`` after a start ran the due sweep in its ``finally`` -> ``withdraw_symbols`` ->
 ``_compact_journal_in_place`` (a full journal parse).  The first due sweep now runs in
-``SnapshotUniverse.warm_start`` during runtime construction, before the app can answer /readyz.
+``SourceIngestionRuntime._warm_snapshot_lookup`` during runtime construction, before the app can answer /readyz.
 No wall-clock threshold: counters only.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from services.source_ingestion import requirement_state as m
 from services.source_ingestion import snapshot_universe as su
 from services.source_ingestion.main import create_app
+from services.source_ingestion import runtime as rt
 from services.source_ingestion.runtime import create_runtime
 from services.source_ingestion.tests.bench_market_snapshot_incremental_read import _line
 
@@ -90,14 +91,14 @@ def test_not_ready_while_warm_start_runs(tmp_path, monkeypatch):
     monkeypatch.setenv("MARKET_SNAPSHOT_STORE", "journal")
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data))
     seen = {}
-    original = su.SnapshotUniverse.warm_start
+    original = rt.SourceIngestionRuntime._warm_snapshot_lookup
 
     def watching(self):
         seen["flag_during"] = runtime_box[0].snapshot_lookup_ready if runtime_box else "no-runtime-yet"
         return original(self)
 
     runtime_box: list = []
-    monkeypatch.setattr(su.SnapshotUniverse, "warm_start", watching)
+    monkeypatch.setattr(rt.SourceIngestionRuntime, "_warm_snapshot_lookup", watching)
     runtime = create_runtime(data)
     assert seen["flag_during"] == "no-runtime-yet"  # the runtime (hence the app) did not exist while the load ran
     assert runtime.snapshot_lookup_ready is True
@@ -113,7 +114,7 @@ def test_sweep_not_run_again_by_first_request(tmp_path, monkeypatch, counters):
     monkeypatch.setenv("MARKET_SNAPSHOT_STORE", "journal")
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data))
     runtime = create_runtime(data)
-    assert runtime.snapshot_universe.warm_start_count == 1
+    assert runtime.snapshot_warm_start_count == 1
     sweeps = counters["sweep"]
     runtime.snapshot_universe.snapshot_for_request("1001.TWSE")
     assert counters["sweep"] == sweeps
