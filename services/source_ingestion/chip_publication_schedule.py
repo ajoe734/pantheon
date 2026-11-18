@@ -399,13 +399,19 @@ def evaluate_chip_provider_session(
     """Compare the session date served by the provider against the expected published session.
 
     - When ``provider_session == expected_session``: returns ``status="published"``, ``is_failure=False``.
+    - When ``provider_session > expected_session``:
+      - If ``provider_session`` is after the Taipei date of ``now``, or equals the Taipei date of ``now``
+        before that day's 13:30 close: returns ``status="future_session"``, ``reason="future_session"``,
+        ``is_failure=True``.
+      - If ``provider_session`` is a trading session day not after the latest closed Taipei date:
+        returns ``status="published_early"``, ``reason="published_early"``, ``is_failure=False``.
     - When ``provider_session < expected_session`` (provider still serving a prior session after
       ``expected_session``'s scheduled publication time):
       - If ``now <= expected_published_at + schedule.max_publication_delay``: returns
         ``status="not_yet_published"``, ``reason="not_yet_published"``, ``is_failure=False``.
       - If ``now > expected_published_at + schedule.max_publication_delay``: returns
         ``status="provider_publication_late"``, ``reason="provider_publication_late"``, ``is_failure=True``.
-    - Otherwise (missing, malformed, or future session date): returns ``status="session_mismatch"``,
+    - Otherwise (missing, malformed, or non-session date): returns ``status="session_mismatch"``,
       ``reason="provider_session_mismatch"``, ``is_failure=True``.
     """
     if not isinstance(now, datetime) or now.tzinfo is None:
@@ -485,12 +491,53 @@ def evaluate_chip_provider_session(
             delay_seconds=delay_seconds,
             max_delay_seconds=max_delay_seconds,
             detail=(
-                f"provider_publication_late: bounded chip provider session {provider_text!r} != requested "
+                f"provider_publication_late: bounded chip provider session {provider_text!r} != requested session "
                 f"{expected_text!r} for {connector_id} (provider_session={provider_text}, "
                 f"expected_session={expected_text}, expected_published_at={expected_published_at.isoformat()}, "
                 f"delay_seconds={delay_seconds} > max_delay_seconds={max_delay_seconds})"
             ),
         )
+
+    if parsed_provider is not None and parsed_provider > expected_session:
+        latest_closed_taipei_date = (
+            now_t.date() if now_t.time() >= time(13, 30) else now_t.date() - timedelta(days=1)
+        )
+        if parsed_provider > latest_closed_taipei_date:
+            return ChipPublicationVerdict(
+                connector_id=connector_id,
+                status="future_session",
+                reason="future_session",
+                is_failure=True,
+                provider_session=provider_text,
+                expected_session=expected_session,
+                expected_published_at=expected_published_at,
+                checked_at=now_t,
+                delay_seconds=delay_seconds,
+                max_delay_seconds=max_delay_seconds,
+                detail=(
+                    f"future_session: bounded chip provider session {provider_text!r} != requested session "
+                    f"{expected_text!r} for {connector_id} (provider_session={provider_text}, "
+                    f"expected_session={expected_text}, checked_at={now_t.isoformat()})"
+                ),
+            )
+        if parsed_provider.weekday() < 5 and (is_session_day is None or bool(is_session_day(parsed_provider))):
+            return ChipPublicationVerdict(
+                connector_id=connector_id,
+                status="published_early",
+                reason="published_early",
+                is_failure=False,
+                provider_session=provider_text,
+                expected_session=expected_session,
+                expected_published_at=expected_published_at,
+                checked_at=now_t,
+                delay_seconds=0,
+                max_delay_seconds=max_delay_seconds,
+                detail=(
+                    f"published_early: bounded chip provider session {provider_text!r} > scheduled "
+                    f"{expected_text!r} for {connector_id} (provider_session={provider_text}, "
+                    f"expected_session={expected_text}, checked_at={now_t.isoformat()})"
+                ),
+            )
 
     return ChipPublicationVerdict(
         connector_id=connector_id,
@@ -504,10 +551,69 @@ def evaluate_chip_provider_session(
         delay_seconds=delay_seconds,
         max_delay_seconds=max_delay_seconds,
         detail=(
-            f"bounded chip provider session {provider_text!r} != requested {expected_text!r} "
+            f"bounded chip provider session {provider_text!r} != requested session {expected_text!r} "
             f"for {connector_id} (provider_session={provider_text!r}, expected_session={expected_text!r})"
         ),
     )
+
+
+def _month_end(year: int, month: int) -> date:
+    if month == 12:
+        return date(year, 12, 31)
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+def expected_finmind_fundamental_period_ends(dataset: str, session_date: date) -> tuple[date, ...]:
+    """Return the acceptable period-end date(s) for a FinMind fundamental dataset at ``session_date``.
+
+    Compares values of the same kind:
+    - ``tw_monthly_revenue`` uses month-end dates (statutory deadline: 10th of next month).
+    - ``tw_financial_statement`` / ``tw_quarterly_statements`` uses quarter-end dates
+      (statutory deadlines: May 15, Aug 14, Nov 14, Mar 31).
+    - ``tw_valuation_bwibbu`` uses the trading session date ``session_date``.
+    When ``session_date`` is between a completed period end and its statutory filing deadline,
+    both the statutorily due period end and the newly closed period end (if filed early) are accepted.
+    """
+    from services.source_ingestion.feature_catalogue import statutory_available_date
+
+    if dataset == "tw_valuation_bwibbu":
+        return (session_date,)
+    if dataset == "tw_monthly_revenue":
+        year, month = session_date.year, session_date.month
+        latest_closed: date | None = None
+        statutory_due: date | None = None
+        for _ in range(24):
+            year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+            candidate = _month_end(year, month)
+            if latest_closed is None:
+                latest_closed = candidate
+            deadline = statutory_available_date("tw_monthly_revenue", candidate)
+            if deadline is not None and deadline <= session_date:
+                statutory_due = candidate
+                break
+        if statutory_due is None or latest_closed is None:
+            raise ValueError(f"no monthly revenue period end found for session {session_date.isoformat()}")
+        return (statutory_due,) if statutory_due == latest_closed else (statutory_due, latest_closed)
+    if dataset in ("tw_financial_statement", "tw_quarterly_statements"):
+        latest_closed_q: date | None = None
+        statutory_due_q: date | None = None
+        for yr in (session_date.year, session_date.year - 1, session_date.year - 2):
+            for qm, qd in ((12, 31), (9, 30), (6, 30), (3, 31)):
+                candidate = date(yr, qm, qd)
+                if candidate >= session_date:
+                    continue
+                if latest_closed_q is None:
+                    latest_closed_q = candidate
+                deadline = statutory_available_date("tw_quarterly_statements", candidate)
+                if deadline is not None and deadline <= session_date:
+                    statutory_due_q = candidate
+                    break
+            if statutory_due_q is not None:
+                break
+        if statutory_due_q is None or latest_closed_q is None:
+            raise ValueError(f"no quarterly statement period end found for session {session_date.isoformat()}")
+        return (statutory_due_q,) if statutory_due_q == latest_closed_q else (statutory_due_q, latest_closed_q)
+    raise ValueError(f"unknown FinMind fundamental dataset {dataset!r}")
 
 
 __all__ = [
@@ -520,6 +626,7 @@ __all__ = [
     "TAIPEI_TZ",
     "evaluate_chip_provider_session",
     "expected_chip_publication_datetime",
+    "expected_finmind_fundamental_period_ends",
     "get_chip_publication_schedule",
     "latest_published_chip_session",
 ]
