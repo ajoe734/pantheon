@@ -4580,3 +4580,189 @@ def test_release_labelled_services_cover_every_compose_service_that_receives_git
     assert set(out) == expected
     assert "dev-paper-principal-issuer" in out
     assert "openclaw-gateway" not in out
+
+
+# --- TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 -------------------------
+
+_SHA_A = "sha256:" + "a" * 64
+
+
+def _interrupt_harness(tmp_path: Path, sig: str, *, leftover: bool = True) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run the real bounded-refresh entrypoint, interrupt it mid-recreate with ``sig``.
+
+    docker is a stateful fake: ``created`` containers are the Compose rename
+    leftover, ``stopped`` is the steady set that the bounded window stopped.
+    """
+    entry = _prune_shell_function("execute_bounded_source_refresh_entrypoint")
+    leftovers = _prune_shell_function("source_ingest_family_services") + _prune_shell_function("remove_source_ingest_compose_leftovers")
+    counts = _prune_shell_function("verify_source_ingest_container_counts")
+    calls = tmp_path / "docker.calls"
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "created").write_text("62f4371e62ff\n" if leftover else "", encoding="utf-8")
+    (state / "bounded").write_text("bounded-sched\nbounded-proj\n", encoding="utf-8")
+    ready = tmp_path / "ready"
+    harness = f"""
+set -euo pipefail
+export PATH="{os.environ['PATH']}"
+STATE="{state}"; CALLS="{calls}"; READY="{ready}"
+info() {{ echo "[remote-deploy] $*"; }}
+error() {{ echo "[remote-deploy] ERROR: $*" >&2; exit 1; }}
+sleep() {{ command sleep "$@"; }}
+validate_source_refresh_profile() {{ :; }}
+curl_with_retry() {{ :; }}
+resolve_bounded_source_refresh_active_symbols() {{ SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS=2330.TW; }}
+check_taiwan_refresh_preflight() {{ echo '{{"status":"proceed"}}'; }}
+redact_bounded_refresh_log() {{ cat; }}
+recover_bounded_source_refresh_dlq() {{ :; }}
+prepare_bounded_source_refresh_dataset() {{ :; }}
+manage_source_ingest_refresh_runtime() {{
+  echo "manage $2" >> "$CALLS"
+  if [[ "$2" == bounded ]]; then
+    : > "$READY"
+    command sleep 30 & wait $!   # the interruptible Compose recreate
+  fi
+}}
+docker() {{
+  echo "docker $*" >> "$CALLS"
+  case "$*" in
+    "compose -p pantheon -f docker-compose.yml ps -q source-ingest") echo cid-src ;;
+    "inspect --format {{{{.Image}}}} cid-src") echo {_SHA_A} ;;
+    "compose -p pantheon -f docker-compose.yml images -q source-ingest") echo {'a' * 64} ;;
+    "inspect --format {{{{json .Config.Env}}}} cid-src") echo '["A=1"]' ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler") echo steady-sched ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-agora-projector") echo steady-proj ;;
+    "inspect --format {{{{json .Config.Env}}}} steady-sched") echo '["PANTHEON_TENANT_ID=t","PANTHEON_ENV=dev","GIT_SHA=x"]' ;;
+    "ps -a -q --filter label=com.docker.compose.project=pantheon --filter label=com.docker.compose.service=source-ingest --filter status=created") cat "$STATE/created" ;;
+    "ps -a -q --filter label=com.docker.compose.project=pantheon --filter label=com.docker.compose.service="*)
+      case "$*" in
+        *"status=created"*) : ;;
+        *"service=source-ingest "*|*"service=source-ingest") echo cid-src ;;
+        *) : ;;
+      esac ;;
+    "rm -f 62f4371e62ff") : > "$STATE/created" ;;
+    "rm -f pantheon-bounded-refresh-"*) : > "$STATE/bounded" ;;
+    "stop "*|"start "*) : ;;
+  esac
+  return 0
+}}
+{leftovers}
+{counts}
+{entry}
+export PANTHEON_BOUNDED_REFRESH_RESTORE_LOG="{tmp_path / 'restore.log'}"
+execute_bounded_source_refresh_entrypoint false "" &
+pid=$!
+for _ in $(seq 1 100); do [[ -e "$READY" ]] && break; command sleep 0.1; done
+kill -{sig} "$pid"
+rc=0; wait "$pid" || rc=$?
+echo "ENTRYPOINT_RC=$rc"
+"""
+    proc = subprocess.run(["bash", "-c", harness], capture_output=True, text=True, timeout=60, check=False)
+    lines = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+    return proc, lines
+
+
+@pytest.mark.parametrize("sig,rc", [("HUP", 129), ("TERM", 143), ("PIPE", 141)])
+def test_interrupted_bounded_refresh_restores_steady_services_for_real(tmp_path: Path, sig: str, rc: int) -> None:
+    proc, calls = _interrupt_harness(tmp_path, sig)
+    out = proc.stdout + proc.stderr
+    assert f"ENTRYPOINT_RC={rc}" in out, out
+    # The restore really ran: runtime restored, steady containers started, bounded removed.
+    assert "manage restore" in calls
+    assert "docker start steady-sched steady-proj" in calls
+    assert any(c.startswith("docker rm -f pantheon-bounded-refresh-source-ingest-scheduler") for c in calls)
+    # Created rename leftover is removed and logged with its id; steady ones never removed.
+    assert "docker rm -f 62f4371e62ff" in calls
+    assert not any(c.startswith("docker rm -f") and ("steady-" in c or "cid-src" in c) for c in calls)
+    log = (tmp_path / "restore.log").read_text(encoding="utf-8") if sig in {"HUP", "PIPE"} else out
+    assert "62f4371e62ff" in log
+
+
+def test_restore_removes_only_created_leftovers_and_flags_duplicates(tmp_path: Path) -> None:
+    fn = _prune_shell_function("remove_source_ingest_compose_leftovers")
+    cnt = _prune_shell_function("verify_source_ingest_container_counts")
+    script = f"""
+set -uo pipefail
+info() {{ echo "$*"; }}
+source_ingest_family_services() {{
+  printf "%s\\n" source-ingest source-ingest-scheduler
+}}
+docker() {{
+  echo "docker $*" >> "{tmp_path}/c"
+  if [[ "$1 $2" == "ps -a" ]]; then
+    case "$*" in
+      *"service=source-ingest-scheduler"*"status=created"*) : ;;
+      *"service=source-ingest "*"status=created"*) echo leftover1 ;;
+      *service=source-ingest-scheduler*) echo s1 ;;
+      *) printf 'k1\\nk2\\n' ;;
+    esac
+  fi
+}}
+{fn}
+{cnt}
+remove_source_ingest_compose_leftovers
+verify_source_ingest_container_counts; echo "VERIFY=$?"
+"""
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    calls = (tmp_path / "c").read_text(encoding="utf-8")
+    assert "removing never-started Compose leftover container leftover1 (service=source-ingest" in proc.stdout
+    assert "docker rm -f leftover1" in calls
+    assert "docker rm -f k1" not in calls and "docker rm -f s1" not in calls
+    assert "expected exactly one source-ingest container after restore, found 2" in proc.stderr
+    assert "VERIFY=1" in proc.stdout
+    assert 'status=created' in calls
+
+
+def _steady_check_run(tmp_path: Path, *, running: bool, mode: str = "collector_steady_pull") -> tuple[subprocess.CompletedProcess[str], list[str], dict]:
+    fns = "\n".join(
+        _prune_shell_function(n)
+        for n in ("remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts", "execute_steady_posture_check")
+    )
+    calls = tmp_path / "calls"
+    out = tmp_path / "steady.json"
+    started = tmp_path / "started"
+    script = f"""
+set -uo pipefail
+info() {{ echo "$*"; }}
+sleep() {{ :; }}
+source_ingest_family_services() {{
+  printf "%s\\n" source-ingest source-ingest-scheduler
+}}
+manage_source_ingest_refresh_runtime() {{ echo "manage $2 $3" >> "{calls}"; touch "{started}"; }}
+docker() {{
+  echo "docker $*" >> "{calls}"
+  [[ "$1" == start ]] && touch "{started}"
+  running=false; [[ "{str(running).lower()}" == true || -e "{started}" ]] && running=true
+  case "$*" in
+    "compose -p pantheon -f docker-compose.yml ps --status running -q "*) [[ $running == true ]] && echo "c-${{*: -1}}" ;;
+    "compose -p pantheon -f docker-compose.yml ps -a -q source-ingest") echo c-src ;;
+    "compose -p pantheon -f docker-compose.yml ps -a -q "*) echo "c-${{*: -1}}" ;;
+    "inspect --format {{{{json .Config.Env}}}} c-source-ingest-scheduler") echo '["SOURCE_INGEST_CONTROLLER_MODE={mode}"]' ;;
+    "inspect --format {{{{json .Config.Env}}}} c-src") echo '["A=1","SOURCE_INGEST_BOUNDED_DATASET=x"]' ;;
+    "inspect --format {{{{.Image}}}} c-src") echo sha256:img ;;
+    "inspect --format "*Health*) echo healthy ;;
+    "ps -a -q"*) : ;;
+  esac
+  return 0
+}}
+{fns}
+STEADY_CHECK_GRACE_SECONDS=0
+execute_steady_posture_check "{out}"; echo "RC=$?"
+"""
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    data = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
+    return proc, (calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []), data
+
+
+def test_steady_check_reports_healthy_without_touching_services(tmp_path: Path) -> None:
+    proc, calls, data = _steady_check_run(tmp_path, running=True)
+    assert "RC=0" in proc.stdout and data["status"] == "healthy", proc.stdout + proc.stderr
+    assert not any(c.startswith(("manage", "docker start", "docker rm")) for c in calls)
+
+
+def test_steady_check_restores_stopped_services_and_reports_named_reason(tmp_path: Path) -> None:
+    proc, calls, data = _steady_check_run(tmp_path, running=False)
+    assert data == {"mode": "collector_steady_pull", "reason": "source-ingest_not_running", "status": "restored"}, proc.stdout + proc.stderr
+    assert "manage restore sha256:img" in calls
+    assert "docker start c-source-ingest-scheduler" in calls
+    assert "docker start c-source-ingest-agora-projector" in calls
