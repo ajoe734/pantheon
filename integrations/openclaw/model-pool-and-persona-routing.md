@@ -288,3 +288,18 @@ overrides any more. Hosted evidence 2026-11-18 (7 days, 576 sessions) showed
 opus-4-8 failing 295 times in this role, which is why the chain order is an
 operator decision made through the variable rather than code. Reached only through the adapter's internal
 memory LLM bridge (see `deploy/hindsight/README.md`).
+
+## OpenAI API route (`openai-api`, `openai-api-2`)
+
+Shipped default chain: Opus, `openai-api/gpt-6.2-sol`, `openai-api-2/gpt-6.2-sol`, then the subscription
+entries `openai/gpt-5.6-sol`, `openai/gpt-5.5` (`DEFAULT_MODEL_CHAIN`, `OPENCLAW_MODEL_CHAIN` overrides).
+The default agent chain, `structured-extraction` and `memory-index` all carry it.
+
+- Mechanism (pinned image 2026.7.1): one provider per key (`baseUrl https://api.openai.com/v1`, `api openai-responses`,
+  `apiKey` env SecretRef) with model-level fallback. A 401/quota/rate-limit on key 1 falls to key 2; a refusal of both
+  falls to the subscription entries. A `model_not_found` cools down the whole provider profile, so later refs on the
+  same provider are skipped. A change of `agents.defaults.model.fallbacks` needs a gateway restart (the configure step restarts).
+- Keys live in container variables `OPENCLAW_API_ROUTE_KEY_1/_2` only (never `OPENAI_API_KEY`/`CODEX_API_KEY`).
+- Missing/empty key: provider unset and its refs removed from the default chain; a requested chain naming it is refused (advisory, exit 3).
+- Isolated qualification: `scripts/openclaw_isolated_model_bootstrap.py` adds the same providers when `PANTHEON_OPENCLAW_OPENAI_API_KEY[_2]` are set.
+- Per-token billing; see `governance.md` (2026-11-18).
