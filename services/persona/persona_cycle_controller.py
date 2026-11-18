@@ -587,7 +587,8 @@ class PersonaCycleController:
                 except CaseFileCitationError:
                     failure = "case_file_citation_invalid"
                 except ToolRecordError as exc:
-                    failure = "tool_record_unavailable:" + exc.reason
+                    failure = (exc.reason if exc.reason.startswith("persona_tools_blocked:")
+                               else "tool_record_unavailable:" + exc.reason)
                 except ToolBrokerUnavailable as exc:
                     failure = "tool_broker_unavailable:" + str(exc)[:120]
                 except case_files.CaseFileError as exc:
@@ -650,6 +651,8 @@ class PersonaCycleController:
         run = broker.register_run(persona_id, "daily_cycle", session_user)
         turn = self.turn_runner(persona_id, prompt, session_user=session_user)
         if turn.status != "completed" or turn.persona_id != persona_id:
+            if getattr(turn, "error", None) == "model_auth_failed":
+                raise ToolRecordError(f"persona_tools_blocked:model_auth_failed:model={turn.model}")
             raise ValueError("agent_turn_unavailable")
         record = broker.run_record(run["run_ref"])
         if tool_use is not None and isinstance(record, Mapping):
@@ -658,7 +661,16 @@ class PersonaCycleController:
                 1 for c in calls if c.get("tool") == "persona_memory_recall" and c.get("outcome") == "ok")
             tool_use["proposals_recorded"] = tool_use.get("proposals_recorded", 0) + sum(
                 1 for c in calls if c.get("tool") == "persona_proposal_submit" and c.get("outcome") == "recorded")
-        output, returned = output_from_tool_record(record, persona_id, run["run_ref"])
+        try:
+            output, returned = output_from_tool_record(record, persona_id, run["run_ref"])
+        except ToolRecordError as exc:
+            blocked = getattr(turn, "blocked_reason", "")
+            if exc.reason == "tool_record_no_calls" and blocked:
+                # The turn had its tools blocked: name that cause and the backend actually used, not "no calls".
+                used = getattr(turn, "model_used", "") or getattr(turn, "model", "")
+                raise ToolRecordError(
+                    f"{blocked}:model={used}:provider={getattr(turn, 'provider', '') or 'unknown'}"[:200]) from exc
+            raise
         return turn, output, returned
 
     def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:

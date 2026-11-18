@@ -16,8 +16,13 @@ DEFAULT_PERSONA_MODEL = "anthropic/claude-opus-4-8"
 MODEL_POOL_ORDER = (
     "anthropic/claude-opus-4-8",
     "anthropic/claude-sonnet-4-6",
+    "openai/gpt-5.6-sol",
     "openai/gpt-5.5",
 )
+# Models whose agentRuntime is claude-cli: the gateway gives before_tool_call no
+# host identity there, so every persona tool is blocked. They may be a primary
+# an operator pins explicitly, but are never an automatic persona fallback.
+PERSONA_TOOLS_BLOCKED_MODEL_REFS = frozenset({"anthropic/claude-sonnet-4-6"})
 KNOWN_MODEL_POOL_REFS = frozenset(MODEL_POOL_ORDER)
 ROUTING_MODES = frozenset(
     {
@@ -350,7 +355,11 @@ def _fallback_model_refs(source: Mapping[str, Any]) -> list[str]:
 def _fallback_after(primary: str, pool_refs: set[str]) -> list[str]:
     ordered = [model for model in MODEL_POOL_ORDER if model in pool_refs]
     ordered.extend(sorted(model for model in pool_refs if model not in ordered))
-    return [model for model in ordered if model != primary]
+    return [
+        model
+        for model in ordered
+        if model != primary and model not in PERSONA_TOOLS_BLOCKED_MODEL_REFS
+    ]
 
 
 def _ready_routing(

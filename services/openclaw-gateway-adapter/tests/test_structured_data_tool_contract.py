@@ -997,16 +997,16 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert ensured["agent"]["status"] == "updated"
             assert ensured["agent"]["model"] == "anthropic/claude-opus-4-8"
             assert ensured["agent"]["fallback_models"] == [
-                "anthropic/claude-sonnet-4-6",
+                "openai/gpt-5.6-sol",
                 "openai/gpt-5.5",
             ]
             assert ensured["agent"]["model_policy"] == {
                 "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
             }
             assert runtime_agents[0]["model"] == {
                 "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
             }
             assert runtime_agents[0]["tools"] == {
                 "allow": [],
@@ -1202,7 +1202,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert legacy_replay.status_code == 201, legacy_replay.text
             assert runtime_agents[0]["model"] == {
                 "primary": "anthropic/claude-opus-4-8",
-                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+                "fallbacks": ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
             }
 
             first = client.post(
