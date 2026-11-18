@@ -466,3 +466,70 @@ def test_summary_reports_deployed_and_acceptance_separately():
     text = summary_lines({"state": "dispatched", "run_url": "u"})
     assert "- deployed: pending" in text and "- acceptance: pending" in text
     assert summary_lines({"state": "up_to_date"}) == ""
+
+
+from scripts.auto_deploy_dev_pair import is_non_build_input, summary_lines
+
+
+@pytest.mark.parametrize("path", [
+    "docs/operations/problem-register.md",
+    "docs/reviews/2026-05-12-x.md",
+    "README.md",
+    ".orchestrator/skills/a.md",
+    "ai-task-archive/2026/x.json",
+    "docs/deployment/latest-dev-six-area-closure.md",
+])
+def test_non_build_input_paths(path):
+    assert is_non_build_input(path)
+
+
+@pytest.mark.parametrize("path", [
+    "docs/contracts/research_demand.v1.schema.json",  # read by services at runtime
+    "docs/deployment/loop-catalog.registry.json",
+    "docs/deployment/evidence/other/evidence.json",
+    "docs/04/x.md",
+    "docs/operations/x.json",
+    "services/research/README.md",  # services read *.md
+    ".orchestrator.py", "ai-task-archive", "scripts/x.py", "", "../README.md", "docs/operations/../../x.py",
+])
+def test_build_input_or_unproven_paths_are_not_skipped(path):
+    assert not is_non_build_input(path)
+
+
+def test_documentation_and_tooling_commit_is_not_released_and_is_reported():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    files = [{"filename": "docs/operations/problem-register.md", "status": "modified"},
+             {"filename": ".orchestrator/skills/x.md", "status": "added"}]
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=files)
+    result = run(apply=True)
+    assert result["state"] == "report_only_no_deploy"
+    assert result["changed_file_count"] == 2 and result["served_backend_sha"] == OLD
+    assert not backend.dispatches
+    text = summary_lines(result)
+    assert "skipped" in text and OLD in text and "2 file" in text
+
+
+def test_later_build_input_candidate_releases_and_carries_skipped_commits():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(
+        files=[{"filename": "docs/operations/a.md", "status": "modified"}])
+    assert run(apply=True)["state"] == "report_only_no_deploy"
+    assert not backend.dispatches
+    # the next candidate still compares against the served commit (OLD), so it covers the skipped one
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(
+        ahead_by=2, total_commits=2, commits=[{"sha": "1"}, {"sha": B}],
+        files=[{"filename": "docs/operations/a.md", "status": "modified"},
+               {"filename": "services/x/main.py", "status": "modified"}])
+    assert run(apply=True)["state"] == "dispatched"
+    assert backend.dispatches[0][1]["ref"] == B
+
+
+def test_over_300_files_and_boundary_rename_fail_open():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    many = [{"filename": f"docs/operations/{i}.md", "status": "modified"} for i in range(300)]
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=many)
+    assert run(apply=True)["state"] == "dispatched"
+    backend.dispatches.clear()
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=[{
+        "filename": "docs/operations/a.md", "status": "renamed", "previous_filename": "docs/contracts/a.md"}])
+    assert run(apply=True)["state"] == "dispatched"

@@ -90,6 +90,8 @@ _HARD_FAILURES: dict[str, int] = {}
 # Pruned payload bytes since the last compaction (process-local).
 _PRUNED_BYTES: dict[str, int] = {}
 COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
+# Max auth (401/403) dead letters redriven per tick; bounds recovery Registry load.
+AUTH_REDRIVE_PER_TICK = 100
 
 
 def _queue_for(config: "DistillationControllerConfig") -> DistillationJobQueue:
@@ -576,6 +578,7 @@ def run_controller_tick(
             # Re-drive dead letters from transient Registry outages, but only
             # once the Registry answers again (404 on a probe id is an answer).
             registry_reachable = False
+            auth_recovery: dict[str, list[str]] = {"redriven": [], "superseded": []}
             if queue.dead_letter_count():
                 try:
                     _get_registry_entry(config.registry_url, "distillation-redrive-probe")
@@ -586,6 +589,16 @@ def run_controller_tick(
                 queue.redrive_transient_dead_letters(
                     requested_by="strategy-distillation-controller",
                     note="registry reachable again; transient delivery failure redrive",
+                    tenant_id=state.tenant_id,
+                )
+                # Auth (401/403) dead letters: the probe above is made with the
+                # worker's own credential, so reaching this point means the
+                # Registry accepts it again. Bounded per tick; superseded
+                # versions are resolved without delivery.
+                auth_recovery = queue.redrive_auth_dead_letters(
+                    requested_by="strategy-distillation-controller",
+                    note="registry accepts worker credential again; auth failure redrive",
+                    limit=AUTH_REDRIVE_PER_TICK,
                     tenant_id=state.tenant_id,
                 )
             run_result = worker.catch_up(
@@ -605,6 +618,8 @@ def run_controller_tick(
                 "retried": run_result.retried,
                 "dead_lettered": run_result.dead_lettered,
                 "lease_lost": len(run_result.lease_lost),
+                "auth_redriven": len(auth_recovery["redriven"]),
+                "auth_superseded": len(auth_recovery["superseded"]),
             }
         except Exception as exc:
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")

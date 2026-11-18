@@ -1,0 +1,39 @@
+{
+  "task_id": "SOURCE-RECEIPT-STORAGE-REFS-BOUND-20261118",
+  "reproduction": {
+    "test": "services/source_ingestion/tests/test_ingest_receipt_snapshot_refs_bounded.py::test_reproduce_previous_release_writes_oversize_storage_refs_line",
+    "reader": "services/source_ingestion/scheduler.py at 638f5b1bd (dev head when opened), loaded from git",
+    "shape": "history pull of 500 dates, one raw, normalized and feature ref per date, fixed seed 20261118 (local generated data)",
+    "result": "stored receipt line 626895 bytes (budget 16384); journal_stats receipt_lines_over_budget >= 1 (alarm ingest_receipt_line_over_16kb)",
+    "hosted_measurement": "2026-11-18 00:33Z on 13a08deaa: max_receipt_line_bytes 177021, receipt_lines_over_budget 70 (from the task brief; not re-measured here)"
+  },
+  "readers_of_stored_receipt_storage_refs": [
+    {"file": "services/source_ingestion/pipeline.py", "line": 1258, "needs": "per ref dataset, date, uri (to open completed normalized partitions) and row_count/raw/feature refs of reused receipts for the merged manifest", "gets": "LazyStorageRefs.get('normalized_refs'|'raw_refs'|'feature_refs') rebuilt from the partition directory; row_count read from the file lazily", "test": "test_reader_replay_reuse_gets_what_it_needs_from_a_compact_receipt"},
+    {"file": "services/source_ingestion/runtime.py", "line": 1340, "needs": "ref date filter and uri of normalized partitions (controller readback)", "gets": "same lazy rebuild", "test": "test_reader_controller_readback_gets_what_it_needs_from_a_compact_receipt"},
+    {"file": "services/source_ingestion/scheduler.py", "line": "_recover_incomplete_receipts", "needs": "copies the receipt storage_refs into the failed terminal receipt", "gets": "compact form passes through unchanged (idempotent)", "test": "test_history_pull_of_500_dates_stores_counts_dates_and_digest_under_bound (reload)"},
+    {"file": "scripts/migrate_ingest_receipts.py", "needs": "rewrites oversize rows via rewrite_journal_line", "gets": "compacts storage_refs with the same code", "test": "scripts/test_migrate_ingest_receipts.py::test_script_compacts_oversize_storage_refs_rows_and_keeps_the_backup"},
+    {"file": "none other", "note": "no script or reconciliation code reads storage_refs from a stored receipt; services/training-session reads manifests from its own sources, not the receipt journal"}
+  ],
+  "design": {
+    "stored_form": "compact_schema source_ingest_receipt_storage_refs.v2: per store (raw/normalized/feature) and dataset {count,row_count,first_date,last_date,uri_pattern,fields}, ref_counts, digest (sha256 of full canonical list), summary kept; refs that do not fit their pattern stay inline, capped at 32 per store with unlisted_ref_count",
+    "not_stored": "the full list; schema_hash per ref (covered by digest only)",
+    "readers": "LazyStorageRefs answers .get/[] of the three list keys by listing the partition directories inside first..last date; a partition removed since is absent",
+    "ingest_api_response": "unchanged (built from evidence_refs of the run, not from the stored receipt)",
+    "rewrite": "compact_receipt_payload now also compacts payload.storage_refs; the in-service rewrite and scripts/migrate_ingest_receipts.py share it; backup .pre-migrate.bak kept 7 days (SOURCE-RECEIPT-SLIM-KEEPS-BACKUP-20261117) is asserted in test_existing_oversize_lines_are_compacted_by_the_in_service_rewrite_with_backup"
+  },
+  "measured_line_bytes": {"history_500_dates_before": 626895, "history_500_dates_after": 2549, "batch_500_records_after": 2721, "bound": 16384},
+  "previous_release": {"revision": "638f5b1bd", "proof": "test_previous_release_reader_proof_both_directions_through_the_harness via scripts/previous_release_reader.py; the previous release reads a journal written by the new code (receipt present, it reads no ref lists from the compact row: named difference) and the new code reads and compacts a journal written by the previous release"},
+  "validation": [
+    {"command": "pytest services/source_ingestion/tests/test_ingest_receipt_snapshot_refs_bounded.py", "result": "18 passed"},
+    {"command": "pytest services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py services/source_ingestion/tests/test_ingest_schedule_slim_backup.py scripts/test_migrate_ingest_receipts.py", "result": "35 passed before the added script test; scripts/test_migrate_ingest_receipts.py alone 16 passed"},
+    {"command": "pytest services/source_ingestion/tests/test_scheduled_connector.py", "result": "74 passed, 1 skipped"},
+    {"command": "pytest services/source_ingestion/tests/test_collector_market_provenance_bound.py services/source_ingestion/tests/test_controller_readback.py", "result": "10 passed, 3 skipped"},
+    {"command": "python3 scripts/check_storage_manifest.py", "result": "passed true"}
+  ],
+  "residual_findings": [
+    "hosted alarm clears only after the deployed service restarts and runs the in-service rewrite; not exercised on hosted here",
+    "readers expand refs by directory listing per receipt: cost is O(refs) stats per receipt per replay-reuse call, was in-memory before; hosted timing not measured",
+    "pipeline.py and runtime.py are not in the artifact list and are unchanged; LazyStorageRefs keeps their .get(...) calls working"
+  ],
+  "credentials": "none read or recorded"
+}

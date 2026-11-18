@@ -2495,20 +2495,26 @@ jobs:
         shell: /bin/bash --noprofile --norc -uo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          transport="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh"
+          # This job has no checkout at the workspace root: every script comes
+          # from the controller checkout (.agora-gate-controller).
+          controller_scripts="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts"
+          transport="${controller_scripts}/dev_vm_ssh.sh"
+          for required in dev_steady_state_rows.py fetch_dev_artifact_evidence.py; do
+            [[ -f "${controller_scripts}/${required}" ]] || { echo "controller script missing: ${required}" >&2; exit 1; }
+          done
           [[ -f "${transport}" && ! -L "${transport}" && -f "${credentials_dir}/deploy_key" ]] || { echo "ssh transport missing" >&2; exit 1; }
           export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
           mkdir -p "${RESTART_EVIDENCE_DIR}"
           sample() {
             timeout --kill-after=5 30 "${transport}" exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
-              | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "$1"
+              | python3 "${controller_scripts}/dev_steady_state_rows.py" > "$1"
           }
           sample "${RESTART_EVIDENCE_DIR}/sample-1.json" || exit 1
           t1="$(date +%s)"
           sleep 90
           sample "${RESTART_EVIDENCE_DIR}/sample-2.json" || exit 1
           gap=$(( $(date +%s) - t1 ))
-          python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
+          python3 "${controller_scripts}/fetch_dev_artifact_evidence.py" \
             --mode verify-restart-loop \
             --steady-state-file "${RESTART_EVIDENCE_DIR}/sample-1.json" \
             --steady-state-second-file "${RESTART_EVIDENCE_DIR}/sample-2.json" \

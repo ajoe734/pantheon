@@ -231,8 +231,11 @@ Design of record: `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16` section 4.3 (dec
   `bundles/*`, so hosted reads it through the bundle transport it already uses and never fetches the exchange pages.
   Hosted keeps it as one file replaced per listing day and runs it in `SOURCE_INGEST_SECURITY_LISTING_MODE`
   `off` | `shadow` (default, counts only) | `enforce`.
-- **Deployment note.** The Dockerfile copies only `collector_stack/`; shipping `security_listing.py` into the image
-  and scheduling the daily `refresh_security_listing` call is a separate Human/Ops step.
+- **Deployment note.** The image (`docker compose build collector-worker`, build context is the repo root) ships
+  `security_listing.py` at `/app/services/source_ingestion/`, byte-identical to the repo file at the same commit
+  (a test fails on drift); no host-local Dockerfile edit is needed. If the module is missing the loader raises a
+  `CollectorConfigError` naming the paths it looked for. The remaining step is scheduling the daily
+  `refresh_security_listing` call (Human/Ops).
 
 ## Price-history backfill (TWSE / TPEx / T86)
 

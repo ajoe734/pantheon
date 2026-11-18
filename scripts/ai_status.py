@@ -3636,6 +3636,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                             commit_reviewer=actual_value,
                             current_reviewer=expected_value,
                             commit_timestamp=commit_timestamp,
+                            delivered_head=commit_hash,
                         )
                     )
                     continue
@@ -4952,6 +4953,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             old_generation=old_generation,
             new_generation=task["generation"],
         )
+        attach_review_independence_exception(
+            event, _review_exception_capacity_evidence()
+        )
         event["reason"] = assignment_reason
     else:
         # A first-ever assignment (no prior owner/reviewer to reassign from) is
@@ -6062,6 +6066,56 @@ def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def reject_stale_reviewer_trailer_at_handoff(
+    task: Mapping[str, Any], binding: Mapping[str, Any]
+) -> None:
+    """Refuse a delivered head whose Reviewer trailer names a replaced reviewer.
+
+    Only fires when an audited reassignment chain already carries the trailer's
+    reviewer to the current reviewer; everything else is left to the existing
+    done-time verification. Best effort on unavailable git/audit data.
+    """
+
+    head = str(binding.get("head_sha") or "").strip().lower()
+    current = canonical_agent_name(task.get("reviewer"))
+    if not APPROVAL_HEAD_SHA_RE.fullmatch(head) or not current:
+        return
+    try:
+        repository_root = Path.cwd()
+        body = run_git_command(
+            ["show", "-s", "--format=%b", head],
+            cwd=repository_root,
+            required=False,
+        )
+    except OSError:
+        return
+    trailer = _commit_trailer_checker().parse_trailers(body).get("Reviewer")
+    trailer_reviewer = canonical_agent_name(trailer) if trailer else ""
+    if not trailer_reviewer or trailer_reviewer == current:
+        return
+    if trailer_reviewer not in KNOWN_AGENTS:
+        return
+    task_id = str(task.get("id") or "").strip()
+    try:
+        audited = _audited_reassignment_events(
+            task_id, source="handoff reviewer trailer admission", unavailable_message=""
+        )
+        _walk_audited_role_chain(
+            audited,
+            role="reviewer",
+            start=trailer_reviewer,
+            end=current,
+            failure_message="",
+        )
+    except SystemExit:
+        return
+    raise SystemExit(
+        f"Cannot hand off {task_id}: commit {head} has `Reviewer: {trailer}` but an "
+        f"audited reassignment replaced that reviewer; amend the commit so its "
+        f"Reviewer trailer is `{current}` before review."
+    )
+
+
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
@@ -6086,6 +6140,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         or not str(manifest.get("path") or "").strip()
     ):
         raise SystemExit(f"{task_id} review admission returned no evidence manifest identity")
+    reject_stale_reviewer_trailer_at_handoff(task, binding)
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
     task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
@@ -6458,6 +6513,95 @@ def _verified_reassignment_chain(
     }
 
 
+# Model families per AGENTS.md "Review Independence". Reviewer must be of a
+# different family than the owner whenever another family has capacity.
+AGENT_FAMILIES: dict[str, str] = {
+    "claude": "claude",
+    "claude2": "claude",
+    "codex": "codex",
+    "codex2": "codex",
+    "antigravity": "antigravity",
+    "antigravity2": "antigravity",
+    "copilot": "copilot",
+    "piastra": "piastra",
+}
+_REVIEW_EXCEPTION_REASON_LIMIT = 120
+
+
+def agent_family(name: object) -> str | None:
+    """Return the model family of an agent name, or None when it has none."""
+
+    key = str(name or "").strip().casefold()
+    if key in AGENT_FAMILIES:
+        return AGENT_FAMILIES[key]
+    # codex1_1 / codex2_3 style lane aliases belong to the codex family.
+    if key.startswith("codex"):
+        return "codex"
+    return None
+
+
+def build_review_independence_exception(
+    *,
+    owner: object,
+    reviewer: object,
+    capacity_evidence: Mapping[str, Any] | None = None,
+) -> dict[str, object] | None:
+    """Record why a same-family reviewer was used, or None when independent.
+
+    Bounded: at most one entry per other family (four), each reason capped, so
+    the record adds well under 1 KiB to one activity event per reassignment.
+    """
+
+    owner_family = agent_family(owner)
+    reviewer_family = agent_family(reviewer)
+    if owner_family is None or reviewer_family is None:
+        return None
+    if owner_family != reviewer_family:
+        return None
+    evidence = {
+        str(key).strip().casefold(): str(value or "").strip()
+        for key, value in (capacity_evidence or {}).items()
+    }
+    considered = []
+    for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family}):
+        reason = evidence.get(family) or "no capacity evidence supplied"
+        considered.append(
+            {"family": family, "reason": reason[:_REVIEW_EXCEPTION_REASON_LIMIT]}
+        )
+    return {
+        "owner_family": owner_family,
+        "reviewer_family": reviewer_family,
+        "considered": considered,
+    }
+
+
+def attach_review_independence_exception(
+    event: dict[str, Any],
+    capacity_evidence: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Add the exception record to a canonical reassignment event, if due."""
+
+    exception = build_review_independence_exception(
+        owner=event.get("new_owner"),
+        reviewer=event.get("new_reviewer"),
+        capacity_evidence=capacity_evidence,
+    )
+    if exception is not None:
+        event["review_independence_exception"] = exception
+    return event
+
+
+def _review_exception_capacity_evidence() -> dict[str, str]:
+    """Parse TASK_REVIEW_EXCEPTION_EVIDENCE ("family=reason;family=reason")."""
+
+    evidence: dict[str, str] = {}
+    for part in os.environ.get("TASK_REVIEW_EXCEPTION_EVIDENCE", "").split(";"):
+        family, sep, reason = part.partition("=")
+        if sep and family.strip() and reason.strip():
+            evidence[family.strip().casefold()] = reason.strip()
+    return evidence
+
+
 def _verified_reviewer_reassignment(
     task: dict[str, Any],
     *,
@@ -6696,8 +6840,14 @@ def _verified_done_reviewer_reassignment(
     commit_reviewer: str,
     current_reviewer: str,
     commit_timestamp: str,
+    delivered_head: str = "",
 ) -> dict[str, Any]:
     """Prove that canonical audited reassignments explain reviewer drift at done.
+
+    When the reassignment precedes the delivered commit (the worker kept
+    writing the replaced reviewer's name), the chain is accepted only if the
+    canonical approval binding names exactly ``delivered_head`` while the task
+    is review_approved (approval is only recordable by the current reviewer).
 
     A delivered commit whose `LLM-Agent` trailer went stale almost always has a
     stale `Reviewer` trailer too, because the supervisor reassigns the pair
@@ -6767,12 +6917,31 @@ def _verified_done_reviewer_reassignment(
         if canonical_agent_name(event.get("old_reviewer"))
         != canonical_agent_name(event.get("new_reviewer"))
     ]
+    chain_not_before: datetime | None = delivered_at
+    head_bound_approval = False
     if reviewer_changes and not any(
         event_timestamp >= delivered_at for event_timestamp, _ in reviewer_changes
     ):
-        raise SystemExit(
-            "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
+        approval = task.get(APPROVAL_BINDING_KEY)
+        approved_head = (
+            str(approval.get("head_sha") or "").strip().lower()
+            if isinstance(approval, Mapping)
+            else ""
         )
+        delivered = str(delivered_head or "").strip().lower()
+        if not (
+            delivered
+            and approved_head == delivered
+            and str(task.get("status") or "").strip() == "review_approved"
+        ):
+            raise SystemExit(
+                "Cannot finalize task: audited reviewer reassignment must follow the "
+                "delivered commit, or the current reviewer's canonical approval must "
+                "bind the exact delivered head "
+                f"(delivered={delivered or 'unknown'}, approved={approved_head or 'missing'})."
+            )
+        chain_not_before = None
+        head_bound_approval = True
     chain = _walk_audited_role_chain(
         audited,
         role="reviewer",
@@ -6782,11 +6951,12 @@ def _verified_done_reviewer_reassignment(
             "Cannot finalize task: the audited reviewer reassignment chain does not "
             "bind the commit reviewer to the current reviewer."
         ),
-        not_before=delivered_at,
+        not_before=chain_not_before,
     )
 
     last_event = chain[-1][1]
     return {
+        "approved_head_binding": head_bound_approval,
         "event_id": str(last_event.get("event_id")),
         "ts": str(last_event.get("ts")),
         "old_reviewer": commit_reviewer_canonical,
