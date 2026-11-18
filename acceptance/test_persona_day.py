@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from acceptance import persona_day as pd
 
 PID = "persona-a"
-NOW = datetime(2026, 11, 17, 6, 30, tzinfo=timezone.utc)  # Tue 14:30 Taipei -> trading day 2026-11-17
-RUN_MS = int(datetime(2026, 11, 17, 2, 0, tzinfo=timezone.utc).timestamp() * 1000)
+NOW = datetime(2026, 11, 17, 11, 30, tzinfo=timezone.utc)  # after the 10:00Z cycle -> cycle day 2026-11-17
+RUN_MS = int(datetime(2026, 11, 17, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def packet(**cycle):
@@ -16,7 +16,7 @@ def packet(**cycle):
             "output": {"proposals": [{"kind": "no_action", "case_file_item_ids": ["i1"]}]}}
     base.update(cycle)
     return {"packet_id": "p1", "persona_ids": [PID], "producer": {"cron_run_at_ms": RUN_MS},
-            "updated_at": "2026-11-17T02:05:00Z", "persona_cycle": base,
+            "updated_at": "2026-11-17T10:05:00Z", "persona_cycle": base,
             "pool_autonomy": {"status": "completed"}}
 
 
@@ -93,3 +93,66 @@ def test_tool_use_survives_packet_store_compaction():
     out = bound_packet_payload(packet)
     assert out["persona_cycle"]["tool_use"] == {"memory_recall_ok": 1, "proposals_recorded": 2}
     assert len(json.dumps(out["persona_cycle"]["tool_use"])) < 200
+
+
+def test_cycle_day_is_utc_and_late_run_is_harmless():
+    early = datetime(2026, 11, 17, 6, 30, tzinfo=timezone.utc)
+    assert pd.cycle_day(early) == "2026-11-16"            # before the window ends: previous cycle
+    assert pd.cycle_day(datetime(2026, 11, 17, 10, 44, tzinfo=timezone.utc)) == "2026-11-16"
+    for h in (10, 11, 15, 23):                              # 10:45Z.. end of day: same cycle day
+        assert pd.cycle_day(datetime(2026, 11, 17, h, 45, tzinfo=timezone.utc)) == "2026-11-17"
+    r = day(packets=[packet()])
+    assert r["cycle_day"] == "2026-11-17" and r["cycle_due_at_utc"] == "2026-11-17T10:00:00+00:00"
+    late = pd.evaluate_persona_day(PID, lifecycle_state="paper_owner", cron_jobs=1, packets=[packet()],
+                                   now=datetime(2026, 11, 17, 22, 0, tzinfo=timezone.utc))
+    assert late["passed"] and late["cycle_day"] == "2026-11-17"
+    at_0630 = pd.evaluate_persona_day(PID, lifecycle_state="paper_owner", cron_jobs=1, packets=[packet()], now=early)
+    assert at_0630["cycle_day"] == "2026-11-16" and not at_0630["passed"]
+    assert pd.aggregate([r])["cycle_day"] == "2026-11-17"
+
+
+def _env(monkeypatch, **kw):
+    for k in ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in kw.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_missing_credential_is_failed_not_skipped(monkeypatch, capsys):
+    _env(monkeypatch, ACCEPTANCE_BFF_URL="https://bff.example")
+    assert pd.main() == 1
+    assert json.loads(capsys.readouterr().out) == {"verdict": "failed", "reason": "credential_missing:viewer_client"}
+
+
+def test_auth_and_read_failures_carry_http_status(monkeypatch, capsys):
+    import urllib.error
+    _env(monkeypatch, ACCEPTANCE_BFF_URL="https://bff.example", ACCEPTANCE_VIEWER_CLIENT_ID="v",
+         ACCEPTANCE_VIEWER_CLIENT_SECRET="SECRET-VALUE")
+
+    def boom(code):
+        def opener(request, timeout=0):
+            raise urllib.error.HTTPError(request.full_url, code, "x", {}, None)
+        return opener
+    monkeypatch.setattr(pd.urllib.request, "urlopen", boom(401))
+    assert pd.main() == 1
+    out = capsys.readouterr().out
+    assert json.loads(out)["reason"] == "auth_failed:401" and "SECRET-VALUE" not in out
+
+    class Resp:
+        def __init__(self, body): self.body = body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, *a): return self.body
+    calls = []
+
+    def opener(request, timeout=0):
+        calls.append((request.get_method(), request.full_url))
+        if request.get_method() == "POST":
+            return Resp(b'{"access_token": "TOKEN-VALUE"}')
+        assert request.headers["Authorization"] == "Bearer TOKEN-VALUE"
+        raise urllib.error.HTTPError(request.full_url, 503, "x", {}, None)
+    monkeypatch.setattr(pd.urllib.request, "urlopen", opener)
+    assert pd.main() == 1
+    out = capsys.readouterr().out
+    assert json.loads(out)["reason"] == "read_failed:503" and "TOKEN-VALUE" not in out
+    assert [m for m, _ in calls] == ["POST", "GET"]

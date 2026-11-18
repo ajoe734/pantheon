@@ -1,0 +1,32 @@
+{
+  "task": "PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118",
+  "defects_fixed": [
+    "workflow step piped to tee without pipefail (exit code lost)",
+    "nonexistent secret DEV_ACCEPTANCE_READ_TOKEN replaced by dev-login viewer exchange",
+    "failure reasons carry HTTP status (auth_failed:401, read_failed:503, credential_missing)",
+    "cycle day derived from 10:00 UTC (window end 10:45Z), not Taipei 12:00; cron moved 06:30Z -> 11:30Z weekdays"
+  ],
+  "same_data_judged_at_different_start_times": {
+    "run_0630Z": {
+      "cycle_day": "2026-11-16",
+      "cycle_due_at_utc": "2026-11-16T10:00:00+00:00"
+    },
+    "run_1130Z": {
+      "cycle_day": "2026-11-17",
+      "cycle_due_at_utc": "2026-11-17T10:00:00+00:00"
+    },
+    "run_late_2200Z": {
+      "cycle_day": "2026-11-17",
+      "cycle_due_at_utc": "2026-11-17T10:00:00+00:00"
+    }
+  },
+  "note": "06:30Z judges the previous UTC cycle day (not yet due); 11:30Z and any later start on the same UTC day judge that day.",
+  "runtime_budget": {
+    "workflow_runs_per_weekday": 1,
+    "artifact": "persona-day.json, a few KB, 30-day retention",
+    "hosted_writers": 0,
+    "new_secrets": 0
+  },
+  "tests": "acceptance/test_persona_day.py, services/control-plane/bff/tests/test_persona_cycle_views.py, scripts/test_acceptance_workflows_truthful.py: 43+1 passed",
+  "residual": "Cycle due time is a constant; BFF has no cron reader, so it is not read from the cron job definition. Hosted run after merge still needed to confirm login on dev."
+}

@@ -253,3 +253,16 @@ def test_detail_exposes_probe_day_status(cycle_stack, route):
     assert tuple(names) == PRECONDITIONS
     assert day["first_failed_precondition"] in PRECONDITIONS
     assert "PRIVATE_CASE_FILE" not in str(day)
+
+
+@pytest.mark.parametrize("route", PATHS)
+def test_detail_day_matches_probe_cycle_day(cycle_stack, route):
+    """The page judges the same UTC cycle day and due time as the probe for the same clock."""
+    from datetime import datetime, timezone
+    from acceptance.persona_day import cycle_day, cycle_due_at
+    client, *_ = cycle_stack
+    before = cycle_day(datetime.now(timezone.utc))
+    day = client.get(route, headers=headers()).json()["data"]["personaCycle"]["dayStatus"]
+    after = cycle_day(datetime.now(timezone.utc))
+    assert day["cycle_day"] in {before, after} and day["trading_day"] == day["cycle_day"]
+    assert day["cycle_due_at_utc"] == cycle_due_at(day["cycle_day"])
