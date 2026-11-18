@@ -85,7 +85,10 @@ KNOWN_RUN_FILE_READERS: tuple[dict[str, Any], ...] = (
               "the status column, the status only files and the lineage entry of each run (design 5.2a)",
      "marker": "def _read_bars(", "switched_marker": "_read_captures_from_daily_bars", "switched": True},
     {"file": "services/source_ingestion/snapshot_universe.py", "part": "_partition_dates (seed)",
-     "reads": "raw/<source>/tw_price_daily run files to seed a latest market snapshot",
+     "reads": "raw/<source>/tw_price_daily run files to seed a latest market snapshot. With the daily bars setting "
+              "the newest 60 closes come from daily bars (_seed_from_daily_bars) but the run file read stays as the "
+              "fallback (fewer than 60 stored dates, fewer closes than needed, unreadable store), so it is NOT "
+              "switched: it stays unswitched until the default reads daily bars and the fallback is removed",
      "marker": "DAILY_PRICE_DATASET", "switched_marker": "", "switched": False},
     {"file": "services/source_ingestion/pin_source.py", "part": "_run_file_dates",
      "reads": "run file NAMES of tw_price_daily partitions to turn pinned run ids into pinned dates: after a "
@@ -119,6 +122,7 @@ SCAN_FALSE_POSITIVES: dict[str, str] = {
     "services/source_ingestion/finmind_broker_backfill.py": "documents where rows are written; reads none",
     "services/source_ingestion/intraday_store.py": "tw_price_1m store; never reads tw_price_daily",
     "services/source_ingestion/runtime.py": "status string 'normalized', not a path",
+    "services/source_ingestion/scheduler.py": "compacts receipt storage_refs (raw_refs/normalized_refs lists); opens no run file",
     "scripts/check_market_data_budget.py": "measures budgets from the writer, opens no run file",
 }
 
