@@ -70,3 +70,48 @@ the comparison base, so the next release that changes a build input carries the 
 commits. Skipped commits stay merged on dev; they never become deployed by themselves.
 The publish cut summary prints the skip with the changed file count and the served commit.
 Evidence: `docs/deployment/evidence/DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117/evidence.json`.
+
+## Quiet windows: no dispatch during trading or the persona daily cycle
+
+Task: DEV-DEPLOY-QUIET-WINDOWS-20261118 (register RC1 / WP1.4; operator decision 2026-11-18).
+
+`scripts/auto_deploy_dev_pair.py` holds the dispatch while the current UTC time is inside
+a quiet window and returns state `held_quiet_window` with the window, `window_ends_at`
+and `dispatch_allowed_from`. Windows are read from the single repository variable
+`DEV_DEPLOY_QUIET_WINDOWS` by the `dev-pair` job of `nightly-publish-cut.yml` (no new
+`workflow_dispatch` input). Syntax, UTC: `<days> HH:MM-HH:MM; <days> HH:MM-HH:MM`, where
+days is `daily`, a range `mon-fri`, or a list `sat,sun`; a window does not cross midnight.
+
+Default when the variable is unset or blank:
+`mon-fri 00:30-05:30; daily 09:05-10:45` (Taiwan session Monday to Friday; persona
+daily cycle every day). A malformed value fails closed to the defaults and the run
+summary prints a WARNING naming the parse error.
+
+**Operator change:** edit the repository variable (Settings, Variables, or
+`gh variable set DEV_DEPLOY_QUIET_WINDOWS --body '...'`); it applies from the next run.
+
+Rules:
+- A window also holds a dispatch whose backend switch would fall inside it. Lead time
+  used: 17 minutes (measured: backend containers recreated about 17 minutes after
+  dispatch; a rollback follows about 12 minutes later, 29 minutes after dispatch, and is
+  not predicted). So 00:13Z is held for the 00:30Z window; 00:12Z is not.
+- A release already running when a window starts is never cancelled (`deployment_in_progress`
+  is decided before the window check).
+- Nothing is queued. After the window the next green-commit trigger or the `17 * * * *`
+  fallback dispatches the newest green commit; greens that arrived inside the window
+  collapse into that one release.
+- The `cut` (publish snapshot) job is unaffected; only the dispatch is held. Newest-green
+  selection and the failed-pair rule are unchanged.
+- Every run summary shows `- state: <state>`; a held release prints the window and the
+  time it ends, so it is not mistaken for a broken trigger.
+- No new writer, no new recurring job.
+
+**Remove after this is merged** (coordinator, on the development host): the temporary
+systemd user timers and scripts that disable the whole workflow with `gh workflow disable`:
+`claude-deploy-hold-pause-20261118` and `claude-deploy-hold-resume-20261118` (script
+`~/claude-evidence/persona-day-deploy-hold-20261118/hold.sh`) and
+`claude-trading-hold-resume-20261118` (script
+`~/claude-evidence/trading-hours-deploy-hold-20261118/hold.sh`). Confirm the workflow is
+enabled (`gh workflow list`) afterwards.
+
+Evidence: `docs/deployment/evidence/DEV-DEPLOY-QUIET-WINDOWS-20261118/evidence.json`.
