@@ -258,7 +258,11 @@ export function createPlugin(deps: PluginDeps = {}) {
       // stays a plain writable file. With no plugin config the broker comes from the process env; with
       // no broker token at all the plugin is inert (no hook, no tools).
       let rawConfig = api.pluginConfig;
-      if (rawConfig === undefined || rawConfig === null) {
+      // The gateway validates a missing plugin entry as {} (applyDefaults), so an object with no keys is
+      // the same "no config" case as undefined/null.
+      const isEmptyObject =
+        typeof rawConfig === "object" && rawConfig !== null && !Array.isArray(rawConfig) && Object.keys(rawConfig).length === 0;
+      if (rawConfig === undefined || rawConfig === null || isEmptyObject) {
         const token = (env[ENV_BROKER_TOKEN] ?? "").trim();
         if (!token) return;
         rawConfig = { brokerUrl: env[ENV_BROKER_URL] ?? "", brokerToken: token };

@@ -262,3 +262,33 @@ test("env-provided broker config is used when plugin config is absent", async ()
   bad.register({ registerTool() {}, on(_n: string, h: Handler) { badHook = h; } } as any);
   assert.equal((await badHook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
 });
+
+test("an empty validated plugin config object (what the gateway hands register) falls back to the env like a missing one", async () => {
+  const env = { PERSONA_TOOL_BROKER_URL: "http://adapter:8104/internal/persona-tools/v1/", PERSONA_TOOL_BROKER_TOKEN: "env-secret" };
+  const calls: any[] = [];
+  const fetchImpl = (async (url: string, init: any) => {
+    calls.push({ url, headers: init.headers });
+    return { status: 200, json: async () => ({ allowed: true, allowed_tools: [...PANTHEON_TOOLS] }) };
+  }) as any;
+  const registered: string[] = [];
+  let hook: Handler | undefined;
+  createPlugin({ env, fetchImpl }).register({
+    pluginConfig: {},
+    registerTool(_f: any, o: any) { registered.push(...(o?.names ?? [o?.name])); },
+    on(_n: string, h: Handler) { hook = h; },
+  } as any);
+  assert.ok(hook);
+  assert.equal(await hook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX), undefined);
+  assert.equal(calls[0].url, "http://adapter:8104/internal/persona-tools/v1/authorize");
+  assert.equal(calls[0].headers.Authorization, "Bearer env-secret");
+  // empty config and no token: inert
+  let inertHook: Handler | undefined;
+  let inertTools = 0;
+  createPlugin({ env: {} }).register({ pluginConfig: {}, registerTool() { inertTools++; }, on(_n: string, h: Handler) { inertHook = h; } } as any);
+  assert.equal(inertHook, undefined);
+  assert.equal(inertTools, 0);
+  // a non-empty config still wins and is validated (invalid -> fail closed, env not used)
+  let badHook: Handler | undefined;
+  createPlugin({ env, fetchImpl }).register({ pluginConfig: { brokerUrl: "nope" }, registerTool() {}, on(_n: string, h: Handler) { badHook = h; } } as any);
+  assert.equal((await badHook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
+});
