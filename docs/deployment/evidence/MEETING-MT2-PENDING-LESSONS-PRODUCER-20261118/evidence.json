@@ -1,0 +1,13 @@
+{
+  "task_id": "MEETING-MT2-PENDING-LESSONS-PRODUCER-20261118",
+  "change": "persona_cycle_controller.pending_lesson_count derives observe['pending_lesson_candidates'] from cycle['lesson_governance'] results (statuses skipped/deferred/risk_review_*/endorse_refused, excluding foreign_candidate) before _meeting_step; None when governance is not completed. MT-2 records reason pending_lesson_count_unavailable instead of a null count.",
+  "tests": "services/persona test_meeting_triggers.py + test_persona_cycle_controller.py + test_lesson_cycle.py: 110 passed, 4 skipped",
+  "acceptance_coverage": {
+    "threshold_3_fires_once_per_week_key": "test_mt2_three_pending_fire_once_per_week_key_and_two_do_not",
+    "two_not_firing": "same test",
+    "unavailable_named": "test_mt2_names_unavailable_pending_count",
+    "hosted_shape_human_endorsement_required": "test_pending_lesson_count_from_governance_result"
+  },
+  "runtime_budget": "no new writer and no extra memory read per cycle; count reuses the read lesson_governance already made",
+  "review_independence": "reviewer Antigravity; record exception if no other model family has capacity"
+}
