@@ -120,3 +120,19 @@ def test_background_schedule_single_flight_and_stops(tmp_path):
     thread = universe._sweep_thread
     universe.stop_background_sweeps()
     assert thread is not None and not thread.is_alive()
+
+
+def test_router_request_handlers_never_call_sweep():
+    """get_latest_market_snapshot (and every handler but the operator sweep endpoint) never sweeps."""
+    import ast
+
+    from services.source_ingestion.routers import ingest_operations as ops
+
+    tree = ast.parse(Path(ops.__file__).read_text(encoding="utf-8"))
+    handlers = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "get_latest_market_snapshot" in handlers
+    for name, node in handlers.items():
+        called = {n.func.attr for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        if name in {"sweep_snapshot_universe", "create_ingest_operations_router"}:  # operator POST (not a lookup) / factory enclosing all handlers
+            continue
+        assert not {"sweep", "maybe_sweep", "initialize"} & called, name
