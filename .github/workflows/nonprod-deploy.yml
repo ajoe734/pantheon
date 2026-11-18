@@ -1436,6 +1436,7 @@ jobs:
           SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
           SOURCE_INGEST_MAX_RECORDS: "100"
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
           PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE: ${{ vars.PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE || '20GB' }}
           PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB: ${{ vars.PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB || '25' }}
           PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED: ${{ vars.PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED || '3' }}
@@ -3554,6 +3555,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3668,6 +3670,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3842,6 +3845,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
 

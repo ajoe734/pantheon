@@ -76,6 +76,15 @@ class MockMounts:
 # ---------------------------------------------------------------------------
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2:operator"}
 
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    # The chain is a deployment variable; these are only its fixture values.
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
 def _fresh_client(td: str) -> TestClient:
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
@@ -302,7 +311,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
         "id": "persona-alpha",
         "name": "Alpha Persona",
         "mandate": "Trade momentum",
-        "preferred_model": "openai/gpt-5.5",
+        "preferred_model": "fx-b/model-3",
     }
 
     # Mock openclaw agents list to show an existing agent with a different model
@@ -311,7 +320,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
             return subprocess.CompletedProcess(
                 args=args,
                 returncode=0,
-                stdout=json.dumps({"agents": [{"id": "persona-alpha", "model": "anthropic/claude-opus-4-8"}]}),
+                stdout=json.dumps({"agents": [{"id": "persona-alpha", "model": "fx-a/model-1"}]}),
                 stderr=""
             )
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="{}", stderr="")
@@ -320,13 +329,13 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
         [persona],
         runner=mock_runner_drift,
         soul_writer=lambda ws, s: None,
-        route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}},
+        route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "fx-b/model-3"}},
     )
 
     assert len(report.failed) == 1
     assert report.failed[0]["persona_id"] == "persona-alpha"
     assert report.failed[0]["error"] == "model_drift_update_unavailable"
-    assert report.failed[0]["desired_model"] == "openai/gpt-5.5"
+    assert report.failed[0]["desired_model"] == "fx-b/model-3"
 
     # 2. Test successful creation of a new agent
     def mock_runner_create(args: list[str]):
@@ -347,7 +356,7 @@ def test_sync_persona_agents_reconciliation_and_model_drift() -> None:
         [persona],
         runner=mock_runner_create,
         soul_writer=mock_soul_writer,
-        route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"}},
+        route_policy_resolver=lambda p: {"model_routing": {"mode": "hard_pin", "model": "fx-b/model-3"}},
     )
 
     assert len(report_create.created) == 1

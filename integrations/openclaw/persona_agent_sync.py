@@ -26,7 +26,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
-from services.persona.runtime_profile import DEFAULT_PERSONA_MODEL, build_persona_runtime_profile
+from services.persona.model_chain import chain_from_gateway_model
+from services.persona.runtime_profile import build_persona_runtime_profile
 
 # Workspaces for synced persona agents live under the gateway state dir.
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
@@ -84,6 +85,8 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
 def _runtime_profile_model(
     persona: Mapping[str, Any],
     route_policy: Optional[Mapping[str, Any]] = None,
+    model_chain: Optional[Sequence[str]] = None,
+    provider_pool: Optional[Mapping[str, Any]] = None,
 ) -> tuple[str, List[str], str, str, int]:
     policy = (
         {"model_routing": dict(route_policy)}
@@ -95,7 +98,12 @@ def _runtime_profile_model(
         and ("mode" in route_policy or "routing_mode" in route_policy)
         else route_policy
     )
-    profile = build_persona_runtime_profile(persona, route_policy=policy)
+    profile = build_persona_runtime_profile(
+        persona,
+        route_policy=policy,
+        provider_pool=provider_pool,
+        model_chain=model_chain,
+    )
     routing = profile.model_routing
     if routing.status != "ready" or not routing.primary_model:
         reason = routing.blocked_reason or routing.reason or "model_routing_degraded"
@@ -345,12 +353,14 @@ def desired_agent_spec(
     persona: Mapping[str, Any],
     *,
     route_policy: Optional[Mapping[str, Any]] = None,
+    model_chain: Optional[Sequence[str]] = None,
+    provider_pool: Optional[Mapping[str, Any]] = None,
 ) -> PersonaAgentSpec:
     pid = _persona_id(persona)
     if not pid:
         raise ValueError("persona record has no persona_id/id")
     model, fallback_models, routing_mode, workspace, sync_generation = _runtime_profile_model(
-        persona, route_policy=route_policy
+        persona, route_policy=route_policy, model_chain=model_chain, provider_pool=provider_pool
     )
     return PersonaAgentSpec(
         persona_id=pid,
@@ -491,6 +501,28 @@ def _reconcile_agent_model_policy(
             "error": (set_proc.stderr or set_proc.stdout or "agents.list model policy write failed")[:300],
         }
     return None
+
+
+def _gateway_model_registry(run: CliRunner) -> tuple[Optional[List[str]], Optional[Dict[str, Any]]]:
+    """(default chain, registered models) as the gateway reports them at sync time.
+
+    Persona routing and route-policy validation follow these instead of any list
+    in code. An unreadable value is None so the caller falls back to the
+    configured chain (a pin outside it then fails closed as unknown_model_ref).
+    """
+
+    def _read(path: str) -> Any:
+        try:
+            proc = run(["openclaw", "config", "get", path, "--json"])
+            if proc.returncode != 0:
+                return None
+            return json.loads((proc.stdout or "").strip() or "null")
+        except Exception:  # noqa: BLE001 - advisory read; never blocks the sync
+            return None
+
+    chain = chain_from_gateway_model(_read("agents.defaults.model")) or None
+    models = _read("agents.defaults.models")
+    return chain, (models if isinstance(models, dict) and models else None)
 
 
 def _existing_agents(runner: CliRunner) -> Dict[str, Dict[str, Any]]:
@@ -645,13 +677,19 @@ def _sync_persona_agents_locked(
     except Exception as exc:  # noqa: BLE001
         report.failed.append({"persona_id": "*", "error": f"agents list failed: {exc}"})
         return report
+    gateway_chain, gateway_models = _gateway_model_registry(run)
 
     for persona in personas:
         try:
             if skip_persona and skip_persona(persona):
                 continue
             route_policy = route_policy_resolver(persona) if route_policy_resolver else None
-            spec = desired_agent_spec(persona, route_policy=route_policy)
+            spec = desired_agent_spec(
+                persona,
+                route_policy=route_policy,
+                model_chain=gateway_chain,
+                provider_pool=gateway_models,
+            )
             existing_agent = existing.get(spec.persona_id)
             if existing_agent is not None:
                 current_model = str(existing_agent.get("model") or "").strip()
