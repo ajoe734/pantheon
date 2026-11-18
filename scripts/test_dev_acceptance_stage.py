@@ -135,3 +135,17 @@ def test_readme_example_probe_satisfies_contract(tmp_path):
     probe(tmp_path, "example", body)
     found = stage.discover_probes(tmp_path)
     assert found[0]["owner"] and found[0]["executable"]
+
+
+def test_repo_probes_dir_has_no_daily_state_probe():
+    repo_probes = Path(__file__).resolve().parent.parent / "acceptance" / "probes"
+    assert "probe:persona-day" not in {p["id"] for p in stage.discover_probes(repo_probes)}
+
+
+def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
+    # identity passed; the persona-day daily probe is not a release probe, so it is not run at all.
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(
+        Path(__file__).resolve().parent.parent / "acceptance" / "probes"), identity=IDENT,
+        base_env=dict(os.environ), lease_held=False, identity_fn=OK)
+    assert [r["id"] for r in results] == ["check:deployed-pair-identity"]
+    assert stage.verdict_status(results) == "passed"
