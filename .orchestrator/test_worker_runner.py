@@ -86,3 +86,13 @@ class WorkerTempSandboxTests(unittest.TestCase):
             idx = [i for i, a in enumerate(cmd) if a == str(temp_dir.resolve())]
             self.assertTrue(idx)
             self.assertEqual(cmd[idx[0] - 1], "--bind-try")
+
+
+class WorkerChildEnvTests(unittest.TestCase):
+    def test_child_env_carries_canonical_agent_and_private_temp(self) -> None:
+        env = wr.build_worker_child_env(
+            {"PANTHEON_WORKER_AGENT": "Other", "X": "1"}, Path("/tmp/wt"), "Claude"
+        )
+        self.assertEqual(env["PANTHEON_WORKER_AGENT"], "Claude")
+        self.assertEqual({env[k] for k in ("TMPDIR", "TMP", "TEMP")}, {"/tmp/wt"})
+        self.assertEqual(env["X"], "1")
