@@ -31,7 +31,7 @@ log() { echo "[openclaw-credential-probe] $*"; }
 
 # Non-authoritative warm-up: refreshes the on-disk credential when it still has
 # a usable refresh token. Never allowed to decide the outcome.
-if docker exec "${CONTAINER}" claude -p "Reply exactly: OK" --model haiku </dev/null >/dev/null 2>&1; then
+if docker exec "${CONTAINER}" claude -p "Reply exactly: OK" </dev/null >/dev/null 2>&1; then
   log "raw-CLI warm-up succeeded (advisory only; this is NOT the path OpenClaw uses)"
 else
   log "raw-CLI warm-up failed (advisory only)"
@@ -42,7 +42,7 @@ fi
 #
 # A bare `openclaw agent` call is NOT equivalent and must not be substituted:
 # it lets the gateway pick any model from its own fallback chain, so it answers
-# via openai/gpt-5.6-sol even while the Claude credential is expired. The
+# via a fallback chain model even while the Claude credential is expired. The
 # adapter instead pins each candidate model explicitly and applies its own
 # per-candidate budget, which is why the two disagree. A probe that is easier to
 # satisfy than the path it guards is the same defect this file exists to prevent.

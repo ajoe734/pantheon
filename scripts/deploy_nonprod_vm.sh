@@ -1095,6 +1095,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" OPENCLAW_MODEL_CHAIN=$(shell_quote "${OPENCLAW_MODEL_CHAIN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
@@ -7235,9 +7236,17 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # Phase 4: Post-Deploy Bounded Verification
     run_dev_advisory_check bounded_source_refresh_readback source_refresh_readback \
       verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}"
+    # Exit 3 = the requested OPENCLAW_MODEL_CHAIN was refused (unregistered or
+    # CLI-runtime ref) and the previous chain was kept: advisory, never a
+    # rollback. Any other non-zero exit keeps the existing rollback behaviour.
+    model_pool_rc=0
     PANTHEON_DEV_REPO="$(pwd)" \
-      bash scripts/openclaw-configure-shared-model-pool.sh \
-      || rollback_dev_bff_on_failure "shared_model_pool"
+      bash scripts/openclaw-configure-shared-model-pool.sh || model_pool_rc=$?
+    if [[ "${model_pool_rc}" -eq 3 ]]; then
+      info "warning: advisory openclaw_model_chain_refused; previous chain kept (see configure output)"
+    elif [[ "${model_pool_rc}" -ne 0 ]]; then
+      rollback_dev_bff_on_failure "shared_model_pool"
+    fi
     retire_dormant_and_one_off_profile_containers \
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
     run_dev_advisory_check dev_paper_fleet paper_fleet verify_dev_paper_fleet

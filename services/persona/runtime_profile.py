@@ -7,23 +7,88 @@ provider/model pool references, never provider auth material.
 from __future__ import annotations
 
 import json
+import os
+import re
+import sys
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, List, Mapping, Optional, Sequence
 
 
-PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
-DEFAULT_PERSONA_MODEL = "anthropic/claude-opus-4-8"
-MODEL_POOL_ORDER = (
+
+# --- model chain: one deployment variable, one default ---------------------
+CHAIN_ENV = "OPENCLAW_MODEL_CHAIN"
+# The only default chain in non-test source (first = primary). Used only when
+# OPENCLAW_MODEL_CHAIN is unset or blank; keeps the chain served before the
+# variable existed. `python3 -m services.persona.runtime_profile default-chain`
+# prints it for the configure script.
+DEFAULT_MODEL_CHAIN = (
     "anthropic/claude-opus-4-8",
-    "anthropic/claude-sonnet-4-6",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.5",
 )
-# Models whose agentRuntime is claude-cli: the gateway gives before_tool_call no
-# host identity there, so every persona tool is blocked. They may be a primary
-# an operator pins explicitly, but are never an automatic persona fallback.
-PERSONA_TOOLS_BLOCKED_MODEL_REFS = frozenset({"anthropic/claude-sonnet-4-6"})
-KNOWN_MODEL_POOL_REFS = frozenset(MODEL_POOL_ORDER)
+GATEWAY_NATIVE_RUNTIME = "openclaw"
+
+
+def parse_chain(raw: Any) -> List[str]:
+    """Ordered, de-duplicated refs from a delimited string or an iterable."""
+    if raw is None:
+        return []
+    items: Iterable[Any] = re.split(r"[,\s]+", raw) if isinstance(raw, str) else raw
+    out: List[str] = []
+    for item in items:
+        ref = str(item or "").strip()
+        if ref and ref not in out:
+            out.append(ref)
+    return out
+
+
+def default_chain() -> List[str]:
+    """The shipped default chain: the single place a default is named."""
+    return list(DEFAULT_MODEL_CHAIN)
+
+
+def configured_chain(environ: Optional[Mapping[str, str]] = None) -> List[str]:
+    env = os.environ if environ is None else environ
+    return parse_chain(env.get(CHAIN_ENV)) or default_chain()
+
+
+def chain_from_gateway_model(model: Any) -> List[str]:
+    """Chain from a gateway ``agents.defaults.model`` value (str or primary/fallbacks)."""
+    if isinstance(model, str):
+        return parse_chain(model)
+    if isinstance(model, Mapping):
+        return parse_chain([model.get("primary"), *(model.get("fallbacks") or [])])
+    return []
+
+
+def registered_refs(models: Any) -> List[str]:
+    """Model refs registered in the gateway (``agents.defaults.models`` keys)."""
+    return [str(k) for k in models] if isinstance(models, Mapping) else []
+
+
+def cli_runtime_refs(models: Any) -> set[str]:
+    """Registered refs whose agentRuntime is not the gateway-native runtime.
+
+    Persona tool calls lack host identity on CLI backends, so these refs may not
+    appear in a chain or a persona fallback.
+    """
+    out: set[str] = set()
+    if not isinstance(models, Mapping):
+        return out
+    for ref, entry in models.items():
+        runtime = entry.get("agentRuntime") if isinstance(entry, Mapping) else None
+        rid = str(runtime.get("id") or "").strip() if isinstance(runtime, Mapping) else ""
+        if rid and rid != GATEWAY_NATIVE_RUNTIME:
+            out.add(str(ref))
+    return out
+
+
+PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
+# The model chain (primary first) is not named here: it comes from
+# services.persona.model_chain (OPENCLAW_MODEL_CHAIN, else the one default
+# file) or, at sync time, from the gateway's own agents.defaults.model. Models
+# on a CLI runtime backend lack host identity for persona tools, so they are
+# never an automatic persona fallback (`cli_blocked`, read from the gateway).
 ROUTING_MODES = frozenset(
     {
         "pool_default",
@@ -93,16 +158,19 @@ def build_persona_runtime_profile(
     *,
     route_policy: Optional[Mapping[str, Any]] = None,
     provider_pool: Optional[Mapping[str, Any]] = None,
+    model_chain: Optional[Sequence[str]] = None,
 ) -> PersonaRuntimeProfile:
     """Build the fail-closed persona runtime profile exposed by BFF."""
     persona_id = _persona_id(persona)
     if not persona_id:
         raise ValueError("persona runtime profile requires persona_id or id")
 
-    pool_refs = _pool_refs(provider_pool)
+    chain = list(model_chain) if model_chain else configured_chain()
+    pool_refs = _pool_refs(provider_pool, chain)
+    cli_blocked = cli_runtime_refs(provider_pool)
     workspace_ref = _workspace_ref(persona, persona_id)
     routing_source = _routing_source(persona, route_policy)
-    model_routing = _resolve_model_routing(routing_source, pool_refs)
+    model_routing = _resolve_model_routing(routing_source, pool_refs, chain, cli_blocked)
 
     return PersonaRuntimeProfile(
         persona_id=persona_id,
@@ -131,9 +199,9 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
     return str(persona.get("persona_id") or persona.get("id") or "").strip()
 
 
-def _pool_refs(provider_pool: Optional[Mapping[str, Any]]) -> set[str]:
+def _pool_refs(provider_pool: Optional[Mapping[str, Any]], chain: Sequence[str]) -> set[str]:
     if not provider_pool:
-        return set(KNOWN_MODEL_POOL_REFS)
+        return set(chain)
     refs: set[str] = set()
     for key, value in provider_pool.items():
         if isinstance(value, Mapping):
@@ -241,12 +309,18 @@ def _loose_routing(source: Mapping[str, Any]) -> dict[str, Any]:
     return {"mode": "preferred_pool_model", "model": model}
 
 
-def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> ModelRouting:
+def _resolve_model_routing(
+    source: Mapping[str, Any],
+    pool_refs: set[str],
+    chain: Sequence[str],
+    cli_blocked: set[str],
+) -> ModelRouting:
     mode = str(source.get("mode") or source.get("routing_mode") or "pool_default").strip()
     if mode not in ROUTING_MODES:
         return _blocked_routing(
             mode=mode or "unknown",
             pool_refs=pool_refs,
+            chain=chain,
             requested=[],
             invalid=[mode or "unknown"],
             reason="invalid_routing_mode",
@@ -254,11 +328,23 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
         )
 
     if mode == "pool_default":
+        default_primary = next((m for m in chain if m in pool_refs), "")
+        if not default_primary:
+            return _blocked_routing(
+                mode=mode,
+                pool_refs=pool_refs,
+                chain=chain,
+                requested=[],
+                invalid=[],
+                reason="model_chain_empty",
+                blocked_reason="model_chain_empty",
+            )
         return _ready_routing(
             mode="pool_default",
             pool_refs=pool_refs,
-            primary=DEFAULT_PERSONA_MODEL,
-            fallback=_fallback_after(DEFAULT_PERSONA_MODEL, pool_refs),
+            chain=chain,
+            primary=default_primary,
+            fallback=_fallback_after(default_primary, pool_refs, chain, cli_blocked),
             requested=[],
             reason="pool_default",
         )
@@ -271,6 +357,7 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
             return _blocked_routing(
                 mode=mode,
                 pool_refs=pool_refs,
+                chain=chain,
                 requested=[],
                 invalid=[],
                 reason="missing_model_ref",
@@ -280,6 +367,7 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
             return _blocked_routing(
                 mode=mode,
                 pool_refs=pool_refs,
+                chain=chain,
                 requested=requested,
                 invalid=invalid,
                 reason="invalid_model_ref",
@@ -288,8 +376,9 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
         return _ready_routing(
             mode=mode,
             pool_refs=pool_refs,
+            chain=chain,
             primary=requested_model,
-            fallback=[] if mode == "hard_pin" else _fallback_after(requested_model, pool_refs),
+            fallback=[] if mode == "hard_pin" else _fallback_after(requested_model, pool_refs, chain, cli_blocked),
             requested=requested,
             reason=mode,
         )
@@ -300,6 +389,7 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
         return _blocked_routing(
             mode="fallback",
             pool_refs=pool_refs,
+            chain=chain,
             requested=[],
             invalid=[],
             reason="missing_fallback_order",
@@ -309,6 +399,7 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
         return _blocked_routing(
             mode="fallback",
             pool_refs=pool_refs,
+            chain=chain,
             requested=requested,
             invalid=invalid,
             reason="invalid_model_ref",
@@ -317,6 +408,7 @@ def _resolve_model_routing(source: Mapping[str, Any], pool_refs: set[str]) -> Mo
     return _ready_routing(
         mode="fallback",
         pool_refs=pool_refs,
+        chain=chain,
         primary=requested[0],
         fallback=requested[1:],
         requested=requested,
@@ -352,13 +444,17 @@ def _fallback_model_refs(source: Mapping[str, Any]) -> list[str]:
     return _string_list(values)
 
 
-def _fallback_after(primary: str, pool_refs: set[str]) -> list[str]:
-    ordered = [model for model in MODEL_POOL_ORDER if model in pool_refs]
-    ordered.extend(sorted(model for model in pool_refs if model not in ordered))
+def _fallback_after(
+    primary: str,
+    pool_refs: set[str],
+    chain: Sequence[str],
+    cli_blocked: set[str],
+) -> list[str]:
+    """Fallbacks are the chain entries after the primary; nothing outside it."""
     return [
         model
-        for model in ordered
-        if model != primary and model not in PERSONA_TOOLS_BLOCKED_MODEL_REFS
+        for model in chain
+        if model != primary and model in pool_refs and model not in cli_blocked
     ]
 
 
@@ -370,13 +466,14 @@ def _ready_routing(
     fallback: list[str],
     requested: list[str],
     reason: str,
+    chain: Sequence[str] = (),
 ) -> ModelRouting:
     return ModelRouting(
         mode=mode,
         status="ready",
         primary_model=primary,
         fallback_models=fallback,
-        provider_pool_refs=_ordered_pool_refs(pool_refs),
+        provider_pool_refs=_ordered_pool_refs(pool_refs, chain),
         selected_provider_pool_ref=_provider_pool_ref(primary),
         requested_models=requested,
         invalid_refs=[],
@@ -392,13 +489,14 @@ def _blocked_routing(
     invalid: list[str],
     reason: str,
     blocked_reason: str,
+    chain: Sequence[str] = (),
 ) -> ModelRouting:
     return ModelRouting(
         mode=mode,
         status="degraded",
         primary_model=None,
         fallback_models=[],
-        provider_pool_refs=_ordered_pool_refs(pool_refs),
+        provider_pool_refs=_ordered_pool_refs(pool_refs, chain),
         selected_provider_pool_ref=None,
         requested_models=requested,
         invalid_refs=invalid,
@@ -407,8 +505,8 @@ def _blocked_routing(
     )
 
 
-def _ordered_pool_refs(pool_refs: set[str]) -> list[str]:
-    ordered = [model for model in MODEL_POOL_ORDER if model in pool_refs]
+def _ordered_pool_refs(pool_refs: set[str], chain: Sequence[str]) -> list[str]:
+    ordered = [model for model in chain if model in pool_refs]
     ordered.extend(sorted(model for model in pool_refs if model not in ordered))
     return [_provider_pool_ref(model) for model in ordered]
 
@@ -461,3 +559,10 @@ def _harness_summary(persona: Mapping[str, Any]) -> dict[str, Any]:
             pass
     return {"status": "unavailable", "active_version": None, "content_digest": None,
             "reason": "invalid_harness_record" if state else "harness_not_initialized"}
+
+
+if __name__ == "__main__":  # pragma: no cover - tiny CLI for the configure script
+    if sys.argv[1:] == ["default-chain"]:
+        print(",".join(default_chain()))
+    else:
+        raise SystemExit("usage: python3 -m services.persona.runtime_profile default-chain")

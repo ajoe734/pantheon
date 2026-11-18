@@ -756,3 +756,16 @@ def test_dev_deploy_step_maps_steady_collector_pull_var_to_env() -> None:
     # Bounded profile, egress allowlist and quotas stay untouched.
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS: \"1\"" in block
     assert block.count("SOURCE_INGEST_STEADY_COLLECTOR_PULL") == 2  # comment + mapping
+
+
+def test_model_chain_variable_reaches_every_deploy_path_and_refusal_is_advisory() -> None:
+    """One repo/environment variable feeds deploy, restore, return and compensation."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert workflow.count("OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}") == 4
+    assert "inputs.OPENCLAW_MODEL_CHAIN" not in workflow  # a variable, never a dispatch input
+    source = _read_deploy_script()
+    assert 'OPENCLAW_MODEL_CHAIN=$(shell_quote "${OPENCLAW_MODEL_CHAIN:-}")' in source
+    root_case = source.split("  root)\n", 1)[1].split("  bff)\n", 1)[0]
+    # Exit 3 (chain refused, previous chain kept) is advisory; other failures still roll back.
+    assert 'model_pool_rc}" -eq 3' in root_case
+    assert 'rollback_dev_bff_on_failure "shared_model_pool"' in root_case

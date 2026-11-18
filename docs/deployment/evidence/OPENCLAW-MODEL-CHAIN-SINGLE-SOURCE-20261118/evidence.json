@@ -1,0 +1,47 @@
+{
+  "task": "OPENCLAW-MODEL-CHAIN-SINGLE-SOURCE-20261118",
+  "acceptance": {
+    "1_one_variable": "OPENCLAW_MODEL_CHAIN (repo/dev-environment variable, comma separated, first = primary; never a dispatch input) is passed by all four deploy-path steps in .github/workflows/nonprod-deploy.yml (deploy, baseline restore, same-final return, compensation) through scripts/deploy_nonprod_vm.sh command_prefix to scripts/openclaw-configure-shared-model-pool.sh, which writes agents.defaults.model.primary/fallbacks. Unset/blank keeps DEFAULT_MODEL_CHAIN (services/persona/runtime_profile.py), equal to the chain served before (opus, openai/gpt-5.6-sol, openai/gpt-5.5). Tests: scripts/test_openclaw_shared_model_pool_contract.py, scripts/test_deploy_nonprod_env_parity.py::test_model_chain_variable_reaches_every_deploy_path_and_refusal_is_advisory.",
+    "2_single_default_place": "DEFAULT_MODEL_CHAIN (services/persona/runtime_profile.py) is the only default; runtime_profile.configured_chain() is the only reader (env, then default; the configure script uses python3 -m services.persona.runtime_profile default-chain). The configure script, runtime_profile.py, persona_agent_sync.py, openclaw-sync-persona-agents.py (local KNOWN_MODELS/DEFAULT removed; fails closed without the shared profile), the adapter (DEFAULT_PRIMARY_MODEL/DEFAULT_FALLBACK_MODELS removed; compose OPENCLAW_PRIMARY_MODEL default replaced by OPENCLAW_MODEL_CHAIN), the isolated bootstrap and the credential probe (--model haiku warm-up flag dropped) no longer name a model.",
+    "2_remaining_model_names_in_non_test_files": [
+      {"file": "DEFAULT_MODEL_CHAIN (services/persona/runtime_profile.py)", "reason": "the one default chain (accepted)"},
+      {"file": "integrations/openclaw/gateway/Dockerfile (comment)", "reason": "explanatory comment, not a chain or allow-list; outside task scope"},
+      {"file": "integrations/openclaw/model-pool-and-persona-routing.md and docs", "reason": "runbook prose describing the default and examples"},
+      {"file": "deploy/collector/* and services/source_ingestion/semantic_extraction_client.py", "reason": "unrelated Gemini collector model and GPT-4o price table; not the OpenClaw chain"}
+    ],
+    "3_agents_follow_chain": "Configure step writes a copy of the effective chain into memory-index and structured-extraction (verified after restart). Persona sync reads the gateway agents.defaults.model at sync time and gives pool-default personas that chain (route-policy pins carry their own list). Pinned-image behaviour of an agent without its own fallbacks was NOT proven in this worker (no pinned gateway available), so the 'sync copies the gateway default chain at sync time' alternative is the implemented one. Management AI adapter uses the chain primary.",
+    "4_cli_runtime_refused": "chain_model_cli_runtime: refused when the registered agentRuntime.id is not openclaw or the provider prefix is a cliBackends key; previous chain kept. Persona fallbacks exclude registered CLI-runtime refs (cli_runtime_refs in runtime_profile.py). Tests in test_openclaw_shared_model_pool_contract.py and services/persona/test_runtime_profile.py.",
+    "5_unregistered_refused_advisory": "chain_model_not_registered: not in agents.defaults.models, a models.providers.<p>.models catalog, or the shipped default; previous chain kept, or the shipped default applied when no chain exists, so the gateway is never chainless. Configure finishes (restart, verification) and exits 3; deploy_nonprod_vm.sh treats 3 as advisory (info warning) and does not roll back; other non-zero exits still roll back.",
+    "6_route_policy_validation": "build_persona_runtime_profile validates preferred/pinned/fallback refs against the gateway-registered models passed at sync time (BFF without gateway access validates against the chain). Tests: test_route_policy_validates_against_gateway_registered_models, test_sync_follows_gateway_default_chain_and_registry_at_sync_time.",
+    "7_runbook": "integrations/openclaw/model-pool-and-persona-routing.md 'The model chain: one deployment variable' states the change procedure (variable, deploy or manual configure step which restarts the gateway, persona re-sync), the refusal names, and the per-provider model_not_found cooldown ordering rule.",
+    "8_tests_no_model_names": "Changed tests use fx-* fixture refs as values of OPENCLAW_MODEL_CHAIN; the configure script is asserted free of model names (test_script_names_no_model_and_static_batch_has_no_chain).",
+    "9_runtime_budget": "No new recurring job and no new persistent writer; the configure step is the existing per-deploy step with a few extra read-only config gets and one extra config set.",
+    "10_hosted_proof": "PENDING: the coordinator sets OPENCLAW_MODEL_CHAIN to the operator chain (anthropic opus, openai-api/gpt-6.2-sol, openai-api-2/gpt-6.2-sol, openai/gpt-5.6-sol, openai/gpt-5.5), deploys, re-runs persona sync, and checks gateway defaults and the three trading persona agents plus which model answers in the next daily cycle. Note the two API-route providers must be registered (hand-configured or via the R2 task) or the step refuses the chain as advisory.",
+    "verification": {
+      "passed": [
+        "services/persona/test_runtime_profile.py (9)",
+        "integrations/openclaw/test_persona_agent_sync.py + test_trading_persona_agent_adapter.py (40)",
+        "scripts/test_openclaw_shared_model_pool_contract.py (18)",
+        "scripts/test_openclaw_isolated_model_bootstrap.py (6)",
+        "tests/test_openclaw_credential_probe.py (6)",
+        "services/openclaw-gateway-adapter full suite",
+        "BFF runtime-profile/reconcile/agora tests (29)",
+        "scripts/test_deploy_nonprod_env_parity.py model-chain test"
+      ],
+      "not_run": [
+        "integrations/openclaw/test_dev_gates.py (needs a Postgres DSN; edited fixtures compile only)"
+      ]
+    }
+  },
+  "residual_findings": [
+    "scripts/test_deploy_nonprod_env_parity.py::test_deploy_script_syntax_and_shared_function_contract fails before this task (a 'while ...; do' line in with_dev_bff_runtime_env).",
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py tests such as test_bff_personas_list_returns_200_and_dto_shape fail in this worker with TENANT_MISMATCH 403, unrelated to models.",
+    "An existing persona agent whose primary changes is blocked by model_drift_update_unavailable; a chain primary change needs agent recreation (fallback-only changes rewrite in place).",
+    "Persona agents only pick up a new chain on the next persona sync; the configure step does not rewrite them.",
+    "The configure step no longer registers the claude-cli Sonnet and Gemini slots (they were named in code); entries already persisted on the gateway volume are untouched, fresh gateways will not have them.",
+    "Model aliases (opus, codex-sol, ...) are no longer written for new registrations; existing entries keep theirs.",
+    "Management AI previously used compose default openai/gpt-5.6-sol as primary; it now follows the chain primary (opus by default). Operators who rely on the old behaviour must order the chain accordingly.",
+    "Overlaps OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (docker-compose.yml, workflow, deploy script, configure script, isolated bootstrap) and TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 (deploy script): expect trivial merge conflicts."
+  ],
+  "review_independence": "Reviewer Antigravity; no other model family capacity assessed."
+}

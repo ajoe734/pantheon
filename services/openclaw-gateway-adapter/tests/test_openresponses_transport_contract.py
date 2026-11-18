@@ -40,6 +40,17 @@ from assistant_openclaw_provider import (  # noqa: E402
 _replay_attempt = threading.local()
 
 
+import os as _os_chain
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not _os_chain.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
 def _observe_replay_subprocess(event, args):
     """Observe actual Popen calls, including pre-imported aliases, without mocks.
 
@@ -258,13 +269,13 @@ def test_mounted_session_user_precedes_legacy_session_id(mounted_http):
 
 @pytest.mark.parametrize("primary", [None, "fixture/configured-primary"])
 def test_mounted_invoke_stream_readiness_share_effective_model(mounted_http, monkeypatch, primary):
-    from assistant_openclaw_provider import DEFAULT_PRIMARY_MODEL
+    from services.persona.runtime_profile import default_chain
 
     client, captured = mounted_http
     if primary is None:
-        monkeypatch.delenv("OPENCLAW_PRIMARY_MODEL", raising=False)
+        monkeypatch.delenv("OPENCLAW_MODEL_CHAIN", raising=False)
     else:
-        monkeypatch.setenv("OPENCLAW_PRIMARY_MODEL", primary)
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", f"{primary},fixture/configured-second")
     for suffix in ("", "/stream"):
         response = client.post(
             "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
@@ -277,7 +288,7 @@ def test_mounted_invoke_stream_readiness_share_effective_model(mounted_http, mon
     assert len(captured) == 3
     for entry in captured:
         assert entry["body"]["model"] == "openclaw/main"
-        assert entry["headers"]["x-openclaw-model"] == (primary or DEFAULT_PRIMARY_MODEL)
+        assert entry["headers"]["x-openclaw-model"] == (primary or default_chain()[0])
 
 
 @pytest.mark.parametrize("model", [None, "fixture/explicit-model"])
@@ -297,7 +308,7 @@ def test_nondefault_agent_model_routing_is_identical_across_transports(monkeypat
     assert all(headers["x-openclaw-agent-id"] == kwargs["agent_id"] for headers in captured)
 
 
-@pytest.mark.parametrize("model", [None, "openai/gpt-5.6-sol", "openai/gpt-5.5"])
+@pytest.mark.parametrize("model", [None, "fx-b/model-2", "fx-b/model-3"])
 def test_structured_extraction_routes_to_dedicated_agent_and_model_override(monkeypatch, model):
     provider = _make_provider()
     captured = []
@@ -381,7 +392,7 @@ class TestNormalInvokeContract:
     def test_explicit_non_default_agent_and_model_routing(self):
         """The JSON `model` field must always be an `openclaw/<agentId>` alias
         (the pinned Gateway's `resolveOpenAiCompatModelOverride` rejects a raw
-        provider id like "openai/gpt-5.5" with HTTP 400); a requested
+        provider id like "fx-b/model-3" with HTTP 400); a requested
         provider/model override belongs in the `x-openclaw-model` header."""
         provider = _make_provider()
         captured = {}
@@ -397,13 +408,13 @@ class TestNormalInvokeContract:
             result = provider.invoke(
                 "route this",
                 agent_id="persona-opinion-abcdef0123456789abcdef01",
-                model="openai/gpt-5.5",
+                model="fx-b/model-3",
                 operator_id="op-1",
             )
         assert result.status == "completed"
         assert captured["agent_id"] == "persona-opinion-abcdef0123456789abcdef01"
         assert captured["body"]["model"] == "openclaw/persona-opinion-abcdef0123456789abcdef01"
-        assert captured["model_header"] == "openai/gpt-5.5"
+        assert captured["model_header"] == "fx-b/model-3"
         assert result.output["agent_id"] == "persona-opinion-abcdef0123456789abcdef01"
 
     def test_default_agent_uses_primary_model_with_openclaw_alias(self):
@@ -419,8 +430,8 @@ class TestNormalInvokeContract:
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("hi", operator_id="op-1"))
         assert captured["body"]["model"] == "openclaw/main"
-        from assistant_openclaw_provider import DEFAULT_PRIMARY_MODEL
-        assert captured["model_header"] == (os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL)
+        from services.persona.runtime_profile import configured_chain
+        assert captured["model_header"] == configured_chain()[0]
 
     def test_same_named_conversation_isolates_by_authenticated_tenant_and_actor(self):
         """Two different tenants/actors reusing the same caller-chosen
@@ -1171,7 +1182,7 @@ class TestErrorInjectionContract:
             with pytest.raises(OpenClawProviderError):
                 provider.invoke("hi", operator_id="op-1")
         assert len(calls) == 1
-        assert calls[0] == "anthropic/claude-opus-4-8"
+        assert calls[0] == "fx-a/model-1"
 
 
 class _SlowDripHTTPServer:
@@ -1825,7 +1836,7 @@ def run_pinned_gateway_replay():
                     patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "synthetic-policy-token"),
                     patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
                     patch.object(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider),
-                    patch.dict(os.environ, {"OPENCLAW_PRIMARY_MODEL": "fixture/fixture-model"}),
+                    patch.dict(os.environ, {"OPENCLAW_MODEL_CHAIN": "fixture/fixture-model"}),
                 ):
                     client = TestClient(adapter_main.app)
                     results = []
