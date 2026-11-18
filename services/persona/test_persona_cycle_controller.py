@@ -1754,3 +1754,17 @@ def test_failed_ensure_records_named_reason_and_never_attempts_turn(system):
     assert "persona-cycle-failure:agent_ensure_unavailable:http_503" in packet["audit_refs"]
     from services.control_plane.bff.loop_inventory import project_persona_cycle_health
     assert project_persona_cycle_health(persona, [packet])["status"] != "healthy"
+
+
+def test_pending_lesson_count_from_governance_result():
+    from services.persona.persona_cycle_controller import pending_lesson_count as n
+    skipped = {"status": "skipped", "reason": "human_endorsement_required"}
+    hosted = {"status": "completed", "results": [{"lesson_candidate_id": str(i), **skipped} for i in range(4)]}
+    assert n(hosted) == 4
+    mixed = {"status": "completed", "results": [
+        {"status": "rejected"}, {"status": "merged"}, {"status": "skipped", "reason": "foreign_candidate"},
+        {"status": "deferred", "reason": "review_budget_exhausted"}]}
+    assert n(mixed) == 1
+    assert n({"status": "completed", "results": []}) == 0
+    assert n({"status": "unavailable", "reason": "x", "results": []}) is None
+    assert n(None) is None

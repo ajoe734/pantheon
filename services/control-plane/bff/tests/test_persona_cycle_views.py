@@ -266,3 +266,12 @@ def test_detail_day_matches_probe_cycle_day(cycle_stack, route):
     after = cycle_day(datetime.now(timezone.utc))
     assert day["cycle_day"] in {before, after} and day["trading_day"] == day["cycle_day"]
     assert day["cycle_due_at_utc"] == cycle_due_at(day["cycle_day"])
+
+
+def test_view_and_probe_share_the_daily_cycle_rule():
+    from acceptance import persona_day
+    from services.persona import persona_cycle_controller as ctl
+    rows = [{"persona_id": "a", "state": "paper_owner"}, {"persona_id": "b", "state": "consultable"},
+            {"persona_id": "c", "state": "draft"}]
+    assert [r["persona_id"] for r in persona_day.daily_cycle_personas(rows)] == ["a"]
+    assert persona_day.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES

@@ -47,7 +47,14 @@ from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
 CONTROLLER_NAME = "persona_cycle_controller"
+# Single definition of eligibility. acceptance/persona_day.py reads this assignment from this file's
+# source (ast, no import: the probe runs under ``python3 -I`` without the repo on sys.path); keep it a literal.
 ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
+DAILY_CYCLE_STATES = ELIGIBLE_STATES - {"consultable"}  # daily-cycle registrar and meeting step enrol these
+
+
+def is_daily_cycle_persona(persona: Mapping[str, Any]) -> bool:
+    return persona.get("lifecycle_state") in DAILY_CYCLE_STATES and persona.get("status", "active") == "active"
 
 
 # Proposal kind -> case-file decision type. harness_patch and no_action have no
@@ -281,6 +288,21 @@ def _summarize_regime_record(strategy_id: str, rec: Mapping[str, Any]) -> dict[s
         "primary_axis": primary_axis,
         "primary_state": primary_state,
     }
+
+
+_PENDING_RESULT_STATUS = {"skipped", "deferred", "risk_review_unavailable", "risk_review_not_recorded",
+                          "memory_owner_unavailable", "endorse_refused"}
+
+
+def pending_lesson_count(governance: Any) -> int | None:
+    """Own candidates still proposed/pending_review after this cycle's lesson step; None when unreadable."""
+    if not isinstance(governance, Mapping) or governance.get("status") != "completed":
+        return None
+    results = governance.get("results")
+    if not isinstance(results, list):
+        return None
+    return sum(1 for r in results if isinstance(r, Mapping) and r.get("status") in _PENDING_RESULT_STATUS
+               and r.get("reason") != "foreign_candidate")
 
 
 def observe_regime(transport: Transport | None, *, session: str, strategy_ids: Sequence[str]) -> dict[str, Any]:
@@ -590,6 +612,9 @@ class PersonaCycleController:
                 cycle["lesson_governance"] = self._lesson_step(lambda lc: lc.govern(persona), degraded={
                     "status": "unavailable", "results": []})
             if run["status"] == "ok" and persona["lifecycle_state"] != "consultable":
+                if isinstance(observe, dict):
+                    # count from the read the lesson step already made this cycle (no extra memory read)
+                    observe["pending_lesson_candidates"] = pending_lesson_count(cycle.get("lesson_governance"))
                 cycle["meetings"] = self._meeting_step(persona, observe, packet, snapshots)
             cycle["harness_loop"] = self._harness_loop().run(persona, packet)
             cycle.update(phase="terminal", failure_reason=failure)
@@ -682,7 +707,7 @@ class PersonaCycleController:
             enrolled_personas = [
                 p for p in self.owners.personas()
                 if p.get("tenant_id") == persona["tenant_id"] and p.get("status", "active") == "active"
-                and p.get("lifecycle_state") in ELIGIBLE_STATES - {"consultable"}
+                and p.get("lifecycle_state") in DAILY_CYCLE_STATES
             ]
             enrolled = sorted(p["persona_id"] for p in enrolled_personas)
             if isinstance(observe, dict):

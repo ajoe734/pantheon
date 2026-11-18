@@ -625,3 +625,20 @@ def test_mt5_case_file_and_consultation_execution_writes_participant_interpretat
     assert len(inst_memories) == 1
     assert dissent_id in inst_memories[0]["content"]["body"]
 
+
+
+def test_mt2_three_pending_fire_once_per_week_key_and_two_do_not():
+    op = Opener()
+    t = triggers(op, day=at_weekday(6))
+    first = run(t, observe={"pending_lesson_candidates": 3})
+    second = run(t, observe={"pending_lesson_candidates": 3})
+    assert "MT-2" in types(first) and "MT-2" not in types(second)
+    assert any(n.get("meeting_type") == "MT-2" and n["reason"] == "already_convened" for n in second["not_fired"])
+    assert len([c for c in op.calls if c.get("meeting_type") == "MT-2"]) == 1
+    rec = run(triggers(Opener(), day=at_weekday(6)), observe={"pending_lesson_candidates": 2})
+    assert {"meeting_type": "MT-2", "reason": "no_optimisation_condition", "pending_lesson_candidates": 2} in rec["not_fired"]
+
+
+def test_mt2_names_unavailable_pending_count():
+    rec = run(triggers(Opener(), day=at_weekday(6)), observe={"pending_lesson_candidates": None})
+    assert {"meeting_type": "MT-2", "reason": "pending_lesson_count_unavailable"} in rec["not_fired"]
