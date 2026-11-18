@@ -68,6 +68,8 @@ class RunOutcome:
     skipped_count: int = 0
 
 
+LISTING_SOURCE_ID = "collector-tw-security-listing"
+
 LISTING_FILTERED_SOURCES = frozenset(
     {
         "collector-tw-twse-t86",
@@ -171,6 +173,85 @@ class CollectorRunner:
         result = sl.refresh_listing(state, fetch_page, listing_date=listing_date, state_path=self.listing_state_path)
         if result.get("ok"):
             result["published"] = self.publish_security_listing()
+        return result
+
+    def listing_fetch_policy(self) -> SourceFetchPolicy:
+        """Policy for the two ISIN pages: same checks as any source (base_urls allow list, <= 1 connection,
+        >= 5 s apart, collector contact User-Agent, no cookies). The URLs come from fetch-policy.json
+        ``warrants.listing_sources`` through the module constants, so there is one list."""
+        sl = load_security_listing_module()
+        urls = (sl.TWSE_LISTED_URL, sl.TPEX_URL)
+        return SourceFetchPolicy(
+            source_id=LISTING_SOURCE_ID, section_ref="4.3",
+            description="TWSE ISIN security listing pages (strMode=2 listed, strMode=4 OTC), once per trading day",
+            base_urls=urls, cadence="daily", cadence_seconds=86400, max_requests_per_run=2,
+            min_interval_seconds=5.0, fetcher="http", respect_robots=True, robots_decision="allowed",
+            terms_ref="https://isin.twse.com.tw/", attribution_required=True,
+            attribution="臺灣證券交易所國際證券辨識號碼公告 (ISIN)", logged_in=False, enabled=True, max_connections=1,
+            raw_config={"source_id": LISTING_SOURCE_ID, "base_urls": list(urls)},
+        )
+
+    def refresh_listing_for_day(
+        self, listing_date: str, *, sleep_fn: Callable[[float], None] | None = None, now: datetime | None = None
+    ) -> dict[str, Any]:
+        """CLI entry: refresh + publish the listing for one trading day, idempotent, outcome in status.json.
+
+        ok=True/skipped covers: already refreshed and published for this day (no fetch), or not a trading day.
+        Failures keep the previous allowlist (fail closed) and are recorded as status ``failed``."""
+        from .fetchers import PolicyEnforcedFetcher
+        from .spiders import TW_EXCHANGE_HOLIDAYS
+
+        sl = load_security_listing_module()
+        now_iso = utc_iso(now)
+        day = datetime.strptime(listing_date, "%Y-%m-%d").date()
+        run_id = f"listing-{listing_date}"
+
+        def record(status: str, reason: str | None) -> None:
+            self.bundle_writer.update_host_status(
+                source_id=LISTING_SOURCE_ID, status=status, last_run_at=now_iso, last_run_id=run_id, reason=reason,
+            )
+
+        if day.weekday() >= 5 or listing_date in TW_EXCHANGE_HOLIDAYS:
+            result: dict[str, Any] = {"ok": True, "skipped": "not_a_trading_day", "listing_date": listing_date}
+            record("skipped", "not_a_trading_day")
+            return result
+        state = sl.ListingState.load(self.listing_state_path)
+        target = self.root_dir / sl.BUNDLE_STATE_PATH
+        if state.last_success_date and state.last_success_date > listing_date:
+            result = {"ok": False, "reason": f"listing already at newer day {state.last_success_date}",
+                      "listing_date": listing_date}
+            record("failed", result["reason"])
+            return result
+        if state.last_success_date == listing_date:
+            try:
+                same = target.read_bytes() == self.listing_state_path.read_bytes()
+            except OSError:
+                same = False
+            if same:
+                result = {"ok": True, "skipped": "already_refreshed", "listing_date": listing_date}
+                record("ok", "already_refreshed")
+                return result
+            result = self.publish_security_listing()
+            result.update(listing_date=listing_date, republished=True)
+            record("ok" if result.get("ok") else "failed", None if result.get("ok") else result.get("reason"))
+            return result
+
+        fetcher = PolicyEnforcedFetcher(
+            self.listing_fetch_policy(), transport=self.transport,
+            contact_user_agent=self.config.contact_user_agent, sleep_fn=sleep_fn,
+        )
+
+        def fetch_page(url: str) -> str:
+            response = fetcher.fetch(url)
+            if response.http_status != 200:
+                raise RuntimeError(f"http {response.http_status} for {url}")
+            return sl.decode_isin_bytes(response.body)
+
+        result = self.refresh_security_listing(fetch_page, listing_date=listing_date)
+        published = result.get("published") or {}
+        ok = bool(result.get("ok")) and bool(published.get("ok"))
+        result["ok"] = ok
+        record("ok" if ok else "failed", None if ok else str(result.get("reason") or published.get("reason")))
         return result
 
     def publish_security_listing(self) -> dict[str, Any]:

@@ -232,6 +232,29 @@ Design of record: `SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16` section 4.3 (dec
   `bundles/*`, so hosted reads it through the bundle transport it already uses and never fetches the exchange pages.
   Hosted keeps it as one file replaced per listing day and runs it in `SOURCE_INGEST_SECURITY_LISTING_MODE`
   `off` | `shadow` (default, counts only) | `enforce`.
+- **Daily refresh command and timer (COLLECTOR-LISTING-DAILY-REFRESH-20261118).**
+  `collector_stack --root-dir /data refresh-listing [--date YYYY-MM-DD]` (default: today, Asia/Taipei) fetches both ISIN
+  pages through `PolicyEnforcedFetcher` (collector contact User-Agent, URLs limited to the two `warrants.listing_sources`,
+  one connection, >= 5 s apart, no cookies), parses them, replaces `state/security-listing.json`, publishes
+  `bundles/security-listing.jsonl` and records `collector-tw-security-listing` in `status.json`. Exit 0 = refreshed,
+  already refreshed (same day: no fetch, republishes only if the published copy is missing or differs), or not a trading
+  day; exit 2 = failed, previous allowlist kept (fail closed, max 3 trading days). `pantheon-collector-listing.timer`
+  runs Mon-Fri 08:30 Asia/Taipei with an idempotent retry at 10:30, both before 13:30 Taipei (05:30Z) and so before that
+  day's T86 and price-history collections.
+  Enable: `sudo cp systemd/pantheon-collector-listing.* /etc/systemd/system/ && sudo systemctl daemon-reload &&
+  sudo systemctl enable --now pantheon-collector-listing.timer`; first run on demand:
+  `sudo systemctl start pantheon-collector-listing.service`.
+  Rollback: `sudo systemctl disable --now pantheon-collector-listing.timer` stops refreshing (an existing listing then
+  goes stale and filtered sources fail closed after 3 trading days); to stop filtering set `COLLECTOR_WARRANTS_MODE=off`
+  in the worker environment (immediate, nothing stored becomes unreadable).
+  **First filter day.** Until the first successful refresh the host collects unfiltered. From the first collection
+  after it succeeds, T86 (`collector-tw-twse-t86`), both price-history spiders and the suspension spider run in
+  `listed_only` mode; with the 08:30 timer that is the same trading day. Hosted needs three dated listing days of
+  shadow counts after that.
+  **Runtime budget.** One file: live shape about 57,531 rows, about 3.2 MB; hard cap 20 MB (`MAX_STATE_BYTES`, refuses
+  to publish above). Growth is the net of new warrants (tens of KB per day); expired rows are removed by
+  `scripts/delete_expired_warrants.py`. `security-listing.jsonl` is replaced in place each day (temp file + rename), no
+  dated copies are kept, so there is nothing to clean up beyond the sweeper.
 - **Deployment note.** The build context is the collector directory itself, so the documented host layout
   (`/opt/pantheon-collector`, the systemd `WorkingDirectory`) builds with `docker compose build collector-worker` and
   no context outside it. The image ships `vendor/security_listing.py` at `/app/services/source_ingestion/`; that file

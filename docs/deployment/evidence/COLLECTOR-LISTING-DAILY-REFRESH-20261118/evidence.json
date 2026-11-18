@@ -1,0 +1,22 @@
+{
+  "task_id": "COLLECTOR-LISTING-DAILY-REFRESH-20261118",
+  "diagnosis": "At 13a08deaa CollectorRunner.refresh_security_listing and publish_security_listing existed but no CLI command and no systemd unit called them, so state/security-listing.json was never initialised and bundles/security-listing.jsonl never published; hosted PR 7521 (shadow mode) had nothing to read.",
+  "fix": {
+    "command": "collector_stack --root-dir /data refresh-listing [--date YYYY-MM-DD] (cli.py); CollectorRunner.refresh_listing_for_day (runner.py): policy-checked PolicyEnforcedFetcher with the collector contact User-Agent, idempotent per day, publishes bundles/security-listing.jsonl, records collector-tw-security-listing in status.json; exit 0 ok/skipped, 2 failed (fail closed).",
+    "timer": "systemd/pantheon-collector-listing.timer: Mon-Fri 08:30 and retry 10:30 Asia/Taipei, both before 13:30 Taipei (05:30Z); README documents enable and rollback."
+  },
+  "first_filter_day_rule": "Until the first successful refresh the host collects unfiltered. From the first collection after it succeeds, collector-tw-twse-t86, collector-tw-twse-price-history, collector-tw-tpex-price-history and collector-tw-trading-suspension run in listed_only mode; with the 08:30 timer the first filtered day is the same trading day as the first successful refresh (the day deployed, if before the 13:30 runs). Rollback: COLLECTOR_WARRANTS_MODE=off.",
+  "runtime_budget": {
+    "rows_at_exchange_scale": 57531,
+    "file_size_live_shape": "about 3.2 MB (README figure from the 2026-11-17 live listing); synthetic compact rows measured 1.6 MB",
+    "cap": "20 MB (MAX_STATE_BYTES); one file replaced per day (temp file + rename), no dated copies",
+    "growth_per_day": "net new warrants, tens of KB per day",
+    "cleanup": "scripts/delete_expired_warrants.py removes expired rows; no old published files exist"
+  },
+  "validation": [
+    {"command": "cd deploy/collector && python -m pytest tests/test_listing_refresh_cli.py -q", "result": "9 passed"},
+    {"command": "cd deploy/collector && python -m pytest tests/test_security_listing_module_shipped.py tests/test_bundle_and_manifest.py -q", "result": "11 passed"},
+    {"command": "cd deploy/collector && python -m pytest tests -q", "result": "288 passed, 6 skipped"}
+  ],
+  "not_verified": "No deployment to the collector host and no live fetch of the ISIN pages (operator side, tests use fixtures with network blocked)."
+}
