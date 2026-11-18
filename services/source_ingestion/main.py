@@ -43,6 +43,8 @@ def create_app(runtime: SourceIngestionRuntime | None = None) -> FastAPI:
         dependencies=lambda: {
             "source_search_posture": runtime.PRODUCTION_POSTURE.to_dict(),
             "source_freshness": _source_freshness_dependency(),
+            # Fixed cost: a flag, no journal read. "starting" keeps /readyz at 503 until the first sweep is done.
+            "snapshot_lookup": {"status": "ok" if runtime.snapshot_lookup_ready else "degraded", "warm": runtime.snapshot_lookup_ready},
         },
         metrics=lambda: runtime._source_runtime_metrics(),
         details=lambda: {
