@@ -274,6 +274,72 @@ def _binding_from_runtime_context(context: PantheonRuntimeContext) -> dict[str, 
     }
 
 
+STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0
+_VOLATILE_STATE_KEY_EXACT = frozenset(
+    {"attempted_at", "staged_at", "pair_id", "state_digest", "event_id", "sequence_no", "seq", "seq_no"}
+)
+_VOLATILE_STATE_KEY_SUFFIXES = ("_at", "_ts", "_timestamp", "_sequence", "_sequence_no")
+# Fields whose change is a real state change, not a mark-to-market drift.
+_STRUCTURAL_PERFORMANCE_KEYS = (
+    "status", "code", "fill_count", "positions", "failed_leg",
+    "pnl_snapshot_sent", "drawdown_snapshot_sent",
+)
+_STRUCTURAL_BOOK_KEYS = (
+    "binding_id", "envelope_checksum", "member_id", "checksum", "marks_complete", "since_inception",
+)
+
+
+def _is_volatile_state_key(key: Any) -> bool:
+    name = str(key)
+    return name in _VOLATILE_STATE_KEY_EXACT or name.endswith(_VOLATILE_STATE_KEY_SUFFIXES)
+
+
+def _strip_volatile_state(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(k): _strip_volatile_state(v)
+            for k, v in value.items()
+            if not _is_volatile_state_key(k)
+        }
+    if isinstance(value, (list, tuple)):
+        return [_strip_volatile_state(v) for v in value]
+    return value
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _state_change_digest(state: Mapping[str, Any]) -> str:
+    """Digest of runtime state with fields that change every tick removed."""
+    return _sha256_json(_strip_volatile_state(state))
+
+
+def _state_structural_digest(state: Mapping[str, Any]) -> str:
+    """Digest of fill / position / member-book structure; excludes mark-to-market values."""
+    perf = state.get("performance_telemetry") or {}
+    books = []
+    for book in state.get("member_virtual_books") or []:
+        if not isinstance(book, Mapping):
+            books.append(book)
+            continue
+        entry = {k: book.get(k) for k in _STRUCTURAL_BOOK_KEYS}
+        entry["fills"] = _strip_volatile_state(book.get("fills") or [])
+        entry["fill_gaps"] = _strip_volatile_state(book.get("fill_gaps") or [])
+        entry["underlyings"] = sorted(
+            str(u.get("symbol")) for u in (book.get("underlyings") or []) if isinstance(u, Mapping)
+        )
+        books.append(entry)
+    return _sha256_json(
+        {
+            "performance": _strip_volatile_state({k: perf.get(k) for k in _STRUCTURAL_PERFORMANCE_KEYS}),
+            "books": books,
+        }
+    )
+
+
 def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[str, Any]:
     if context is None:
         return {
@@ -5337,6 +5403,9 @@ class PaperRuntimeService:
         self._last_error: str | None = None
         self._last_heartbeat_at: str | None = None
         self._last_state_snapshot_digest: str | None = None
+        self._last_state_structural_digest: str | None = None
+        self._last_state_snapshot_monotonic: float | None = None
+        self._heartbeat_lock = threading.Lock()
         self._last_heartbeat_monotonic: float | None = None
         self._heartbeat_clock = time.monotonic
         self._poll_count = 0
@@ -6468,6 +6537,12 @@ class PaperRuntimeService:
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:
             return
+        # The drain loop and the dedicated heartbeat thread both call this; the
+        # gate and the last-emit update must be one atomic step.
+        with self._heartbeat_lock:
+            self._maybe_emit_heartbeat_locked()
+
+    def _maybe_emit_heartbeat_locked(self) -> None:
         now = _iso_now()
         mono_now = self._heartbeat_clock()
         min_interval = max(
@@ -6499,21 +6574,39 @@ class PaperRuntimeService:
         self._maybe_emit_runtime_state_snapshot()
 
     def _maybe_emit_runtime_state_snapshot(self) -> None:
-        """Send performance_telemetry/member_virtual_books only when they change.
+        """Send performance_telemetry/member_virtual_books only on a real change.
 
-        The digest is advanced only after a successful emit, so a failed emit
-        is retried at the next heartbeat tick.
+        The change digest excludes per-tick volatile fields (timestamps, pair
+        ids, sequence numbers). A structural change (fill, position or member
+        book change) is sent at the next tick; a mark-to-market-only change is
+        rate limited to ``PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR``
+        per runtime. The digest is advanced only after a successful emit, so
+        a failed emit is retried at the next heartbeat tick.
         """
         try:
             state = {
                 "performance_telemetry": dict(self._performance_telemetry),
                 "member_virtual_books": self._member_book_snapshot(),
             }
-            digest = hashlib.sha256(
-                json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-            ).hexdigest()
+            digest = _state_change_digest(state)
             if digest == self._last_state_snapshot_digest:
                 return
+            structural = _state_structural_digest(state)
+            mono_now = self._heartbeat_clock()
+            if (
+                self._last_state_snapshot_digest is not None
+                and structural == self._last_state_structural_digest
+            ):
+                max_per_hour = max(
+                    0.1,
+                    _as_float(
+                        os.getenv("PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR"),
+                        STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT,
+                    ),
+                )
+                last = self._last_state_snapshot_monotonic
+                if last is not None and (mono_now - last) < 3600.0 / max_per_hour:
+                    return
             meta = {"runtime_package": "paper_execution_runtime", "state_digest": digest, **state}
             emit = getattr(self._telemetry, "emit_runtime_state_snapshot", None)
             if callable(emit):
@@ -6525,6 +6618,8 @@ class PaperRuntimeService:
             return
         if emitted:
             self._last_state_snapshot_digest = digest
+            self._last_state_structural_digest = structural
+            self._last_state_snapshot_monotonic = mono_now
 
     def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:
