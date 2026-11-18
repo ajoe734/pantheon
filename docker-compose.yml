@@ -1054,13 +1054,13 @@ services:
       # stays disabled. The config value is an unresolved env reference, so the secret is never
       # written to the openclaw-data volume.
       PERSONA_TOOL_BROKER_TOKEN: ${PERSONA_TOOL_BROKER_TOKEN:-}
-      # Rollback-safe: the plugin path/entry are NEVER persisted into openclaw.json on the shared
-      # openclaw-data volume (a previous gateway image without /opt/pantheon fails config validation and
-      # restart-loops). With the token, startup writes a runtime-only overlay (openclaw.runtime.json, read only
-      # via OPENCLAW_CONFIG_PATH, $include-ing the real config); without it the overlay is deleted.
-      # BASE_PATCH also strips any plugin path/entry an earlier candidate persisted (one config write per start).
+      # The plugin ships as a stock plugin in the image (enabledByDefault) and reads these two env vars, so
+      # openclaw.json stays a plain writable file (no $include overlay: that made every config.patch fail with
+      # "would flatten $include-owned config"). Rollback-safe: nothing plugin-related is persisted on the
+      # shared openclaw-data volume. BASE_PATCH still strips any plugin path/entry an earlier candidate
+      # persisted (one config write per start), and startup deletes the legacy overlay file.
+      PERSONA_TOOL_BROKER_URL: http://openclaw-gateway-adapter:8104/internal/persona-tools/v1
       PANTHEON_OPENCLAW_BASE_PATCH: '{"gateway":{"http":{"endpoints":{"responses":{"enabled":true}}}},"plugins":{"load":{"paths":null},"entries":{"pantheon-persona-tools":null}}}'
-      PANTHEON_PERSONA_TOOLS_OVERLAY: '{"$$include":"./openclaw.json","plugins":{"load":{"paths":["/opt/pantheon/plugins/pantheon-persona-tools"]},"entries":{"pantheon-persona-tools":{"enabled":true,"config":{"brokerUrl":"http://openclaw-gateway-adapter:8104/internal/persona-tools/v1","brokerToken":"$${PERSONA_TOOL_BROKER_TOKEN}"}}}}}'
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -1074,7 +1074,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && if [ -n \"$$PERSONA_TOOL_BROKER_TOKEN\" ]; then printf '%s' \"$$PANTHEON_PERSONA_TOOLS_OVERLAY\" > /home/node/.openclaw/openclaw.runtime.json.tmp && mv /home/node/.openclaw/openclaw.runtime.json.tmp /home/node/.openclaw/openclaw.runtime.json && export OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.runtime.json; else rm -f /home/node/.openclaw/openclaw.runtime.json; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && rm -f /home/node/.openclaw/openclaw.runtime.json /home/node/.openclaw/openclaw.runtime.json.tmp && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
