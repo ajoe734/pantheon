@@ -95,6 +95,8 @@ DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_
 # interactive-login session.
 DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"
 DEV_OPENCLAW_ANTHROPIC_API_KEY="${DEV_OPENCLAW_ANTHROPIC_API_KEY:-}"
+DEV_OPENCLAW_OPENAI_API_KEY="${DEV_OPENCLAW_OPENAI_API_KEY:-}"
+DEV_OPENCLAW_OPENAI_API_KEY_2="${DEV_OPENCLAW_OPENAI_API_KEY_2:-}"
 DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
@@ -470,6 +472,7 @@ Environment overrides:
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN
   DEV_OPENCLAW_ANTHROPIC_API_KEY DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID
+  DEV_OPENCLAW_OPENAI_API_KEY DEV_OPENCLAW_OPENAI_API_KEY_2
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
@@ -580,6 +583,8 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-$DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}"
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-$DEV_OPENCLAW_ANTHROPIC_API_KEY}"
+  PANTHEON_OPENCLAW_OPENAI_API_KEY="${PANTHEON_OPENCLAW_OPENAI_API_KEY:-$DEV_OPENCLAW_OPENAI_API_KEY}"
+  PANTHEON_OPENCLAW_OPENAI_API_KEY_2="${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-$DEV_OPENCLAW_OPENAI_API_KEY_2}"
   PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-$DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID}"
 }
 
@@ -787,6 +792,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_claude_code_oauth_token_configured=$([[ -n "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_anthropic_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" ]] && echo true || echo false)"
+  info "dev_openclaw_openai_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}" ]] && echo true || echo false)"
+  info "dev_openclaw_openai_api_key_2_configured=$([[ -n "${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}" ]] && echo true || echo false)"
   info "dev_openclaw_anthropic_workspace_id_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
@@ -1093,8 +1100,11 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_OPENAI_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_OPENAI_API_KEY_2=$(shell_quote "${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" OPENCLAW_MODEL_CHAIN=$(shell_quote "${OPENCLAW_MODEL_CHAIN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
@@ -1655,11 +1665,20 @@ wait_for_bounded_source_refresh_service() {
         sleep 5
         ;;
       *)
+        dump_bounded_refresh_container_logs "${service}" "${container_id}"
         error "bounded source refresh service ${service} has unexpected state ${state}"
         ;;
     esac
   done
 
+  if [[ -z "${container_id}" ]]; then
+    if [[ -n "${container_name}" ]]; then
+      container_id="$(docker ps -a -q --filter "name=^${container_name}\$" 2>/dev/null || true)"
+    else
+      container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    fi
+  fi
+  dump_bounded_refresh_container_logs "${service}" "${container_id}"
   error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
 }
 
@@ -1796,14 +1815,20 @@ verify_bounded_source_refresh_readback() {
     finmind_records_file="$(mktemp)"
     fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
   fi
-  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - \
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
+  local readback_verdict_file="" readback_err_file="" readback_py_rc=0
+  readback_verdict_file="$(mktemp)"
+  readback_err_file="$(mktemp)"
+  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    BOUNDED_REFRESH_VERDICT_PATH="${readback_verdict_file}" \
+    python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
     "${evidence_dir}/readback.json" \
     "${evidence_dir}/agora_watchlist.json" \
     "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+    "${SOURCE_INGEST_BOUNDED_DATASET:-}" 2>"${readback_err_file}" <<'PY'
 import json
 import math
 import os
@@ -1840,7 +1865,10 @@ expected_dataset = bounded_dataset or (
 from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
 profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
 if profile is not None and expected_dataset != profile["dataset"]:
-    raise SystemExit("bounded chip dataset is outside the governed profile")
+    raise SystemExit(
+        f"bounded chip dataset is outside the governed profile: "
+        f"connector={connector_id!r} actual={expected_dataset!r} != expected={profile['dataset']!r}"
+    )
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1857,7 +1885,10 @@ candidates = [
     )
 ]
 if not candidates:
-    raise SystemExit("bounded source refresh produced no new successful source-time-valid receipt")
+    raise SystemExit(
+        f"bounded source refresh produced no new successful source-time-valid receipt: "
+        f"connector={connector_id!r} deploy_started_at={started.isoformat()!r} total_receipts={len(receipts)}"
+    )
 receipt = max(candidates, key=lambda item: timestamp(item.get("finished_at") or item.get("created_at")))
 run_id = str(receipt["ingest_run_id"])
 
@@ -1867,7 +1898,11 @@ connector = next(
     None,
 )
 if connector is None:
-    raise SystemExit("bounded source refresh connector is absent from controller readback")
+    present_ids = [item.get("connector_id") for item in connectors if isinstance(item, dict)]
+    raise SystemExit(
+        f"bounded source refresh connector is absent from controller readback: "
+        f"expected={connector_id!r} present={present_ids!r}"
+    )
 freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
 latest_receipt = freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), dict) else {}
 latest_record = connector.get("latest_source_record") if isinstance(connector.get("latest_source_record"), dict) else {}
@@ -1875,11 +1910,20 @@ provenance = latest_record.get("provenance") if isinstance(latest_record.get("pr
 record_metadata = latest_record.get("metadata") if isinstance(latest_record.get("metadata"), dict) else {}
 source_id = str(latest_record.get("source_id") or "")
 if latest_receipt.get("ingest_run_id") != run_id:
-    raise SystemExit("controller freshness does not bind the new ingest receipt")
+    raise SystemExit(
+        f"controller freshness does not bind the new ingest receipt: "
+        f"latest_receipt.ingest_run_id={latest_receipt.get('ingest_run_id')!r} != expected_run_id={run_id!r}"
+    )
 if freshness.get("source_timestamp_status") != "valid":
-    raise SystemExit("controller freshness does not report valid provider source time")
+    raise SystemExit(
+        f"controller freshness does not report valid provider source time: "
+        f"source_timestamp_status={freshness.get('source_timestamp_status')!r} != 'valid'"
+    )
 if provenance.get("source_ingest_run_id") != run_id or not source_id:
-    raise SystemExit("controller source record does not bind the new ingest run")
+    raise SystemExit(
+        f"controller source record does not bind the new ingest run: "
+        f"provenance.source_ingest_run_id={provenance.get('source_ingest_run_id')!r} expected_run_id={run_id!r} source_id={source_id!r}"
+    )
 actual_dataset = str(provenance.get("dataset") or record_metadata.get("dataset") or "").strip()
 if expected_dataset and (profile is not None or connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
     if actual_dataset != expected_dataset:
@@ -1887,28 +1931,116 @@ if expected_dataset and (profile is not None or connector_id == "tw-taifex-futur
             f"controller source record dataset mismatch for {connector_id}: "
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
+chip_verdict = None
 if profile is not None:
     expected_schema = profile["schema_hash"]
-    if (provenance.get("schema_hash") or record_metadata.get("schema_hash")) != expected_schema:
-        raise SystemExit("bounded chip schema mismatch")
-    row = record_metadata.get("normalized_row") or {}
-    from datetime import time as _time, timedelta
-    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
-    taipei = started.astimezone(timezone(timedelta(hours=8)))
-    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
-    for _ in range(20):
-        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=cursor.isoformat())
-        if cursor.weekday() < 5 and not (calendar and cursor.isoformat() in (calendar.get("holidays") or {})):
-            break
-        cursor -= timedelta(days=1)
-    record_date = str(row.get("date") or record_metadata.get("date") or "")
-    if record_date != cursor.isoformat():
-        raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
-    prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
-    if not source_id.startswith(f"{prefix}:{expected_dataset}:"):
-        raise SystemExit("bounded chip source identity does not bind the dataset")
+    actual_schema = provenance.get("schema_hash") or record_metadata.get("schema_hash")
+    if actual_schema != expected_schema:
+        raise SystemExit(
+            f"bounded chip schema mismatch: connector={connector_id!r} actual={actual_schema!r} != expected={expected_schema!r}"
+        )
+    if profile["base"] == "tw-finmind-fundamentals":
+        allowed_prefixes = (f"finmind:{expected_dataset}:", f"tw-official:{expected_dataset}:")
+        expected_prefix = allowed_prefixes[0]
+    else:
+        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        expected_prefix = f"{prefix}:{expected_dataset}:"
+        allowed_prefixes = (expected_prefix,)
+    if not source_id.startswith(allowed_prefixes):
+        raise SystemExit(
+            f"bounded chip source identity does not bind the dataset: "
+            f"source_id={source_id!r} expected_prefix={expected_prefix!r}"
+        )
     if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
-        raise SystemExit("bounded chip venue is outside the governed profile")
+        raise SystemExit(
+            f"bounded chip venue is outside the governed profile: "
+            f"venue={record_metadata.get('venue')!r} allowed={profile['venues']!r}"
+        )
+    row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
+    from datetime import time as _time, timedelta
+    from services.source_ingestion.chip_publication_schedule import (
+        CHIP_PUBLICATION_SCHEDULES,
+        evaluate_chip_provider_session,
+        expected_finmind_fundamental_period_ends,
+        latest_published_chip_session,
+    )
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def _is_session_day(day):
+        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
+
+    raw_date = row.get("date") if row.get("date") is not None else record_metadata.get("date")
+    if raw_date is None:
+        raw_date = provenance.get("trade_date")
+    record_date = str(raw_date or "").strip()[:10]
+    if connector_id in CHIP_PUBLICATION_SCHEDULES:
+        if not record_date and raw_date is None and connector_id == "tw-official-twse-margin-balances":
+            ev_raw = (
+                provenance.get("event_time")
+                or record_metadata.get("available_time")
+                or latest_receipt.get("source_timestamp")
+                or freshness.get("source_timestamp")
+            )
+            if ev_raw and "T" in str(ev_raw):
+                record_date = latest_published_chip_session(
+                    connector_id, timestamp(ev_raw), is_session_day=_is_session_day
+                ).isoformat()
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_date,
+            now=started,
+            is_session_day=_is_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
+    elif profile["base"] == "tw-finmind-fundamentals":
+        from services.source_ingestion.connectors.finmind_taiwan import (
+            latest_published_broker_session,
+        )
+
+        expected_session = latest_published_broker_session(started, is_session_day=_is_session_day)
+        expected_period_ends = tuple(
+            d.isoformat() for d in expected_finmind_fundamental_period_ends(expected_dataset, expected_session)
+        )
+        run_session_raw = (
+            record_metadata.get("as_of_date")
+            or (record_metadata.get("ingest_job") or {}).get("run_date")
+            or (record_metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session = str(run_session_raw or "").strip()[:10]
+        if run_session and run_session != expected_session.isoformat():
+            raise SystemExit(
+                f"bounded FinMind fundamentals session {run_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+            )
+        if expected_dataset == "tw_valuation_bwibbu":
+            effective_session = record_date or run_session
+            if effective_session != expected_session.isoformat():
+                raise SystemExit(
+                    f"bounded FinMind fundamentals session {effective_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+                )
+        else:
+            if record_date not in expected_period_ends:
+                raise SystemExit(
+                    f"bounded FinMind fundamentals period_end {record_date!r} not in expected {expected_period_ends!r} "
+                    f"for session {expected_session.isoformat()!r} ({connector_id})"
+                )
+    else:
+        taipei = started.astimezone(timezone(timedelta(hours=8)))
+        cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+        for _ in range(20):
+            if _is_session_day(cursor):
+                break
+            cursor -= timedelta(days=1)
+        if record_date != cursor.isoformat():
+            raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
 if connector_id == "tw-taifex-futures-options-chip":
     req_ds = expected_dataset or "taifex_ssf_contracts"
     expected_source_prefix = f"tw-taifex:{req_ds}:"
@@ -1922,24 +2054,31 @@ if connector_id == "tw-taifex-futures-options-chip":
             f"controller source record schema_hash mismatch for {req_ds}: {schema_hash!r}"
         )
     if req_ds == "taifex_ssf_contracts":
-        # Bind the proof to the session preparation targeted (latest closed Taipei
-        # session at deploy start, same rule/calendar) and to the active underlyings.
-        from datetime import date as _date, time as _time, timedelta
+        # Bind the proof to the latest published TAIFEX stock-futures contract session
+        # at refresh start (evaluate_chip_provider_session) and to the active underlyings.
+        from services.source_ingestion.chip_publication_schedule import evaluate_chip_provider_session
         from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 
-        _taipei = started.astimezone(timezone(timedelta(hours=8)))
-        _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
-        for _ in range(20):
-            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=_cursor.isoformat())
-            if _cursor.weekday() < 5 and not (_ev and _cursor.isoformat() in (_ev.get("holidays") or {})):
-                break
-            _cursor -= timedelta(days=1)
+        def _is_ssf_session_day(day):
+            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+            return day.weekday() < 5 and not (_ev and day.isoformat() in (_ev.get("holidays") or {}))
+
         _row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
         _record_date = str(record_metadata.get("date") or _row.get("date") or provenance.get("trade_date") or "")[:10]
-        if _record_date != _cursor.isoformat():
-            raise SystemExit(
-                f"controller source record session {_record_date!r} != requested session {_cursor.isoformat()!r}"
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=_record_date,
+            now=started,
+            is_session_day=_is_ssf_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
             )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
         _active = {
             item.strip().upper().split(".")[0]
             for item in priority_csv.split(",")
@@ -1968,7 +2107,10 @@ projected = next(
     None,
 )
 if projected is None and connector_id == "tw-twse-tpex-official-market":
-    raise SystemExit("Agora projection does not bind the new receipt/run/source")
+    raise SystemExit(
+        f"Agora projection does not bind the new receipt/run/source: "
+        f"connector={connector_id!r} expected_run={run_id!r} expected_source={source_id!r}"
+    )
 if projected is not None:
     projected_freshness = projected.get("freshness") if isinstance(projected.get("freshness"), dict) else {}
     if (
@@ -1978,7 +2120,10 @@ if projected is not None:
         or projected_freshness.get("status") not in {"fresh", "stale"}
         or not isinstance(projected_freshness.get("stale"), bool)
     ):
-        raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
+        raise SystemExit(
+            f"Agora projection is missing explicit source-time/freshness truth: "
+            f"asOf={projected.get('asOf')!r} freshness={projected_freshness!r}"
+        )
 else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
 
@@ -2135,6 +2280,10 @@ for requested_symbol in spot_symbols:
         f"event_time={snapshot.get('event_time')} closes={len(closes)} "
         f"snapshot={snapshot.get('snapshot_id')}"
     )
+if chip_verdict is not None and chip_verdict.status == "not_yet_published":
+    print(chip_verdict.detail, file=sys.stderr)
+    print(chip_verdict.detail)
+    raise SystemExit(0)
 print(
     "bounded source refresh accepted "
     f"connector={connector_id} run={run_id} source={source_id} "
@@ -2142,12 +2291,35 @@ print(
 )
 PY
   then
+    readback_py_rc=1
+  fi
+  if [[ -s "${readback_verdict_file}" ]]; then
+    BOUNDED_REFRESH_READBACK_OUTCOME_JSON="$(cat "${readback_verdict_file}")"
+  fi
+  if [[ -s "${readback_err_file}" ]]; then
+    cat "${readback_err_file}" >&2
+    if [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" ]]; then
+      redact_bounded_refresh_log < "${readback_err_file}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
+    fi
+  fi
+  if (( readback_py_rc != 0 )); then
+    local readback_err_msg=""
+    if [[ -s "${readback_err_file}" ]]; then
+      readback_err_msg="$(tr '\n' ' ' < "${readback_err_file}" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    fi
     rm -rf "${evidence_dir}"
+    rm -f "${readback_verdict_file}" "${readback_err_file}"
     [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
-    LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    if [[ -n "${readback_err_msg}" ]]; then
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed: ${readback_err_msg}"
+      echo "[remote-deploy] ERROR: ${LAST_REMOTE_DEPLOY_ERROR}" >&2
+    else
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    fi
     return 1
   fi
   rm -rf "${evidence_dir}"
+  rm -f "${readback_verdict_file}" "${readback_err_file}"
   [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
   info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
@@ -2359,10 +2531,21 @@ for _ in range(20):
     cursor -= timedelta(days=1)
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
-if connector_id == "tw-finmind-broker-daily-report":
+from services.source_ingestion.chip_publication_schedule import (
+    CHIP_PUBLICATION_SCHEDULES,
+    evaluate_chip_provider_session,
+    expected_finmind_fundamental_period_ends,
+    latest_published_chip_session,
+)
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+is_finmind_fundamental = profile is not None and profile.get("base") == "tw-finmind-fundamentals"
+if connector_id == "tw-finmind-broker-daily-report" or is_finmind_fundamental:
     from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
     session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
     session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
+elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+    session_date = latest_published_chip_session(connector_id, now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
@@ -2406,11 +2589,14 @@ if connector_id in CHIP_CONNECTORS:
     source_id = str(latest_record.get("source_id") or "")
     record_dataset = str(provenance.get("dataset") or metadata.get("dataset") or "")
     schema_hash = str(provenance.get("schema_hash") or metadata.get("schema_hash") or "")
-    profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
     if profile is not None:
-        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        if is_finmind_fundamental:
+            allowed_prefixes = (f"finmind:{bounded_dataset}:", f"tw-official:{bounded_dataset}:")
+        else:
+            prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+            allowed_prefixes = (f"{prefix}:{bounded_dataset}:",)
         if (schema_hash != profile["schema_hash"]
-                or not source_id.startswith(f"{prefix}:{bounded_dataset}:")
+                or not source_id.startswith(allowed_prefixes)
                 or (profile.get("venues") and metadata.get("venue") not in profile["venues"])):
             emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if (
@@ -2446,7 +2632,19 @@ if connector_id in CHIP_CONNECTORS:
             record_session_date = None
     if record_session_date is None and ev_raw:
         try:
-            record_session_date = datetime.fromisoformat(str(ev_raw).replace("Z", "+00:00")).astimezone(tz).date()
+            ev_text = str(ev_raw).strip()
+            if "T" not in ev_text and len(ev_text) >= 10:
+                record_session_date = date.fromisoformat(ev_text[:10])
+            else:
+                ev_dt = datetime.fromisoformat(ev_text.replace("Z", "+00:00"))
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                if connector_id in CHIP_PUBLICATION_SCHEDULES:
+                    record_session_date = latest_published_chip_session(
+                        connector_id, ev_dt, is_session_day=is_session_day
+                    )
+                else:
+                    record_session_date = ev_dt.astimezone(tz).date()
         except ValueError:
             record_session_date = None
     obs_dt = None
@@ -2455,7 +2653,48 @@ if connector_id in CHIP_CONNECTORS:
             obs_dt = datetime.fromisoformat(str(obs_raw).replace("Z", "+00:00"))
         except ValueError:
             obs_dt = None
-    if record_session_date != session_date or obs_dt is None or obs_dt < session_close:
+    if is_finmind_fundamental:
+        expected_periods = set(expected_finmind_fundamental_period_ends(bounded_dataset, session_date))
+        run_session_raw = (
+            metadata.get("as_of_date")
+            or (metadata.get("ingest_job") or {}).get("run_date")
+            or (metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session_date = None
+        if run_session_raw:
+            try:
+                run_session_date = date.fromisoformat(str(run_session_raw)[:10])
+            except ValueError:
+                run_session_date = None
+        if bounded_dataset == "tw_valuation_bwibbu":
+            effective_session = record_session_date or run_session_date
+            session_ok = (
+                effective_session == session_date
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        else:
+            session_ok = (
+                record_session_date in expected_periods
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        if not session_ok or obs_dt is None or obs_dt < session_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+        verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_session_date,
+            now=now_u,
+            is_session_day=is_session_day,
+        )
+        effective_close = (
+            datetime(record_session_date.year, record_session_date.month, record_session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+            if record_session_date is not None and verdict.status == "published_early"
+            else session_close
+        )
+        if verdict.status not in {"published", "published_early"} or obs_dt is None or obs_dt < effective_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif record_session_date != session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if connector_id == "tw-finmind-broker-daily-report":
         records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
@@ -3455,9 +3694,10 @@ execute_bounded_source_refresh_entrypoint() {
   export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS SOURCE_INGEST_MAX_RECORDS
   validate_source_refresh_profile
   BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
   write_bounded_refresh_outcome() {
     [[ -n "${output_path:-}" ]] || return 0
-    local out_status="$1" out_reason="$2" base_json="${3:-}"
+    local out_status="$1" out_reason="$2" base_json="${3:-${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}}"
     python3 - "${output_path}" "${out_status}" "${out_reason}" "${base_json}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'OUTCOME_PY'
 import json, pathlib, sys
 out_path, status, reason, base_raw, log_file, connector_id, dataset = sys.argv[1:8]
@@ -3775,6 +4015,11 @@ print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_sched
   restore_bounded_source_refresh "${refresh_rc}" || post_restore_rc=$?
   (( post_restore_rc == 0 )) || return "${post_restore_rc}"
   if (( refresh_rc != 0 )); then
+    return 0
+  fi
+  if [[ -n "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}" ]]; then
+    write_bounded_refresh_outcome "not_yet_published" "not_yet_published" "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON}"
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
   write_bounded_refresh_outcome "completed" "refreshed" "{\"status\": \"completed\", \"refreshed_at\": \"${refresh_started_at}\"}"
@@ -6168,6 +6413,8 @@ with_dev_bff_runtime_env() {
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY}" \
+  PANTHEON_OPENCLAW_OPENAI_API_KEY="${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}" \
+  PANTHEON_OPENCLAW_OPENAI_API_KEY_2="${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}" \
   PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID}" \
   MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
   MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
@@ -6993,7 +7240,9 @@ if [[ "${PANTHEON_DEPLOY_COMPONENT}" == refresh-only ]]; then
     || error "no managed deploy worktree containing docker-compose.yml at '${PANTHEON_REMOTE_DIR:-}' (set DEV_DEPLOY_WORKTREE_ROOT)"
 fi
 cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
-git rev-parse --is-inside-work-tree >/dev/null
+if [[ "${PANTHEON_DEPLOY_COMPONENT}" != refresh-only ]]; then
+  git rev-parse --is-inside-work-tree >/dev/null
+fi
 
 case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
@@ -7093,9 +7342,17 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # Phase 4: Post-Deploy Bounded Verification
     run_dev_advisory_check bounded_source_refresh_readback source_refresh_readback \
       verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}"
+    # Exit 3 = the requested OPENCLAW_MODEL_CHAIN was refused (unregistered or
+    # CLI-runtime ref) and the previous chain was kept: advisory, never a
+    # rollback. Any other non-zero exit keeps the existing rollback behaviour.
+    model_pool_rc=0
     PANTHEON_DEV_REPO="$(pwd)" \
-      bash scripts/openclaw-configure-shared-model-pool.sh \
-      || rollback_dev_bff_on_failure "shared_model_pool"
+      bash scripts/openclaw-configure-shared-model-pool.sh || model_pool_rc=$?
+    if [[ "${model_pool_rc}" -eq 3 ]]; then
+      info "warning: advisory openclaw_model_chain_refused; previous chain kept (see configure output)"
+    elif [[ "${model_pool_rc}" -ne 0 ]]; then
+      rollback_dev_bff_on_failure "shared_model_pool"
+    fi
     retire_dormant_and_one_off_profile_containers \
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
     run_dev_advisory_check dev_paper_fleet paper_fleet verify_dev_paper_fleet

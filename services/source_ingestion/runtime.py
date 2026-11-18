@@ -6,12 +6,14 @@ narrow operations and dependencies for routers and entrypoints.
 
 from __future__ import annotations
 
+import atexit
 import fcntl
 import hmac
 import json
 import os
 import re
 import threading
+import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -360,6 +362,17 @@ class SourceIngestionRuntime:
             storage_root=self.MARKET_DATA_STORAGE_ROOT,
             connector_market=self._connector_market_for_snapshot,
         )
+        # The first due universe sweep runs here, before the app can answer /readyz, not inside the first
+        # snapshot lookup (SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118).
+        self.snapshot_lookup_ready = False
+        self.snapshot_warm_start_count = 0
+        try:
+            self._warm_snapshot_lookup()
+        finally:
+            self.snapshot_lookup_ready = True
+        # The hourly sweep runs on this one background thread, never inside a lookup.
+        self.snapshot_universe.start_background_sweeps()
+        atexit.register(self.snapshot_universe.stop_background_sweeps)
         self.controller_token = load_controller_token(token_path=self.CONTROLLER_TOKEN_PATH, create=True)
         self.authoritative_reconcile_lock = threading.RLock()
         self.audit_store_lock = threading.RLock()
@@ -800,6 +813,24 @@ class SourceIngestionRuntime:
             now=datetime.now(timezone.utc),
             latest_record=latest_record,
         )
+
+    def _warm_snapshot_lookup(self) -> None:
+        """Run the first due universe sweep once, before readiness, instead of inside the first lookup.
+
+        ``SnapshotUniverse._last_sweep`` starts at 0, so the first ``snapshot_for_request`` after a start found
+        the sweep due and ran it (withdraw_symbols -> journal compaction) in its ``finally`` under the universe
+        lock: about 20 s on a hosted-shaped journal.  A sweep that cannot run is left for the hourly one.
+        """
+        universe = self.snapshot_universe
+        self.snapshot_warm_start_count += 1
+        with universe._lock:
+            universe._last_sweep = time.monotonic()
+            if not universe.ready:
+                return
+            try:
+                universe.sweep()
+            except (MarketSnapshotStateError, OSError):
+                pass
 
     def _source_freshness_readiness(self) -> dict[str, Any]:
         """Return a fixed-cost readiness projection from the controller snapshot."""

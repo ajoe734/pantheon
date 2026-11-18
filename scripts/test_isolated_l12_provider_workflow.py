@@ -54,12 +54,14 @@ def test_original_driver_owns_lease_with_environment_secrets() -> None:
     assert env["PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN"] == (
         "${{ secrets.DEV_OPENCLAW_OPENAI_OAUTH_TOKEN }}"
     )
-    assert "PANTHEON_OPENCLAW_OPENAI_API_KEY" not in env
+    assert env["PANTHEON_OPENCLAW_OPENAI_API_KEY"] == "${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}"
+    assert env["PANTHEON_OPENCLAW_OPENAI_API_KEY_2"] == "${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}"
+    assert "OPENAI_API_KEY" not in env and "CODEX_API_KEY" not in env  # ambient names stay unset
     assert env["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
     assert "secrets." not in yaml.safe_dump({k: v for k, v in JOB.items() if k != "steps"})
     # Credentials never appear in argv: only the credential-free batch is exported.
     assert not re.search(
-        r"\$\{?PANTHEON_OPENCLAW_(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_WORKSPACE_ID|OPENAI_OAUTH_TOKEN)",
+        r"\$\{?PANTHEON_OPENCLAW_(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_WORKSPACE_ID|OPENAI_OAUTH_TOKEN|OPENAI_API_KEY(?:_2)?)",
         run,
     )
 
@@ -89,7 +91,7 @@ def test_gateway_bootstrap_is_opt_in_and_fail_closed() -> None:
     assert "ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" in COMPOSE_TEXT
     assert "ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" in COMPOSE_TEXT
     assert "OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}" in COMPOSE_TEXT
-    assert "OPENAI_API_KEY" not in COMPOSE_TEXT
+    assert not re.search(r"(?<![A-Z_])(?:OPENAI_API_KEY|CODEX_API_KEY)\\b", COMPOSE_TEXT)
     assert "CODEX_HOME:" not in COMPOSE_TEXT
     start = COMPOSE_TEXT.index('if [ -n \\"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\\" ]')
     startup = COMPOSE_TEXT[start : COMPOSE_TEXT.index("exec node dist/index.js gateway", start)]

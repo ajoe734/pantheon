@@ -1,0 +1,25 @@
+{
+  "task": "OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118",
+  "status": "implemented_pending_deploy_and_hosted_reading",
+  "model_refs_for_persona_chain_task": ["openai-api/gpt-6.2-sol", "openai-api-2/gpt-6.2-sol"],
+  "acceptance": {
+    "1_secrets_wired": "DEV_OPENCLAW_OPENAI_API_KEY and _2 are passed in every workflow step that already passes the Anthropic key (deploy, restore, same-final return, compensation, dev-artifact) and in the isolated L12 step; scripts/deploy_nonprod_vm.sh forwards them via command_prefix and the compose export; no dispatch input added. Test: test_openai_api_route_secrets_reach_every_deploy_path_without_dispatch_input.",
+    "2_non_ambient_names": "docker-compose.yml gateway env OPENCLAW_API_ROUTE_KEY_1/_2 only. Test: test_api_keys_use_non_ambient_names_never_openai_api_key (no OPENAI_API_KEY/CODEX_API_KEY in compose, deploy script, workflow, configure script).",
+    "3_missing_key": "compose default is empty; configure step unsets the provider and drops its default-chain refs. Test: test_missing_or_empty_api_key_drops_its_route_and_gateway_still_configures.",
+    "4_distinct_ids": "providers openai-api and openai-api-2; built-in openai untouched. Test: test_api_route_registers_one_provider_per_key_with_env_secretref.",
+    "5_env_ref_only": "apiKey = {source: env, provider: default, id: OPENCLAW_API_ROUTE_KEY_n}; tests assert sentinel key values never appear in argv, stdout, stderr or batch.",
+    "6_mechanism": "one provider id per key with model-level fallback in agents.defaults.model.fallbacks (pinned image 2026.7.1, coordinator-proven: 401 -> reason=auth -> next candidate).",
+    "7_chain_order": "DEFAULT_MODEL_CHAIN: anthropic, openai-api, openai-api-2, openai/gpt-5.6-sol, openai/gpt-5.5; structured-extraction and memory-index copy it. Test: test_default_chain_orders_api_route_after_anthropic_and_before_subscription.",
+    "8_four_cases_on_pinned_image": "PENDING: needs the pinned gateway image and live keys; not run in this worker (no docker/keys). Unit-level contract tests only. To be shown by coordinator/hosted reading.",
+    "9_isolated_bootstrap": "render_batch adds both providers when PANTHEON_OPENCLAW_OPENAI_API_KEY[_2] present and drops refs when absent. Tests in scripts/test_openclaw_isolated_model_bootstrap.py.",
+    "10_governance_and_spend": "governance.md 2026-11-18 entry records the decision and per-token billing. Expected calls/day on this route at hosted scale: observed ~88 answered turns/day (615 over 7 days) plus up to 500 memory-bridge calls/day once its switch is on, i.e. about 90/day now and at most ~590/day. Because Anthropic is first in the chain, the route only receives the share Anthropic refuses; the figures are the upper bound if it refuses everything.",
+    "11_no_recurring_job": "no job or persistent writer added; the keys are read from the container environment.",
+    "12_hosted_reading": "PENDING: coordinator reads hosted gateway session files after a release carrying this is served; not reported beyond deployed before then."
+  },
+  "tests": "scripts/test_openclaw_shared_model_pool_contract.py, test_openclaw_isolated_model_bootstrap.py, test_deploy_nonprod_env_parity.py, test_isolated_l12_provider_workflow.py, test_nonprod_dev_artifact_workflow.py, test_nonprod_restore_accepted_baseline.py, services/persona/test_runtime_profile.py: after merging dev 4305bbaeb: 335 passed, 5 failed, all outside this change (the first two also fail on a clean origin/dev; httpx/fastapi/pydantic/requests/pyyaml supplied via uv): test_whole_stack_restore_succeeds_with_current_controller_and_streaming_source_probe, test_tempgit_multipayload_fetch_and_mismatch_guard, test_hosted_mode_is_explicit_and_mutually_exclusive, test_hosted_validation_guard_script, test_deploy_script_syntax_and_shared_function_contract).",
+  "residual_findings": [
+    "4 pre-existing test failures listed above (COMPENSATION_DRILL unbound variable in extracted workflow shell, compressed-assignment lint on bridge_line loop).",
+    "Config key 'auth' is omitted from the provider entry (default api-key) to match the coordinator-proven shape; confirm on the pinned image.",
+    "Hosted providers with stored api_key profiles from the 14:14Z repair must be removed; the configure step overwrites models.providers.openai-api[-2] but does not delete stored auth profiles."
+  ]
+}

@@ -114,6 +114,9 @@ class SnapshotUniverse:
         self._last_seed: dict[str, Any] | None = None
         self._last_fallback_reason: str | None = None
         self._reader: Any = None
+        self._deferred_touch: dict[str, str] = {}  # recency touches left by lookups that met a running sweep
+        self._sweep_thread: threading.Thread | None = None
+        self._sweep_stop = threading.Event()
         self._load()
         store.admission = self.admits
         store.stats_extra = self.stats
@@ -212,15 +215,31 @@ class SnapshotUniverse:
 
     # ----- request path --------------------------------------------------------------------
     def snapshot_for_request(self, symbol: str) -> LatestMarketSnapshot | None:
-        """The daily snapshot for ``symbol``; a non-member is seeded from stored partitions first."""
+        """The daily snapshot for ``symbol``; a non-member is seeded from stored partitions first.
+
+        No lookup runs the sweep (SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119): the hourly sweep belongs to
+        ``start_background_sweeps``.  A stored snapshot is returned without waiting for a sweep: its recency
+        touch needs the universe lock, so when the lock is busy the touch is deferred (applied by the next
+        lookup or sweep that holds the lock) instead of queueing the reader behind it.  A lookup that must
+        seed (no stored snapshot) takes the lock and therefore waits for a sweep in progress.
+        """
         snapshot = self.store.get(symbol, DAILY_SNAPSHOT_DATASET)
         if not self.ready:
             return snapshot
+        if snapshot is not None:
+            if not self._lock.acquire(blocking=False):
+                self._deferred_touch[member_key(symbol)] = str(symbol)
+                return snapshot
+            try:
+                self._apply_deferred_touches()
+                self._touch(symbol, "request")
+            except OSError:
+                pass
+            finally:
+                self._lock.release()
+            return snapshot
         with self._lock:
             try:
-                if snapshot is not None:
-                    self._touch(symbol, "request")
-                    return snapshot
                 key = member_key(symbol)
                 if self._misses.get(key, 0.0) > time.monotonic():
                     return None
@@ -232,8 +251,12 @@ class SnapshotUniverse:
                 return snapshot
             except OSError:
                 return snapshot
-            finally:
-                self.maybe_sweep()
+
+    def _apply_deferred_touches(self) -> None:
+        """Apply touches deferred while a sweep held the lock (caller holds ``self._lock``)."""
+        while self._deferred_touch:
+            _, symbol = self._deferred_touch.popitem()
+            self._touch(symbol, "request")
 
     # ----- seeding -------------------------------------------------------------------------
     def _partition_dates(self) -> list[tuple[str, list[Path]]]:
@@ -420,6 +443,39 @@ class SnapshotUniverse:
             except (MarketSnapshotStateError, OSError):
                 pass
 
+    def start_background_sweeps(self, interval_seconds: float = _SWEEP_INTERVAL_SECONDS) -> bool:
+        """Start the one per-process thread that runs the due sweep every ``interval_seconds``.
+
+        Single flight (one thread, sweeps run one after another); a second call is a no-op.  The thread is a
+        daemon and ``stop_background_sweeps`` ends it, so it stops with the process.  The first wait is a full
+        interval because the runtime ran the startup sweep.
+        """
+        import weakref
+
+        if self._sweep_thread is not None and self._sweep_thread.is_alive():
+            return False
+        self._sweep_stop = stop = threading.Event()
+        ref = weakref.ref(self)
+
+        def loop() -> None:
+            while not stop.wait(interval_seconds):
+                universe = ref()
+                if universe is None:
+                    return
+                universe.maybe_sweep()
+                del universe
+
+        self._sweep_thread = threading.Thread(target=loop, name="snapshot-universe-sweep", daemon=True)
+        self._sweep_thread.start()
+        return True
+
+    def stop_background_sweeps(self) -> None:
+        self._sweep_stop.set()
+        thread = self._sweep_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5)
+        self._sweep_thread = None
+
     def sweep(self, *, force: bool = False) -> dict[str, Any]:
         """Withdraw non-members and expired members; seed static members missing from the store."""
         with self._lock:
@@ -456,5 +512,6 @@ class SnapshotUniverse:
                 if self.store.get(symbol, DAILY_SNAPSHOT_DATASET) is None and self.seed(symbol) is not None:
                     seeded.append(symbol)
                 self._members.setdefault(key, {"symbol": symbol, "last_requested_date": today, "origin": "governed"})
+            self._apply_deferred_touches()
             self._write_state()
             return {"swept": True, "withdrawn": len(removed), "transitions": len(transitions), "seeded_static": seeded}
