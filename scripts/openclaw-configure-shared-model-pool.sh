@@ -42,9 +42,12 @@ CLAUDE_TOOLSEARCH_BATCH='[
 
 cd "$REPO_ROOT"
 
+# Standard input is detached for every compose call: docker compose exec -T
+# still forwards stdin, so inside a `while read` loop it swallows the remaining
+# lines (the second API route was never registered). Nothing here pipes into it.
 compose() {
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}" \
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "$@"
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "$@" </dev/null
 }
 
 openclaw() {
@@ -64,6 +67,39 @@ if [[ -n "${requested_raw//[[:space:],]/}" ]]; then
 else
   requested_chain="$default_chain"
   chain_source=default
+fi
+
+# OpenAI API route (per-token billing): one provider per key, each reading its
+# key through an env SecretRef (container variables OPENCLAW_API_ROUTE_KEY_1/_2,
+# never the ambient OpenAI/Codex key names). A key that is missing or empty drops its
+# provider and its refs from the shipped default chain, so the gateway still
+# starts and the other routes keep working. No key value is read or written here.
+api_routes="$(PYTHONPATH="$REPO_ROOT" python3 -m services.persona.runtime_profile api-routes)"
+present_routes='[]'
+while IFS= read -r route; do
+  route_provider="$(jq -r '.provider' <<<"$route")"
+  route_env="$(jq -r '.env' <<<"$route")"
+  if compose exec -T -u node openclaw-gateway node -e \
+    'process.exit(process.env[process.argv[1]]?.trim() ? 0 : 1)' "$route_env"; then
+    present_routes="$(jq -c --arg p "$route_provider" '. + [$p]' <<<"$present_routes")"
+    route_models="$( (printf '%s\n' "$requested_chain" "$default_chain") | jq -s -c --arg p "$route_provider" \
+      '[.[][] | select(startswith($p + "/")) | .[($p | length) + 1:]] | unique')"
+    route_value="$(PYTHONPATH="$REPO_ROOT" python3 -c '
+import json, sys
+from services.persona.runtime_profile import api_route_provider_value
+print(json.dumps(api_route_provider_value(sys.argv[1], json.loads(sys.argv[2])), separators=(",", ":")))
+' "$route_env" "$route_models")"
+    openclaw config set --batch-json "$(jq -n -c --arg p "models.providers.$route_provider" --argjson v "$route_value" '[{"path":$p,"value":$v}]')" >/dev/null
+  else
+    printf 'OpenAI API route %s: %s is empty; provider not registered.\n' "$route_provider" "$route_env" >&2
+    openclaw config unset "models.providers.$route_provider" >/dev/null 2>&1 || true
+  fi
+done < <(jq -c '.[]' <<<"$api_routes")
+default_chain="$(jq -c --argjson p "$present_routes" --argjson r "$api_routes" \
+  '($r | map(select(.provider as $x | ($p | index($x)) | not) | .provider + "/")) as $absent
+   | map(select(. as $ref | any($absent[]; . as $a | $ref | startswith($a)) | not))' <<<"$default_chain")"
+if [[ -z "${requested_raw//[[:space:],]/}" ]]; then
+  requested_chain="$default_chain"
 fi
 
 config_json_or_empty() {

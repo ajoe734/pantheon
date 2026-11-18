@@ -44,6 +44,9 @@ def test_chain_is_written_as_primary_and_fallbacks_with_native_runtime(tmp_path)
     assert any("restart" in a for a in calls[set_idx:])
 
 
+ROUTE_KEYS = {"TEST_OPENCLAW_API_ROUTE_KEY_1": "1", "TEST_OPENCLAW_API_ROUTE_KEY_2": "1"}
+
+
 def test_unset_variable_keeps_the_shipped_default_chain(tmp_path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from services.persona.runtime_profile import default_chain
@@ -51,10 +54,100 @@ def test_unset_variable_keeps_the_shipped_default_chain(tmp_path) -> None:
     default = default_chain()
     result, _ = _run_model_pool_script(
         tmp_path, token_present=False, config={"models": {}, "providers": {}},
-        extra_env={"OPENCLAW_MODEL_CHAIN": ""},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "", **ROUTE_KEYS},
     )
     assert result.returncode == 0, result.stderr
     assert result.final_config["model"] == {"primary": default[0], "fallbacks": default[1:]}
+
+
+def test_default_chain_orders_api_route_after_anthropic_and_before_subscription() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from services.persona.runtime_profile import default_chain
+
+    chain = default_chain()
+    assert chain[0].startswith("anthropic/")
+    assert chain[1:3] == ["openai-api/gpt-6.2-sol", "openai-api-2/gpt-6.2-sol"]
+    assert chain[3:] == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]
+
+
+def test_api_route_registers_one_provider_per_key_with_env_secretref(tmp_path) -> None:
+    result, calls = _run_model_pool_script(
+        tmp_path, token_present=False, config={"models": {}, "providers": {}},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "", **ROUTE_KEYS,
+                   "OPENCLAW_API_ROUTE_KEY_1": "sk-proj-sentinel-1", "OPENCLAW_API_ROUTE_KEY_2": "sk-proj-sentinel-2"},
+    )
+    assert result.returncode == 0, result.stderr
+    providers = result.final_config["providers"]
+    assert set(providers) == {"openai-api", "openai-api-2"}  # never the built-in "openai"
+    for pid, env_name in (("openai-api", "OPENCLAW_API_ROUTE_KEY_1"), ("openai-api-2", "OPENCLAW_API_ROUTE_KEY_2")):
+        assert providers[pid] == {
+            "baseUrl": "https://api.openai.com/v1", "api": "openai-responses",
+            "apiKey": {"source": "env", "provider": "default", "id": env_name},
+            "models": [{"id": "gpt-6.2-sol", "name": "gpt-6.2-sol"}],
+        }
+    blob = json.dumps(calls) + result.stdout + result.stderr
+    assert "sk-proj-sentinel" not in blob
+
+
+def test_second_route_is_registered_and_null_apikey_entry_gets_secretref(tmp_path) -> None:
+    stale = {"openai-api-2": {"apiKey": None}}
+    result, _ = _run_model_pool_script(
+        tmp_path, token_present=False, config={"models": {}, "providers": stale},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "", **ROUTE_KEYS},
+    )
+    assert result.returncode == 0, result.stderr
+    providers = result.final_config["providers"]
+    assert set(providers) == {"openai-api", "openai-api-2"}
+    assert providers["openai-api-2"]["apiKey"] == {
+        "source": "env", "provider": "default", "id": "OPENCLAW_API_ROUTE_KEY_2"}
+
+
+def test_missing_or_empty_api_key_drops_its_route_and_gateway_still_configures(tmp_path) -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from services.persona.runtime_profile import default_chain
+
+    stale = {"openai-api-2": {"apiKey": {"source": "env", "provider": "default", "id": "OPENCLAW_API_ROUTE_KEY_2"}}}
+    result, _ = _run_model_pool_script(
+        tmp_path, token_present=False, config={"models": {}, "providers": stale},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "", "TEST_OPENCLAW_API_ROUTE_KEY_1": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    chain = [r for r in default_chain() if not r.startswith("openai-api-2/")]
+    assert result.final_config["model"] == {"primary": chain[0], "fallbacks": chain[1:]}
+    assert set(result.final_config["providers"]) == {"openai-api"}
+    result, _ = _run_model_pool_script(
+        tmp_path / "none" if (tmp_path / "none").mkdir() is None else tmp_path,
+        token_present=False, config={"models": {}, "providers": {}}, extra_env={"OPENCLAW_MODEL_CHAIN": ""},
+    )
+    assert result.returncode == 0, result.stderr
+    chain = [r for r in default_chain() if not r.startswith("openai-api")]
+    assert result.final_config["model"] == {"primary": chain[0], "fallbacks": chain[1:]}
+    assert result.final_config["providers"] == {}
+
+
+def test_requested_api_route_ref_without_key_is_refused(tmp_path) -> None:
+    result, _ = _run_model_pool_script(
+        tmp_path, token_present=False, config={"models": {}, "providers": {}},
+        extra_env={"OPENCLAW_MODEL_CHAIN": "anthropic/x-1,openai-api/gpt-6.2-sol"},
+    )
+    assert result.returncode == 3
+    assert "chain_model_not_registered" in result.stderr
+
+
+def test_api_keys_use_non_ambient_names_never_openai_api_key() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from services.persona.runtime_profile import AMBIENT_OPENAI_KEY_ENV_NAMES, API_ROUTES
+
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    gateway = compose.split("openclaw-gateway:\n", 1)[1].split("\n  openclaw-gateway-adapter:", 1)[0]
+    for ambient in (*AMBIENT_OPENAI_KEY_ENV_NAMES, "OPENAI_ACCESS_TOKEN"):
+        assert not re.search(rf"^\s+{ambient}:", gateway, re.M), ambient
+    for route, host in zip(API_ROUTES, ("PANTHEON_OPENCLAW_OPENAI_API_KEY", "PANTHEON_OPENCLAW_OPENAI_API_KEY_2")):
+        assert f"{route['env']}: ${{{host}:-}}" in gateway  # empty default: gateway starts without it
+        assert not route["env"].startswith(("OPENAI_", "CODEX_"))
+    for path in ("scripts/deploy_nonprod_vm.sh", ".github/workflows/nonprod-deploy.yml", "scripts/openclaw-configure-shared-model-pool.sh"):
+        text = (REPO_ROOT / path).read_text(encoding="utf-8")
+        assert not re.search(r"(?<![A-Z_])(?:OPENAI_API_KEY|CODEX_API_KEY)\b", text), path
 
 
 def test_chain_naming_a_cli_runtime_model_is_refused_and_previous_chain_kept(tmp_path) -> None:
@@ -159,12 +252,16 @@ def _run_model_pool_script(
         f"#!{sys.executable}\n" + r'''
 import json, os, sys
 args = sys.argv[1:]
+if "exec" in args and "-T" in args:
+    sys.stdin.read()  # like docker compose exec: forwards and consumes stdin
 with open(os.environ["TEST_DOCKER_LOG"], "a") as stream:
     stream.write(json.dumps(args) + "\n")
 if "-e" in args:
     expr = args[args.index("-e") + 1]
     if "ANTHROPIC_WORKSPACE_ID" in expr:
         sys.exit(0)
+    if "process.argv[1]" in expr:
+        sys.exit(0 if os.environ.get("TEST_" + args[-1]) == "1" else 1)
     sys.exit(0 if os.environ["TEST_TOKEN_PRESENT"] == "1" else 1)
 if "dist/index.js" not in args:
     sys.exit(0)
@@ -181,7 +278,9 @@ elif cli[:2] == ["config", "set"]:
     store = json.load(open(os.environ["TEST_CONFIG"]))
     for op in batch:
         pth = op["path"]
-        if pth == "agents.defaults.model.primary":
+        if pth.startswith("models.providers."):
+            store["providers"][pth[len("models.providers."):]] = op["value"]
+        elif pth == "agents.defaults.model.primary":
             store["model"] = {**(store["model"] if isinstance(store["model"], dict) else {}), "primary": op["value"]}
         elif pth == "agents.defaults.model.fallbacks":
             store["model"] = {**(store["model"] if isinstance(store["model"], dict) else {}), "fallbacks": op["value"]}
@@ -191,6 +290,10 @@ elif cli[:2] == ["config", "set"]:
                 store["models"][ref]["agentRuntime"] = op["value"]
             else:
                 store["models"][ref] = op["value"]
+    json.dump(store, open(os.environ["TEST_CONFIG"], "w"))
+elif cli[:2] == ["config", "unset"]:
+    store = json.load(open(os.environ["TEST_CONFIG"]))
+    store["providers"].pop(cli[2].split("models.providers.", 1)[1], None)
     json.dump(store, open(os.environ["TEST_CONFIG"], "w"))
 elif cli[:2] == ["config", "get"]:
     path = cli[2]

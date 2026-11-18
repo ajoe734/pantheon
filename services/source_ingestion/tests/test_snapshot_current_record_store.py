@@ -513,6 +513,7 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
     assert updated == HOSTED_KEYS
     assert stats["record_count"] == HOSTED_KEYS  # replaced in place: no superseded version after commit
     assert process_stats["calls"] > 100 and len(read_ms) > 100
+    print("full_replacement timing:", json.dumps(MEASURED["full_replacement"], sort_keys=True), flush=True)
     # Wall-clock bounds: judged only with PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 (values unchanged); always reported.
     wall_clock_bounds.check_many(
         ("snapshot.reader_process_call_max", process_stats["max_ms"], 100.0),

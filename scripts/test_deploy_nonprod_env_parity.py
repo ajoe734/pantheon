@@ -491,6 +491,8 @@ DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="true"
 DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=""
 DEV_OPENCLAW_ANTHROPIC_API_KEY="{synthetic_api_key}"
 DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="{synthetic_workspace_id}"
+DEV_OPENCLAW_OPENAI_API_KEY=""
+DEV_OPENCLAW_OPENAI_API_KEY_2=""
 
 {configure_kernel_func}
 {with_env_func}
@@ -555,6 +557,8 @@ DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="true"
 DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=""
 DEV_OPENCLAW_ANTHROPIC_API_KEY="${{DEV_OPENCLAW_ANTHROPIC_API_KEY:-}}"
 DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${{DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}}"
+DEV_OPENCLAW_OPENAI_API_KEY=""
+DEV_OPENCLAW_OPENAI_API_KEY_2=""
 
 {configure_kernel_func}
 {with_env_func}
@@ -769,3 +773,20 @@ def test_model_chain_variable_reaches_every_deploy_path_and_refusal_is_advisory(
     # Exit 3 (chain refused, previous chain kept) is advisory; other failures still roll back.
     assert 'model_pool_rc}" -eq 3' in root_case
     assert 'rollback_dev_bff_on_failure "shared_model_pool"' in root_case
+
+
+def test_openai_api_route_secrets_reach_every_deploy_path_without_dispatch_input() -> None:
+    import yaml
+
+    deploy = (Path(__file__).resolve().parents[1] / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    wf_text = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    for var in ("PANTHEON_OPENCLAW_OPENAI_API_KEY", "PANTHEON_OPENCLAW_OPENAI_API_KEY_2"):
+        assert f'command_prefix+=" {var}=$(shell_quote "${{{var}:-}}")"' in deploy
+        assert f'{var}="${{{var}:-}}" \\' in deploy  # exported to the compose invocation
+    for n, suffix in ((1, ""), (2, "_2")):
+        assert f'DEV_OPENCLAW_OPENAI_API_KEY{suffix}="${{DEV_OPENCLAW_OPENAI_API_KEY{suffix}:-}}"' in deploy
+        # deploy, restore, same-final return, compensation and the dev-artifact steps all pass both secrets
+        assert wf_text.count(f"DEV_OPENCLAW_OPENAI_API_KEY{suffix}: ${{{{ secrets.DEV_OPENCLAW_OPENAI_API_KEY{suffix} }}}}") >= 7
+    inputs = yaml.safe_load(wf_text)[True]["workflow_dispatch"]["inputs"]
+    assert len(inputs) <= 25
+    assert not any("openai_api" in name.lower() for name in inputs)

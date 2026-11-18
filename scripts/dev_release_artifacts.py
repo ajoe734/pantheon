@@ -61,6 +61,7 @@ STACK_FORMAT = (
     '{"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
     '"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}},'
     '"image_id":{{json .Image}},"status":{{json .State.Status}},"exit_code":{{json .State.ExitCode}},'
+    '"started_at":{{json .State.StartedAt}},'
     '"health_test":{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{else}}null{{end}},'
     '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
 )
@@ -195,6 +196,8 @@ def failure_record(error: Exception, stage: str) -> dict:
             "failure_kind": kind, "failure_location": location, "exit_code": code}
     if isinstance(error, SourceCompatibilityError):
         record["source_compatibility"] = {"reason": error.reason, "line": error.line}
+    if isinstance(error, StackError) and error.services:
+        record["services"] = [name for name in error.services if SERVICE_NAME.fullmatch(name)]
     return record
 
 
@@ -207,7 +210,7 @@ def remote_failure_record(raw: bytes) -> dict | None:
             value = _json(line)
         except (ArtifactError, ValueError, TypeError, RecursionError):
             continue
-        if not isinstance(value, dict) or set(value) - {"source_compatibility"} != {
+        if not isinstance(value, dict) or set(value) - {"source_compatibility", "services"} != {
             "status", "error_code", "failure_stage", "failure_kind", "failure_location", "exit_code"
         }:
             continue
@@ -217,6 +220,9 @@ def remote_failure_record(raw: bytes) -> dict | None:
                     not isinstance(detail["reason"], str) or detail["reason"] not in SOURCE_FAILURE_REASONS or \
                     (detail["line"] is not None and (type(detail["line"]) is not int or not 0 < detail["line"] < 100000000)):
                 continue
+        if "services" in value and (not isinstance(value["services"], list) or len(value["services"]) > 64 or
+                                    not all(isinstance(n, str) and SERVICE_NAME.fullmatch(n) for n in value["services"])):
+            continue
         stage, kind, location = (value[key] for key in ("failure_stage", "failure_kind", "failure_location"))
         if (value["status"] == "error" and value["error_code"] == FAILURE_CODE
                 and isinstance(stage, str) and stage in FAILURE_STAGES
@@ -346,8 +352,19 @@ def _document_bytes(path: Path) -> bytes:
 def _current(docker: Docker, service: str, *, require_healthy: bool = True) -> dict:
     ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon",
                       "--filter", f"label=com.docker.compose.service={service}").split()
-    if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", ids[0]):
-        raise ArtifactError(f"{service}: expected exactly one Compose container")
+    if len(ids) > 1 and all(CONTAINER_ID.fullmatch(i) for i in ids):
+        rows = {service: []}
+        for container_id in ids:
+            row = _json(docker.call("inspect", "--format", STACK_FORMAT, container_id))
+            if isinstance(row, dict) and row.get("oneoff") != "True":
+                rows[service].append({**row, "container_id": container_id})
+        try:
+            _drop_never_started(docker, rows)
+        except KeyError:
+            pass
+        ids = [r["container_id"] for r in rows[service]]
+    if len(ids) != 1 or not CONTAINER_ID.fullmatch(ids[0]):
+        raise StackError(f"{service}: expected exactly one Compose container", [service])
     row = _json(docker.call("inspect", "--format", CONTAINER_FORMAT, ids[0]))
     _keys(row, ("image_id", "status", "health"), "container")
     _match(row["image_id"], IMAGE, "container image ID")
@@ -465,6 +482,39 @@ def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: st
     return bundle
 
 
+NEVER_STARTED = "0001-01-01T00:00:00Z"
+CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
+
+
+def _never_started(row: dict) -> bool:
+    return row["status"] == "created" and row.get("started_at") == NEVER_STARTED
+
+
+def _settled(row: dict) -> bool:
+    return row["status"] == "running" or (
+        row["status"] == "exited" and row["exit_code"] == 0 and not _has_healthcheck(row))
+
+
+def _drop_never_started(docker: Docker, rows: dict[str, list[dict]], check_lease=None) -> list[dict]:
+    """Remove interrupted-recreate leftovers: a container that was created but
+    never started, while the same service has exactly one other container that
+    is running or a completed one-shot. Anything with a start time is untouched,
+    and a never-started container that is alone in its service is kept."""
+    removed = []
+    for service, containers in sorted(rows.items()):
+        fresh = [r for r in containers if _never_started(r)]
+        others = [r for r in containers if not _never_started(r)]
+        if not fresh or len(others) != 1 or not _settled(others[0]):
+            continue
+        for row in fresh:
+            if check_lease is not None:
+                check_lease()
+            docker.call("rm", "--force", row["container_id"])
+            removed.append({"service": service, "container_id": row["container_id"]})
+        rows[service] = others
+    return removed
+
+
 def _stack_rows(docker: Docker) -> dict[str, list[dict]]:
     """Every non-one-off Compose container of the project, by service."""
     ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon").split()
@@ -472,7 +522,9 @@ def _stack_rows(docker: Docker) -> dict[str, list[dict]]:
     for container_id in ids:
         _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "container ID")
         row = _json(docker.call("inspect", "--format", STACK_FORMAT, container_id))
-        _keys(row, ("service", "oneoff", "image_id", "status", "exit_code", "health_test", "health"), "stack container")
+        # started_at is optional on input: absent means "treat as started" (never removable).
+        _keys({k: v for k, v in row.items() if k != "started_at"},
+              ("service", "oneoff", "image_id", "status", "exit_code", "health_test", "health"), "stack container")
         if row["oneoff"] == "True":
             continue
         _match(row["service"], SERVICE_NAME, "Compose service name")
@@ -712,6 +764,9 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
     _match(source_sha, SHA, "source SHA")
     check_lease()
     first = _stack_rows(docker)
+    removed = _drop_never_started(docker, first, check_lease)
+    for entry in removed:
+        print(f"removed never-started container {entry['container_id'][:12]} of service {entry['service']}", flush=True)
     services, missing = {}, []
     for service, containers in sorted(first.items()):
         if len(containers) != 1:
@@ -747,6 +802,7 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
         except ArtifactError as error:
             raise StackError(f"{service}: failed to hold the recorded image", [service]) from error
     second = _stack_rows(docker)
+    _drop_never_started(docker, second, check_lease)
     for service, row in services.items():
         again = second.get(service)
         if not again or len(again) != 1 or again[0]["image_id"] != row["image_id"] or \

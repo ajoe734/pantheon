@@ -23,10 +23,58 @@ CHAIN_ENV = "OPENCLAW_MODEL_CHAIN"
 # prints it for the configure script.
 DEFAULT_MODEL_CHAIN = (
     "anthropic/claude-opus-4-8",
+    "openai-api/gpt-6.2-sol",
+    "openai-api-2/gpt-6.2-sol",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.5",
 )
 GATEWAY_NATIVE_RUNTIME = "openclaw"
+
+# --- OpenAI API route (per-token billing) ----------------------------------
+# One provider id per key; the second key backs the first up through model-level
+# fallback in the chain. Provider ids are distinct from the built-in subscription
+# provider ``openai``. The key reaches the gateway only through these container
+# variables, which neither the gateway, its OpenAI plugin nor a bundled CLI reads
+# ambiently (never OPENAI_API_KEY / CODEX_API_KEY), and is referenced from
+# models.providers.<id>.apiKey as an env SecretRef: no key value is ever stored.
+API_ROUTE_BASE_URL = "https://api.openai.com/v1"
+API_ROUTE_API = "openai-responses"
+API_ROUTES = (
+    {"provider": "openai-api", "env": "OPENCLAW_API_ROUTE_KEY_1"},
+    {"provider": "openai-api-2", "env": "OPENCLAW_API_ROUTE_KEY_2"},
+)
+AMBIENT_OPENAI_KEY_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY")
+
+
+def api_route_provider_value(env_name: str, model_ids: Iterable[str]) -> dict:
+    """models.providers.<id> value: endpoint, env SecretRef, model catalog."""
+    ids: List[str] = []
+    for mid in model_ids:
+        if mid and mid not in ids:
+            ids.append(mid)
+    return {
+        "baseUrl": API_ROUTE_BASE_URL,
+        "api": API_ROUTE_API,
+        "apiKey": {"source": "env", "provider": "default", "id": env_name},
+        "models": [{"id": mid, "name": mid} for mid in ids],
+    }
+
+
+def api_route_models(chain: Iterable[str], provider: str) -> List[str]:
+    prefix = provider + "/"
+    return [ref[len(prefix):] for ref in chain if ref.startswith(prefix) and len(ref) > len(prefix)]
+
+
+def api_route_providers_present(environ: Mapping[str, str]) -> List[str]:
+    """Provider ids whose key variable is non-empty in ``environ``."""
+    return [r["provider"] for r in API_ROUTES if str(environ.get(r["env"]) or "").strip()]
+
+
+def drop_absent_api_routes(chain: Iterable[str], present: Iterable[str]) -> List[str]:
+    """Remove refs of API route providers whose key is absent."""
+    present_set = set(present)
+    absent = [r["provider"] + "/" for r in API_ROUTES if r["provider"] not in present_set]
+    return [ref for ref in chain if not any(ref.startswith(a) for a in absent)]
 
 
 def parse_chain(raw: Any) -> List[str]:
@@ -564,5 +612,7 @@ def _harness_summary(persona: Mapping[str, Any]) -> dict[str, Any]:
 if __name__ == "__main__":  # pragma: no cover - tiny CLI for the configure script
     if sys.argv[1:] == ["default-chain"]:
         print(",".join(default_chain()))
+    elif sys.argv[1:] == ["api-routes"]:
+        print(json.dumps(list(API_ROUTES), separators=(",", ":")))
     else:
         raise SystemExit("usage: python3 -m services.persona.runtime_profile default-chain")

@@ -18,7 +18,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services.persona.runtime_profile import configured_chain  # noqa: E402
+from services.persona.runtime_profile import (  # noqa: E402
+    API_ROUTES,
+    api_route_models,
+    api_route_provider_value,
+    configured_chain,
+    drop_absent_api_routes,
+)
 
 POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh")
 API_KEY_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"
@@ -26,6 +32,12 @@ WORKSPACE_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"
 TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"
 OPENAI_OAUTH_TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN"
 OPENAI_CONTAINER_OAUTH_TOKEN_ENV = "OPENCLAW_OPENAI_OAUTH_TOKEN"
+# OpenAI API route keys: host-side source variable per route (same order as
+# runtime_profile.API_ROUTES; the container variable is the route's ``env``).
+API_ROUTE_SOURCE_ENVS = (
+    "PANTHEON_OPENCLAW_OPENAI_API_KEY",
+    "PANTHEON_OPENCLAW_OPENAI_API_KEY_2",
+)
 ANTHROPIC_WORKSPACE_BATCH: list[dict[str, object]] = [
     {
         "path": "models.providers.anthropic.headers.anthropic-workspace-id",
@@ -105,7 +117,14 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
         )
     _validate_openai_oauth_token(str(env.get(OPENAI_OAUTH_TOKEN_SOURCE_ENV) or ""))
     source = POOL_SCRIPT.read_text(encoding="utf-8")
+    present_routes = [
+        route["provider"]
+        for route, source_env in zip(API_ROUTES, API_ROUTE_SOURCE_ENVS)
+        if str(env.get(source_env) or "").strip()
+    ]
     chain = configured_chain(env)
+    if not str(env.get("OPENCLAW_MODEL_CHAIN") or "").strip():
+        chain = drop_absent_api_routes(chain, present_routes)
     if not chain:
         raise BootstrapError("OPENCLAW_MODEL_CHAIN is empty and no default chain file is readable")
     chain_policy = {"primary": chain[0], "fallbacks": chain[1:]}
@@ -124,6 +143,16 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
         ]
         + ANTHROPIC_WORKSPACE_BATCH
         + OPENAI_OAUTH_TOKEN_BATCH
+        + [
+            {
+                "path": f"models.providers.{route['provider']}",
+                "value": api_route_provider_value(
+                    route["env"], api_route_models(chain, route["provider"])
+                ),
+            }
+            for route in API_ROUTES
+            if route["provider"] in present_routes
+        ]
         + _script_batch(source, "CLAUDE_TOOLSEARCH_BATCH")
     )
     if str(env.get(TOKEN_SOURCE_ENV) or "").strip():
