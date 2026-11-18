@@ -129,7 +129,7 @@ class JsonlConnectorScheduleStore:
                 and existing.interval_seconds == interval_seconds
                 and existing.enabled == enabled
             ):
-                return self._copy_config(existing)
+                return existing
             config = ConnectorScheduleConfig(
                 connector_id=connector_id,
                 interval_seconds=interval_seconds,
@@ -205,7 +205,6 @@ class JsonlConfiguredConnectorStore:
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
-            self._read_key = None  # explicit reload is always a full replay
             self._reload_unlocked()
 
     def _stat_key(self) -> tuple[int, int, int] | None:
