@@ -751,6 +751,9 @@ class _HostedShapedOwner:
     def get_strategy_pool(self, persona_id, *, tenant_id):
         return self.pool.current(persona_id, tenant_id)
 
+    def get_strategy_pool_version(self, persona_id, number, *, tenant_id):
+        return self.pool.version(persona_id, tenant_id, number)
+
     def get_harness(self, persona_id, *, tenant_id):
         return {"active_version": 1}
 
@@ -839,6 +842,31 @@ def test_pool_beyond_seed_is_left_to_the_cycle_and_legacy_enrolled_readback_is_u
     assert outcome.steps["publish"]["status"] == "deferred" and w.state["publishes"] == 0
     assert enrollment_settled(outcome.to_dict()) is True
     assert enrollment_settled({"status": "enrolled", "steps": {"pool": {"status": "present"}}}) is False
+
+
+def test_refused_reweight_version_with_identical_members_is_published(monkeypatch):
+    w = _hosted_publish_world(monkeypatch)
+    w.append([w.member("artifact-a", 1.0)], 1)  # v2: a refused reweight keeps the members
+    assert w.pool.current("persona-a", "tenant-a")["pool_version"] == 2
+    outcome = _first_publish_enrollment(w).enroll()
+    step = outcome.steps["publish"]
+    assert outcome.status == "enrolled" and step["status"] == "published", outcome.to_dict()
+    assert step["pool_version"] == 2 and w.state["publishes"] == 1
+    again = _first_publish_enrollment(w).enroll()
+    assert again.steps["publish"]["status"] == "current" and w.state["publishes"] == 1
+
+
+def test_changed_member_is_deferred_and_legacy_deferred_readback_is_reevaluated_once(monkeypatch):
+    from services.control_plane.bff.persona_paper_enrollment import enrollment_settled
+    w = _hosted_publish_world(monkeypatch)
+    w.append([w.member("artifact-a", 0.5), w.member("artifact-b", 0.5)], 1, policy=True)
+    outcome = _first_publish_enrollment(w).enroll()
+    step = outcome.steps["publish"]
+    assert step["status"] == "deferred" and step["reason"].startswith("pool_membership_changed_since_seed")
+    assert w.state["publishes"] == 0 and enrollment_settled(outcome.to_dict()) is True
+    legacy = {"status": "enrolled", "steps": {"publish": {
+        "status": "deferred", "reason": "pool_advanced_past_seed:v2"}}}
+    assert enrollment_settled(legacy) is False
 
 
 # ---------------------------------------------------------------------------
