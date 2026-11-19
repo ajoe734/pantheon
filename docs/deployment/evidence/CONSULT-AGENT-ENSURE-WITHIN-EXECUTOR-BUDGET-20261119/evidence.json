@@ -1,0 +1,33 @@
+{
+  "task_id": "CONSULT-AGENT-ENSURE-WITHIN-EXECUTOR-BUDGET-20261119",
+  "measurement": {
+    "method": "real ensure_consult_agent, gateway double with 6.0 s per call (hosted CLI spawn 5-7 s), a concurrent persona agent ensure holding agent_registry_lock for two config.get calls; script run on pre-change HEAD and on the change",
+    "before": {
+      "first_time_ensure": "lock wait 12.0 s, then config.get, config.patch, config.get, agents.list (admission: config.get + agents.list), config.get verify = 5 calls, completes at 41.5 s > 30 s executor timeout",
+      "already_matching_ensure": "4 gateway calls = 24.0 s, taken under the registry lock (config.get, admission config.get + agents.list, verify config.get)"
+    },
+    "after": {
+      "first_time_ensure": "1 lock-free fast-path read (answered at 6 s, did not wait for the concurrent writer); provisioning single-flight in a background thread: lock wait 12 s, config.get, config.patch, config.get, agents.list (admission reuses the verified snapshot); route answers 202 in_progress after CONSULT_AGENT_ENSURE_WAIT_SECONDS=20 s (< 30 s timeout), provisioning finishes at ~35.5 s",
+      "already_matching_ensure": "1 config.get, 6.0 s, no lock"
+    }
+  },
+  "design_in_progress_outcome": {
+    "endpoint": "existing POST /api/openclaw-adapter/consultation/agents/ensure; ready -> 200 status=ready, still provisioning -> 202 status=in_progress retry_after_seconds=15 (single flight per tenant+persona, no second dispatcher)",
+    "executor": "HttpContributionProvider.ensure_agents asks every persona, then raises AgentProvisioningInProgress (also on a socket timeout, since the adapter keeps working). run_tick blocks the existing work item (status blocked, retry via available_at) with count_attempt=False, so blocked_count is unchanged and it can never dead-letter from this cause; no panel_agent_provisioning_blocked event is written. The next attempt finds the agent ready on the fast path.",
+    "no_repatch": "a live config whose entry already holds the desired spec (fast path, and re-checked under the lock) never produces config.patch; verified by the double asserting on every patch and by test_matching_live_spec_is_one_read..."
+  },
+  "tests": {
+    "services/consultation/tests/test_persona_meetings.py::test_mt2_meeting_held_with_slow_gateway_and_concurrent_persona_ensure": "real workflow executor + real adapter ensure + stateful gateway double (0.6 s per call vs 3 s executor timeout, ratio of hosted 6 s / 30 s, plus concurrent persona ensure): MT-2 completed, blocked_count 0, 3 patches. Same test on pre-change HEAD: dead_letter",
+    "services/openclaw-gateway-adapter/test_consult_agent_provisioning.py": "matching spec = one read and no wait behind lock holder; slow first provisioning -> 202 in_progress, single flight, then ready with one patch",
+    "regression": "services/consultation and services/openclaw-gateway-adapter pass (670 passed, 9 skipped); integrations/openclaw collection error 'Postgres DSN is required' is pre-existing on HEAD"
+  },
+  "runtime_budget_gateway_cli_spawns": {
+    "per_agent_already_matching": {"before": 4, "after": 1},
+    "per_meeting_three_personas_steady_state": {"before": 12, "after": 3},
+    "per_daily_cycle_three_meetings_steady_state": {"before": 36, "after": 9},
+    "first_time_per_persona": {"before": 5, "after": 5, "note": "unchanged count, now off the executor's critical path (background, single flight)"},
+    "new_writers": 0,
+    "note": "contribution-path admission (config.get + agents.list per contribution) is untouched"
+  },
+  "hosted_followup": "after deploy, confirm the next 10:00Z cycle holds a meeting; the earlier dead_letter rows need replay_dead_letter by the operator"
+}

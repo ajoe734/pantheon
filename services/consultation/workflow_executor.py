@@ -36,6 +36,7 @@ from services.knowledge import case_file as decision_case
 
 from .provider import (
     AgentProvisioningBlocked,
+    AgentProvisioningInProgress,
     ContributionBlocked,
     ContributionProviderError,
     HttpContributionProvider,
@@ -1206,6 +1207,8 @@ def _execute_panel_claim(
                     if future.done():
                         raise
                     claim = _renew(state, claim, config)
+    except AgentProvisioningInProgress:
+        raise
     except ContributionProviderError as exc:
         _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
             "request_id": claim.request_id, "event_type": "panel_agent_provisioning_blocked",
@@ -1779,6 +1782,7 @@ def run_tick(
                                           if isinstance(exc, AgentProvisioningBlocked)
                                           else config.max_blocked_attempts),
                     retry_after_seconds=config.retry_after_seconds,
+                    count_attempt=not isinstance(exc, AgentProvisioningInProgress),
                 )
             except StaleWorkflowClaim as stale:
                 errors.append(

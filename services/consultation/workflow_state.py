@@ -353,10 +353,12 @@ class WorkflowStateStore:
         reason: str,
         max_blocked_attempts: int,
         retry_after_seconds: int,
+        count_attempt: bool = True,
     ) -> str:
         if max_blocked_attempts < 1:
             raise ValueError("max_blocked_attempts must be >= 1")
-        next_blocked_count = claim.blocked_count + 1
+        # An in-progress hold (adapter still provisioning) is not a failed attempt.
+        next_blocked_count = claim.blocked_count + (1 if count_attempt else 0)
         status = (
             "dead_letter"
             if next_blocked_count >= max_blocked_attempts
