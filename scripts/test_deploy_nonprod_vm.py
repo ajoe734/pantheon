@@ -6314,3 +6314,199 @@ docker() {{
 
 
 
+
+
+# --- TW-REFRESH-STEADY-CHECK-ORPHAN-AND-START-PERIOD-20261119 ----------------
+# Reproduces refresh run 44594831526: a timed out step whose remote process writes its
+# outcome late, and a scheduler whose health is "starting" right after the restore.
+
+
+def _runner_with_fake_transport(tmp_path: Path, mode: str, run_id: str = "777") -> tuple[subprocess.CompletedProcess[str], Path, list[str]]:
+    """Run the real --refresh-only runner path with only the SSH transport stubbed."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "deploy_nonprod_vm.sh").write_text(DEPLOY_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    calls = tmp_path / "calls"
+    (scripts / "dev_vm_ssh.sh").write_text(
+        '#!/bin/bash\necho "$1 $2" >> "$CALLS"\n'
+        'if [[ "$1" == copy-from ]]; then\n'
+        '  base="$(basename "$2" .json)"; call_id="${base#pantheon-refresh-outcome-}"\n'
+        '  case "$FAKE_MODE" in\n'
+        '    own) printf \'{"call_id":"%s","status":"completed","reason":"refreshed"}\\n\' "$call_id" > "$3" ;;\n'
+        '    foreign) printf \'{"connector_id":"tw-finmind-valuation","status":"completed","reason":"refreshed"}\\n\' > "$3" ;;\n'
+        '    other_call) printf \'{"call_id":"%s-other","status":"completed","reason":"refreshed"}\\n\' "$call_id" > "$3" ;;\n'
+        '  esac\nfi\n', encoding="utf-8")
+    (scripts / "dev_remote_guarded_exec.py").write_text("import sys\n", encoding="utf-8")
+    for f in scripts.iterdir():
+        f.chmod(0o755)
+    out = tmp_path / "out.json"
+    proc = subprocess.run(
+        ["bash", str(scripts / "deploy_nonprod_vm.sh"), "--refresh-only", "--steady-check", "--output", str(out)],
+        env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "CALLS": str(calls), "FAKE_MODE": mode,
+             "GITHUB_RUN_ID": run_id, "DEV_DEPLOY_SSH_HOST": "35.194.154.62", "PANTHEON_DEPLOY_WORKTREE_ROOT": "/x",
+             "DEV_DEPLOY_SSH_USER": "chloe_ong_dev_cctech_support_com"},
+        capture_output=True, text=True, check=False,
+    )
+    return proc, out, calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+
+
+def test_refresh_call_accepts_only_the_outcome_that_carries_its_own_call_id(tmp_path: Path) -> None:
+    proc, out, calls = _runner_with_fake_transport(tmp_path, "own")
+    assert json.loads(out.read_text(encoding="utf-8"))["status"] == "completed", proc.stderr
+    remote_path = next(c.split()[1] for c in calls if c.startswith("copy-from"))
+    # Unique per call, never just the run id (the shared name that run 44594831526 overwrote).
+    assert re.fullmatch(r"/tmp/pantheon-refresh-outcome-777-\d+-\d+-\d+\.json", remote_path), remote_path
+
+
+@pytest.mark.parametrize("mode", ["foreign", "other_call"])
+def test_refresh_call_records_failed_when_outcome_belongs_to_another_call(tmp_path: Path, mode: str) -> None:
+    """Run 44594831526: the steady check copied back a tw-finmind-valuation 'completed refreshed'."""
+    proc, out, _ = _runner_with_fake_transport(tmp_path, mode)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["status"] == "failed", proc.stderr
+    assert data["reason"].startswith("outcome_call_mismatch:")
+
+
+def test_two_refresh_calls_of_one_run_use_different_remote_outcome_paths(tmp_path: Path) -> None:
+    paths = []
+    for index in range(2):
+        sub = tmp_path / str(index)
+        sub.mkdir()
+        _, _, calls = _runner_with_fake_transport(sub, "own")
+        paths.append(next(c.split()[1] for c in calls if c.startswith("copy-from")))
+    assert paths[0] != paths[1]
+
+
+def _steady_harness(tmp_path: Path, body: str, *, health_script: str = "echo healthy") -> tuple[subprocess.CompletedProcess[str], list[str], dict]:
+    fns = "\n".join(
+        _prune_shell_function(n)
+        for n in (
+            "remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts",
+            "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans",
+            "steady_check_cleanup_call_files", "steady_check_health_bound_seconds", "execute_steady_posture_check",
+        )
+    )
+    calls = tmp_path / "calls"
+    out = tmp_path / "steady.json"
+    started = tmp_path / "started"
+    script = f"""
+set -uo pipefail
+info() {{ echo "$*"; }}
+sleep() {{ echo "sleep $1" >> "{calls}"; command sleep "${{REAL_SLEEP:-0}}"; }}
+source_ingest_family_services() {{ printf "%s\\n" source-ingest source-ingest-scheduler; }}
+manage_source_ingest_refresh_runtime() {{ echo "manage $2" >> "{calls}"; touch "{started}"; }}
+docker() {{
+  echo "docker $*" >> "{calls}"
+  [[ "$1" == start ]] && touch "{started}"
+  running=false; [[ -e "{started}" || -n "${{ALREADY_RUNNING:-}}" ]] && running=true
+  case "$*" in
+    "compose -p pantheon -f docker-compose.yml ps --status running -q "*) [[ $running == true ]] && echo "c-${{*: -1}}" ;;
+    "compose -p pantheon -f docker-compose.yml ps -a -q source-ingest") echo c-src ;;
+    "compose -p pantheon -f docker-compose.yml ps -a -q "*) echo "c-${{*: -1}}" ;;
+    "inspect --format {{{{json .Config.Env}}}} c-source-ingest-scheduler") echo '["SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull"]' ;;
+    "inspect --format {{{{json .Config.Env}}}} c-src") echo '["A=1"]' ;;
+    "inspect --format {{{{.Image}}}} c-src") echo sha256:img ;;
+    "inspect --format {{{{json .Config.Healthcheck}}}} "*) echo '{{"Interval":30000000000,"StartPeriod":90000000000}}' ;;
+    "inspect --format "*State.Health*) {health_script} ;;
+  esac
+  return 0
+}}
+{fns}
+STEADY_CHECK_GRACE_SECONDS=0
+{body}
+"""
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    data = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
+    return proc, (calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []), data
+
+
+def test_steady_check_waits_for_scheduler_health_to_leave_starting_after_restore(tmp_path: Path) -> None:
+    """Run 44594831526: the scheduler (start period 90s, interval 30s) was judged 1s after the restore."""
+    counter = tmp_path / "health_calls"
+    health = (
+        f'if [[ -e "{tmp_path / "started"}" && "$*" == *scheduler* ]]; then '
+        f'n=$(cat "{counter}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "{counter}"; '
+        'if (( n < 4 )); then echo starting; else echo healthy; fi; else echo healthy; fi'
+    )
+    proc, calls, data = _steady_harness(
+        tmp_path, f'execute_steady_posture_check "{tmp_path / "steady.json"}"; echo "RC=$?"', health_script=health
+    )
+    assert "RC=0" in proc.stdout, proc.stdout + proc.stderr
+    assert data["status"] == "restored", data
+    assert "manage restore" in calls
+    assert any(c.startswith("sleep") for c in calls), "the check must wait while health is starting"
+
+
+def test_steady_check_fails_naming_the_service_still_starting_at_the_bound(tmp_path: Path) -> None:
+    health = f'if [[ -e "{tmp_path / "started"}" && "$*" == *scheduler* ]]; then echo starting; else echo healthy; fi'
+    proc, calls, data = _steady_harness(
+        tmp_path, f'execute_steady_posture_check "{tmp_path / "steady.json"}"; echo "RC=$?"', health_script=health
+    )
+    assert "RC=1" in proc.stdout, proc.stdout + proc.stderr
+    assert data["status"] == "failed" and "source-ingest-scheduler_starting" in data["reason"], data
+    # start period 90s + one 30s interval = 120s at 5s polls, never more.
+    assert sum(1 for c in calls if c == "sleep 5") == 24
+
+
+def test_steady_check_judges_an_already_healthy_service_at_once(tmp_path: Path) -> None:
+    proc, calls, data = _steady_harness(
+        tmp_path, f'ALREADY_RUNNING=1; export ALREADY_RUNNING; execute_steady_posture_check "{tmp_path / "steady.json"}"; echo "RC=$?"'
+    )
+    assert data["status"] == "healthy" and not any(c.startswith("sleep") for c in calls), (data, calls)
+
+
+def test_steady_check_stops_left_over_refresh_and_never_accepts_its_late_outcome(tmp_path: Path) -> None:
+    """The timed out step's remote process keeps running and would write its outcome after the check."""
+    late = tmp_path / "pantheon-refresh-outcome-4242-1-1-1.json"
+    orphan = subprocess.Popen(
+        ["bash", "-c", f'sleep 3; echo \'{{"status":"completed","reason":"refreshed"}}\' > "{late}"'],
+        env={**os.environ, "PANTHEON_REFRESH_RUN_ID": "4242", "PANTHEON_DEPLOY_COMPONENT": "refresh-only", "STEADY_CHECK": "false",
+             "PANTHEON_REFRESH_CALL_ID": "4242-1-1-1"},
+    )
+    try:
+        proc, calls, data = _steady_harness(
+            tmp_path,
+            f'ALREADY_RUNNING=1; export ALREADY_RUNNING; REAL_SLEEP=1; PANTHEON_REFRESH_RUN_ID=4242; STEADY_CHECK_TMP_DIR="{tmp_path}"; '
+            'STEADY_CHECK_ORPHAN_WAIT_SECONDS=1; STEADY_CHECK_ORPHAN_STOP_SECONDS=5; STEADY_CHECK_ORPHAN_POLL_SECONDS=1; '
+            f'execute_steady_posture_check "{tmp_path / "steady.json"}"; echo "RC=$?"',
+        )
+        orphan.wait(timeout=15)
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+    assert data["orphan"]["action"] == "stopped", (data, proc.stdout, proc.stderr)
+    assert data["orphan"]["seconds"] >= 1
+    assert data["status"] == "healthy"
+    assert orphan.returncode != 0 and not late.exists()
+
+
+def test_steady_check_waits_for_left_over_refresh_that_ends_by_itself(tmp_path: Path) -> None:
+    orphan = subprocess.Popen(
+        ["bash", "-c", "sleep 1"],
+        env={**os.environ, "PANTHEON_REFRESH_RUN_ID": "4243", "PANTHEON_DEPLOY_COMPONENT": "refresh-only", "STEADY_CHECK": "false"},
+    )
+    try:
+        proc, _, data = _steady_harness(
+            tmp_path,
+            f'ALREADY_RUNNING=1; export ALREADY_RUNNING; REAL_SLEEP=1; PANTHEON_REFRESH_RUN_ID=4243; STEADY_CHECK_TMP_DIR="{tmp_path}"; '
+            f'STEADY_CHECK_ORPHAN_POLL_SECONDS=1; execute_steady_posture_check "{tmp_path / "steady.json"}"',
+        )
+    finally:
+        orphan.wait(timeout=10)
+    assert data["orphan"]["action"] == "ended", (data, proc.stdout)
+
+
+def test_steady_check_removes_call_files_of_its_run_only_and_reports_count_and_size(tmp_path: Path) -> None:
+    (tmp_path / "pantheon-refresh-outcome-55-1-1-1.json").write_text("12345")
+    (tmp_path / "pantheon-refresh-outcome-55-2-2-2.json.lock").write_text("123")
+    (tmp_path / "pantheon-refresh-outcome-56-1-1-1.json").write_text("other run")
+    own = tmp_path / "pantheon-refresh-outcome-55-9-9-9.json"
+    own.write_text("{}")
+    proc, _, _ = _steady_harness(
+        tmp_path,
+        f'ALREADY_RUNNING=1; export ALREADY_RUNNING; PANTHEON_REFRESH_RUN_ID=55; STEADY_CHECK_TMP_DIR="{tmp_path}"; '
+        f'execute_steady_posture_check "{own}"',
+    )
+    data = json.loads(own.read_text(encoding="utf-8"))
+    assert data["cleanup"] == {"bytes": 8, "files": 2}, (data, proc.stdout, proc.stderr)
+    assert (tmp_path / "pantheon-refresh-outcome-56-1-1-1.json").exists()

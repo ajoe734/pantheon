@@ -1,0 +1,39 @@
+{
+  "task_id": "PERSONA-TOOLS-HOOK-AUTHORIZATION-ACROSS-PLUGIN-INSTANCES-20261119",
+  "cause_confirmation": {
+    "image": "ghcr.io/openclaw/openclaw:2026.7.1",
+    "method": "static inspection of /app/dist/tools-Bm4OUTgF.js in the pinned image (docker run --entrypoint sh, grep)",
+    "found": "createCachedDescriptorPluginTool (line 477-490), the cold-load path (653-704) and resolvePluginTools (727-765) load a plugin registry at tool execute time with activate:false and toolDiscovery:true; each registry load calls the plugin's register() again, while before_tool_call hooks run from the global hook runner. The hook's closure and the tool's closure can therefore belong to different register() calls.",
+    "not_measured": "a live gateway process was not started, so the exact register() count per process and which instance served each of the 14 11/19 calls is inferred from the code path plus the logged 14x authorize 200 / 14x call_not_authorized_by_hook, not counted at runtime"
+  },
+  "fix": "Authorization is no longer held in plugin memory. The hook's /authorize call (with host tool_call_id) makes the broker record (agent_id, session_key, tool_call_id, tool, run_id); /call (agent, session, tool_call_id from the host tool context) consumes it exactly once and takes run_id from the record. A call with no record, another agent, session or tool, an expired record, or a forged run_id is refused (403). Identity still comes only from host context, never model params; a broker refusal/timeout in the hook still blocks.",
+  "tests": {
+    "plugin": "integrations/openclaw/plugins/pantheon-persona-tools: npm test, 19 pass, including 'a call the hook authorized succeeds when the tool comes from a different plugin instance than the hook' (hook from one register(), tool from a second; the pre-change plugin kept bindings per register() so this scenario returned call_not_authorized_by_hook)",
+    "broker": "services/openclaw-gateway-adapter: pytest 668 passed, 9 skipped (opt-in real-stack tests); new tests cover single use, other agent/session/tool, forged run id, refused authorize records nothing, TTL expiry and cap",
+    "broker_callers": {
+      "services/consultation/tests/test_panel_full_interpretations.py": "GatewayDouble._recall now authorizes (authorize_only, host tool_call_id) then calls with the same agent, session and tool_call_id; assertions unchanged",
+      "services/memory/test_mental_models.py": "each call goes through authorize then call. Refusals asserted at authorize: tool_outside_profile (3 forbidden tools) and tool_not_allowed_for_purpose (panel read); invalid_parameters (422) still asserted at call",
+      "result": "consultation + memory + broker tests: 53 passed, 4 skipped"
+    },
+    "bff_concurrent_read": "services/control-plane/bff/tests/test_persona_league_concurrent_read.py: 11 passed, 1 skipped on this branch and on dev (git archive of dev); no residual"
+  },
+  "pull_request_check": {
+    "adapter_tests": "branch-ci.yml job service-suites-runtime (already required via service-suites) runs pytest services/openclaw-gateway-adapter",
+    "plugin_tests": "added step 'Run pantheon-persona-tools plugin tests' (setup-node 22, npm ci, npm test) to service-suites-runtime in this task; previously the plugin tests ran only inside the gateway image build"
+  },
+  "runtime_budget": {
+    "records_per_daily_cycle": "about 15 per persona, about 45 for three trading personas",
+    "lifetime_seconds": 600,
+    "cap": 2000,
+    "removal": "deleted on use at /call; expired rows and rows over the cap (oldest first) pruned on each authorize",
+    "writer": "the existing broker sqlite store (new table authorizations); no other new writer"
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "criteria": "after the release containing this merge, in the first daily cycle: persona-day probe check memory_read_via_broker passes for at least one trading persona and the gateway log has no call_not_authorized_by_hook line. Task must not be reported accepted before that."
+  },
+  "residual_findings": [
+    "The hook's persona-profile cache (personaAgents) is still per plugin instance; it is defense in depth only, so a second instance just skips the extra narrowing.",
+    "Cause was confirmed statically, not by a live gateway register() count."
+  ]
+}

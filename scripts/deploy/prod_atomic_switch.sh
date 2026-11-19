@@ -305,7 +305,14 @@ write_state prod_green_verified
 # Exactly one owner at any time: drain (baseline, or none on first release) then activate the candidate.
 : > "${JOURNAL}/singletons_drained"
 "$PROD_OPS_CMD" drain_singletons "$RELEASE_ID" || rollback_and_exit "singleton_drain_failed"
-"$PROD_OPS_CMD" activate_singletons "$RELEASE_ID" || rollback_and_exit "singleton_activate_failed"
+ACTIVATE_OUT="$("$PROD_OPS_CMD" activate_singletons "$RELEASE_ID")" || rollback_and_exit "singleton_activate_failed"
+# Last stdout line carries the reporting-only product worker Docker health JSON (never a gate).
+WORKER_HEALTH_JSON="$(printf '%s\n' "$ACTIVATE_OUT" | tail -n1 | python3 -c 'import json,sys
+try:
+    d = json.loads(sys.stdin.read()).get("product_worker_health")
+except Exception:
+    d = None
+print(json.dumps(d if isinstance(d, dict) else {}, sort_keys=True))')"
 "$PROD_OPS_CMD" gate "$RELEASE_ID" candidate_ready "$TARGET_PORT" || rollback_and_exit "candidate_not_ready_after_handoff"
 
 # 8. Compensated BFF upstream switch (atomic file replace + proxy reload).
@@ -371,4 +378,5 @@ rec = {
 Path(out_p).write_text(json.dumps(rec, sort_keys=True) + "\n", encoding="utf-8")
 PY
 write_state prod_active
-printf '{"status":"prod_active","release_id":"%s","observation_window_minutes":30,"note":"release_complete requires hosted drills and 30-minute observation; not asserted here"}\n' "$RELEASE_ID"
+python3 -c 'import json,sys
+print(json.dumps({"status":"prod_active","release_id":sys.argv[1],"observation_window_minutes":30,"product_worker_health":json.loads(sys.argv[2]),"product_worker_health_is_gate":False,"note":"release_complete requires hosted drills and 30-minute observation; not asserted here"}))' "$RELEASE_ID" "$WORKER_HEALTH_JSON"

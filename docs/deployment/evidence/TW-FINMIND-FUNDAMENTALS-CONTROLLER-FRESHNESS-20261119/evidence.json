@@ -1,0 +1,15 @@
+{
+  "task": "TW-FINMIND-FUNDAMENTALS-CONTROLLER-FRESHNESS-20261119",
+  "rule": "Monthly revenue / quarterly statements freshness = newest stored publication (source_timestamp Taipei date) >= statutory deadline of the period due as of (today_Taipei - 2 day grace), via expected_finmind_fundamental_period_ends + statutory_available_date. Fails closed when unresolved. Only connector ids tw-finmind-monthly-revenue and tw-finmind-quarterly-statements use it; all other connectors keep the generic threshold.",
+  "files_changed": [
+    "services/source_ingestion/runtime.py",
+    "services/source_ingestion/chip_publication_schedule.py",
+    "services/source_ingestion/tests/test_finmind_fundamentals_freshness.py"
+  ],
+  "not_changed": ["services/source_ingestion/connector_definitions.py", "scripts/deploy_nonprod_vm.sh"],
+  "reproduction_on_old_runtime": "new test file with old runtime.py: 13 failed, 4 passed (hosted monthly/quarterly shapes stale; boundary cases fail)",
+  "validation": [
+    {"cmd": "pytest services/source_ingestion/tests/test_finmind_fundamentals_freshness.py services/source_ingestion/tests/test_chip_publication_schedule.py services/source_ingestion/tests/test_scheduled_connector.py -q", "result": "158 passed, 1 skipped"}
+  ],
+  "hosted_followup": "Coordinator reads controller readback for both connectors and next Taiwan refresh FinMind fundamentals step after deploy (acceptance 7); not yet done."
+}

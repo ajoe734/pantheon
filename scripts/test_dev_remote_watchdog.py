@@ -123,13 +123,15 @@ class TestDevRemoteWatchdog(unittest.TestCase):
 
     def test_large_envelope_exceeding_pause_succeeds_within_startup_timeout(self) -> None:
         # Simulate a ~350KB base64 deploy-dev envelope streaming over WAN SSH slower
-        # than runtime pause (0.10s) but well within startup_timeout (1.0s).
+        # than runtime pause (0.10s) but well within startup_timeout (30s: the clock includes the
+        # child Python start, so a loaded runner must not be able to exhaust it; the fail-closed
+        # startup-timeout test below keeps proving the timeout itself).
         padding = "# " + ("x" * 270000) + "\n"
         script = padding + "printf 'wan-envelope-ok\\n'\n"
         raw_envelope = _envelope_bytes(script, seconds=5)
         self.assertGreaterEqual(len(raw_envelope), 350000)
 
-        process = self._spawn(startup_timeout=1.0, pause=0.10, silence_kill=2.0, poll=0.01)
+        process = self._spawn(startup_timeout=30.0, pause=0.10, silence_kill=2.0, poll=0.01)
         assert process.stdin is not None
         assert process.stdout is not None
         assert process.stderr is not None
@@ -142,7 +144,7 @@ class TestDevRemoteWatchdog(unittest.TestCase):
         process.stdin.write(sender._frame(NONCE, 1))
         process.stdin.flush()
 
-        code = process.wait(timeout=4)
+        code = process.wait(timeout=30)
         stdout = process.stdout.read().decode("utf-8")
         stderr = process.stderr.read().decode("utf-8")
         self.assertEqual(code, 0, stderr)

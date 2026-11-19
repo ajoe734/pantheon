@@ -275,44 +275,51 @@ def test_agents_cannot_create_or_edit_standing_questions_and_answers_are_readabl
         broker.register_run("persona-beta", broker_mod.PURPOSE_DAILY_CYCLE, "u-beta")
         broker.register_run("persona-alpha", broker_mod.PURPOSE_PANEL_INTERPRETATION, "u-panel")
 
+        def authorize_then_call(*, body):
+            # As the plugin does: authorize in the hook, then call with the same ids; a refusal at authorize ends it.
+            authorized = broker.handle(authorization="Bearer broker-secret", body=body, authorize_only=True)
+            if authorized.status_code != 200:
+                return authorized
+            return broker.handle(authorization="Bearer broker-secret", body=body)
+
         for forbidden_tool in ("persona_standing_questions_declare", "persona_mental_model_write", "persona_mental_model_edit"):
+            # tool_outside_profile is asserted at authorize (the hook step); a call is never reached.
             refused = broker.handle(
                 authorization="Bearer broker-secret",
                 body={"tool": forbidden_tool, "agent_id": "persona-alpha", "run_id": "r-alpha",
-                      "session_key": "agent:persona-alpha:u-alpha", "params": {}},
+                      "session_key": "agent:persona-alpha:u-alpha", "tool_call_id": "tc-" + forbidden_tool,
+                      "params": {}},
+                authorize_only=True,
             )
             assert refused.status_code == 403 and refused.body["reason"] == "tool_outside_profile"
 
-        edit_attempt = broker.handle(
-            authorization="Bearer broker-secret",
+        edit_attempt = authorize_then_call(
             body={"tool": PERSONA_MENTAL_MODEL_READ_TOOL, "agent_id": "persona-alpha", "run_id": "r-alpha",
-                  "session_key": "agent:persona-alpha:u-alpha",
+                  "session_key": "agent:persona-alpha:u-alpha", "tool_call_id": "tc-x",
                   "params": {"persona_id": "persona-beta", "questions": questions}},
         )
         assert edit_attempt.status_code == 422 and edit_attempt.body["reason"] == "invalid_parameters"
 
-        alpha_read = broker.handle(
-            authorization="Bearer broker-secret",
+        alpha_read = authorize_then_call(
             body={"tool": PERSONA_MENTAL_MODEL_READ_TOOL, "agent_id": "persona-alpha", "run_id": "r-alpha",
-                  "session_key": "agent:persona-alpha:u-alpha", "params": {}},
+                  "session_key": "agent:persona-alpha:u-alpha", "tool_call_id": "tc-x", "params": {}},
         )
         assert alpha_read.status_code == 200
         alpha_answers = {a["key"]: a for a in alpha_read.body["result"]["answers"]}
         assert alpha_answers["market_regime"]["text"] == "ALPHA REGIME ANSWER"
         assert "BETA REGIME SECRET" not in json.dumps(alpha_read.body)
 
-        beta_read = broker.handle(
-            authorization="Bearer broker-secret",
+        beta_read = authorize_then_call(
             body={"tool": PERSONA_MENTAL_MODEL_READ_TOOL, "agent_id": "persona-beta", "run_id": "r-beta",
-                  "session_key": "agent:persona-beta:u-beta", "params": {}},
+                  "session_key": "agent:persona-beta:u-beta", "tool_call_id": "tc-x", "params": {}},
         )
         assert beta_read.status_code == 200
         assert "ALPHA REGIME ANSWER" not in json.dumps(beta_read.body)
 
-        panel_read = broker.handle(
-            authorization="Bearer broker-secret",
+        # tool_not_allowed_for_purpose is asserted at authorize; authorize_then_call returns the authorize refusal.
+        panel_read = authorize_then_call(
             body={"tool": PERSONA_MENTAL_MODEL_READ_TOOL, "agent_id": "persona-alpha", "run_id": "r-panel",
-                  "session_key": "agent:persona-alpha:u-panel", "params": {}},
+                  "session_key": "agent:persona-alpha:u-panel", "tool_call_id": "tc-x", "params": {}},
         )
         assert panel_read.status_code == 403 and panel_read.body["reason"] == "tool_not_allowed_for_purpose"
     finally:

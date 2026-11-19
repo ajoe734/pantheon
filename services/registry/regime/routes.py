@@ -18,7 +18,9 @@ from .store import get_regime_store
 
 router = APIRouter()
 STORE_ROOT_ENV = "REGISTRY_REGIME_STORE_ROOT"
-DEFAULT_STORE_ROOT = "/data/source-ingest"
+# The market data store source-ingest writes (services/source_ingestion/runtime.py); datasets live in
+# ``<root>/normalized/<dataset>``.
+DEFAULT_STORE_ROOT = "/data/source-ingest/market_data_store"
 
 
 class EvaluateRequest(BaseModel):
@@ -40,18 +42,44 @@ def _semver(version: str) -> tuple:
         return (-1,)
 
 
+def _store_root() -> str:
+    return os.environ.get(STORE_ROOT_ENV) or DEFAULT_STORE_ROOT
+
+
 def _observations_loader():
     def load():
         from pathlib import Path
 
-        from services.research.regime.features import load_governed_observations
+        from services.research.regime.features import load_governed_observations, missing_input_datasets
 
-        root = os.environ.get(STORE_ROOT_ENV, DEFAULT_STORE_ROOT)
+        root = _store_root()
         if not Path(root).is_dir():
             raise EvaluationRefused("governed_store_unavailable", "governed dataset root is not mounted")
+        missing = missing_input_datasets(root)
+        if missing:
+            raise EvaluationRefused("session_data_incomplete", "missing_datasets:" + ",".join(missing))
         return load_governed_observations(root)[0]
 
     return load
+
+
+def _preflight_observations(body: "EvaluateRequest") -> list:
+    """Load and check the governed inputs before any registry entry is read.
+
+    Refuses (nothing read from the registry) when the request is invalid, the store is absent, a declared
+    input dataset has no normalized directory (each one is listed), or the session close is not visible.
+    """
+    from .evaluator import SESSION_RE, session_complete
+
+    if body.market != MARKET:
+        raise EvaluationRefused("unsupported_market", body.market)
+    if not SESSION_RE.match(body.session):
+        raise EvaluationRefused("invalid_session", body.session)
+    observations = _observations_loader()()
+    refusal = session_complete(observations, body.session)
+    if refusal:
+        raise EvaluationRefused("session_data_incomplete", refusal)
+    return observations
 
 
 def _scoped(ctx, row: dict) -> bool:
@@ -70,22 +98,25 @@ def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(defaul
     from ..models import ArtifactType
 
     svc._authenticate_registry(authorization, required_roles=REGIME_EVALUATE_ROLES)
-    views = svc._filter_strategy_spec_views(None, authorization, x_tenant_id, None)
-    latest: dict[str, Any] = {}
-    for view in views:
-        e = view.entry
-        if e.artifact_state.value == "retired":
-            continue
-        if e.strategy_id not in latest or _semver(e.version) >= _semver(latest[e.strategy_id].version):
-            latest[e.strategy_id] = e
-    strategies = [{"strategy_id": e.strategy_id, "registry_id": e.registry_id, "metadata": e.metadata or {},
-                   "owner_tenant": e.owner_tenant} for e in latest.values()]
-    models = [{"registry_id": v.entry.registry_id, "artifact_state": v.entry.artifact_state.value,
-               "metadata": v.entry.metadata or {}, "created_at": v.entry.created_at}
-              for v in svc.get_registry_service().list_all_entries()
-              if v.entry.artifact_type == ArtifactType.MODEL_ARTIFACT]
     try:
-        return RegimeEvaluator(get_regime_store(), _observations_loader()).evaluate(
+        observations = _preflight_observations(body)
+        ctx, header_tenant = svc._strategy_spec_read_scope(authorization, x_tenant_id)
+        latest: dict[str, Any] = {}
+        for view in svc.list_views_by_artifact_type(ArtifactType.STRATEGY_SPEC):
+            e = view.entry
+            if not (svc._can_read(ctx, view)
+                    and (header_tenant is None or e.owner_tenant in (header_tenant, svc.BUILTIN_TENANT))):
+                continue
+            if e.artifact_state.value == "retired":
+                continue
+            if e.strategy_id not in latest or _semver(e.version) >= _semver(latest[e.strategy_id].version):
+                latest[e.strategy_id] = e
+        strategies = [{"strategy_id": e.strategy_id, "registry_id": e.registry_id, "metadata": e.metadata or {},
+                       "owner_tenant": e.owner_tenant} for e in latest.values()]
+        models = [{"registry_id": v.entry.registry_id, "artifact_state": v.entry.artifact_state.value,
+                   "metadata": v.entry.metadata or {}, "created_at": v.entry.created_at}
+                  for v in svc.list_views_by_artifact_type(ArtifactType.MODEL_ARTIFACT)]
+        return RegimeEvaluator(get_regime_store(), lambda: observations).evaluate(
             session=body.session, market=body.market, models=models, strategies=strategies,
             verify_inputs=body.verify_inputs)
     except EvaluationRefused as exc:

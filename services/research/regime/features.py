@@ -338,6 +338,15 @@ REGIME_INPUT_DATASETS: tuple[str, ...] = (
 )
 
 
+def missing_input_datasets(store_root: str | Path) -> list[str]:
+    """Declared regime inputs with no normalized directory under ``store_root`` (same tree resolution
+    as the source-ingestion writer: run-file or keyed reader mode)."""
+    from services.source_ingestion.market_data_storage import normalized_dataset_base
+
+    root = Path(store_root)
+    return [d for d in REGIME_INPUT_DATASETS if not normalized_dataset_base(root, d).is_dir()]
+
+
 def _normalized_rows(root: Path, dataset: str) -> Iterable[dict[str, Any]]:
     from services.source_ingestion.market_data_storage import normalized_dataset_base
 

@@ -28,8 +28,6 @@ export type PantheonTool = (typeof PANTHEON_TOOLS)[number];
 
 const DEFAULT_AUTHORIZE_TIMEOUT_MS = 5_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
-const BINDING_TTL_MS = 10 * 60_000;
-const MAX_BINDINGS = 2_000;
 const PERSONA_CACHE_TTL_MS = 60_000;
 
 export interface PluginConfig {
@@ -221,13 +219,6 @@ export interface PluginApi {
   ): void;
 }
 
-interface Binding {
-  agentId: string;
-  sessionKey: string;
-  runId: string;
-  at: number;
-}
-
 export interface PluginDeps {
   fetchImpl?: FetchLike;
   now?: () => number;
@@ -272,22 +263,8 @@ export function createPlugin(deps: PluginDeps = {}) {
       if (!config) {
         api.logger?.error?.(`${PLUGIN_ID}: invalid plugin config; every Pantheon persona tool call will be blocked`);
       }
-      // toolCallId -> host identity captured by the hook; execute() never trusts model-supplied identity.
-      const bindings = new Map<string, Binding>();
       // agent id -> tools its broker run allows, learned from authorize responses.
       const personaAgents = new Map<string, { tools: Set<string>; at: number }>();
-
-      function prune(): void {
-        const cutoff = now() - BINDING_TTL_MS;
-        for (const [id, binding] of bindings) {
-          if (binding.at < cutoff) bindings.delete(id);
-        }
-        while (bindings.size > MAX_BINDINGS) {
-          const oldest = bindings.keys().next().value;
-          if (oldest === undefined) break;
-          bindings.delete(oldest);
-        }
-      }
 
       async function post(path: "authorize" | "call", body: Json, timeoutMs: number): Promise<Json> {
         if (!config) throw new BrokerRefused(503, "plugin_config_invalid");
@@ -344,7 +321,7 @@ export function createPlugin(deps: PluginDeps = {}) {
           try {
             const result = await post(
               "authorize",
-              { tool, params: event.params ?? {}, agent_id: agentId, run_id: runId, session_key: sessionKey },
+              { tool, params: event.params ?? {}, agent_id: agentId, run_id: runId, session_key: sessionKey, tool_call_id: toolCallId },
               config?.authorizeTimeoutMs ?? DEFAULT_AUTHORIZE_TIMEOUT_MS,
             );
             if (result["allowed"] !== true) {
@@ -352,8 +329,6 @@ export function createPlugin(deps: PluginDeps = {}) {
             }
             const allowedTools = Array.isArray(result["allowed_tools"]) ? (result["allowed_tools"] as unknown[]).map(String) : [];
             personaAgents.set(agentId, { tools: new Set(allowedTools), at: now() });
-            prune();
-            bindings.set(toolCallId, { agentId, sessionKey, runId, at: now() });
             return undefined;
           } catch (error) {
             // Handler error, timeout, refusal and unreachable broker all block (fail closed).
@@ -374,16 +349,13 @@ export function createPlugin(deps: PluginDeps = {}) {
             description: spec.description,
             parameters: spec.parameters,
             async execute(toolCallId, params) {
-              const binding = bindings.get(toolCallId);
-              // The binding is created only by the authorized hook for this very call; a missing or
-              // mismatched one means the hook did not run, so the call fails closed.
-              if (!binding || binding.agentId !== ctx.agentId || binding.sessionKey !== ctx.sessionKey) {
-                throw new BrokerRefused(403, "call_not_authorized_by_hook");
-              }
-              bindings.delete(toolCallId);
+              // The authorization lives in the broker (recorded by the hook's authorize call, consumed once
+              // here), not in this plugin instance: OpenClaw may run the tool from another instance than the hook.
+              // The broker refuses with call_not_authorized_by_hook when none was recorded for this agent,
+              // session and tool call id.
               const result = await post(
                 "call",
-                { tool: spec.name, params: params ?? {}, agent_id: binding.agentId, run_id: binding.runId, session_key: binding.sessionKey },
+                { tool: spec.name, params: params ?? {}, agent_id: ctx.agentId, session_key: ctx.sessionKey, tool_call_id: toolCallId },
                 config?.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS,
               );
               const body = result["result"] ?? {};

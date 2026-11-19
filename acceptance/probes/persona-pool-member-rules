@@ -2,8 +2,9 @@
 # acceptance-owner: BFF-PERSONA-STRATEGY-VISIBILITY-20261119
 """Read-only release probe: persona detail shows each pool member's strategy rules.
 
-For every non-retired persona on the first page of GET /bff/personas whose
-strategy_pool surface is ok:
+Reads every page of GET /bff/personas (page_size=200, following next_page_token until
+empty) and, for every persona that is not retired or archived and whose strategy_pool
+surface is ok:
   * each current (non-removed) member has an ok data.strategyPool.memberRules row;
   * pool_health is not cycle_pool_snapshot_mismatch when the members of the version
     named by observed_pool_version equal the current members. A persona without a
@@ -19,6 +20,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
@@ -65,15 +67,59 @@ def _is_retired(persona) -> bool:
                for k in ("lifecycle_state", "lifecycleState", "state", "status"))
 
 
+def _next_token(listing):
+    if not isinstance(listing, dict):
+        return None
+    for holder in (listing, listing.get("meta") or {}, (listing.get("meta") or {}).get("page") or {},
+                   listing.get("page") or {}, listing.get("pagination") or {}):
+        if isinstance(holder, dict) and holder.get("next_page_token"):
+            return str(holder["next_page_token"])
+    return None
+
+
+def _all_personas(fetch, max_pages=100):
+    personas, token = [], None
+    for _ in range(max_pages):
+        path = "/bff/personas?page_size=200"
+        if token:
+            path += "&page_token=" + urllib.parse.quote(token, safe="")
+        listing = fetch(path)
+        personas.extend(_personas(listing))
+        token = _next_token(listing)
+        if not token:
+            return personas
+    raise RuntimeError("persona_list_pagination_exceeded")
+
+
+def _applicable(detail) -> bool:
+    surfaces = (detail.get("meta") or {}).get("surfaces") or {}
+    pool = (detail.get("data") or {}).get("strategyPool") or {}
+    return (surfaces.get("strategy_pool") or {}).get("status") == "ok" and isinstance(pool.get("current"), dict)
+
+
 def run(fetch) -> dict:
-    results = {}
-    for persona in _personas(fetch("/bff/personas")):
+    personas = _all_personas(fetch)
+    results, skipped_retired, skipped_no_pool = {}, 0, 0
+    for persona in personas:
         pid = persona.get("id") or persona.get("persona_id")
         if not pid or _is_retired(persona):
+            skipped_retired += 1
             continue
-        results[pid] = check_persona(fetch(f"/bff/personas/{pid}"))
+        detail = fetch(f"/bff/personas/{pid}")
+        if not _applicable(detail):
+            skipped_no_pool += 1
+            continue
+        results[pid] = check_persona(detail)
     failed = {pid: f for pid, f in results.items() if f}
-    return {"passed": not failed, "checked": len(results), "failed": failed}
+    report = {"read": len(personas), "skipped": skipped_retired + skipped_no_pool,
+              "skipped_retired": skipped_retired, "skipped_no_pool": skipped_no_pool,
+              "checked": len(results),
+              "results": {pid: ("failed" if f else "ok") for pid, f in sorted(results.items())},
+              "failed": failed}
+    if not results:
+        report["reason"] = "no_persona_checked"
+    report["passed"] = bool(results) and not failed
+    return report
 
 
 def _request(request):

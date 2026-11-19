@@ -96,8 +96,10 @@ Task: PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118. Workflow `.github/workflow
 
 Task: BFF-PERSONA-STRATEGY-VISIBILITY-20261119. Read-only release probe. Logs in at `/bff/auth/dev-login` with
 `ACCEPTANCE_VIEWER_CLIENT_ID` / `ACCEPTANCE_VIEWER_CLIENT_SECRET` (never printed); exit 77 naming the missing variable
-when either (or `ACCEPTANCE_BFF_URL`) is absent. For each non-retired persona on the first page of `GET /bff/personas`
+when either (or `ACCEPTANCE_BFF_URL`) is absent. Reads every page of `GET /bff/personas` (`page_size=200`, following `next_page_token`). For each non-retired, non-archived persona
 whose `strategy_pool` surface is ok it fails when a current member has no ok `memberRules` row, or when `pool_health`
 reports `cycle_pool_snapshot_mismatch` although the members of the version named by `observed_pool_version` equal the
-current members. No cycle observation is not a failure. Tests: `acceptance/test_persona_pool_member_rules.py` with
+current members. No cycle observation is not a failure. A run that checks no persona exits 1 with `reason: no_persona_checked`; the JSON report lists
+each checked persona id with `ok`/`failed` plus `read`/`skipped` counts (never a token or body). Task:
+PERSONA-POOL-PROBE-CHECKS-LIVE-PERSONAS-20261119. Tests: `acceptance/test_persona_pool_member_rules.py` with
 `fixtures/hosted_persona_pool_20261119.json` and `fixtures/hosted_strategy_rules_20261119.json`.

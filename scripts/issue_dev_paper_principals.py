@@ -88,6 +88,12 @@ READERS = {
         "pantheon-dev-persona-evaluator-bff-reader",
         ("viewer", "registry-reader"),
     ),
+    # Consultation executor case-file composition -> persona owner strategy-pool GET routes ONLY
+    # (current / versions / one version). persona_pool_reader is accepted by no other persona route
+    # and is not a write role; the dev tenant is the only admitted tenant. Delivered as a file only:
+    # PANTHEON_PERSONA_SERVICE_TOKEN is the persona owner's own service-token name, so it is never
+    # exported into the shared deploy environment.
+    "CONSULTATION_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-consultation-persona-pool-reader", "persona_pool_reader"),
     # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
     # memory write role). The adapter's actor id must equal this subject in strict auth.
     "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
@@ -265,6 +271,7 @@ CONSUMER_FILES = {
         "AUTO_CONSUMER_REGISTRY_TOKEN",
     ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
+    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
