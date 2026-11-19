@@ -325,11 +325,11 @@ def world(monkeypatch) -> World:
     return World()
 
 
-def _client(world: World, monkeypatch, tmp_path, tenant: str = TENANT) -> TestClient:
+def _client(world: World, monkeypatch, tmp_path, tenant: str = TENANT, roles=("operator",)) -> TestClient:
     def identity(authorization, mfa_token=None, session_cookie=None):
         return OperatorIdentity(
-            operator_id="operator-a", roles=["operator"], mfa_verified=False,
-            claims={"sub": "operator-a", "tenant_id": tenant, "roles": ["operator"]},
+            operator_id="operator-a", roles=list(roles), mfa_verified=False,
+            claims={"sub": "operator-a", "tenant_id": tenant, "roles": list(roles)},
             token_kind="structured",
         )
 
@@ -947,3 +947,70 @@ def test_history_route_and_publish_records_survive_a_restart(world, monkeypatch,
     assert record["published"]["1"]["status"] == "published" and record["current_envelope"]["pool_version"] == 1
     history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H)
     assert history.status_code == 200 and history.json()["data"]["published"]["1"]["members"][0]["stage"] == "active"
+
+
+def test_pool_publish_service_principal_accepted_on_publish_route_only(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path, roles=("persona_pool_publisher",))
+    world.append([world.member("artifact-a", 0.5)], 0)
+    assert client.post(PATH, json={}, headers=H).status_code == 200
+    # Any other BFF route guarded by the shared role sets refuses this least-privilege principal.
+    from services.control_plane.bff.personas import service as svc
+    from starlette.exceptions import HTTPException
+    identity = OperatorIdentity(operator_id="persona-pool-cycle", roles=["persona_pool_publisher"],
+                                mfa_verified=False, claims={}, token_kind="structured")
+    for guard in (svc._require_operator_role, svc._require_read_role):
+        with pytest.raises(HTTPException) as refused:
+            guard(identity)
+        assert refused.value.status_code == 403
+
+
+def test_pool_publish_still_refuses_unprivileged_role(world, monkeypatch, tmp_path):
+    client = _client(world, monkeypatch, tmp_path, roles=("viewer",))
+    assert client.post(PATH, json={}, headers=H).status_code == 403
+
+
+def test_pool_principal_history_and_owner_fetch_use_bff_service_auth(world, monkeypatch, tmp_path):
+    """persona_pool_publisher reads history; owner-facing calls carry the BFF service auth, never its token."""
+    from services.control_plane.bff.personas import service as persona_service
+
+    client = _client(world, monkeypatch, tmp_path, roles=("persona_pool_publisher",))
+    seen: dict[str, Any] = {}
+    real_publisher = world.publisher
+
+    def ensure(persona_id, tenant_id=None):
+        seen["ensure"] = persona_service._owner_read_authorization.get()
+
+    def publisher(authorization):
+        seen["publisher"] = authorization
+        return real_publisher
+
+    monkeypatch.setattr(personas_lifecycle, "_ensure_persona_exists", ensure)
+    monkeypatch.setattr(personas_lifecycle, "_pool_publisher", publisher)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "unit-test-secret")
+    history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H)
+    assert history.status_code == 200, history.text
+    assert seen["ensure"] == seen["publisher"] and seen["publisher"].startswith("Bearer ")
+    from services.control_plane.bff.command_adapters.base import _token_tenants
+    assert _token_tenants(seen["publisher"])[0] == TENANT
+    assert "operator-a" not in str(seen)
+    viewer = _client(world, monkeypatch, tmp_path, roles=("unrelated",))
+    assert viewer.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H).status_code == 403
+
+
+def test_pool_principal_owner_token_is_tenant_bound_and_strict_owner_accepts_it(monkeypatch):
+    """Un-mocked bound_tenant and strict owner scope resolution accept the minted service token."""
+    from services.control_plane.bff.command_adapters.base import bound_tenant
+
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "unit-test-secret")
+    identity = OperatorIdentity(operator_id="persona-pool-cycle", roles=["persona_pool_publisher"],
+                                mfa_verified=False, claims={}, token_kind="structured")
+    token = personas_lifecycle._pool_owner_authorization(identity, "Bearer pool-principal", TENANT)
+    assert token != "Bearer pool-principal" and "pool-principal" not in token
+    assert bound_tenant({}, TENANT, token) == TENANT
+    with pytest.raises(Exception):
+        bound_tenant({}, "other-tenant", token)
+    from services.persona.write_owner import resolve_persona_tenant_scope
+    scope = resolve_persona_tenant_scope(token, TENANT)
+    assert scope[1] == TENANT
