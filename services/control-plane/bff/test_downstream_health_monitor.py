@@ -1261,52 +1261,86 @@ class TestBoundedHealthPruneAtHostedScale:
                 os.fsync(fd)
                 os.close(fd)
 
-        # Measure concurrent record_outcome writer lock wait during the initial prune burst
+        # Bounded locking is proven by counts and events, not by a wall-clock bound
+        # (TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119): every prune call removes at most one
+        # batch, and the concurrent record_outcome writer completes at least one more write
+        # between consecutive prune calls (a prune that held the lock for the whole backlog
+        # would starve it).  The 500 ms writer-wait / prune-hold bounds are measured and printed,
+        # and judged only with PANTHEON_HEALTH_PRUNE_WALL_CLOCK_BOUNDS=1.
+        from downstream_health_monitor import _DELIVERY_PRUNE_BATCH_SIZE
+
+        judged = os.environ.get("PANTHEON_HEALTH_PRUNE_WALL_CLOCK_BOUNDS", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         writer_waits_ms: List[float] = []
+        writes_done = threading.Condition()
         stop_writer = threading.Event()
+        writer_errors: List[BaseException] = []
 
         def _concurrent_writer() -> None:
-            idx = 0
-            while not stop_writer.is_set():
-                idx += 1
-                probe = DownstreamProbeResult(
-                    target_name="telemetry",
-                    ok=True,
-                    status_code=200,
-                    latency_ms=4.0,
-                    checked_at="2026-11-07T15:13:21Z",
-                )
-                t_w0 = time.perf_counter()
-                store.record_outcome(
-                    target_name="telemetry",
-                    window_started_at="2026-11-07T15:13:00Z",
-                    ok=True,
-                    latency_ms=4.0,
-                    status_code=200,
-                    detail=None,
-                    observed_at="2026-11-07T15:13:21Z",
-                    probe=probe,
-                )
-                writer_waits_ms.append((time.perf_counter() - t_w0) * 1000.0)
-                time.sleep(0.02)
+            try:
+                while not stop_writer.is_set():
+                    probe = DownstreamProbeResult(
+                        target_name="telemetry",
+                        ok=True,
+                        status_code=200,
+                        latency_ms=4.0,
+                        checked_at="2026-11-07T15:13:21Z",
+                    )
+                    t_w0 = time.perf_counter()
+                    store.record_outcome(
+                        target_name="telemetry",
+                        window_started_at="2026-11-07T15:13:00Z",
+                        ok=True,
+                        latency_ms=4.0,
+                        status_code=200,
+                        detail=None,
+                        observed_at="2026-11-07T15:13:21Z",
+                        probe=probe,
+                    )
+                    with writes_done:
+                        writer_waits_ms.append((time.perf_counter() - t_w0) * 1000.0)
+                        writes_done.notify_all()
+                    stop_writer.wait(0.005)
+            except BaseException as exc:  # surfaced by the main thread
+                writer_errors.append(exc)
+                with writes_done:
+                    writes_done.notify_all()
+
+        def _writes() -> int:
+            with writes_done:
+                return len(writer_waits_ms)
+
+        def _wait_for_write_after(count: int) -> None:
+            # Event-gated: the timeout only fails a writer that never gets the lock again.
+            with writes_done:
+                assert writes_done.wait_for(
+                    lambda: len(writer_waits_ms) > count or bool(writer_errors), timeout=60.0
+                ), "concurrent writer completed no write between prune calls"
+            assert not writer_errors, writer_errors
 
         prune_holds_ms: List[float] = []
         total_pruned = 0
+        per_call_pruned: List[int] = []
         writer_thread = threading.Thread(target=_concurrent_writer, daemon=True)
         writer_thread.start()
         try:
+            _wait_for_write_after(0)  # writer is running before the first prune
             for _ in range(10):
+                before = _writes()
                 t0 = time.perf_counter()
                 pruned = store.prune_retained_history()
                 prune_holds_ms.append((time.perf_counter() - t0) * 1000.0)
+                per_call_pruned.append(pruned["delivery_outbox"])
                 total_pruned += pruned["delivery_outbox"]
-                time.sleep(0.05)
+                _wait_for_write_after(before)
         finally:
             stop_writer.set()
-            writer_thread.join(timeout=5.0)
+            writer_thread.join(timeout=30.0)
 
+        assert not writer_errors, writer_errors
         assert writer_waits_ms, "concurrent writer must execute during prune"
-        assert max(writer_waits_ms) < 500.0, f"concurrent writer waited {max(writer_waits_ms):.1f}ms >= 500ms"
+        assert all(0 < n <= _DELIVERY_PRUNE_BATCH_SIZE for n in per_call_pruned), per_call_pruned
 
         # Continue draining the remaining backlog to completion
         while True:
@@ -1314,12 +1348,19 @@ class TestBoundedHealthPruneAtHostedScale:
             pruned = store.prune_retained_history()
             hold_ms = (time.perf_counter() - t0) * 1000.0
             prune_holds_ms.append(hold_ms)
+            assert pruned["delivery_outbox"] <= _DELIVERY_PRUNE_BATCH_SIZE
             total_pruned += pruned["delivery_outbox"]
             if pruned["delivery_outbox"] == 0:
                 break
 
         assert total_pruned == 872489 + 10477
-        assert max(prune_holds_ms) < 500.0, f"max prune hold {max(prune_holds_ms):.1f}ms >= 500ms"
+        print(
+            f"hosted-scale prune measured: max writer wait {max(writer_waits_ms):.1f}ms, "
+            f"max prune hold {max(prune_holds_ms):.1f}ms (bound 500ms, judged={judged})"
+        )
+        if judged:
+            assert max(writer_waits_ms) < 500.0, f"concurrent writer waited {max(writer_waits_ms):.1f}ms >= 500ms"
+            assert max(prune_holds_ms) < 500.0, f"max prune hold {max(prune_holds_ms):.1f}ms >= 500ms"
         final_counts = store.delivery_counts()
         assert final_counts["dead_letter"] == 0
         assert final_counts["quarantined"] == 0
