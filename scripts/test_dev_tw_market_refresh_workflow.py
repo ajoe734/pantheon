@@ -863,14 +863,21 @@ if cmd == 'verify':
 if cmd == 'verify-heartbeat-identity':
     sys.exit(0 if os.path.exists(opt('--identity-file')) else 1)
 if cmd == 'heartbeat-loop':
-    open(opt('--identity-json-out'), 'w').write('{"pid": %d}' % os.getpid())
+    if opt('--identity-json-out'):
+        open(opt('--identity-json-out'), 'w').write('{"pid": %d}' % os.getpid())
+    # Like the real loop: sleep one interval BEFORE the first renewal, then rewrite state.json.
+    time.sleep(float(opt('--interval-seconds')))
+    if os.path.exists(opt('--state-file') + '.renew-fails'):
+        sys.exit(1)
+    open(opt('--state-file'), 'w').write('{"leaseId":"x","heartbeatAt":"%f"}' % time.time())
+    open(opt('--state-file') + '.renewals', 'a').write(opt('--interval-seconds') + '\\n')
     time.sleep(30)
     sys.exit(0)
 sys.exit(2)
 """
 
 
-def _rearm(tmp_path: Path, lost: bool, quarantined: bool = True) -> tuple[subprocess.CompletedProcess[str], Path]:
+def _rearm(tmp_path: Path, lost: bool, quarantined: bool = True, renew_fails: bool = False) -> tuple[subprocess.CompletedProcess[str], Path]:
     ctrl = tmp_path / ".lease-controller/scripts"
     ctrl.mkdir(parents=True)
     cli = ctrl / "dev_environment_lease.py"
@@ -887,6 +894,8 @@ def _rearm(tmp_path: Path, lost: bool, quarantined: bool = True) -> tuple[subpro
     gh = tmp_path / "gh_output"
     env = {**os.environ, "CONTROLLER": str(tmp_path / ".lease-controller"), "LD": str(ld), "GITHUB_OUTPUT": str(gh),
            "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "t"}
+    if renew_fails:
+        (ld / "state.json.renew-fails").write_text("1")
     if lost:
         env["FAKE_LEASE_LOST"] = "1"
     step = _step("Re-arm lease heartbeat")
@@ -931,3 +940,76 @@ def test_rearm_sits_between_refresh_steps_and_probe_and_release_needs_healthy_pr
     assert "STEADY_CHECK_OUTCOME}\" == success" in _step("Stop heartbeat")["run"]
     for name in ("bounded Taiwan market refresh", "Taiwan chip refresh"):
         assert _step(name)["continue-on-error"] is True
+
+
+def test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False)
+    pid = int((ld / "heartbeat.pid").read_text())
+    try:
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        # state.json was renewed (by the 1s one-shot) before the step returned; the 60s loop has not renewed yet.
+        assert (ld / "state.json.renewals").read_text().split() == ["1"]
+        assert "heartbeatAt" in (ld / "state.json").read_text()
+        assert "rearm=done" in (tmp_path / "gh_output").read_text()
+    finally:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+
+
+def test_rearm_fails_closed_and_keeps_quarantine_when_renewal_does_not_happen(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False, renew_fails=True)
+    assert proc.returncode == 0
+    assert "rearm=failed" in (tmp_path / "gh_output").read_text()
+    assert (ld / "heartbeat-failure.json").is_file()
+
+
+_DEPLOY_REFRESH_FAILS = """import json, os, sys
+a = sys.argv[1:]
+out = a[a.index('--output') + 1]
+if '--steady-check' in a:
+    json.dump({'mode': 'collector_steady_pull', 'reason': '', 'status': 'healthy'}, open(out, 'w'))
+    sys.exit(0)
+json.dump({'status': 'failed', 'reason': 'readback_failed'}, open(out, 'w'))
+sys.exit(3)
+"""
+
+
+def test_refresh_failure_does_not_quarantine_lease_and_probe_still_runs(tmp_path: Path) -> None:
+    env = _layout(tmp_path, _DEPLOY_REFRESH_FAILS)
+    env["REFRESH_OUTPUT_PATH"] = str(tmp_path / "temp/tw-refresh-outcome.json")
+    refresh = _run(_step("Execute bounded Taiwan market refresh")["run"], tmp_path, env)
+    assert refresh.returncode == 3, refresh.stdout + refresh.stderr  # own exit code, reported after the guard
+    assert not (tmp_path / "heartbeat-failure.json").exists()  # guard did not quarantine
+    check = _run(_step("steady source-ingest posture")["run"], tmp_path, {**env, "STEADY_CHECK_OUTPUT_PATH": str(tmp_path / "temp/steady.json"), "REFRESH_OUTCOME_PATH": str(tmp_path / "temp/tw-refresh-outcome.json")})
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert json.loads((tmp_path / "temp/tw-refresh-outcome.json").read_text())["steady_restore_check"]["status"] == "healthy"
+
+
+def test_quarantine_then_rearm_then_probe_records_probe_own_result(tmp_path: Path) -> None:
+    """Timeout/cancel style quarantine: guard file present -> re-arm -> probe runs and records its own result."""
+    proc, ld = _rearm(tmp_path, lost=False)
+    pid = int((ld / "heartbeat.pid").read_text())
+    try:
+        assert "rearm=done" in (tmp_path / "gh_output").read_text(), proc.stdout + proc.stderr
+        wrapper = tmp_path / ".lease-controller/scripts/run_with_dev_environment_lease.sh"
+        deploy = tmp_path / "scripts/deploy_nonprod_vm.sh"
+        wrapper.write_text(_QUARANTINING_WRAPPER)
+        deploy.parent.mkdir()
+        deploy.write_text("#!/usr/bin/env python3\n" + _DEPLOY_FAIL_FIRST)
+        for f in (wrapper, deploy):
+            f.chmod(0o755)
+        (tmp_path / "temp").mkdir()
+        env = {**os.environ, "RUNNER_TEMP": str(tmp_path / "temp"), "GUARD_FAILURE_FILE": str(ld / "heartbeat-failure.json"),
+               "GUARD_CALLS": str(tmp_path / "guard_calls"), "CALLS": str(tmp_path / "calls"),
+               "STEADY_CHECK_OUTPUT_PATH": str(tmp_path / "temp/steady.json"), "REFRESH_OUTCOME_PATH": str(tmp_path / "temp/o.json")}
+        check = _run(_step("steady source-ingest posture")["run"], tmp_path, env)
+        assert check.returncode == 0, check.stdout + check.stderr
+        rec = json.loads((tmp_path / "temp/o.json").read_text())["steady_restore_check"]
+        assert rec == {"reason": "", "status": "healthy"}
+    finally:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass

@@ -2,19 +2,31 @@
   "task": "TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119",
   "diagnosis": {
     "run": "44421268724",
-    "note": "Log lines of steps 10/12 were not fetched in this worker (no GitHub log access); diagnosis is from the brief and scripts/run_with_dev_environment_lease.sh. Residual: release owner should quote the log lines from the run.",
+    "note": "Quoted from `gh api repos/ajoe734/pantheon/actions/jobs/135214597951/logs` (run 44421268724), accessible on the worker host.",
     "chain": "chip profile readback failed -> chip loop exit 1 -> guard record_guard_failure(guarded_command_failed) + stop_heartbeat_for_quarantine (cleanup_command/command_status!=0 path) -> next guarded command: heartbeat_is_healthy fails -> 'lease heartbeat is not healthy before command start' exit 75 -> steady_check_transport_exit_75; FinMind fundamentals skipped because chip step had no continue-on-error.",
-    "same_quarantine_reach": "Every guarded step whose command exits non-zero (refresh, chip, fundamentals per profile, TAIFEX/FinMind broker only when not '|| exit 0'), plus any step timeout-minutes (15 fundamentals, 90 chip, 10 steady) or cancellation, which TERMs the wrapper -> cleanup_command stops the heartbeat and records the failure."
+    "same_quarantine_reach": "Every guarded step whose command exits non-zero (refresh, chip, fundamentals per profile, TAIFEX/FinMind broker only when not '|| exit 0'), plus any step timeout-minutes (15 fundamentals, 90 chip, 10 steady) or cancellation, which TERMs the wrapper -> cleanup_command stops the heartbeat and records the failure.",
+    "steps": "10 Execute bounded Taiwan chip refresh=failure; 11 FinMind fundamentals refresh=skipped; 12 Verify and restore steady source-ingest posture=failure; 9 refresh=success; 13 upload=success; 14 release=success",
+    "log_lines": [
+      "2026-11-18T23:58:06.9606739Z [remote-deploy] ERROR: bounded_source_refresh_readback_failed: bounded chip provider session '' != requested session '2026-11-18' for tw-official-twse-margin-balances (provider_session='', expected_session='2026-11-18')",
+      "2026-11-19T00:33:26.5276654Z ##[error]Process completed with exit code 75.",
+      "2026-11-19T00:33:26.7782416Z {\"schemaVersion\":1,\"status\":\"guarded_command_failed\",\"exitStatus\":1,\"detectedAt\":\"2026-11-19T00:33:25Z\"}",
+      "2026-11-19T00:33:26.7796988Z [dev-environment-lease-guard] ERROR: lease heartbeat is not healthy before command start",
+      "2026-11-19T00:33:26.8043241Z steady restore check: status=failed reason=steady_check_transport_exit_75",
+      "2026-11-19T00:33:26.8057795Z ##[error]steady_restore_check_failed: steady_check_transport_exit_75"
+    ]
   },
   "changes": [
     "chip and fundamentals loops run in ONE guarded call that always exits 0; failures recorded in outcome files + failed-profile file and the step exits 1 after the guard returns, so no quarantine and later steps run",
-    "refresh and chip_refresh get continue-on-error; summary step (PR 7605) turns run red listing profile and reason",
     "new 'Re-arm lease heartbeat' step before probe: if heartbeat-failure.json exists, old heartbeat must be gone, `verify` confirms this run still owns the same lease, failure kept as heartbeat-failure.quarantine.json, same lease renewed by a new heartbeat (no release, no re-acquire, no gap for other holder)",
     "probe: guard refusal exit 75 is recorded as probe_not_run_lease_guard_refused_exit_75, never as a probe result",
-    "scripts/run_with_dev_environment_lease.sh (pinned controller) NOT changed; deploy workflows unchanged"
+    "scripts/run_with_dev_environment_lease.sh (pinned controller) NOT changed; deploy workflows unchanged",
+    "refresh and chip_refresh keep continue-on-error; the bounded market refresh guarded command now always exits 0 (own rc recorded in a file and re-raised after the guard returns), so a refresh failure no longer quarantines the lease",
+    "re-arm step now renews the same lease synchronously (1s-interval heartbeat-loop until state.json changes, then stopped) before starting the 60s loop, so a heartbeat >=60s old at quarantine cannot go stale (>120s) before the first renewal; failed renewal restores the quarantine file and records rearm=failed",
+    "no change to scripts/run_with_dev_environment_lease.sh or dev_environment_lease.py; no persistent writer added"
   ],
   "validation": [
-    "uv run --no-project --with pytest --with pyyaml python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -> 38 passed (8 of them fail against the dev workflow)",
-    "same command, scripts/test_dev_tw_market_refresh.py -> 129 passed, 1 failed (test_bounded_refresh_controller_writes_the_authoritative_readback_state: ModuleNotFoundError fastapi, environmental, unrelated to this change)"
+    "PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PY -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py -> 42 passed",
+    "$PY -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py scripts/test_dev_tw_market_refresh.py -> 173 passed (42 workflow + 131 refresh), 0 failed",
+    "new tests: synchronous renewal before first interval; renewal failure fails closed; refresh failure does not quarantine and probe runs; quarantine -> re-arm -> probe records its own healthy result"
   ]
 }
