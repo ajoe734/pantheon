@@ -366,7 +366,7 @@ def test_chip_workflow_executes_every_profile_under_lease_and_preserves_failures
     assert step['timeout-minutes'] == 90
     assert step['env']['SOURCE_INGEST_MAX_RECORDS'] == 500
     assert step['env']['SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS'] == 300
-    assert step.get('continue-on-error', False) is False
+    assert step['continue-on-error'] is True  # a failed profile must not skip later steps
     assert step['run'].count('run_with_dev_environment_lease.sh') == 1
     wrapper = tmp_path / '.lease-controller/scripts/run_with_dev_environment_lease.sh'
     wrapper.parent.mkdir(parents=True)
@@ -405,7 +405,9 @@ sys.exit(code)
                                'CALLS': str(tmp_path / 'calls'), 'GUARD_CALLS': str(guard_calls),
                                'GUARD_FAILED': str(guard_failed)}, text=True, capture_output=True, timeout=20)
     assert proc.returncode == 1, proc.stderr
+    assert not guard_failed.exists(), 'guarded command must exit 0 so the guard does not quarantine the lease'
     assert guard_calls.read_text().splitlines() == ['bash -c']
+    assert 'tw-official-twse-margin-balances exit 1' in (tmp_path / 'chip-refresh-failed-profiles.txt').read_text()
     calls = [json.loads(l) for l in (tmp_path / 'calls').read_text().splitlines()]
     chip_profiles = {k: v for k, v in TW_CHIP_REFRESH_PROFILES.items() if v['base'] != 'tw-finmind-fundamentals'}
     assert len(calls) == len(chip_profiles) == 6
@@ -433,7 +435,8 @@ def test_workflow_requests_each_finmind_fundamental_dataset_once_after_publicati
     workflow = _load_workflow()
     steps = workflow['jobs']['refresh']['steps']
     step = next(s for s in steps if s.get('id') == 'finmind_fundamentals_refresh')
-    lines = [ln.split() for ln in step['run'].split("<<'PROFILES'\n", 1)[1].split('\nPROFILES')[0].splitlines() if ln.strip()]
+    block = step['run'].split("PROFILES='", 1)[1].split("'\n", 1)[0]
+    lines = [ln.split() for ln in block.splitlines() if ln.strip()]
     assert lines == [
         ['tw-finmind-monthly-revenue', 'tw_monthly_revenue', 'api.finmindtrade.com'],
         ['tw-finmind-quarterly-statements', 'tw_financial_statement', 'api.finmindtrade.com'],
@@ -645,3 +648,368 @@ def test_steady_check_step_fails_closed_when_transport_produces_nothing(tmp_path
     proc, outcome = _run_check_step(tmp_path, "exit 255\n", "not json")
     assert proc.returncode == 1
     assert outcome["steady_restore_check"] == {"reason": "steady_check_transport_exit_255", "status": "failed"}
+
+
+# --- non-blocking step failure visibility (TW-REFRESH-NON-BLOCKING-STEP-FAILURE-VISIBLE-20261118) ---
+
+import importlib.util
+import sys as _sys
+
+_SUMMARY_PATH = ROOT / "scripts" / "tw_refresh_outcome_summary.py"
+_spec = importlib.util.spec_from_file_location("tw_refresh_outcome_summary", _SUMMARY_PATH)
+summary_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(summary_mod)
+
+_FUNDAMENTALS = ("tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation")
+_CHIPS = (
+    "tw-official-twse-margin-balances", "tw-official-tpex-margin-balances", "tw-official-tpex-institutional-flow",
+    "tw-taifex-institutional-positions", "tw-taifex-put-call", "tw-taifex-tx-daily",
+)
+
+
+def _write(d: Path, name: str, **payload: Any) -> None:
+    (d / name).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _real_run(d: Path, overrides: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """Write outcome files shaped like a healthy full run; return all step outcomes."""
+    overrides = overrides or {}
+    files = {"taifex-ssf-refresh-outcome.json": "tw-taifex-futures-options-chip", "finmind-broker-refresh-outcome.json": "tw-finmind-broker-daily-report"}
+    files.update({f"{c}-refresh-outcome.json": c for c in _CHIPS + _FUNDAMENTALS})
+    for fname, connector in files.items():
+        payload = {"connector_id": connector, "log": "", "reason": "refreshed", "status": "completed"}
+        payload.update(overrides.get(connector, {}))
+        _write(d, fname, **payload)
+    _write(d, "tw-refresh-outcome.json", status="completed", reason="refreshed",
+           steady_restore_check={"reason": "", "status": "healthy"})
+    return {k: "success" for k in ("taifex_refresh", "finmind_refresh", "refresh", "chip_refresh", "finmind_fundamentals_refresh", "steady_check")}
+
+
+def _run_summary(tmp_path: Path, steps: dict[str, str]) -> tuple[int, str, str]:
+    summary = tmp_path / "summary.md"
+    args = ["--outcomes-dir", str(tmp_path), "--summary-file", str(summary)]
+    for k, v in steps.items():
+        args += ["--step", f"{k}={v}"]
+    proc = subprocess.run([_sys.executable, str(_SUMMARY_PATH), *args], capture_output=True, text=True, check=False)
+    return proc.returncode, proc.stdout, summary.read_text(encoding="utf-8")
+
+
+def test_summary_all_passing_run_stays_green(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+    assert "tw-finmind-valuation" in table and "steady_restore_check" in table
+    assert "FAILED" not in table
+
+
+def test_summary_failed_fundamentals_step_fails_run_and_names_it(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {c: {"status": "failed", "reason": "exit_1"} for c in _FUNDAMENTALS})
+    steps["finmind_fundamentals_refresh"] = "failure"
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 1
+    assert "Execute bounded FinMind fundamentals refresh" in out
+    for c in _FUNDAMENTALS:
+        assert c in out and c in table
+
+
+def test_summary_failed_step_outcome_alone_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    steps["finmind_fundamentals_refresh"] = "failure"
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "FinMind fundamentals refresh" in out
+
+
+def test_summary_not_yet_published_missing_credential_and_skipped_do_not_fail(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {
+        "tw-taifex-tx-daily": {"status": "not_yet_published", "reason": "not_yet_published"},
+        "tw-finmind-valuation": {"status": "skipped", "reason": "missing_credential"},
+        "tw-finmind-broker-daily-report": {"status": "noop", "reason": "already_fresh"},
+    })
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+
+
+def test_summary_unknown_or_missing_status_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {"tw-taifex-put-call": {"status": "weird"}})
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "tw-taifex-put-call" in out
+    (tmp_path / "tw-taifex-tx-daily-refresh-outcome.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "tw-finmind-valuation-refresh-outcome.json").unlink()
+    rc, out, _ = _run_summary(tmp_path, _real_run_steps_only())
+    assert rc == 1 and "tw-taifex-tx-daily" in out and "tw-finmind-valuation" in out
+
+
+def _real_run_steps_only() -> dict[str, str]:
+    return {k: "success" for k in ("taifex_refresh", "finmind_refresh", "refresh", "chip_refresh", "finmind_fundamentals_refresh", "steady_check")}
+
+
+def test_summary_failing_steady_restore_check_fails_run(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path)
+    _write(tmp_path, "tw-refresh-outcome.json", status="completed", steady_restore_check={"reason": "scheduler_mode_x", "status": "failed"})
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 1 and "steady_restore_check" in out
+
+
+def test_summary_schedule_skipped_steps_do_not_fail(tmp_path: Path) -> None:
+    # 07:00/08:00 UTC cron: broker and fundamentals skipped, no files for them.
+    _write(tmp_path, "tw-refresh-outcome.json", status="completed", steady_restore_check={"reason": "", "status": "healthy"})
+    steps = {"taifex_refresh": "skipped", "finmind_refresh": "skipped", "refresh": "success", "chip_refresh": "skipped",
+             "finmind_fundamentals_refresh": "skipped", "steady_check": "success"}
+    rc, out, _ = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+
+
+def test_summary_step_is_last_always_and_keeps_continue_on_error() -> None:
+    steps = _steps()
+    final = steps[-1]
+    assert "Summarize refresh outcomes" in final["name"]
+    assert final["if"] == "${{ always() && steps.lease.outcome == 'success' }}"
+    assert "tw_refresh_outcome_summary.py" in final["run"]
+    assert "ssh" not in final["run"].lower() and "deploy_nonprod_vm" not in final["run"]
+    for name in ("TAIFEX contract refresh", "FinMind broker branch refresh", "FinMind fundamentals refresh"):
+        assert _step(name)["continue-on-error"] is True
+    upload = next(i for i, s in enumerate(steps) if "Upload refresh outcome" in s.get("name", ""))
+    assert upload < len(steps) - 1
+
+
+# --- TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119 -----------------
+# Reproduces run 44421268724: one chip profile fails its readback, the lease guard
+# records guarded_command_failed + stops the heartbeat, and every later guarded
+# command is refused with exit 75.
+
+_QUARANTINING_WRAPPER = """#!/usr/bin/env bash
+if [[ -e "${GUARD_FAILURE_FILE}" ]]; then
+  echo "[dev-environment-lease-guard] ERROR: lease heartbeat is not healthy before command start" >&2
+  exit 75
+fi
+printf '%s\\n' "$*" >> "${GUARD_CALLS}"
+"$@"; rc=$?
+if (( rc != 0 )); then echo '{"status":"guarded_command_failed"}' > "${GUARD_FAILURE_FILE}"; exit 75; fi
+exit 0
+"""
+
+
+def _layout(tmp_path: Path, deploy_py: str) -> dict[str, str]:
+    wrapper = tmp_path / ".lease-controller/scripts/run_with_dev_environment_lease.sh"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(_QUARANTINING_WRAPPER)
+    deploy = tmp_path / "scripts/deploy_nonprod_vm.sh"
+    deploy.parent.mkdir()
+    deploy.write_text("#!/usr/bin/env python3\n" + deploy_py)
+    for f in (wrapper, deploy):
+        f.chmod(0o755)
+    (tmp_path / "temp").mkdir()
+    return {**os.environ, "RUNNER_TEMP": str(tmp_path / "temp"), "FORCE_REFRESH": "false",
+            "GUARD_FAILURE_FILE": str(tmp_path / "heartbeat-failure.json"), "GUARD_CALLS": str(tmp_path / "guard_calls"),
+            "CALLS": str(tmp_path / "calls")}
+
+
+_DEPLOY_FAIL_FIRST = """import json, os, sys
+a = sys.argv[1:]
+open(os.environ['CALLS'], 'a').write(a[a.index('--connector-id') + 1] + '\\n' if '--connector-id' in a else 'steady\\n')
+if '--steady-check' in a:
+    json.dump({'mode': 'collector_steady_pull', 'reason': '', 'status': 'healthy'}, open(a[a.index('--output') + 1], 'w'))
+    sys.exit(0)
+bad = a[a.index('--connector-id') + 1] in ('tw-official-twse-margin-balances', 'tw-finmind-monthly-revenue')
+json.dump({'status': 'failed' if bad else 'completed', 'reason': 'readback_failed' if bad else 'refreshed'}, open(a[a.index('--output') + 1], 'w'))
+sys.exit(1 if bad else 0)
+"""
+
+
+def _run(step_run: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["bash", "--noprofile", "--norc", "-c", step_run], cwd=cwd, env=env, text=True, capture_output=True, timeout=30)
+
+
+def test_failed_chip_profile_does_not_quarantine_lease_or_stop_fundamentals_and_probe_runs(tmp_path: Path) -> None:
+    env = _layout(tmp_path, _DEPLOY_FAIL_FIRST)
+    env["FINMIND_API_TOKEN"] = "x"
+    chip = _run(_step("Taiwan chip refresh")["run"], tmp_path, env)
+    assert chip.returncode == 1, chip.stdout + chip.stderr  # step fails -> summary turns the run red
+    assert not (tmp_path / "heartbeat-failure.json").exists()
+    fund = _run(_step("FinMind fundamentals refresh")["run"], tmp_path, env)
+    assert fund.returncode == 1, fund.stdout + fund.stderr
+    assert not (tmp_path / "heartbeat-failure.json").exists()
+    calls = (tmp_path / "calls").read_text().split()
+    for c in _CHIPS + _FUNDAMENTALS:
+        assert c in calls, c  # every profile ran, none skipped after the failure
+    check = _run(_step("steady source-ingest posture")["run"], tmp_path, {**env, "STEADY_CHECK_OUTPUT_PATH": str(tmp_path / "temp/steady.json"), "REFRESH_OUTCOME_PATH": str(tmp_path / "temp/tw-refresh-outcome.json")})
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert json.loads((tmp_path / "temp/tw-refresh-outcome.json").read_text())["steady_restore_check"]["status"] == "healthy"
+    # Summary names the failed profiles with their own reason.
+    rc, out, _ = _run_summary(tmp_path / "temp", {"chip_refresh": "failure", "finmind_fundamentals_refresh": "failure", "steady_check": "success"})
+    assert rc == 1
+    assert "tw-official-twse-margin-balances" in out and "readback_failed" in out
+    assert "tw-finmind-monthly-revenue" in out
+
+
+def test_steady_probe_never_records_lease_quarantine_as_probe_result(tmp_path: Path) -> None:
+    env = _layout(tmp_path, _DEPLOY_FAIL_FIRST)
+    (tmp_path / "heartbeat-failure.json").write_text("{}")  # e.g. step timeout / cancellation quarantine
+    env.update(STEADY_CHECK_OUTPUT_PATH=str(tmp_path / "temp/steady.json"), REFRESH_OUTCOME_PATH=str(tmp_path / "temp/o.json"))
+    proc = _run(_step("steady source-ingest posture")["run"], tmp_path, env)
+    assert proc.returncode == 1
+    reason = json.loads((tmp_path / "temp/o.json").read_text())["steady_restore_check"]["reason"]
+    assert reason == "probe_not_run_lease_guard_refused_exit_75"
+    assert "transport" not in reason
+
+
+_FAKE_LEASE_CLI = """#!/usr/bin/env python3
+import json, os, sys, time
+cmd = sys.argv[1]
+args = sys.argv[2:]
+def opt(n): return args[args.index(n) + 1] if n in args else ''
+if cmd == 'verify':
+    sys.exit(75 if os.environ.get('FAKE_LEASE_LOST') else 0)
+if cmd == 'verify-heartbeat-identity':
+    sys.exit(0 if os.path.exists(opt('--identity-file')) else 1)
+if cmd == 'heartbeat-loop':
+    if opt('--identity-json-out'):
+        open(opt('--identity-json-out'), 'w').write('{"pid": %d}' % os.getpid())
+    # Like the real loop: sleep one interval BEFORE the first renewal, then rewrite state.json.
+    time.sleep(float(opt('--interval-seconds')))
+    if os.path.exists(opt('--state-file') + '.renew-fails'):
+        sys.exit(1)
+    open(opt('--state-file'), 'w').write('{"leaseId":"x","heartbeatAt":"%f"}' % time.time())
+    open(opt('--state-file') + '.renewals', 'a').write(opt('--interval-seconds') + '\\n')
+    time.sleep(30)
+    sys.exit(0)
+sys.exit(2)
+"""
+
+
+def _rearm(tmp_path: Path, lost: bool, quarantined: bool = True, renew_fails: bool = False) -> tuple[subprocess.CompletedProcess[str], Path]:
+    ctrl = tmp_path / ".lease-controller/scripts"
+    ctrl.mkdir(parents=True)
+    cli = ctrl / "dev_environment_lease.py"
+    cli.write_text(_FAKE_LEASE_CLI)
+    cli.chmod(0o755)
+    ld = tmp_path / "ld"
+    ld.mkdir()
+    (ld / "state.json").write_text('{"leaseId":"x"}')
+    (ld / "heartbeat.pid").write_text("999999\n")
+    (ld / "heartbeat-identity.json").write_text("{}")
+    (ld / "heartbeat-stop.json").write_text("{}")
+    if quarantined:
+        (ld / "heartbeat-failure.json").write_text('{"status":"guarded_command_failed"}')
+    gh = tmp_path / "gh_output"
+    env = {**os.environ, "CONTROLLER": str(tmp_path / ".lease-controller"), "LD": str(ld), "GITHUB_OUTPUT": str(gh),
+           "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "t"}
+    if renew_fails:
+        (ld / "state.json.renew-fails").write_text("1")
+    if lost:
+        env["FAKE_LEASE_LOST"] = "1"
+    step = _step("Re-arm lease heartbeat")
+    assert step["if"] == "${{ always() && steps.lease.outcome == 'success' }}"
+    return _run(step["run"], tmp_path, env), ld
+
+
+def test_rearm_renews_same_lease_after_quarantine_without_release(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False)
+    pid = int((ld / "heartbeat.pid").read_text())
+    try:
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "rearm=done" in (tmp_path / "gh_output").read_text()
+        assert not (ld / "heartbeat-failure.json").exists()
+        assert (ld / "heartbeat-failure.quarantine.json").is_file()  # evidence kept
+        assert not (ld / "heartbeat-stop.json").exists()  # stale stop marker would allow early release
+        assert pid != 999999 and (ld / "heartbeat-identity.json").read_text().strip() == '{"pid": %d}' % pid
+        assert "release" not in _step("Re-arm lease heartbeat")["run"].replace("never released", "")
+    finally:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+
+
+def test_rearm_does_not_touch_lease_when_ownership_is_lost(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=True)
+    assert proc.returncode == 0
+    assert "rearm=failed" in (tmp_path / "gh_output").read_text()
+    assert (ld / "heartbeat-failure.json").is_file()  # still quarantined; probe will not run
+
+
+def test_rearm_is_noop_without_quarantine(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False, quarantined=False)
+    assert proc.returncode == 0 and (ld / "heartbeat.pid").read_text().strip() == "999999"
+
+
+def test_rearm_sits_between_refresh_steps_and_probe_and_release_needs_healthy_probe() -> None:
+    names = [s.get("name", "") for s in _steps()]
+    rearm = next(i for i, n in enumerate(names) if "Re-arm lease heartbeat" in n)
+    assert rearm + 1 == next(i for i, n in enumerate(names) if "steady source-ingest posture" in n)
+    assert "STEADY_CHECK_OUTCOME}\" == success" in _step("Stop heartbeat")["run"]
+    for name in ("bounded Taiwan market refresh", "Taiwan chip refresh"):
+        assert _step(name)["continue-on-error"] is True
+
+
+def test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False)
+    pid = int((ld / "heartbeat.pid").read_text())
+    try:
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        # state.json was renewed (by the 1s one-shot) before the step returned; the 60s loop has not renewed yet.
+        assert (ld / "state.json.renewals").read_text().split() == ["1"]
+        assert "heartbeatAt" in (ld / "state.json").read_text()
+        assert "rearm=done" in (tmp_path / "gh_output").read_text()
+    finally:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+
+
+def test_rearm_fails_closed_and_keeps_quarantine_when_renewal_does_not_happen(tmp_path: Path) -> None:
+    proc, ld = _rearm(tmp_path, lost=False, renew_fails=True)
+    assert proc.returncode == 0
+    assert "rearm=failed" in (tmp_path / "gh_output").read_text()
+    assert (ld / "heartbeat-failure.json").is_file()
+
+
+_DEPLOY_REFRESH_FAILS = """import json, os, sys
+a = sys.argv[1:]
+out = a[a.index('--output') + 1]
+if '--steady-check' in a:
+    json.dump({'mode': 'collector_steady_pull', 'reason': '', 'status': 'healthy'}, open(out, 'w'))
+    sys.exit(0)
+json.dump({'status': 'failed', 'reason': 'readback_failed'}, open(out, 'w'))
+sys.exit(3)
+"""
+
+
+def test_refresh_failure_does_not_quarantine_lease_and_probe_still_runs(tmp_path: Path) -> None:
+    env = _layout(tmp_path, _DEPLOY_REFRESH_FAILS)
+    env["REFRESH_OUTPUT_PATH"] = str(tmp_path / "temp/tw-refresh-outcome.json")
+    refresh = _run(_step("Execute bounded Taiwan market refresh")["run"], tmp_path, env)
+    assert refresh.returncode == 3, refresh.stdout + refresh.stderr  # own exit code, reported after the guard
+    assert not (tmp_path / "heartbeat-failure.json").exists()  # guard did not quarantine
+    check = _run(_step("steady source-ingest posture")["run"], tmp_path, {**env, "STEADY_CHECK_OUTPUT_PATH": str(tmp_path / "temp/steady.json"), "REFRESH_OUTCOME_PATH": str(tmp_path / "temp/tw-refresh-outcome.json")})
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert json.loads((tmp_path / "temp/tw-refresh-outcome.json").read_text())["steady_restore_check"]["status"] == "healthy"
+
+
+def test_quarantine_then_rearm_then_probe_records_probe_own_result(tmp_path: Path) -> None:
+    """Timeout/cancel style quarantine: guard file present -> re-arm -> probe runs and records its own result."""
+    proc, ld = _rearm(tmp_path, lost=False)
+    pid = int((ld / "heartbeat.pid").read_text())
+    try:
+        assert "rearm=done" in (tmp_path / "gh_output").read_text(), proc.stdout + proc.stderr
+        wrapper = tmp_path / ".lease-controller/scripts/run_with_dev_environment_lease.sh"
+        deploy = tmp_path / "scripts/deploy_nonprod_vm.sh"
+        wrapper.write_text(_QUARANTINING_WRAPPER)
+        deploy.parent.mkdir()
+        deploy.write_text("#!/usr/bin/env python3\n" + _DEPLOY_FAIL_FIRST)
+        for f in (wrapper, deploy):
+            f.chmod(0o755)
+        (tmp_path / "temp").mkdir()
+        env = {**os.environ, "RUNNER_TEMP": str(tmp_path / "temp"), "GUARD_FAILURE_FILE": str(ld / "heartbeat-failure.json"),
+               "GUARD_CALLS": str(tmp_path / "guard_calls"), "CALLS": str(tmp_path / "calls"),
+               "STEADY_CHECK_OUTPUT_PATH": str(tmp_path / "temp/steady.json"), "REFRESH_OUTCOME_PATH": str(tmp_path / "temp/o.json")}
+        check = _run(_step("steady source-ingest posture")["run"], tmp_path, env)
+        assert check.returncode == 0, check.stdout + check.stderr
+        rec = json.loads((tmp_path / "temp/o.json").read_text())["steady_restore_check"]
+        assert rec == {"reason": "", "status": "healthy"}
+    finally:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass

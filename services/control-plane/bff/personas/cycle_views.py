@@ -57,6 +57,37 @@ def persona_cycle_health(records, persona_id):
     return cycle_health(latest)
 
 
+DAILY_CYCLE_OWNER_STATES = frozenset({"paper_running", "paper_owner", "consultable"})
+
+
+def cycle_owner_lifecycle(persona):
+    """Lifecycle value for the day check, using the registrar's rule.
+
+    Owner state (never the BFF provisioning projection) must be in
+    paper_running/paper_owner/consultable, with status active and a tenant (the
+    route's tenant-scoped read guarantees it)
+    (persona_cron_registrar.reconcile_daily_cycles). Anything else yields a
+    value the evaluator rejects, with the reason preserved.
+    """
+    if not isinstance(persona, dict):
+        return None
+    owner = persona.get("owner_lifecycle_state")
+    if owner in (None, ""):
+        if persona.get("provisioning_lifecycle_state"):
+            return None
+        owner = persona.get("lifecycle_state") or persona.get("state")
+    owner = str(owner or "").strip().lower() or None
+    if owner is None:
+        return None
+    status = str(persona.get("status") or "active").strip().lower()
+    # The detail routes only reach here for a record already matched to the
+    # caller tenant (_get_persona_record_for_detail), so tenant is guaranteed.
+    if owner in DAILY_CYCLE_OWNER_STATES:
+        if status != "active":
+            return f"{owner}:status={status}"
+    return owner
+
+
 def unavailable_health(reason):
     return {"status": "unavailable", "last_packet_id": None, "stage": None,
             "failure_reason": reason}

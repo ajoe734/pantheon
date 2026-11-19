@@ -312,9 +312,12 @@ def observe_regime(transport: Transport | None, *, session: str, strategy_ids: S
     try:
         status, body = transport("POST", "/api/registry/regime/evaluate", {"session": session, "market": MARKET})
         if status != 200:
-            code = ((body or {}).get("detail") or {}).get("code") if isinstance(body, dict) else None
-            detail = (body or {}).get("detail") if isinstance(body, dict) else None
-            code = code or (detail if isinstance(detail, str) else None)
+            detail = body.get("detail") if isinstance(body, dict) else None
+            code = detail.get("code") if isinstance(detail, dict) else None
+            if not code and isinstance(detail, str):
+                code = detail
+            if not isinstance(code, str):
+                code = None
             return _unavailable(f"evaluate_refused:{status}:{code or 'unknown'}"[:160], session)
         records: dict[str, dict[str, Any]] = {}
         missing: list[str] = []

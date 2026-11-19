@@ -202,6 +202,7 @@ jobs:
       - name: Execute bounded Taiwan market refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: refresh
+        continue-on-error: true
         env:
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           TARGET_ENV: dev
@@ -219,14 +220,34 @@ jobs:
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          force_arg=()
-          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+          rc_file="${RUNNER_TEMP}/refresh-step-rc.txt"
+          rm -f "${rc_file}"
+          export RC_FILE="${rc_file}"
+          # The guarded command always exits 0: any non-zero guarded exit is recorded by the guard as
+          # guarded_command_failed (heartbeat stopped, later steps refused with exit 75). The refresh's
+          # own exit code is reported by this step after the guard returns.
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
-            ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" --output "${REFRESH_OUTPUT_PATH}"
+            bash -c '
+              force_arg=()
+              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              rc=0
+              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" --output "${REFRESH_OUTPUT_PATH}" || rc=$?
+              echo "${rc}" > "${RC_FILE}"
+              exit 0
+            '
+          refresh_rc="$(tr -d '[:space:]' < "${rc_file}" 2>/dev/null || true)"
+          if [[ "${refresh_rc}" != "0" ]]; then
+            echo "::error::bounded Taiwan market refresh exit ${refresh_rc:-unknown}"
+            exit "${refresh_rc:-1}"
+          fi
 
       - name: Execute bounded Taiwan chip refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: chip_refresh
+        # Failure of a profile is reported by this step's own exit code (after the guarded
+        # command returns 0, so the lease guard does not quarantine the lease) and by the
+        # summary step; later steps still run.
+        continue-on-error: true
         # Measured 9.1-9.5 min per profile in run 44273374890 (recreate + 51-67s lease wait +
         # two bounded one-shots + restore): 6 x 15 min budget; each profile is also bounded
         # at 15 min so a timeout stops at a profile boundary instead of mid-recreate.
@@ -246,15 +267,25 @@ jobs:
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
+          failed_file="${RUNNER_TEMP}/chip-refresh-failed-profiles.txt"
+          rm -f "${failed_file}"
+          export FAILED_FILE="${failed_file}"
+          # The guarded command always exits 0: the guard records every non-zero guarded exit
+          # as guarded_command_failed and stops the heartbeat, which would refuse every later step.
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
             bash -c '
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
-              failed=0
               while read -r connector dataset hosts; do
+                out="${RUNNER_TEMP}/${connector}-refresh-outcome.json"
+                rc=0
                 timeout --kill-after=60 900 ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
                   --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
-                  --output "${RUNNER_TEMP}/${connector}-refresh-outcome.json" </dev/null || failed=1
+                  --output "${out}" </dev/null || rc=$?
+                if (( rc != 0 )); then
+                  echo "${connector} exit ${rc}" >> "${FAILED_FILE}"
+                  [[ -s "${out}" ]] || printf '"'"'{"connector_id":"%s","dataset":"%s","log":"","reason":"exit_%s","status":"failed"}\n'"'"' "${connector}" "${dataset}" "${rc}" > "${out}"
+                fi
               done <<PROFILES
           tw-official-twse-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
           tw-official-tpex-margin-balances tw_margin_short_balance openapi.twse.com.tw,www.tpex.org.tw
@@ -263,8 +294,12 @@ jobs:
           tw-taifex-put-call taifex_options_chip openapi.taifex.com.tw,www.taifex.com.tw
           tw-taifex-tx-daily taifex_tx_daily openapi.taifex.com.tw,www.taifex.com.tw
           PROFILES
-              exit "${failed}"
+              exit 0
             '
+          if [[ -s "${failed_file}" ]]; then
+            echo "::error::chip refresh profiles failed: $(tr '\n' ';' < "${failed_file}")"
+            exit 1
+          fi
 
       - name: Execute bounded FinMind fundamentals refresh
         # FinMind publishes after the close (18:00 Taipei = 10:00 UTC): never run on the 07:00/08:00 UTC crons.
@@ -288,25 +323,151 @@ jobs:
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          force_arg=()
-          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
-          failed=0
-          while read -r connector dataset hosts; do
-            if [[ -z "${FINMIND_API_TOKEN}" ]]; then
+          PROFILES='tw-finmind-monthly-revenue tw_monthly_revenue api.finmindtrade.com
+          tw-finmind-quarterly-statements tw_financial_statement api.finmindtrade.com
+          tw-finmind-valuation tw_valuation_bwibbu api.finmindtrade.com'
+          if [[ -z "${FINMIND_API_TOKEN}" ]]; then
+            while read -r connector dataset hosts; do
               printf '{"connector_id":"%s","dataset":"%s","log":"","reason":"missing_credential","status":"skipped"}\n' "${connector}" "${dataset}" > "${RUNNER_TEMP}/${connector}-refresh-outcome.json"
               echo "FinMind fundamentals refresh skipped: missing_credential (${connector})"
-              continue
+            done <<<"${PROFILES}"
+            exit 0
+          fi
+          failed_file="${RUNNER_TEMP}/fundamentals-refresh-failed-profiles.txt"
+          rm -f "${failed_file}"
+          export FAILED_FILE="${failed_file}" PROFILES
+          # One guarded call that always exits 0 (see chip step): one failed profile must not
+          # quarantine the lease or skip the remaining profiles.
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            bash -c '
+              force_arg=()
+              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              while read -r connector dataset hosts; do
+                out="${RUNNER_TEMP}/${connector}-refresh-outcome.json"
+                rc=0
+                ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
+                  --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
+                  --output "${out}" </dev/null || rc=$?
+                if (( rc != 0 )); then
+                  echo "${connector} exit ${rc}" >> "${FAILED_FILE}"
+                  [[ -s "${out}" ]] || printf '"'"'{"connector_id":"%s","dataset":"%s","log":"","reason":"exit_%s","status":"failed"}\n'"'"' "${connector}" "${dataset}" "${rc}" > "${out}"
+                fi
+              done <<<"${PROFILES}"
+              exit 0
+            '
+          if [[ -s "${failed_file}" ]]; then
+            echo "::error::fundamentals refresh profiles failed: $(tr '\n' ';' < "${failed_file}")"
+            exit 1
+          fi
+
+      - name: Re-arm lease heartbeat after a guarded step quarantine
+        # run_with_dev_environment_lease.sh stops the heartbeat and writes
+        # heartbeat-failure.json after ANY failed, timed-out or cancelled guarded step, and then refuses
+        # every later guarded command (exit 75). The lease itself stays held by this run until its TTL.
+        # Before the probe: verify this run still owns that exact lease (state-file leaseId + owner via
+        # `verify`), make sure the old heartbeat is gone, keep the quarantine evidence and renew the same
+        # lease with a new heartbeat. The lease is never released or re-acquired here, so no other holder
+        # can enter between the quarantine and the probe.
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        id: rearm
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LD: ${{ steps.lease.outputs.ld }}
+        shell: /bin/bash --noprofile --norc {0}
+        run: |
+          [[ -e "${LD}/heartbeat-failure.json" ]] || { echo "No lease quarantine recorded; heartbeat re-arm not needed."; exit 0; }
+          echo "Lease quarantine recorded by the guard:"; sed -n '1,20p' "${LD}/heartbeat-failure.json" || true
+          old_pid="$(tr -d '[:space:]' < "${LD}/heartbeat.pid" 2>/dev/null || true)"
+          if [[ "${old_pid}" =~ ^[1-9][0-9]*$ ]] && kill -0 "${old_pid}" 2>/dev/null; then
+            if python3 "${CONTROLLER}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+                 --identity-file "${LD}/heartbeat-identity.json" --pid "${old_pid}" \
+                 --expected-cli "${CONTROLLER}/scripts/dev_environment_lease.py" \
+                 --state-file "${LD}/state.json" >/dev/null 2>&1; then
+              kill -TERM "${old_pid}" 2>/dev/null || true
+              for _ in $(seq 1 40); do kill -0 "${old_pid}" 2>/dev/null || break; sleep 0.25; done
             fi
-            .lease-controller/scripts/run_with_dev_environment_lease.sh \
-              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
-              --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
-              --output "${RUNNER_TEMP}/${connector}-refresh-outcome.json" </dev/null || failed=1
-          done <<'PROFILES'
-          tw-finmind-monthly-revenue tw_monthly_revenue api.finmindtrade.com
-          tw-finmind-quarterly-statements tw_financial_statement api.finmindtrade.com
-          tw-finmind-valuation tw_valuation_bwibbu api.finmindtrade.com
-          PROFILES
-          exit "${failed}"
+            if kill -0 "${old_pid}" 2>/dev/null; then
+              echo "::warning::old heartbeat still running; not re-arming" >&2; echo "rearm=failed" >> "${GITHUB_OUTPUT}"; exit 0
+            fi
+          fi
+          if ! python3 "${CONTROLLER}/scripts/dev_environment_lease.py" verify \
+                 --repository ajoe734/execute-plans --branch environment-coordination \
+                 --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                 --resource pantheon-dev-environment --state-file "${LD}/state.json" \
+                 --max-heartbeat-age-seconds 300 >/dev/null; then
+            echo "::warning::lease no longer owned by this run; probe cannot run under the lease" >&2
+            echo "rearm=failed" >> "${GITHUB_OUTPUT}"; exit 0
+          fi
+          mv -f "${LD}/heartbeat-failure.json" "${LD}/heartbeat-failure.quarantine.json"
+          rm -f "${LD}/heartbeat-stop.json" "${LD}/heartbeat-identity.json"
+          # heartbeat-loop sleeps one interval before its first renewal, while the lease guard and the
+          # lease manager both refuse a heartbeat older than 120s. A heartbeat that was already >=60s old
+          # when the quarantine happened would go stale before that first renewal. So renew the same lease
+          # synchronously first: run a 1s-interval loop until state.json shows a renewal, then stop it.
+          before_sha="$(sha256sum "${LD}/state.json" | cut -d' ' -f1)"
+          exec {token_fd}<<<"${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${CONTROLLER}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${LD}/state.json" \
+              --ttl-seconds 300 \
+              --interval-seconds 1 \
+              --failure-json-out "${LD}/rearm-renew-failure.json" \
+              --token-stdin \
+              <&"${token_fd}" >"${LD}/rearm-renew.log" 2>&1 &
+          renew_pid=$!
+          exec {token_fd}<&-
+          renewed=0
+          for _ in $(seq 1 300); do
+            if [[ "$(sha256sum "${LD}/state.json" | cut -d' ' -f1)" != "${before_sha}" ]]; then renewed=1; break; fi
+            kill -0 "${renew_pid}" 2>/dev/null || break
+            sleep 0.2
+          done
+          kill -TERM "${renew_pid}" 2>/dev/null || true
+          for _ in $(seq 1 100); do kill -0 "${renew_pid}" 2>/dev/null || break; sleep 0.1; done
+          kill -KILL "${renew_pid}" 2>/dev/null || true
+          if (( renewed != 1 )); then
+            cat "${LD}/rearm-renew.log" >&2 || true
+            echo "::warning::lease renewal before probe did not complete; probe cannot run under the lease" >&2
+            mv -f "${LD}/heartbeat-failure.quarantine.json" "${LD}/heartbeat-failure.json" || true
+            echo "rearm=failed" >> "${GITHUB_OUTPUT}"; exit 0
+          fi
+          exec {token_fd}<<<"${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${CONTROLLER}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${LD}/state.json" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${LD}/heartbeat-failure.json" \
+              --shutdown-json-out "${LD}/heartbeat-stop.json" \
+              --identity-json-out "${LD}/heartbeat-identity.json" \
+              --token-stdin \
+              <&"${token_fd}" >"${LD}/heartbeat.log" 2>&1 &
+          heartbeat_pid=$!
+          disown "${heartbeat_pid}" 2>/dev/null || true
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${LD}/heartbeat.pid"
+          for _ in $(seq 1 100); do
+            [[ -s "${LD}/heartbeat-identity.json" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || { cat "${LD}/heartbeat.log" >&2; echo "rearm=failed" >> "${GITHUB_OUTPUT}"; exit 0; }
+            sleep 0.1
+          done
+          python3 "${CONTROLLER}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+            --identity-file "${LD}/heartbeat-identity.json" --pid "${heartbeat_pid}" \
+            --expected-cli "${CONTROLLER}/scripts/dev_environment_lease.py" \
+            --state-file "${LD}/state.json" >/dev/null || { echo "rearm=failed" >> "${GITHUB_OUTPUT}"; exit 0; }
+          echo "rearm=done" >> "${GITHUB_OUTPUT}"
 
       - name: Verify and restore steady source-ingest posture
         # Runs after failure, timeout and cancellation of any refresh step. The result
@@ -327,6 +488,7 @@ jobs:
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           STEADY_CHECK_OUTPUT_PATH: ${{ runner.temp }}/steady-restore-check.json
           REFRESH_OUTCOME_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
+          REARM_RESULT: ${{ steps.rearm.outputs.rearm }}
         shell: /bin/bash --noprofile --norc {0}
         run: |
           check_rc=0
@@ -344,7 +506,12 @@ jobs:
               except Exception:
                   check = {}
           if not check:
-              check = {"mode": "collector_steady_pull", "reason": f"steady_check_transport_exit_{rc}", "status": "failed"}
+              # The guard refuses (exit 75) when the lease heartbeat is quarantined or lost. That is the
+              # lease's reason, never the probe's result: record that the probe did not run.
+              if rc == 75:
+                  check = {"mode": "collector_steady_pull", "reason": "probe_not_run_lease_guard_refused_exit_75", "status": "failed"}
+              else:
+                  check = {"mode": "collector_steady_pull", "reason": f"steady_check_transport_exit_{rc}", "status": "failed"}
           outcome = {}
           if outcome_path.is_file():
               try:
@@ -407,3 +574,24 @@ jobs:
             --path .pantheon/environment-leases/pantheon-dev-environment.json \
             --resource pantheon-dev-environment \
             --state-file "${LD}/state.json"
+
+      - name: Summarize refresh outcomes and fail on any failed step
+        # Reads only local step outcomes and the uploaded outcome files; no SSH, no hosted change.
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        env:
+          OUTCOMES_DIR: ${{ runner.temp }}
+          TAIFEX_REFRESH_OUTCOME: ${{ steps.taifex_refresh.outcome }}
+          FINMIND_REFRESH_OUTCOME: ${{ steps.finmind_refresh.outcome }}
+          REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
+          CHIP_REFRESH_OUTCOME: ${{ steps.chip_refresh.outcome }}
+          FUNDAMENTALS_REFRESH_OUTCOME: ${{ steps.finmind_fundamentals_refresh.outcome }}
+          STEADY_CHECK_OUTCOME: ${{ steps.steady_check.outcome }}
+        run: |
+          python3 scripts/tw_refresh_outcome_summary.py \
+            --outcomes-dir "${OUTCOMES_DIR}" --summary-file "${GITHUB_STEP_SUMMARY}" \
+            --step "taifex_refresh=${TAIFEX_REFRESH_OUTCOME}" \
+            --step "finmind_refresh=${FINMIND_REFRESH_OUTCOME}" \
+            --step "refresh=${REFRESH_OUTCOME}" \
+            --step "chip_refresh=${CHIP_REFRESH_OUTCOME}" \
+            --step "finmind_fundamentals_refresh=${FUNDAMENTALS_REFRESH_OUTCOME}" \
+            --step "steady_check=${STEADY_CHECK_OUTCOME}"

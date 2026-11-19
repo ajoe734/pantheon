@@ -713,3 +713,28 @@ def test_harness_and_feedback_bridge_writers_use_write_principal_at_real_route_g
         monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", tok)
         response = client.post("/api/memory/writebacks/learn-feedback", json=payload, headers=_memory_headers())
         assert response.status_code == expected
+
+
+def test_bff_publish_principal_is_read_from_file_first_and_fails_closed(tmp_path):
+    import io
+    from unittest import mock
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    token_file = tmp_path / "PERSONA_POOL_PUBLISH_BFF_TOKEN"
+    token_file.write_text("bff-file-tok\n")
+    token_file.chmod(0o400)
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen[request.full_url] = request.get_header("Authorization")
+        return io.StringIO("{}")
+
+    env = {"PERSONA_POOL_PUBLISH_BFF_TOKEN_FILE": str(token_file), "PERSONA_POOL_PUBLISH_BFF_TOKEN": "env-tok"}
+    with mock.patch("services.persona.pool_autonomy_cycle.urlopen", fake_urlopen):
+        HttpPoolCyclePorts(env=env)._urllib("POST", "bff", "/bff/x", "t1", {})
+    assert seen["http://operator-bff:8001/bff/x"] == "Bearer bff-file-tok"  # file wins over env
+    # A configured but missing file fails closed; it never falls back to the env value.
+    token_file.unlink()
+    with pytest.raises(RuntimeError, match="Configured service credential unavailable"):
+        HttpPoolCyclePorts(env=env)._urllib("POST", "bff", "/bff/x", "t1", {})
+    with pytest.raises(RuntimeError, match="owner_credential_unconfigured:bff"):
+        HttpPoolCyclePorts(env={})._urllib("POST", "bff", "/bff/x", "t1", {})
