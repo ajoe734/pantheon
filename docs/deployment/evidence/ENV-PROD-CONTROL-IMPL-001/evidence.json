@@ -495,5 +495,14 @@
       "command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests",
       "result": "16 tests OK; exit 0; git diff --check passed"
     }
+  },
+  "prod_switch_container_of_profile_repair_20261119": {
+    "diagnosis": "Production Release run 43130573352 (pantheon-20261108-111 bootstrap) failed activate_singletons: product owner agora-interaction-worker not running exactly once. prod_ops.sh container_of ran compose ps -q without profiles; singleton-profile worker depends on core-profile services so compose returned no such service: persona, swallowed as empty.",
+    "change": "container_of, singleton_count, worker_count and workers_each_single now pass \"${CORE_PROFILES[@]}\" to compose ps. No other behavior or gate change.",
+    "regression": "tests/deployment/test_production_release.py::StaticContractTests::test_compose_ps_helpers_pass_core_profiles_so_singleton_workers_resolve",
+    "local_validation": "python3 -m unittest tests.deployment.test_production_release: 104 run; only 2 errors, both ModuleNotFoundError fastapi (environmental), unrelated.",
+    "hosted_pass_claim": false,
+    "residual_finding": "loop lease agora_interaction_evidence held by previous controller instance; out of scope.",
+    "next": "After merge a fresh Production Release for pantheon-20261108-111 is dispatched and operator-approved by the Claude chat session."
   }
 }

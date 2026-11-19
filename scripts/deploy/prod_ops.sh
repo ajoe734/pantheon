@@ -271,7 +271,7 @@ production_schema_gate() {
   catalog="$(live_catalog)" || { GATE_REASON="production live catalog unreadable (database unreachable)"; return 1; }
   GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
-container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
+container_of() { compose "${CORE_PROFILES[@]}" ps -q "$1" 2>/dev/null | head -n1; }
 # mint_gate_token <port> <outfile>: viewer SERVICE token for the explicit production tenant, signed inside the BFF
 # container with its own secret/issuer/audience. Written 0600; the secret is never read or printed by this script.
 mint_gate_token() {
@@ -306,13 +306,13 @@ wait_until() { # wait_until <tries> <interval> <command...>
   for _ in $(seq 1 "$tries"); do "$@" && return 0; sleep "$interval"; done
   return 1
 }
-singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
-worker_count() { compose ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
+singleton_count() { compose "${CORE_PROFILES[@]}" ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
+worker_count() { compose "${CORE_PROFILES[@]}" ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
 # Every singleton worker (Agora request worker, Paper fleet reconciler, Paper signal producer) is exactly one.
 workers_each_single() {
   local svc
   for svc in $PRODUCT_WORKER_SERVICE; do
-    [[ "$(compose ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
+    [[ "$(compose "${CORE_PROFILES[@]}" ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
   done
 }
 # Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
