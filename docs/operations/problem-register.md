@@ -14,14 +14,16 @@ How to use it:
   is merged.
 - State column: `open` (not merged), `merged`, `deployed` (the merge is
   contained in the backend commit hosted serves) or `accepted`. Hosted serves
-  backend `1c9fbee93` with frontend `0e886b9ce` since 2026-11-19 08:57Z (Root
-  44475158547; release accepted: the record passed at 08:57:48Z with its one
-  check, the deployed pair identity). Before that `08d748790` from 11/18
-  23:02Z; Root 44466874746 (`fd4903dcc`) switched at about 06:14Z on 11/19 and
-  was rejected and compensated at 06:44Z. The source for a release's state is
-  the hosted `acceptance/latest.json`
-  (`managed-deploy-worktrees/dev-root/acceptance/` under the deploy root).
-  Changes that only run in GitHub Actions or on the collector host stay
+  backend `2fb152cd3` with frontend `a318cc2d6` since 2026-11-19 (Root
+  44560086559; the gateway was recreated at 16:22Z; release accepted: the
+  record passed at 17:19:54Z with the deployed pair identity check, and the
+  persona pool member probe was skipped because release probes receive no
+  viewer credentials, see RC2). Earlier on 11/19: `1c9fbee93` from 08:57Z, then
+  Roots 44512666272 (`45ec8d53d`) and 44542784932 (`d685eb962`, record passed
+  15:46Z). The source for a release's state is the hosted
+  `acceptance/latest.json` (`managed-deploy-worktrees/dev-root/acceptance/`
+  under the deploy root). Changes that only run in GitHub Actions or on the
+  collector host stay `merged` here.
   `merged` here.
 
 ## Domains and owners
@@ -62,12 +64,12 @@ doing and by the first eight characters of its session id.
 | Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 (#7518) | deployed |
 | Required check that fails under CI load (market-data owner) | SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117 (#7501) and its R2 (#7546); snapshot-store wall-clock bounds made opt-in: SOURCE-SNAPSHOT-STORE-TEST-TIMING-OPT-IN-20261118 (#7595); a test loop that ran to its limit past the 300 s cap: COLLECTOR-WHOLE-MARKET-DAY-TEST-LOOP-EXIT-20261118 (#7596); class task SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 (PR #7593) | merged; class task open |
 | Same class, not load: `services/control-plane/bff/test_training_session_service_client.py::test_live_tampered_credential_rejected_by_owner` fails about 1 run in 16 because it "tampers" an HS256 JWT by replacing the last base64url character, which carries only padding bits when the original is `A` (replaced by `B`), and `exp` changes the signature every run; it returned the approved PR #7625 to its owner on 11/19 and passed on rerun (found by the persona strategy visibility chain) | BFF-TRAINING-TAMPER-TEST-DETERMINISTIC-20261119 (operator request 11/19; #7631, 26db13afa) | merged |
-| Same class, wall-clock bounds on the required path, seen together in run 44534477621 (PR #7631, a test-only change) and passed on the next head: `services/control-plane/bff/test_downstream_health_monitor.py::...drain_under_500ms` (533.2 ms against 500 ms), `scripts/test_dev_remote_watchdog.py::...test_large_envelope_exceeding_pause_succeeds_within_startup_timeout` (exit 75 under a 1.0 s startup timeout) and `services/control-plane/bff/tests/test_persona_league_concurrent_read.py` (elapsed-time and concurrency bounds) | TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119 (operator request 11/19; #7638) | merged |
+| Same class, wall-clock bounds on the required path, seen together in run 44534477621 (PR #7631, a test-only change) and passed on the next head: `services/control-plane/bff/test_downstream_health_monitor.py::...drain_under_500ms` (533.2 ms against 500 ms), `scripts/test_dev_remote_watchdog.py::...test_large_envelope_exceeding_pause_succeeds_within_startup_timeout` (exit 75 under a 1.0 s startup timeout) and `services/control-plane/bff/tests/test_persona_league_concurrent_read.py` (elapsed-time and concurrency bounds) | TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119 (operator request 11/19; #7638) | merged; before it, the league test also failed on dev CI 44541777061, so the cut skipped 2dabd6073 (#7630) for one round |
 | A required frontend check fails on a browser-install race inside `npm run test`: Root 44466874746 (fd4903dcc) was rejected and compensated on 11/19 06:44Z although its frontend commit had passed the gate eleven times (frontend owner) | FE-GATE-BROWSER-INSTALL-BEFORE-TESTS-20261119 | open |
 | WP1.2 on dev a frontend gate failure for an unchanged frontend rolled the backend back, against operator decision 1 | DEV-RELEASE-UNCHANGED-FE-GATE-FAILURE-NO-ROLLBACK-20261119 (#7622) | merged |
 | Deployer reports failure after a successful dispatch: correlation compares the run's head commit with the selected backend, and dev has usually advanced; for the same reason a failed pair can be invisible to the retry guard and be dispatched again (release owner) | DEV-DEPLOY-DISPATCH-CORRELATION-BY-PAIR-TITLE-20261118 (#7597) | merged |
 | The stock persona-tools plugin reported `invalid plugin config` on 5c0463e3b and blocked every persona tool (persona-loop owner) | PERSONA-TOOLS-PLUGIN-EMPTY-CONFIG-ENV-FALLBACK-20261118 (#7601) | deployed (e09a12d17, 11/18 20:40Z) |
-| Every persona tool call is refused with `call_not_authorized_by_hook` although the broker authorized it: in the 11/19 10:00Z cycle the hook ran and the broker answered 200 to all 14 `/authorize` requests, then all 14 calls failed in the tool. The plugin keeps the hook's authorization in the memory of one plugin instance; OpenClaw 2026.7.1 most likely runs the tool from a separate registry load (`activate: false`, `toolDiscovery: true`) with its own instance. The unit test uses one instance (persona-loop owner) | no task yet (the persona-loop owner's session has been idle since 11/19 08:17Z; fix proposed to the operator) | open |
+| Every persona tool call is refused with `call_not_authorized_by_hook` although the broker authorized it: in the 11/19 10:00Z cycle the hook ran and the broker answered 200 to all 14 `/authorize` requests, then all 14 calls failed in the tool. The plugin keeps the hook's authorization in the memory of one plugin instance; OpenClaw 2026.7.1 most likely runs the tool from a separate registry load (`activate: false`, `toolDiscovery: true`) with its own instance. The unit test uses one instance (persona-loop owner) | PERSONA-TOOLS-HOOK-AUTHORIZATION-ACROSS-PLUGIN-INSTANCES-20261119 (#7630): the broker records each authorized tool call id and the tool consumes it once; the first CI run of the PR was red for an undeclared writer (the storage manifest guard) and two test doubles that called `/call` directly | deployed (2fb152cd3): the gateway image built in that Root carries the new plugin (no in-memory binding; the call sends the tool call id); accepted when the persona-day probe after the 11/20 10:00Z cycle reads memory through the broker for a trading persona |
 | The advisory check summary carries its own `acceptance` field and wrote `failed` on Root 44187386408 because a housekeeping budget check failed (docker build cache cap), while the acceptance record passed; one coordinator reported the release as not accepted from it | no task yet | open |
 | WP1.2 the acceptance stage runs release probes only | ACCEPTANCE-STAGE-RELEASE-PROBES-ONLY-20261118 (#7576) | merged |
 | WP1.3 capture removes a never-started replacement container and the failure line names the service | DEV-DEPLOY-CAPTURE-NEVER-STARTED-CONTAINER-20261118 (#7587) | deployed |
@@ -75,12 +77,13 @@ doing and by the first eight characters of its session id.
 | WP1.3 the shared health routes computed the service's metrics on the event loop; `/livez` froze source-ingest for 11.5 s and 20.5 s while the hourly sweep held the universe lock | HEALTH-LIVENESS-NO-METRICS-ON-EVENT-LOOP-20261119 (#7619); the source-ingest side SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119 (#7615, market-data owner) | deployed (1c9fbee93) |
 | WP1.3 same shape, recovered by itself: the shared outbox-worker health of paper-signal-producer fails on `status=degraded` (reported by the persona-loop owner, not verified by the register owner) | no task yet | open |
 | WP1.4 a change that touches no runtime path does not trigger a release | DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117 (#7550) | merged; not yet observed on a real change |
-| WP1.4 the deployer holds a dispatch during the Taiwan session and the persona daily cycle | DEV-DEPLOY-QUIET-WINDOWS-20261118 (#7566) | merged; not yet observed holding; until then timers on the development host pause the publish-cut workflow in both windows |
-| An interrupted refresh run leaves source-ingest stopped and a leftover container (release owner) | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 (#7585) | merged; first real run 44421268724 (11/18 23:30Z) showed the steady check is refused after any guarded failure (the lease is quarantined); repair TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119 open |
+| WP1.4 the deployer holds a dispatch during the Taiwan session and the persona daily cycle | DEV-DEPLOY-QUIET-WINDOWS-20261118 (#7566) | merged; not yet observed holding; until then timers on the development host pause the publish-cut workflow in both windows; for 11/20: Taiwan session 00:30Z to 05:35Z, persona window 08:00Z (earlier, because a release takes up to two hours) to 10:45Z; pause timers do not run late after a host restart |
+| An interrupted refresh run leaves source-ingest stopped and a leftover container (release owner) | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 (#7585) | merged; first real run 44421268724 (11/18 23:30Z) showed the steady check is refused after any guarded failure (the lease is quarantined); repair TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119 (#7607) merged and seen working in refresh runs 44481377958 (07:40Z) and 44509299247 (10:50Z): the steady restore check reported healthy and the summary step failed the run visibly |
 | Refresh preflight allows 3 s, and the first snapshot lookup after a restart ran a 20 s sweep before answering (market-data owner) | SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118 (#7589) | deployed |
 | Gateway provider credentials are hand-made hosted state: a stored auth profile shadows the deployed secret | the operator's two OpenAI API keys come from the environment since OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (#7594) and OPENCLAW-API-ROUTE-LOOP-STDIN-SECOND-KEY-20261118 (#7603, the deploy loop lost its second key to `docker compose exec` reading stdin) deployed in 08d748790; the two hand-stored OpenAI profiles were removed 11/18 23:28Z; the Anthropic api_key profile and the OpenAI OAuth profile are still hand-stored (persona-loop owner) | open |
 | Scheduled workflows start hours late or not at all, so the daily measurement and the probes do not run on time | no task yet (dispatch on time from the development host) | open |
 | Which step of a failed release invalidates the distillation worker's Registry credential (bursts of 401 inside failed-deploy windows) | release owner; no task yet | open |
+| A release recreates the containers and their `docker logs` go with them: the adapter log of the 11/19 10:01Z to 10:08Z meeting failures was gone by 15:50Z; only a gateway log copied by hand at 10:52Z survived, and OOM kills are left only in the host kernel log (release owner) | no task yet | open |
 | Frontend unit test red inside the integration gate (execute-plans) | FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117 (execute-plans #1036) | merged |
 
 The workflow and deploy-script tasks are serialised in this order: no probe
@@ -163,7 +166,7 @@ returning data.
 |---|---|---|
 | WP2.1 probe runner and contract | DEV-DEPLOY-ACCEPTANCE-STAGE-20261117 (#7531) | merged |
 | WP2.1 probes for chains already merged (replace the manual hosted acceptance tasks) | to be opened once the probe contract exists | open |
-| WP2.1 release probes receive no viewer credentials: the acceptance step of `nonprod-deploy.yml` passes only the URLs and SHAs, so a probe that reads an authenticated BFF route can only skip (found 2026-11-19 while specifying the persona pool probe; remediation mechanisms owner) | no task yet | open |
+| WP2.1 release probes receive no viewer credentials: the acceptance step of `nonprod-deploy.yml` passes only the URLs and SHAs, so a probe that reads an authenticated BFF route can only skip (found 2026-11-19 while specifying the persona pool probe; remediation mechanisms owner) | no task yet | open; Root 44560086559 skipped `probe:persona-pool-member-rules` (exit 77) for this reason |
 | WP2.2 three delivery states in reporting | rule in AGENTS.md | in force |
 | WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 (#7539) with repairs #7573 and #7577; selection repaired by PERSONA-DAY-PROBE-CONTROLLER-SET-20261119 (#7606), which needs BFF-PERSONA-OWNER-LIFECYCLE-TRUTH-20261119 (#7610) on hosted | deployed (1c9fbee93); run 44510111282 (11/19 10:55Z) judged exactly the three trading personas and left out 174 with a reason each; all three failed first at `terminal_packet_today` (no proposal submitted) because every persona tool call was refused (RC1) |
 | Health that lies: source-ingest readiness | SOURCE-INGEST-READINESS-TRUTHFUL-20261117 (#7511) | deployed |
@@ -175,13 +178,17 @@ returning data.
 | Gateway config writes are refused under the plugin overlay, so the consultation agent cannot be ensured (persona-loop owner) | OPENCLAW-CONFIG-WRITE-UNDER-PLUGIN-OVERLAY-20261118 (#7579) | deployed; it introduced the plugin config regression listed under RC1 |
 | Operator instruction 2026-11-18: gpt-5.6-sol becomes gpt-6.2-sol; the operator supplied two OpenAI API keys that belong to two organizations | separate providers openai-api and openai-api-2, first by a temporary live repair at 14:16Z, since 17:02Z through the chain variable; OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (PR #7594) turns the hand-stored keys into environment references; two earlier tasks that put gpt-6.2-sol on the subscription provider were superseded | open |
 | MT-2 meeting never triggers: nothing produced its input (persona-loop owner) | MEETING-MT2-PENDING-LESSONS-PRODUCER-20261118 (#7580) | deployed |
-| The daily cycle cannot publish its own pool: owner credential not configured (persona-loop owner) | PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118 (PR #7591) | open; blocked since 14:35Z, needs BFF route files added to its artifact contract |
-| Regime evaluation is refused by Registry for the persona principal and reported as a different error (persona-loop owner) | REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118 | open |
+| Meetings are convened and not held: in the 11/19 10:00Z cycle all three meetings ended in dead letter after 3 attempts (`consultation agent ensure transport failed`): the adapter starts one `openclaw` CLI per gateway call (5 to 7 s) and holds the agent registry lock against persona ensures, past the executor's 30 s. A cycle packet's `meetings.convened` does not say a meeting was held (persona-loop owner) | CONSULT-AGENT-ENSURE-WITHIN-EXECUTOR-BUDGET-20261119 (#7642) | merged |
+| The daily cycle cannot publish its own pool: owner credential not configured (persona-loop owner) | PERSONA-POOL-PUBLISH-BFF-CREDENTIAL-20261118 (#7591) | deployed (1c9fbee93): publication no longer fails on the credential; it now opens a persona panel consultation (next row) |
+| Pool publication consultations (`consult-envelope-publication-*`) end in dead letter after 55 to 57 attempts against a maximum of 3: reading the panel case file returns HTTP 401 because consultation-svc has an empty `PANTHEON_PERSONA_SERVICE_TOKEN`, which `issue_dev_paper_principals.py` never issues (persona-loop owner) | CONSULTATION-POOL-READ-PERSONA-PRINCIPAL-20261119 (#7641) | merged |
+| Regime evaluation is refused by Registry for the persona principal and reported as a different error (persona-loop owner) | REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118 (#7608) | deployed (1c9fbee93): the refusal is gone; evaluation fails differently (next row) |
+| Regime evaluation in the 11/19 10:00Z cycle: all three `registry_unavailable:RemoteDisconnected`; the host kernel log shows Registry killed at its 256 MiB limit at 10:01:20, 10:03:02 and 10:05:30Z (normal peak 93 MB) because evaluate reads all 7,162 entries twice; `REGISTRY_REGIME_STORE_ROOT` is one level above the normalized store, so it read 0 rows (persona-loop owner) | REGIME-EVALUATE-HOSTED-INPUTS-AND-MEMORY-20261119 (#7636); five of the seven input datasets do not exist on hosted and stay with REGIME-DATA-HOSTED-ACCEPTANCE-20261114 (market-data owner) | merged |
 | Proposals marked `requires_owner_gate` are consumed by nothing (persona-loop owner) | no task yet | open |
 | The cycle records `consult_requests` (trigger `macro_regime_shift`) and nothing reads them; cannot fire while regime is unavailable (persona-loop owner) | attached to REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118; no task until regime evaluates on hosted | open |
 | Paper-to-canary promotion is advisory only: the candidacy is recorded and nothing acts on an approval (persona-loop owner; outside the freeze criteria) | no task yet | open |
 | Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | MEMORY-INDEX-MODEL-CHAIN-PROVEN-PRIMARY-20261118 (#7588) is deployed and the memory-index agent follows the chain variable; the switch stays off until the persona tools work on hosted, so that the first run of the bridge is not in the same release as that fix (remediation coordinator) | open |
 | Taiwan refresh: profiles do not finish within 300 s; partly the cost of a steady tick (87 to 112 s), mainly that the afternoon run asks six chip providers for a session they publish later (market-data owner) | SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574) deployed; TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 (#7592) merged | merged |
+| Taiwan refresh on 11/19 07:40Z and 10:50Z: FinMind monthly revenue and quarterly statements end with source-ingest-scheduler exit 1 in both runs; TPEx institutional flow exit 1, then the 300 s timeout; TWSE margin balances the 300 s timeout in both. The 16:54Z run failed at the shared environment lease while Root 44560086559 held it (market-data owner) | TW-FINMIND-FUNDAMENTALS-CONTROLLER-FRESHNESS-20261119 (#7634) for FinMind; no task yet for the two chip datasets and the lease | FinMind merged; the rest open |
 | Taiwan refresh: TAIFEX responses fail to decode; the TAIFEX failures after 07:18Z were the session rule, not decoding (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) deployed; stock-futures contracts were still on the 13:30 rule: TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119 (#7599) merged | merged |
 | The refresh test file `scripts/test_dev_tw_market_refresh.py` ran in no CI workflow and 13 of its tests had drifted (an earlier count of 42 came from a copy without .git); a provider session newer than scheduled counted as a failure; FinMind fundamentals used the 13:30 rule (market-data owner) | TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119 (#7602) | merged |
 | Every snapshot reader waits about 13 s once an hour: the hourly universe sweep held the lock inside a lookup and inside the health route (market-data owner) | SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119 (#7598) for the lookup path; SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119 (#7615) for the health path | deployed (1c9fbee93) |
@@ -264,6 +271,14 @@ repair (44510111282, dispatched by hand) judged the three trading personas and
 no other. GitHub's 11:30Z schedule for the probe started at 19:29Z on 11/18,
 eight hours late, so the day's verdict can come after the next release; the
 dispatch on 11/19 did not wait for it.
+
+Third natural daily cycle, 11/19 10:00Z on 1c9fbee93: enrolled yes; cycle
+ticked yes (terminal, no proposal submitted); a decision used memory no (every
+tool call refused, RC1); a meeting was held no (three convened, none held);
+results written back no. #7630 is deployed in 2fb152cd3. #7634, #7636, #7641
+and #7642 merged after that release was cut at 15:54Z and are merged, not
+deployed; they need a release served before the 11/20 10:00Z cycle, which is
+the first that can meet the freeze criteria.
 
 ## RC3. Nobody owns data volume
 
@@ -397,6 +412,11 @@ runs promotions and announces each one first.
   to a log, an artifact or an evidence file.
 - To compare two credentials, compare their length and the first eight
   characters of their SHA-256; do not print either value.
+- A cycle packet that lists a meeting as convened does not say it was held;
+  read the consultation work item.
+- Container logs are gone after the next release recreates the container.
+  Copy the log you need before then, and read OOM kills from the host kernel
+  log.
 - A rule that must agree with an owner's decision is read from the owner's
   data, not from a projection of it. Check the owner store before writing a
   selection or a probe condition.
