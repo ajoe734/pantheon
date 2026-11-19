@@ -1,0 +1,21 @@
+{
+  "task": "COLLECTOR-RAW-READS-KEEPALIVE-CONCURRENT-20261119",
+  "change": {
+    "services/external_egress.py": "GuardedKeepAliveClient: one allowlisted host, <= max_connections kept-alive _PinnedHTTPSConnection (connect() re-runs DNS global-address check, IP pin, cert verify per connection); guard_external_url once per client; every request URL must equal the client host/https/443 (else keepalive_host_mismatch); redirects replayed through open_external_url (policy unchanged); per-request deadline watchdog; one reconnect when a REUSED connection is reset; 4xx/5xx raise urllib.error.HTTPError like urlopen; close() closes all. open_external_url and its other callers unchanged.",
+    "services/source_ingestion/connectors/collector_bundle.py": "_verify_raw_window opens one client per raw window for HttpBundleTransport (width capped by COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL=8), HttpBundleTransport.read uses it via a ContextVar; client closed in finally. Hash/size verification, ordering, deadline-cut and verified_through logic are untouched (moved verbatim into _read_window)."
+  },
+  "setting": {"name": "COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL", "default": 8, "reason": "measured knee: 40 reads over 8 fresh connections took 809 ms; one collector host gains little beyond 8. Existing width (4 latest / 16 history) is capped to it for HTTP transport."},
+  "ac1_reproduction": {
+    "coordinator_hosted_numbers_cited": {"raw_read_median_ms": 247, "connect_plus_tls_ms": 98, "kept_alive_read_ms": 43, "40_reads_8_fresh_conns_ms": 809},
+    "worker_off_hosted_loopback_TLS": {"connect_tls_ms": 2.5, "fresh_request_ms": 41.3, "kept_alive_request_ms": 41.0, "note": "loopback has ~0 RTT so connect+TLS is 2.5 ms; the 41 ms request is a local server Nagle/delayed-ack artefact present in both modes. The off-hosted run can reproduce neither the WAN handshake saving nor DNS-guard cost (guard blocks loopback); it only confirms the mechanism (a handshake per read vs none). The hosted 98 ms/247 ms/43 ms split must come from the coordinator."}
+  },
+  "ac5_expectation": "Handshake (98 ms of 247 ms) removed per read and 8 reads overlap: expected ~20-45 ms effective per read inside the 15 s budget, i.e. several hundred raw reads per pull versus ~256 now. Target >= 37000 TPEx rows/hour is for the coordinator to measure on hosted after deploy. NOTE: LATEST_CLOSE_PERSISTED_ROWS_PER_PULL=256 still caps the newest-close path; the history sweep is not capped by it. If rows/pull stay at 256 after deploy, a cap change is a follow-up with its memory stated.",
+  "ac6_memory": {"method": "tracemalloc, fake collector, 200-item window, width 8", "after_1_window_bytes": 55784, "after_61_windows_bytes": 59032, "growth_bytes": 3248, "peak_bytes": 344012, "note": "no growth across consecutive windows; connections closed per window. Peak on hosted-shaped 13900-row day and 100 consecutive full pulls NOT measured off hosted; raw_bytes dict (existing) dominates and the client keeps no bodies. Hosted measurement by coordinator."},
+  "ac7": "No new persistent writer; every connection closed at end of each raw window (test_connections_and_in_flight_never_exceed_setting asserts closed == opened).",
+  "validation": {
+    "command": "pytest services/test_external_egress.py services/source_ingestion/tests/test_collector_raw_reads_pooled.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_bundle_whole_market_day.py",
+    "result": "163 passed, 1 skipped, 1 failed",
+    "preexisting_failure": "test_every_production_connector_uses_guarded_transport fails on services/source_ingestion/connectors/agora_owner.py (urlopen); file untouched by this task"
+  },
+  "reviewer_guard_path": ["external_egress.py GuardedKeepAliveClient._check_url", "GuardedKeepAliveClient.open (guard once)", "_request (reconnect, redirect fallback, HTTPError)", "_PinnedHTTPSConnection.connect unchanged"]
+}
