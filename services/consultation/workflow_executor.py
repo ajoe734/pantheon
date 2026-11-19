@@ -797,6 +797,22 @@ def _validated_panel(
     return participants, dict(decision)
 
 
+def _owner_read(endpoint: Any, owner: str, token_env: str, path: str, *, tenant_id: str) -> Any:
+    """One owner GET; a refusal with no credential configured names the missing credential.
+
+    A 401/403 from an owner we hold no bearer for is a configuration gap, not an owner fault: say
+    which environment credential is absent instead of the owner's bare "missing Bearer token".
+    """
+    try:
+        return decision_case.http_json(endpoint, path, tenant_id=tenant_id)
+    except decision_case.OwnerUnavailable as exc:
+        if endpoint is not None and not endpoint.token and exc.reason.startswith(("http_401", "http_403")):
+            raise WorkflowBlocked(
+                f"panel_case_file: {owner} owner credential missing: {token_env} (or {token_env}_FILE) "
+                f"is not configured for consultation-svc ({exc.reason})") from exc
+        raise
+
+
 def _compose_panel_case_file(
     config: ExecutorConfig, request: Mapping[str, Any], decision: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -818,8 +834,9 @@ def _compose_panel_case_file(
         if decision["type"] == "trial_admission" and not canary:
             refs = [str(decision["id"])]
         else:
-            pool = decision_case.http_json(
-                owners.pool, f"/api/personas/{urllib.parse.quote(persona, safe='')}/strategy-pool",
+            pool = _owner_read(
+                owners.pool, "persona", "PANTHEON_PERSONA_SERVICE_TOKEN",
+                f"/api/personas/{urllib.parse.quote(persona, safe='')}/strategy-pool",
                 tenant_id=config.tenant_id)
             refs = [str(m["artifact_ref"]) for m in pool.get("members", [])
                     if m.get("stage") != "removed" and m.get("artifact_ref")]
@@ -830,8 +847,9 @@ def _compose_panel_case_file(
         # Resolve family/spec/backtest context from registry ownership, never a model.
         families: dict[str, list[dict[str, Any]]] = {}
         for ref in dict.fromkeys(refs):
-            row = decision_case.http_json(
-                owners.registry, f"/api/registry/entries/{urllib.parse.quote(ref, safe='')}",
+            row = _owner_read(
+                owners.registry, "registry", "PANTHEON_REGISTRY_SERVICE_TOKEN",
+                f"/api/registry/entries/{urllib.parse.quote(ref, safe='')}",
                 tenant_id=config.tenant_id)
             entry = row.get("entry", row)
             if entry.get("registry_id") != ref or not entry.get("strategy_id"):

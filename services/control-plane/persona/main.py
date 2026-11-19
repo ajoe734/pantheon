@@ -57,6 +57,7 @@ from services.persona.owner_port_health import (
 )
 from services.persona.write_owner import (
     _AUTHENTICATED_MUTATION_ROLES,
+    _AUTHENTICATED_READ_ROLES,
     PersonaAuthorityError,
     create_app as create_persona_owner_app,
     resolve_persona_tenant_scope,
@@ -756,7 +757,14 @@ def _pool_store() -> PersonaStrategyPoolStore:
     return POOL_STORE
 
 
-def _pool_scope(persona_id: str, authorization: str | None, tenant_id: str | None, *, write: bool):
+# Dedicated read-only role for the consultation executor: accepted ONLY by the three strategy-pool
+# GET routes below (current / versions / one version). It is not in _AUTHENTICATED_READ_ROLES, so
+# every other persona route (and every pool write or POST) refuses it.
+_POOL_GET_ROLES = frozenset(_AUTHENTICATED_READ_ROLES) | {"persona_pool_reader"}
+
+
+def _pool_scope(persona_id: str, authorization: str | None, tenant_id: str | None, *, write: bool,
+                pool_get: bool = False):
     """Authenticate, admit the tenant, and require the persona to belong to it.
 
     A persona owned by another tenant is refused: 403 on write, 404 on read
@@ -764,7 +772,8 @@ def _pool_scope(persona_id: str, authorization: str | None, tenant_id: str | Non
     """
     try:
         authority, admitted = resolve_persona_tenant_scope(
-            authorization, tenant_id, *( (_AUTHENTICATED_MUTATION_ROLES,) if write else () )
+            authorization, tenant_id,
+            *((_AUTHENTICATED_MUTATION_ROLES,) if write else (_POOL_GET_ROLES,) if pool_get else ())
         )
     except PersonaAuthorityError as exc:
         raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
@@ -794,7 +803,7 @@ def get_strategy_pool(
     tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     authorization: str | None = Header(default=None),
 ):
-    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
     return _pool_call(lambda: _pool_store().current(persona_id, admitted))
 
 
@@ -804,7 +813,7 @@ def list_strategy_pool_versions(
     tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     authorization: str | None = Header(default=None),
 ):
-    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
     store = _pool_store()
     return _pool_call(
         lambda: {
@@ -821,7 +830,7 @@ def get_strategy_pool_version(
     tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     authorization: str | None = Header(default=None),
 ):
-    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
     return _pool_call(lambda: _pool_store().version(persona_id, admitted, pool_version))
 
 
