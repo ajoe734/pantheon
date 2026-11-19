@@ -145,6 +145,7 @@ the order set by hand at 14:16Z did not have to be re-applied.
 |---|---|---|
 | WP2.1 probe runner and contract | DEV-DEPLOY-ACCEPTANCE-STAGE-20261117 (#7531) | merged |
 | WP2.1 probes for chains already merged (replace the manual hosted acceptance tasks) | to be opened once the probe contract exists | open |
+| WP2.1 release probes receive no viewer credentials: the acceptance step of `nonprod-deploy.yml` passes only the URLs and SHAs, so a probe that reads an authenticated BFF route can only skip (found 2026-11-19 while specifying the persona pool probe; remediation mechanisms owner) | no task yet | open |
 | WP2.2 three delivery states in reporting | rule in AGENTS.md | in force |
 | WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 (#7539); repairs PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118 (#7573) and PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118 (#7577) | merged; not yet run against hosted since the repairs |
 | Health that lies: source-ingest readiness | SOURCE-INGEST-READINESS-TRUTHFUL-20261117 (#7511) | deployed |
@@ -166,6 +167,7 @@ the order set by hand at 14:16Z did not have to be re-applied.
 | Taiwan refresh: TAIFEX responses fail to decode; the TAIFEX failures after 07:18Z were the session rule, not decoding (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) deployed; stock-futures contracts were still on the 13:30 rule: TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119 (#7599) merged | merged |
 | The refresh test file `scripts/test_dev_tw_market_refresh.py` runs in no CI workflow and 42 of its 130 tests fail on dev; a provider session newer than scheduled counts as a failure; FinMind fundamentals still use the 13:30 rule (market-data owner) | TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119 | open |
 | Every snapshot reader waits about 13 s once an hour: the hourly universe sweep runs inside a lookup under the lock (measured on hosted at 16:41Z over 3,535 lookups; market-data owner) | SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119 (#7598) | merged |
+| The persona page cannot show what a persona trades (operator question 2026-11-19): the pool view returns only member ids; the strategy page labels the trading member a no-order rollback baseline because the pool envelope names it as a parent, and shows the envelope as an unsupported kind; pool health is always `cycle_pool_snapshot_mismatch` because the cycle's refused reweight appends a version after its observation (deliberate: trial counts are read from versions). The only member of each pool is the shared base momentum strategy (persona-loop owner) | BFF-PERSONA-STRATEGY-VISIBILITY-20261119, then FE-PERSONA-STRATEGY-VISIBILITY-20261119 (execute-plans) | open |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
