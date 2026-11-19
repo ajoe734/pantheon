@@ -1,0 +1,6 @@
+{
+  "task_id": "DEV-ACCEPTANCE-STAGE-VIEWER-CREDENTIALS-20261119",
+  "change": "jobs.dev-acceptance-stage.env gains ACCEPTANCE_VIEWER_CLIENT_ID/SECRET (same expressions as persona-day-acceptance.yml)",
+  "unchanged": ["continue-on-error", "no gate added to deploy path", "no rollback from acceptance", "no new job or writer", "no other job receives the secret"],
+  "hosted_proof": "pending: first Root after merge must list probe:persona-pool-member-rules as passed or failed, not skipped; coordinator checks acceptance/latest.json"
+}

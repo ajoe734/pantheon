@@ -4111,6 +4111,9 @@ jobs:
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
       VERDICT_FILE: ${{ github.workspace }}/acceptance-verdict.json
+      # Read-only viewer dev-login identity for authenticated release probes (same pair as persona-day-acceptance.yml); never printed.
+      ACCEPTANCE_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
     steps:
       - name: Checkout exact deployed backend release
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

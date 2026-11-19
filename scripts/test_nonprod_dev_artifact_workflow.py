@@ -1040,3 +1040,26 @@ def test_final_artifact_verify_and_compensation_skip_deployed_not_accepted():
     comp = step(COORDINATE, "compensation")
     # compensation keys off final_artifact_verify being non-skipped, so a skipped verify never compensates
     assert "final_artifact_verify.conclusion != 'skipped'" in comp["if"]
+
+
+ACCEPTANCE_STAGE = WORKFLOW["jobs"]["dev-acceptance-stage"]
+VIEWER_ENV = {
+    "ACCEPTANCE_VIEWER_CLIENT_ID": "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}",
+    "ACCEPTANCE_VIEWER_CLIENT_SECRET": "${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}",
+}
+
+
+def test_acceptance_stage_receives_viewer_credentials_and_stays_advisory():
+    for key, value in VIEWER_ENV.items():
+        assert ACCEPTANCE_STAGE["env"].get(key) == value
+    assert ACCEPTANCE_STAGE["continue-on-error"] is True
+    assert all("ACCEPTANCE_VIEWER" not in str(s.get("env", {})) for s in ACCEPTANCE_STAGE["steps"])
+
+
+def test_viewer_acceptance_secret_is_not_in_any_other_job_or_step():
+    for name, job in WORKFLOW["jobs"].items():
+        if name == "dev-acceptance-stage":
+            continue
+        scopes = [job.get("env") or {}] + [s.get("env") or {} for s in job.get("steps", [])]
+        for env in scopes:
+            assert not any(k.startswith("ACCEPTANCE_VIEWER") for k in env), name

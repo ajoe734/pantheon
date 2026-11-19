@@ -103,3 +103,6 @@ current members. No cycle observation is not a failure. A run that checks no per
 each checked persona id with `ok`/`failed` plus `read`/`skipped` counts (never a token or body). Task:
 PERSONA-POOL-PROBE-CHECKS-LIVE-PERSONAS-20261119. Tests: `acceptance/test_persona_pool_member_rules.py` with
 `fixtures/hosted_persona_pool_20261119.json` and `fixtures/hosted_strategy_rules_20261119.json`.
+
+Task: DEV-ACCEPTANCE-STAGE-VIEWER-CREDENTIALS-20261119. The `dev-acceptance-stage` job of `nonprod-deploy.yml` (and only that job) sets
+`ACCEPTANCE_VIEWER_CLIENT_ID/SECRET` from the dev viewer var/secret so this probe runs instead of skipping; the stage stays advisory.
