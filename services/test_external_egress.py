@@ -525,3 +525,61 @@ def test_delayed_connect_then_stalled_tls_uses_remaining_deadline(monkeypatch: p
         for conn in held:
             conn.close()
     assert elapsed < 0.65, elapsed
+
+
+def test_keepalive_client_guards_each_connection_and_refuses_rebinding(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.external_egress import GuardedKeepAliveClient
+
+    answers = {"addr": "8.8.8.8"}
+    lookups: list[str] = []
+
+    def resolver(host, port, *, type):
+        lookups.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers["addr"], port))]
+
+    connected: list[str] = []
+
+    class Sock:
+        def settimeout(self, value): ...
+        def shutdown(self, how): ...
+        def close(self): ...
+        def gettimeout(self):
+            return 2
+
+    def create_connection(target, timeout, source_address):
+        connected.append(target[0])
+        return Sock()
+
+    class FakeContext:
+        def wrap_socket(self, sock, *, server_hostname, **kw):
+            return sock
+
+    class Conn(_PinnedHTTPSConnection):
+        def __init__(self, host, *, policy, timeout):
+            super().__init__(host, policy=policy, timeout=timeout, context=FakeContext())
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    client = GuardedKeepAliveClient(
+        "api.example.com", caller="test", max_connections=2, timeout=2,
+        env=_allowlist("api.example.com"), resolver=resolver, connection_factory=Conn,
+    )
+    conn = client._new_connection(
+        _RedirectPolicy(caller="test", env=_allowlist("api.example.com"), resolver=resolver, max_redirects=3)
+    )
+    conn.connect()
+    assert connected == ["8.8.8.8"]
+    # A reconnect re-runs the DNS guard: a rebinding to a private address is refused.
+    answers["addr"] = "10.0.0.5"
+    other = client._new_connection(
+        _RedirectPolicy(caller="test", env=_allowlist("api.example.com"), resolver=resolver, max_redirects=3)
+    )
+    with pytest.raises(ExternalEgressBlocked) as err:
+        other.connect()
+    assert err.value.reason_code == "target_ip_forbidden"
+    assert connected == ["8.8.8.8"]
+    # Allowlist is enforced on the first request.
+    denied = GuardedKeepAliveClient("evil.example.com", caller="test", max_connections=1, timeout=2,
+                                    env=_allowlist("api.example.com"), resolver=resolver)
+    with pytest.raises(ExternalEgressBlocked):
+        denied.open("https://evil.example.com/x")
+    client.close()

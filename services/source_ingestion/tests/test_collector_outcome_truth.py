@@ -684,6 +684,29 @@ def test_slow_reads_make_bounded_scheduler_progress_and_persist_partial_cursor(t
 
 
 
+
+class _DelegatingKeepAlive:
+    """Test shim: kept-alive client that routes every read through the module's faked open_external_url."""
+
+    def __init__(self, host, *, caller, max_connections, timeout, **_kw):
+        self.host, self._caller, self._module = host.lower().rstrip("."), caller, None
+
+    def open(self, request, *, deadline=None, timeout=None):
+        return self._module.open_external_url(request, caller=self._caller, timeout=timeout, deadline=deadline)
+
+    def close(self):
+        pass
+
+
+def _delegate_keepalive(monkeypatch, module):
+    def factory(host, **kw):
+        shim = _DelegatingKeepAlive(host, **kw)
+        shim._module = module
+        return shim
+
+    monkeypatch.setattr(module, "GuardedKeepAliveClient", factory)
+
+
 def _trickle_env(tmp_path, monkeypatch, step):
     from types import SimpleNamespace
 
@@ -704,6 +727,7 @@ def _trickle_env(tmp_path, monkeypatch, step):
         return response
 
     monkeypatch.setattr(module, "open_external_url", fake_open)
+    _delegate_keepalive(monkeypatch, module)
     return store, clock, opened
 
 
@@ -783,6 +807,7 @@ def test_verified_bundle_prefix_survives_next_bundle_deadline(tmp_path, monkeypa
         return response
 
     monkeypatch.setattr(cb, "open_external_url", fake_open)
+    _delegate_keepalive(monkeypatch, cb)
     first = run_scheduler(tmp_path, store)
     assert first.run.status.value == "completed" and first.run.raw_count == 1
     assert first.watermark.value == "2026-11-10T02:05:00Z#run1"  # run2 stays pending
@@ -832,6 +857,7 @@ def test_priority_verified_prefix_survives_ordered_deadline(tmp_path, monkeypatc
         return response
 
     monkeypatch.setattr(_cb, "open_external_url", fake_open)
+    _delegate_keepalive(monkeypatch, _cb)
     adapter = _cb.CollectorBundleAdapter(connector_id="conn-truth", source_id=source_id,
         source_type="market", dataset="tw_price_daily", host=HOST, cadence_seconds=1800)
     store = JsonlConfiguredConnectorStore(tmp_path / "configured.jsonl")

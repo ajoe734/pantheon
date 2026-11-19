@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from threading import RLock
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
-from services.external_egress import open_external_url
+from services.external_egress import GuardedKeepAliveClient, open_external_url
 
 from ..external_sources import validate_external_source_record
 from .base import (
@@ -112,7 +112,14 @@ LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 # Bound that work even when the Collector transport is fast; the remainder continues.
 LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
+# Upper bound on kept-alive connections (= in-flight raw reads) to the collector host within
+# one raw verification window; connections close when the window ends. Equal to the existing
+# history width on purpose: a narrower cap would cut hosted TPEx history from 16 to 8 rows per
+# pull (the 15 s budget is already spent before the raw window; one group of 16 is read).
+# Keep-alive alone removes the per-read handshake; width is unchanged.
+COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL = HISTORY_RAW_READ_CONCURRENCY
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+_KEEPALIVE_CLIENT: ContextVar[GuardedKeepAliveClient | None] = ContextVar("collector_keepalive", default=None)
 # Process-local, shared across the short-lived adapters built by configured pulls.
 # No serialized trust marker survives a restart. Bounds apply to both population
 # and encoded metadata size; raw bodies are never cached here.
@@ -301,9 +308,14 @@ class HttpBundleTransport(BundleTransport):
             # the body stream is held to the same floored deadline, chunk by chunk.
             timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
             op_deadline = max(op_deadline, time.monotonic() + 1.0)
-        with open_external_url(
-            request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
-        ) as response:
+        client = _KEEPALIVE_CLIENT.get()
+        if client is not None and client.host == self.host.lower().rstrip("."):
+            opened = client.open(request, timeout=timeout, deadline=op_deadline)
+        else:
+            opened = open_external_url(
+                request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+            )
+        with opened as response:
             if op_deadline is not None:
                 response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)
@@ -603,6 +615,27 @@ def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
         return actual, data
 
     width = max(1, min(raw_read_concurrency, HISTORY_RAW_READ_CONCURRENCY))
+    keepalive: GuardedKeepAliveClient | None = None
+    token = None
+    if isinstance(transport, HttpBundleTransport) and wanted_ids:
+        width = max(1, min(width, COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL))
+        keepalive = GuardedKeepAliveClient(
+            transport.host, caller="source_ingest.collector_bundle", max_connections=width,
+            timeout=transport.timeout_seconds)
+        token = _KEEPALIVE_CLIENT.set(keepalive)
+    verified_through = None
+    try:
+        verified_through = _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes)
+    finally:
+        if token is not None:
+            _KEEPALIVE_CLIENT.reset(token)
+        if keepalive is not None:
+            keepalive.close()
+    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
+
+
+def _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes):
+    verified_through = None
     # A separate context per worker preserves the *same* operation deadline and
     # egress policy. Never acknowledge out of order or discard a genuine failure
     # from a later parallel read merely because an earlier read timed out.
@@ -632,8 +665,7 @@ def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
                 raw_bytes[actual] = data
             if verified_through is not None:
                 break
-
-    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
+    return verified_through
 
 
 def observed_from_collector_status(
