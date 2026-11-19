@@ -70,6 +70,12 @@ def health_payload(
     }
 
 
+def _liveness_payload(service: str) -> dict[str, Any]:
+    """Liveness answers "process is up" only: no metrics/details/dependency callables."""
+
+    return health_payload(service, live=True, ready=True)
+
+
 def readiness_status_code(payload: Mapping[str, Any]) -> int:
     return 200 if str(payload.get("status") or "").lower() == "ok" else 503
 
@@ -97,17 +103,20 @@ def register_fastapi_health_routes(
     def _payload() -> dict[str, Any]:
         return health_payload(service, dependencies=dependencies, metrics=metrics, details=details)
 
-    async def healthz() -> dict[str, Any]:
+    # Plain ``def`` handlers run in FastAPI's threadpool, so service callables
+    # that block (locks, file reads) delay only their own request, never the
+    # event loop.  /livez calls no service callable and stays on the loop.
+    def healthz() -> dict[str, Any]:
         return _payload()
 
     async def livez() -> dict[str, Any]:
-        return health_payload(service, ready=True, metrics=metrics, details=details)
+        return _liveness_payload(service)
 
-    async def readyz() -> Any:
+    def readyz() -> Any:
         payload = _payload()
         return JSONResponse(payload, status_code=readiness_status_code(payload))
 
-    async def metrics_route() -> dict[str, Any]:
+    def metrics_route() -> dict[str, Any]:
         return metrics_payload(service, metrics)
 
     app.add_api_route("/healthz", healthz, methods=["GET"], summary="Health probe")
@@ -135,7 +144,7 @@ def register_flask_health_routes(
         return jsonify(_payload()), 200
 
     def livez():
-        return jsonify(health_payload(service, ready=True, metrics=metrics, details=details)), 200
+        return jsonify(_liveness_payload(service)), 200
 
     def readyz():
         payload = _payload()

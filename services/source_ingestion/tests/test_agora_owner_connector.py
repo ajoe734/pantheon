@@ -859,3 +859,63 @@ def test_configured_connector_fetcher_live_http_pull_and_shadow_mode_c4_compatib
         server.shutdown()
         server.server_close()
 
+
+
+def test_agora_fetch_refuses_external_host_before_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    opened: list[object] = []
+    real_connect = socket.socket.connect
+
+    def _no_connect(self, address):  # pragma: no cover - must not run
+        opened.append(address)
+        raise AssertionError("connection opened")
+
+    monkeypatch.setattr(socket.socket, "connect", _no_connect)
+    adapter = AgoraOwnerAdapter(api_url="http://agora.example.com/internal/agora/platform-source/records")
+    with pytest.raises(SourceEvidenceError):
+        adapter.fetch_payload()
+    assert opened == []
+    monkeypatch.setattr(socket.socket, "connect", real_connect)
+
+
+def test_agora_fetch_refuses_redirect_to_external_host_without_forwarding_token() -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from services.source_ingestion.connectors.base import SourceEvidenceError
+
+    seen: list[str] = []
+
+    class _Target(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.headers.get("Authorization") or "")
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):  # noqa: D401
+            return
+
+    class _Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(302)
+            self.send_header("Location", "http://agora.example.com/steal")
+            self.end_headers()
+
+        def log_message(self, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), _Redirect)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        adapter = AgoraOwnerAdapter(api_url=f"http://127.0.0.1:{port}/internal/agora/platform-source/records")
+        with pytest.raises(SourceEvidenceError, match="escaped"):
+            adapter.fetch_payload()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert seen == []

@@ -630,6 +630,49 @@ def open_external_url(
     return _WatchedResponse(response, watchdog)
 
 
+def _url_has_allowed_prefix(url: str, allowed_prefixes: Sequence[str]) -> bool:
+    return any(url.startswith(prefix) for prefix in allowed_prefixes)
+
+
+class InternalServiceRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects that leave internal hosts or the allowed URL prefixes."""
+
+    def __init__(self, allowed_prefixes: Sequence[str], error_cls: type[Exception] = ValueError) -> None:
+        super().__init__()
+        self.allowed_prefixes = list(allowed_prefixes)
+        self.error_cls = error_cls
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute_url = urljoin(req.full_url, newurl)
+        host = urlsplit(absolute_url).hostname or ""
+        if not is_internal_host(host) or not _url_has_allowed_prefix(absolute_url, self.allowed_prefixes):
+            raise self.error_cls("internal_service redirect escaped its internal URL allowlist")
+        redirected = super().redirect_request(req, fp, code, msg, headers, absolute_url)
+        if redirected is not None and _request_origin(req.full_url) != _request_origin(absolute_url):
+            _strip_cross_origin_credentials(redirected)
+        return redirected
+
+
+def open_internal_service_url(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+    allowed_prefixes: Sequence[str],
+    error_cls: type[Exception] = ValueError,
+):
+    """Open an internal-service URL; the single guard shared by all callers.
+
+    The host must be internal and every redirect must stay internal and inside
+    ``allowed_prefixes``.  Refusal happens before any connection is opened.
+    """
+
+    host = urlsplit(request.full_url).hostname or ""
+    if not is_internal_host(host):
+        raise error_cls("internal_service redirect escaped to an external host")
+    opener = urllib.request.build_opener(InternalServiceRedirectHandler(allowed_prefixes, error_cls))
+    return opener.open(request, timeout=timeout)
+
+
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _REUSE_RESET_ERRORS = (
     ConnectionError,
