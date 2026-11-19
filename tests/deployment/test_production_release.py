@@ -2180,6 +2180,16 @@ class StaticContractTests(unittest.TestCase):
         self.assertEqual(proj["environment"]["LIFECYCLE_PROJECTOR_WRITER_BACKEND"], "postgres")
         self.assertNotEqual(svc["operator-bff-blue"]["ports"], svc["operator-bff-green"]["ports"])
 
+    def test_compose_ps_helpers_pass_core_profiles_so_singleton_workers_resolve(self):
+        # Regression: `compose ps -q agora-interaction-worker` without profiles fails with "no such service: persona"
+        # (singleton worker depends on core-profile services), container_of swallowed it and the owner check failed.
+        ops_text = OPS.read_text()
+        self.assertIn('container_of() { compose "${CORE_PROFILES[@]}" ps -q "$1"', ops_text)
+        self.assertIn('CORE_PROFILES=(--profile core --profile singleton)', ops_text)
+        for line in ops_text.splitlines():
+            if re.search(r"\bcompose\b.*\bps\b", line) and not line.lstrip().startswith("#"):
+                self.assertIn('"${CORE_PROFILES[@]}" ps', line, line)
+
     def test_compose_packages_every_product_owner_and_agora_worker_from_immutable_manifest_images(self):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]
         ops_text = OPS.read_text()
