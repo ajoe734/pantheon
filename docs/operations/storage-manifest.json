@@ -2929,6 +2929,24 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MAX_AUTHORIZATIONS = 2000",
+    "file": "services/openclaw-gateway-adapter/persona_tool_broker.py"
+   },
+   "bound_status": "bounded",
+   "cap": "MAX_AUTHORIZATIONS = 2000 rows, oldest evicted first at write time; TTL AUTHORIZATION_TTL_SECONDS = 600s",
+   "cleanup": "row deleted on first use by the tool call (one-time), expired rows and rows over the cap deleted at each record_authorization write",
+   "growth_driver": "one row per authorized persona tool call (before_tool_call hook)",
+   "growth_per_day": "about 15 per persona per daily cycle (3 trading personas = about 45 rows/day), each removed within 600s",
+   "kind": "table",
+   "name": "authorizations",
+   "owner": "openclaw-gateway-adapter",
+   "readers": [
+    "services/openclaw-gateway-adapter/persona_tool_broker.py"
+   ],
+   "task": "PERSONA-TOOLS-HOOK-AUTHORIZATION-ACROSS-PLUGIN-INSTANCES-20261119"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
