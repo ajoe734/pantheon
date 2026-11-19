@@ -9,7 +9,7 @@
   "design": [
     "_PRIORITY_DELIVERED_MEMO (in memory, <=64 scopes): after a pull finds the latest session fully delivered, remembers trade date, cursor key, held, hash of persisted delivered items and a fingerprint of every index entry with upper bound >= trade date; identical fingerprint+state returns None without any verification",
     "_PRIORITY_TRADE_DATE_MEMO (in memory, <=512 entries): trade date proven per (scope, run_id, bundle_sha256); a candidate with a proven earlier session than the best is skipped",
-    "eviction now releases only earlier-session candidates verified this pull, so the history bundle stays cached across pulls",
+    "superseded-session eviction keeps the bundles the ordered sweep windowed last pull (_HISTORY_READING, <=VERIFIED_METADATA_CACHE_ENTRIES per scope) and earlier-session candidates with a proven trade date; other earlier-session cache entries are still evicted as before (fixes CI smoke failure in test_collector_newest_session_hosted_throughput::test_cache_is_bounded_and_superseded_sessions_evict)",
     "new run, changed bundle_sha256, process restart, pending items: fully verified as before (memo is dropped or mismatched)"
   ],
   "persisted_state": "no field added; latest_priority.json unchanged (old and new release read each other's file); one file per connector",
@@ -17,6 +17,7 @@
   "changed_existing_tests": "none",
   "validation": {
     "env": "venv with requirements.txt; pytest",
+    "test_collector_newest_session_hosted_throughput.py": "14 passed",
     "test_collector_priority_metadata_reads.py": "9 passed",
     "test_collector_bundle_connector.py": "106 passed, 4 skipped",
     "test_collector_bundle_whole_market_day.py": "15 passed",
