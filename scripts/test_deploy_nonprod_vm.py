@@ -5535,3 +5535,413 @@ def test_finmind_fundamentals_preflight_and_readback_use_1800_taipei_rule_and_sa
         assert outcome_bad["status"] == "failed"
 
 
+def test_twse_margin_stored_empty_date_shape_shared_helper_and_missing_fields_error(tmp_path: Path) -> None:
+    """Acceptance 1, 2, 4: hosted TWSE margin record shape (metadata.date='', normalized_row.date='', provenance.trade_date absent,
+    provenance.event_time='', provenance.available_time='2026-11-18T23:53:58Z') derives 2026-11-18 in both preflight and readback
+    via the single shared helper; a record missing both date and event_time fails naming the missing fields.
+    """
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert script.count("def derive_chip_record_provider_session(") == 1
+    assert script.count("# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---") == 2  # 1 in readback loader, 1 in preflight block
+
+    fresh_twse = _stored_tw_snapshot("2026-11-18", "2026-11-18T06:35:00Z")
+    stored_twse_margin_entry = {
+        "connector_id": "tw-official-twse-margin-balances",
+        "freshness": {
+            "last_success_at": "2026-11-18T23:53:58Z",
+            "source_timestamp": "2026-11-18T23:53:58Z",
+            "source_timestamp_status": "valid",
+            "status": "fresh",
+            "latest_receipt": {
+                "ingest_run_id": "ingest-2f56b4efe47f",
+                "connector_id": "tw-official-twse-margin-balances",
+                "status": "completed",
+                "started_at": "2026-11-18T23:53:58Z",
+                "finished_at": "2026-11-18T23:53:58Z",
+                "created_at": "2026-11-18T23:57:32Z",
+                "source_timestamp": "2026-11-18T23:53:58Z",
+                "source_timestamp_status": "valid",
+            },
+        },
+        "latest_source_record": {
+            "source_id": "tw-official:tw_margin_short_balance:TWSE:2330:868572793d1b6354",
+            "connector_id": "tw-official-twse-margin-balances",
+            "source_type": "market",
+            "status": "normalized",
+            "trace_id": "scheduled-tw-official-twse-margin-balances-1794993901",
+            "created_at": "2026-11-18T23:53:58Z",
+            "metadata": {
+                "date": "",
+                "venue": "TWSE",
+                "symbol": "2330",
+                "dataset": "tw_margin_short_balance",
+                "event_time": "",
+                "schema_hash": "tw_margin_short_balance.v1",
+                "available_time": "2026-11-18T23:53:58Z",
+                "normalized_row": {
+                    "date": "",
+                    "venue": "TWSE",
+                    "market": "TW",
+                    "symbol": "2330",
+                    "dataset": "tw_margin_short_balance",
+                    "available_time": "",
+                    "source_dataset": "MI_MARGN",
+                    "symbol_canonical": "2330.TWSE",
+                },
+                "source_dataset": "MI_MARGN",
+                "symbol_canonical": "2330.TWSE",
+                "source_ingest_run_id": "ingest-2f56b4efe47f",
+            },
+            "provenance": {
+                "provider": "TWSE/TPEx",
+                "dataset": "tw_margin_short_balance",
+                "source_dataset": "MI_MARGN",
+                "venue": "TWSE",
+                "symbol": "2330",
+                "event_time": "",
+                "available_time": "2026-11-18T23:53:58Z",
+                "api_endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN",
+                "access_scope": ["public", "research"],
+                "license_scope": "official_reference",
+                "schema_hash": "tw_margin_short_balance.v1",
+                "source_ingest_run_id": "ingest-2f56b4efe47f",
+                "tenant_id": "tenant-dev",
+            },
+        },
+    }
+
+    # Preflight recognizes the hosted record as already_fresh for 2026-11-18.
+    preflight = _run_pinned_taiwan_preflight(
+        "2026-11-19T00:40:00Z",
+        {"2330.TW": fresh_twse},
+        connector_id="tw-official-twse-margin-balances",
+        dataset="tw_margin_short_balance",
+        readback_connectors=[stored_twse_margin_entry],
+    )
+    assert (preflight["status"], preflight["reason"], preflight["session_date"]) == (
+        "noop",
+        "already_fresh",
+        "2026-11-18",
+    )
+
+    # Readback verifier accepts the exact hosted record shape that previously failed with provider_session=''.
+    receipts = [
+        {
+            "connector_id": "tw-official-twse-margin-balances",
+            "status": "completed",
+            "typed_failure": None,
+            "source_timestamp": "2026-11-18T23:53:58Z",
+            "source_timestamp_status": "valid",
+            "started_at": "2026-11-18T23:53:58Z",
+            "finished_at": "2026-11-18T23:53:58Z",
+            "created_at": "2026-11-18T23:57:32Z",
+            "ingest_run_id": "ingest-2f56b4efe47f",
+        }
+    ]
+    ok_dir = tmp_path / "twse-margin-ok"
+    ok_dir.mkdir()
+    proc_ok, outcome_ok, _ = _run_chip_entrypoint_harness(
+        ok_dir,
+        connector_id="tw-official-twse-margin-balances",
+        dataset="tw_margin_short_balance",
+        now_utc="2026-11-18T23:53:00Z",
+        preflight_readback=[],
+        post_refresh_readback=[stored_twse_margin_entry],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc_ok.returncode == 0, proc_ok.stdout + proc_ok.stderr
+    assert outcome_ok["status"] == "completed"
+    assert outcome_ok["reason"] == "refreshed"
+
+    # A record whose date and event_time fields are both missing fails naming the missing fields.
+    missing_both = json.loads(json.dumps(stored_twse_margin_entry))
+    missing_both["latest_source_record"]["metadata"]["available_time"] = ""
+    missing_both["latest_source_record"]["provenance"]["available_time"] = ""
+    missing_both["freshness"]["source_timestamp"] = ""
+    missing_both["freshness"]["latest_receipt"]["source_timestamp"] = ""
+    bad_dir = tmp_path / "twse-margin-missing-both"
+    bad_dir.mkdir()
+    proc_bad, outcome_bad, _ = _run_chip_entrypoint_harness(
+        bad_dir,
+        connector_id="tw-official-twse-margin-balances",
+        dataset="tw_margin_short_balance",
+        now_utc="2026-11-18T23:53:00Z",
+        preflight_readback=[],
+        post_refresh_readback=[missing_both],
+        post_refresh_receipts=receipts,
+        force=True,
+    )
+    assert proc_bad.returncode != 0
+    assert outcome_bad["status"] == "failed"
+    for field_name in (
+        "metadata.date",
+        "metadata.normalized_row.date",
+        "provenance.trade_date",
+        "provenance.event_time",
+        "metadata.event_time",
+        "provenance.available_time",
+        "metadata.available_time",
+        "latest_receipt.source_timestamp",
+        "freshness.source_timestamp",
+    ):
+        assert field_name in outcome_bad["reason"], (field_name, outcome_bad["reason"])
+
+
+def test_finmind_broker_stored_shape_without_top_level_provenance_and_bounded_per_run_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Acceptance 1, 3, 4, 6: hosted SourceRecord.to_dict() shape (no top-level provenance; run id in metadata.source_ingest_run_id)
+    passes coverage check when complete, fails as status=partial when a symbol is missing, and FINMIND_RECORDS_PY performs a bounded
+    per-run read via receipts -> bundle -> source-records/{id} without calling unbounded /api/source-ingest/source-records.
+    """
+    import http.server
+    import threading
+    import urllib.parse
+
+    from services.source_ingestion.routers.ingest_operations import _source_read_tenant
+
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    verify_body = script.split("verify_bounded_source_refresh_readback() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    fetch_body = script.split("<<'FINMIND_RECORDS_PY' || return 1\n", 1)[1].split("\nFINMIND_RECORDS_PY", 1)[0]
+
+    auth_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": "s" * 40,
+        "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    for key, value in auth_env.items():
+        monkeypatch.setenv(key, value)
+
+    def _hosted_broker_record(symbol: str, side: str, h: str, *, run_id: str, covered: list[str], missing: list[str]) -> dict[str, Any]:
+        # Exact SourceRecord.to_dict() shape from GET /api/source-ingest/source-records on hosted dev (no 'provenance' key).
+        return {
+            "source_id": f"finmind-broker-top:{symbol}:2026-11-18:{side}:{h}",
+            "connector_id": "tw-finmind-broker-daily-report",
+            "source_type": "market",
+            "title": f"FinMind broker top {side} {symbol} 2026-11-18 #3 群益",
+            "content_ref": f"finmind://broker-top/{symbol}/2026-11-18/{side}/3",
+            "status": "normalized",
+            "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-18",
+            "created_at": "2026-11-18T23:41:43Z",
+            "metadata": {
+                "rank": 3,
+                "side": side,
+                "broker": "群益",
+                "symbol": symbol,
+                "dataset": "tw_broker_top",
+                "provider": "FinMind",
+                "tenant_id": "tenant-dev",
+                "as_of_date": "2026-11-18",
+                "event_time": "2026-11-18",
+                "trade_date": "2026-11-18",
+                "schema_hash": "tw_broker_top.v1",
+                "available_time": "2026-11-18T23:41:43Z",
+                "source_dataset": "TaiwanStockTradingDailyReport",
+                "refresh_coverage": {
+                    "status": "partial" if missing else "complete",
+                    "trade_date": "2026-11-18",
+                    "covered_symbols": covered,
+                    "missing_symbols": missing,
+                    "requested_symbols": covered + missing,
+                },
+                "source_ingest_run_id": run_id,
+            },
+        }
+
+    run_id = "ingest-78b81ff0f04d"
+    bundle_id = "evbundle-ingest-78b81ff0f04d-12ab07c7cc5f"
+    old_run_id = "ingest-3a6eb4e3e278"
+    old_bundle_id = "evbundle-ingest-3a6eb4e3e278-53d45c14e7f5"
+    records_by_id = {
+        "finmind-broker-top:2330:2026-11-18:buy:e9aa0f42481f8696": _hosted_broker_record(
+            "2330", "buy", "e9aa0f42481f8696", run_id=run_id, covered=["2330", "2317", "0050"], missing=[]
+        ),
+        "finmind-broker-top:2330:2026-11-18:sell:1111111111111111": _hosted_broker_record(
+            "2330", "sell", "1111111111111111", run_id=run_id, covered=["2330", "2317", "0050"], missing=[]
+        ),
+        "finmind-broker-top:2317:2026-11-18:buy:2222222222222222": _hosted_broker_record(
+            "2317", "buy", "2222222222222222", run_id=run_id, covered=["2330", "2317", "0050"], missing=[]
+        ),
+        "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c": _hosted_broker_record(
+            "0050", "sell", "f2fb94ce10285c6c", run_id=run_id, covered=["2330", "2317", "0050"], missing=[]
+        ),
+        "finmind-broker-top:2330:2026-11-17:buy:aaaaaaaaaaaaaaaa": _hosted_broker_record(
+            "2330", "buy", "aaaaaaaaaaaaaaaa", run_id=old_run_id, covered=["2330", "2317", "0050"], missing=[]
+        ),
+    }
+    bundles_by_id = {
+        bundle_id: {
+            "evidence_bundle_id": bundle_id,
+            "source_ids": [
+                "finmind-broker-top:2330:2026-11-18:buy:e9aa0f42481f8696",
+                "finmind-broker-top:2330:2026-11-18:sell:1111111111111111",
+                "finmind-broker-top:2317:2026-11-18:buy:2222222222222222",
+                "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+            ],
+        },
+        old_bundle_id: {
+            "evidence_bundle_id": old_bundle_id,
+            "source_ids": ["finmind-broker-top:2330:2026-11-17:buy:aaaaaaaaaaaaaaaa"],
+        },
+    }
+    receipts_list = [
+        {
+            "connector_id": "tw-finmind-broker-daily-report",
+            "status": "completed",
+            "typed_failure": None,
+            "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-17",
+            "source_timestamp": "2026-11-18T07:52:31Z",
+            "source_timestamp_status": "valid",
+            "finished_at": "2026-11-18T07:52:32Z",
+            "created_at": "2026-11-18T07:53:29Z",
+            "ingest_run_id": old_run_id,
+            "evidence_refs": {"evidence_bundle_id": old_bundle_id, "source_id_count": 120},
+        },
+        {
+            "connector_id": "tw-finmind-broker-daily-report",
+            "status": "completed",
+            "typed_failure": None,
+            "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-18",
+            "source_timestamp": "2026-11-18T23:41:43Z",
+            "source_timestamp_status": "valid",
+            "started_at": "2026-11-18T23:41:39Z",
+            "finished_at": "2026-11-18T23:41:43Z",
+            "created_at": "2026-11-18T23:42:42Z",
+            "ingest_run_id": run_id,
+            "evidence_refs": {"evidence_bundle_id": bundle_id, "source_id_count": 120},
+        },
+    ]
+    requested_paths: list[str] = []
+
+    class BoundedHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            _source_read_tenant(self.headers.get("Authorization"), self.headers.get("X-Tenant-Id"))
+            parsed = urllib.parse.urlparse(self.path)
+            requested_paths.append(parsed.path)
+            if parsed.path == "/api/source-ingest/receipts":
+                payload, code = {"receipts": receipts_list}, 200
+            elif parsed.path.startswith("/api/source-ingest/evidence/bundles/"):
+                bid = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+                payload, code = ({"bundle": bundles_by_id[bid]}, 200) if bid in bundles_by_id else ({"detail": "not found"}, 404)
+            elif parsed.path.startswith("/api/source-ingest/source-records/"):
+                sid = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+                payload, code = ({"source_record": records_by_id[sid]}, 200) if sid in records_by_id else ({"detail": "not found"}, 404)
+            elif parsed.path == "/api/source-ingest/source-records":
+                payload, code = {"detail": "unbounded source-records list must not be called"}, 500
+            else:
+                payload, code = {"detail": "unexpected"}, 404
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), BoundedHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        fetch_proc = subprocess.run(
+            ["python3", "-c", f"import sys\nexec(compile({fetch_body!r}, 'fetch', 'exec'))\n", "2026-11-18T23:38:00Z"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "PORT": str(server.server_port)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+    assert fetch_proc.returncode == 0, fetch_proc.stderr
+    assert "/api/source-ingest/source-records" not in requested_paths
+    fetched_records = json.loads(fetch_proc.stdout)["source_records"]
+    # Bounded read: 1 record per covered symbol of the single verified run (3 records), never the old run.
+    assert len(fetched_records) == 3
+    assert {r["metadata"]["symbol"] for r in fetched_records} == {"2330", "2317", "0050"}
+    assert all("provenance" not in r for r in fetched_records)
+    assert all(r["metadata"]["source_ingest_run_id"] == run_id for r in fetched_records)
+
+    # Readback verifier accepts these stored records (which have no top-level 'provenance' key).
+    (tmp_path / "receipts.json").write_text(json.dumps({"receipts": receipts_list}), encoding="utf-8")
+    (tmp_path / "readback.json").write_text(
+        json.dumps(
+            {
+                "connectors": [
+                    {
+                        "connector_id": "tw-finmind-broker-daily-report",
+                        "freshness": {
+                            "last_success_at": "2026-11-18T23:41:43Z",
+                            "source_timestamp": "2026-11-18T23:41:43Z",
+                            "source_timestamp_status": "valid",
+                            "status": "fresh",
+                            "latest_receipt": {"ingest_run_id": run_id},
+                        },
+                        "latest_source_record": {
+                            "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                            "connector_id": "tw-finmind-broker-daily-report",
+                            "status": "normalized",
+                            "metadata": {"dataset": "tw_broker_top", "source_ingest_run_id": run_id},
+                            "provenance": {"dataset": "tw_broker_top", "source_ingest_run_id": run_id},
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "agora.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "records.json").write_text(fetch_proc.stdout, encoding="utf-8")
+
+    verify_ok = subprocess.run(
+        [
+            "python3",
+            "-c",
+            f"import sys\nexec(compile({verify_body!r}, 'verify', 'exec'))\n",
+            "tw-finmind-broker-daily-report",
+            "2026-11-18T23:38:00Z",
+            str(tmp_path / "receipts.json"),
+            str(tmp_path / "readback.json"),
+            str(tmp_path / "agora.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_broker_top",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT), "FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "records.json")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verify_ok.returncode == 0, verify_ok.stderr
+    assert "bounded source refresh accepted" in verify_ok.stdout
+
+    # A stored record shape that truly lacks coverage of an active symbol (0050 missing) still fails as partial.
+    partial_record = _hosted_broker_record(
+        "2330", "buy", "e9aa0f42481f8696", run_id=run_id, covered=["2330", "2317"], missing=["0050"]
+    )
+    (tmp_path / "partial_records.json").write_text(json.dumps({"source_records": [partial_record]}), encoding="utf-8")
+    verify_partial = subprocess.run(
+        [
+            "python3",
+            "-c",
+            f"import sys\nexec(compile({verify_body!r}, 'verify', 'exec'))\n",
+            "tw-finmind-broker-daily-report",
+            "2026-11-18T23:38:00Z",
+            str(tmp_path / "receipts.json"),
+            str(tmp_path / "readback.json"),
+            str(tmp_path / "agora.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_broker_top",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT), "FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "partial_records.json")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verify_partial.returncode != 0
+    assert "FinMind bounded refresh status=partial: covered=['2317', '2330'] missing=['0050']" in verify_partial.stderr
+
+
+
