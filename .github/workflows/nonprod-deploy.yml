@@ -3376,7 +3376,9 @@ jobs:
 
       - name: Verify and seal admitted final candidate
         id: final_artifact_verify
-        if: ${{ steps.frontend_release.outcome == 'success' }}
+        # deployed_not_accepted switched no frontend and wrote no FE deploy run, so the
+        # final seal (and any compensation it would trigger) does not apply.
+        if: ${{ steps.frontend_release.outcome == 'success' && steps.frontend_release.outputs.release_outcome != 'deployed_not_accepted' }}
         env:
           PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.target
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
@@ -4031,22 +4033,23 @@ jobs:
             fi
           fi
           if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
+                "${{ steps.frontend_release.outputs.release_outcome }}" == "deployed_not_accepted" ]]; then
+            {
+              echo "## Exact FE/BFF release deployed, NOT accepted"
+              echo "- the frontend gate failed for the unchanged served frontend; the backend stays deployed and nothing was rolled back"
+              echo "- gate run: \`${{ steps.frontend_release.outputs.gate_run_id }}\`"
+              echo "- failing gates: \`${{ steps.frontend_release.outputs.failed_gates }}\`"
+              echo "- owning chain: frontend (open a task there; the release is not accepted)"
+              echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
+              echo "- backend: \`${{ needs.deploy-dev.outputs.backend_sha }}\`"
+              echo "- frontend (accepted baseline, unchanged): \`${{ needs.deploy-dev.outputs.frontend_sha }}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
                 "${{ steps.final_artifact_verify.outcome }}" == "success" && \
                 "${roundtrip_ok}" == "true" && \
                 -s "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json" ]]; then
-            if [[ "${{ steps.frontend_release.outputs.release_outcome }}" == "deployed_not_accepted" ]]; then
-              {
-                echo "## Exact FE/BFF release deployed, NOT accepted"
-                echo "- the frontend gate failed for the unchanged served frontend; the backend stays deployed and nothing was rolled back"
-                echo "- gate run: \`${{ steps.frontend_release.outputs.gate_run_id }}\`"
-                echo "- failing gates: \`${{ steps.frontend_release.outputs.failed_gates }}\`"
-                echo "- owning chain: frontend (open a task there; the release is not accepted)"
-                echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
-                echo "- backend: \`${{ needs.deploy-dev.outputs.backend_sha }}\`"
-                echo "- frontend (accepted baseline, unchanged): \`${{ needs.deploy-dev.outputs.frontend_sha }}\`"
-              } >> "${GITHUB_STEP_SUMMARY}"
-              exit 0
-            fi
             {
               echo "## Exact FE/BFF release accepted"
               echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
@@ -4343,6 +4346,12 @@ jobs:
               "detail": f"integration gate run {os.environ.get('GATE_RUN_ID', '')} failed: {gates}",
           }
           verdict["acceptance"] = "failed"
+          verdict["outcome"] = "deployed_not_accepted"
+          verdict["deployed"] = True
+          verdict["accepted"] = False
+          verdict["owning_chain"] = "frontend"
+          verdict["gate_run_id"] = os.environ.get("GATE_RUN_ID", "")
+          verdict["failed_gates"] = [g for g in os.environ.get("FAILED_GATES", "").split(",") if g]
           verdict["failed"] = [entry, *verdict.get("failed", [])]
           verdict["checks"] = [{**entry, "status": "failed"}, *verdict.get("checks", [])]
           path.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
