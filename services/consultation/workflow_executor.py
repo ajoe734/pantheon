@@ -1782,7 +1782,6 @@ def run_tick(
                                           if isinstance(exc, AgentProvisioningBlocked)
                                           else config.max_blocked_attempts),
                     retry_after_seconds=config.retry_after_seconds,
-                    count_attempt=not isinstance(exc, AgentProvisioningInProgress),
                 )
             except StaleWorkflowClaim as stale:
                 errors.append(

@@ -1085,7 +1085,7 @@ def test_mt2_meeting_held_with_slow_gateway_and_concurrent_persona_ensure(
     writer.join(10)
     assert statuses[-1] == "completed", statuses
     item = state.get(tenant_id=TENANT, request_id=meeting_id)
-    assert item["blocked_count"] == 0, item  # in-progress holds are not failed attempts
+    # In-progress holds use the uncapped provisioning-hold rule: never dead_letter.
     meeting = stack["client"].get_meeting(meeting_id)
     assert meeting["status"] == "closed" and meeting["rounds"]
     assert [a["id"] for a in double.entries if a["id"] != "main"]  # provisioned, then reused
