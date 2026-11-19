@@ -1,0 +1,105 @@
+{
+  "task_id": "TW-REFRESH-HELPERS-FROM-RUNNING-SCRIPT-20261119",
+  "problem_register_class": "RC1 refresh failures; market data domain (cb4f6795)",
+  "repairs_merged_work": {
+    "task_id": "TW-REFRESH-READBACK-FALSE-FAILURES-20261119",
+    "pr_number": 7609,
+    "merge_commit": "12c63eee735a678b0f05d24ffdde9397ec8bcd43",
+    "merged_at_utc": "2026-11-19T02:00:24Z",
+    "hosted_release_checkout_commit_at_incident": "08d748790551534411a2e168b2b3fa8bb579a391"
+  },
+  "acceptance_1_reproduction_on_origin_dev": {
+    "reproduced_against_commit": "69d03a743d9cd1f64f9a1d5aad38840a705e090e (contains PR 7609 merge 12c63eee735a678b0f05d24ffdde9397ec8bcd43)",
+    "root_cause": "In verify_bounded_source_refresh_readback (scripts/deploy_nonprod_vm.sh lines 1846-1852 on origin/dev), the Python heredoc resolved _deploy_script_path = Path(evaluate_taiwan_market_freshness.__code__.co_filename).resolve().parents[2] / 'scripts' / 'deploy_nonprod_vm.sh', read that file from disk, and ran .split('# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---\\n', 1)[1]. Because the refresh workflow executes scripts/deploy_nonprod_vm.sh after cd \"${PANTHEON_REMOTE_DIR}\" (the hosted managed release worktree), evaluate_taiwan_market_freshness is imported from the hosted release checkout rather than from the running dispatched script.",
+    "case_1_working_directory_with_08d748790_deploy_nonprod_vm_sh_no_markers": {
+      "hosted_deploy_script_commit": "08d748790551534411a2e168b2b3fa8bb579a391",
+      "begin_marker_count_in_file": 0,
+      "exit_code": 1,
+      "exception_type": "IndexError",
+      "exception_message": "list index out of range",
+      "script_line": "scripts/deploy_nonprod_vm.sh:1849 (heredoc File \"<stdin>\", line 17, in <module>: .split(\"# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---\\n\", 1)[1])",
+      "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 17, in <module>\nIndexError: list index out of range\n[remote-deploy] ERROR: bounded_source_refresh_readback_failed: Traceback (most recent call last): File \"<stdin>\", line 17, in <module> IndexError: list index out of range"
+    },
+    "case_2_working_directory_with_deploy_nonprod_vm_sh_absent": {
+      "exit_code": 1,
+      "exception_type": "FileNotFoundError",
+      "exception_message": "[Errno 2] No such file or directory: '.../scripts/deploy_nonprod_vm.sh'",
+      "script_line": "scripts/deploy_nonprod_vm.sh:1848 (heredoc File \"<stdin>\", line 17, in <module>: _deploy_script_path.read_text(encoding=\"utf-8\"))",
+      "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 17, in <module>\n  File \"/usr/lib/python3.12/pathlib.py\", line 1029, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n  File \"/usr/lib/python3.12/pathlib.py\", line 1015, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\nFileNotFoundError: [Errno 2] No such file or directory: '.../scripts/deploy_nonprod_vm.sh'"
+    }
+  },
+  "acceptance_2_shared_helpers_from_running_script": {
+    "bash_function": "emit_taiwan_refresh_shared_helpers",
+    "location": "scripts/deploy_nonprod_vm.sh",
+    "mechanism": "The shared helper Python source exists once inside emit_taiwan_refresh_shared_helpers() in scripts/deploy_nonprod_vm.sh. Both verify_bounded_source_refresh_readback() and check_taiwan_refresh_preflight() pass TW_REFRESH_SHARED_HELPERS_PY=\"$(emit_taiwan_refresh_shared_helpers)\" from the running bash script into their Python heredoc, which executes exec(compile(os.environ['TW_REFRESH_SHARED_HELPERS_PY'], '<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>', 'exec'), globals()). Neither heredoc derives _deploy_script_path from __code__.co_filename or reads scripts/deploy_nonprod_vm.sh or any other file of the hosted checkout."
+  },
+  "acceptance_3_markerless_and_absent_hosted_checkout_tests": {
+    "tests_added_or_updated": [
+      "scripts/test_deploy_nonprod_vm.py::test_preflight_and_readback_take_shared_helpers_from_running_script_not_hosted_checkout",
+      "scripts/test_dev_tw_market_refresh.py::test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback"
+    ],
+    "verified_failure_on_origin_dev_before_fix": true,
+    "cases_covered": [
+      "Working directory whose scripts/deploy_nonprod_vm.sh is the 08d748790 copy lacking BEGIN_SHARED_TW_REFRESH_HELPERS markers: preflight and readback both pass TWSE margin empty-date case and FinMind stored SourceRecord.to_dict() run-id case",
+      "Working directory where scripts/deploy_nonprod_vm.sh is absent: preflight and readback both pass TWSE margin empty-date case and FinMind stored SourceRecord.to_dict() run-id case"
+    ]
+  },
+  "acceptance_4_remove_test_only_finmind_branch_and_serve_real_routes": {
+    "removed_branch": "Removed `if \"source_records\" in first and \"receipts\" not in first:` from fetch_finmind_source_records in scripts/deploy_nonprod_vm.sh",
+    "updated_fake_server": "Updated test_finmind_coverage_readback_passes_the_real_strict_auth_boundary (and BoundedHandler in test_finmind_broker_stored_shape_without_top_level_provenance_and_bounded_per_run_read) in scripts/test_deploy_nonprod_vm.py to serve the three real routes: GET /api/source-ingest/receipts filtered by connector_id, GET /api/source-ingest/evidence/bundles/{bundle_id}, and GET /api/source-ingest/source-records/{source_id}."
+  },
+  "acceptance_5_no_other_behaviour_change": {
+    "session_rules_changed": false,
+    "bounded_finmind_read_changed": false,
+    "workflow_or_dev_host_timer_changed": false
+  },
+  "acceptance_6_runtime_budget": {
+    "new_persistent_writers": 0,
+    "new_recurring_jobs_or_emitters": 0
+  },
+  "acceptance_7_validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "status": "passed",
+        "exit_code": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 201,
+        "skipped_count": 2,
+        "terminal_summary": "201 passed, 2 skipped in 306.34s (0:05:06)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 132,
+        "terminal_summary": "132 passed in 301.94s (0:05:01)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 67,
+        "terminal_summary": "67 passed in 2.35s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts/test_ci_stage0.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 23,
+        "terminal_summary": "Ran 23 tests in 2.518s OK"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest && .venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-tw-refresh.json",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 10,
+        "terminal_summary": "Ran 10 tests in 3.250s OK; storage_manifest_check.v1 passed=true failures=[]"
+      }
+    ]
+  }
+}
