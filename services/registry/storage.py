@@ -1319,6 +1319,16 @@ class RegistryStore:
                 for entry in self._entries.values()
             ]
 
+    def list_by_artifact_type(self, artifact_type: str) -> list[RegistryEntry]:
+        """Only entries of one artifact type; other types are never copied."""
+        wanted = getattr(artifact_type, "value", artifact_type)
+        with self._lock:
+            return [
+                RegistryEntry.from_dict(entry.to_dict())
+                for entry in self._entries.values()
+                if getattr(entry.artifact_type, "value", entry.artifact_type) == wanted
+            ]
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:

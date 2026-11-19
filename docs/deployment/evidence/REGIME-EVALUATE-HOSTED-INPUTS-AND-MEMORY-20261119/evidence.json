@@ -1,0 +1,35 @@
+{
+ "task": "REGIME-EVALUATE-HOSTED-INPUTS-AND-MEMORY-20261119",
+ "owner": "Claude",
+ "changes": {
+  "order": "routes.evaluate -> _preflight_observations (request check, root mounted, every declared input has a normalized dir, observations loaded, session index close visible) BEFORE any registry read; refusal is 409 session_data_incomplete with detail 'missing_datasets:<each missing name>' (422 for invalid session/market, 409 governed_store_unavailable for an unmounted root).",
+  "bounded_read": "new list_by_artifact_type on storage.py (memory), pg_store.py (SQL payload->>'artifact_type' = %s, only matching rows fetched and decoded) and split_api.py; evaluate reads strategy_spec and model_artifact through it. list_all_entries and _filter_strategy_spec_views are no longer called by evaluate; the strategy tenant/visibility filter is applied inline with the same predicates.",
+  "store_root": "routes.DEFAULT_STORE_ROOT and docker-compose.yml REGISTRY_REGIME_STORE_ROOT = /data/source-ingest/market_data_store (overridable); contract.md states the same.",
+  "reader_mode": "features.missing_input_datasets and load_governed_observations both resolve through services.source_ingestion.market_data_storage.normalized_dataset_base, so PANTHEON_KEYED_DATASET_READER=keyed selects <root>/keyed/<dataset> for KEYED_DATASETS exactly as source-ingest does. Not set in registry compose env today (unset = run_files, same as source-ingest hosted)."
+ },
+ "memory": {
+  "method": "tracemalloc peak around one POST /regime/evaluate (in-process TestClient) with 7200 extra registry entries (2 KB metadata each) loaded in the store; test_evaluate_never_materializes_every_registry_entry also fails if list_all_entries is called",
+  "measured_peak_bytes": 15928552,
+  "stated_bound_bytes": 25165824,
+  "note": "peak includes the synthetic governed observations and model fit inputs; real hosted observation volume is not measured here. Registry memory limit NOT raised (AC6): no hosted-scale measured peak exists."
+ },
+ "input_datasets": [
+  {"dataset": "tw_index_daily", "produced_by_source_ingest_connector": true, "where": "connector_definitions.py market_daily connectors"},
+  {"dataset": "tw_market_breadth_daily", "produced_by_source_ingest_connector": true, "where": "connector_definitions.py extra_datasets of the market_daily connector"},
+  {"dataset": "tw_market_institutional_flows", "produced_by_source_ingest_connector": false},
+  {"dataset": "tw_market_margin_balances", "produced_by_source_ingest_connector": false},
+  {"dataset": "taifex_market_positions", "produced_by_source_ingest_connector": false},
+  {"dataset": "taifex_market_put_call", "produced_by_source_ingest_connector": false},
+  {"dataset": "tw_macro_ndc", "produced_by_source_ingest_connector": false}
+ ],
+ "residual_findings": [
+  "Five of seven REGIME_INPUT_DATASETS names appear only in feature_catalogue readers, not as any connector's output dataset on current dev (connectors write e.g. taifex_futures_chip/taifex_options_chip under other names). Not remapped. Producing task: REGIME-DATA-HOSTED-ACCEPTANCE-20261114 / market-data owner. Until they exist, evaluate on hosted refuses 409 session_data_incomplete listing them (previously it crashed the registry).",
+  "The missing-dataset refusal now precedes the stored-result return, so an already-evaluated session also refuses if inputs vanish; evaluate re-reads observations on every call (no longer lazy)."
+ ],
+ "runtime_budget": {
+  "records_written": "only existing regime store rows: per model set (approved, plus candidate if present) 1 market_state row per session (~9.6 KB) and 1 regime row per visible latest strategy (~5.0 KB). The three persona calls of a daily cycle are idempotent: the first creates them, the other two write 0.",
+  "per_day": "1 session/day: 1-2 market_state rows + N_strategies x 1-2 regime rows; with S strategies about 9.6 KB x sets + 5 KB x S x sets (e.g. S=50, 1 set: ~260 KB/day, ~95 MB/year).",
+  "cap_and_cleanup": "unchanged by this task; no cap or cleanup exists on the regime tables (follow-up if growth matters). Revisions only add rows when verified inputs change."
+ },
+ "tests": "services/registry/regime/tests + services/research/regime/tests: 90 passed, 1 skipped (pre-existing skip) in a fresh venv from services/registry/requirements.txt plus ruptures."
+}

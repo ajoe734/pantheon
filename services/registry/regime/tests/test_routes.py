@@ -24,6 +24,7 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 SECRET = "regime-routes-test-secret"
 PKG = Path(registry_auth.__file__).resolve().parent
+_REAL_LOADER = routes._observations_loader
 
 
 @pytest.fixture(autouse=True)
@@ -112,10 +113,6 @@ def test_second_evaluate_returns_stored_result_and_gets_never_write(client, seed
     client.post("/api/registry/regime/evaluate", headers=a, json={"session": session})
     store = get_regime_store()
     before = (store.list_regimes(served_only=False), store.list_market_states("TW", served_only=False))
-    def forbidden():
-        raise AssertionError("governed data re-read")
-
-    monkeypatch.setattr(routes, "_observations_loader", lambda: forbidden)
     again = client.post("/api/registry/regime/evaluate", headers=a, json={"session": session})
     assert again.status_code == 200 and again.json()["sets"][0]["computed"] is False
     for path in ("/api/registry/regime/states", f"/api/registry/regime/market-state/TW/{session}",
@@ -225,3 +222,102 @@ def test_regime_evaluator_role_is_accepted_on_evaluate_only(client, seeded):
         assert resp.status_code in (401, 403, 404, 405, 422), (method, path, resp.status_code)
         assert resp.status_code != 200, (method, path)
     assert client.get("/api/registry/regime/states", headers=only).status_code == 403
+
+
+# -- hosted inputs and memory (REGIME-EVALUATE-HOSTED-INPUTS-AND-MEMORY-20261119) ------------------------
+
+HOSTED_ENTRY_COUNT = 7200  # registry.entries had 7162 rows on 2026-11-19
+EVALUATE_PEAK_BOUND_BYTES = 24 * 1024 * 1024  # tracemalloc peak of one evaluate call at hosted entry count
+
+
+def _inflate_registry(client, headers, count):
+    """Add ``count`` unrelated registry entries (allocation-policy type, padded metadata) to the store."""
+    from services.registry import service as svc
+    from services.registry.models import ArtifactType, RegistryEntry
+
+    store = svc.get_registry_service().store
+    template = next(iter(store.list_all_entries())).to_dict()
+    for i in range(count):
+        raw = dict(template, registry_id=f"filler-{i}", strategy_id=f"filler-{i}",
+                   artifact_type=ArtifactType.ALLOCATION_POLICY.value,
+                   metadata={"pad": "x" * 2000, "n": i, "regime_classifier": False})
+        entry = RegistryEntry.from_dict(raw)
+        store._entries[entry.registry_id] = entry
+        store._strategy_index.setdefault(entry.strategy_id, []).append(entry.registry_id)
+
+
+def test_evaluate_never_materializes_every_registry_entry(client, seeded, monkeypatch):
+    import tracemalloc
+
+    a, _, session = seeded
+    _inflate_registry(client, a, HOSTED_ENTRY_COUNT)
+    from services.registry import service as svc
+
+    def forbidden(self):
+        raise AssertionError("evaluate must not call list_all_entries")
+
+    monkeypatch.setattr(type(svc.get_registry_service()), "list_all_entries", forbidden)
+    tracemalloc.start()
+    try:
+        r = client.post("/api/registry/regime/evaluate", headers=a, json={"session": session})
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert r.status_code == 200, r.text
+    assert peak < EVALUATE_PEAK_BOUND_BYTES, f"peak {peak} bytes"
+
+
+def test_missing_inputs_refuse_before_any_registry_read(client, seeded, monkeypatch, tmp_path):
+    a, _, session = seeded
+    from services.registry import service as svc
+
+    root = tmp_path / "market_data_store"
+    (root / "normalized" / "tw_index_daily").mkdir(parents=True)
+    monkeypatch.setenv(routes.STORE_ROOT_ENV, str(root))
+    monkeypatch.setattr(routes, "_observations_loader", _REAL_LOADER)  # the real store reader, not the seeded double
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("registry entries read before inputs were checked")
+
+    cls = type(svc.get_registry_service())
+    for name in ("list_all_entries", "list_by_artifact_type", "list_by_strategy"):
+        monkeypatch.setattr(cls, name, forbidden)
+    r = client.post("/api/registry/regime/evaluate", headers=a, json={"session": session})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "session_data_incomplete"
+    expected = [d for d in routes_inputs() if d != "tw_index_daily"]
+    assert detail["detail"] == "missing_datasets:" + ",".join(expected)
+
+
+def routes_inputs():
+    from services.research.regime.features import REGIME_INPUT_DATASETS
+
+    return list(REGIME_INPUT_DATASETS)
+
+
+def test_default_root_is_the_market_data_store_and_matches_compose_and_contract():
+    import re
+
+    repo = PKG.parents[1]
+    assert routes.DEFAULT_STORE_ROOT == "/data/source-ingest/market_data_store"
+    compose = (repo / "docker-compose.yml").read_text(encoding="utf-8")
+    assert re.search(r"REGISTRY_REGIME_STORE_ROOT: \$\{REGISTRY_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store\}", compose)
+    assert "/data/source-ingest/market_data_store" in (PKG / "contract.md").read_text(encoding="utf-8")
+
+
+def test_reader_follows_source_ingest_run_file_and_keyed_trees(tmp_path, monkeypatch):
+    from services.research.regime.features import REGIME_INPUT_DATASETS, missing_input_datasets
+    from services.source_ingestion.daily_bars_store import KEYED_DATASETS
+
+    root = tmp_path / "market_data_store"
+    assert missing_input_datasets(root) == list(REGIME_INPUT_DATASETS)
+    for d in REGIME_INPUT_DATASETS:
+        (root / "normalized" / d).mkdir(parents=True)
+    assert missing_input_datasets(root) == []
+    monkeypatch.setenv("PANTHEON_KEYED_DATASET_READER", "keyed")
+    keyed = [d for d in REGIME_INPUT_DATASETS if d in KEYED_DATASETS]
+    assert keyed and set(missing_input_datasets(root)) == set(keyed)
+    for d in keyed:
+        (root / "keyed" / d).mkdir(parents=True)
+    assert missing_input_datasets(root) == []

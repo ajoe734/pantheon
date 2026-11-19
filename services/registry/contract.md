@@ -466,7 +466,15 @@ store's `evaluator_commit` / `evaluator_invalidate`). Paper scope only; no place
   inputs make the stored record `invalidated`. Each transition is appended to `metadata.lifecycle`.
 - Profile (design R8): primary axis and horizon from the spec's regime section (`metadata.regime` or the spec's own
   `metadata.regime`), else the alpha template's applicable regimes, else a family default. Macro is never primary.
-- Governed data: read from the source-ingestion normalized store mounted read-only at `REGISTRY_REGIME_STORE_ROOT`
-  (default `/data/source-ingest`) through `services.research.regime.features.load_governed_observations`, which reads
+- Governed data: read from the market data store source-ingest writes (hosted `/data/source-ingest/market_data_store`,
+  datasets under `<root>/normalized/<dataset>`) mounted read-only at `REGISTRY_REGIME_STORE_ROOT`
+  (default `/data/source-ingest/market_data_store`; docker-compose.yml sets the same). The tree is resolved by
+  `services.source_ingestion.market_data_storage.normalized_dataset_base`, so `PANTHEON_KEYED_DATASET_READER` selects
+  the keyed or run-file tree exactly as in source-ingest. `POST /regime/evaluate` loads and checks these inputs first:
+  an invalid request, an unmounted root, a declared input dataset with no normalized directory (each listed in a
+  `409 session_data_incomplete` detail `missing_datasets:...`) or a missing session index close refuses before any
+  registry entry is read. Only then are strategy specs and model artifacts read, each with an artifact-type-filtered
+  query (`list_by_artifact_type`; SQL-filtered on Postgres), never the whole registry. Observations come from
+  `services.research.regime.features.load_governed_observations`, which reads
   every input through the feature catalogue (point in time).
 - Statistical dependencies (numpy, pandas, scipy, scikit-learn, statsmodels) run in the registry image (design K5).
