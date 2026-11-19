@@ -4313,10 +4313,40 @@ jobs:
           python3 scripts/dev_acceptance_stage.py run \
             --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
             --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
-            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" \
-            --release-outcome "${RELEASE_OUTCOME}" --gate-run-id "${GATE_RUN_ID}" \
-            --failed-gates "${FAILED_GATES}" || true
+            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" || true
           exit 0
+
+      - name: Record frontend gate failure for the unchanged served frontend
+        if: ${{ always() && env.RELEASE_OUTCOME == 'deployed_not_accepted' }}
+        continue-on-error: true
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # Deployed, not accepted: the unchanged served frontend failed its
+          # integration gate. The verdict is failed and owned by the frontend
+          # chain; the deploy itself is never rolled back.
+          python3 - "${VERDICT_FILE}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              verdict = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, ValueError):
+              verdict = {"schemaVersion": "pantheon.dev-acceptance-verdict.v1", "failed": [], "checks": []}
+          gates = ", ".join(g for g in os.environ.get("FAILED_GATES", "").split(",") if g) or "unknown"
+          entry = {
+              "id": "gate:frontend-integration",
+              "kind": "check",
+              "owner": "frontend",
+              "detail": f"integration gate run {os.environ.get('GATE_RUN_ID', '')} failed: {gates}",
+          }
+          verdict["acceptance"] = "failed"
+          verdict["failed"] = [entry, *verdict.get("failed", [])]
+          verdict["checks"] = [{**entry, "status": "failed"}, *verdict.get("checks", [])]
+          path.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
 
       - name: Stop heartbeat and release the acceptance lease
         id: lease_cleanup

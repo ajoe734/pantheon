@@ -9,7 +9,7 @@
     "non_dev_target": "rejected as before (gate-before-switch unchanged)",
     "unhealthy_stack": "unchanged: still rolls back"
   },
-  "tests": "uv run --no-project --with pytest --with pyyaml python -m pytest scripts/test_cross_repo_release_controller.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_acceptance_stage.py scripts/test_acceptance_workflows_truthful.py -> 381 passed",
+  "tests": "uv run --no-project --with pytest --with pyyaml python -m pytest scripts/test_cross_repo_release_controller.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_acceptance_stage.py scripts/test_acceptance_workflows_truthful.py -> 379 passed",
   "residual_findings": [
     "After a tolerated failure the hosted frontend deployment.json still names the previous bffCommit (no FE switch ran), so readers of that manifest see the older backend until the next frontend deploy; the controller skips the pair/bff-manifest equality check in that path.",
     "Opening the owning-chain task is still manual: the record and acceptance verdict name the frontend chain, no automatic task creation was added (would be a new writer).",

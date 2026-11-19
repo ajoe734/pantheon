@@ -188,17 +188,6 @@ def verdict_status(results: list[dict]) -> str:
     return "passed"
 
 
-FRONTEND_GATE_OWNER = "frontend"
-
-
-def gate_failure_result(*, gate_run_id: str, failed_gates: list[str]) -> dict:
-    """A frontend gate failure for an unchanged served frontend: the release is
-    deployed (not rolled back) and not accepted, owned by the frontend chain."""
-    names = ", ".join(failed_gates) or "unknown"
-    return _result({"id": "gate:frontend-integration", "kind": "check", "owner": FRONTEND_GATE_OWNER},
-                   "failed", detail=_clip(f"integration gate run {gate_run_id} failed: {names}"))
-
-
 def build_verdict(*, status: str, results: list[dict], identity: dict, run: dict) -> dict:
     failed = [{"id": item["id"], "kind": item["kind"], "owner": item["owner"], "detail": item["detail"]}
               for item in results if item["status"] == "failed"]
@@ -264,9 +253,6 @@ def main(argv=None) -> int:
     parser.add_argument("--verdict-out", type=Path, default=Path("acceptance-verdict.json"))
     parser.add_argument("--lease-held", action="store_true")
     parser.add_argument("--deployed", default="success")
-    parser.add_argument("--release-outcome", default="")
-    parser.add_argument("--gate-run-id", default="")
-    parser.add_argument("--failed-gates", default="")
     args = parser.parse_args(argv)
     try:
         checks, probes = load_checks(args.checks), discover_probes(args.probes_dir)
@@ -291,9 +277,6 @@ def main(argv=None) -> int:
     except Exception as exc:
         results = [_result({"id": "check:stage-internal", "kind": "check", "owner": SELF_OWNER}, "failed",
                            detail=f"acceptance stage error: {exc}")]
-    if args.release_outcome == "deployed_not_accepted":
-        results = [gate_failure_result(gate_run_id=args.gate_run_id,
-                                       failed_gates=[n for n in args.failed_gates.split(",") if n]), *results]
     verdict = build_verdict(status=verdict_status(results), results=results, identity=identity, run=_run_info())
     _write(args.verdict_out, verdict)
     _output("acceptance", verdict["acceptance"])

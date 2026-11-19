@@ -149,17 +149,3 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         base_env=dict(os.environ), lease_held=False, identity_fn=OK)
     assert [r["id"] for r in results] == ["check:deployed-pair-identity"]
     assert stage.verdict_status(results) == "passed"
-
-
-def test_gate_failure_for_unchanged_frontend_is_recorded_as_failed_and_frontend_owned():
-    from scripts import dev_acceptance_stage as stage
-
-    result = stage.gate_failure_result(gate_run_id="44470794822", failed_gates=["Gate 1 - npm run test"])
-    verdict = stage.build_verdict(
-        status=stage.verdict_status([result]), results=[result],
-        identity={"backend_sha": "a" * 40, "frontend_sha": "b" * 40}, run={},
-    )
-    assert verdict["acceptance"] == "failed"
-    assert verdict["failed"][0]["owner"] == "frontend"
-    assert "44470794822" in verdict["failed"][0]["detail"]
-    assert "Gate 1 - npm run test" in verdict["failed"][0]["detail"]

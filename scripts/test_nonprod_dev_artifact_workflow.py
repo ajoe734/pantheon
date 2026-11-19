@@ -1000,3 +1000,26 @@ def test_controller_gets_manifest_and_target_environment_without_new_dispatch_in
     assert '--environment "${TARGET_ENV}"' in run
     inputs = set(WORKFLOW[True]["workflow_dispatch"]["inputs"])
     assert not {name for name in inputs if "unchanged" in name or "tolerate" in name or "gate_failure" in name}
+
+
+def test_gate_failure_marks_acceptance_verdict_failed_and_frontend_owned(tmp_path):
+    acceptance = WORKFLOW["jobs"]["dev-acceptance-stage"]
+    record = next(
+        item for item in acceptance["steps"]
+        if item.get("name") == "Record frontend gate failure for the unchanged served frontend"
+    )
+    assert "deployed_not_accepted" in record["if"]
+    verdict = tmp_path / "acceptance-verdict.json"
+    verdict.write_text('{"acceptance": "pending", "failed": [], "checks": []}')
+    subprocess.run(
+        ["bash", "--noprofile", "--norc", "-c", record["run"]],
+        check=True, cwd=tmp_path,
+        env={"PATH": os.environ["PATH"], "VERDICT_FILE": str(verdict),
+             "GATE_RUN_ID": "44470794822", "FAILED_GATES": "Gate 1 - npm run test"},
+    )
+    import json
+    result = json.loads(verdict.read_text())
+    assert result["acceptance"] == "failed"
+    assert result["failed"][0]["owner"] == "frontend"
+    assert "44470794822" in result["failed"][0]["detail"]
+    assert "Gate 1 - npm run test" in result["failed"][0]["detail"]
