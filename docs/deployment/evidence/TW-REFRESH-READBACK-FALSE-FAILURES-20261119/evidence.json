@@ -124,6 +124,13 @@
     "workflow_or_timer_changed": false,
     "provider_adapters_or_finmind_taiwan_edited": false
   },
+  "residual_findings": [
+    {
+      "file": "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "outside_task_scope": true,
+      "detail": "Not in .github/pantheon-stage0-matrix.json; has 3 pre-existing failures on dev: test_search_worker_failure_retained_before_compensation_without_payloads[stdout/stderr] (does not stub verify_steady_services_restored added by PR #7524) and test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_or_stale (asserts pre-PR-#7599 13:30 cutoff instead of 06:50 T+1 for taifex_ssf_contracts)."
+    }
+  ],
   "validation": {
     "commands": [
       {
@@ -135,14 +142,30 @@
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
         "status": "passed",
         "exit_code": 0,
-        "passed_count": 132
+        "passed_count": 132,
+        "terminal_summary": "132 passed in 298.01s (0:04:58)"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
         "status": "passed",
         "exit_code": 0,
         "passed_count": 200,
-        "skipped_count": 2
+        "skipped_count": 2,
+        "terminal_summary": "200 passed, 2 skipped in 300.90s (0:05:00)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 67,
+        "terminal_summary": "67 passed in 2.77s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts/test_ci_stage0.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 23,
+        "terminal_summary": "Ran 23 tests in 2.721s OK"
       }
     ]
   }
