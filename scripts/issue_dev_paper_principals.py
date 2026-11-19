@@ -91,6 +91,8 @@ READERS = {
     # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
     # memory write role). The adapter's actor id must equal this subject in strict auth.
     "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
+    # Persona daily pool cycle -> BFF strategy-pool publish route ONLY. The role is accepted by no other BFF route.
+    "PERSONA_POOL_PUBLISH_BFF_TOKEN": ("persona-pool-cycle", "persona_pool_publisher"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
@@ -214,6 +216,7 @@ CONSUMER_FILES = {
         "PERSONA_MEMORY_WRITE_TOKEN",
         "LESSON_RULE_PROPOSER_TOKEN",
         "PERSONA_SEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_PUBLISH_BFF_TOKEN",
     ),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": (
