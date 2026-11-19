@@ -1821,6 +1821,7 @@ verify_bounded_source_refresh_readback() {
   readback_err_file="$(mktemp)"
   if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
     BOUNDED_REFRESH_VERDICT_PATH="${readback_verdict_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
     python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
@@ -1843,13 +1844,14 @@ from services.execution.market_snapshot_admission import (
     is_taiwan_symbol,
 )
 
-_deploy_script_path = Path(evaluate_taiwan_market_freshness.__code__.co_filename).resolve().parents[2] / "scripts" / "deploy_nonprod_vm.sh"
-_shared_helpers_src = (
-    _deploy_script_path.read_text(encoding="utf-8")
-    .split("# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---\n", 1)[1]
-    .split("\n# --- END_SHARED_TW_REFRESH_HELPERS ---", 1)[0]
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
 )
-exec(compile(_shared_helpers_src, str(_deploy_script_path) + ":SHARED_TW_REFRESH_HELPERS", "exec"), globals())
 
 
 def load(path):
@@ -2342,117 +2344,8 @@ ensure_dev_caddy_ingress() (
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
 
-# Reads FinMind broker coverage records through the real strict JWT/tenant
-# boundary using a bounded per-run bundle + source-record read instead of an
-# unbounded /api/source-ingest/source-records full-table scan. A short-lived
-# HS256 token is minted inside the source-ingest container from its own runtime
-# verifier env, so no secret reaches the host command line, logs or stdout.
-fetch_finmind_source_records() {
-  local out_path="$1" since="${2:-}" cid=""
-  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
-  [[ -n "${cid}" ]] || return 1
-  docker exec -i "${cid}" python3 - "${since}" >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
-import json, os, sys, time, urllib.parse, urllib.request
-from datetime import datetime, timezone
-from services.runtime_auth_inbound import encode_jwt_hs256
-
-secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
-tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
-if not secret or not tenant:
-    raise SystemExit(2)
-now = int(time.time())
-claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
-if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
-    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
-if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
-    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
-headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
-port = os.environ.get("PORT", "8097")
-
-def get_json(path):
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-def ts(val):
-    dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
-    return (dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
-
-since_arg = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
-first = get_json("/api/source-ingest/receipts?connector_id=tw-finmind-broker-daily-report")
-if "source_records" in first and "receipts" not in first:
-    print(json.dumps(first))
-    raise SystemExit(0)
-completed = [
-    r for r in (first.get("receipts") or [])
-    if isinstance(r, dict)
-    and r.get("connector_id") == "tw-finmind-broker-daily-report"
-    and r.get("status") == "completed"
-    and r.get("typed_failure") is None
-    and r.get("source_timestamp")
-    and r.get("source_timestamp_status") == "valid"
-    and (r.get("finished_at") or r.get("created_at"))
-    and ((r.get("evidence_refs") or {}).get("evidence_bundle_id"))
-]
-if since_arg:
-    since_dt = ts(since_arg)
-    completed = [r for r in completed if ts(r.get("finished_at") or r.get("created_at")) >= since_dt]
-completed.sort(key=lambda r: ts(r.get("finished_at") or r.get("created_at")), reverse=True)
-if completed:
-    target_trace = completed[0].get("trace_id")
-    if target_trace:
-        completed = [r for r in completed if r.get("trace_id") == target_trace]
-    else:
-        completed = completed[:1]
-records = []
-seen_symbols = set()
-for r in completed:
-    bundle_id = str((r.get("evidence_refs") or {}).get("evidence_bundle_id") or "").strip()
-    if not bundle_id:
-        continue
-    bundle = (get_json(f"/api/source-ingest/evidence/bundles/{urllib.parse.quote(bundle_id)}") or {}).get("bundle") or {}
-    source_ids = [str(s).strip() for s in (bundle.get("source_ids") or []) if str(s).strip()]
-    batch_sids = []
-    batch_syms = set()
-    for sid in source_ids:
-        parts = sid.split(":")
-        sym_key = parts[1] if len(parts) >= 3 and parts[0] == "finmind-broker-top" else sid
-        if sym_key not in seen_symbols and sym_key not in batch_syms:
-            batch_syms.add(sym_key)
-            batch_sids.append(sid)
-    if not batch_sids:
-        continue
-    seen_symbols.update(batch_syms)
-    for sid in batch_sids:
-        rec = (get_json(f"/api/source-ingest/source-records/{urllib.parse.quote(sid)}") or {}).get("source_record")
-        if isinstance(rec, dict):
-            records.append(rec)
-print(json.dumps({"source_records": records}))
-FINMIND_RECORDS_PY
-}
-
-check_taiwan_refresh_preflight() {
-  local force="${1:-false}" finmind_records_file=""
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
-    finmind_records_file="$(mktemp)"
-    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
-  fi
-  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - "${force}" <<'PREFLIGHT_PY'
-import json, os, sys, urllib.error, urllib.parse, urllib.request
-from datetime import date, datetime, time, timedelta, timezone
-
-tz = timezone(timedelta(hours=8))
-force = str(sys.argv[1]).lower() == "true"
-# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
-pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
-now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
-now_t = now_u.astimezone(tz)
-d_str = str(now_t.date())
-def emit(status, **kw):
-    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
-
-from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
-
+emit_taiwan_refresh_shared_helpers() {
+  cat <<'SHARED_TW_REFRESH_HELPERS_PY'
 # --- BEGIN_SHARED_TW_REFRESH_HELPERS ---
 from datetime import date as _shared_date, datetime as _shared_datetime, timedelta as _shared_timedelta, timezone as _shared_timezone
 from services.source_ingestion.chip_publication_schedule import (
@@ -2581,6 +2474,127 @@ def finmind_coverage(records, expected, *, accept):
     missing = [item for item in dict.fromkeys(wanted) if item not in covered]
     return seen, missing, sorted(covered), sorted(partial_missing)
 # --- END_SHARED_TW_REFRESH_HELPERS ---
+SHARED_TW_REFRESH_HELPERS_PY
+}
+
+# Reads FinMind broker coverage records through the real strict JWT/tenant
+# boundary using a bounded per-run bundle + source-record read instead of an
+# unbounded /api/source-ingest/source-records full-table scan. A short-lived
+# HS256 token is minted inside the source-ingest container from its own runtime
+# verifier env, so no secret reaches the host command line, logs or stdout.
+fetch_finmind_source_records() {
+  local out_path="$1" since="${2:-}" cid=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec -i "${cid}" python3 - "${since}" >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
+import json, os, sys, time, urllib.parse, urllib.request
+from datetime import datetime, timezone
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
+if not secret or not tenant:
+    raise SystemExit(2)
+now = int(time.time())
+claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
+if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
+    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
+if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
+    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
+headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
+port = os.environ.get("PORT", "8097")
+
+def get_json(path):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def ts(val):
+    dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+    return (dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+since_arg = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+first = get_json("/api/source-ingest/receipts?connector_id=tw-finmind-broker-daily-report")
+completed = [
+    r for r in (first.get("receipts") or [])
+    if isinstance(r, dict)
+    and r.get("connector_id") == "tw-finmind-broker-daily-report"
+    and r.get("status") == "completed"
+    and r.get("typed_failure") is None
+    and r.get("source_timestamp")
+    and r.get("source_timestamp_status") == "valid"
+    and (r.get("finished_at") or r.get("created_at"))
+    and ((r.get("evidence_refs") or {}).get("evidence_bundle_id"))
+]
+if since_arg:
+    since_dt = ts(since_arg)
+    completed = [r for r in completed if ts(r.get("finished_at") or r.get("created_at")) >= since_dt]
+completed.sort(key=lambda r: ts(r.get("finished_at") or r.get("created_at")), reverse=True)
+if completed:
+    target_trace = completed[0].get("trace_id")
+    if target_trace:
+        completed = [r for r in completed if r.get("trace_id") == target_trace]
+    else:
+        completed = completed[:1]
+records = []
+seen_symbols = set()
+for r in completed:
+    bundle_id = str((r.get("evidence_refs") or {}).get("evidence_bundle_id") or "").strip()
+    if not bundle_id:
+        continue
+    bundle = (get_json(f"/api/source-ingest/evidence/bundles/{urllib.parse.quote(bundle_id)}") or {}).get("bundle") or {}
+    source_ids = [str(s).strip() for s in (bundle.get("source_ids") or []) if str(s).strip()]
+    batch_sids = []
+    batch_syms = set()
+    for sid in source_ids:
+        parts = sid.split(":")
+        sym_key = parts[1] if len(parts) >= 3 and parts[0] == "finmind-broker-top" else sid
+        if sym_key not in seen_symbols and sym_key not in batch_syms:
+            batch_syms.add(sym_key)
+            batch_sids.append(sid)
+    if not batch_sids:
+        continue
+    seen_symbols.update(batch_syms)
+    for sid in batch_sids:
+        rec = (get_json(f"/api/source-ingest/source-records/{urllib.parse.quote(sid)}") or {}).get("source_record")
+        if isinstance(rec, dict):
+            records.append(rec)
+print(json.dumps({"source_records": records}))
+FINMIND_RECORDS_PY
+}
+
+check_taiwan_refresh_preflight() {
+  local force="${1:-false}" finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
+    python3 - "${force}" <<'PREFLIGHT_PY'
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+from datetime import date, datetime, time, timedelta, timezone
+
+tz = timezone(timedelta(hours=8))
+force = str(sys.argv[1]).lower() == "true"
+# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
+pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
+now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
+now_t = now_u.astimezone(tz)
+d_str = str(now_t.date())
+def emit(status, **kw):
+    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
+)
 
 
 raw_connector = os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", "").strip()
