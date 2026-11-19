@@ -952,14 +952,50 @@ if [[ "${REFRESH_ONLY:-false}" == "true" && -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; th
   DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 fi
 
+# A copied-back refresh outcome must carry the call id this call generated. An outcome
+# that does not (another call, a left-over process, a stale file) is replaced by a failed
+# record naming the mismatch. A missing or empty file is left to the existing handling.
+verify_refresh_outcome_belongs_to_call() {
+  local path="$1" call_id="$2"
+  [[ -s "${path}" ]] || return 0
+  python3 - "${path}" "${call_id}" <<'CALL_ID_PY' || true
+import json, pathlib, sys
+path, expected = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    data = None
+actual = data.get("call_id") if isinstance(data, dict) else None
+if actual == expected:
+    raise SystemExit(0)
+payload = {
+    "call_id_expected": expected,
+    "call_id_found": actual if isinstance(actual, str) else "",
+    "log": "",
+    "reason": "outcome_call_mismatch: outcome file did not carry this call's id (expected %s, found %s)" % (expected, actual if isinstance(actual, str) and actual else "none"),
+    "status": "failed",
+}
+if isinstance(data, dict):
+    for key in ("connector_id", "dataset"):
+        if isinstance(data.get(key), str):
+            payload[key] = data[key]
+path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+CALL_ID_PY
+  return 0
+}
+
 ssh_bash() {
   local vm="$1"
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output="" refresh_call_id=""
   if [[ "${remote_component}" == "refresh-only" ]]; then
-    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+    # Every call owns a unique remote outcome path. Steps of one run (and a refresh process
+    # left running after its step timed out) can therefore never write the file another call
+    # copies back. The run-id prefix lets the steady check of the same run clean leftovers.
+    refresh_call_id="${GITHUB_RUN_ID:-$$}-$(date -u +%s)-$$-${RANDOM}${RANDOM}"
+    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${refresh_call_id}.json"
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=refresh-only"
     command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
@@ -969,6 +1005,8 @@ ssh_bash() {
     command_prefix+=" PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")"
     command_prefix+=" STEADY_CHECK=$(shell_quote "${STEADY_CHECK:-false}")"
     command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
+    command_prefix+=" PANTHEON_REFRESH_CALL_ID=$(shell_quote "${refresh_call_id}")"
+    command_prefix+=" PANTHEON_REFRESH_RUN_ID=$(shell_quote "${GITHUB_RUN_ID:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
@@ -1239,6 +1277,7 @@ with os.fdopen(fd, "wb") as stream:
       fi
       if [[ "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
         "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        verify_refresh_outcome_belongs_to_call "${REFRESH_OUTPUT_PATH}" "${refresh_call_id}"
         "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
       if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
@@ -3647,6 +3686,24 @@ PREPARE_DATASET_PY
   info "prepared bounded source refresh dataset ${dataset} for ${connector_id} (symbols=${active_symbols_csv})"
 }
 
+# Records the call id of this invocation in an outcome file this call just wrote.
+stamp_refresh_call_id() {
+  local path="${1:-}"
+  [[ -n "${path}" && -s "${path}" && -n "${PANTHEON_REFRESH_CALL_ID:-}" ]] || return 0
+  python3 - "${path}" "${PANTHEON_REFRESH_CALL_ID}" <<'STAMP_PY' || true
+import json, pathlib, sys
+path, call_id = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if isinstance(data, dict):
+    data["call_id"] = call_id
+    path.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+STAMP_PY
+  return 0
+}
+
 # Proves the latest closed Taiwan session without refreshing anything. The outcome is always
 # written to the output path (exit 0) so the caller can name it; it never changes the stack.
 execute_taiwan_refresh_preflight_only() {
@@ -3670,7 +3727,7 @@ execute_taiwan_refresh_preflight_only() {
   else
     preflight_output="$(check_taiwan_refresh_preflight false)" || error "preflight execution failed: ${preflight_output}"
   fi
-  [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+  if [[ -n "${output_path}" ]]; then printf '%s\n' "${preflight_output}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
   info "taiwan refresh preflight-only outcome: ${preflight_output}"
   return 0
 }
@@ -3710,19 +3767,110 @@ verify_source_ingest_container_counts() {
   return "${rc}"
 }
 
+# PIDs of refresh-only invocations of this run that are still alive on the host (a refresh
+# whose runner step timed out or was cancelled keeps running remotely). Matched by the run id
+# and call markers in the process environment; the steady check itself (STEADY_CHECK=true)
+# and this shell are never matched. STEADY_CHECK_PROC_ROOT exists for tests only.
+steady_check_find_refresh_orphans() {
+  local proc_root="${STEADY_CHECK_PROC_ROOT:-/proc}" run_id="${PANTHEON_REFRESH_RUN_ID:-}" d pid env_text
+  [[ -n "${run_id}" ]] || return 0
+  for d in "${proc_root}"/[0-9]*; do
+    pid="${d##*/}"
+    [[ "${pid}" != "$$" && "${pid}" != "${BASHPID:-$$}" && -r "${d}/environ" ]] || continue
+    env_text="$(tr '\0' '\n' < "${d}/environ" 2>/dev/null || true)"
+    grep -qx "PANTHEON_REFRESH_RUN_ID=${run_id}" <<< "${env_text}" || continue
+    grep -qx "PANTHEON_DEPLOY_COMPONENT=refresh-only" <<< "${env_text}" || continue
+    grep -qx "STEADY_CHECK=true" <<< "${env_text}" && continue
+    grep -qx "PREFLIGHT_ONLY=true" <<< "${env_text}" && continue
+    printf '%s\n' "${pid}"
+  done
+  return 0
+}
+
+# Waits a bounded time for a left-over refresh of this run to end; stops it when it does not.
+# Sets STEADY_ORPHAN_ACTION (none|ended|stopped) and STEADY_ORPHAN_SECONDS and logs both.
+steady_check_settle_refresh_orphans() {
+  local wait_max="${STEADY_CHECK_ORPHAN_WAIT_SECONDS:-180}" poll="${STEADY_CHECK_ORPHAN_POLL_SECONDS:-5}"
+  local elapsed=0 pids pid
+  STEADY_ORPHAN_ACTION="none"; STEADY_ORPHAN_SECONDS=0; STEADY_ORPHAN_PIDS=""
+  pids="$(steady_check_find_refresh_orphans)"
+  [[ -n "${pids}" ]] || return 0
+  STEADY_ORPHAN_PIDS="$(tr '\n' ',' <<< "${pids}" | sed 's/,$//')"
+  info "left-over refresh process(es) of this run found: pids=${STEADY_ORPHAN_PIDS}; waiting up to ${wait_max}s"
+  while [[ -n "${pids}" ]] && (( elapsed < wait_max )); do
+    sleep "${poll}"; elapsed=$((elapsed + poll)); pids="$(steady_check_find_refresh_orphans)"
+  done
+  if [[ -z "${pids}" ]]; then
+    STEADY_ORPHAN_ACTION="ended"; STEADY_ORPHAN_SECONDS="${elapsed}"
+  else
+    info "left-over refresh still running after ${elapsed}s; stopping pids=$(tr '\n' ',' <<< "${pids}")"
+    # Its own signal handler restores the steady services; give that time to finish.
+    for pid in ${pids}; do kill -TERM "${pid}" 2>/dev/null || true; done
+    local grace_stop=0
+    while [[ -n "${pids}" ]] && (( grace_stop < ${STEADY_CHECK_ORPHAN_STOP_SECONDS:-60} )); do
+      sleep "${poll}"; grace_stop=$((grace_stop + poll)); elapsed=$((elapsed + poll)); pids="$(steady_check_find_refresh_orphans)"
+    done
+    for pid in ${pids}; do kill -KILL "${pid}" 2>/dev/null || true; done
+    STEADY_ORPHAN_ACTION="stopped"; STEADY_ORPHAN_SECONDS="${elapsed}"
+  fi
+  info "left-over refresh: action=${STEADY_ORPHAN_ACTION} seconds=${STEADY_ORPHAN_SECONDS}"
+  return 0
+}
+
+# Removes the outcome (and lock/temp) files that calls of this run left in /tmp, except this
+# call's own output. Sets STEADY_CLEANUP_COUNT and STEADY_CLEANUP_BYTES. STEADY_CHECK_TMP_DIR is for tests.
+steady_check_cleanup_call_files() {
+  local run_id="${PANTHEON_REFRESH_RUN_ID:-}" tmp="${STEADY_CHECK_TMP_DIR:-/tmp}" own="${1:-}" f size
+  STEADY_CLEANUP_COUNT=0; STEADY_CLEANUP_BYTES=0
+  [[ -n "${run_id}" && "${run_id}" =~ ^[0-9]+$ ]] || return 0
+  for f in "${tmp}/pantheon-refresh-outcome-${run_id}-"* "${tmp}/.pantheon-refresh-outcome-${run_id}-"*; do
+    [[ -f "${f}" && ! -L "${f}" && "${f}" != "${own}" ]] || continue
+    size="$(stat -c %s "${f}" 2>/dev/null || echo 0)"
+    rm -f "${f}" && { STEADY_CLEANUP_COUNT=$((STEADY_CLEANUP_COUNT + 1)); STEADY_CLEANUP_BYTES=$((STEADY_CLEANUP_BYTES + size)); }
+  done
+  info "removed ${STEADY_CLEANUP_COUNT} left-over refresh call file(s), ${STEADY_CLEANUP_BYTES} bytes"
+  return 0
+}
+
+# Seconds a service may stay in health "starting": its healthcheck start period plus one
+# interval (Docker defaults 0s/30s when unset; 90+30 when the container cannot be inspected).
+steady_check_health_bound_seconds() {
+  docker inspect --format '{{json .Config.Healthcheck}}' "$1" 2>/dev/null | python3 -c 'import json,sys
+try:
+    h=json.load(sys.stdin) or {}
+    print(int((int(h.get("StartPeriod") or 0)+int(h.get("Interval") or 30000000000))/1000000000))
+except Exception:
+    print(120)' 2>/dev/null || echo 120
+}
+
 # Probe and, when needed, repair the steady posture after a refresh run ended
 # (including by timeout or cancellation). Writes a small JSON outcome.
 # status: healthy | restored | failed.
 execute_steady_posture_check() {
   local output_path="${1:-}" grace="${STEADY_CHECK_GRACE_SECONDS:-90}"
-  local reason="" status="healthy" attempt=0 svc cid state mode health
+  local reason="" status="healthy" attempt=0 svc cid state mode health waited_cids=" "
+  steady_check_settle_refresh_orphans
+  steady_check_cleanup_call_files "${output_path}"
   steady_posture_problem() {
     reason=""
-    local s c st md hl
+    local s c st md hl bound waited poll="${STEADY_CHECK_HEALTH_POLL_SECONDS:-5}"
     for s in source-ingest source-ingest-scheduler; do
       c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${s}" 2>/dev/null | head -n1 || true)"
       [[ -n "${c}" ]] || { reason="${s}_not_running"; return 0; }
       hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+      # A service that was just started or recreated is still in its start period: wait for
+      # it to leave "starting" (at most start period + one interval) before judging it.
+      # An already healthy service is judged at once. Waited once per container.
+      if [[ "${hl}" == "starting" && "${waited_cids}" != *" ${c} "* ]]; then
+        waited_cids+="${c} "
+        bound="$(steady_check_health_bound_seconds "${c}")"; waited=0
+        info "${s} health is starting; waiting up to ${bound}s (start period + one interval)"
+        while [[ "${hl}" == "starting" ]] && (( waited < bound )); do
+          sleep "${poll}"; waited=$((waited + poll))
+          hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+        done
+        info "${s} health=${hl:-none} after ${waited}s"
+      fi
       if [[ -n "${hl}" && "${hl}" != "healthy" ]]; then reason="${s}_${hl}"; return 0; fi
     done
     c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
@@ -3777,6 +3925,7 @@ json.dump(env,sys.stdout)' > "${env_file}" || restore_rc=1
       if (( restore_rc != 0 )); then
         reason="steady_restore_failed:${first_reason}"
       else
+        waited_cids=" "
         steady_posture_problem
         if [[ -n "${reason}" ]]; then restore_rc=1; reason="steady_restore_incomplete:${reason}"; fi
       fi
@@ -3784,11 +3933,18 @@ json.dump(env,sys.stdout)' > "${env_file}" || restore_rc=1
     rm -f "${env_file}"
     if (( restore_rc == 0 )); then status="restored"; reason="${first_reason}"; else status="failed"; fi
   fi
-  [[ -n "${output_path}" ]] && python3 - "${output_path}" "${status}" "${reason}" <<'STEADY_PY'
-import json, sys
+  [[ -n "${output_path}" ]] && STEADY_ORPHAN_ACTION="${STEADY_ORPHAN_ACTION:-none}" STEADY_ORPHAN_PIDS="${STEADY_ORPHAN_PIDS:-}" STEADY_ORPHAN_SECONDS="${STEADY_ORPHAN_SECONDS:-0}" STEADY_CLEANUP_COUNT="${STEADY_CLEANUP_COUNT:-0}" STEADY_CLEANUP_BYTES="${STEADY_CLEANUP_BYTES:-0}" python3 - "${output_path}" "${status}" "${reason}" <<'STEADY_PY'
+import json, os, sys
 path, status, reason = sys.argv[1:4]
+payload = {"mode": "collector_steady_pull", "reason": reason, "status": status}
+if os.environ.get("STEADY_ORPHAN_ACTION", "none") != "none":
+    payload["orphan"] = {"action": os.environ["STEADY_ORPHAN_ACTION"], "pids": os.environ.get("STEADY_ORPHAN_PIDS", ""), "seconds": int(os.environ.get("STEADY_ORPHAN_SECONDS") or 0)}
+if int(os.environ.get("STEADY_CLEANUP_COUNT") or 0):
+    payload["cleanup"] = {"bytes": int(os.environ.get("STEADY_CLEANUP_BYTES") or 0), "files": int(os.environ["STEADY_CLEANUP_COUNT"])}
+if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
+    payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
 with open(path, "w", encoding="utf-8") as f:
-    f.write(json.dumps({"mode": "collector_steady_pull", "reason": reason, "status": status}, sort_keys=True) + "\n")
+    f.write(json.dumps(payload, sort_keys=True) + "\n")
 STEADY_PY
   info "steady posture check: status=${status} reason=${reason:-none}"
   [[ "${status}" != "failed" ]]
@@ -3826,7 +3982,7 @@ execute_bounded_source_refresh_entrypoint() {
     [[ -n "${output_path:-}" ]] || return 0
     local out_status="$1" out_reason="$2" base_json="${3:-${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}}"
     python3 - "${output_path}" "${out_status}" "${out_reason}" "${base_json}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'OUTCOME_PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 out_path, status, reason, base_raw, log_file, connector_id, dataset = sys.argv[1:8]
 payload = {}
 if base_raw:
@@ -3846,6 +4002,8 @@ if connector_id and "connector_id" not in payload:
     payload["connector_id"] = connector_id
 if dataset and "dataset" not in payload:
     payload["dataset"] = dataset
+if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
+    payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
 pathlib.Path(out_path).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 OUTCOME_PY
   }
@@ -3898,7 +4056,7 @@ OUTCOME_PY
       if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
         write_bounded_refresh_outcome "failed" "${err_reason}" "${preflight_output}"
       else
-        [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+        if [[ -n "${output_path}" ]]; then printf '%s\n' "${preflight_output}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
       fi
       info "bounded source refresh preflight error: ${preflight_output}" >&2
       trap - EXIT INT TERM
