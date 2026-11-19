@@ -65,6 +65,10 @@ from .connectors import (
     SourceType,
     example_provider_catalog,
 )
+from .chip_publication_schedule import (
+    FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS,
+    finmind_fundamental_publication_fresh,
+)
 from .configured import ConfiguredConnector, ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .distillation_worker import DistillationJobQueue
 from .external_sources import (
@@ -707,6 +711,15 @@ class SourceIngestionRuntime:
                     calendar_evidence=cal_ev,
                 )
                 stale = not tw_ok
+        elif connector_id in FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS:
+            stale = source_timestamp_status != "valid" or (
+                source_timestamp_dt is not None
+                and not finmind_fundamental_publication_fresh(
+                    FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS[connector_id],
+                    source_timestamp_dt,
+                    now,
+                )
+            )
         else:
             stale = source_timestamp_status != "valid" or (
                 age_seconds is not None and age_seconds > stale_threshold_seconds

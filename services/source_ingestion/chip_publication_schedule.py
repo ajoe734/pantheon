@@ -615,8 +615,42 @@ def expected_finmind_fundamental_period_ends(dataset: str, session_date: date) -
         return (statutory_due_q,) if statutory_due_q == latest_closed_q else (statutory_due_q, latest_closed_q)
     raise ValueError(f"unknown FinMind fundamental dataset {dataset!r}")
 
+# Controller freshness for slow FinMind fundamentals is decided by publication,
+# not by the generic cadence threshold. The stored ``source_timestamp`` of these
+# connectors is the statutory publication time of the newest stored period.
+FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS = {
+    "tw-finmind-monthly-revenue": "tw_monthly_revenue",
+    "tw-finmind-quarterly-statements": "tw_quarterly_statements",
+}
+# Days after a statutory deadline during which the previous period is still accepted.
+FINMIND_FUNDAMENTAL_PUBLICATION_GRACE_DAYS = 2
+
+
+def finmind_fundamental_publication_fresh(
+    dataset: str, source_timestamp: datetime, now: datetime
+) -> bool:
+    """True when the newest stored period is the newest one due as of ``now`` minus grace.
+
+    Uses ``expected_finmind_fundamental_period_ends`` and ``statutory_available_date``;
+    fails closed (False) when the schedule cannot be resolved.
+    """
+    from services.source_ingestion.feature_catalogue import statutory_available_date
+
+    as_of = now.astimezone(TAIPEI_TZ).date() - timedelta(days=FINMIND_FUNDAMENTAL_PUBLICATION_GRACE_DAYS)
+    try:
+        required_end = min(expected_finmind_fundamental_period_ends(dataset, as_of))
+        deadline = statutory_available_date(dataset, required_end)
+    except ValueError:
+        return False
+    if deadline is None:
+        return False
+    return source_timestamp.astimezone(TAIPEI_TZ).date() >= deadline
+
 
 __all__ = [
+    "FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS",
+    "FINMIND_FUNDAMENTAL_PUBLICATION_GRACE_DAYS",
+    "finmind_fundamental_publication_fresh",
     "CHIP_PUBLICATION_SCHEDULES",
     "ChipPublicationSchedule",
     "ChipPublicationVerdict",
