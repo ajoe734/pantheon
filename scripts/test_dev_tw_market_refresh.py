@@ -3532,3 +3532,229 @@ def test_chip_preflight_does_not_require_equity_price_snapshots():
                                        profile=(cid, profile['dataset']), readback={'connectors': []})
         assert result['status'] == 'proceed', (cid, result)
         assert result['reason'] != 'snapshot_missing'
+
+
+def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(tmp_path: Path):
+    """Acceptance 1, 2, 3, 4: hosted TWSE margin empty-date record and FinMind broker SourceRecord.to_dict() without
+    top-level provenance both pass terminal readback and fail when date+event_time or symbol coverage are missing.
+    """
+    body = DEPLOY_SCRIPT.read_text(encoding="utf-8").split("verify_bounded_source_refresh_readback() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+    # 1. Hosted TWSE margin shape (2026-11-18T23:53:58Z, ingest-2f56b4efe47f)
+    twse_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:53:58Z",
+                "source_timestamp_status": "valid",
+                "started_at": "2026-11-18T23:53:58Z",
+                "finished_at": "2026-11-18T23:53:58Z",
+                "created_at": "2026-11-18T23:57:32Z",
+                "ingest_run_id": "ingest-2f56b4efe47f",
+            }
+        ]
+    }
+    twse_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:53:58Z",
+                    "source_timestamp": "2026-11-18T23:53:58Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {
+                        "ingest_run_id": "ingest-2f56b4efe47f",
+                        "source_timestamp": "2026-11-18T23:53:58Z",
+                        "source_timestamp_status": "valid",
+                        "finished_at": "2026-11-18T23:53:58Z",
+                    },
+                },
+                "latest_source_record": {
+                    "source_id": "tw-official:tw_margin_short_balance:TWSE:2330:868572793d1b6354",
+                    "connector_id": "tw-official-twse-margin-balances",
+                    "status": "normalized",
+                    "metadata": {
+                        "date": "",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "dataset": "tw_margin_short_balance",
+                        "event_time": "",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "normalized_row": {
+                            "date": "",
+                            "venue": "TWSE",
+                            "symbol": "2330",
+                            "dataset": "tw_margin_short_balance",
+                            "available_time": "",
+                        },
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                    "provenance": {
+                        "dataset": "tw_margin_short_balance",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "event_time": "",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "twse_receipts.json").write_text(json.dumps(twse_receipts), encoding="utf-8")
+    (tmp_path / "twse_readback.json").write_text(json.dumps(twse_readback), encoding="utf-8")
+    (tmp_path / "projection.json").write_text("{}", encoding="utf-8")
+
+    preflight_res = _run_preflight_script(
+        False,
+        datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+        None,
+        profile=("tw-official-twse-margin-balances", "tw_margin_short_balance"),
+        readback=twse_readback,
+    )
+    assert (preflight_res["status"], preflight_res["reason"], preflight_res["session_date"]) == (
+        "noop",
+        "already_fresh",
+        "2026-11-18",
+    )
+
+    proc_twse = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_twse.returncode == 0, proc_twse.stderr
+
+    # Missing both date and event_time fails naming the missing fields.
+    missing_twse = json.loads(json.dumps(twse_readback))
+    missing_twse["connectors"][0]["latest_source_record"]["metadata"]["available_time"] = ""
+    missing_twse["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = ""
+    missing_twse["connectors"][0]["freshness"]["source_timestamp"] = ""
+    missing_twse["connectors"][0]["freshness"]["latest_receipt"]["source_timestamp"] = ""
+    (tmp_path / "twse_missing.json").write_text(json.dumps(missing_twse), encoding="utf-8")
+    proc_missing = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_missing.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_missing.returncode != 0
+    assert "metadata.date" in proc_missing.stderr and "provenance.event_time" in proc_missing.stderr
+
+    # 2. Hosted FinMind broker SourceRecord.to_dict() shape (2026-11-18T23:41:43Z, ingest-78b81ff0f04d, no provenance key)
+    fm_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:41:43Z",
+                "source_timestamp_status": "valid",
+                "finished_at": "2026-11-18T23:41:43Z",
+                "ingest_run_id": "ingest-78b81ff0f04d",
+            }
+        ]
+    }
+    fm_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:41:43Z",
+                    "source_timestamp": "2026-11-18T23:41:43Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {"ingest_run_id": "ingest-78b81ff0f04d"},
+                },
+                "latest_source_record": {
+                    "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                    "connector_id": "tw-finmind-broker-daily-report",
+                    "status": "normalized",
+                    "metadata": {"dataset": "tw_broker_top", "source_ingest_run_id": "ingest-78b81ff0f04d"},
+                    "provenance": {"dataset": "tw_broker_top", "source_ingest_run_id": "ingest-78b81ff0f04d"},
+                },
+            }
+        ]
+    }
+    fm_records = {
+        "source_records": [
+            {
+                "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                "connector_id": "tw-finmind-broker-daily-report",
+                "source_type": "market",
+                "title": "FinMind broker top sell 0050 2026-11-18 #3 群益",
+                "content_ref": "finmind://broker-top/0050/2026-11-18/sell/3",
+                "status": "normalized",
+                "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-18",
+                "created_at": "2026-11-18T23:41:43Z",
+                "metadata": {
+                    "dataset": "tw_broker_top",
+                    "symbol": "0050",
+                    "trade_date": "2026-11-18",
+                    "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    "refresh_coverage": {
+                        "status": "complete",
+                        "trade_date": "2026-11-18",
+                        "covered_symbols": ["2330", "2317", "0050"],
+                        "missing_symbols": [],
+                        "requested_symbols": ["2330", "2317", "0050"],
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "fm_receipts.json").write_text(json.dumps(fm_receipts), encoding="utf-8")
+    (tmp_path / "fm_readback.json").write_text(json.dumps(fm_readback), encoding="utf-8")
+    (tmp_path / "fm_records.json").write_text(json.dumps(fm_records), encoding="utf-8")
+
+    proc_fm = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-finmind-broker-daily-report",
+            "2026-11-18T23:38:00Z",
+            str(tmp_path / "fm_receipts.json"),
+            str(tmp_path / "fm_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_broker_top",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "fm_records.json")},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_fm.returncode == 0, proc_fm.stderr
+
