@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 from threading import RLock
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
-from services.external_egress import open_external_url
+from services.external_egress import GuardedKeepAliveClient, open_external_url
 
 from ..external_sources import validate_external_source_record
 from .base import (
@@ -112,7 +112,14 @@ LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 # Bound that work even when the Collector transport is fast; the remainder continues.
 LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
+# Upper bound on kept-alive connections (= in-flight raw reads) to the collector host within
+# one raw verification window; connections close when the window ends. Equal to the existing
+# history width on purpose: a narrower cap would cut hosted TPEx history from 16 to 8 rows per
+# pull (the 15 s budget is already spent before the raw window; one group of 16 is read).
+# Keep-alive alone removes the per-read handshake; width is unchanged.
+COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL = HISTORY_RAW_READ_CONCURRENCY
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+_KEEPALIVE_CLIENT: ContextVar[GuardedKeepAliveClient | None] = ContextVar("collector_keepalive", default=None)
 # Process-local, shared across the short-lived adapters built by configured pulls.
 # No serialized trust marker survives a restart. Bounds apply to both population
 # and encoded metadata size; raw bodies are never cached here.
@@ -123,6 +130,18 @@ VERIFIED_METADATA_CACHE_ENTRIES = 16
 VERIFIED_METADATA_CACHE_BYTES = MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES
 _METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
 _METADATA_CACHE_LOCK = RLock()
+# In-memory only (nothing persisted, nothing survives a restart): bounded by count.
+# Trade date proven for one exact (run, bundle_sha256): lets the priority path skip re-verifying
+# a run fetched on a later date that carries an earlier session.
+PRIORITY_TRADE_DATE_MEMO_ENTRIES = 512
+_PRIORITY_TRADE_DATE_MEMO: OrderedDict[tuple, str] = OrderedDict()
+# Per connector scope: the latest session was fully delivered for exactly this candidate index
+# fingerprint and persisted state; an identical index lets the next pull skip every verification.
+PRIORITY_DELIVERED_MEMO_ENTRIES = 64
+# Per scope: (date, run_id) of the bundle the ordered history sweep is reading; the priority
+# path's superseded-session eviction must not drop it. One entry per scope, bounded by scopes.
+_HISTORY_READING: dict[tuple, set[tuple[str, str]]] = {}
+_PRIORITY_DELIVERED_MEMO: OrderedDict[tuple, tuple[str, str, str, tuple[str, ...], str]] = OrderedDict()
 
 
 class _DeadlineBody:
@@ -301,9 +320,14 @@ class HttpBundleTransport(BundleTransport):
             # the body stream is held to the same floored deadline, chunk by chunk.
             timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
             op_deadline = max(op_deadline, time.monotonic() + 1.0)
-        with open_external_url(
-            request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
-        ) as response:
+        client = _KEEPALIVE_CLIENT.get()
+        if client is not None and client.host == self.host.lower().rstrip("."):
+            opened = client.open(request, timeout=timeout, deadline=op_deadline)
+        else:
+            opened = open_external_url(
+                request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+            )
+        with opened as response:
             if op_deadline is not None:
                 response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)
@@ -603,6 +627,27 @@ def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
         return actual, data
 
     width = max(1, min(raw_read_concurrency, HISTORY_RAW_READ_CONCURRENCY))
+    keepalive: GuardedKeepAliveClient | None = None
+    token = None
+    if isinstance(transport, HttpBundleTransport) and wanted_ids:
+        width = max(1, min(width, COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL))
+        keepalive = GuardedKeepAliveClient(
+            transport.host, caller="source_ingest.collector_bundle", max_connections=width,
+            timeout=transport.timeout_seconds)
+        token = _KEEPALIVE_CLIENT.set(keepalive)
+    verified_through = None
+    try:
+        verified_through = _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes)
+    finally:
+        if token is not None:
+            _KEEPALIVE_CLIENT.reset(token)
+        if keepalive is not None:
+            keepalive.close()
+    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
+
+
+def _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes):
+    verified_through = None
     # A separate context per worker preserves the *same* operation deadline and
     # egress policy. Never acknowledge out of order or discard a genuine failure
     # from a later parallel read merely because an earlier read timed out.
@@ -632,8 +677,7 @@ def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
                 raw_bytes[actual] = data
             if verified_through is not None:
                 break
-
-    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
+    return verified_through
 
 
 def observed_from_collector_status(
@@ -958,6 +1002,16 @@ class CollectorBundleAdapter:
     def _priority_key_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
 
+    def _metadata_scope(self, transport: BundleTransport) -> tuple:
+        if isinstance(transport, HttpBundleTransport):
+            namespace = (transport.host, transport.token_env,
+                         _sha256(os.environ.get(transport.token_env, "").encode()))
+        elif isinstance(transport, LocalDirectoryBundleTransport):
+            namespace = (str(Path(transport.root_dir).resolve()),)
+        else:
+            namespace = (id(transport),)
+        return (str(self._raw_root().resolve()), self.source_id, namespace)
+
     def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
         """Reuse only fully verified immutable metadata bound to the live index.
 
@@ -968,14 +1022,7 @@ class CollectorBundleAdapter:
         digest = str(entry.get("bundle_sha256") or "").lower()
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
-        if isinstance(transport, HttpBundleTransport):
-            namespace = (transport.host, transport.token_env,
-                         _sha256(os.environ.get(transport.token_env, "").encode()))
-        elif isinstance(transport, LocalDirectoryBundleTransport):
-            namespace = (str(Path(transport.root_dir).resolve()),)
-        else:
-            namespace = (id(transport),)
-        scope = (str(self._raw_root().resolve()), self.source_id, namespace)
+        scope = self._metadata_scope(transport)
         key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
         with _METADATA_CACHE_LOCK:
             cached = _METADATA_CACHE.get(key)
@@ -1056,6 +1103,28 @@ class CollectorBundleAdapter:
 
         state = self._priority_document()
         state_key, delivered, _, state_held = self._load_priority_state()
+        scope = self._metadata_scope(transport)
+        state_hash = _sha256(json.dumps(state.get("items") or {}, sort_keys=True).encode())
+
+        def fingerprint(trade_day: str) -> str | None:
+            # Every index entry that could still hold this session (upper bound not below it).
+            # Unverifiable-by-digest entries are never memoised.
+            parts = []
+            for e in mine:
+                if upper_bound(e) >= trade_day:
+                    if not re.fullmatch(r"[0-9a-f]{64}", str(e.get("bundle_sha256") or "").lower()):
+                        return None
+                    parts.append(json.dumps(dict(e), sort_keys=True, separators=(",", ":")))
+            return _sha256("\n".join(sorted(parts)).encode())
+
+        with _METADATA_CACHE_LOCK:
+            known_delivered = _PRIORITY_DELIVERED_MEMO.get(scope)
+        if (known_delivered is not None and state.get("trade_date") == known_delivered[0]
+                and state_key == known_delivered[1] and state_held == held
+                and state_hash == known_delivered[4] and fingerprint(known_delivered[0]) == known_delivered[2]):
+            # Same candidate index, same persisted state, session fully delivered: the full
+            # verification below would find nothing pending and return None.
+            return None
         best: tuple[str, str, VerifiedBundle] | None = None
         candidates: list[tuple[str, str, VerifiedBundle]] = []
         for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
@@ -1063,6 +1132,12 @@ class CollectorBundleAdapter:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
+            memo_key = (*scope, str(entry.get("run_id") or ""), digest.lower())
+            if best and re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+                with _METADATA_CACHE_LOCK:
+                    known_day = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                if known_day is not None and known_day < best[0]:
+                    continue  # proven earlier session for this exact bundle; not a candidate
             bundle = self._verified_metadata(transport, entry)
             if not bundle.items:
                 continue
@@ -1072,6 +1147,12 @@ class CollectorBundleAdapter:
             if digest:
                 if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
                     raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+                if re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+                    with _METADATA_CACHE_LOCK:
+                        _PRIORITY_TRADE_DATE_MEMO[memo_key] = trade_date
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                        while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                            _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
             candidates.append((trade_date, key, bundle))
             if best is None or (trade_date, key) > best[:2]:
                 best = (trade_date, key, bundle)
@@ -1104,11 +1185,21 @@ class CollectorBundleAdapter:
             if day == trade_date:
                 for row in candidate.items:
                     session_items.setdefault(str(row["id"]), (candidate, row))
+        # Release cached earlier-session metadata, except the history bundle the ordered
+        # sweep is currently reading (it is not a candidate and must survive across pulls).
+        # Earlier-session candidates this pull verified are kept so they are not re-read next pull.
+        kept = {(c.date, c.run_id) for day, _, c in candidates if day < trade_date}
         with _METADATA_CACHE_LOCK:
+            reading = _HISTORY_READING.get(scope, set())
             for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
-                if (cache_key[:2] == (str(self._raw_root().resolve()), self.source_id)
-                        and cached.items and _bundle_trade_date({}, cached.items) < trade_date):
+                if (cache_key[:3] == scope and cached.items
+                        and _bundle_trade_date({}, cached.items) < trade_date
+                        and (cached.date, cached.run_id) not in reading
+                        and (cached.date, cached.run_id) not in kept
+                        and (*scope, cached.run_id, str(cached.manifest.get("bundle_sha256") or "").lower())
+                        not in _PRIORITY_TRADE_DATE_MEMO):
                     del _METADATA_CACHE[cache_key]
+            _PRIORITY_DELIVERED_MEMO.pop(scope, None)
         pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
                    if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
         pending.sort(key=lambda pair: not (
@@ -1117,6 +1208,13 @@ class CollectorBundleAdapter:
         if not pending:
             if state_key != key or not state.get("trade_date") or state_held != held:
                 return [], key, (), len(session_items), True, held, trade_date, delivered_items
+            fp = fingerprint(trade_date)
+            if fp is not None and state.get("trade_date") == trade_date:
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, state_hash)
+                    _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
+                    while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
+                        _PRIORITY_DELIVERED_MEMO.popitem(last=False)
             return None
         if _DEFER_ACK.get():
             total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)
@@ -1181,6 +1279,8 @@ class CollectorBundleAdapter:
         # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
         total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         verified: list[VerifiedBundle] = []
+        with _METADATA_CACHE_LOCK:
+            _HISTORY_READING.pop(self._metadata_scope(transport), None)
         acknowledged_only_keys: set[str] = set()
         rejected: list[Mapping[str, Any]] = []
         rejected_keys: set[str] = set()
@@ -1254,6 +1354,11 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
+                with _METADATA_CACHE_LOCK:
+                    # The bundle whose raw rows this pull windows is the one being backfilled.
+                    reading_set = _HISTORY_READING.setdefault(self._metadata_scope(transport), set())
+                    if len(reading_set) < VERIFIED_METADATA_CACHE_ENTRIES:
+                        reading_set.add((str(entry.get("date") or ""), str(entry.get("run_id") or "")))
                 if metadata_bundle is not None:
                     bundle = _verify_raw_window(
                         transport, metadata_bundle, item_window=(skip, skip + remaining), deadline=deadline,

@@ -35,7 +35,14 @@ SUDO="${SUDO_BIN:-sudo}"
 CADDY_CONTAINER="${PROD_CADDY_CONTAINER:-pantheon-caddy}"
 SNAPSHOT_MAX_AGE="${PROD_SNAPSHOT_MAX_AGE_SECONDS:-3600}"
 
-fail() { printf '{"status":"error","step":"%s","error_code":"%s","message":"%s"}\n' "$STEP" "$1" "$2" >&2; exit 1; }
+fail() {
+  printf '{"status":"error","step":"%s","error_code":"%s","message":"%s"}\n' "$STEP" "$1" "$2" >&2
+  # Helpers run inside $(...) subshells: an `exit` there would only end the subshell and let the caller continue
+  # with an empty value. Terminate the whole controller (the TERM trap below maps it to exit 1).
+  [[ "${BASHPID:-$$}" == "$$" ]] || kill -TERM "$$" 2>/dev/null
+  exit 1
+}
+trap 'exit 1' TERM
 need() { local v; for v in "$@"; do [[ -n "${!v:-}" ]] || fail "MISSING_INPUT" "required env ${v} is missing"; done; }
 
 run_priv() {
@@ -271,7 +278,20 @@ production_schema_gate() {
   catalog="$(live_catalog)" || { GATE_REASON="production live catalog unreadable (database unreachable)"; return 1; }
   GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
-container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
+# compose_ps_ids <service...>: container ids for the services. A compose failure (e.g. unresolved ':?' release
+# variable, unknown service, daemon error) is a COMPOSE_ERROR carrying the compose error text — never an empty/zero result.
+compose_ps_ids() {
+  local out err rc msg
+  err="$(mktemp)"
+  out="$(compose "${CORE_PROFILES[@]}" ps -q "$@" 2>"$err")"; rc=$?
+  if (( rc != 0 )); then
+    msg="$(head -c 500 "$err" | tr '\n\r"\\' '    ')"; rm -f "$err"
+    fail COMPOSE_ERROR "container lookup for $* failed (rc=${rc}): ${msg}"
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
+container_of() { local o; o="$(compose_ps_ids "$1")" || return 1; printf '%s\n' "$o" | head -n1; }
 # mint_gate_token <port> <outfile>: viewer SERVICE token for the explicit production tenant, signed inside the BFF
 # container with its own secret/issuer/audience. Written 0600; the secret is never read or printed by this script.
 mint_gate_token() {
@@ -306,13 +326,14 @@ wait_until() { # wait_until <tries> <interval> <command...>
   for _ in $(seq 1 "$tries"); do "$@" && return 0; sleep "$interval"; done
   return 1
 }
-singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
-worker_count() { compose ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
+singleton_count() { local o; o="$(compose_ps_ids lifecycle-projector)" || return 1; printf '%s\n' "$o" | grep -c . || true; }
+worker_count() { local o; o="$(compose_ps_ids $PRODUCT_WORKER_SERVICE)" || return 1; printf '%s\n' "$o" | grep -c . || true; }
 # Every singleton worker (Agora request worker, Paper fleet reconciler, Paper signal producer) is exactly one.
+container_count() { local o; o="$(compose_ps_ids "$1")" || return 1; printf '%s\n' "$o" | grep -c . || true; }
 workers_each_single() {
   local svc
   for svc in $PRODUCT_WORKER_SERVICE; do
-    [[ "$(compose ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
+    [[ "$(container_count "$svc")" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
   done
 }
 # Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
@@ -691,6 +712,8 @@ PY
     ;;
 
   post_identity)
+    # Compose interpolation requires the candidate release keys (':?'); the bootstrap compose.env holds none of them.
+    release_env
     verify_public_fe_bff_pair "${PROD_TARGET_PORT:-}" "" "" "" "" "" ""
     ;;
 

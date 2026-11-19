@@ -1,0 +1,14 @@
+{
+  "task": "AGORA-SOURCE-INTERNAL-EGRESS-GUARD-20261119",
+  "change": "Guard moved to services/external_egress.py (open_internal_service_url + InternalServiceRedirectHandler); configured.py _open_configured_url and agora_owner.py fetch_payload both call it. No copy; agora_owner no longer calls urlopen.",
+  "tests": {
+    "services/test_external_egress.py + services/source_ingestion/tests/test_agora_owner_connector.py": "49 passed on python3.12 after merging origin/dev, with test_collector_raw_reads_pooled.py (includes test_every_production_connector_uses_guarded_transport; static assertions retargeted to the new guard location, not weakened)",
+    "new_tests": [
+      "test_agora_fetch_refuses_external_host_before_connecting (socket.connect patched; no connection opened)",
+      "test_agora_fetch_refuses_redirect_to_external_host_without_forwarding_token (local HTTP server 302 -> external host; refused, token not forwarded)"
+    ],
+    "pre_existing_unrelated": "test_configured_connector_fetcher_live_http_pull_and_shadow_mode_c4_compatibility fails with -k selection across the whole tests dir identically on unmodified dev (order dependent); passes when the file runs alone"
+  },
+  "ci_coverage": "No job in .github/workflows runs services/test_external_egress.py or services/source_ingestion/tests/test_agora_owner_connector.py (grep found none); CI coverage is CI-EVERY-TEST-FILE-RUNS-20261119.",
+  "runtime_budget": "no new writer"
+}

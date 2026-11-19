@@ -1813,7 +1813,7 @@ verify_bounded_source_refresh_readback() {
   local finmind_records_file=""
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
     finmind_records_file="$(mktemp)"
-    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+    fetch_finmind_source_records "${finmind_records_file}" "${deploy_started_at}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
   fi
   BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
   local readback_verdict_file="" readback_err_file="" readback_py_rc=0
@@ -1821,6 +1821,7 @@ verify_bounded_source_refresh_readback() {
   readback_err_file="$(mktemp)"
   if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
     BOUNDED_REFRESH_VERDICT_PATH="${readback_verdict_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
     python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
@@ -1841,6 +1842,15 @@ from pathlib import Path
 from services.execution.market_snapshot_admission import (
     evaluate_taiwan_market_freshness,
     is_taiwan_symbol,
+)
+
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
 )
 
 
@@ -1970,22 +1980,18 @@ if profile is not None:
         calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
         return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
 
-    raw_date = row.get("date") if row.get("date") is not None else record_metadata.get("date")
-    if raw_date is None:
-        raw_date = provenance.get("trade_date")
-    record_date = str(raw_date or "").strip()[:10]
+    record_session_date, session_err = derive_chip_record_provider_session(
+        connector_id,
+        record_metadata,
+        provenance,
+        latest_receipt,
+        freshness,
+        is_session_day=_is_session_day,
+    )
+    record_date = record_session_date.isoformat() if record_session_date is not None else ""
     if connector_id in CHIP_PUBLICATION_SCHEDULES:
-        if not record_date and raw_date is None and connector_id == "tw-official-twse-margin-balances":
-            ev_raw = (
-                provenance.get("event_time")
-                or record_metadata.get("available_time")
-                or latest_receipt.get("source_timestamp")
-                or freshness.get("source_timestamp")
-            )
-            if ev_raw and "T" in str(ev_raw):
-                record_date = latest_published_chip_session(
-                    connector_id, timestamp(ev_raw), is_session_day=_is_session_day
-                ).isoformat()
+        if record_session_date is None:
+            raise SystemExit(session_err)
         chip_verdict = evaluate_chip_provider_session(
             connector_id,
             provider_session=record_date,
@@ -2128,34 +2134,6 @@ else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
 
 
-def finmind_bare_symbol(value):
-    text = str(value).strip().upper()
-    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
-        if text.endswith(suffix):
-            return text[: -len(suffix)]
-    return text
-
-
-def finmind_coverage(records, expected, *, accept):
-    """Union refresh_coverage across every accepted batch record against the current symbols."""
-    covered = set()
-    partial_missing = set()
-    seen = False
-    for record in records:
-        if not isinstance(record, dict) or not accept(record):
-            continue
-        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-        cov = meta.get("refresh_coverage")
-        if not isinstance(cov, dict):
-            continue
-        seen = True
-        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
-        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
-    wanted = [finmind_bare_symbol(item) for item in expected]
-    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
-    return seen, missing, sorted(covered), sorted(partial_missing)
-
-
 if connector_id == "tw-finmind-broker-daily-report":
     run_ids = {
         str(item["ingest_run_id"])
@@ -2176,7 +2154,7 @@ if connector_id == "tw-finmind-broker-daily-report":
         all_records,
         expected_symbols,
         accept=lambda rec: rec.get("connector_id") == connector_id
-        and str((rec.get("provenance") or {}).get("source_ingest_run_id") or "") in run_ids,
+        and finmind_record_run_id(rec) in run_ids,
     )
     if not seen or missing_syms:
         raise SystemExit(
@@ -2366,57 +2344,100 @@ ensure_dev_caddy_ingress() (
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
 
-# Reads /api/source-ingest/source-records through the real strict JWT/tenant
-# boundary. A short-lived HS256 token is minted inside the source-ingest
-# container from its own runtime verifier env, so no secret reaches the host
-# command line, logs or this script's stdout. Writes the JSON body to $1.
-fetch_finmind_source_records() {
-  local out_path="$1" cid=""
-  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
-  [[ -n "${cid}" ]] || return 1
-  docker exec -i "${cid}" python3 - >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
-import json, os, time, urllib.request
-from services.runtime_auth_inbound import encode_jwt_hs256
+emit_taiwan_refresh_shared_helpers() {
+  cat <<'SHARED_TW_REFRESH_HELPERS_PY'
+# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---
+from datetime import date as _shared_date, datetime as _shared_datetime, timedelta as _shared_timedelta, timezone as _shared_timezone
+from services.source_ingestion.chip_publication_schedule import (
+    CHIP_PUBLICATION_SCHEDULES as _SHARED_CHIP_SCHEDULES,
+    latest_published_chip_session as _shared_latest_published_chip_session,
+)
 
-secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
-tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
-if not secret or not tenant:
-    raise SystemExit(2)
-now = int(time.time())
-claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
-if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
-    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
-if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
-    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
-headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
-port = os.environ.get("PORT", "8097")
-req = urllib.request.Request(f"http://127.0.0.1:{port}/api/source-ingest/source-records", headers=headers)
-with urllib.request.urlopen(req, timeout=30) as resp:
-    print(resp.read().decode("utf-8"))
-FINMIND_RECORDS_PY
-}
+CHIP_RECORD_DATE_FIELDS = (
+    "metadata.date",
+    "metadata.normalized_row.date",
+    "provenance.trade_date",
+)
+CHIP_RECORD_EVENT_TIME_FIELDS = (
+    "provenance.event_time",
+    "metadata.event_time",
+    "provenance.available_time",
+    "metadata.available_time",
+    "latest_receipt.source_timestamp",
+    "freshness.source_timestamp",
+)
 
-check_taiwan_refresh_preflight() {
-  local force="${1:-false}" finmind_records_file=""
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
-    finmind_records_file="$(mktemp)"
-    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
-  fi
-  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - "${force}" <<'PREFLIGHT_PY'
-import json, os, sys, urllib.error, urllib.parse, urllib.request
-from datetime import date, datetime, time, timedelta, timezone
 
-tz = timezone(timedelta(hours=8))
-force = str(sys.argv[1]).lower() == "true"
-# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
-pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
-now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
-now_t = now_u.astimezone(tz)
-d_str = str(now_t.date())
-def emit(status, **kw):
-    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+def derive_chip_record_provider_session(
+    connector_id,
+    metadata,
+    provenance,
+    latest_receipt=None,
+    freshness=None,
+    *,
+    is_session_day,
+):
+    """Derive a chip record's provider session date identically across preflight and readback.
 
-from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+    An empty date string is treated like a missing date and falls back to the record's event/available
+    time via latest_published_chip_session. When both date and event_time are missing or invalid,
+    returns (None, message_naming_missing_fields).
+    """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    provenance = provenance if isinstance(provenance, dict) else {}
+    latest_receipt = latest_receipt if isinstance(latest_receipt, dict) else {}
+    freshness = freshness if isinstance(freshness, dict) else {}
+    row = metadata.get("normalized_row") if isinstance(metadata.get("normalized_row"), dict) else {}
+    date_raw = ""
+    for candidate in (metadata.get("date"), row.get("date"), provenance.get("trade_date")):
+        text = str(candidate or "").strip()
+        if text:
+            date_raw = text
+            break
+    ev_raw = ""
+    for candidate in (
+        provenance.get("event_time"),
+        metadata.get("event_time"),
+        provenance.get("available_time"),
+        metadata.get("available_time"),
+        latest_receipt.get("source_timestamp"),
+        freshness.get("source_timestamp"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            ev_raw = text
+            break
+    if not date_raw and not ev_raw:
+        return (
+            None,
+            f"bounded chip record for {connector_id} is missing both date "
+            f"({', '.join(CHIP_RECORD_DATE_FIELDS)}) and event_time "
+            f"({', '.join(CHIP_RECORD_EVENT_TIME_FIELDS)})",
+        )
+    record_session_date = None
+    if date_raw:
+        try:
+            record_session_date = _shared_date.fromisoformat(date_raw[:10])
+        except ValueError:
+            return None, f"bounded chip record for {connector_id} has invalid date {date_raw!r}"
+    if record_session_date is None and ev_raw:
+        try:
+            if "T" not in ev_raw and len(ev_raw) >= 10:
+                record_session_date = _shared_date.fromisoformat(ev_raw[:10])
+            else:
+                ev_dt = _shared_datetime.fromisoformat(ev_raw.replace("Z", "+00:00"))
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=_shared_timezone.utc)
+                if connector_id in _SHARED_CHIP_SCHEDULES:
+                    record_session_date = _shared_latest_published_chip_session(
+                        connector_id, ev_dt, is_session_day=is_session_day
+                    )
+                else:
+                    record_session_date = ev_dt.astimezone(_shared_timezone(_shared_timedelta(hours=8))).date()
+        except ValueError:
+            return None, f"bounded chip record for {connector_id} has invalid event_time {ev_raw!r}"
+    return record_session_date, None
+
 
 def finmind_bare_symbol(value):
     text = str(value).strip().upper()
@@ -2424,6 +2445,14 @@ def finmind_bare_symbol(value):
         if text.endswith(suffix):
             return text[: -len(suffix)]
     return text
+
+
+def finmind_record_run_id(record):
+    if not isinstance(record, dict):
+        return ""
+    prov = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return str(prov.get("source_ingest_run_id") or meta.get("source_ingest_run_id") or "").strip()
 
 
 def finmind_coverage(records, expected, *, accept):
@@ -2444,6 +2473,128 @@ def finmind_coverage(records, expected, *, accept):
     wanted = [finmind_bare_symbol(item) for item in expected]
     missing = [item for item in dict.fromkeys(wanted) if item not in covered]
     return seen, missing, sorted(covered), sorted(partial_missing)
+# --- END_SHARED_TW_REFRESH_HELPERS ---
+SHARED_TW_REFRESH_HELPERS_PY
+}
+
+# Reads FinMind broker coverage records through the real strict JWT/tenant
+# boundary using a bounded per-run bundle + source-record read instead of an
+# unbounded /api/source-ingest/source-records full-table scan. A short-lived
+# HS256 token is minted inside the source-ingest container from its own runtime
+# verifier env, so no secret reaches the host command line, logs or stdout.
+fetch_finmind_source_records() {
+  local out_path="$1" since="${2:-}" cid=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec -i "${cid}" python3 - "${since}" >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
+import json, os, sys, time, urllib.parse, urllib.request
+from datetime import datetime, timezone
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
+if not secret or not tenant:
+    raise SystemExit(2)
+now = int(time.time())
+claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
+if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
+    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
+if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
+    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
+headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
+port = os.environ.get("PORT", "8097")
+
+def get_json(path):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def ts(val):
+    dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+    return (dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+since_arg = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+first = get_json("/api/source-ingest/receipts?connector_id=tw-finmind-broker-daily-report")
+completed = [
+    r for r in (first.get("receipts") or [])
+    if isinstance(r, dict)
+    and r.get("connector_id") == "tw-finmind-broker-daily-report"
+    and r.get("status") == "completed"
+    and r.get("typed_failure") is None
+    and r.get("source_timestamp")
+    and r.get("source_timestamp_status") == "valid"
+    and (r.get("finished_at") or r.get("created_at"))
+    and ((r.get("evidence_refs") or {}).get("evidence_bundle_id"))
+]
+if since_arg:
+    since_dt = ts(since_arg)
+    completed = [r for r in completed if ts(r.get("finished_at") or r.get("created_at")) >= since_dt]
+completed.sort(key=lambda r: ts(r.get("finished_at") or r.get("created_at")), reverse=True)
+if completed:
+    target_trace = completed[0].get("trace_id")
+    if target_trace:
+        completed = [r for r in completed if r.get("trace_id") == target_trace]
+    else:
+        completed = completed[:1]
+records = []
+seen_symbols = set()
+for r in completed:
+    bundle_id = str((r.get("evidence_refs") or {}).get("evidence_bundle_id") or "").strip()
+    if not bundle_id:
+        continue
+    bundle = (get_json(f"/api/source-ingest/evidence/bundles/{urllib.parse.quote(bundle_id)}") or {}).get("bundle") or {}
+    source_ids = [str(s).strip() for s in (bundle.get("source_ids") or []) if str(s).strip()]
+    batch_sids = []
+    batch_syms = set()
+    for sid in source_ids:
+        parts = sid.split(":")
+        sym_key = parts[1] if len(parts) >= 3 and parts[0] == "finmind-broker-top" else sid
+        if sym_key not in seen_symbols and sym_key not in batch_syms:
+            batch_syms.add(sym_key)
+            batch_sids.append(sid)
+    if not batch_sids:
+        continue
+    seen_symbols.update(batch_syms)
+    for sid in batch_sids:
+        rec = (get_json(f"/api/source-ingest/source-records/{urllib.parse.quote(sid)}") or {}).get("source_record")
+        if isinstance(rec, dict):
+            records.append(rec)
+print(json.dumps({"source_records": records}))
+FINMIND_RECORDS_PY
+}
+
+check_taiwan_refresh_preflight() {
+  local force="${1:-false}" finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
+    python3 - "${force}" <<'PREFLIGHT_PY'
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+from datetime import date, datetime, time, timedelta, timezone
+
+tz = timezone(timedelta(hours=8))
+force = str(sys.argv[1]).lower() == "true"
+# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
+pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
+now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
+now_t = now_u.astimezone(tz)
+d_str = str(now_t.date())
+def emit(status, **kw):
+    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
+)
 
 
 raw_connector = os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", "").strip()
@@ -2608,15 +2759,6 @@ if connector_id in CHIP_CONNECTORS:
     ):
         emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
 
-    date_raw = metadata.get("date") or (metadata.get("normalized_row") or {}).get("date") or provenance.get("trade_date")
-    ev_raw = (
-        provenance.get("event_time")
-        or metadata.get("event_time")
-        or provenance.get("available_time")
-        or metadata.get("available_time")
-        or latest_receipt.get("source_timestamp")
-        or freshness.get("source_timestamp")
-    )
     obs_raw = (
         freshness.get("last_success_at")
         or latest_receipt.get("finished_at")
@@ -2624,29 +2766,14 @@ if connector_id in CHIP_CONNECTORS:
         or provenance.get("ingest_time")
         or metadata.get("ingest_time")
     )
-    record_session_date = None
-    if date_raw:
-        try:
-            record_session_date = date.fromisoformat(str(date_raw)[:10])
-        except ValueError:
-            record_session_date = None
-    if record_session_date is None and ev_raw:
-        try:
-            ev_text = str(ev_raw).strip()
-            if "T" not in ev_text and len(ev_text) >= 10:
-                record_session_date = date.fromisoformat(ev_text[:10])
-            else:
-                ev_dt = datetime.fromisoformat(ev_text.replace("Z", "+00:00"))
-                if ev_dt.tzinfo is None:
-                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
-                if connector_id in CHIP_PUBLICATION_SCHEDULES:
-                    record_session_date = latest_published_chip_session(
-                        connector_id, ev_dt, is_session_day=is_session_day
-                    )
-                else:
-                    record_session_date = ev_dt.astimezone(tz).date()
-        except ValueError:
-            record_session_date = None
+    record_session_date, _session_err = derive_chip_record_provider_session(
+        connector_id,
+        metadata,
+        provenance,
+        latest_receipt,
+        freshness,
+        is_session_day=is_session_day,
+    )
     obs_dt = None
     if obs_raw:
         try:

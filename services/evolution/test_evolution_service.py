@@ -2273,7 +2273,7 @@ def test_sweep_status_accumulates_across_multiple_sweeps():
 
 
 def test_health_metrics_include_sweep_fields():
-    """The /livez health endpoint exposes sweep_last_success_at and sweep_total_proposals_created."""
+    """The /metrics endpoint exposes sweep_last_success_at and sweep_total_proposals_created."""
     payload = sweep_fixture({"incident_id": "inc-health-metrics-001"})
     payload["telemetry_event"]["event_id"] = "tel-health-metrics-001"
     payload["telemetry_event"]["artifact_id"] = "artifact-health-metrics-001"
@@ -2283,7 +2283,7 @@ def test_health_metrics_include_sweep_fields():
         json={"incident_ids": [payload["incident_id"]], "sweep_id": "health-metrics-sweep"},
     ).raise_for_status()
 
-    r = client.get("/livez")
+    r = client.get("/metrics")
     assert r.status_code == 200, r.text
     metrics = r.json().get("metrics", {})
     assert "sweep_last_success_at" in metrics

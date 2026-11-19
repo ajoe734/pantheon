@@ -847,6 +847,58 @@ jobs:
         run: |
           python3 -m pytest -q services/persona
 
+  # Every tracked test file runs in a required job unless it is listed in
+  # docs/operations/ci-test-inventory.json with a reason and an owner.
+  # test-inventory-guard fails on a test file that is neither run nor listed;
+  # test-sweep runs the files no other job command names (a new test file is in
+  # CI by default). Both are legs of the required "Service suites" check.
+  test-inventory-guard:
+    name: Test inventory guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Guard tests and every test file is run or listed
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest -q scripts/test_ci_test_inventory.py
+          python3 scripts/ci_test_inventory.py check
+
+  test-sweep:
+    name: Test sweep (shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs:
+      - trailers
+      - generated-files
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt \
+            -r services/control-plane/bff/requirements.txt \
+            -r services/control-plane/feedback/requirements.txt pytest
+      - name: Run sweep shard
+        timeout-minutes: 25
+        run: |
+          python3 scripts/ci_test_inventory.py run-shard --shard ${{ matrix.shard }} --of 12 --jobs 3 --timeout 300
+
   # Aggregator: keeps the required check name "Service suites" stable for
   # branch protection and .orchestrator/config.json required_status_checks.
   service-suites:
@@ -859,6 +911,8 @@ jobs:
       - service-suites-heavy
       - service-suites-runtime
       - service-suites-misc
+      - test-inventory-guard
+      - test-sweep
     steps:
       - name: Require every leg to succeed
         env:

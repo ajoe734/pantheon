@@ -1,0 +1,1765 @@
+{
+ "recorded_at": "2026-11-19T09:28:21Z",
+ "source": "GET /bff/personas/persona-2448c7053e33ea48da47 on hosted dev (BFF read-only, admintest) (strategyPool trimmed; memberRules and observed_pool_version are the post-fix shapes)",
+ "persona_list": {
+  "data": [
+   {
+    "id": "persona-2448c7053e33ea48da47",
+    "lifecycle_state": "paper_running"
+   },
+   {
+    "id": "persona-retired",
+    "lifecycle_state": "retired"
+   }
+  ]
+ },
+ "details": {
+  "pass": {
+   "data": {
+    "id": "persona-2448c7053e33ea48da47",
+    "strategyPool": {
+     "current": {
+      "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+      "members": [
+       {
+        "stage": "active",
+        "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+        "joined_at": "2026-11-08T12:19:51Z",
+        "demand_ref": null,
+        "parent_ref": null,
+        "removed_at": null,
+        "risk_weight": 1.0,
+        "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+        "removal_reason": null
+       }
+      ],
+      "decision": {
+       "action": "reweight",
+       "health": {
+        "window_end": null,
+        "window_start": null,
+        "demand_reasons": [
+         "health_inputs_unknown"
+        ],
+        "effective_bets": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "idle_day_share": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "gross_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "window_trading_days": 20,
+        "drawdown_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        }
+       },
+       "status": "refused",
+       "reasons": [
+        "virtual_book_source_missing"
+       ],
+       "candidate": null,
+       "book_sources": {},
+       "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+       "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+       "execution_status": "requires_approved_envelope",
+       "execution_context": "paper",
+       "persona_trial_count": 0
+      },
+      "tenant_id": "tenant-dev",
+      "created_at": "2026-11-18T10:01:36.001254+00:00",
+      "created_by": "persona_cycle_controller",
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "pool_version": 3,
+      "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+      "schema_version": "persona_strategy_pool.v1",
+      "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+     },
+     "versions": [
+      {
+       "digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": null,
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-16T06:59:49.883076+00:00",
+       "created_by": "operator-bff",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 1,
+       "change_reason": "first member derived from the persona's approved paper artifact (owner records)",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": null
+      },
+      {
+       "digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-17T10:01:16.656190+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 2,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45"
+      },
+      {
+       "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-18T10:01:36.001254+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 3,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+      }
+     ],
+     "memberVirtualBooks": null,
+     "health": null,
+     "cycles": [
+      {
+       "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+       "status": "observing",
+       "created_at": "2026-11-18T10:00:58Z",
+       "updated_at": "2026-11-18T10:02:47Z",
+       "phase": "terminal",
+       "failure_reason": "tool_record_unavailable:tool_record_no_calls",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "completed",
+        "observe": {
+         "pool_version": 3,
+         "members": 1,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         }
+        },
+        "orient": {
+         "pool_version": 3,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         },
+         "short_measures": [],
+         "open_demands": [],
+         "candidate_count": 0,
+         "tried_families": [
+          "strategy-persona-06d4775a9b6a8f63b311"
+         ]
+        },
+        "decide": {
+         "kind": "no_action",
+         "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown",
+         "short_measures": []
+        },
+        "act": {
+         "receipts": [
+          {
+           "route": "none",
+           "status": "no_action",
+           "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown"
+          }
+         ],
+         "paper_only": true,
+         "discovery": [],
+         "publication": {
+          "status": "failed",
+          "step": "compare",
+          "reason": "RuntimeError: owner_credential_unconfigured:bff"
+         }
+        },
+        "learn": {
+         "memory_entries": [],
+         "memory_write_errors": [],
+         "tried_families": []
+        }
+       }
+      },
+      {
+       "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+       "status": "observing",
+       "created_at": "2026-11-17T10:01:12Z",
+       "updated_at": "2026-11-17T10:01:17Z",
+       "phase": "terminal",
+       "failure_reason": "observe_prerequisites_unavailable:canonical_memory",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "failed",
+        "reason": "HTTPError: HTTP Error 403: Forbidden"
+       }
+      }
+     ],
+     "openDemands": null,
+     "memberRules": [
+      {
+       "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+       "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+       "status": "ok",
+       "reason": null
+      }
+     ]
+    }
+   },
+   "meta": {
+    "surfaces": {
+     "strategy_pool": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "strategy_pool_versions": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "autonomy_cycles": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "pool_health": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "observed_pool_version": 2
+     },
+     "member_virtual_books": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "cycle_pool_snapshot_mismatch",
+      "snapshot_at": "2026-11-19T09:28:21Z",
+      "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+      "observed_at": "2026-11-18T10:02:47Z"
+     },
+     "open_demands": {
+      "status": "unavailable",
+      "source": "research_owner",
+      "reason": "owner_read_failed:RuntimeError",
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "member_rules": {
+      "status": "ok",
+      "source": "registry_owner",
+      "reason": null
+     }
+    }
+   }
+  },
+  "no_observation": {
+   "data": {
+    "id": "persona-2448c7053e33ea48da47",
+    "strategyPool": {
+     "current": {
+      "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+      "members": [
+       {
+        "stage": "active",
+        "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+        "joined_at": "2026-11-08T12:19:51Z",
+        "demand_ref": null,
+        "parent_ref": null,
+        "removed_at": null,
+        "risk_weight": 1.0,
+        "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+        "removal_reason": null
+       }
+      ],
+      "decision": {
+       "action": "reweight",
+       "health": {
+        "window_end": null,
+        "window_start": null,
+        "demand_reasons": [
+         "health_inputs_unknown"
+        ],
+        "effective_bets": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "idle_day_share": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "gross_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "window_trading_days": 20,
+        "drawdown_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        }
+       },
+       "status": "refused",
+       "reasons": [
+        "virtual_book_source_missing"
+       ],
+       "candidate": null,
+       "book_sources": {},
+       "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+       "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+       "execution_status": "requires_approved_envelope",
+       "execution_context": "paper",
+       "persona_trial_count": 0
+      },
+      "tenant_id": "tenant-dev",
+      "created_at": "2026-11-18T10:01:36.001254+00:00",
+      "created_by": "persona_cycle_controller",
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "pool_version": 3,
+      "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+      "schema_version": "persona_strategy_pool.v1",
+      "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+     },
+     "versions": [
+      {
+       "digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": null,
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-16T06:59:49.883076+00:00",
+       "created_by": "operator-bff",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 1,
+       "change_reason": "first member derived from the persona's approved paper artifact (owner records)",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": null
+      },
+      {
+       "digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-17T10:01:16.656190+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 2,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45"
+      },
+      {
+       "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-18T10:01:36.001254+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 3,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+      }
+     ],
+     "memberVirtualBooks": null,
+     "health": null,
+     "cycles": [
+      {
+       "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+       "status": "observing",
+       "created_at": "2026-11-18T10:00:58Z",
+       "updated_at": "2026-11-18T10:02:47Z",
+       "phase": "terminal",
+       "failure_reason": "tool_record_unavailable:tool_record_no_calls",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "completed",
+        "observe": {
+         "pool_version": 3,
+         "members": 1,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         }
+        },
+        "orient": {
+         "pool_version": 3,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         },
+         "short_measures": [],
+         "open_demands": [],
+         "candidate_count": 0,
+         "tried_families": [
+          "strategy-persona-06d4775a9b6a8f63b311"
+         ]
+        },
+        "decide": {
+         "kind": "no_action",
+         "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown",
+         "short_measures": []
+        },
+        "act": {
+         "receipts": [
+          {
+           "route": "none",
+           "status": "no_action",
+           "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown"
+          }
+         ],
+         "paper_only": true,
+         "discovery": [],
+         "publication": {
+          "status": "failed",
+          "step": "compare",
+          "reason": "RuntimeError: owner_credential_unconfigured:bff"
+         }
+        },
+        "learn": {
+         "memory_entries": [],
+         "memory_write_errors": [],
+         "tried_families": []
+        }
+       }
+      },
+      {
+       "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+       "status": "observing",
+       "created_at": "2026-11-17T10:01:12Z",
+       "updated_at": "2026-11-17T10:01:17Z",
+       "phase": "terminal",
+       "failure_reason": "observe_prerequisites_unavailable:canonical_memory",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "failed",
+        "reason": "HTTPError: HTTP Error 403: Forbidden"
+       }
+      }
+     ],
+     "openDemands": null,
+     "memberRules": [
+      {
+       "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+       "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+       "status": "ok",
+       "reason": null
+      }
+     ]
+    }
+   },
+   "meta": {
+    "surfaces": {
+     "strategy_pool": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "strategy_pool_versions": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "autonomy_cycles": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "pool_health": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "latest_cycle_observation_missing"
+     },
+     "member_virtual_books": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "cycle_pool_snapshot_mismatch",
+      "snapshot_at": "2026-11-19T09:28:21Z",
+      "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+      "observed_at": "2026-11-18T10:02:47Z"
+     },
+     "open_demands": {
+      "status": "unavailable",
+      "source": "research_owner",
+      "reason": "owner_read_failed:RuntimeError",
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "member_rules": {
+      "status": "ok",
+      "source": "registry_owner",
+      "reason": null
+     }
+    }
+   }
+  },
+  "fail_member_rules_missing": {
+   "data": {
+    "id": "persona-2448c7053e33ea48da47",
+    "strategyPool": {
+     "current": {
+      "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+      "members": [
+       {
+        "stage": "active",
+        "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+        "joined_at": "2026-11-08T12:19:51Z",
+        "demand_ref": null,
+        "parent_ref": null,
+        "removed_at": null,
+        "risk_weight": 1.0,
+        "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+        "removal_reason": null
+       }
+      ],
+      "decision": {
+       "action": "reweight",
+       "health": {
+        "window_end": null,
+        "window_start": null,
+        "demand_reasons": [
+         "health_inputs_unknown"
+        ],
+        "effective_bets": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "idle_day_share": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "gross_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "window_trading_days": 20,
+        "drawdown_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        }
+       },
+       "status": "refused",
+       "reasons": [
+        "virtual_book_source_missing"
+       ],
+       "candidate": null,
+       "book_sources": {},
+       "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+       "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+       "execution_status": "requires_approved_envelope",
+       "execution_context": "paper",
+       "persona_trial_count": 0
+      },
+      "tenant_id": "tenant-dev",
+      "created_at": "2026-11-18T10:01:36.001254+00:00",
+      "created_by": "persona_cycle_controller",
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "pool_version": 3,
+      "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+      "schema_version": "persona_strategy_pool.v1",
+      "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+     },
+     "versions": [
+      {
+       "digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": null,
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-16T06:59:49.883076+00:00",
+       "created_by": "operator-bff",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 1,
+       "change_reason": "first member derived from the persona's approved paper artifact (owner records)",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": null
+      },
+      {
+       "digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-17T10:01:16.656190+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 2,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45"
+      },
+      {
+       "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-18T10:01:36.001254+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 3,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+      }
+     ],
+     "memberVirtualBooks": null,
+     "health": null,
+     "cycles": [
+      {
+       "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+       "status": "observing",
+       "created_at": "2026-11-18T10:00:58Z",
+       "updated_at": "2026-11-18T10:02:47Z",
+       "phase": "terminal",
+       "failure_reason": "tool_record_unavailable:tool_record_no_calls",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "completed",
+        "observe": {
+         "pool_version": 3,
+         "members": 1,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         }
+        },
+        "orient": {
+         "pool_version": 3,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         },
+         "short_measures": [],
+         "open_demands": [],
+         "candidate_count": 0,
+         "tried_families": [
+          "strategy-persona-06d4775a9b6a8f63b311"
+         ]
+        },
+        "decide": {
+         "kind": "no_action",
+         "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown",
+         "short_measures": []
+        },
+        "act": {
+         "receipts": [
+          {
+           "route": "none",
+           "status": "no_action",
+           "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown"
+          }
+         ],
+         "paper_only": true,
+         "discovery": [],
+         "publication": {
+          "status": "failed",
+          "step": "compare",
+          "reason": "RuntimeError: owner_credential_unconfigured:bff"
+         }
+        },
+        "learn": {
+         "memory_entries": [],
+         "memory_write_errors": [],
+         "tried_families": []
+        }
+       }
+      },
+      {
+       "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+       "status": "observing",
+       "created_at": "2026-11-17T10:01:12Z",
+       "updated_at": "2026-11-17T10:01:17Z",
+       "phase": "terminal",
+       "failure_reason": "observe_prerequisites_unavailable:canonical_memory",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "failed",
+        "reason": "HTTPError: HTTP Error 403: Forbidden"
+       }
+      }
+     ],
+     "openDemands": null,
+     "memberRules": null
+    }
+   },
+   "meta": {
+    "surfaces": {
+     "strategy_pool": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "strategy_pool_versions": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "autonomy_cycles": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "pool_health": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "observed_pool_version": 2
+     },
+     "member_virtual_books": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "cycle_pool_snapshot_mismatch",
+      "snapshot_at": "2026-11-19T09:28:21Z",
+      "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+      "observed_at": "2026-11-18T10:02:47Z"
+     },
+     "open_demands": {
+      "status": "unavailable",
+      "source": "research_owner",
+      "reason": "owner_read_failed:RuntimeError",
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     }
+    }
+   }
+  },
+  "fail_false_mismatch": {
+   "data": {
+    "id": "persona-2448c7053e33ea48da47",
+    "strategyPool": {
+     "current": {
+      "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+      "members": [
+       {
+        "stage": "active",
+        "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+        "joined_at": "2026-11-08T12:19:51Z",
+        "demand_ref": null,
+        "parent_ref": null,
+        "removed_at": null,
+        "risk_weight": 1.0,
+        "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+        "removal_reason": null
+       }
+      ],
+      "decision": {
+       "action": "reweight",
+       "health": {
+        "window_end": null,
+        "window_start": null,
+        "demand_reasons": [
+         "health_inputs_unknown"
+        ],
+        "effective_bets": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "idle_day_share": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "gross_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        },
+        "window_trading_days": 20,
+        "drawdown_utilisation": {
+         "value": null,
+         "reason": "health_window_missing_or_invalid",
+         "status": "unknown"
+        }
+       },
+       "status": "refused",
+       "reasons": [
+        "virtual_book_source_missing"
+       ],
+       "candidate": null,
+       "book_sources": {},
+       "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+       "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+       "execution_status": "requires_approved_envelope",
+       "execution_context": "paper",
+       "persona_trial_count": 0
+      },
+      "tenant_id": "tenant-dev",
+      "created_at": "2026-11-18T10:01:36.001254+00:00",
+      "created_by": "persona_cycle_controller",
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "pool_version": 3,
+      "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+      "schema_version": "persona_strategy_pool.v1",
+      "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+     },
+     "versions": [
+      {
+       "digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": null,
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-16T06:59:49.883076+00:00",
+       "created_by": "operator-bff",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 1,
+       "change_reason": "first member derived from the persona's approved paper artifact (owner records)",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": null
+      },
+      {
+       "digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-17T10:01:16.656190+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 2,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:7fb77814a59edaedcdb08f3850f05f05efc6b567a6ee6d32e4cba7b7017a4d45"
+      },
+      {
+       "digest": "sha256:de7fc4faad963f2de1860ea1c0e84a89a85f9433adfee9d7f4a560b02e2af51c",
+       "members": [
+        {
+         "stage": "active",
+         "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+         "joined_at": "2026-11-08T12:19:51Z",
+         "demand_ref": null,
+         "parent_ref": null,
+         "removed_at": null,
+         "risk_weight": 1.0,
+         "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
+         "removal_reason": null
+        }
+       ],
+       "decision": {
+        "action": "reweight",
+        "health": {
+         "window_end": null,
+         "window_start": null,
+         "demand_reasons": [
+          "health_inputs_unknown"
+         ],
+         "effective_bets": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "idle_day_share": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "gross_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         },
+         "window_trading_days": 20,
+         "drawdown_utilisation": {
+          "value": null,
+          "reason": "health_window_missing_or_invalid",
+          "status": "unknown"
+         }
+        },
+        "status": "refused",
+        "reasons": [
+         "virtual_book_source_missing"
+        ],
+        "candidate": null,
+        "book_sources": {},
+        "input_digest": "sha256:d0569b179d4e66b1a257dac2eef47ae88f325339362b7088d0b4825a06e20951",
+        "policy_digest": "sha256:60fe67d10eb87ae31a0709a78fe5d68b604405793decfec6dcc28cf3870b0e1f",
+        "execution_status": "requires_approved_envelope",
+        "execution_context": "paper",
+        "persona_trial_count": 0
+       },
+       "tenant_id": "tenant-dev",
+       "created_at": "2026-11-18T10:01:36.001254+00:00",
+       "created_by": "persona_cycle_controller",
+       "persona_id": "persona-2448c7053e33ea48da47",
+       "pool_version": 3,
+       "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+       "schema_version": "persona_strategy_pool.v1",
+       "previous_digest": "sha256:36a4d4315a23af9c922aabcf2fb32e267d2026d510ae4bae650112287976ffff"
+      }
+     ],
+     "memberVirtualBooks": null,
+     "health": null,
+     "cycles": [
+      {
+       "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+       "status": "observing",
+       "created_at": "2026-11-18T10:00:58Z",
+       "updated_at": "2026-11-18T10:02:47Z",
+       "phase": "terminal",
+       "failure_reason": "tool_record_unavailable:tool_record_no_calls",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "completed",
+        "observe": {
+         "pool_version": 3,
+         "members": 1,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         }
+        },
+        "orient": {
+         "pool_version": 3,
+         "health": {
+          "pool_version": 2,
+          "window_trading_days": 20,
+          "window_start": null,
+          "window_end": null,
+          "gross_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "drawdown_utilisation": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "idle_day_share": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "effective_bets": {
+           "status": "unknown",
+           "value": null,
+           "reason": "health_window_missing_or_invalid"
+          },
+          "demand_reasons": [
+           "health_inputs_unknown"
+          ]
+         },
+         "short_measures": [],
+         "open_demands": [],
+         "candidate_count": 0,
+         "tried_families": [
+          "strategy-persona-06d4775a9b6a8f63b311"
+         ]
+        },
+        "decide": {
+         "kind": "no_action",
+         "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown",
+         "short_measures": []
+        },
+        "act": {
+         "receipts": [
+          {
+           "route": "none",
+           "status": "no_action",
+           "reason": "health_inputs_unknown_or_pool_sufficient:health_inputs_unknown"
+          }
+         ],
+         "paper_only": true,
+         "discovery": [],
+         "publication": {
+          "status": "failed",
+          "step": "compare",
+          "reason": "RuntimeError: owner_credential_unconfigured:bff"
+         }
+        },
+        "learn": {
+         "memory_entries": [],
+         "memory_write_errors": [],
+         "tried_families": []
+        }
+       }
+      },
+      {
+       "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+       "status": "observing",
+       "created_at": "2026-11-17T10:01:12Z",
+       "updated_at": "2026-11-17T10:01:17Z",
+       "phase": "terminal",
+       "failure_reason": "observe_prerequisites_unavailable:canonical_memory",
+       "decisions": null,
+       "pool_autonomy": {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "packet_id": "ooda-persona-956dcad9013b0a797c4ea2ddbee3a0130cf1ab5776295f236aec84f7bc3a9557",
+        "decision_kinds": [
+         "open_demand",
+         "admit_trial",
+         "reweight",
+         "remove",
+         "propose_mutate",
+         "propose_widen",
+         "no_action"
+        ],
+        "status": "failed",
+        "reason": "HTTPError: HTTP Error 403: Forbidden"
+       }
+      }
+     ],
+     "openDemands": null,
+     "memberRules": [
+      {
+       "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
+       "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+       "status": "ok",
+       "reason": null
+      }
+     ]
+    }
+   },
+   "meta": {
+    "surfaces": {
+     "strategy_pool": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "strategy_pool_versions": {
+      "status": "ok",
+      "source": "persona_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "autonomy_cycles": {
+      "status": "ok",
+      "source": "persona_cycle_owner",
+      "reason": null,
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "pool_health": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "cycle_pool_snapshot_mismatch",
+      "observed_pool_version": 2
+     },
+     "member_virtual_books": {
+      "status": "unavailable",
+      "source": "persona_cycle_owner",
+      "reason": "cycle_pool_snapshot_mismatch",
+      "snapshot_at": "2026-11-19T09:28:21Z",
+      "packet_id": "ooda-persona-33e9b339d9fb3e0094d0ed9f449b45caec8e26966ca7ed217a036b5cb84e6dee",
+      "observed_at": "2026-11-18T10:02:47Z"
+     },
+     "open_demands": {
+      "status": "unavailable",
+      "source": "research_owner",
+      "reason": "owner_read_failed:RuntimeError",
+      "snapshot_at": "2026-11-19T09:28:21Z"
+     },
+     "member_rules": {
+      "status": "ok",
+      "source": "registry_owner",
+      "reason": null
+     }
+    }
+   }
+  }
+ }
+}

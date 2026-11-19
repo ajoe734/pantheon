@@ -1,0 +1,19 @@
+{
+  "task": "PERSONA-DAY-PROBE-CONTROLLER-SET-20261119",
+  "rule": "Probe judges a BFF row only when the controller would register a daily cycle for it: owner lifecycle_state (BFF field ownerLifecycleState from BFF-PERSONA-OWNER-LIFECYCLE-TRUTH-20261119, never the projected `state`, `lifecycleStatus` or provisioningLifecycleState) in ELIGIBLE_STATES minus consultable (read from persona_cycle_controller.py by ast); status active (BFF projects archived/suspended into state); tenant id present (registrar requires it); and not a release probe / test / acceptance persona (data_scope test, is_test style flags, text rule).",
+  "baseline_persona_exclusion": {
+    "persona_id": "persona-d64835a203ce276b8fbb",
+    "field": "ownerLifecycleState (owner lifecycle_state) = research_only, not in daily-cycle states; same field/rule the controller registrar applies",
+    "basis": "Coordinator read hosted 2026-11-19T01:35Z from persona.personas: owner lifecycle_state research_only; three trading personas paper_owner. Probe reads ownerLifecycleState, not personaCycle.harness.",
+    "verify_on_hosted": "next persona-day report lists it under left_out with its reason"
+  },
+  "hosted_fixture": "acceptance/fixtures/hosted_persona_day_20261118.json: 177 list_rows read-only from hosted BFF 2026-11-19T00:35Z (backend 08d748790), reduced to id/state/lifecycleStatus, no credential/names/mandates. ownerLifecycleState and tenantId (placeholder, value redacted) were NOT in the raw list capture and are populated from the coordinator's persona.personas facts (baseline research_only; three trading paper_owner; others = projected state), stated in the fixture's owner_fact_note. test_persona_day.py::_hosted_1118 loads this file; test_hosted_fixture_is_the_177_row_capture_and_selects_only_trading asserts selection == exactly the 3 trading personas.",
+  "report": "adds left_out_count and left_out [{persona_id, reason}]; every judged persona still lists first_failed_precondition",
+  "tests": "acceptance/test_persona_day.py 20 passed (/tmp/accvenv with pydantic, jsonschema for the controller import)",
+  "scope": "acceptance only; no product service file, no recurring job, no writer",
+  "residual_findings": [
+    "BFF rows do not expose owner status; archived/suspended is inferred from projected state.",
+    "Probe reads BFF tenantId (metadata.tenant_id) while the controller reads owner top-level tenant_id.",
+    "Fixture owner facts are coordinator-supplied, not machine-captured from the hosted list; BFF list should return ownerLifecycleState (BFF-PERSONA-OWNER-LIFECYCLE-TRUTH) so the next capture is self-contained."
+  ]
+}

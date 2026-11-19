@@ -1,0 +1,172 @@
+{
+  "task_id": "TW-REFRESH-READBACK-FALSE-FAILURES-20261119",
+  "problem_register_class": "RC1 / RC2 Taiwan refresh readback false failures (market data domain; cb4f6795)",
+  "incident_run": {
+    "github_actions_run_id": 44421268724,
+    "workflow": ".github/workflows/dev-tw-market-refresh.yml",
+    "scheduled_at_utc": "2026-11-18T23:30:00Z",
+    "hosted_backend_commit": "08d748790551534411a2e168b2b3fa8bb579a391"
+  },
+  "acceptance_1_hosted_readonly_reproduction": {
+    "hosted_write_performed": false,
+    "captured_at_utc": "2026-11-19T00:46:33Z",
+    "twse_margin_balances": {
+      "connector_id": "tw-official-twse-margin-balances",
+      "dataset": "tw_margin_short_balance",
+      "ingest_run_id": "ingest-2f56b4efe47f",
+      "ingested_at_utc": "2026-11-18T23:53:58Z",
+      "receipt_created_at_utc": "2026-11-18T23:57:32Z",
+      "source_id": "tw-official:tw_margin_short_balance:TWSE:2330:868572793d1b6354",
+      "stored_values": {
+        "metadata.date": "",
+        "metadata_has_date_key": true,
+        "metadata.normalized_row.date": "",
+        "normalized_row_has_date_key": true,
+        "provenance.trade_date": null,
+        "provenance_has_trade_date_key": false,
+        "provenance.event_time": "",
+        "metadata.event_time": "",
+        "provenance.available_time": "2026-11-18T23:53:58Z",
+        "metadata.available_time": "2026-11-18T23:53:58Z",
+        "metadata.normalized_row.available_time": "",
+        "latest_receipt.source_timestamp": "2026-11-18T23:53:58Z",
+        "freshness.source_timestamp": "2026-11-18T23:53:58Z"
+      },
+      "failure_line_and_cause": {
+        "file": "scripts/deploy_nonprod_vm.sh",
+        "lines": "1973-1978 (raised at line 2002)",
+        "failing_expression": "raw_date = row.get(\"date\") if row.get(\"date\") is not None else record_metadata.get(\"date\"); ... if not record_date and raw_date is None and connector_id == \"tw-official-twse-margin-balances\":",
+        "explanation": "TaiwanOfficialMarketDatasetAdapter._normalize_margin_row sets normalized_row['date'] = '' and metadata['date'] = '' because TWSE OpenAPI MI_MARGN rows carry no date field. In verify_bounded_source_refresh_readback, line 1973 evaluated row.get('date') is not None to True for '', setting raw_date = '', and line 1978 gated the event-time fallback on raw_date is None (False when raw_date == ''), leaving record_date = '' and failing at line 2002 with \"bounded chip provider session '' != requested session '2026-11-18' for tw-official-twse-margin-balances\". By contrast, check_taiwan_refresh_preflight at line 2611 used an truthy `or` chain (`metadata.get('date') or ...`), treating '' as missing and deriving 2026-11-18 from available_time via latest_published_chip_session."
+      },
+      "pre_fix_reproduction_result": {
+        "exit_code": 1,
+        "stderr": "bounded chip provider session '' != requested session '2026-11-18' for tw-official-twse-margin-balances (provider_session='', expected_session='2026-11-18')"
+      }
+    },
+    "finmind_broker_daily_report": {
+      "connector_id": "tw-finmind-broker-daily-report",
+      "dataset": "tw_broker_top",
+      "ingest_run_id": "ingest-78b81ff0f04d",
+      "run_window_utc": "2026-11-18T23:41:39Z to 2026-11-18T23:42:42Z",
+      "evidence_bundle_id": "evbundle-ingest-78b81ff0f04d-12ab07c7cc5f",
+      "terminal_source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+      "unbounded_source_records_endpoint_observation": {
+        "endpoint": "GET /api/source-ingest/source-records",
+        "total_records_returned": 14654,
+        "response_bytes": 62519948,
+        "elapsed_seconds": 8.005,
+        "matched_connector_count": 720,
+        "matched_run_id_via_metadata_source_ingest_run_id": 120,
+        "matched_run_id_via_top_level_provenance_source_ingest_run_id": 0,
+        "records_of_run_carrying_refresh_coverage": 120,
+        "stored_record_top_level_keys": [
+          "source_id",
+          "connector_id",
+          "source_type",
+          "title",
+          "content_ref",
+          "status",
+          "metadata",
+          "trace_id",
+          "created_at"
+        ],
+        "stored_refresh_coverage": {
+          "status": "complete",
+          "trade_date": "2026-11-18",
+          "covered_symbols": [
+            "2330",
+            "2317",
+            "0050"
+          ],
+          "missing_symbols": [],
+          "requested_symbols": [
+            "2330",
+            "2317",
+            "0050"
+          ]
+        }
+      },
+      "failure_line_and_cause": {
+        "file": "scripts/deploy_nonprod_vm.sh",
+        "lines": "2178-2185 (and unbounded fetch at line 2393)",
+        "failing_expression": "accept=lambda rec: rec.get(\"connector_id\") == connector_id and str((rec.get(\"provenance\") or {}).get(\"source_ingest_run_id\") or \"\") in run_ids",
+        "explanation": "SourceRecord.to_dict() serialized by /api/source-ingest/source-records (and /api/source-ingest/source-records/{source_id}) has no top-level 'provenance' key (rec.get('provenance') is None); source_ingest_run_id is stored at rec['metadata']['source_ingest_run_id'] ('provenance' is only synthesized on controller/readback's latest_source_record). Line 2179 checked only rec.get('provenance'), matching 0 of the 120 records of ingest-78b81ff0f04d even though all 120 carried complete metadata.refresh_coverage for ['2330', '2317', '0050'], and raised at line 2182 with \"FinMind bounded refresh status=partial: covered=[] missing=['2330', '2317', '0050']; not accepted as fresh\". In addition, line 2393 fetched all 14,654 rows (62.5 MB) from /api/source-ingest/source-records instead of a bounded per-run read."
+      },
+      "pre_fix_reproduction_result": {
+        "exit_code": 1,
+        "stderr": "FinMind bounded refresh status=partial: covered=[] missing=['2330', '2317', '0050']; not accepted as fresh"
+      }
+    }
+  },
+  "fixes_implemented": {
+    "twse_margin_shared_session_helper": {
+      "helper": "derive_chip_record_provider_session",
+      "location": "scripts/deploy_nonprod_vm.sh (# --- BEGIN_SHARED_TW_REFRESH_HELPERS --- .. # --- END_SHARED_TW_REFRESH_HELPERS ---)",
+      "detail": "Defined once in scripts/deploy_nonprod_vm.sh and loaded by both check_taiwan_refresh_preflight and verify_bounded_source_refresh_readback so they cannot diverge. Treats empty date strings identically to missing dates, falls back to event/available/source_timestamp through latest_published_chip_session, and returns an explicit error naming all missing date and event_time fields (metadata.date, metadata.normalized_row.date, provenance.trade_date, provenance.event_time, metadata.event_time, provenance.available_time, metadata.available_time, latest_receipt.source_timestamp, freshness.source_timestamp) when both are absent."
+    },
+    "finmind_broker_run_id_and_bounded_per_run_read": {
+      "helpers": [
+        "finmind_record_run_id",
+        "finmind_coverage",
+        "fetch_finmind_source_records"
+      ],
+      "location": "scripts/deploy_nonprod_vm.sh",
+      "detail": "finmind_record_run_id reads source_ingest_run_id from either provenance.source_ingest_run_id or metadata.source_ingest_run_id so stored SourceRecord.to_dict() payloads match run_ids. fetch_finmind_source_records performs a bounded per-run read inside the source-ingest container under the strict JWT/tenant guard via GET /api/source-ingest/receipts?connector_id=tw-finmind-broker-daily-report -> GET /api/source-ingest/evidence/bundles/{evidence_bundle_id} -> GET /api/source-ingest/source-records/{source_id} (1 representative record per symbol in the run's bundle: 3 records in 0.148s on hosted dev instead of 14,654 records / 62.5 MB in 8.005s)."
+    }
+  },
+  "runtime_budget": {
+    "new_persistent_writers": 0,
+    "new_recurring_jobs_or_emitters": 0,
+    "finmind_readback_bound": "Reads at most the records of one run (1 representative record per symbol from the verified run's evidence_bundle, <= 25 records per batch run; 3 records / ~4.5 KB in 0.148s on hosted dev vs 14,654 records / 62.5 MB before). Ephemeral mktemp file is removed on function exit."
+  },
+  "scope_compliance": {
+    "session_rules_of_pr_7592_7599_7602_changed": false,
+    "workflow_or_timer_changed": false,
+    "provider_adapters_or_finmind_taiwan_edited": false
+  },
+  "residual_findings": [
+    {
+      "file": "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "outside_task_scope": true,
+      "detail": "Not in .github/pantheon-stage0-matrix.json; has 3 pre-existing failures on dev: test_search_worker_failure_retained_before_compensation_without_payloads[stdout/stderr] (does not stub verify_steady_services_restored added by PR #7524) and test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_or_stale (asserts pre-PR-#7599 13:30 cutoff instead of 06:50 T+1 for taifex_ssf_contracts)."
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "status": "passed",
+        "exit_code": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 132,
+        "terminal_summary": "132 passed in 298.01s (0:04:58)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 200,
+        "skipped_count": 2,
+        "terminal_summary": "200 passed, 2 skipped in 300.90s (0:05:00)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 67,
+        "terminal_summary": "67 passed in 2.77s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts/test_ci_stage0.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 23,
+        "terminal_summary": "Ran 23 tests in 2.721s OK"
+      }
+    ]
+  }
+}

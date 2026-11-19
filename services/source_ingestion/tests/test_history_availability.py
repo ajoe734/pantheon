@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from services.source_ingestion.daily_bars_store import DailyBarsStore
 from services.source_ingestion.routers.ingest_operations import create_ingest_operations_router
+from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.tests.daily_bars_hosted_shape import (
     HOSTED_SYMBOLS, HOSTED_WARRANTS, build_hosted_shaped,
 )
@@ -107,7 +108,7 @@ def test_hosted_shape_builder_matches_write_day(tmp_path):
     assert manifest["row_count"] == HOSTED_SYMBOLS and len(manifest["files"]) > 1
 
 
-def test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes(tmp_path):
+def test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes(tmp_path, monkeypatch):
     """52,958 symbols per day (50,883 warrants: design of record as amended 2026-11-17), 500 trading days, 50 symbols, warm manifests."""
     ds = trading_days(500)
     build_hosted_shaped(tmp_path, ds)
@@ -118,6 +119,7 @@ def test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes(tmp_path):
     first = c.get(URL, params={"symbols": symbols}).json()["symbols"]
     cold_ms = (time.perf_counter() - cold) * 1000
     assert all(v["count"] == 500 and v["first_date"] == ds[0] for v in first.values())
+    reads = wall_clock_bounds.count_parquet_reads(monkeypatch)
     timings = []
     for _ in range(40):
         t = time.perf_counter()
@@ -126,5 +128,8 @@ def test_p95_50_symbols_on_hosted_shaped_data_and_no_stored_bytes(tmp_path):
     timings.sort()
     p95 = timings[int(len(timings) * 0.95) - 1]
     print(f"cold_ms={cold_ms:.0f} p95_ms={p95:.1f} median_ms={statistics.median(timings):.1f}")
-    assert p95 <= 100, p95
+    # Counter that does not depend on host speed: a warm request is answered from the per-date presence cache and
+    # opens no file and decodes no row group (the cold request above paid for all of them).
+    assert reads == {"opens": 0, "row_groups": 0}, reads
+    wall_clock_bounds.check("history_availability.warm_p95", p95, 100, unit="ms")
     assert _tree(tmp_path) == before

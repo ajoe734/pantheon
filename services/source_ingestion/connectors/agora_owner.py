@@ -28,6 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from services.external_egress import open_internal_service_url
 from services.knowledge.evidence import EvidenceBundleBuilder
 
 from .base import (
@@ -352,7 +353,14 @@ class AgoraOwnerAdapter(SourceConnectorProvider):
             method="GET",
         )
         try:
-            with urllib.request.urlopen(req, timeout=float(timeout_seconds or self.timeout_seconds)) as resp:
+            with open_internal_service_url(
+                req,
+                timeout=float(timeout_seconds or self.timeout_seconds),
+                allowed_prefixes=[
+                    urllib.parse.urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", ""))
+                ],
+                error_cls=SourceEvidenceError,
+            ) as resp:
                 raw_bytes = read_bounded_response(resp, max_bytes=16 * 1024 * 1024)
         except urllib.error.HTTPError as exc:
             raise SourceEvidenceError(

@@ -183,3 +183,75 @@ def test_control_and_exec_app_healthchecks_use_readiness_contract() -> None:
             assert not legacy_probe.search(command), (
                 f"{filename}:{service_name} healthcheck still uses a legacy probe: {command}"
             )
+
+
+def _exploding(*_a, **_k):
+    raise AssertionError("liveness must not call service callables")
+
+
+def test_fastapi_livez_does_not_call_service_callables() -> None:
+    app = FastAPI()
+    register_fastapi_health_routes(app, "ex", dependencies=_exploding, metrics=_exploding, details=_exploding)
+    body = TestClient(app).get("/livez")
+    assert body.status_code == 200
+    payload = body.json()
+    assert payload["status"] == "ok" and payload["live"] is True and payload["ready"] is True
+    assert payload["metrics"] == {"service_up": 1}
+    assert payload["dependencies"] == {} and payload["details"] == {}
+
+
+def test_flask_livez_does_not_call_service_callables() -> None:
+    app = Flask(__name__)
+    register_flask_health_routes(app, "ex", dependencies=_exploding, metrics=_exploding, details=_exploding)
+    response = app.test_client().get("/livez")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "ok" and payload["metrics"] == {"service_up": 1}
+
+
+def test_fastapi_blocking_callable_does_not_stall_event_loop() -> None:
+    import asyncio
+    import threading
+    import time
+
+    import httpx
+
+    lock = threading.Lock()
+    lock.acquire()
+    entered = threading.Event()
+
+    def slow_metrics():
+        entered.set()
+        with lock:
+            return {"q": 1}
+
+    app = FastAPI()
+    register_fastapi_health_routes(app, "ex", metrics=slow_metrics)
+
+    @app.get("/other")
+    async def other():
+        return {"ok": True}
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            for path in ("/metrics", "/healthz", "/readyz"):
+                entered.clear()
+                blocked = asyncio.create_task(c.get(path))
+                while not entered.is_set():
+                    await asyncio.sleep(0.01)
+                t0 = time.monotonic()
+                other_r = await asyncio.wait_for(c.get("/other"), timeout=2)
+                live_r = await asyncio.wait_for(c.get("/livez"), timeout=2)
+                assert other_r.status_code == 200 and live_r.status_code == 200
+                assert time.monotonic() - t0 < 1.0
+                assert not blocked.done()
+                lock.release()
+                assert (await asyncio.wait_for(blocked, timeout=5)).status_code == 200
+                lock.acquire()
+
+    try:
+        asyncio.run(run())
+    finally:
+        if lock.locked():
+            lock.release()

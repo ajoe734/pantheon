@@ -14,13 +14,15 @@ How to use it:
   is merged.
 - State column: `open` (not merged), `merged`, `deployed` (the merge is
   contained in the backend commit hosted serves) or `accepted`. Hosted serves
-  backend `5c0463e3b` with frontend `0e886b9ce` since 2026-11-18 about 17:00Z
-  (Root 44349573838, finished 18:02Z; release accepted: the record passed with
-  its one check, the deployed pair identity). Before that `01c51aa69` from
-  07:18Z. The source for a release's state is the hosted
-  `acceptance/latest.json` (`managed-deploy-worktrees/dev-root/acceptance/`
-  under the deploy root). Changes that only run in GitHub Actions or on the
-  collector host stay `merged` here.
+  backend `1c9fbee93` with frontend `0e886b9ce` since 2026-11-19 08:57Z (Root
+  44475158547; release accepted: the record passed at 08:57:48Z with its one
+  check, the deployed pair identity). Before that `08d748790` from 11/18
+  23:02Z; Root 44466874746 (`fd4903dcc`) switched at about 06:14Z on 11/19 and
+  was rejected and compensated at 06:44Z. The source for a release's state is
+  the hosted `acceptance/latest.json`
+  (`managed-deploy-worktrees/dev-root/acceptance/` under the deploy root).
+  Changes that only run in GitHub Actions or on the collector host stay
+  `merged` here.
 
 ## Domains and owners
 
@@ -59,18 +61,22 @@ doing and by the first eight characters of its session id.
 | Integrator re-dispatches the review gate and cancels its own queued run | AUTO-INTEGRATOR-GATE-REDISPATCH-LIVELOCK-20261117 (#7478) | merged |
 | Projection bootstrap rebuilds then drops a redundant event_receipts index on every deploy and deadlocks with live writers | PROJECTION-BOOTSTRAP-INDEX-CHURN-DEADLOCK-20261117 (#7518) | deployed |
 | Required check that fails under CI load (market-data owner) | SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-20261117 (#7501) and its R2 (#7546); snapshot-store wall-clock bounds made opt-in: SOURCE-SNAPSHOT-STORE-TEST-TIMING-OPT-IN-20261118 (#7595); a test loop that ran to its limit past the 300 s cap: COLLECTOR-WHOLE-MARKET-DAY-TEST-LOOP-EXIT-20261118 (#7596); class task SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 (PR #7593) | merged; class task open |
+| A required frontend check fails on a browser-install race inside `npm run test`: Root 44466874746 (fd4903dcc) was rejected and compensated on 11/19 06:44Z although its frontend commit had passed the gate eleven times (frontend owner) | FE-GATE-BROWSER-INSTALL-BEFORE-TESTS-20261119 | open |
+| WP1.2 on dev a frontend gate failure for an unchanged frontend rolled the backend back, against operator decision 1 | DEV-RELEASE-UNCHANGED-FE-GATE-FAILURE-NO-ROLLBACK-20261119 (#7622) | merged |
 | Deployer reports failure after a successful dispatch: correlation compares the run's head commit with the selected backend, and dev has usually advanced; for the same reason a failed pair can be invisible to the retry guard and be dispatched again (release owner) | DEV-DEPLOY-DISPATCH-CORRELATION-BY-PAIR-TITLE-20261118 (#7597) | merged |
-| The stock persona-tools plugin reports `invalid plugin config` on 5c0463e3b: the gateway passes an empty config and the environment fallback never runs, so every persona tool is blocked; the proof of #7579 did not cover an empty config (persona-loop owner) | PERSONA-TOOLS-PLUGIN-EMPTY-CONFIG-ENV-FALLBACK-20261118 | open; needs a release before 11/19 09:05Z |
+| The stock persona-tools plugin reported `invalid plugin config` on 5c0463e3b and blocked every persona tool (persona-loop owner) | PERSONA-TOOLS-PLUGIN-EMPTY-CONFIG-ENV-FALLBACK-20261118 (#7601) | deployed (e09a12d17, 11/18 20:40Z) |
+| Every persona tool call is refused with `call_not_authorized_by_hook` although the broker authorized it: in the 11/19 10:00Z cycle the hook ran and the broker answered 200 to all 14 `/authorize` requests, then all 14 calls failed in the tool. The plugin keeps the hook's authorization in the memory of one plugin instance; OpenClaw 2026.7.1 most likely runs the tool from a separate registry load (`activate: false`, `toolDiscovery: true`) with its own instance. The unit test uses one instance (persona-loop owner) | no task yet (the persona-loop owner's session has been idle since 11/19 08:17Z; fix proposed to the operator) | open |
 | The advisory check summary carries its own `acceptance` field and wrote `failed` on Root 44187386408 because a housekeeping budget check failed (docker build cache cap), while the acceptance record passed; one coordinator reported the release as not accepted from it | no task yet | open |
 | WP1.2 the acceptance stage runs release probes only | ACCEPTANCE-STAGE-RELEASE-PROBES-ONLY-20261118 (#7576) | merged |
 | WP1.3 capture removes a never-started replacement container and the failure line names the service | DEV-DEPLOY-CAPTURE-NEVER-STARTED-CONTAINER-20261118 (#7587) | deployed |
 | WP1.3 container health encodes a durable functional failure: consultation-svc was unhealthy for as long as a dead letter was recorded (persona-loop owner) | CONSULTATION-HEALTHCHECK-DEAD-LETTER-NOT-LIVENESS-20261118 (#7582) | deployed; consultation-svc is healthy on 5c0463e3b |
+| WP1.3 the shared health routes computed the service's metrics on the event loop; `/livez` froze source-ingest for 11.5 s and 20.5 s while the hourly sweep held the universe lock | HEALTH-LIVENESS-NO-METRICS-ON-EVENT-LOOP-20261119 (#7619); the source-ingest side SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119 (#7615, market-data owner) | deployed (1c9fbee93) |
 | WP1.3 same shape, recovered by itself: the shared outbox-worker health of paper-signal-producer fails on `status=degraded` (reported by the persona-loop owner, not verified by the register owner) | no task yet | open |
 | WP1.4 a change that touches no runtime path does not trigger a release | DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117 (#7550) | merged; not yet observed on a real change |
 | WP1.4 the deployer holds a dispatch during the Taiwan session and the persona daily cycle | DEV-DEPLOY-QUIET-WINDOWS-20261118 (#7566) | merged; not yet observed holding; until then timers on the development host pause the publish-cut workflow in both windows |
-| An interrupted refresh run leaves source-ingest stopped and a leftover container (release owner) | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 (#7585) | merged 13:35Z; the workflow runs from the dev checkout; first real run 23:30Z; the timer slot moved from 09:10Z to 10:50Z, out of the persona window |
+| An interrupted refresh run leaves source-ingest stopped and a leftover container (release owner) | TW-REFRESH-STEADY-RESTORE-ON-INTERRUPT-20261118 (#7585) | merged; first real run 44421268724 (11/18 23:30Z) showed the steady check is refused after any guarded failure (the lease is quarantined); repair TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119 open |
 | Refresh preflight allows 3 s, and the first snapshot lookup after a restart ran a 20 s sweep before answering (market-data owner) | SOURCE-INGEST-READY-COVERS-SNAPSHOT-LOOKUP-20261118 (#7589) | deployed |
-| Gateway provider credentials are hand-made hosted state: a stored auth profile shadows the deployed secret; since 11/18 the volume also holds the operator's two OpenAI API keys, stored by hand for the live repair (persona-loop owner; remediation coordinator for the OpenAI keys) | OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (PR #7594) replaces the two OpenAI profiles with environment references; the Anthropic and OAuth profiles have no task yet | open |
+| Gateway provider credentials are hand-made hosted state: a stored auth profile shadows the deployed secret | the operator's two OpenAI API keys come from the environment since OPENCLAW-OPENAI-API-KEY-ROUTE-TWO-KEYS-R2-20261118 (#7594) and OPENCLAW-API-ROUTE-LOOP-STDIN-SECOND-KEY-20261118 (#7603, the deploy loop lost its second key to `docker compose exec` reading stdin) deployed in 08d748790; the two hand-stored OpenAI profiles were removed 11/18 23:28Z; the Anthropic api_key profile and the OpenAI OAuth profile are still hand-stored (persona-loop owner) | open |
 | Scheduled workflows start hours late or not at all, so the daily measurement and the probes do not run on time | no task yet (dispatch on time from the development host) | open |
 | Which step of a failed release invalidates the distillation worker's Registry credential (bursts of 401 inside failed-deploy windows) | release owner; no task yet | open |
 | Frontend unit test red inside the integration gate (execute-plans) | FE-TAILWIND-REPRO-TEST-GATE-ISOLATION-20261117 (execute-plans #1036) | merged |
@@ -139,14 +145,25 @@ dispatched at 16:38Z by the completion of a dev CI run, finished at 18:02Z and
 is accepted. Its configure step wrote the model chain from the dev variable, so
 the order set by hand at 14:16Z did not have to be re-applied.
 
+On 11/19 Root 44475158547 (`1c9fbee93`) passed at 08:57Z, before the 09:05Z
+persona-window pause, with the liveness, sweep, Agora egress and BFF
+owner-state fixes. In the 10:00Z cycle Anthropic was skipped for billing on
+every turn and `openai-api/gpt-6.2-sol` answered all 11 turns of the three
+trading personas: the provider fallback works. The persona tools loaded (no
+`invalid plugin config` line since the gateway started at 07:13Z) and the
+personas called them 14 times, but none returned data (row above). The memory
+bridge (`DEV_MEMORY_LLM_BRIDGE_ENABLED`) stays false until a cycle shows a tool
+returning data.
+
 ## RC2. Done means merged, not working
 
 | Work package | Task | State |
 |---|---|---|
 | WP2.1 probe runner and contract | DEV-DEPLOY-ACCEPTANCE-STAGE-20261117 (#7531) | merged |
 | WP2.1 probes for chains already merged (replace the manual hosted acceptance tasks) | to be opened once the probe contract exists | open |
+| WP2.1 release probes receive no viewer credentials: the acceptance step of `nonprod-deploy.yml` passes only the URLs and SHAs, so a probe that reads an authenticated BFF route can only skip (found 2026-11-19 while specifying the persona pool probe; remediation mechanisms owner) | no task yet | open |
 | WP2.2 three delivery states in reporting | rule in AGENTS.md | in force |
-| WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 (#7539); repairs PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118 (#7573) and PERSONA-DAY-ACCEPTANCE-PROBE-ELIGIBLE-SET-20261118 (#7577) | merged; not yet run against hosted since the repairs |
+| WP2.3 daily probe "a persona's day" | PERSONA-DAY-ACCEPTANCE-PROBE-20261117 (#7539) with repairs #7573 and #7577; selection repaired by PERSONA-DAY-PROBE-CONTROLLER-SET-20261119 (#7606), which needs BFF-PERSONA-OWNER-LIFECYCLE-TRUTH-20261119 (#7610) on hosted | deployed (1c9fbee93); run 44510111282 (11/19 10:55Z) judged exactly the three trading personas and left out 174 with a reason each; all three failed first at `terminal_packet_today` (no proposal submitted) because every persona tool call was refused (RC1) |
 | Health that lies: source-ingest readiness | SOURCE-INGEST-READINESS-TRUTHFUL-20261117 (#7511) | deployed |
 | Same-day close: official rows never fetched for a collector-covered session | TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117 (#7479) | deployed |
 | Distillation dead letters from Registry 401 responses | DISTILLATION-AUTH-DEAD-LETTER-RECOVERY-20261117 (#7552) | deployed; 257 of 260 recovered without a manual hosted write |
@@ -164,8 +181,14 @@ the order set by hand at 14:16Z did not have to be re-applied.
 | Standing questions are refused on hosted: the rollout switch `DEV_MEMORY_LLM_BRIDGE_ENABLED` was never set | MEMORY-INDEX-MODEL-CHAIN-PROVEN-PRIMARY-20261118 (#7588) is deployed and the memory-index agent follows the chain variable; the switch stays off until the persona tools work on hosted, so that the first run of the bridge is not in the same release as that fix (remediation coordinator) | open |
 | Taiwan refresh: profiles do not finish within 300 s; partly the cost of a steady tick (87 to 112 s), mainly that the afternoon run asks six chip providers for a session they publish later (market-data owner) | SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574) deployed; TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118 (#7592) merged | merged |
 | Taiwan refresh: TAIFEX responses fail to decode; the TAIFEX failures after 07:18Z were the session rule, not decoding (market-data owner) | TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118 (#7565) deployed; stock-futures contracts were still on the 13:30 rule: TW-TAIFEX-SSF-REFRESH-PUBLISHED-SESSION-20261119 (#7599) merged | merged |
-| The refresh test file `scripts/test_dev_tw_market_refresh.py` runs in no CI workflow and 42 of its 130 tests fail on dev; a provider session newer than scheduled counts as a failure; FinMind fundamentals still use the 13:30 rule (market-data owner) | TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119 | open |
-| Every snapshot reader waits about 13 s once an hour: the hourly universe sweep runs inside a lookup under the lock (measured on hosted at 16:41Z over 3,535 lookups; market-data owner) | SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119 (#7598) | merged |
+| The refresh test file `scripts/test_dev_tw_market_refresh.py` ran in no CI workflow and 13 of its tests had drifted (an earlier count of 42 came from a copy without .git); a provider session newer than scheduled counted as a failure; FinMind fundamentals used the 13:30 rule (market-data owner) | TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119 (#7602) | merged |
+| Every snapshot reader waits about 13 s once an hour: the hourly universe sweep held the lock inside a lookup and inside the health route (market-data owner) | SOURCE-SNAPSHOT-SWEEP-OFF-REQUEST-PATH-20261119 (#7598) for the lookup path; SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119 (#7615) for the health path | deployed (1c9fbee93) |
+| The BFF reports a projected lifecycle (`paper_running`) for a persona the owner records as `research_only`, also in the field named `owner_lifecycle_state`, so the probe judged a persona the controller never runs (persona-loop owner) | BFF-PERSONA-OWNER-LIFECYCLE-TRUTH-20261119 (#7610) | deployed (1c9fbee93): hosted shows `ownerLifecycleState` `paper_owner` for the three trading personas and `research_only` for the deploy-probe persona; residual: 165 rows the BFF shows as retired |
+| Test files that no CI job runs drift silently: 152 of 209 `scripts/test_*.py` files were run by no workflow, including the model pool, persona-day probe and storage measurement tests | CI-EVERY-TEST-FILE-RUNS-20261119 (#7620): a required check fails on a test file that no required job runs and that has no listed reason | merged |
+| The Agora source connector called `urlopen` with its bearer token, no host check and default redirects; the egress guard test that would have failed runs in no CI job (persona-loop owner) | AGORA-SOURCE-INTERNAL-EGRESS-GUARD-20261119 (#7616) | deployed (1c9fbee93) |
+| A refresh step marked `continue-on-error` failed while the run showed green; FinMind fundamentals never passed since 11/10 (release owner) | TW-REFRESH-NON-BLOCKING-STEP-FAILURE-VISIBLE-20261118 (#7605) | merged |
+| Collector intake re-verifies six whole-day TPEx bundles (131 MB, larger than the 72 MB metadata cache) on every pull, so TPEx history advances 16 rows per pull (market-data owner) | COLLECTOR-PRIORITY-METADATA-REVERIFY-20261119 after COLLECTOR-RAW-READS-KEEPALIVE-CONCURRENT-20261119 (#7611) | open |
+| The persona page cannot show what a persona trades (operator question 2026-11-19): the pool view returns only member ids; the strategy page labels the trading member a no-order rollback baseline because the pool envelope names it as a parent, and shows the envelope as an unsupported kind; pool health is always `cycle_pool_snapshot_mismatch` because the cycle's refused reweight appends a version after its observation (deliberate: trial counts are read from versions). The only member of each pool is the shared base momentum strategy (persona-loop owner) | BFF-PERSONA-STRATEGY-VISIBILITY-20261119, then FE-PERSONA-STRATEGY-VISIBILITY-20261119 (execute-plans) | open |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
 daily cycle never ticked; Hindsight empty; retrieval never queried; no
@@ -233,6 +256,13 @@ the test measured a store mode hosted does not use (`MARKET_SNAPSHOT_STORE` is
 unset, so journal), while the mode hosted does use blocks readers for 13 s
 every hour.
 
+The persona-day probe now selects personas by the owner's lifecycle, read from
+the BFF field that carries it since #7610. Its first hosted run after the
+repair (44510111282, dispatched by hand) judged the three trading personas and
+no other. GitHub's 11:30Z schedule for the probe started at 19:29Z on 11/18,
+eight hours late, so the day's verdict can come after the next release; the
+dispatch on 11/19 did not wait for it.
+
 ## RC3. Nobody owns data volume
 
 | Work package | Task | State |
@@ -267,6 +297,7 @@ every hour.
 | WP3.5 development host: worker test temp is never removed | DEV-WORKER-TEMP-DIR-BOUND-20261117 (#7538) | merged; live since the supervisor runtime promotion of 11/18 04:06Z |
 | WP3.4 incidents exceeds its limit while starting | DEV-MEMORY-BUDGET-STARTUP-PEAK-20261118 (#7572) | merged |
 | WP3.4 the gateway container reached its 1280 MiB limit 73 times on 01c51aa69 without a kill (persona-loop owner; re-measure after the 11/19 10:00Z cycle) | no task yet | open |
+| WP3.4 source-ingest glibc thread arenas grew from 36 to 48 (1.17 to 1.89 GB) in two hours; same shape as the BFF on 11/07; temporary limit of 10 GiB on hosted from 11/19 02:11Z (market-data owner) | SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119 (#7617) | merged |
 | WP3.2 the 5 GB manifest bound for telemetry_events cannot be met: after the reclaim about 14 GB remain, of which 8.5 GB are event types with no retention | needs an operator decision on retention | open |
 
 Instances: see section 2 of the plan. Added 11/17: on 80d4cf2ca the OpenClaw
@@ -319,6 +350,12 @@ ms bound that stopped the required check all afternoon was written into an
 acceptance item as a bound and accepted although the delivering commit already
 showed one failure in three runs on the development host.
 
+On 11/19 00:45Z the remediation coordinator told the probe worker to select
+personas by a field of the BFF cycle view instead of the controller's rule,
+after reading only BFF projections; the worker refused because that was a
+second rule, and the owner table showed the cause was the BFF projection. The
+fix went to the source (#7610).
+
 ## RC5. Coordinators each fix their own symptom
 
 | Work package | Task | State |
@@ -358,6 +395,11 @@ runs promotions and announces each one first.
   to a log, an artifact or an evidence file.
 - To compare two credentials, compare their length and the first eight
   characters of their SHA-256; do not print either value.
+- A rule that must agree with an owner's decision is read from the owner's
+  data, not from a projection of it. Check the owner store before writing a
+  selection or a probe condition.
+- A new test file is run by a required CI job by default; an exemption needs a
+  reason and an owner in `docs/operations/ci-test-inventory.json`.
 - A time bound in an acceptance item is proven by a measurement recorded at
   delivery or by the daily hosted measurement. It is not written as a
   wall-clock assertion on the required check path: on shared CI that measures

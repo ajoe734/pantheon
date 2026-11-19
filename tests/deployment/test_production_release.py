@@ -162,6 +162,17 @@ case "$tool" in
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
     fi
+    if [[ "$args" == *"compose "* && -n "${FAKE_COMPOSE_REQUIRED:-}" ]]; then
+      # Mirror real compose: every ':?' variable of the compose file must resolve from the process env or --env-file.
+      envf=""; prev=""
+      for a in "$@"; do [[ "$prev" == "--env-file" ]] && envf="$a"; prev="$a"; done
+      for v in $FAKE_COMPOSE_REQUIRED; do
+        [[ -n "${!v:-}" ]] && continue
+        if [[ -n "$envf" && -f "$envf" ]] && grep -Eq "^${v}=." "$envf"; then continue; fi
+        echo "required variable $v is missing a value: set by the release environment" >&2
+        exit 1
+      done
+    fi
     if [[ "$args" == *"compose"*"--profile stateful up"* ]]; then
       env | grep -E '^(PANTHEON_(RELEASE_ID|BACKEND_COMMIT|OPERATOR_BFF_IMAGE|OPERATOR_BFF_DIGEST|RUNTIME_MANAGER_IMAGE|GOVERNANCE_IMAGE|DEPLOYMENT_IMAGE|LIFECYCLE_PROJECTOR_IMAGE|[A-Z_]+_IMAGE))=' > "$FAKE_STATE/stateful_env"
     fi
@@ -394,6 +405,20 @@ def _public_runtime_config(config_ref: str, *, sha: bool = True, **override) -> 
     return "window.__PANTHEON_DEPLOYMENT_CONFIG__ = " + json.dumps(cfg, sort_keys=True) + ";\n"
 
 
+# Derived from the compose file itself (never hard-coded): every ${VAR:?...} the file refuses to start without.
+COMPOSE_REQUIRED_VARS = sorted(set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*):\?", COMPOSE.read_text())))
+
+
+def _write_bootstrap_compose_env(path, test):
+    """compose.env exactly as deploy/production/bootstrap.sh writes it: PROD_* keys + stateful image keys only."""
+    text = (REPO_ROOT / "deploy" / "production" / "bootstrap.sh").read_text()
+    body = re.search(r"cat > \"\$tmp_ce\" <<EOF\n(.*?)\nEOF\n", text, re.S).group(1)
+    keys = [ln.split("=", 1)[0] for ln in body.splitlines() if "=" in ln]
+    test.assertFalse([k for k in keys if k.startswith("PANTHEON_") and k not in
+                      ("PANTHEON_POSTGRES_IMAGE", "PANTHEON_NATS_IMAGE", "PANTHEON_SIGNAL_STORE_IMAGE")])
+    Path(path).write_text("".join(f"{k}=bootstrap-value\n" for k in keys))
+
+
 class OpsHarness(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -455,10 +480,13 @@ class OpsHarness(unittest.TestCase):
                "STAGING_EVIDENCE_PATH": str(self.epath),
                "PROD_BASELINE_READY_TRIES": "1", "PROD_BASELINE_READY_INTERVAL": "0",
                "PROD_CANDIDATE_READY_TRIES": "1", "PROD_CANDIDATE_READY_INTERVAL": "0"}
+        env["FAKE_COMPOSE_REQUIRED"] = " ".join(COMPOSE_REQUIRED_VARS)
         env.update(extra)
         return env
 
     def ops(self, *args, **extra):
+        if not (self.tmp / "compose.env").exists():  # a host that ran bootstrap has exactly this compose.env
+            _write_bootstrap_compose_env(self.tmp / "compose.env", self)
         return subprocess.run([str(OPS), *args], env=self.env(**extra), capture_output=True, text=True, timeout=60)
 
     def snapshot(self, **over):
@@ -835,6 +863,78 @@ class ProdOpsTests(OpsHarness):
             '"bffBaseUrl":"https://api.trading.acme-prod.net"};\n',            # legacy shape
         ):
             self.assertIn("RUNTIME_CONFIG_CONTRACT", verify(bad).stderr)
+
+    def _seal_fe(self):
+        cur = self.root / "fe" / "releases" / "r1"
+        cur.mkdir(exist_ok=True)
+        fe_sha = "sha256:" + "1" * 64
+        (cur / ".artifact_sha256").write_text(fe_sha)
+        (cur / "deployment.json").write_text(json.dumps({
+            "release_id": self.manifest["release_id"],
+            "frontend_commit": self.manifest["frontend"]["commit"],
+            "frontend_artifact_sha256": fe_sha,
+            "backend_commit": self.manifest["backend"]["commit"],
+            "operator_bff_image": self.manifest["backend"]["images"]["operator_bff"],
+        }))
+        if not (self.root / "fe" / "current").exists():
+            os.symlink(cur, self.root / "fe" / "current")
+
+    def test_fake_compose_enforces_the_compose_file_required_variable_contract(self):
+        self.assertIn("PANTHEON_RELEASE_ID", COMPOSE_REQUIRED_VARS)
+        self.assertIn("PANTHEON_OPERATOR_BFF_IMAGE", COMPOSE_REQUIRED_VARS)
+        self.assertGreater(len(COMPOSE_REQUIRED_VARS), 5)
+        _write_bootstrap_compose_env(self.tmp / "compose.env", self)
+        env = self.env()
+        r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "--env-file", str(self.tmp / "compose.env"), "ps", "-q", "x"],
+                           env=env, capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("required variable", r.stderr)
+
+    def test_post_identity_with_bootstrap_shaped_compose_env_loads_release_env_and_passes(self):
+        # Regression (run 44485045441): post_identity skipped release_env, compose ps failed interpolation, and
+        # container_of reported 'active container not found on green'.
+        _write_bootstrap_compose_env(self.tmp / "compose.env", self)
+        self._seal_fe()
+        r = self.ops("post_identity", "rel-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(json.loads(r.stdout)["public_fe_deployment_verified"])
+
+    def test_compose_failure_is_reported_with_compose_text_not_as_not_found_or_zero(self):
+        _write_bootstrap_compose_env(self.tmp / "compose.env", self)
+        self._seal_fe()
+        broken = {"FAKE_COMPOSE_REQUIRED": "PANTHEON_UNSET_FOR_TEST_ONLY"}
+        r = self.ops("post_identity", "rel-1", **broken)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("COMPOSE_ERROR", r.stderr)
+        self.assertIn("required variable PANTHEON_UNSET_FOR_TEST_ONLY", r.stderr)
+        self.assertNotIn("not found", r.stderr)
+        # singleton/worker counting must not collapse a compose error into 0 (which would pass the drain check).
+        for step in ("drain_singletons", "activate_singletons", "stop_green"):
+            r = self.ops(step, "rel-1", **broken)
+            self.assertNotEqual(r.returncode, 0, step)
+            self.assertIn("required variable PANTHEON_UNSET_FOR_TEST_ONLY", r.stderr, step)
+
+    def test_every_compose_using_case_branch_supplies_the_release_env(self):
+        text = OPS.read_text()
+        case_body = text[text.index('case "$STEP" in'):]
+        branches = re.split(r"(?m)^  ([a-z_]+)\)\n", case_body)
+        compose_users = re.compile(r"\bcompose\b|container_of|singleton_count|worker_count|workers_each_single|"
+                                   r"verify_public_fe_bff_pair|verify_product_owner_images|mint_gate_token|remove_product_owners")
+        checked = []
+        for name, body in zip(branches[1::2], branches[2::2]):
+            body = body.split("\n  *)")[0]
+            if compose_users.search(body):
+                checked.append(name)
+                self.assertRegex(body, r"\b(release_env|baseline_env)\b", f"case branch {name} uses compose without loading release env")
+        for must in ("post_identity", "drain_singletons", "activate_singletons", "stop_green", "start_green", "gate"):
+            self.assertIn(must, checked)
+        # And drive the post-switch/drain branches against a bootstrap-shaped compose.env with the enforcing fake.
+        _write_bootstrap_compose_env(self.tmp / "compose.env", self)
+        self._seal_fe()
+        for step in ("drain_singletons", "activate_singletons", "post_identity"):
+            r = self.ops(step, "rel-1")
+            self.assertNotIn("COMPOSE_ERROR", r.stderr, f"{step}: {r.stderr}")
+            self.assertNotIn("required variable", r.stderr, f"{step}: {r.stderr}")
 
     def test_post_identity_reads_back_real_public_and_local_values_and_fails_closed(self):
         cur = self.root / "fe" / "releases" / "r1"
@@ -2179,6 +2279,16 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("GIT_SHA", proj["environment"])
         self.assertEqual(proj["environment"]["LIFECYCLE_PROJECTOR_WRITER_BACKEND"], "postgres")
         self.assertNotEqual(svc["operator-bff-blue"]["ports"], svc["operator-bff-green"]["ports"])
+
+    def test_compose_ps_helpers_pass_core_profiles_so_singleton_workers_resolve(self):
+        # Regression: `compose ps -q agora-interaction-worker` without profiles fails with "no such service: persona"
+        # (singleton worker depends on core-profile services), container_of swallowed it and the owner check failed.
+        ops_text = OPS.read_text()
+        self.assertIn('out="$(compose "${CORE_PROFILES[@]}" ps -q "$@"', ops_text)
+        self.assertIn('CORE_PROFILES=(--profile core --profile singleton)', ops_text)
+        for line in ops_text.splitlines():
+            if re.search(r"\bcompose\b.*\bps\b", line) and not line.lstrip().startswith("#"):
+                self.assertIn('"${CORE_PROFILES[@]}" ps', line, line)
 
     def test_compose_packages_every_product_owner_and_agora_worker_from_immutable_manifest_images(self):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]

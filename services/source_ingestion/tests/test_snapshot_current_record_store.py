@@ -3,10 +3,15 @@
 Size, blocking and equality claims run on a hosted-shaped copy: 10,700 live keys of 60 closes each
 (real-length ``content_ref``), collector batches of 500 records.  Never a three-symbol fixture.
 Set ``SNAPSHOT_EVIDENCE_OUT=<file>`` to dump the measured values the evidence file quotes.
+
+Wall-clock bounds (reader 100 ms, write transaction p99 250 ms, maintenance step 200 ms) are judged only with
+``PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1``; the default required check proves the same properties with counters
+that do not depend on host speed (see ``wall_clock_bounds.py`` for the one command that prints the measured values).
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -39,7 +44,9 @@ from services.source_ingestion.requirement_state import (
     SNAPSHOT_RECORD_ALARM_BYTES,
     SNAPSHOT_WAL_BUDGET_BYTES,
 )
+from services.source_ingestion import snapshot_current_store as scs
 from services.source_ingestion.snapshot_current_store import SqliteSnapshotBackend
+from services.source_ingestion.tests import wall_clock_bounds
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 E7E_REF = "e7ec353d6b9917b4d92cca766d4cd439a47edc2d"
@@ -288,6 +295,126 @@ _READER_SCRIPT = textwrap.dedent(
 )
 
 
+LIVENESS_SECONDS = 30  # "the read finished while a write transaction was open"; not a latency bound
+
+
+class _Counters:
+    """Counts what a batch did, never how long it took: transactions, WAL bytes per batch, pages a maintenance step moved."""
+
+    def __init__(self, backend):
+        self.backend = backend
+        self.transactions: list[dict] = []
+        self.maintenance: list[dict] = []
+        self._payload = 0
+        self._keys = 0
+        self._original = (backend.transaction, backend.maintain, scs.SnapshotTransaction.put_many)
+        wal = Path(str(backend.path) + "-wal")
+        counters, (txn, maintain, put_many) = self, self._original
+
+        def counted_put_many(tx, rows):
+            counters._payload += sum(len(row[1]) for _prior, row in rows.values())
+            counters._keys += len(rows)
+            return put_many(tx, rows)
+
+        class _Txn:
+            def __enter__(self_inner):
+                counters._payload = 0
+                counters._keys = 0
+                self_inner.cm = txn()
+                self_inner.changes_before = backend.total_changes()
+                return self_inner.cm.__enter__()
+
+            def __exit__(self_inner, *exc):
+                result = self_inner.cm.__exit__(*exc)  # COMMIT done: the WAL holds exactly this batch
+                counters.transactions.append(
+                    {"keys": counters._keys, "rows_changed": backend.total_changes() - self_inner.changes_before,
+                     "payload_bytes": counters._payload, "wal_bytes": wal.stat().st_size if wal.exists() else 0}
+                )
+                return result
+
+        def counted_maintain():
+            conn = backend._connect()
+            free_before = conn.execute("PRAGMA freelist_count").fetchone()[0]
+            maintain()
+            counters.maintenance.append({"pages_freed": free_before - conn.execute("PRAGMA freelist_count").fetchone()[0]})
+
+        backend.transaction, backend.maintain = lambda: _Txn(), counted_maintain
+        scs.SnapshotTransaction.put_many = counted_put_many
+
+    def restore(self) -> None:
+        self.backend.transaction, self.backend.maintain, scs.SnapshotTransaction.put_many = self._original
+
+    def summary(self) -> dict:
+        ratios = [t["wal_bytes"] / t["payload_bytes"] for t in self.transactions if t["payload_bytes"]]
+        return {
+            "transactions": len(self.transactions),
+            "wal_bytes_per_payload_byte_max": round(max(ratios, default=0), 2),
+            "wal_bytes_per_batch_max": max((t["wal_bytes"] for t in self.transactions), default=0),
+            "maintenance_pages_freed_max": max((m["pages_freed"] for m in self.maintenance), default=0),
+        }
+
+
+def _assert_counter_guarantees(counters: _Counters, keys: int) -> None:
+    """The timing-free guarantees behind the three wall-clock bounds (one txn per 500 keys, no rewrite, bounded step)."""
+    expected = -(-keys // BATCH)
+    assert len(counters.transactions) == expected, f"{len(counters.transactions)} transactions for {keys} keys"
+    for number, txn in enumerate(counters.transactions):
+        assert txn["payload_bytes"] > 0
+        # host independent "no rewrite": rows changed per transaction equal that batch's key count (WAL size is only
+        # reported, it depends on reader snapshots and checkpoint scheduling)
+        assert txn["rows_changed"] == txn["keys"], (
+            f"batch {number} changed {txn['rows_changed']} rows for {txn['keys']} keys: the table was rewritten"
+        )
+    assert counters.maintenance, "maintenance never ran"
+    for step in counters.maintenance:
+        assert step["pages_freed"] <= scs.VACUUM_STEP_PAGES, f"maintenance step freed {step['pages_freed']} pages"
+
+
+def _readers_during_open_write(store) -> dict:
+    """Read committed rows from another thread while a write transaction is open (uncommitted) on the same store."""
+    backend = store._backend
+    keys = [(_symbol(i), DAILY_SNAPSHOT_DATASET) for i in range(0, 40, 4)]
+    before = {key: backend.get(*key) for key in keys}
+    assert all(before.values())
+    outcome: dict = {"errors": [], "reads": 0, "stale_ok": True}
+
+    warm, go = threading.Event(), threading.Event()
+
+    def _read():
+        try:
+            backend.get(*keys[0])  # opens this thread's read connection (the writer lock guards that registration, once per thread)
+            warm.set()
+            assert go.wait(timeout=LIVENESS_SECONDS)
+            for key in keys:
+                outcome["stale_ok"] &= backend.get(*key) == before[key]  # the last committed version, not the open one
+                outcome["reads"] += 1
+        except BaseException as exc:  # noqa: BLE001 - a busy/locked error is the failure this guards
+            outcome["errors"].append(repr(exc))
+            warm.set()
+
+    thread = threading.Thread(target=_read, daemon=True)
+    thread.start()
+    assert warm.wait(timeout=LIVENESS_SECONDS)
+    with backend.transaction() as tx:
+        tx.put_many({key: (before[key][0], ("f" * 64, before[key][1], before[key][2])) for key in keys})
+        go.set()
+        thread.join(timeout=LIVENESS_SECONDS)
+        outcome["completed"] = not thread.is_alive()
+    probe = sqlite3.connect(backend.path)  # a plain connection: reading the mode must not set it
+    try:
+        outcome["journal_mode"] = probe.execute("PRAGMA journal_mode").fetchone()[0]
+    finally:
+        probe.close()
+    return outcome
+
+
+def _assert_readers_not_blocked(outcome: dict) -> None:
+    assert outcome["completed"], "a read did not finish while a write transaction was open"
+    assert outcome["errors"] == [], outcome["errors"]
+    assert outcome["reads"] == 10 and outcome["stale_ok"]
+    assert outcome["journal_mode"] == "wal", f"journal mode is {outcome['journal_mode']}, not WAL"
+
+
 def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sqlite_copy, tmp_path):
     """A reader loop (a separate process, unthrottled, plus an in-process request-paced thread) runs while
     every one of the 10,700 keys is replaced in 22 transactions of 500."""
@@ -324,12 +451,13 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
 
     txn_ms: list[float] = []
     maintain_ms: list[float] = []
-    original_txn, original_maintain = backend.transaction, backend.maintain
+    counters = _Counters(backend)
+    counted_txn, counted_maintain = backend.transaction, backend.maintain
 
     def _timed():
         class _Timed:
             def __enter__(self_inner):
-                self_inner.cm = original_txn()
+                self_inner.cm = counted_txn()
                 self_inner.began = time.perf_counter()
                 return self_inner.cm.__enter__()
 
@@ -342,7 +470,7 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
 
     def _timed_maintain():
         began = time.perf_counter()
-        original_maintain()
+        counted_maintain()
         maintain_ms.append((time.perf_counter() - began) * 1000)
 
     backend.transaction, backend.maintain = _timed, _timed_maintain
@@ -364,7 +492,7 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
         stop.set()
         thread.join(timeout=10)
         stop_file.write_text("stop")
-        backend.transaction, backend.maintain = original_txn, original_maintain
+        counters.restore()
     process_stats = json.loads(reader.communicate(timeout=60)[0].strip().splitlines()[-1])
     stats = store.snapshot_current_stats()
     p99_txn = sorted(txn_ms)[-(-len(txn_ms) * 99 // 100) - 1]  # nearest-rank p99 (the max for 22 batches)
@@ -382,25 +510,116 @@ def test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers(sql
         "reader_process_ms_p99": round(process_stats["p99_ms"], 2),
         "reader_thread_calls": len(read_ms),
         "reader_thread_ms_max": round(max(read_ms), 2),
+        "counters": counters.summary(),
+        "wall_clock_judged": wall_clock_bounds.judged(),
         "stats_after": stats,
     }
     assert not failures, failures
+    _assert_counter_guarantees(counters, HOSTED_KEYS)
     assert updated == HOSTED_KEYS
     assert stats["record_count"] == HOSTED_KEYS  # replaced in place: no superseded version after commit
     assert process_stats["calls"] > 100 and len(read_ms) > 100
-    # Wall-clock bounds are judged only on opt-in (shared CI runners are too noisy); values stay visible in the log.
     print("full_replacement timing:", json.dumps(MEASURED["full_replacement"], sort_keys=True), flush=True)
-    if os.environ.get("PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS") == "1":
-        assert process_stats["max_ms"] <= 100.0, f"reader process call blocked {process_stats['max_ms']:.1f} ms"
-        assert max(read_ms) <= 100.0, f"reader thread call blocked {max(read_ms):.1f} ms"
-        assert p99_txn <= 250.0, f"500-key write transaction p99 {p99_txn:.1f} ms"
-        assert max(maintain_ms) <= 50.0 * 4, f"maintenance step {max(maintain_ms):.1f} ms"
+    # Wall-clock bounds: judged only with PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 (values unchanged); always reported.
+    wall_clock_bounds.check_many(
+        ("snapshot.reader_process_call_max", process_stats["max_ms"], 100.0),
+        ("snapshot.reader_thread_call_max", max(read_ms), 100.0),
+        ("snapshot.write_txn_500_keys_p99", p99_txn, 250.0),
+        ("snapshot.maintenance_step_max", max(maintain_ms), 50.0 * 4),
+    )
     assert stats["max_record_bytes"] <= SNAPSHOT_RECORD_BUDGET_BYTES
     assert stats["live_bytes"] <= SNAPSHOT_LIVE_BUDGET_BYTES
     assert stats["db_bytes"] <= SNAPSHOT_FILE_BUDGET_RATIO * stats["live_bytes"], stats
     assert stats["wal_bytes"] <= SNAPSHOT_WAL_BUDGET_BYTES
     assert store.get(_symbol(5)).closes[-1] == round(20 + 5 * 0.01 + CLOSES * 0.05, 2)
     assert len(store.get(_symbol(5)).closes) == CLOSES  # SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES still applies
+
+
+def _maintenance_step_pages(backend) -> dict:
+    """Pages one maintenance step reclaims from a freelist far larger than one step (a bound in pages, not time)."""
+    doomed = [(_symbol(i), DAILY_SNAPSHOT_DATASET) for i in range(1500)]
+    with backend.transaction() as tx:  # not through ``apply``: leaves the freelist for the step under test
+        for key in doomed:
+            tx.delete(key)
+    conn = backend._connect()
+    before = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    backend.maintain()
+    after = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    assert before > 3 * scs.VACUUM_STEP_PAGES, f"scenario too small to exercise the step: {before} free pages"
+    return {"free_before": before, "pages_freed": before - after}
+
+
+def _default_path_guarantees(tmp_path, *, keys: int, fault: str | None = None) -> dict:
+    """Everything the required check guarantees without a clock; ``fault`` injects one of the three bugs the bounds were for."""
+    true_put_many = scs.SnapshotTransaction.put_many
+    if fault == "rewrite_table":  # every batch rewrites the whole table inside its transaction
+
+        def rewriting_put_many(tx, rows):
+            written = true_put_many(tx, rows)
+            # a byte-identical update is skipped by SQLite, so the fault changes every record
+            tx._conn.execute("UPDATE snapshot_current SET record = CAST(record || x'00' AS BLOB)")
+            return written
+
+        scs.SnapshotTransaction.put_many = rewriting_put_many
+    store = LatestMarketSnapshotStore(tmp_path / "s.jsonl", store_mode="sqlite", export_min_interval_seconds=10**9)
+    backend = store._backend
+    counters = _Counters(backend)
+    try:
+        for number, batch in enumerate(_new_day_batches(5, keys=keys)):
+            store.append_normalized_records(batch, ingest_run_id=f"day-{number}", observed_at="2026-11-17T10:00:00Z")
+    finally:
+        counters.restore()
+        scs.SnapshotTransaction.put_many = true_put_many
+    summary = counters.summary()
+    backend.busy_timeout_ms = 200  # read connections opened from here on give up quickly instead of waiting out 2 s
+    if fault == "exclusive_lock":  # rollback-journal mode and an exclusive lock held for the whole batch
+        backend.close()
+        raw = sqlite3.connect(backend.path, timeout=0.2, isolation_level=None, check_same_thread=False)
+        raw.execute("PRAGMA journal_mode=DELETE")
+
+        @contextlib.contextmanager
+        def exclusive():
+            raw.execute("BEGIN EXCLUSIVE")
+            yield scs.SnapshotTransaction(raw)
+            raw.execute("COMMIT")
+
+        backend.transaction = exclusive
+    readers = _readers_during_open_write(store)
+    if fault == "whole_file_maintenance":  # one maintenance step reclaims every free page at once
+
+        def whole_file_maintain():
+            conn = backend._connect()
+            conn.execute("PRAGMA incremental_vacuum").fetchall()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+
+        backend.maintain = whole_file_maintain
+    maintenance = _maintenance_step_pages(backend)
+    summary.update(readers=readers, maintenance=maintenance)
+    _assert_counter_guarantees(counters, keys)
+    _assert_readers_not_blocked(readers)
+    assert maintenance["pages_freed"] <= scs.VACUUM_STEP_PAGES, f"maintenance step freed {maintenance['pages_freed']} pages"
+    return summary
+
+
+def test_default_path_counts_one_txn_per_500_keys_no_rewrite_readers_free_bounded_maintenance(tmp_path):
+    """Required-check guarantee for the wall-clock bounds: counters, not a stopwatch (10,700 keys = 22 transactions)."""
+    summary = _default_path_guarantees(tmp_path, keys=HOSTED_KEYS)
+    MEASURED["default_path_counters"] = summary
+    assert summary["transactions"] == 22
+    assert summary["maintenance"]["pages_freed"] == scs.VACUUM_STEP_PAGES
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("exclusive_lock", "database is locked"),
+        ("rewrite_table", "table was rewritten"),
+        ("whole_file_maintenance", "maintenance step freed"),
+    ],
+)
+def test_default_path_catches_each_fault_the_wall_clock_bounds_were_for(tmp_path, fault, expected):
+    with pytest.raises(AssertionError, match=expected):
+        _default_path_guarantees(tmp_path, keys=2000, fault=fault)
 
 
 def test_unchanged_window_writes_zero_rows(tmp_path):
@@ -435,7 +654,10 @@ def test_second_writer_gets_a_retryable_error_after_two_seconds(tmp_path):
             store.append_normalized_records([_record(0, 4)], ingest_run_id="r2", observed_at="2026-11-17T11:00:00Z")
         waited = time.monotonic() - began
         assert raised.value.retryable is True
-        assert 1.8 <= waited <= 4.0, waited
+        assert waited >= 1.8, waited  # it really waited out the busy timeout (a slow host only makes this longer)
+        # Counter that does not depend on host speed: the wait is the configured busy timeout, which is 2 s, never more than 4 s.
+        assert store._backend.busy_timeout_ms == scs.DEFAULT_BUSY_TIMEOUT_MS == 2000
+        wall_clock_bounds.check("snapshot.second_writer_wait_max", waited, 4.0, unit="s")
         MEASURED["second_writer"] = {"waited_seconds": round(waited, 2), "error": type(raised.value).__name__}
         # readers are not blocked by the held writer lock
         assert store.get(_symbol(0)).closes == (round(20 + 3 * 0.05, 2),)

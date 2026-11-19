@@ -146,6 +146,9 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
     # identity passed; the persona-day daily probe is not a release probe, so it is not run at all.
     results = stage.run_stage(checks=[], probes=stage.discover_probes(
         Path(__file__).resolve().parent.parent / "acceptance" / "probes"), identity=IDENT,
-        base_env=dict(os.environ), lease_held=False, identity_fn=OK)
-    assert [r["id"] for r in results] == ["check:deployed-pair-identity"]
+        base_env={k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")},
+        lease_held=False, identity_fn=OK)
+    # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
+    assert [r["id"] for r in results] == ["check:deployed-pair-identity", "probe:persona-pool-member-rules"]
+    assert "probe:persona-day" not in {r["id"] for r in results}
     assert stage.verdict_status(results) == "passed"
