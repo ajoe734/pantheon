@@ -420,13 +420,13 @@ def test_persona_owner_tokens_verify_against_each_target_owner_contract(
     )
     assert authz_decision["allowed"] is True
 
-    # 3. Registry owner token: registry-reader role only (read-only)
+    # 3. Registry owner token: registry-reader + regime-evaluator (no registry write role)
     registry_ctx = validate_request_auth(
         authorization=f"Bearer {issued['PERSONA_REGISTRY_SERVICE_TOKEN']}",
         required_roles=("registry-reader",),
         env=verifier_env,
     )
-    assert list(registry_ctx.roles) == ["registry-reader"]
+    assert set(registry_ctx.roles) == {"registry-reader", "regime-evaluator"}
 
     # 4. Evolution owner token: verified against evolution's real authenticate_tenant middleware
     from types import SimpleNamespace
