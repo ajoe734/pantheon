@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
+from services.service_token_file import configured_service_token
+
 SCHEMA_VERSION = "decision_case_file.v1"
 GROUPS = ("facts", "similar_history", "lessons", "evidence")
 DECISION_TYPES = frozenset({
@@ -99,7 +101,13 @@ class Owners:
 
         def ep(url_key: str, token_key: str) -> Optional[OwnerEndpoint]:
             url = (env.get(url_key) or "").strip()
-            return OwnerEndpoint(url.rstrip("/"), (env.get(token_key) or "").strip()) if url else None
+            if not url:
+                return None
+            try:  # honours <TOKEN>_FILE (rotating issued principal); unreadable file => no credential
+                token = configured_service_token(token_key, env)
+            except RuntimeError:
+                token = ""
+            return OwnerEndpoint(url.rstrip("/"), token)
 
         return cls(
             registry=ep("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_SERVICE_TOKEN"),

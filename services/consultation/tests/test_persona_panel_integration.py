@@ -818,3 +818,202 @@ def test_intake_persists_version_and_digest_bindings(stack: dict[str, Any]) -> N
     assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "2", "b" * 64)
     assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "1", "b" * 64) is None
     assert gov._consultation_veto_block(TENANT, "t-9", "registry_entry", "2", "a" * 64) is None
+
+
+# --- Issued pool-read principal against the REAL persona owner (no facts double for persona) ---
+
+_POOL_SECRET = "pool-principal-secret-0123456789abcdef"
+_POOL_CHECKSUM = "sha256:" + "a" * 64
+
+
+def _issued_pool_reader_token() -> str:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    try:
+        import issue_dev_paper_principals as issuer
+    finally:
+        sys.path.pop(0)
+    values = issuer.issue_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true", "PANTHEON_DEV_BFF_JWT_SECRET": _POOL_SECRET,
+        "PANTHEON_DEV_BFF_JWT_ISSUER": "pool-iss", "PANTHEON_DEV_BFF_JWT_AUDIENCE": "pool-aud"})
+    return values["CONSULTATION_PERSONA_POOL_READ_TOKEN"]
+
+
+def _http(method: str, url: str, token: str, tenant: str, body: dict | None = None) -> tuple[int, Any]:
+    request = urllib.request.Request(
+        url, method=method, data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.loads(response.read() or "null")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode()
+
+
+@pytest.fixture
+def real_persona_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+    import importlib.util
+    import sys
+    from services.foundation.reliable_delivery import AtomicJsonRecordStore
+    from services.persona.write_owner import CreatePersonaRequest
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    for key, value in {
+        "PERSONA_AUTH_MODE": "strict", "PERSONA_JWT_SECRET": _POOL_SECRET,
+        "PERSONA_JWT_ISSUER": "pool-iss", "PERSONA_JWT_AUDIENCE": "pool-aud",
+        "PERSONA_STORE_PATH": str(tmp_path / "p.json"), "PERSONA_CAPABILITY_STORE_PATH": str(tmp_path / "c.json"),
+        "PERSONA_POOL_STORE_PATH": str(tmp_path / "pools.json"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    for key in ("PANTHEON_PERSONA_SERVICE_TOKEN", "PERSONA_SERVICE_TOKEN", "PANTHEON_RUNTIME_JWT_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+    directory = Path(__file__).resolve().parents[2] / "control-plane" / "persona"
+    spec = importlib.util.spec_from_file_location("persona_main_pool_principal_test", directory / "main.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    monkeypatch.syspath_prepend(str(directory))  # the pool store imports sibling modules lazily
+    spec.loader.exec_module(module)
+    from persona_strategy_pool import PersonaStrategyPoolStore
+    entries = {"reg-member": {
+        "registry_id": "reg-member", "artifact_state": "approved", "checksum": _POOL_CHECKSUM,
+        "approval_decision_id": "b-1", "rollback_target": "rollback-no-trade",
+        "approved_at": "2026-11-01T00:00:00+00:00", "owner_tenant": "tenant-dev",
+        "metadata": {"persona_id": INITIATOR, "execution_context": "paper", "persona_capital_binding_id": "pcb-1"}}}
+    module.POOL_STORE = PersonaStrategyPoolStore(
+        AtomicJsonRecordStore(tmp_path / "pools.json"),
+        registry_reader=lambda ref, tenant: entries.get(ref, {}),
+        owner_lister=lambda persona, tenant: list(entries.values()))
+    owner = module.PERSONA_OWNER_API.state.persona_owner
+    for persona, tenant in ((INITIATOR, "tenant-dev"), ("persona-foreign", "tenant-other")):
+        owner.create(CreatePersonaRequest(actor_id="op", persona_id=persona, name=persona, mandate="m", tenant_id=tenant))
+
+    def jwt(roles: list[str], tenant: str) -> str:
+        return encode_jwt_hs256({"sub": "writer", "roles": roles, "tenant_id": tenant, "allowed_tenants": [tenant],
+                                 "iss": "pool-iss", "aud": "pool-aud", "exp": 4102444800}, secret=_POOL_SECRET)
+
+    registry = FastAPI()
+
+    @registry.get("/api/registry/entries/{ref}")
+    def entry(ref: str, tenant_id: str = Header(alias="X-Tenant-Id")):
+        return {"registry_id": ref, "tenant_id": tenant_id, "strategy_id": "momentum",
+                "artifact_type": "strategy_spec", "version": "1", "artifact_state": "approved",
+                "metadata": {"underlyings": ["2330"], "instrument_class": "equity"}}
+
+    @registry.get("/api/registry/strategies/{family}/entries")
+    def history(family: str):
+        return []
+
+    with _serve(module.app) as persona_url, _serve(registry) as registry_url:
+        status, _ = _http("POST", f"{persona_url}/api/personas/{INITIATOR}/strategy-pool/versions",
+                          jwt(["persona.admin"], "tenant-dev"), "tenant-dev", {
+                              "expected_version": 0, "change_reason": "seed", "members": [{
+                                  "artifact_ref": "reg-member", "checksum": _POOL_CHECKSUM, "stage": "active",
+                                  "risk_weight": 0.5, "baseline_ref": "b-1",
+                                  "joined_at": "2026-11-12T00:00:00+00:00"}]})
+        assert status == 201
+        yield {"persona": persona_url, "registry": registry_url, "reader": _issued_pool_reader_token(), "jwt": jwt}
+
+
+def _panel_inputs():
+    request = {"request_id": "req-pool", "from_persona_id": INITIATOR,
+               "metadata": {"panel": {"touches": ["paper_canary_candidacy"]}}}
+    return request, {"type": "trial_admission", "id": "ranking-1", "target_version": "1"}
+
+
+def _pool_config(tenant: str = "tenant-dev") -> ExecutorConfig:
+    return ExecutorConfig(api_url="http://unused", tenant_id=tenant, api_token="x", provider_url="http://unused",
+                          provider_token="x", provider_service_actor="x", handoff_sink_url="http://unused",
+                          handoff_token="x", worker_id="w", state_path="unused")
+
+
+def test_issued_pool_reader_attaches_case_file_and_cannot_write_or_cross_tenant(
+        real_persona_pool, monkeypatch, tmp_path):
+    from services.consultation import workflow_executor as wf
+    env = real_persona_pool
+    monkeypatch.setenv("PANTHEON_PERSONA_API_URL", env["persona"])
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", env["registry"])
+    monkeypatch.delenv("PANTHEON_PERSONA_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "memory-operator-1")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "memory-writer")
+    # The executor reads the issued token exactly as compose delivers it: a mode-0600 file.
+    path = tmp_path / "CONSULTATION_PERSONA_POOL_READ_TOKEN"
+    path.write_text(env["reader"], encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN_FILE", str(path))
+    request, decision = _panel_inputs()
+    case = wf._compose_panel_case_file(_pool_config(), request, decision)
+    assert case["subject"]["member_artifact_refs"] == ["reg-member"]
+    assert case["case_file_id"].startswith("casefile-")
+
+    reader, base = env["reader"], env["persona"]
+    pool = f"{base}/api/personas/{INITIATOR}/strategy-pool"
+    assert _http("GET", pool, reader, "tenant-dev")[0] == 200
+    assert _http("GET", pool + "/versions", reader, "tenant-dev")[0] == 200
+    assert _http("GET", pool + "/versions/1", reader, "tenant-dev")[0] == 200
+    # Least privilege: no pool writes, no decision/health POSTs, no other persona routes.
+    body = {"expected_version": 1, "change_reason": "x", "members": []}
+    assert _http("POST", pool + "/versions", reader, "tenant-dev", body)[0] in (401, 403)
+    assert _http("POST", pool + "/seed", reader, "tenant-dev", {})[0] in (401, 403)
+    assert _http("POST", pool + "/decisions", reader, "tenant-dev",
+                 {"expected_version": 1, "execution_context": "paper", "action": "reweight"})[0] in (401, 403)
+    assert _http("POST", pool + "/health", reader, "tenant-dev", {})[0] in (401, 403)
+    assert _http("GET", f"{base}/api/personas", reader, "tenant-dev")[0] in (401, 403)
+    # Dev tenant only: another tenant's persona is hidden, and tenant-other is not an admitted tenant.
+    assert _http("GET", f"{base}/api/personas/persona-foreign/strategy-pool", reader, "tenant-dev")[0] == 404
+    assert _http("GET", f"{base}/api/personas/persona-foreign/strategy-pool", reader, "tenant-other")[0] == 403
+    assert _http("GET", pool, reader, "tenant-other")[0] in (403, 404)
+
+
+def test_missing_persona_credential_blocks_once_with_named_reason_and_dead_letters_at_cap(
+        real_persona_pool, monkeypatch, tmp_path):
+    from services.consultation import workflow_executor as wf
+    monkeypatch.setenv("PANTHEON_PERSONA_API_URL", real_persona_pool["persona"])
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", real_persona_pool["registry"])
+    for key in ("PANTHEON_PERSONA_SERVICE_TOKEN", "PANTHEON_PERSONA_SERVICE_TOKEN_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    request, decision = _panel_inputs()
+    with pytest.raises(wf.WorkflowBlocked) as blocked:
+        wf._compose_panel_case_file(_pool_config(), request, decision)
+    assert "persona owner credential missing: PANTHEON_PERSONA_SERVICE_TOKEN" in str(blocked.value)
+    # Same retry accounting as run_tick: the cap is max_blocked_attempts, not unbounded.
+    state = WorkflowStateStore(tmp_path / "cap.sqlite3")
+    state.ensure_request(tenant_id="tenant-dev", request_id="req-pool")
+    statuses = []
+    for _ in range(5):
+        claim = state.claim_next(tenant_id="tenant-dev", lease_owner="w", lease_seconds=60)
+        if claim is None:
+            break
+        statuses.append(state.block(claim, reason=str(blocked.value), max_blocked_attempts=3, retry_after_seconds=0))
+    assert statuses == ["blocked", "blocked", "dead_letter"]
+
+
+def test_tick_without_persona_credential_stops_at_max_blocked_attempts(stack, monkeypatch):
+    """Whole executor tick (real consultation API + state store): the 401 is capped, not endless."""
+    _bootstrap(stack)
+    refusing = FastAPI()
+
+    @refusing.get("/api/personas/{pid}/strategy-pool")
+    def refuse(pid: str):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token")
+
+    requirement = triggers.required_consultation(
+        "trial_admission", INITIATOR, initiator_persona_id=INITIATOR,
+        touches=("paper_canary_candidacy",), target_version="ranking-snapshot-7")
+    with _serve(refusing) as refusing_url, _provider_fake({}) as fake:
+        monkeypatch.setenv("PANTHEON_PERSONA_API_URL", refusing_url)
+        for key in ("PANTHEON_PERSONA_SERVICE_TOKEN", "PANTHEON_PERSONA_SERVICE_TOKEN_FILE"):
+            monkeypatch.delenv(key, raising=False)
+        config = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        created = ConsultationServiceClient(
+            base_url=stack["api"], token=SERVICE_TOKEN, tenant_id=TENANT
+        ).open_persona_panel(requirement, persona_id=INITIATOR, trace_id="trace-401")
+        state = WorkflowStateStore(config.state_path)
+        for _ in range(8):
+            run_tick(config=config, state=state, provider=_provider(config))
+    item = state.get(tenant_id=TENANT, request_id=created["request_id"])
+    assert item["status"] == "dead_letter"
+    assert item["blocked_count"] == config.max_blocked_attempts == 3
+    assert item["attempt_count"] == 3
+    assert "persona owner credential missing: PANTHEON_PERSONA_SERVICE_TOKEN" in item["last_error"]

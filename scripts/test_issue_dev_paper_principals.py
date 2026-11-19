@@ -707,3 +707,29 @@ def test_persona_registry_principal_is_reader_plus_regime_evaluator_without_writ
     claims = verify(values["PERSONA_REGISTRY_SERVICE_TOKEN"])
     assert claims["roles"] == ["registry-reader", "regime-evaluator"]
     assert not {"operator", "registry-writer", "admin"}.intersection(claims["roles"])
+
+
+def test_consultation_persona_pool_read_principal_is_pool_get_only_file_delivered_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_PERSONA_POOL_READ_TOKEN"
+    assert CONSUMER_FILES["consultation-svc"] == (variable,)
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "pantheon-dev-consultation-persona-pool-reader"
+    assert claims["roles"] == ["persona_pool_reader"] and claims["scope"] == "pantheon:dev-owner-read"
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    # PANTHEON_PERSONA_SERVICE_TOKEN is the persona owner's own service-token name: never exported.
+    assert "PANTHEON_PERSONA_SERVICE_TOKEN" not in values
+    revoked = issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert revoked[variable] == ""
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    consultation = compose["services"]["consultation-svc"]
+    assert "dev-paper-consultation-tokens:/run/pantheon-principals:ro" in consultation["volumes"]
+    assert consultation["environment"]["PANTHEON_PERSONA_SERVICE_TOKEN_FILE"].endswith(
+        "/run/pantheon-principals/" + variable + "}")
+    assert "dev-paper-consultation-tokens:/issued/consultation-svc" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"])
+    assert "dev-paper-consultation-tokens" in compose["volumes"]
