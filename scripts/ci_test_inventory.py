@@ -266,11 +266,11 @@ def _sweep_declared(root: Path, sources) -> tuple[bool, list[str]]:
     return False, []
 
 
-def covered_files(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES, with_sweep: bool = True) -> dict[str, str]:
+def covered_files(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES, with_sweep: bool = True, inventory_rel: str = INVENTORY_PATH) -> dict[str, str]:
     """Map test file -> 'whole' | 'partial' | 'sweep' for what required CI collects."""
     cov = _named_files(root, sources)
     if with_sweep and _sweep_declared(root, sources)[0]:
-        inv, _ = load_inventory(root)
+        inv, _ = load_inventory(root, inventory_rel)
         for t in tracked_test_files(root):
             if t not in cov and t not in inv:
                 cov[t] = "sweep"
@@ -319,7 +319,7 @@ def load_inventory(root: Path = REPO_ROOT, rel: str = INVENTORY_PATH) -> tuple[d
 
 def check(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES, inventory_rel: str = INVENTORY_PATH) -> list[str]:
     tests = tracked_test_files(root)
-    cov = covered_files(root, sources)
+    cov = covered_files(root, sources, inventory_rel=inventory_rel)
     inv, errors = load_inventory(root, inventory_rel)
     ok, problems = _sweep_declared(root, sources)
     errors += problems
@@ -338,9 +338,9 @@ def check(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES, inventory_rel: str =
     return errors
 
 
-def sweep_files(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES) -> list[str]:
+def sweep_files(root: Path = REPO_ROOT, sources=WORKFLOW_SOURCES, inventory_rel: str = INVENTORY_PATH) -> list[str]:
     named = _named_files(root, sources)
-    inv, _ = load_inventory(root)
+    inv, _ = load_inventory(root, inventory_rel)
     return [t for t in tracked_test_files(root) if t not in named and t not in inv]
 
 
