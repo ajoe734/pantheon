@@ -19,61 +19,13 @@
       "host_cpu_count": 12,
       "glibc_default_arena_limit": 96,
       "smaps_series": [
-        {
-          "time_utc": "01:43Z",
-          "total_rss_mb": 3379,
-          "aligned_64mb_arenas": 36,
-          "aligned_64mb_arena_rss_mb": 1174,
-          "main_heap_mb": 339,
-          "mappings_above_64mb_range_mb": "956-1006",
-          "small_mappings_range_mb": "791-886",
-          "docker_stats_gib": 3.38
-        },
-        {
-          "time_utc": "02:03Z",
-          "total_rss_mb": 3699,
-          "aligned_64mb_arenas": 42,
-          "aligned_64mb_arena_rss_mb": 1483,
-          "main_heap_mb": 339
-        },
-        {
-          "time_utc": "02:23Z",
-          "total_rss_mb": 3744,
-          "aligned_64mb_arenas": 42,
-          "aligned_64mb_arena_rss_mb": 1518,
-          "main_heap_mb": 339
-        },
-        {
-          "time_utc": "02:43Z",
-          "total_rss_mb": 3998,
-          "aligned_64mb_arenas": 46,
-          "aligned_64mb_arena_rss_mb": 1812,
-          "main_heap_mb": 339
-        },
-        {
-          "time_utc": "03:03Z",
-          "total_rss_mb": 3982,
-          "aligned_64mb_arenas": 47,
-          "aligned_64mb_arena_rss_mb": 1851,
-          "main_heap_mb": 339
-        },
-        {
-          "time_utc": "03:23Z",
-          "total_rss_mb": 4001,
-          "aligned_64mb_arenas": 46,
-          "aligned_64mb_arena_rss_mb": 1760,
-          "main_heap_mb": 339
-        },
-        {
-          "time_utc": "03:43Z",
-          "total_rss_mb": 4121,
-          "aligned_64mb_arenas": 48,
-          "aligned_64mb_arena_rss_mb": 1889,
-          "main_heap_mb": 339,
-          "mappings_above_64mb_range_mb": "956-1006",
-          "small_mappings_range_mb": "791-886",
-          "docker_stats_gib": 4.03
-        }
+        {"time_utc": "01:43Z", "total_rss_mb": 3379, "aligned_64mb_arenas": 36, "aligned_64mb_arena_rss_mb": 1174, "main_heap_mb": 339, "mappings_above_64mb_range_mb": "956-1006", "small_mappings_range_mb": "791-886", "docker_stats_gib": 3.38},
+        {"time_utc": "02:03Z", "total_rss_mb": 3699, "aligned_64mb_arenas": 42, "aligned_64mb_arena_rss_mb": 1483, "main_heap_mb": 339},
+        {"time_utc": "02:23Z", "total_rss_mb": 3744, "aligned_64mb_arenas": 42, "aligned_64mb_arena_rss_mb": 1518, "main_heap_mb": 339},
+        {"time_utc": "02:43Z", "total_rss_mb": 3998, "aligned_64mb_arenas": 46, "aligned_64mb_arena_rss_mb": 1812, "main_heap_mb": 339},
+        {"time_utc": "03:03Z", "total_rss_mb": 3982, "aligned_64mb_arenas": 47, "aligned_64mb_arena_rss_mb": 1851, "main_heap_mb": 339},
+        {"time_utc": "03:23Z", "total_rss_mb": 4001, "aligned_64mb_arenas": 46, "aligned_64mb_arena_rss_mb": 1760, "main_heap_mb": 339},
+        {"time_utc": "03:43Z", "total_rss_mb": 4121, "aligned_64mb_arenas": 48, "aligned_64mb_arena_rss_mb": 1889, "main_heap_mb": 339, "mappings_above_64mb_range_mb": "956-1006", "small_mappings_range_mb": "791-886", "docker_stats_gib": 4.03}
       ],
       "thread_list_at_03_45z": {
         "live_thread_count": 18,
@@ -81,10 +33,7 @@
         "main_thread_wait": "ep_poll",
         "request_pool_thread_tids": "156-169 (14 threads)",
         "long_lived_thread_tid": 44,
-        "recently_created_thread_tids": [
-          39181,
-          39220
-        ],
+        "recently_created_thread_tids": [39181, 39220],
         "diagnosis": "Each collector raw read window in services/source_ingestion/connectors/collector_bundle.py (_verify_raw_window) creates a short-lived ThreadPoolExecutor(max_workers=16) alongside the request thread pool; new threads claim new 64 MB-aligned glibc thread arenas up to 8 * CPU (96 on the 12-CPU host) and retain fragmented/pinned resident pages after thread exit."
       }
     },
@@ -124,116 +73,16 @@
       "concurrent_windows_per_round": 1,
       "snapshot_lookups_per_round": 4,
       "series": [
-        {
-          "round": 0,
-          "total_rss_mb": 68.39,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 0,
-          "aligned_64mb_arena_rss_mb": 0.0,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 48.09,
-          "live_threads": 1,
-          "max_tid": 7
-        },
-        {
-          "round": 1,
-          "total_rss_mb": 75.65,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 9,
-          "aligned_64mb_arena_rss_mb": 6.49,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 48.86,
-          "live_threads": 4,
-          "max_tid": 10
-        },
-        {
-          "round": 25,
-          "total_rss_mb": 108.86,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 39.46,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.11,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 50,
-          "total_rss_mb": 112.35,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 42.84,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 75,
-          "total_rss_mb": 113.41,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 43.91,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 100,
-          "total_rss_mb": 113.76,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 44.26,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 125,
-          "total_rss_mb": 115.16,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 45.66,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 150,
-          "total_rss_mb": 115.46,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 22,
-          "aligned_64mb_arena_rss_mb": 45.96,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 175,
-          "total_rss_mb": 118.15,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 23,
-          "aligned_64mb_arena_rss_mb": 48.65,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.2,
-          "live_threads": 15,
-          "max_tid": 92
-        },
-        {
-          "round": 200,
-          "total_rss_mb": 118.25,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 23,
-          "aligned_64mb_arena_rss_mb": 48.74,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.21,
-          "live_threads": 15,
-          "max_tid": 92
-        }
+        {"round": 0, "total_rss_mb": 68.39, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 0, "aligned_64mb_arena_rss_mb": 0.0, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 48.09, "live_threads": 1, "max_tid": 7},
+        {"round": 1, "total_rss_mb": 75.65, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 9, "aligned_64mb_arena_rss_mb": 6.49, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 48.86, "live_threads": 4, "max_tid": 10},
+        {"round": 25, "total_rss_mb": 108.86, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 39.46, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.11, "live_threads": 15, "max_tid": 92},
+        {"round": 50, "total_rss_mb": 112.35, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 42.84, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 75, "total_rss_mb": 113.41, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 43.91, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 100, "total_rss_mb": 113.76, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 44.26, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 125, "total_rss_mb": 115.16, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 45.66, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 150, "total_rss_mb": 115.46, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 22, "aligned_64mb_arena_rss_mb": 45.96, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 175, "total_rss_mb": 118.15, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 23, "aligned_64mb_arena_rss_mb": 48.65, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.2, "live_threads": 15, "max_tid": 92},
+        {"round": 200, "total_rss_mb": 118.25, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 23, "aligned_64mb_arena_rss_mb": 48.74, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.21, "live_threads": 15, "max_tid": 92}
       ],
       "summary": {
         "initial_rss_mb": 68.39,
@@ -250,16 +99,8 @@
         "round_50_aligned_64mb_arena_rss_mb": 42.84,
         "final_aligned_64mb_arena_rss_mb": 48.74,
         "arena_rss_growth_round_50_to_end_mb": 5.9,
-        "raw_read_window_wall_ms": {
-          "count": 200,
-          "median_ms": 25.016,
-          "p99_ms": 40.426
-        },
-        "stored_snapshot_lookup_wall_ms": {
-          "count": 800,
-          "median_ms": 4.241,
-          "p99_ms": 14.192
-        }
+        "raw_read_window_wall_ms": {"count": 200, "median_ms": 25.016, "p99_ms": 40.426},
+        "stored_snapshot_lookup_wall_ms": {"count": 800, "median_ms": 4.241, "p99_ms": 14.192}
       }
     },
     "malloc_arena_max_2": {
@@ -271,116 +112,16 @@
       "concurrent_windows_per_round": 1,
       "snapshot_lookups_per_round": 4,
       "series": [
-        {
-          "round": 0,
-          "total_rss_mb": 68.64,
-          "main_heap_rss_mb": 20.3,
-          "aligned_64mb_arenas": 0,
-          "aligned_64mb_arena_rss_mb": 0.0,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 48.34,
-          "live_threads": 1,
-          "max_tid": 1343
-        },
-        {
-          "round": 1,
-          "total_rss_mb": 74.33,
-          "main_heap_rss_mb": 21.2,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 4.0,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.14,
-          "live_threads": 5,
-          "max_tid": 1347
-        },
-        {
-          "round": 25,
-          "total_rss_mb": 78.04,
-          "main_heap_rss_mb": 23.88,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 4.82,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.35,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 50,
-          "total_rss_mb": 78.67,
-          "main_heap_rss_mb": 23.88,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.41,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.38,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 75,
-          "total_rss_mb": 78.09,
-          "main_heap_rss_mb": 22.98,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.71,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.39,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 100,
-          "total_rss_mb": 76.32,
-          "main_heap_rss_mb": 23.28,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 3.65,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.39,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 125,
-          "total_rss_mb": 78.71,
-          "main_heap_rss_mb": 23.58,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.73,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.4,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 150,
-          "total_rss_mb": 78.12,
-          "main_heap_rss_mb": 22.98,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.73,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.4,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 175,
-          "total_rss_mb": 79.01,
-          "main_heap_rss_mb": 23.88,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.73,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.4,
-          "live_threads": 15,
-          "max_tid": 1423
-        },
-        {
-          "round": 200,
-          "total_rss_mb": 79.01,
-          "main_heap_rss_mb": 23.88,
-          "aligned_64mb_arenas": 1,
-          "aligned_64mb_arena_rss_mb": 5.73,
-          "above_64mb_rss_mb": 0.0,
-          "small_mappings_rss_mb": 49.4,
-          "live_threads": 15,
-          "max_tid": 1423
-        }
+        {"round": 0, "total_rss_mb": 68.64, "main_heap_rss_mb": 20.3, "aligned_64mb_arenas": 0, "aligned_64mb_arena_rss_mb": 0.0, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 48.34, "live_threads": 1, "max_tid": 1343},
+        {"round": 1, "total_rss_mb": 74.33, "main_heap_rss_mb": 21.2, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 4.0, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.14, "live_threads": 5, "max_tid": 1347},
+        {"round": 25, "total_rss_mb": 78.04, "main_heap_rss_mb": 23.88, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 4.82, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.35, "live_threads": 15, "max_tid": 1423},
+        {"round": 50, "total_rss_mb": 78.67, "main_heap_rss_mb": 23.88, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.41, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.38, "live_threads": 15, "max_tid": 1423},
+        {"round": 75, "total_rss_mb": 78.09, "main_heap_rss_mb": 22.98, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.71, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.39, "live_threads": 15, "max_tid": 1423},
+        {"round": 100, "total_rss_mb": 76.32, "main_heap_rss_mb": 23.28, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 3.65, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.39, "live_threads": 15, "max_tid": 1423},
+        {"round": 125, "total_rss_mb": 78.71, "main_heap_rss_mb": 23.58, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.73, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.4, "live_threads": 15, "max_tid": 1423},
+        {"round": 150, "total_rss_mb": 78.12, "main_heap_rss_mb": 22.98, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.73, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.4, "live_threads": 15, "max_tid": 1423},
+        {"round": 175, "total_rss_mb": 79.01, "main_heap_rss_mb": 23.88, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.73, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.4, "live_threads": 15, "max_tid": 1423},
+        {"round": 200, "total_rss_mb": 79.01, "main_heap_rss_mb": 23.88, "aligned_64mb_arenas": 1, "aligned_64mb_arena_rss_mb": 5.73, "above_64mb_rss_mb": 0.0, "small_mappings_rss_mb": 49.4, "live_threads": 15, "max_tid": 1423}
       ],
       "summary": {
         "initial_rss_mb": 68.64,
@@ -397,16 +138,8 @@
         "round_50_aligned_64mb_arena_rss_mb": 5.41,
         "final_aligned_64mb_arena_rss_mb": 5.73,
         "arena_rss_growth_round_50_to_end_mb": 0.32,
-        "raw_read_window_wall_ms": {
-          "count": 200,
-          "median_ms": 22.92,
-          "p99_ms": 33.464
-        },
-        "stored_snapshot_lookup_wall_ms": {
-          "count": 800,
-          "median_ms": 3.598,
-          "p99_ms": 13.37
-        }
+        "raw_read_window_wall_ms": {"count": 200, "median_ms": 22.92, "p99_ms": 33.464},
+        "stored_snapshot_lookup_wall_ms": {"count": 800, "median_ms": 3.598, "p99_ms": 13.37}
       }
     },
     "comparison": {
@@ -442,7 +175,7 @@
   "7_validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_source_ingest_image_allocator.py services/source_ingestion/test_compose_activation.py scripts/test_check_service_lock_shared_deps.py",
-      "result": "17 passed in 55.98s"
+      "result": "18 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-task.json",
