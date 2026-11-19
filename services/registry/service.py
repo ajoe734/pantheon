@@ -1672,6 +1672,12 @@ def _strategy_spec_read_scope(
     return ctx, header_tenant
 
 
+def list_views_by_artifact_type(artifact_type: ArtifactType) -> list[RegistryEntryView]:
+    """Views of one artifact type via the owner store's type-filtered read (never the whole registry)."""
+    registry = get_registry_service()
+    return [registry._to_view(e) for e in registry.store.list_by_artifact_type(artifact_type)]
+
+
 def _filter_strategy_spec_views(
     strategy_id: Optional[str],
     authorization: Optional[str],
