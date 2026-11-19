@@ -130,6 +130,15 @@ VERIFIED_METADATA_CACHE_ENTRIES = 16
 VERIFIED_METADATA_CACHE_BYTES = MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES
 _METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
 _METADATA_CACHE_LOCK = RLock()
+# In-memory only (nothing persisted, nothing survives a restart): bounded by count.
+# Trade date proven for one exact (run, bundle_sha256): lets the priority path skip re-verifying
+# a run fetched on a later date that carries an earlier session.
+PRIORITY_TRADE_DATE_MEMO_ENTRIES = 512
+_PRIORITY_TRADE_DATE_MEMO: OrderedDict[tuple, str] = OrderedDict()
+# Per connector scope: the latest session was fully delivered for exactly this candidate index
+# fingerprint and persisted state; an identical index lets the next pull skip every verification.
+PRIORITY_DELIVERED_MEMO_ENTRIES = 64
+_PRIORITY_DELIVERED_MEMO: OrderedDict[tuple, tuple[str, str, str, tuple[str, ...], str]] = OrderedDict()
 
 
 class _DeadlineBody:
@@ -990,6 +999,16 @@ class CollectorBundleAdapter:
     def _priority_key_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
 
+    def _metadata_scope(self, transport: BundleTransport) -> tuple:
+        if isinstance(transport, HttpBundleTransport):
+            namespace = (transport.host, transport.token_env,
+                         _sha256(os.environ.get(transport.token_env, "").encode()))
+        elif isinstance(transport, LocalDirectoryBundleTransport):
+            namespace = (str(Path(transport.root_dir).resolve()),)
+        else:
+            namespace = (id(transport),)
+        return (str(self._raw_root().resolve()), self.source_id, namespace)
+
     def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
         """Reuse only fully verified immutable metadata bound to the live index.
 
@@ -1000,14 +1019,7 @@ class CollectorBundleAdapter:
         digest = str(entry.get("bundle_sha256") or "").lower()
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
-        if isinstance(transport, HttpBundleTransport):
-            namespace = (transport.host, transport.token_env,
-                         _sha256(os.environ.get(transport.token_env, "").encode()))
-        elif isinstance(transport, LocalDirectoryBundleTransport):
-            namespace = (str(Path(transport.root_dir).resolve()),)
-        else:
-            namespace = (id(transport),)
-        scope = (str(self._raw_root().resolve()), self.source_id, namespace)
+        scope = self._metadata_scope(transport)
         key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
         with _METADATA_CACHE_LOCK:
             cached = _METADATA_CACHE.get(key)
@@ -1088,6 +1100,28 @@ class CollectorBundleAdapter:
 
         state = self._priority_document()
         state_key, delivered, _, state_held = self._load_priority_state()
+        scope = self._metadata_scope(transport)
+        state_hash = _sha256(json.dumps(state.get("items") or {}, sort_keys=True).encode())
+
+        def fingerprint(trade_day: str) -> str | None:
+            # Every index entry that could still hold this session (upper bound not below it).
+            # Unverifiable-by-digest entries are never memoised.
+            parts = []
+            for e in mine:
+                if upper_bound(e) >= trade_day:
+                    if not re.fullmatch(r"[0-9a-f]{64}", str(e.get("bundle_sha256") or "").lower()):
+                        return None
+                    parts.append(json.dumps(dict(e), sort_keys=True, separators=(",", ":")))
+            return _sha256("\n".join(sorted(parts)).encode())
+
+        with _METADATA_CACHE_LOCK:
+            known_delivered = _PRIORITY_DELIVERED_MEMO.get(scope)
+        if (known_delivered is not None and state.get("trade_date") == known_delivered[0]
+                and state_key == known_delivered[1] and state_held == held
+                and state_hash == known_delivered[4] and fingerprint(known_delivered[0]) == known_delivered[2]):
+            # Same candidate index, same persisted state, session fully delivered: the full
+            # verification below would find nothing pending and return None.
+            return None
         best: tuple[str, str, VerifiedBundle] | None = None
         candidates: list[tuple[str, str, VerifiedBundle]] = []
         for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
@@ -1095,6 +1129,12 @@ class CollectorBundleAdapter:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
+            memo_key = (*scope, str(entry.get("run_id") or ""), digest.lower())
+            if best and re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+                with _METADATA_CACHE_LOCK:
+                    known_day = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                if known_day is not None and known_day < best[0]:
+                    continue  # proven earlier session for this exact bundle; not a candidate
             bundle = self._verified_metadata(transport, entry)
             if not bundle.items:
                 continue
@@ -1104,6 +1144,12 @@ class CollectorBundleAdapter:
             if digest:
                 if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
                     raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+                if re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+                    with _METADATA_CACHE_LOCK:
+                        _PRIORITY_TRADE_DATE_MEMO[memo_key] = trade_date
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                        while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                            _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
             candidates.append((trade_date, key, bundle))
             if best is None or (trade_date, key) > best[:2]:
                 best = (trade_date, key, bundle)
@@ -1136,11 +1182,14 @@ class CollectorBundleAdapter:
             if day == trade_date:
                 for row in candidate.items:
                     session_items.setdefault(str(row["id"]), (candidate, row))
+        # Release only the earlier-session candidates this pull just verified; the history
+        # bundle the ordered sweep is reading is not a candidate and stays cached.
+        stale = {(c.date, c.run_id) for day, _, c in candidates if day < trade_date}
         with _METADATA_CACHE_LOCK:
             for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
-                if (cache_key[:2] == (str(self._raw_root().resolve()), self.source_id)
-                        and cached.items and _bundle_trade_date({}, cached.items) < trade_date):
+                if cache_key[:3] == scope and (cached.date, cached.run_id) in stale:
                     del _METADATA_CACHE[cache_key]
+            _PRIORITY_DELIVERED_MEMO.pop(scope, None)
         pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
                    if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
         pending.sort(key=lambda pair: not (
@@ -1149,6 +1198,13 @@ class CollectorBundleAdapter:
         if not pending:
             if state_key != key or not state.get("trade_date") or state_held != held:
                 return [], key, (), len(session_items), True, held, trade_date, delivered_items
+            fp = fingerprint(trade_date)
+            if fp is not None and state.get("trade_date") == trade_date:
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, state_hash)
+                    _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
+                    while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
+                        _PRIORITY_DELIVERED_MEMO.popitem(last=False)
             return None
         if _DEFER_ACK.get():
             total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)

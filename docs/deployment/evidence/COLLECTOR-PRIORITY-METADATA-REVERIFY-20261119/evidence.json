@@ -1,0 +1,27 @@
+{
+  "task": "COLLECTOR-PRIORITY-METADATA-REVERIFY-20261119",
+  "root_cause": "priority path re-verified six TPEx latest-session candidates (131444551 bytes = 1.83x VERIFIED_METADATA_CACHE_BYTES 71680000; 12.3 s uncached on hosted; TWSE six = 12936111 bytes = 0.18x) every pull, then evicted every older-session cached bundle including the history bundle being swept; TPEx history advanced exactly 16 rows per pull vs TWSE 192-304 (coordinator hosted numbers, cited not re-measured)",
+  "reproduction_hosted_shaped_fake": {
+    "shape": "4 same-day runs + 2 runs fetched same day carrying previous session + 1 history bundle (8 rows); steady-state pull, small bodies, counts of transport reads",
+    "before_origin_dev": "per pull: manifest.json 3, items.jsonl 3, index.json 2 (history bundle re-read after priority eviction)",
+    "after": "per pull: manifest.json 0, items.jsonl 0, index.json 2"
+  },
+  "design": [
+    "_PRIORITY_DELIVERED_MEMO (in memory, <=64 scopes): after a pull finds the latest session fully delivered, remembers trade date, cursor key, held, hash of persisted delivered items and a fingerprint of every index entry with upper bound >= trade date; identical fingerprint+state returns None without any verification",
+    "_PRIORITY_TRADE_DATE_MEMO (in memory, <=512 entries): trade date proven per (scope, run_id, bundle_sha256); a candidate with a proven earlier session than the best is skipped",
+    "eviction now releases only earlier-session candidates verified this pull, so the history bundle stays cached across pulls",
+    "new run, changed bundle_sha256, process restart, pending items: fully verified as before (memo is dropped or mismatched)"
+  ],
+  "persisted_state": "no field added; latest_priority.json unchanged (old and new release read each other's file); one file per connector",
+  "memory": "VERIFIED_METADATA_CACHE_BYTES/ENTRIES unchanged; memos hold short strings only; fewer bundles resident than before (history no longer evicted, no extra retention)",
+  "changed_existing_tests": "none",
+  "validation": {
+    "env": "venv with requirements.txt; pytest",
+    "test_collector_priority_metadata_reads.py": "9 passed",
+    "test_collector_bundle_connector.py": "106 passed, 4 skipped",
+    "test_collector_bundle_whole_market_day.py": "15 passed",
+    "test_collector_outcome_truth.py": "104 passed",
+    "test_collector_raw_reads_pooled.py": "9 passed"
+  },
+  "limits": "acceptance 9 (hosted throughput) is measured by the coordinator after deploy; large-body 21.9 MB cache thrash on the first pull after a restart or a new run is verified as today by design"
+}
