@@ -14,7 +14,7 @@
   "ac7": "No new persistent writer; every connection closed at end of each raw window (test_connections_and_in_flight_never_exceed_setting asserts closed == opened).",
   "validation": {
     "command": "pytest services/test_external_egress.py services/source_ingestion/tests/test_collector_raw_reads_pooled.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_bundle_whole_market_day.py",
-    "result": "160 passed, 4 skipped, 1 failed (re-run after width 8->16 fix)",
+    "result": "264 passed, 4 skipped, 1 failed (adds test_collector_outcome_truth.py, whose 4 fakes of open_external_url now also shim GuardedKeepAliveClient; those 4 failed in CI smoke before this fix)",
     "preexisting_failure": "test_every_production_connector_uses_guarded_transport fails on services/source_ingestion/connectors/agora_owner.py (urlopen); file untouched by this task"
   },
   "reviewer_guard_path": ["external_egress.py GuardedKeepAliveClient._check_url", "GuardedKeepAliveClient.open (guard once)", "_request (reconnect, redirect fallback, HTTPError)", "_PinnedHTTPSConnection.connect unchanged"]
