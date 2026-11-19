@@ -202,3 +202,26 @@ def test_only_the_evaluator_route_mutates_regime_tables():
         if path.name == "store.py" or "tests" in path.parts:
             continue
         assert "registry.market_state" not in path.read_text(encoding="utf-8") or path.name == "evaluator.py"
+
+
+def test_regime_evaluator_role_is_accepted_on_evaluate_only(client, seeded):
+    _, _, session = seeded
+    evaluator = _jwt(roles=("registry-reader", "regime-evaluator"), sub="persona-eval")
+    r = client.post("/api/registry/regime/evaluate", headers=evaluator, json={"session": session})
+    assert r.status_code == 200, r.text
+    # Idempotent per session+market: a second evaluate stores no new record.
+    n = len(get_regime_store().list_regimes(served_only=False))
+    assert client.post("/api/registry/regime/evaluate", headers=evaluator, json={"session": session}).status_code == 200
+    assert len(get_regime_store().list_regimes(served_only=False)) == n
+    # Refused on every other registry mutation route (role is in no write allowlist).
+    only = _jwt(roles=("regime-evaluator",))
+    assert "regime-evaluator" not in registry_auth._REGISTRY_WRITE_ROLES
+    assert "regime-evaluator" not in registry_auth._REGISTRY_READ_ROLES
+    for path, method in sorted({(p, m.upper()) for p, ops in registry_service.app.openapi()["paths"].items()
+                                for m in ops if m.lower() in ("post", "put", "patch", "delete")}):
+        if path == "/api/registry/regime/evaluate":
+            continue
+        resp = client.request(method, path.replace("{", "x").replace("}", ""), headers=evaluator, json={})
+        assert resp.status_code in (401, 403, 404, 405, 422), (method, path, resp.status_code)
+        assert resp.status_code != 200, (method, path)
+    assert client.get("/api/registry/regime/states", headers=only).status_code == 403

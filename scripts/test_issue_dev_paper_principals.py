@@ -700,3 +700,10 @@ def test_persona_pool_publish_bff_principal_is_least_privilege_file_delivered_an
     assert "dev-paper-persona-tokens:/run/pantheon-principals:ro" in persona["volumes"]
     assert persona["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
     assert variable not in persona["environment"]  # never an env value, so it cannot appear in env dumps
+
+
+def test_persona_registry_principal_is_reader_plus_regime_evaluator_without_write_role():
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values["PERSONA_REGISTRY_SERVICE_TOKEN"])
+    assert claims["roles"] == ["registry-reader", "regime-evaluator"]
+    assert not {"operator", "registry-writer", "admin"}.intersection(claims["roles"])
