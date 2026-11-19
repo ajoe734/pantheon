@@ -504,5 +504,20 @@
     "hosted_pass_claim": false,
     "residual_finding": "loop lease agora_interaction_evidence held by previous controller instance; out of scope.",
     "next": "After merge a fresh Production Release for pantheon-20261108-111 is dispatched and operator-approved by the Claude chat session."
+  },
+  "prod_post_identity_release_env_repair_20261119": {
+    "trigger": "Production Release run 44485045441 (pantheon-20261108-111 bootstrap) failed at post_identity: IDENTITY 'active container not found on green'; compensation restored 503.",
+    "root_cause": "post_identity was the only compose-using case branch not calling release_env; bootstrap compose.env lacks the ':?' release keys; container_of swallowed compose stderr.",
+    "fix": "post_identity calls release_env; compose_ps_ids makes container_of/singleton_count/worker_count/workers_each_single fail with COMPOSE_ERROR + compose text. No gate or identity criterion changed.",
+    "tests": [
+      "test_fake_compose_enforces_the_compose_file_required_variable_contract",
+      "test_post_identity_with_bootstrap_shaped_compose_env_loads_release_env_and_passes",
+      "test_compose_failure_is_reported_with_compose_text_not_as_not_found_or_zero",
+      "test_every_compose_using_case_branch_supplies_the_release_env"
+    ],
+    "local_validation": "python3 -m unittest tests.deployment.test_production_release: 108 run; only 2 errors, ModuleNotFoundError pydantic/fastapi (environmental). New tests verified failing on pre-fix prod_ops.sh.",
+    "hosted_pass_claim": false,
+    "review_independence_exception": "Reviewer Claude shares model family with author; no different-family reviewer assigned.",
+    "next": "After merge the Claude chat session dispatches a fresh Production Release for pantheon-20261108-111; operator approves. Root01a11 must not dispatch."
   }
 }
