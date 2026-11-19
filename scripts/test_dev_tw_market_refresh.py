@@ -1003,6 +1003,13 @@ CHIP_PROFILES = [
 ]
 
 
+def _shared_tw_refresh_helpers_py(script: str | None = None) -> str:
+    text = script if script is not None else DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    if "<<'SHARED_TW_REFRESH_HELPERS_PY'\n" not in text:
+        return ""
+    return text.split("<<'SHARED_TW_REFRESH_HELPERS_PY'\n", 1)[1].split("\nSHARED_TW_REFRESH_HELPERS_PY", 1)[0]
+
+
 def _run_preflight_script(
     force: bool,
     now_dt: datetime,
@@ -1023,6 +1030,7 @@ def _run_preflight_script(
     """
     content = script_text if script_text is not None else DEPLOY_SCRIPT.read_text(encoding="utf-8")
     code = content.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(content)
     connector, dataset = profile
 
     def urlopen(request, *, timeout):
@@ -1054,6 +1062,7 @@ def _run_preflight_script(
             "SOURCE_INGEST_BOUNDED_DATASET": dataset,
             "PANTHEON_REFRESH_PREFLIGHT_NOW": now_dt.isoformat(),
             "FINMIND_SOURCE_RECORDS_PATH": records_file.name if source_records is not None else "",
+            "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
         }
         output = io.StringIO()
         with patch.dict(os.environ, env), patch.object(sys, "argv", ["-", str(force)]), \
@@ -3340,6 +3349,7 @@ def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
     body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script)
     run = "run-ssf-1"
     receipt_at = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     receipts = {"receipts": [{
@@ -3362,6 +3372,7 @@ def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta
         ["python3", "-I", "-c", f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nexec(compile({body!r}, 'verify', 'exec'))",
          "tw-taifex-futures-options-chip", started, str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
          str(tmp_path / "projection.json"), symbols, "taifex_ssf_contracts"],
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
         capture_output=True, text=True, check=False,
     )
 
@@ -3389,7 +3400,9 @@ def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Pa
 
 def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session(tmp_path):
     from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
-    body = DEPLOY_SCRIPT.read_text().split('verify_bounded_source_refresh_readback() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = script_text.split('verify_bounded_source_refresh_readback() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script_text)
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         dataset = profile['dataset']
         is_fund = profile['base'] == 'tw-finmind-fundamentals'
@@ -3442,7 +3455,8 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
             proc = subprocess.run([sys.executable, '-c', body, cid, '2026-11-13T11:00:00Z',
                                    str(tmp_path / 'receipts.json'), str(tmp_path / 'readback.json'),
                                    str(tmp_path / 'projection.json'), '', dataset],
-                                  cwd=ROOT, text=True, capture_output=True, timeout=20)
+                                  cwd=ROOT, env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+                                  text=True, capture_output=True, timeout=20)
             assert (proc.returncode == 0) is accepted, (cid, meta_patch, proc.stderr)
 
 
@@ -3532,3 +3546,336 @@ def test_chip_preflight_does_not_require_equity_price_snapshots():
                                        profile=(cid, profile['dataset']), readback={'connectors': []})
         assert result['status'] == 'proceed', (cid, result)
         assert result['reason'] != 'snapshot_missing'
+
+
+def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(tmp_path: Path):
+    """Acceptance 1, 2, 3, 4: hosted TWSE margin empty-date record and FinMind broker SourceRecord.to_dict() without
+    top-level provenance both pass terminal readback and fail when date+event_time or symbol coverage are missing,
+    including from a working directory whose scripts/deploy_nonprod_vm.sh lacks the shared-helper markers or is absent.
+    """
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = script_text.split("verify_bounded_source_refresh_readback() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script_text)
+
+    # 1. Hosted TWSE margin shape (2026-11-18T23:53:58Z, ingest-2f56b4efe47f)
+    twse_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:53:58Z",
+                "source_timestamp_status": "valid",
+                "started_at": "2026-11-18T23:53:58Z",
+                "finished_at": "2026-11-18T23:53:58Z",
+                "created_at": "2026-11-18T23:57:32Z",
+                "ingest_run_id": "ingest-2f56b4efe47f",
+            }
+        ]
+    }
+    twse_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:53:58Z",
+                    "source_timestamp": "2026-11-18T23:53:58Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {
+                        "ingest_run_id": "ingest-2f56b4efe47f",
+                        "source_timestamp": "2026-11-18T23:53:58Z",
+                        "source_timestamp_status": "valid",
+                        "finished_at": "2026-11-18T23:53:58Z",
+                    },
+                },
+                "latest_source_record": {
+                    "source_id": "tw-official:tw_margin_short_balance:TWSE:2330:868572793d1b6354",
+                    "connector_id": "tw-official-twse-margin-balances",
+                    "status": "normalized",
+                    "metadata": {
+                        "date": "",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "dataset": "tw_margin_short_balance",
+                        "event_time": "",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "normalized_row": {
+                            "date": "",
+                            "venue": "TWSE",
+                            "symbol": "2330",
+                            "dataset": "tw_margin_short_balance",
+                            "available_time": "",
+                        },
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                    "provenance": {
+                        "dataset": "tw_margin_short_balance",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "event_time": "",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "twse_receipts.json").write_text(json.dumps(twse_receipts), encoding="utf-8")
+    (tmp_path / "twse_readback.json").write_text(json.dumps(twse_readback), encoding="utf-8")
+    (tmp_path / "projection.json").write_text("{}", encoding="utf-8")
+
+    preflight_res = _run_preflight_script(
+        False,
+        datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+        None,
+        profile=("tw-official-twse-margin-balances", "tw_margin_short_balance"),
+        readback=twse_readback,
+    )
+    assert (preflight_res["status"], preflight_res["reason"], preflight_res["session_date"]) == (
+        "noop",
+        "already_fresh",
+        "2026-11-18",
+    )
+
+    proc_twse = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_twse.returncode == 0, proc_twse.stderr
+
+    # Missing both date and event_time fails naming the missing fields.
+    missing_twse = json.loads(json.dumps(twse_readback))
+    missing_twse["connectors"][0]["latest_source_record"]["metadata"]["available_time"] = ""
+    missing_twse["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = ""
+    missing_twse["connectors"][0]["freshness"]["source_timestamp"] = ""
+    missing_twse["connectors"][0]["freshness"]["latest_receipt"]["source_timestamp"] = ""
+    (tmp_path / "twse_missing.json").write_text(json.dumps(missing_twse), encoding="utf-8")
+    proc_missing = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_missing.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_missing.returncode != 0
+    assert "metadata.date" in proc_missing.stderr and "provenance.event_time" in proc_missing.stderr
+
+    # 2. Hosted FinMind broker SourceRecord.to_dict() shape (2026-11-18T23:41:43Z, ingest-78b81ff0f04d, no provenance key)
+    fm_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:41:43Z",
+                "source_timestamp_status": "valid",
+                "finished_at": "2026-11-18T23:41:43Z",
+                "ingest_run_id": "ingest-78b81ff0f04d",
+            }
+        ]
+    }
+    fm_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:41:43Z",
+                    "source_timestamp": "2026-11-18T23:41:43Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {"ingest_run_id": "ingest-78b81ff0f04d"},
+                },
+                "latest_source_record": {
+                    "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                    "connector_id": "tw-finmind-broker-daily-report",
+                    "status": "normalized",
+                    "metadata": {
+                        "dataset": "tw_broker_top",
+                        "trade_date": "2026-11-18",
+                        "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    },
+                    "provenance": {
+                        "dataset": "tw_broker_top",
+                        "trade_date": "2026-11-18",
+                        "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    },
+                },
+            }
+        ]
+    }
+    fm_records = {
+        "source_records": [
+            {
+                "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                "connector_id": "tw-finmind-broker-daily-report",
+                "source_type": "market",
+                "title": "FinMind broker top sell 0050 2026-11-18 #3 群益",
+                "content_ref": "finmind://broker-top/0050/2026-11-18/sell/3",
+                "status": "normalized",
+                "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-18",
+                "created_at": "2026-11-18T23:41:43Z",
+                "metadata": {
+                    "dataset": "tw_broker_top",
+                    "symbol": "0050",
+                    "trade_date": "2026-11-18",
+                    "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    "refresh_coverage": {
+                        "status": "complete",
+                        "trade_date": "2026-11-18",
+                        "covered_symbols": ["2330", "2317", "0050"],
+                        "missing_symbols": [],
+                        "requested_symbols": ["2330", "2317", "0050"],
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "fm_receipts.json").write_text(json.dumps(fm_receipts), encoding="utf-8")
+    (tmp_path / "fm_readback.json").write_text(json.dumps(fm_readback), encoding="utf-8")
+    (tmp_path / "fm_records.json").write_text(json.dumps(fm_records), encoding="utf-8")
+
+    proc_fm = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-finmind-broker-daily-report",
+            "2026-11-18T23:38:00Z",
+            str(tmp_path / "fm_receipts.json"),
+            str(tmp_path / "fm_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_broker_top",
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "fm_records.json"),
+            "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+        },
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_fm.returncode == 0, proc_fm.stderr
+
+    # 3. Hosted working directory whose scripts/deploy_nonprod_vm.sh lacks markers (08d748790 copy) or is absent.
+    workdir = tmp_path / "hosted_workdir"
+    (workdir / "services" / "execution").mkdir(parents=True)
+    for item in (ROOT / "services").iterdir():
+        if item.name != "execution":
+            (workdir / "services" / item.name).symlink_to(item)
+    for item in (ROOT / "services" / "execution").iterdir():
+        if item.name == "market_snapshot_admission.py":
+            shutil.copyfile(item, workdir / "services" / "execution" / item.name)
+        else:
+            (workdir / "services" / "execution" / item.name).symlink_to(item)
+    (workdir / "scripts").mkdir(parents=True)
+    old_copy_proc = subprocess.run(
+        ["git", "show", "08d748790551534411a2e168b2b3fa8bb579a391:scripts/deploy_nonprod_vm.sh"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    markerless_copy = old_copy_proc.stdout if old_copy_proc.returncode == 0 and old_copy_proc.stdout else "#!/usr/bin/env bash\n"
+    assert "BEGIN_SHARED_TW_REFRESH_HELPERS" not in markerless_copy
+
+    for mode in ("lacks_markers", "absent"):
+        hosted_script = workdir / "scripts" / "deploy_nonprod_vm.sh"
+        if mode == "lacks_markers":
+            hosted_script.write_text(markerless_copy, encoding="utf-8")
+        else:
+            hosted_script.unlink(missing_ok=True)
+        prev_cwd = Path.cwd()
+        try:
+            os.chdir(workdir)
+            twse_pf = _run_preflight_script(
+                False,
+                datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+                None,
+                profile=("tw-official-twse-margin-balances", "tw_margin_short_balance"),
+                readback=twse_readback,
+            )
+            assert (twse_pf["status"], twse_pf["reason"], twse_pf["session_date"]) == ("noop", "already_fresh", "2026-11-18")
+            fm_pf = _run_preflight_script(
+                False,
+                datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+                None,
+                profile=("tw-finmind-broker-daily-report", "tw_broker_top"),
+                readback=fm_readback,
+                source_records=fm_records["source_records"],
+            )
+            assert (fm_pf["status"], fm_pf["reason"], fm_pf["session_date"]) == ("noop", "already_fresh", "2026-11-18")
+        finally:
+            os.chdir(prev_cwd)
+        for cid, ds, started, rec_path, rb_path, extra_env in (
+            (
+                "tw-official-twse-margin-balances",
+                "tw_margin_short_balance",
+                "2026-11-18T23:53:00Z",
+                tmp_path / "twse_receipts.json",
+                tmp_path / "twse_readback.json",
+                {},
+            ),
+            (
+                "tw-finmind-broker-daily-report",
+                "tw_broker_top",
+                "2026-11-18T23:38:00Z",
+                tmp_path / "fm_receipts.json",
+                tmp_path / "fm_readback.json",
+                {"FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "fm_records.json")},
+            ),
+        ):
+            proc_hosted = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    f"import sys\nsys.path.insert(0, {str(workdir)!r})\nexec(compile({body!r}, 'verify', 'exec'))\n",
+                    cid,
+                    started,
+                    str(rec_path),
+                    str(rb_path),
+                    str(tmp_path / "projection.json"),
+                    "2330.TW,2317.TWSE,0050.TWSE",
+                    ds,
+                ],
+                cwd=workdir,
+                env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers, **extra_env},
+                text=True,
+                capture_output=True,
+                timeout=20,
+            )
+            assert proc_hosted.returncode == 0, (mode, cid, proc_hosted.stderr)
+

@@ -1,0 +1,15 @@
+{
+  "task_id": "PERSONA-TOOLS-BROKER-COMPOSE-CONTRACT-STOCK-PLUGIN-20261119",
+  "changed_files": ["scripts/test_persona_cycle_owner_ports_compose_contract.py"],
+  "production_files_changed": false,
+  "contract_asserted": [
+    "adapter PERSONA_TOOL_BROKER_ENABLED resolves to true",
+    "adapter and gateway PERSONA_TOOL_BROKER_TOKEN resolve equal and non-empty",
+    "gateway env PERSONA_TOOL_BROKER_URL matches http://openclaw-gateway-adapter:<port>/internal/persona-tools/v1",
+    "gateway command has no $include/plugin overlay and never writes openclaw.runtime.json (only rm -f)"
+  ],
+  "negative_cases": "In-test mutations: gateway without token, without URL, with differing token, and command appending a write to openclaw.runtime.json each yield violations from _persona_broker_stock_plugin_violations.",
+  "test_result": "scripts/test_persona_cycle_owner_ports_compose_contract.py: 11 passed (python -m pytest, venv with pytest/pyyaml/fastapi/httpx/pydantic/pyjwt/cryptography)",
+  "ci_job": "None. grep of .github, scripts and .orchestrator finds no workflow referencing this test file (persona-owner-contract.yml does not list it).",
+  "runtime_budget": "No new writer; test-only change, pure in-memory parsing of docker-compose.yml."
+}

@@ -38,6 +38,16 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 TENANT, PERSONA, REF = "tenant-pool", "persona-pool", "artifact-momentum"
 CHECKSUM = "sha256:" + "a" * 64
 AT = "2026-11-13T08:00:00Z"
+STRATEGY_ARTIFACT = {
+    "artifact_id": REF, "strategy_id": "strategy-momentum", "version": "1.0.0",
+    "strategy_logic": {"kind": "close_to_close_momentum", "positive_action": "BUY",
+                       "non_positive_action": "SELL", "lookback_parameter": "lookback_bars",
+                       "threshold_parameter": "momentum_threshold"},
+    "parameters": {"symbols": ["2330.TWSE"], "lookback_bars": 2, "momentum_threshold": 0.0},
+    "mutation_surface": {"controls": [{"parameter_key": "lookback_bars", "current_value": 2}],
+                         "immutable_parameters": ["symbols"]},
+    "expression_policy": {"kind": "notional_target_v1", "version": "1.0", "parameters": {}},
+}
 PATHS = [f"/bff/personas/{PERSONA}", f"/api/v1/operator/persona-management/{PERSONA}"]
 
 
@@ -91,12 +101,17 @@ def world(monkeypatch, tmp_path):
     demands = ResearchDemandStore(tmp_path / "demands.json", now=lambda: datetime(2026, 11, 13, tzinfo=timezone.utc))
     demand = demands.open(TENANT, {"persona_id": PERSONA, "mandate": "Taiwan equities",
                                   "short_measure": "health_inputs_unknown", "pool_version": 2})
+    registry_entry = {
+        "registry_id": REF, "artifact_state": "approved", "checksum": CHECKSUM, "owner_tenant": TENANT,
+        "metadata": {"strategy_artifact": deepcopy(STRATEGY_ARTIFACT)},
+    }
     payloads = {
         "http://persona-owner/api/personas/" + PERSONA + "/strategy-pool": pool,
         "http://persona-owner/api/personas/" + PERSONA + "/strategy-pool/versions": {
             "versions": pools.versions(PERSONA, TENANT), "refusals": []},
         "http://research-owner/api/research/persona-demands?persona_id=" + PERSONA + "&status=open": {
             "demands": [demand], "count": 1},
+        "http://registry-owner/api/registry/strategy-artifacts/" + REF: {"entry": registry_entry},
     }
     calls = []
     for owner in ("PERSONA", "RESEARCH"):
@@ -110,6 +125,10 @@ def world(monkeypatch, tmp_path):
         return deepcopy(result)
 
     monkeypatch.setattr(pool_port, "http_request_json", http)
+    # The registry env also switches other persona-detail registry readbacks on; scope it to this port.
+    real_base = pool_port.get_base_url
+    monkeypatch.setattr(pool_port, "get_base_url", lambda primary, *fallback: (
+        "http://registry-owner" if primary == "PANTHEON_REGISTRY_API_URL" else real_base(primary, *fallback)))
     ooda = OodaPacketsPort(records_provider=lambda: deepcopy(packets))
     store = create_in_memory_read_surface_ports(
         persona_capital_runtime_kwargs={"personas": [{"persona_id": PERSONA, "tenant_id": TENANT,
@@ -153,7 +172,7 @@ def test_real_route_returns_owner_values(world, path):
                  "autonomy_cycles", "open_demands"):
         assert result["meta"]["surfaces"][name]["status"] == "ok"
     assert result["meta"]["surfaces"]["pool_health"]["observed_at"] == AT
-    assert len(world.calls) == 3
+    assert len(world.calls) == 4  # persona x2, research, one registry read
     assert all(method == "GET" and kwargs["tenant_id"] == TENANT
                and kwargs["auth_token"] == "Bearer reader-token" and 0 < kwargs["timeout"] <= 2
                for _, method, kwargs in world.calls)
@@ -208,14 +227,10 @@ def test_misscoped_owner_payload_is_not_exposed(world, target):
     assert response.json()["meta"]["surfaces"][section]["status"] == "unavailable"
 
 
-@pytest.mark.parametrize("mismatch", ["version", "digest", "scope", "missing_observation"])
+@pytest.mark.parametrize("mismatch", ["scope", "missing_observation"])
 def test_latest_cycle_mismatch_does_not_fall_back_to_older_metrics(world, mismatch):
     bundle = world.packet["persona_cycle"]["observe_bundle"]
-    if mismatch == "version":
-        bundle["pool"]["pool_version"] = 1
-    elif mismatch == "digest":
-        bundle["pool"]["digest"] = "another-digest"
-    elif mismatch == "scope":
+    if mismatch == "scope":
         bundle["tenant_id"] = "secret-tenant"
     else:
         del world.packet["persona_cycle"]["observe_bundle"]
@@ -307,7 +322,7 @@ def test_real_http_transport_forwards_authenticated_tenant(world, monkeypatch):
     response = world.client().get(PATHS[0], headers={"Authorization": "Bearer " + token})
     assert response.status_code == 200, response.text
     assert response.json()["data"]["strategyPool"]["current"] == world.pool
-    assert len(requests) == 3
+    assert len(requests) == 4
     assert all(r.get_method() == "GET" and r.get_header("X-tenant-id") == TENANT
                and r.get_header("Authorization") == "Bearer " + token for r in requests)
 
@@ -340,3 +355,124 @@ def test_production_missing_or_corrupt_cycle_store_fails_closed(world, monkeypat
     assert view["cycles"] is view["health"] is view["memberVirtualBooks"] is None
     assert result["meta"]["surfaces"]["autonomy_cycles"]["status"] == "unavailable"
     assert path.exists() == (contents is not None)
+
+
+def _row(result):
+    return result["data"]["strategyPool"]["memberRules"]
+
+
+def test_member_rules_copied_unchanged_from_registry(world):
+    result = world.client().get(PATHS[0], headers={"Authorization": "Bearer reader-token"}).json()
+    rows = _row(result)
+    assert len(rows) == 1  # one row per distinct artifact_ref in current and versions
+    assert rows[0] == {
+        "artifact_ref": REF, "checksum": CHECKSUM, "status": "ok", "reason": None,
+        "strategy_id": "strategy-momentum", "version": "1.0.0",
+        "strategy_logic": STRATEGY_ARTIFACT["strategy_logic"], "parameters": STRATEGY_ARTIFACT["parameters"],
+        "adjustable_controls": STRATEGY_ARTIFACT["mutation_surface"]["controls"],
+        "immutable_parameters": ["symbols"], "expression_policy": STRATEGY_ARTIFACT["expression_policy"]}
+    assert result["meta"]["surfaces"]["member_rules"]["status"] == "ok"
+    registry = [c for c in world.calls if "registry-owner" in c[0]]
+    assert len(registry) == 1  # two pool versions name the ref; one Registry read
+    assert registry[0][2]["tenant_id"] == TENANT and registry[0][2]["auth_token"] == "Bearer reader-token"
+    assert 0 < registry[0][2]["timeout"] <= 2
+
+
+def test_member_rules_second_distinct_ref_adds_one_read(world):
+    url = list(world.payloads)[0]
+    other = deepcopy(world.pool)
+    other["members"].append({**other["members"][0], "artifact_ref": "artifact-other"})
+    world.payloads[url] = other
+    world.payloads["http://registry-owner/api/registry/strategy-artifacts/artifact-other"] = {
+        "entry": {**world.payloads[list(world.payloads)[3]]["entry"], "registry_id": "artifact-other"}}
+    rows = _row(world.client().get(PATHS[1]).json())
+    assert [r["artifact_ref"] for r in rows] == [REF, "artifact-other"]
+    assert len([c for c in world.calls if "registry-owner" in c[0]]) == 2
+
+
+@pytest.mark.parametrize("case", ["checksum", "tenant", "missing"])
+def test_member_rules_unverifiable_row_has_reason_and_no_rule_body(world, case):
+    url = list(world.payloads)[3]
+    if case == "checksum":
+        world.payloads[url]["entry"]["checksum"] = "sha256:" + "b" * 64
+    elif case == "tenant":
+        world.payloads[url]["entry"]["owner_tenant"] = "secret-tenant"
+    else:
+        world.payloads[url] = HTTPError(url, 404, "nf", None, io.BytesIO(b"{}"))
+    result = world.client().get(PATHS[0]).json()
+    row = _row(result)[0]
+    assert row["status"] == "unavailable" and row["reason"]
+    assert not ({"strategy_logic", "parameters", "adjustable_controls"} & set(row))
+    assert "secret-tenant" not in json.dumps(result)
+    assert result["data"]["strategyPool"]["current"] == world.pool  # rest unchanged
+
+
+def test_registry_failure_marks_surface_unavailable_and_keeps_other_sections(world):
+    url = list(world.payloads)[3]
+    world.payloads[url] = HTTPError(url, 503, "down", None, io.BytesIO(b"secret"))
+    result = world.client().get(PATHS[0]).json()
+    view = result["data"]["strategyPool"]
+    assert view["memberRules"] is None
+    assert result["meta"]["surfaces"]["member_rules"] == {
+        "status": "unavailable", "source": "registry_owner", "reason": "owner_http_503",
+        "snapshot_at": result["meta"]["snapshot_at"]}
+    assert view["current"] == world.pool and view["health"] == world.health and view["memberVirtualBooks"]
+
+
+def _recorded_refused_reweight(world):
+    """Recorded hosted shape: the cycle observed v2; a refused reweight appended v3, same members."""
+    bundle = world.packet["persona_cycle"]["observe_bundle"]
+    observed = deepcopy(world.pool)
+    observed.update(pool_version=2, digest="sha256:observed-v2")
+    bundle["pool"] = observed
+    bundle["pool_health"]["pool_version"] = 2
+    current = {**deepcopy(observed), "pool_version": 3, "digest": "sha256:current-v3"}
+    world.payloads[list(world.payloads)[0]] = current
+    world.payloads[list(world.payloads)[1]] = {"versions": [observed, current], "refusals": []}
+    return bundle, current
+
+
+def test_refused_reweight_version_does_not_invalidate_health_and_books(world):
+    _recorded_refused_reweight(world)
+    result = world.client().get(PATHS[0]).json()
+    surfaces = result["meta"]["surfaces"]
+    assert surfaces["pool_health"]["status"] == surfaces["member_virtual_books"]["status"] == "ok"
+    assert surfaces["pool_health"]["observed_pool_version"] == 2
+    assert surfaces["member_virtual_books"]["observed_pool_version"] == 2
+    assert result["data"]["strategyPool"]["current"]["pool_version"] == 3
+    assert result["data"]["strategyPool"]["health"]["pool_version"] == 2
+
+
+def test_health_pinned_to_observed_version_not_current(world):
+    bundle, _ = _recorded_refused_reweight(world)
+    bundle["pool_health"]["pool_version"] = 3
+    result = world.client().get(PATHS[0]).json()
+    assert result["meta"]["surfaces"]["pool_health"]["reason"] == "pool_health_missing_or_invalid"
+
+
+@pytest.mark.parametrize("change", ["risk_weight", "added", "removed", "stage", "checksum"])
+def test_changed_members_keep_snapshot_mismatch(world, change):
+    bundle, current = _recorded_refused_reweight(world)
+    member = current["members"][0]
+    if change == "risk_weight":
+        member["risk_weight"] = .2
+    elif change == "added":
+        current["members"].append({**member, "artifact_ref": "artifact-new"})
+    elif change == "removed":
+        bundle["pool"]["members"].append({**member, "artifact_ref": "artifact-gone"})
+    elif change == "stage":
+        member["stage"] = "trial"
+    else:
+        member["checksum"] = "sha256:" + "c" * 64
+    result = world.client().get(PATHS[0]).json()
+    for name in ("pool_health", "member_virtual_books"):
+        assert result["meta"]["surfaces"][name]["status"] == "unavailable"
+        assert result["meta"]["surfaces"][name]["reason"] == "cycle_pool_snapshot_mismatch"
+        assert result["meta"]["surfaces"][name]["observed_pool_version"] == 2
+
+
+def test_removed_members_are_ignored_in_membership_comparison(world):
+    bundle, current = _recorded_refused_reweight(world)
+    current["members"].append({**current["members"][0], "artifact_ref": "artifact-out", "stage": "removed"})
+    result = world.client().get(PATHS[0]).json()
+    assert result["meta"]["surfaces"]["pool_health"]["status"] == "ok"

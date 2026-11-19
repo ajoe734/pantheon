@@ -1,0 +1,20 @@
+{
+  "task_id": "DEV-RELEASE-UNCHANGED-FE-GATE-FAILURE-NO-ROLLBACK-20261119",
+  "owner": "Claude2",
+  "compatibility_source": "release-compatibility-manifest.json (agora_compat_manifest.py write), digest-bound via compatibility_manifest_sha256; compatibility judged by existing validate_deployment_rules for the exact backend/frontend runtime pair. No second rule added.",
+  "behavior": {
+    "dev_unchanged_fe_gate_failure_compatible_manifest": "deployed_not_accepted; backend stays, no FE switch, no compensation",
+    "unreadable_or_incompatible_manifest": "rejected and compensated as before",
+    "changed_frontend": "rejected and compensated as before",
+    "non_dev_target": "rejected as before (gate-before-switch unchanged)",
+    "unhealthy_stack": "unchanged: still rolls back"
+  },
+  "tests": "uv run --no-project --with pytest --with pyyaml python -m pytest scripts/test_cross_repo_release_controller.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_acceptance_stage.py scripts/test_acceptance_workflows_truthful.py -> 379 passed",
+  "residual_findings": [
+    "After a tolerated failure the hosted frontend deployment.json still names the previous bffCommit (no FE switch ran), so readers of that manifest see the older backend until the next frontend deploy; the controller skips the pair/bff-manifest equality check in that path.",
+    "Opening the owning-chain task is still manual: the record and acceptance verdict name the frontend chain, no automatic task creation was added (would be a new writer).",
+    "compensate_cross_repo_release.sh left unchanged; final_artifact_verify is skipped for deployed_not_accepted so it is only reached on rejection.",
+    "The gate itself reruns frontend unit tests on every backend release for an unchanged frontend; FE-GATE-BROWSER-INSTALL-BEFORE-TESTS-20261119 owns the flake."
+  ],
+  "rework_20261119": "deployed_not_accepted now skips final_artifact_verify (so compensate_cross_repo_release.sh is never reached and cannot crash on null frontend run_id); Enforce step handles deployed_not_accepted before the accepted branch without requiring final verify or candidate-frontend.json; acceptance verdict records outcome, deployed, accepted, gate_run_id, failed_gates, owning_chain. Tests: 367 passed (workflow + controller)."
+}

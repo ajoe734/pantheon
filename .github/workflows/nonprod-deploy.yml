@@ -174,6 +174,7 @@ jobs:
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
       compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
       admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
+      compatibility_manifest_b64: ${{ steps.release_admission.outputs.compatibility_manifest_b64 }}
       artifact_baseline_manifest_sha256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
       artifact_baseline_id: ${{ steps.artifact_baseline_upload.outputs.artifact-id }}
       artifact_baseline_digest: ${{ steps.artifact_baseline_upload.outputs.artifact-digest }}
@@ -438,6 +439,7 @@ jobs:
             --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
             --evidence-out "${ledger}"
           python3 - "${ledger}" "${evidence_dir}" >> "${GITHUB_OUTPUT}" <<'PY'
+          import base64
           import json
           import pathlib
           import sys
@@ -452,6 +454,10 @@ jobs:
               f"{candidate['compatibility_manifest']['sha256']}"
           )
           print(f"evidence_dir={sys.argv[2]}")
+          # The exact manifest bytes (digest-bound) travel to the coordinator,
+          # which reads compatibility from them and never from a second rule.
+          manifest_bytes = (pathlib.Path(sys.argv[2]) / "release-compatibility-manifest.json").read_bytes()
+          print("compatibility_manifest_b64=" + base64.b64encode(manifest_bytes).decode("ascii"))
           PY
 
       - name: Capture exact hosted FE and BFF rollback baseline
@@ -3222,6 +3228,9 @@ jobs:
       source_mode: ${{ steps.frontend_release.outputs.source_mode }}
       expires_at: ${{ steps.frontend_release.outputs.expires_at }}
       evidence_dir: ${{ steps.frontend_release.outputs.evidence_dir }}
+      release_outcome: ${{ steps.frontend_release.outputs.release_outcome }}
+      gate_run_id: ${{ steps.frontend_release.outputs.gate_run_id }}
+      failed_gates: ${{ steps.frontend_release.outputs.failed_gates }}
     env:
       TARGET_ENV: dev
       RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
@@ -3283,9 +3292,12 @@ jobs:
           PREVIOUS_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}
           RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
           COMPATIBILITY_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.compatibility_manifest_sha256 }}
+          COMPATIBILITY_MANIFEST_B64: ${{ needs.deploy-dev.outputs.compatibility_manifest_b64 }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           install -d -m 0700 "${RELEASE_EVIDENCE_DIR}"
+          manifest_file="${RELEASE_EVIDENCE_DIR}/release-compatibility-manifest.json"
+          printf '%s' "${COMPATIBILITY_MANIFEST_B64}" | base64 -d > "${manifest_file}" || rm -f "${manifest_file}"
           controller_log="${RELEASE_EVIDENCE_DIR}/release-controller.log"
           umask 077
           controller_evidence="${RELEASE_EVIDENCE_DIR}/release-controller-accepted.json"
@@ -3300,6 +3312,8 @@ jobs:
             --predecessor-bff-sha "${PREVIOUS_BACKEND_SHA}" \
             --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
+            --compatibility-manifest-file "${manifest_file}" \
+            --environment "${TARGET_ENV}" \
             --controller-run-id "${GITHUB_RUN_ID}" \
             --evidence-out "${controller_evidence}" \
             --candidate-profile "${FRONTEND_PROFILE}" \
@@ -3344,11 +3358,27 @@ jobs:
           fi
           echo "evidence_dir=${RELEASE_EVIDENCE_DIR}" >> "${GITHUB_OUTPUT}"
           echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
+          if [[ "${controller_status}" -eq 0 ]]; then
+            # deployed_not_accepted: the gate failed for the unchanged served
+            # frontend; the record names the run, the failing gates and owner.
+            python3 - "${controller_evidence}" >> "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import sys
+
+          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
+          acceptance = evidence.get("acceptance") or {}
+          print(f"release_outcome={evidence.get('outcome', '')}")
+          print(f"gate_run_id={acceptance.get('gate_run_id', '')}")
+          print("failed_gates=" + ",".join(acceptance.get("failed_gates") or []))
+          PY
+          fi
           exit "${controller_status}"
 
       - name: Verify and seal admitted final candidate
         id: final_artifact_verify
-        if: ${{ steps.frontend_release.outcome == 'success' }}
+        # deployed_not_accepted switched no frontend and wrote no FE deploy run, so the
+        # final seal (and any compensation it would trigger) does not apply.
+        if: ${{ steps.frontend_release.outcome == 'success' && steps.frontend_release.outputs.release_outcome != 'deployed_not_accepted' }}
         env:
           PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.target
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
@@ -4003,6 +4033,20 @@ jobs:
             fi
           fi
           if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
+                "${{ steps.frontend_release.outputs.release_outcome }}" == "deployed_not_accepted" ]]; then
+            {
+              echo "## Exact FE/BFF release deployed, NOT accepted"
+              echo "- the frontend gate failed for the unchanged served frontend; the backend stays deployed and nothing was rolled back"
+              echo "- gate run: \`${{ steps.frontend_release.outputs.gate_run_id }}\`"
+              echo "- failing gates: \`${{ steps.frontend_release.outputs.failed_gates }}\`"
+              echo "- owning chain: frontend (open a task there; the release is not accepted)"
+              echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
+              echo "- backend: \`${{ needs.deploy-dev.outputs.backend_sha }}\`"
+              echo "- frontend (accepted baseline, unchanged): \`${{ needs.deploy-dev.outputs.frontend_sha }}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
                 "${{ steps.final_artifact_verify.outcome }}" == "success" && \
                 "${roundtrip_ok}" == "true" && \
                 -s "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json" ]]; then
@@ -4058,6 +4102,9 @@ jobs:
     env:
       BACKEND_SHA: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
       FRONTEND_SHA: ${{ needs.coordinate-dev-release.outputs.frontend_sha }}
+      RELEASE_OUTCOME: ${{ needs.coordinate-dev-release.outputs.release_outcome }}
+      GATE_RUN_ID: ${{ needs.coordinate-dev-release.outputs.gate_run_id }}
+      FAILED_GATES: ${{ needs.coordinate-dev-release.outputs.failed_gates }}
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
@@ -4271,6 +4318,44 @@ jobs:
             --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
             --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" || true
           exit 0
+
+      - name: Record frontend gate failure for the unchanged served frontend
+        if: ${{ always() && env.RELEASE_OUTCOME == 'deployed_not_accepted' }}
+        continue-on-error: true
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # Deployed, not accepted: the unchanged served frontend failed its
+          # integration gate. The verdict is failed and owned by the frontend
+          # chain; the deploy itself is never rolled back.
+          python3 - "${VERDICT_FILE}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              verdict = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, ValueError):
+              verdict = {"schemaVersion": "pantheon.dev-acceptance-verdict.v1", "failed": [], "checks": []}
+          gates = ", ".join(g for g in os.environ.get("FAILED_GATES", "").split(",") if g) or "unknown"
+          entry = {
+              "id": "gate:frontend-integration",
+              "kind": "check",
+              "owner": "frontend",
+              "detail": f"integration gate run {os.environ.get('GATE_RUN_ID', '')} failed: {gates}",
+          }
+          verdict["acceptance"] = "failed"
+          verdict["outcome"] = "deployed_not_accepted"
+          verdict["deployed"] = True
+          verdict["accepted"] = False
+          verdict["owning_chain"] = "frontend"
+          verdict["gate_run_id"] = os.environ.get("GATE_RUN_ID", "")
+          verdict["failed_gates"] = [g for g in os.environ.get("FAILED_GATES", "").split(",") if g]
+          verdict["failed"] = [entry, *verdict.get("failed", [])]
+          verdict["checks"] = [{**entry, "status": "failed"}, *verdict.get("checks", [])]
+          path.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
 
       - name: Stop heartbeat and release the acceptance lease
         id: lease_cleanup

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from services.source_ingestion import controller_worker
+from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion import controller_state
 from services.source_ingestion.controller_state import (
@@ -3598,9 +3599,13 @@ def test_steady_run_scheduled_that_never_responds_fails_within_dedicated_bound(
     import time
 
     start = time.monotonic()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception) as raised:
         _steady_server_tick(tmp_path, monkeypatch, schedule_delay=-1, reconcile_delay=0.0)
-    assert time.monotonic() - start < 2.9
+    elapsed = time.monotonic() - start
+    # Counter that does not depend on host speed: a server that never answers can only end the tick through the
+    # dedicated RPC timeout (patched to 1.5 s above), and it does end it with that timeout, not a hang or another error.
+    assert isinstance(raised.value, controller_worker.ControllerTickError) and "timed out" in str(raised.value)
+    wall_clock_bounds.check("controller_worker.steady_rpc_timeout_failure", elapsed, 2.9, unit="s", strict=True)
 
 
 def test_steady_reconcile_slower_than_config_timeout_but_inside_bound_is_ok(
@@ -3616,9 +3621,13 @@ def test_steady_reconcile_that_never_responds_fails_within_dedicated_bound(
     import time
 
     start = time.monotonic()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception) as raised:
         _steady_server_tick(tmp_path, monkeypatch, schedule_delay=0.0, reconcile_delay=-1)
-    assert time.monotonic() - start < 2.9
+    elapsed = time.monotonic() - start
+    # Counter that does not depend on host speed: a server that never answers can only end the tick through the
+    # dedicated RPC timeout (patched to 1.5 s above), and it does end it with that timeout, not a hang or another error.
+    assert isinstance(raised.value, controller_worker.ControllerTickError) and "timed out" in str(raised.value)
+    wall_clock_bounds.check("controller_worker.steady_rpc_timeout_failure", elapsed, 2.9, unit="s", strict=True)
 
 
 def test_steady_timeout_env_may_raise_but_never_lower_below_floor(

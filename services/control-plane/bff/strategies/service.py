@@ -6,6 +6,8 @@ away from route handlers.
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
 import json
 import logging
 import os
@@ -65,6 +67,9 @@ STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES = STRATEGY_OWNER_PAGE_SIZE
 
 ROLE_TRADING = "trading"
 ROLE_ROLLBACK_BASELINE = "rollback_baseline"
+ROLE_POOL_ENVELOPE = "pool_envelope"
+ROLE_POOL_MEMBER = "pool_member"
+POOL_ENVELOPE_KIND = "persona_portfolio_v1"
 
 
 def _clean_dict(value: Any) -> Dict[str, Any]:
@@ -83,7 +88,10 @@ def project_strategy_rules(
     of RegistryEntryView (``{"entry": {...}}``) or bare entries. Role is
     ``rollback_baseline`` only when the registry id is named in
     ``lineage.parent_registry_ids`` of another approved bundle of the same
-    strategy. No registry id is ever derived by rewriting another id.
+    strategy. A bundle whose ``strategy_logic.kind`` is ``persona_portfolio_v1``
+    is a ``pool_envelope`` and lists its members; a bundle named only by pool
+    envelopes (as member or lineage parent) is a ``pool_member``. No registry
+    id is ever derived by rewriting another id.
     """
     approved: List[Dict[str, Any]] = []
     for item in entries if isinstance(entries, list) else []:
@@ -115,30 +123,75 @@ def project_strategy_rules(
             else []
         )
 
+    def _artifact_of(entry: Dict[str, Any]) -> Dict[str, Any]:
+        return _clean_dict(_clean_dict(entry.get("metadata")).get("strategy_artifact"))
+
+    envelope_ids = {
+        str(e["registry_id"])
+        for e in approved
+        if _clean_dict(_artifact_of(e).get("strategy_logic")).get("kind") == POOL_ENVELOPE_KIND
+    }
+    named_by_envelopes: set = set()
+    for env_id in envelope_ids:
+        named_by_envelopes.update(parent_ids_by_bundle.get(env_id, []))
+    for entry in approved:
+        if str(entry["registry_id"]) not in envelope_ids:
+            continue
+        for member in _clean_dict(_artifact_of(entry).get("strategy_logic")).get("members") or []:
+            if isinstance(member, dict):
+                for key in ("artifact_id", "member_id"):
+                    if str(member.get(key) or "").strip():
+                        named_by_envelopes.add(str(member[key]).strip())
+
     rules: List[Dict[str, Any]] = []
     for entry in approved:
         registry_id = str(entry["registry_id"])
-        is_parent_of_other = any(
+        is_envelope = registry_id in envelope_ids
+        is_baseline = any(
             registry_id in parents
             for other_id, parents in parent_ids_by_bundle.items()
-            if other_id != registry_id
+            if other_id != registry_id and other_id not in envelope_ids
         )
-        metadata = _clean_dict(entry.get("metadata"))
-        artifact = _clean_dict(metadata.get("strategy_artifact"))
+        artifact = _artifact_of(entry)
         mutation = _clean_dict(artifact.get("mutation_surface"))
         controls = mutation.get("controls")
         immutable = mutation.get("immutable_parameters")
-        rules.append(
-            {
-                "registryId": registry_id,
-                "version": entry.get("version"),
-                "role": ROLE_ROLLBACK_BASELINE if is_parent_of_other else ROLE_TRADING,
-                "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
-                "parameters": _clean_dict(artifact.get("parameters")),
-                "adjustableControls": list(controls) if isinstance(controls, list) else [],
-                "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
-            }
-        )
+        if is_envelope:
+            role = ROLE_POOL_ENVELOPE
+        elif is_baseline:
+            role = ROLE_ROLLBACK_BASELINE
+        elif registry_id in named_by_envelopes:
+            role = ROLE_POOL_MEMBER
+        else:
+            role = ROLE_TRADING
+        rule = {
+            "registryId": registry_id,
+            "version": entry.get("version"),
+            "role": role,
+            "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
+            "parameters": _clean_dict(artifact.get("parameters")),
+            "adjustableControls": list(controls) if isinstance(controls, list) else [],
+            "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
+        }
+        if is_envelope:
+            logic = rule["strategyLogic"]
+            rule["combinationRule"] = logic.get("combination_rule")
+            rule["riskLimits"] = deepcopy(logic.get("risk_limits"))
+            members = []
+            for member in logic.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                member_artifact = _clean_dict(member.get("artifact"))
+                member_controls = _clean_dict(member_artifact.get("mutation_surface")).get("controls")
+                members.append({
+                    "registryId": member.get("artifact_id") or member.get("member_id"),
+                    "riskWeight": member.get("risk_weight"),
+                    "strategyLogic": deepcopy(_clean_dict(member_artifact.get("strategy_logic"))),
+                    "parameters": deepcopy(_clean_dict(member_artifact.get("parameters"))),
+                    "adjustableControls": deepcopy(member_controls) if isinstance(member_controls, list) else [],
+                })
+            rule["members"] = members
+        rules.append(rule)
     return rules
 
 log = logging.getLogger(__name__)

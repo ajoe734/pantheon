@@ -1,0 +1,18 @@
+{
+  "task_id": "BFF-PERSONA-STRATEGY-VISIBILITY-20261119",
+  "owned_layer": "BFF persona pool port, strategy rules projection, acceptance probe and fixtures",
+  "not_changed": ["owner writes", "persistent stores", "route signatures", "decide() refused-decision appends"],
+  "tests": {
+    "passed": [
+      "services/control-plane/bff/tests/test_persona_pool_views.py (40)",
+      "services/control-plane/bff/tests/test_strategy_rules_pool_envelope.py",
+      "services/control-plane/bff/tests/test_strategy_operational_status.py",
+      "acceptance/test_persona_pool_member_rules.py",
+      "scripts/test_dev_acceptance_stage.py (12; replay test updated for the shipped probe)"
+    ],
+    "preexisting_failures_identical_on_base_82b289eb6": "15 in test_bff_b2_list_detail_facade, test_persona_cycle_views, test_persona_router, test_ppl_alloc_009_paper_eligibility_proof, test_strategy_ranking_router (sandbox env: 403s, route count, dates); test_persona_paper_owner_lifecycle_contract needs GOV_APPROVAL_TEST_DSN"
+  },
+  "hosted_verification": "not run here; the coordinator runs acceptance/probes/persona-pool-member-rules once against hosted after deploy (release probes receive no viewer credentials from nonprod-deploy.yml, so the probe skips there with exit 77)",
+  "fixtures": ["acceptance/fixtures/hosted_persona_pool_20261119.json", "acceptance/fixtures/hosted_strategy_rules_20261119.json"],
+  "fixture_note": "baseline registry entry in the rules fixture is reconstructed from the recorded rule; persona detail memberRules and observed_pool_version are post-fix shapes"
+}

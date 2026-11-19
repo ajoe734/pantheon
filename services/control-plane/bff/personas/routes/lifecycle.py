@@ -49,6 +49,33 @@ log = logging.getLogger(__name__)
 
 _POOL_PUBLISH_RECORDS: Any = None
 
+# Host-issued least-privilege role for the persona daily pool cycle. It is accepted by the strategy-pool
+# publish route ONLY: no shared role set (read/write helpers) includes it, so every other route refuses it.
+POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
+
+
+def _pool_owner_authorization(identity: Any, authorization: Optional[str], tenant_id: str = "") -> Optional[str]:
+    if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+        return authorization
+    from ..service import PERSONA_OWNER_SERVICE_ACTOR_ID, _PersonaOwnerHttpTransport, _owner_read_authorization
+
+    try:
+        # Tenant-bound short-lived BFF service JWT: passes bound_tenant and the owner's strict auth.
+        token = _PersonaOwnerHttpTransport(tenant_id=tenant_id)._service_jwt("persona")
+    except RuntimeError:
+        # No signing secret (stub/test environments only): carry the tenant claim unsigned.
+        import base64
+        import json
+
+        def _b64(obj: Any) -> str:
+            return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+        claims = {"sub": PERSONA_OWNER_SERVICE_ACTOR_ID, "tenant_id": tenant_id,
+                  "allowed_tenants": [tenant_id], "roles": ["operator", "admin", "service"]}
+        token = f"{_b64({'alg': 'none'})}.{_b64(claims)}."
+    _owner_read_authorization.set(f"Bearer {token}")
+    return _owner_read_authorization.get()
+
 
 def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
     """Real coordinator + owner pool reader; only owner HTTP is external."""
@@ -471,7 +498,8 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         identity = _extract_identity(authorization, mfa_token=x_mfa_token)
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        _require_operator_role(identity)
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_operator_role(identity)
         unknown = set(payload) - {"pool_version", "stage"}
         if unknown:
             raise _bff_error(
@@ -486,6 +514,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 422, ErrorCode.VALIDATION_FAILED, "Invalid pool_version",
                 "pool_version must be a positive integer",
             )
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         publisher = _pool_publisher(authorization)
         try:
@@ -516,7 +545,9 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         identity = _extract_identity(authorization)
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        _require_read_role(identity)
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_read_role(identity)
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
         return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}

@@ -929,3 +929,114 @@ def test_job_script_paths_have_a_matching_checkout():
                 if match.group(1).rstrip("/") not in checkout_paths:
                     problems.append(f"{job_name} / {step.get('name')}: {match.group(0)}")
     assert not problems, "script path without a matching checkout in the same job: " + "; ".join(problems)
+
+
+def _run_enforce_step(tmp_path, values, with_candidate_frontend=True):
+    """Run the real outcome-enforcing step in a bare checkout layout of its own job."""
+    enforce = next(
+        item for item in COORDINATE["steps"]
+        if item.get("name") == "Enforce accepted or proven compensated outcome"
+    )
+    rendered = re.sub(
+        r"\$\{\{\s*(.*?)\s*\}\}", lambda match: values.get(match.group(1), ""), enforce["run"]
+    )
+    workspace = tmp_path / "workspace"
+    evidence = workspace / "evidence"
+    (evidence / "candidate").mkdir(parents=True)
+    if with_candidate_frontend:
+        (evidence / "candidate" / "candidate-frontend.json").write_text("{}")
+    (workspace / ".target").mkdir()  # the coordinator's own checkout layout
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", rendered],
+        cwd=workspace, text=True, capture_output=True,
+        env={"PATH": os.environ["PATH"], "RELEASE_EVIDENCE_DIR": str(evidence),
+             "GITHUB_STEP_SUMMARY": str(summary)},
+    )
+    return result, summary.read_text() if summary.exists() else ""
+
+
+def _enforce_values(**overrides):
+    values = {
+        "inputs.run_exact_artifact_roundtrip": "false",
+        "steps.frontend_release.outcome": "success",
+        "steps.final_artifact_verify.outcome": "success",
+        "steps.frontend_release.outputs.release_outcome": "",
+        "steps.frontend_release.outputs.gate_run_id": "44470794822",
+        "steps.frontend_release.outputs.failed_gates": "Gate 1 - npm run test",
+        "steps.compensation.outcome": "skipped",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_deployed_not_accepted_release_exits_zero_and_names_gate_and_owner(tmp_path):
+    result, summary = _run_enforce_step(
+        tmp_path,
+        _enforce_values(**{
+            "steps.frontend_release.outputs.release_outcome": "deployed_not_accepted",
+            "steps.final_artifact_verify.outcome": "skipped",
+        }),
+        with_candidate_frontend=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "deployed, NOT accepted" in summary
+    assert "44470794822" in summary and "Gate 1 - npm run test" in summary
+    assert "owning chain: frontend" in summary
+
+
+def test_accepted_release_summary_is_unchanged_by_the_new_outcome(tmp_path):
+    result, summary = _run_enforce_step(tmp_path, _enforce_values())
+    assert result.returncode == 0, result.stderr
+    assert "Exact FE/BFF release accepted" in summary
+
+
+def test_failed_frontend_release_still_requires_compensation(tmp_path):
+    result, summary = _run_enforce_step(
+        tmp_path, _enforce_values(**{"steps.frontend_release.outcome": "failure"})
+    )
+    assert result.returncode == 75
+    assert "rollback NOT proven" in summary
+
+
+def test_controller_gets_manifest_and_target_environment_without_new_dispatch_inputs():
+    run = step(COORDINATE, "frontend_release")["run"]
+    assert '--compatibility-manifest-file "${manifest_file}"' in run
+    assert '--environment "${TARGET_ENV}"' in run
+    inputs = set(WORKFLOW[True]["workflow_dispatch"]["inputs"])
+    assert not {name for name in inputs if "unchanged" in name or "tolerate" in name or "gate_failure" in name}
+
+
+def test_gate_failure_marks_acceptance_verdict_failed_and_frontend_owned(tmp_path):
+    acceptance = WORKFLOW["jobs"]["dev-acceptance-stage"]
+    record = next(
+        item for item in acceptance["steps"]
+        if item.get("name") == "Record frontend gate failure for the unchanged served frontend"
+    )
+    assert "deployed_not_accepted" in record["if"]
+    verdict = tmp_path / "acceptance-verdict.json"
+    verdict.write_text('{"acceptance": "pending", "failed": [], "checks": []}')
+    subprocess.run(
+        ["bash", "--noprofile", "--norc", "-c", record["run"]],
+        check=True, cwd=tmp_path,
+        env={"PATH": os.environ["PATH"], "VERDICT_FILE": str(verdict),
+             "GATE_RUN_ID": "44470794822", "FAILED_GATES": "Gate 1 - npm run test"},
+    )
+    import json
+    result = json.loads(verdict.read_text())
+    assert result["acceptance"] == "failed"
+    assert result["failed"][0]["owner"] == "frontend"
+    assert result["deployed"] is True and result["accepted"] is False
+    assert result["owning_chain"] == "frontend"
+    assert result["gate_run_id"] == "44470794822"
+    assert result["failed_gates"] == ["Gate 1 - npm run test"]
+    assert "44470794822" in result["failed"][0]["detail"]
+    assert "Gate 1 - npm run test" in result["failed"][0]["detail"]
+
+
+def test_final_artifact_verify_and_compensation_skip_deployed_not_accepted():
+    verify = step(COORDINATE, "final_artifact_verify")
+    assert "release_outcome != 'deployed_not_accepted'" in verify["if"]
+    comp = step(COORDINATE, "compensation")
+    # compensation keys off final_artifact_verify being non-skipped, so a skipped verify never compensates
+    assert "final_artifact_verify.conclusion != 'skipped'" in comp["if"]
