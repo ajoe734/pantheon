@@ -342,7 +342,12 @@ def test_every_production_connector_uses_guarded_transport() -> None:
     configured = (root / "services/source_ingestion/configured.py").read_text(encoding="utf-8")
     assert "return open_external_url(request, caller=caller, timeout=timeout)" in configured
     assert 'network_scope == "internal_service"' in configured
-    assert "_InternalServiceRedirectHandler" in configured
+    assert "open_internal_service_url(" in configured
+    egress = (root / "services/external_egress.py").read_text(encoding="utf-8")
+    assert "class InternalServiceRedirectHandler" in egress
+    assert "InternalServiceRedirectHandler(allowed_prefixes" in egress
+    agora = (root / "services/source_ingestion/connectors/agora_owner.py").read_text(encoding="utf-8")
+    assert "open_internal_service_url(" in agora
 
 
 def test_connector_fetch_helpers_are_denied_before_outbound_transport(monkeypatch: pytest.MonkeyPatch) -> None:
