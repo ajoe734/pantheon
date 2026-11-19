@@ -364,6 +364,10 @@ fix went to the source (#7610).
 |---|---|---|
 | WP5.1 one owner per domain | table above | in force (operator decision 3) |
 | WP5.2 this register | this file | in force |
+| Production first release: `post_identity` ran without the release environment and reported a failed compose lookup as "active container not found", which rolled back Prod run 44485045441 on 11/19 (production release) | ENV-PROD-CONTROL-IMPL-001 g70 (#7623) | merged; passed on Prod run 44546522009 |
+| Two bootstrap copies: staging's runtime-manager caller token (2efb0d291, 10/30) never reached `deploy/production/bootstrap.sh`; on Prod run 44546522009 (Release 111, 11/19 14:52Z) paper-fleet-reconciler and paper-signal-producer send the opaque secrets-file value, runtime-manager answers 403 `AUTH_TOKEN_FORMAT`, and both stay unhealthy while the switch reported `prod_active`, because it checks only BFF readiness and the projector count (production release) | ENV-PROD-CONTROL-IMPL-001 g71 | open |
+| The paper reconciler and signal producer read one static runtime-manager bearer at start-up, while BFF, persona and consultation mint a short-lived HS256 token per call, so any minted bearer expires under them (persona-loop owner) | no task yet | open |
+| Production runtime-manager runs the default `permissive` auth mode and accepts an unsigned `actor:role` bearer from any container on its network; staging not checked (production release) | no task yet | open |
 
 Instances: the snapshot journal incident was opened by four conversations.
 On 11/18 04:06Z two conversations started a supervisor runtime promotion 14
