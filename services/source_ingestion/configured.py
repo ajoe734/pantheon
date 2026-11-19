@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from services.external_egress import is_internal_host, open_external_url
+from services.external_egress import is_internal_host, open_external_url, open_internal_service_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .connectors.collector_bundle import (
@@ -755,25 +755,13 @@ def _open_configured_url(
     allowed_prefixes: list[str],
 ):
     if network_scope == "internal_service":
-        host = urllib.parse.urlparse(request.full_url).hostname or ""
-        if not is_internal_host(host):
-            raise SourceEvidenceError("internal_service redirect escaped to an external host")
-        opener = urllib.request.build_opener(_InternalServiceRedirectHandler(allowed_prefixes))
-        return opener.open(request, timeout=timeout)
+        return open_internal_service_url(
+            request,
+            timeout=timeout,
+            allowed_prefixes=allowed_prefixes,
+            error_cls=SourceEvidenceError,
+        )
     return open_external_url(request, caller=caller, timeout=timeout)
-
-
-class _InternalServiceRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, allowed_prefixes: list[str]) -> None:
-        super().__init__()
-        self.allowed_prefixes = allowed_prefixes
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        absolute_url = urllib.parse.urljoin(req.full_url, newurl)
-        host = urllib.parse.urlparse(absolute_url).hostname or ""
-        if not is_internal_host(host) or not _url_is_allowed(absolute_url, self.allowed_prefixes):
-            raise SourceEvidenceError("internal_service redirect escaped its internal URL allowlist")
-        return super().redirect_request(req, fp, code, msg, headers, absolute_url)
 
 
 def _assert_robots_allowed(
