@@ -967,3 +967,29 @@ def test_pool_publish_service_principal_accepted_on_publish_route_only(world, mo
 def test_pool_publish_still_refuses_unprivileged_role(world, monkeypatch, tmp_path):
     client = _client(world, monkeypatch, tmp_path, roles=("viewer",))
     assert client.post(PATH, json={}, headers=H).status_code == 403
+
+
+def test_pool_principal_history_and_owner_fetch_use_bff_service_auth(world, monkeypatch, tmp_path):
+    """persona_pool_publisher reads history; owner-facing calls carry the BFF service auth, never its token."""
+    from services.control_plane.bff.personas import service as persona_service
+
+    client = _client(world, monkeypatch, tmp_path, roles=("persona_pool_publisher",))
+    seen: dict[str, Any] = {}
+    real_publisher = world.publisher
+
+    def ensure(persona_id, tenant_id=None):
+        seen["ensure"] = persona_service._owner_read_authorization.get()
+
+    def publisher(authorization):
+        seen["publisher"] = authorization
+        return real_publisher
+
+    monkeypatch.setattr(personas_lifecycle, "_ensure_persona_exists", ensure)
+    monkeypatch.setattr(personas_lifecycle, "_pool_publisher", publisher)
+    service_auth = "Bearer control-plane-bff:operator,admin,service"
+    history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H)
+    assert history.status_code == 200, history.text
+    assert seen == {"ensure": service_auth, "publisher": service_auth}
+    assert "operator-a" not in str(seen)
+    viewer = _client(world, monkeypatch, tmp_path, roles=("unrelated",))
+    assert viewer.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H).status_code == 403

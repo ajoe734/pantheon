@@ -54,6 +54,15 @@ _POOL_PUBLISH_RECORDS: Any = None
 POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
 
 
+def _pool_owner_authorization(identity: Any, authorization: Optional[str]) -> Optional[str]:
+    if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+        return authorization
+    from ..service import PERSONA_OWNER_SERVICE_ACTOR_ID, _owner_read_authorization
+
+    _owner_read_authorization.set(f"Bearer {PERSONA_OWNER_SERVICE_ACTOR_ID}:operator,admin,service")
+    return _owner_read_authorization.get()
+
+
 def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
     """Real coordinator + owner pool reader; only owner HTTP is external."""
 
@@ -491,6 +500,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 422, ErrorCode.VALIDATION_FAILED, "Invalid pool_version",
                 "pool_version must be a positive integer",
             )
+        authorization = _pool_owner_authorization(identity, authorization)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         publisher = _pool_publisher(authorization)
         try:
@@ -521,7 +531,9 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
         identity = _extract_identity(authorization)
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        _require_read_role(identity)
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_read_role(identity)
+        authorization = _pool_owner_authorization(identity, authorization)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
         return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}

@@ -10,9 +10,25 @@
   },
   "runtime_budget": "one principal file per issue run (PERSONA_POOL_PUBLISH_BFF_TOKEN in the existing persona volume, atomic 0400 write by the existing issuer); no new writer, volume, service or schedule",
   "tests": {
-    "passed": ["scripts/test_issue_dev_paper_principals.py", "services/persona/test_pool_autonomy_cycle.py", "services/control-plane/bff/tests/test_persona_pool_publish_route.py", "scripts/test_persona_cycle_owner_ports_compose_contract.py (all but one)"],
+    "passed": [
+      "scripts/test_issue_dev_paper_principals.py",
+      "services/persona/test_pool_autonomy_cycle.py",
+      "services/control-plane/bff/tests/test_persona_pool_publish_route.py",
+      "scripts/test_persona_cycle_owner_ports_compose_contract.py (all but one)",
+      "test_persona_pool_publish_route.py: 34 passed after reopen fix"
+    ],
     "preexisting_failure": "scripts/test_persona_cycle_owner_ports_compose_contract.py::test_dev_persona_tool_broker_resolves_enabled_with_shared_token asserts the openclaw-gateway command contains PERSONA_TOOL_BROKER_TOKEN; this diff does not touch the gateway service. Could not re-run on a clean HEAD (read-only git metadata in sandbox); attributed by diff scope, not proven.",
-    "added": ["issuance+mount+least-privilege claims", "cycle reads file first / fails closed / unconfigured", "BFF accepts principal on publish route only; shared guards refuse it; viewer refused"]
+    "added": [
+      "issuance+mount+least-privilege claims",
+      "cycle reads file first / fails closed / unconfigured",
+      "BFF accepts principal on publish route only; shared guards refuse it; viewer refused"
+    ]
   },
-  "hosted_proof": "pending: next daily cycle publication step must not fail on the credential; coordinator to record if task closes first"
+  "hosted_proof": "pending: next daily cycle publication step must not fail on the credential; coordinator to record if task closes first",
+  "reopen_fix_20261119": {
+    "problem": "publish-history refused the principal (_require_read_role) and owner reads (_ensure_persona_exists, owner strategy-pool fetch) forwarded the principal token, which owners reject with 403 AUTH_FORBIDDEN",
+    "fix": "publish-history allows persona_pool_publisher; for that role the BFF swaps in its own service authorization for the owner-facing reads (contextvar + _pool_publisher), so the principal token never leaves the BFF; other roles unchanged",
+    "test": "test_pool_principal_history_and_owner_fetch_use_bff_service_auth (history 200, owner-facing auth is BFF service auth, unrelated role 403)",
+    "runtime_budget": "no new writer, file or env"
+  }
 }
