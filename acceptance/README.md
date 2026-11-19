@@ -54,6 +54,16 @@ curl --fail --silent --show-error --max-time 30 "${ACCEPTANCE_BFF_URL%/}/bff/ver
 The directory may be empty or absent; the stage then runs only the built-in check.
 Each feature task adds its own probe (remediation plan RC2); the directory ships `persona-pool-member-rules` (below).
 
+### Viewer identity and redaction
+
+The dev acceptance stage gives release probes the read-only viewer identity in
+`ACCEPTANCE_VIEWER_CLIENT_ID` and `ACCEPTANCE_VIEWER_CLIENT_SECRET` (only when the stage
+declares output redaction). A probe must never print them. The stage also redacts, as
+`[redacted]`, the value of `ACCEPTANCE_VIEWER_CLIENT_SECRET` and of every non-empty
+environment value whose name ends in `_SECRET`, `_TOKEN` or `_PASSWORD` in all captured
+check and probe output before it is clipped or written to the verdict. A probe that
+needs the identity and does not receive it still exits 77 (skip).
+
 ## Declared checks
 
 `acceptance/checks.json` (optional; absent means none): `{"checks": [{"id", "owner", "argv": [...], "mutates": false, "timeout": 300}]}`.

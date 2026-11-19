@@ -4305,6 +4305,9 @@ jobs:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           DEPLOYED_RESULT: ${{ needs.coordinate-dev-release.result }}
           LEASE_HELD: ${{ steps.lease.outcome == 'success' && 'true' || 'false' }}
+          # Read-only viewer identity for release probes; only when the checked-out stage redacts output.
+          ACCEPTANCE_VIEWER_CLIENT_ID: ${{ steps.plan.outputs.redacts_output == 'true' && (vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1') || '' }}
+          ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ steps.plan.outputs.redacts_output == 'true' && secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET || '' }}
         shell: /bin/bash --noprofile --norc -uo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

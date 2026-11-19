@@ -46,6 +46,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+REDACTED = "[redacted]"
+SECRET_NAME_SUFFIXES = ("_SECRET", "_TOKEN", "_PASSWORD")
+
+
+def redact(text: str, env: dict) -> str:
+    """Replace every non-empty secret-like environment value (and the viewer secret) with [redacted]."""
+    names = {"ACCEPTANCE_VIEWER_CLIENT_SECRET"}
+    names.update(name for name in env if name.endswith(SECRET_NAME_SUFFIXES))
+    values = sorted({env[name] for name in names if env.get(name)}, key=len, reverse=True)
+    for value in values:
+        text = (text or "").replace(value, REDACTED)
+    return text or ""
+
+
 def _clip(text: str) -> str:
     text = (text or "").strip()
     return text if len(text) <= DETAIL_LIMIT else text[-DETAIL_LIMIT:]
@@ -96,7 +110,7 @@ def load_checks(path: Path) -> list[dict]:
 
 
 def plan(checks: list[dict], probes: list[dict]) -> dict:
-    return {"checks": len(checks), "probes": len(probes),
+    return {"checks": len(checks), "probes": len(probes), "redacts_output": True,
             "mutating": any(check["mutates"] for check in checks)}
 
 
@@ -129,7 +143,7 @@ def _run(argv: list[str], env: dict, timeout: int) -> tuple[int, str]:
         return 124, f"timed out after {timeout}s"
     except OSError as exc:
         return 126, f"could not execute: {exc}"
-    return done.returncode, _clip((done.stdout or "") + (done.stderr or ""))
+    return done.returncode, _clip(redact((done.stdout or "") + (done.stderr or ""), env))
 
 
 def _result(item: dict, status: str, *, exit_code: int | None = None, detail: str = "", seconds: float = 0.0) -> dict:
@@ -162,6 +176,7 @@ def run_stage(*, checks: list[dict], probes: list[dict], identity: dict, base_en
             continue
         started = clock()
         code, output = runner(check["argv"], probe_env, check["timeout"])
+        output = _clip(redact(output, probe_env))
         results.append(_result(check, "passed" if code == 0 else "failed", exit_code=code, detail=output,
                                seconds=clock() - started))
     for probe in probes:
@@ -175,6 +190,7 @@ def run_stage(*, checks: list[dict], probes: list[dict], identity: dict, base_en
             continue
         started = clock()
         code, output = runner([str(probe["path"])], probe_env, DEFAULT_TIMEOUT)
+        output = _clip(redact(output, probe_env))
         status = "passed" if code == 0 else "skipped" if code == SKIP_EXIT else "failed"
         results.append(_result(probe, status, exit_code=code, detail=output, seconds=clock() - started))
     return results
@@ -264,6 +280,7 @@ def main(argv=None) -> int:
         info = plan(checks, probes)
         print(json.dumps(info))
         _output("mutating", "true" if info["mutating"] else "false")
+        _output("redacts_output", "true" if info["redacts_output"] else "false")
         return 0
     identity = _identity_from(args)
     if args.command == "pending":
