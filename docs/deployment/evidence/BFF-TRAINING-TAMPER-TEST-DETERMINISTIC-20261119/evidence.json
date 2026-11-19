@@ -21,7 +21,7 @@
     "wall_clock_assertions_added": false
   },
   "loop_200_fresh_token_verification": {
-    "command": ".venv-pantheon/bin/python3 -c 'import sys, pytest; tokens = []; class Repeat200:\n    def pytest_collection_modifyitems(self, session, config, items):\n        mod = items[0].module; orig_jwt = mod._signed_caller_jwt\n        def wrapped_jwt(*a, **kw):\n            tok = orig_jwt(*a, **kw); tokens.append(tok); return tok\n        mod._signed_caller_jwt = wrapped_jwt\n        items[:] = [pytest.Function.from_parent(item.parent, name=f\"{item.name}[{i}]\", callobj=item.obj) for item in items for i in range(200)]\nrc = pytest.main([\"-q\", \"services/control-plane/bff/test_training_session_service_client.py::test_live_tampered_credential_rejected_by_owner\"], plugins=[Repeat200()]); ending_in_a = sum(1 for t in tokens if t.endswith(\"A\")); print(f\"runs={len(tokens)} unique_tokens={len(set(tokens))} ending_in_A={ending_in_a} rc={rc}\"); assert rc == 0 and len(tokens) == 200 and len(set(tokens)) == 200'",
+    "command": ".venv-pantheon/bin/python3 -c 'import sys, pytest\ntokens = []\nclass Repeat200:\n    def pytest_collection_modifyitems(self, session, config, items):\n        mod = items[0].module\n        orig_jwt = mod._signed_caller_jwt\n        def wrapped_jwt(*a, **kw):\n            tok = orig_jwt(*a, **kw)\n            tokens.append(tok)\n            return tok\n        mod._signed_caller_jwt = wrapped_jwt\n        items[:] = [\n            pytest.Function.from_parent(item.parent, name=f\"{item.name}[{i}]\", callobj=item.obj)\n            for item in items\n            for i in range(200)\n        ]\nrc = pytest.main([\"-q\", \"services/control-plane/bff/test_training_session_service_client.py::test_live_tampered_credential_rejected_by_owner\"], plugins=[Repeat200()])\nending_in_a = sum(1 for t in tokens if t.endswith(\"A\"))\nprint(f\"runs={len(tokens)} unique_tokens={len(set(tokens))} ending_in_A={ending_in_a} rc={rc}\")\nassert rc == 0 and len(tokens) == 200 and len(set(tokens)) == 200'",
     "runs": 200,
     "unique_fresh_tokens": 200,
     "tokens_ending_in_A_exercised": 9,
@@ -48,7 +48,26 @@
     ],
     "other_last_char_token_tamper_instances_found": 0
   },
-  "residual_findings": [],
+  "residual_findings": [
+    {
+      "problem_register_class": "RC1",
+      "location": "services/control-plane/bff/test_downstream_health_monitor.py:1309 (TestBoundedHealthPruneAtHostedScale.test_500k_plus_outbox_and_870k_dead_letter_backlog_drain_under_500ms)",
+      "observation": "In PR #7631 Branch CI Gate run 44534477621 (Test sweep shard 11, job 135597037986), failed wall-clock assertion: AssertionError: concurrent writer waited 533.2ms >= 500ms.",
+      "why_outside_scope": "File is outside this task's artifact contract (services/control-plane/bff/test_training_session_service_client.py); belongs to RC1 wall-clock bounds on shared CI runners."
+    },
+    {
+      "problem_register_class": "RC1",
+      "location": "scripts/test_dev_remote_watchdog.py:148 (TestDevRemoteWatchdog.test_large_envelope_exceeding_pause_succeeds_within_startup_timeout)",
+      "observation": "In PR #7631 Branch CI Gate run 44534477621 (Test sweep shard 11, job 135597037986), failed timing-sensitive watchdog subprocess test under CI load: AssertionError: 75 != 0 : [artifact-watchdog] guarded execution failed.",
+      "why_outside_scope": "File is outside this task's artifact contract; belongs to RC1 timing-sensitive required checks under shared CI load."
+    },
+    {
+      "problem_register_class": "RC1",
+      "location": "services/control-plane/bff/tests/test_persona_league_concurrent_read.py",
+      "observation": "In PR #7631 Branch CI Gate run 44534477621 (Test sweep shard 10, job 135597038115), 1 test failed comparing parallel vs serial / memoized league responses across a wall-clock boundary.",
+      "why_outside_scope": "File is outside this task's artifact contract; belongs to RC1 non-deterministic/timing-sensitive required checks."
+    }
+  ],
   "validation": {
     "commands": [
       {
