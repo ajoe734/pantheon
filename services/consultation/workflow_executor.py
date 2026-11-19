@@ -36,6 +36,7 @@ from services.knowledge import case_file as decision_case
 
 from .provider import (
     AgentProvisioningBlocked,
+    AgentProvisioningInProgress,
     ContributionBlocked,
     ContributionProviderError,
     HttpContributionProvider,
@@ -1206,6 +1207,8 @@ def _execute_panel_claim(
                     if future.done():
                         raise
                     claim = _renew(state, claim, config)
+    except AgentProvisioningInProgress:
+        raise
     except ContributionProviderError as exc:
         _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
             "request_id": claim.request_id, "event_type": "panel_agent_provisioning_blocked",
