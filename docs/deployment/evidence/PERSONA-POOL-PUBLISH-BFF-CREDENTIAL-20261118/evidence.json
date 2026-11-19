@@ -30,5 +30,11 @@
     "fix": "publish-history allows persona_pool_publisher; for that role the BFF swaps in its own service authorization for the owner-facing reads (contextvar + _pool_publisher), so the principal token never leaves the BFF; other roles unchanged",
     "test": "test_pool_principal_history_and_owner_fetch_use_bff_service_auth (history 200, owner-facing auth is BFF service auth, unrelated role 403)",
     "runtime_budget": "no new writer, file or env"
+  },
+  "reopen_fix_tenant_bound_20261119": {
+    "problem": "_pool_owner_authorization used stub 'Bearer control-plane-bff:operator,admin,service': no tenant claim -> bound_tenant TENANT_MISMATCH (503) and strict owner 401 AUTH_TOKEN_FORMAT",
+    "fix": "_pool_owner_authorization(identity, authorization, tenant_id) mints a tenant-bound short-lived BFF service JWT via _PersonaOwnerHttpTransport(tenant_id)._service_jwt('persona'); tenant-bearing unsigned fallback only when PANTHEON_BFF_JWT_SECRET is unset (stub tests)",
+    "test": "test_pool_principal_owner_token_is_tenant_bound_and_strict_owner_accepts_it exercises real bound_tenant and resolve_persona_tenant_scope under PERSONA_AUTH_MODE=strict; 35 passed in test_persona_pool_publish_route.py",
+    "runtime_budget": "no new writer; JWT minted in-memory per request"
   }
 }

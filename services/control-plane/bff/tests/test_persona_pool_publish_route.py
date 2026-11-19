@@ -986,10 +986,31 @@ def test_pool_principal_history_and_owner_fetch_use_bff_service_auth(world, monk
 
     monkeypatch.setattr(personas_lifecycle, "_ensure_persona_exists", ensure)
     monkeypatch.setattr(personas_lifecycle, "_pool_publisher", publisher)
-    service_auth = "Bearer control-plane-bff:operator,admin,service"
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "unit-test-secret")
     history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H)
     assert history.status_code == 200, history.text
-    assert seen == {"ensure": service_auth, "publisher": service_auth}
+    assert seen["ensure"] == seen["publisher"] and seen["publisher"].startswith("Bearer ")
+    from services.control_plane.bff.command_adapters.base import _token_tenants
+    assert _token_tenants(seen["publisher"])[0] == TENANT
     assert "operator-a" not in str(seen)
     viewer = _client(world, monkeypatch, tmp_path, roles=("unrelated",))
     assert viewer.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H).status_code == 403
+
+
+def test_pool_principal_owner_token_is_tenant_bound_and_strict_owner_accepts_it(monkeypatch):
+    """Un-mocked bound_tenant and strict owner scope resolution accept the minted service token."""
+    from services.control_plane.bff.command_adapters.base import bound_tenant
+
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "unit-test-secret")
+    identity = OperatorIdentity(operator_id="persona-pool-cycle", roles=["persona_pool_publisher"],
+                                mfa_verified=False, claims={}, token_kind="structured")
+    token = personas_lifecycle._pool_owner_authorization(identity, "Bearer pool-principal", TENANT)
+    assert token != "Bearer pool-principal" and "pool-principal" not in token
+    assert bound_tenant({}, TENANT, token) == TENANT
+    with pytest.raises(Exception):
+        bound_tenant({}, "other-tenant", token)
+    from services.persona.write_owner import resolve_persona_tenant_scope
+    scope = resolve_persona_tenant_scope(token, TENANT)
+    assert scope[1] == TENANT

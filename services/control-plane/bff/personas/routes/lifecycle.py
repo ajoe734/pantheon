@@ -54,12 +54,26 @@ _POOL_PUBLISH_RECORDS: Any = None
 POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
 
 
-def _pool_owner_authorization(identity: Any, authorization: Optional[str]) -> Optional[str]:
+def _pool_owner_authorization(identity: Any, authorization: Optional[str], tenant_id: str = "") -> Optional[str]:
     if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
         return authorization
-    from ..service import PERSONA_OWNER_SERVICE_ACTOR_ID, _owner_read_authorization
+    from ..service import PERSONA_OWNER_SERVICE_ACTOR_ID, _PersonaOwnerHttpTransport, _owner_read_authorization
 
-    _owner_read_authorization.set(f"Bearer {PERSONA_OWNER_SERVICE_ACTOR_ID}:operator,admin,service")
+    try:
+        # Tenant-bound short-lived BFF service JWT: passes bound_tenant and the owner's strict auth.
+        token = _PersonaOwnerHttpTransport(tenant_id=tenant_id)._service_jwt("persona")
+    except RuntimeError:
+        # No signing secret (stub/test environments only): carry the tenant claim unsigned.
+        import base64
+        import json
+
+        def _b64(obj: Any) -> str:
+            return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+        claims = {"sub": PERSONA_OWNER_SERVICE_ACTOR_ID, "tenant_id": tenant_id,
+                  "allowed_tenants": [tenant_id], "roles": ["operator", "admin", "service"]}
+        token = f"{_b64({'alg': 'none'})}.{_b64(claims)}."
+    _owner_read_authorization.set(f"Bearer {token}")
     return _owner_read_authorization.get()
 
 
@@ -500,7 +514,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 422, ErrorCode.VALIDATION_FAILED, "Invalid pool_version",
                 "pool_version must be a positive integer",
             )
-        authorization = _pool_owner_authorization(identity, authorization)
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         publisher = _pool_publisher(authorization)
         try:
@@ -533,7 +547,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
             _require_read_role(identity)
-        authorization = _pool_owner_authorization(identity, authorization)
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
         return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
