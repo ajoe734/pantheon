@@ -24,9 +24,24 @@ interface Call {
   body: any;
 }
 
-function harness(opts: { respond?: (call: Call) => { status: number; body: unknown } | Promise<never>; config?: unknown } = {}) {
+// Stateful stand-in for the broker: /authorize records (agent, session, tool call id, run), /call consumes it once.
+function fakeBroker() {
+  const recorded = new Map<string, string>();
+  return (call: Call): { status: number; body: unknown } => {
+    const b = call.body;
+    const key = `${b.agent_id}|${b.session_key}|${b.tool_call_id}`;
+    if (call.url.endsWith("/authorize")) {
+      recorded.set(key, b.run_id);
+      return { status: 200, body: { allowed: true, allowed_tools: [...PANTHEON_TOOLS] } };
+    }
+    if (!recorded.delete(key)) return { status: 403, body: { error: "refused", reason: "call_not_authorized_by_hook" } };
+    return { status: 200, body: { result: { ok: true } } };
+  };
+}
+
+function harness(opts: { respond?: (call: Call) => { status: number; body: unknown } | Promise<never>; config?: unknown; broker?: ReturnType<typeof fakeBroker> } = {}) {
   const calls: Call[] = [];
-  const respond = opts.respond ?? (() => ({ status: 200, body: { allowed: true, allowed_tools: [...PANTHEON_TOOLS], result: { ok: true } } }));
+  const respond = opts.respond ?? (opts.broker ?? fakeBroker());
   const fetchImpl = async (url: string, init: any) => {
     const call = { url, headers: init.headers, body: JSON.parse(init.body) };
     calls.push(call);
@@ -37,17 +52,23 @@ function harness(opts: { respond?: (call: Call) => { status: number; body: unkno
   let hook: Handler | undefined;
   let factory: ((ctx: any) => any) | undefined;
   let toolOptions: any;
-  instance.register({
-    pluginConfig: "config" in opts ? opts.config : CONFIG,
-    registerTool(f: any, o: any) {
-      factory = f;
-      toolOptions = o;
-    },
-    on(_name: string, handler: Handler) {
-      hook = handler;
-    },
-  } as any);
-  return { calls, hook: hook!, factory: factory!, toolOptions };
+  const registerOn = (target: { hook?: Handler; factory?: (ctx: any) => any; options?: any }) =>
+    instance.register({
+      pluginConfig: "config" in opts ? opts.config : CONFIG,
+      registerTool(f: any, o: any) {
+        target.factory = f;
+        target.options = o;
+      },
+      on(_name: string, handler: Handler) {
+        target.hook = handler;
+      },
+    } as any);
+  const first: { hook?: Handler; factory?: (ctx: any) => any; options?: any } = {};
+  registerOn(first);
+  hook = first.hook;
+  factory = first.factory;
+  toolOptions = first.options;
+  return { calls, hook: hook!, factory: factory!, toolOptions, registerAgain: () => { const t: any = {}; registerOn(t); return t as { hook: Handler; factory: (ctx: any) => any }; } };
 }
 
 const HOOK_CTX = { agentId: "persona-alpha", sessionKey: "agent:persona-alpha:openresponses-user:s1", runId: "run-1" };
@@ -99,7 +120,7 @@ test("authorized call forwards tool, params and host identity with the plugin-co
   const call = calls[1]!;
   assert.equal(call.url, "http://adapter:8104/internal/persona-tools/v1/call");
   assert.deepEqual(call.body, {
-    tool: TOOL_RECALL, params, agent_id: "persona-alpha", run_id: "run-1", session_key: HOOK_CTX.sessionKey,
+    tool: TOOL_RECALL, params, agent_id: "persona-alpha", session_key: HOOK_CTX.sessionKey, tool_call_id: "tc-1",
   });
   assert.equal(call.headers["Authorization"], "Bearer secret-1");
   assert.deepEqual(Object.keys(call.headers).sort(), ["Authorization", "Content-Type"]);
@@ -115,7 +136,7 @@ test("model-supplied identity in params is forwarded as params only, never as id
   await tool.execute("tc-2", params);
   for (const call of calls) {
     assert.equal(call.body.agent_id, "persona-alpha");
-    assert.equal(call.body.run_id, "run-1");
+    if (call.url.endsWith("/authorize")) assert.equal(call.body.run_id, "run-1");
     assert.equal(call.body.session_key, HOOK_CTX.sessionKey);
   }
 });
@@ -167,11 +188,25 @@ test("hook blocks when host identity is incomplete and invalid config blocks eve
   assert.equal(missing.factory, undefined);
 });
 
-test("execute without a hook authorization fails closed and never calls the broker", async () => {
+test("execute without a hook authorization fails closed (the broker has no record of it)", async () => {
   const { calls, factory } = harness();
   const tool = factory({ agentId: "persona-alpha", sessionKey: "k" })[0];
   await assert.rejects(tool.execute("never-authorized", { query: "q" }), /call_not_authorized_by_hook/);
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]!.url.endsWith("/call"));
+});
+
+test("a call the hook authorized succeeds when the tool comes from a different plugin instance than the hook", async () => {
+  const { calls, hook, registerAgain } = harness();
+  // OpenClaw loads another registry at execute time: the tool is taken from a second register() call.
+  const second = registerAgain();
+  assert.notEqual(second.hook, hook);
+  await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "tc-x" }, HOOK_CTX);
+  const tool = second.factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
+  const result = await tool.execute("tc-x", { query: "q" });
+  assert.deepEqual(result.details, { ok: true });
+  assert.equal(calls.filter((c) => c.url.endsWith("/call")).length, 1);
+  await assert.rejects(tool.execute("tc-x", { query: "q" }), /call_not_authorized_by_hook/);
 });
 
 test("an authorization is single-use and bound to the agent and session of the tool context", async () => {
@@ -182,7 +217,7 @@ test("an authorization is single-use and bound to the agent and session of the t
   const own = factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
   await own.execute("tc-3", { query: "q" });
   await assert.rejects(own.execute("tc-3", { query: "q" }), /call_not_authorized_by_hook/);
-  assert.equal(calls.filter((c) => c.url.endsWith("/call")).length, 1);
+  assert.equal(calls.filter((c) => c.url.endsWith("/call") && c.body.agent_id === "persona-alpha").length, 2); // the successful call and the refused replay
 });
 
 test("broker refusal at call time surfaces as a tool error with the reason", async () => {

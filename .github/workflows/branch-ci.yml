@@ -778,6 +778,18 @@ jobs:
         run: |
           python3 -m pytest -q services/openclaw-gateway-adapter
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run pantheon-persona-tools plugin tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        working-directory: integrations/openclaw/plugins/pantheon-persona-tools
+        run: |
+          npm ci
+          npm test
+
       - name: Run telemetry service tests
         if: ${{ !cancelled() }}
         timeout-minutes: 15

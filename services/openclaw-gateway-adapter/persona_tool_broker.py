@@ -77,6 +77,12 @@ MAX_QUERY_CHARS = 1000
 _PANEL_ACTOR_ROLES = ("consultation_session",)
 
 
+# Hook authorizations recorded for one-time use by the tool call: ~15 per persona per daily cycle at hosted
+# scale, removed on use, on expiry (TTL) or by the cap (oldest first).
+AUTHORIZATION_TTL_SECONDS = 600.0
+MAX_AUTHORIZATIONS = 2000
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, "") or default)
@@ -228,6 +234,10 @@ class _Store:
                     canonical_ids TEXT NOT NULL, outcome TEXT NOT NULL, reason TEXT NOT NULL,
                     proposal TEXT, at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS calls_run ON calls(run_ref);
+                CREATE TABLE IF NOT EXISTS authorizations (
+                    agent_id TEXT NOT NULL, session_key TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+                    tool TEXT NOT NULL, run_id TEXT NOT NULL, at REAL NOT NULL,
+                    PRIMARY KEY(agent_id, session_key, tool_call_id));
                 """
             )
 
@@ -255,6 +265,38 @@ class _Store:
             if key == r["session_user"].lower() or key.endswith(":" + r["session_user"].lower())
         ]
         return matches[0] if len(matches) == 1 else None
+
+    def add_authorization(self, agent_id: str, session_key: str, tool_call_id: str, tool: str, run_id: str,
+                          now: float, ttl: float, cap: int) -> None:
+        """Record a hook authorization where every plugin instance can consume it (once)."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM authorizations WHERE at<?", (now - ttl,))
+            self._db.execute(
+                "INSERT OR REPLACE INTO authorizations(agent_id, session_key, tool_call_id, tool, run_id, at) VALUES(?,?,?,?,?,?)",
+                (agent_id, session_key, tool_call_id, tool, run_id, now),
+            )
+            self._db.execute(
+                "DELETE FROM authorizations WHERE rowid IN (SELECT rowid FROM authorizations ORDER BY at ASC, rowid ASC "
+                "LIMIT max(0, (SELECT count(*) FROM authorizations) - ?))", (cap,),
+            )
+
+    def consume_authorization(self, agent_id: str, session_key: str, tool_call_id: str, tool: str,
+                              now: float, ttl: float) -> Optional[str]:
+        """Return the authorized run id and delete the record; None when absent, expired or for another tool."""
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT tool, run_id, at FROM authorizations WHERE agent_id=? AND session_key=? AND tool_call_id=?",
+                (agent_id, session_key, tool_call_id),
+            ).fetchone()
+            if row is None:
+                return None
+            self._db.execute(
+                "DELETE FROM authorizations WHERE agent_id=? AND session_key=? AND tool_call_id=?",
+                (agent_id, session_key, tool_call_id),
+            )
+            if row["tool"] != tool or row["at"] < now - ttl:
+                return None
+            return row["run_id"]
 
     def bind_run_id(self, run_ref: str, run_id: str) -> bool:
         with self._lock, self._db:
@@ -408,7 +450,23 @@ class PersonaToolBroker:
         agent_id = body.get("agent_id")
         run_id = body.get("run_id")
         session_key = body.get("session_key")
+        tool_call_id = body.get("tool_call_id")
         params = body.get("params", {})
+        if not authorize_only:
+            # A call must present the host tool call id the before_tool_call hook authorized (recorded here, so
+            # it holds across plugin instances); the run id is the one the hook saw, never one the caller picks.
+            ids_ok = all(isinstance(v, str) and v.strip() for v in (tool, agent_id, session_key, tool_call_id))
+            if not ids_ok or not isinstance(params, dict):
+                self._telemetry(outcome="rejected", reason="identity_fields_required")
+                return BrokerResponse(422, {"error": "invalid_body", "reason": "identity_fields_required"})
+            authorized_run = self._store.consume_authorization(
+                agent_id.strip(), session_key.strip(), tool_call_id.strip(), tool.strip(), self._clock(), AUTHORIZATION_TTL_SECONDS)
+            if authorized_run is None:
+                self._telemetry(outcome="denied", reason="call_not_authorized_by_hook")
+                return BrokerResponse(403, {"error": "refused", "reason": "call_not_authorized_by_hook", "message": ""})
+            if isinstance(run_id, str) and run_id.strip() and run_id.strip() != authorized_run:
+                return BrokerResponse(403, {"error": "refused", "reason": "run_id_mismatch", "message": ""})
+            run_id = authorized_run
         if not all(isinstance(v, str) and v.strip() for v in (tool, agent_id, run_id, session_key)) or not isinstance(params, dict):
             self._telemetry(outcome="rejected", reason="identity_fields_required")
             return BrokerResponse(422, {"error": "invalid_body", "reason": "identity_fields_required"})
@@ -429,6 +487,9 @@ class PersonaToolBroker:
             if run["purpose"] == PURPOSE_PANEL_INTERPRETATION and tool not in PANEL_ALLOWED_TOOLS:
                 raise BrokerRefusal(403, "tool_not_allowed_for_purpose")
             if authorize_only:
+                if isinstance(tool_call_id, str) and tool_call_id.strip():
+                    self._store.add_authorization(agent_id, session_key, tool_call_id.strip(), tool, run_id,
+                                                  self._clock(), AUTHORIZATION_TTL_SECONDS, MAX_AUTHORIZATIONS)
                 return BrokerResponse(200, {"allowed": True, "persona_id": persona_id, "purpose": run["purpose"],
                                             "allowed_tools": [t for t in agent["profile"]["allow"]
                                                               if t in PERSONA_BROKERED_TOOLS

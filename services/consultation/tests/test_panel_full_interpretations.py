@@ -61,11 +61,14 @@ class GatewayDouble:
         return [{"id": cp.consult_agent_id(TENANT, p)} for p in self.personas]
 
     def _recall(self, persona: str, session_user: str) -> list[dict[str, Any]]:
-        response = self.broker.handle(
-            authorization="Bearer " + BROKER_TOKEN,
-            body={"tool": "persona_memory_recall", "agent_id": persona, "run_id": "run-" + persona,
-                  "session_key": f"agent:{persona}:openai-user:{session_user}",
-                  "params": {"query": "momentum 2330 trial admission liquidity", "bank": "own", "limit": 10}})
+        body = {"tool": "persona_memory_recall", "agent_id": persona, "run_id": "run-" + persona,
+                "session_key": f"agent:{persona}:openai-user:{session_user}", "tool_call_id": "tc-" + persona,
+                "params": {"query": "momentum 2330 trial admission liquidity", "bank": "own", "limit": 10}}
+        # As the plugin does: the before_tool_call hook authorizes with the host tool_call_id, then the tool
+        # calls with the same agent, session and tool_call_id.
+        authorized = self.broker.handle(authorization="Bearer " + BROKER_TOKEN, body=body, authorize_only=True)
+        assert authorized.status_code == 200, authorized.body
+        response = self.broker.handle(authorization="Bearer " + BROKER_TOKEN, body=body)
         assert response.status_code == 200, response.body
         return response.body["result"]["hits"]
 

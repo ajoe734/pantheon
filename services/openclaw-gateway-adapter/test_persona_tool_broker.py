@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 import os
 import shutil
@@ -104,9 +105,21 @@ def limited():
     return broker, registry, memory
 
 
-def call(broker, tool, params=None, *, agent=ALPHA, run_id="run-a", session_key=SESSION_KEY, auth=f"Bearer {TOKEN}"):
+_TC = itertools.count(1)
+
+
+def call(broker, tool, params=None, *, agent=ALPHA, run_id="run-a", session_key=SESSION_KEY, auth=f"Bearer {TOKEN}",
+         hook=True):
+    """Run the hook's authorize step (records the authorization) then the tool's call, like the plugin does."""
+    tool_call_id = f"tc-{next(_TC)}"
+    if hook:
+        authorized = broker.handle(authorization=auth, authorize_only=True, body={
+            "tool": tool, "params": params or {}, "agent_id": agent, "run_id": run_id,
+            "session_key": session_key, "tool_call_id": tool_call_id})
+        if authorized.status_code != 200:  # the hook would block: the tool never runs
+            return authorized
     return broker.handle(authorization=auth, body={"tool": tool, "params": params or {}, "agent_id": agent,
-                                                   "run_id": run_id, "session_key": session_key})
+                                                   "session_key": session_key, "tool_call_id": tool_call_id})
 
 
 def register(broker, purpose="daily_cycle", persona=ALPHA, session=SESSION):
@@ -375,6 +388,57 @@ def test_authorize_reports_the_run_tool_set_without_side_effects(env):
     assert broker.run_record(ref)["calls"] == [] and memory.requests == []
 
 
+def _authorize(broker, tool_call_id, *, tool="persona_memory_recall", agent=ALPHA, session_key=SESSION_KEY, run_id="run-a"):
+    return broker.handle(authorization=f"Bearer {TOKEN}", authorize_only=True, body={
+        "tool": tool, "params": {"query": "q"}, "agent_id": agent, "run_id": run_id,
+        "session_key": session_key, "tool_call_id": tool_call_id})
+
+
+def _call(broker, tool_call_id, *, tool="persona_memory_recall", agent=ALPHA, session_key=SESSION_KEY, extra=None):
+    return broker.handle(authorization=f"Bearer {TOKEN}", body={
+        "tool": tool, "params": {"query": "q"}, "agent_id": agent, "session_key": session_key,
+        "tool_call_id": tool_call_id, **(extra or {})})
+
+
+def test_a_hook_authorization_is_recorded_by_the_broker_and_usable_once(env):
+    broker, _, _ = env
+    register(broker)
+    assert _call(broker, "tc-1").body["reason"] == "call_not_authorized_by_hook"  # nothing recorded
+    assert _authorize(broker, "tc-1").status_code == 200
+    assert _call(broker, "tc-1").status_code == 200
+    assert _call(broker, "tc-1").status_code == 403  # consumed
+
+
+def test_an_authorization_does_not_serve_another_agent_session_tool_or_run(env):
+    broker, _, _ = env
+    register(broker)
+    assert _authorize(broker, "tc-2").status_code == 200
+    assert _call(broker, "tc-2", agent="persona-beta").status_code == 403
+    assert _call(broker, "tc-2", session_key=SESSION_KEY + "x").status_code == 403
+    assert _call(broker, "tc-2", tool="persona_mental_model_read").status_code == 403  # also consumes it
+    assert _call(broker, "tc-2").status_code == 403
+    assert _authorize(broker, "tc-3").status_code == 200
+    forged = _call(broker, "tc-3", extra={"run_id": "forged"})
+    assert forged.status_code == 403 and forged.body["reason"] == "run_id_mismatch"
+
+
+def test_a_refused_authorize_records_nothing_and_authorizations_expire_and_are_capped(env):
+    import persona_tool_broker as ptb
+
+    broker, _, _ = env
+    register(broker)
+    assert _authorize(broker, "tc-4", tool="persona_reflect").status_code == 403
+    assert _call(broker, "tc-4", tool="persona_reflect").status_code == 403
+    assert _authorize(broker, "tc-5").status_code == 200
+    broker._clock = lambda: time.time() + ptb.AUTHORIZATION_TTL_SECONDS + 5
+    assert _call(broker, "tc-5").status_code == 403  # expired
+    n = ptb.MAX_AUTHORIZATIONS
+    store = broker._store
+    for i in range(n + 5):
+        store.add_authorization(ALPHA, SESSION_KEY, f"cap-{i}", "persona_memory_recall", "run-a", 1000.0 + i, 1e9, n)
+    assert store._db.execute("SELECT count(*) FROM authorizations").fetchone()[0] == n
+
+
 def test_registry_is_cached_only_within_the_ttl():
     registry, memory = Registry(), Memory()
     now = [100.0]
@@ -427,11 +491,14 @@ def test_routes_register_call_and_read_the_per_run_record(client):
     assert reg.status_code == 201
     run_ref = reg.json()["run"]["run_ref"]
     body = {"tool": "persona_memory_recall", "params": {"query": "momentum"}, "agent_id": ALPHA,
-            "run_id": "run-a", "session_key": SESSION_KEY}
-    assert http.post("/internal/persona-tools/v1/call", json=body, headers=PLUGIN).status_code == 200
+            "run_id": "run-a", "session_key": SESSION_KEY, "tool_call_id": "tc-r1"}
+    assert http.post("/internal/persona-tools/v1/call", json=body, headers=PLUGIN).status_code == 403  # no hook yet
     authorize = http.post("/internal/persona-tools/v1/authorize", json=body, headers=PLUGIN)
     assert authorize.status_code == 200 and "persona_memory_recall" in authorize.json()["allowed_tools"]
-    proposal = {**body, "tool": "persona_proposal_submit", "params": PROPOSAL}
+    assert http.post("/internal/persona-tools/v1/call", json=body, headers=PLUGIN).status_code == 200
+    assert http.post("/internal/persona-tools/v1/call", json=body, headers=PLUGIN).status_code == 403  # single use
+    proposal = {**body, "tool": "persona_proposal_submit", "params": PROPOSAL, "tool_call_id": "tc-r2"}
+    assert http.post("/internal/persona-tools/v1/authorize", json=proposal, headers=PLUGIN).status_code == 200
     assert http.post("/internal/persona-tools/v1/call", json=proposal, headers=PLUGIN).status_code == 200
     record = http.get(f"/api/openclaw-adapter/agents/persona-tools/runs/{run_ref}", headers=SVC).json()["record"]
     assert [c["tool"] for c in record["calls"]] == ["persona_memory_recall", "persona_proposal_submit"]
@@ -684,9 +751,9 @@ def test_daily_cycle_own_bank_facts_bank_refusals_and_per_run_record(stack):
     base = f"http://127.0.0.1:{s.adapter_port}/internal/persona-tools/v1/call"
     headers = {"Authorization": f"Bearer {BROKER_TOKEN}"}
     body = {"tool": "persona_reflect", "params": {"query": "q"}, "agent_id": "persona-alpha", "run_id": "run-1",
-            "session_key": "agent:persona-alpha:openresponses-user:daily-1"}
+            "session_key": "agent:persona-alpha:openresponses-user:daily-1", "tool_call_id": "tc-direct"}
     refusal = httpx.post(base, json=body, headers=headers)
-    assert refusal.status_code == 403 and refusal.json()["reason"] == "tool_outside_profile"
+    assert refusal.status_code == 403 and refusal.json()["reason"] == "call_not_authorized_by_hook"
     assert httpx.post(base, json=body).status_code == 401
     assert s.plugin([step("persona-alpha", "daily-1", "persona_memory_recall", q)], token="wrong")[0]["blocked"]
 
