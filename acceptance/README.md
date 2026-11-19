@@ -52,7 +52,7 @@ curl --fail --silent --show-error --max-time 30 "${ACCEPTANCE_BFF_URL%/}/bff/ver
 ```
 
 The directory may be empty or absent; the stage then runs only the built-in check.
-Each feature task adds its own probe (remediation plan RC2); the directory currently ships none.
+Each feature task adds its own probe (remediation plan RC2); the directory ships `persona-pool-member-rules` (below).
 
 ## Declared checks
 
@@ -91,3 +91,13 @@ Task: PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118. Workflow `.github/workflow
   earlier clocks judge the previous UTC day. Reports state `cycle_day` and `cycle_due_at_utc`, so a late-started run
   still judges the stated day. The workflow cron is `30 11 * * 1-5` (one run per weekday, no hosted writer).
 - Artifact `persona-day.json`: a few KB (one line per persona report), 30-day retention.
+
+## persona-pool-member-rules probe (`acceptance/probes/persona-pool-member-rules`)
+
+Task: BFF-PERSONA-STRATEGY-VISIBILITY-20261119. Read-only release probe. Logs in at `/bff/auth/dev-login` with
+`ACCEPTANCE_VIEWER_CLIENT_ID` / `ACCEPTANCE_VIEWER_CLIENT_SECRET` (never printed); exit 77 naming the missing variable
+when either (or `ACCEPTANCE_BFF_URL`) is absent. For each non-retired persona on the first page of `GET /bff/personas`
+whose `strategy_pool` surface is ok it fails when a current member has no ok `memberRules` row, or when `pool_health`
+reports `cycle_pool_snapshot_mismatch` although the members of the version named by `observed_pool_version` equal the
+current members. No cycle observation is not a failure. Tests: `acceptance/test_persona_pool_member_rules.py` with
+`fixtures/hosted_persona_pool_20261119.json` and `fixtures/hosted_strategy_rules_20261119.json`.

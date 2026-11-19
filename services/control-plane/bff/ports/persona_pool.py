@@ -1,7 +1,11 @@
 """Read-only persona pool composition; every value comes from an owner record.
 
-Health and virtual books are the latest daily cycle's observation, pinned to
-the current pool digest. No BFF portfolio calculations or historical fallback.
+Health and virtual books are the latest daily cycle's observation. They are
+valid while the observed pool has the same non-removed members as the current
+pool (artifact_ref, checksum, stage, risk_weight); a refused reweight appends a
+new version with unchanged members and must not invalidate them. Member rules
+are read from the Registry owner and checksum-verified. No BFF portfolio
+calculations or historical fallback.
 """
 from __future__ import annotations
 
@@ -18,6 +22,11 @@ from ..core.owner_reads import remaining_management_read_budget, selected_tenant
 
 class PoolReadUnavailable(ValueError):
     pass
+
+
+def _membership(pool: dict) -> list:
+    return sorted((m["artifact_ref"], m["checksum"], m["stage"], m["risk_weight"])
+                  for m in pool["members"] if m["stage"] != "removed")
 
 
 class PersonaPoolViewsPort:
@@ -118,15 +127,15 @@ class PersonaPoolViewsPort:
                     or bundle.get("persona_id") != persona_id):
                 raise PoolReadUnavailable("cycle_observation_scope_missing_or_mismatched")
             pool = scoped_pool(bundle.get("pool"))
-            if pool["pool_version"] != current["pool_version"] or pool["digest"] != current["digest"]:
+            if _membership(pool) != _membership(current):
                 raise PoolReadUnavailable("cycle_pool_snapshot_mismatch")
-            return bundle
+            return bundle, pool["pool_version"]
 
         def health():
-            bundle = observation()
+            bundle, observed_version = observation()
             value = bundle.get("pool_health")
             keys = ("gross_utilisation", "drawdown_utilisation", "effective_bets", "idle_day_share")
-            if (not isinstance(value, dict) or value.get("pool_version") != current["pool_version"]
+            if (not isinstance(value, dict) or value.get("pool_version") != observed_version
                     or any(not isinstance(value.get(k), dict)
                            or value[k].get("status") not in {"known", "unknown"} for k in keys)):
                 raise PoolReadUnavailable("pool_health_missing_or_invalid")
@@ -135,7 +144,7 @@ class PersonaPoolViewsPort:
         pool_health = section("pool_health", "persona_cycle_owner", health)
 
         def books():
-            bundle = observation()
+            bundle, _ = observation()
             if "own_telemetry" in bundle.get("unavailable", []):
                 raise PoolReadUnavailable("member_telemetry_unavailable")
             owned_books = bundle.get("books")
@@ -162,10 +171,66 @@ class PersonaPoolViewsPort:
         member_books = section("member_virtual_books", "persona_cycle_owner", books)
         if member_books is not None and any(row["status"] != "ok" for row in member_books):
             surfaces["member_virtual_books"].update(status="unavailable", reason="member_books_incomplete")
+        observed_version = None
+        if records:
+            observed_pool = ((records[0]["persona_cycle"].get("observe_bundle") or {}).get("pool"))
+            version = observed_pool.get("pool_version") if isinstance(observed_pool, dict) else None
+            observed_version = version if type(version) is int and version >= 1 else None
         for name in ("pool_health", "member_virtual_books"):
             if records:
                 surfaces[name].update(packet_id=records[0]["packet_id"],
                                       observed_at=records[0].get("updated_at"))
+                if observed_version is not None:
+                    surfaces[name]["observed_pool_version"] = observed_version
+
+        def rules():
+            if current is None and versions is None:
+                raise PoolReadUnavailable("pool_unavailable")
+            named: dict[str, str] = {}
+            for pool in ([current] if current else []) + list(reversed(versions or [])):
+                for member in pool["members"]:
+                    named.setdefault(member["artifact_ref"], member["checksum"])
+            rows = []
+            for ref, checksum in named.items():  # one Registry read per distinct ref
+                row = {"artifact_ref": ref, "checksum": checksum, "status": "unavailable",
+                       "reason": None}
+                try:
+                    payload = self._get("REGISTRY", "/api/registry/strategy-artifacts/"
+                                        + quote(ref, safe=""), tenant_id)
+                except HTTPError as exc:
+                    if exc.code != 404:
+                        raise
+                    row["reason"] = "registry_entry_missing"
+                    rows.append(row)
+                    continue
+                entry = payload.get("entry") if isinstance(payload, dict) and isinstance(
+                    payload.get("entry"), dict) else payload
+                entry = entry.get("data") if isinstance(entry, dict) and isinstance(
+                    entry.get("data"), dict) else entry
+                if not isinstance(entry, dict) or not entry:
+                    raise PoolReadUnavailable("registry_payload_invalid")
+                artifact = (entry.get("metadata") or {}).get("strategy_artifact") \
+                    if isinstance(entry.get("metadata"), dict) else None
+                if entry.get("registry_id") not in (None, ref) or entry.get("owner_tenant") != tenant_id:
+                    row["reason"] = "registry_entry_missing_or_not_tenant_owned"
+                elif entry.get("checksum") != checksum:
+                    row["reason"] = "registry_checksum_mismatch"
+                elif not isinstance(artifact, dict):
+                    row["reason"] = "registry_strategy_artifact_missing"
+                else:
+                    surface = artifact.get("mutation_surface")
+                    surface = surface if isinstance(surface, dict) else {}
+                    row.update(status="ok", reason=None, strategy_id=artifact.get("strategy_id"),
+                               version=artifact.get("version"),
+                               strategy_logic=deepcopy(artifact.get("strategy_logic")),
+                               parameters=deepcopy(artifact.get("parameters")),
+                               adjustable_controls=deepcopy(surface.get("controls")),
+                               immutable_parameters=deepcopy(surface.get("immutable_parameters")),
+                               expression_policy=deepcopy(artifact.get("expression_policy")))
+                rows.append(row)
+            return rows
+
+        member_rules = section("member_rules", "registry_owner", rules)
 
         def demands():
             payload = self._get("RESEARCH", "/api/research/persona-demands?" + urlencode(
@@ -189,4 +254,5 @@ class PersonaPoolViewsPort:
              "pool_autonomy": deepcopy(p.get("pool_autonomy"))}
             for p in records]
         return {"current": current, "versions": versions, "memberVirtualBooks": member_books,
-                "health": pool_health, "cycles": cycle_rows, "openDemands": open_demands}, surfaces
+                "health": pool_health, "cycles": cycle_rows, "openDemands": open_demands,
+                "memberRules": member_rules}, surfaces

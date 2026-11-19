@@ -2902,6 +2902,13 @@
       "rationale": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106 regression coverage for GET /bff/strategies exclude_state=draft, meta.state_counts at 5000 real-shape rows, state=retired, unknown lifecycle visibility, and tenant isolation; never imports main"
     },
     {
+      "file": "tests/test_strategy_rules_pool_envelope.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-PERSONA-STRATEGY-VISIBILITY-20261119 rules projection on the recorded hosted envelope/member/baseline shape; never imports main"
+    },
+    {
       "file": "tests/test_strategy_operational_status.py",
       "layer": "router",
       "imports_main": false,

@@ -1,0 +1,516 @@
+{
+ "recorded_at": "2026-11-19T09:28Z",
+ "source": "GET /bff/strategies/strategy-persona-06d4775a9b6a8f63b311 on hosted dev (registry entries of the same strategy; the baseline entry is reconstructed from the recorded rule)",
+ "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+ "entries": [
+  {
+   "registry_id": "artifact-persona-paper-baseline-06d4775a9b6a8f63b311",
+   "artifact_type": "execution_bundle",
+   "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+   "version": "0.0.1",
+   "artifact_state": "approved",
+   "lineage": {
+    "parent_registry_ids": null
+   },
+   "checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "owner_tenant": "tenant-dev",
+   "metadata": {
+    "strategy_artifact": {
+     "strategy_logic": {
+      "kind": "close_to_close_momentum",
+      "positive_action": "HOLD",
+      "lookback_parameter": "lookback_bars",
+      "non_positive_action": "HOLD",
+      "threshold_parameter": "momentum_threshold"
+     },
+     "parameters": {
+      "market": "TW",
+      "symbols": [
+       "2330.TWSE"
+      ],
+      "data_source": "source-ingest:tw_price_daily",
+      "bar_frequency": "1d",
+      "lookback_bars": 2,
+      "quantity_type": "SHARES",
+      "order_quantity": 0,
+      "momentum_threshold": 0.0,
+      "zero_momentum_action": "HOLD"
+     },
+     "mutation_surface": {
+      "controls": [
+       {
+        "step": 1,
+        "value_type": "integer",
+        "allowed_range": {
+         "max": 60,
+         "min": 2
+        },
+        "current_value": 2,
+        "parameter_key": "lookback_bars"
+       },
+       {
+        "step": 0.001,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 0.05,
+         "min": 0.0
+        },
+        "current_value": 0.0,
+        "parameter_key": "momentum_threshold"
+       }
+      ],
+      "immutable_parameters": [
+       "symbols",
+       "bar_frequency",
+       "data_source",
+       "order_quantity",
+       "quantity_type",
+       "zero_momentum_action",
+       "market"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "registry_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+   "artifact_type": "execution_bundle",
+   "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+   "version": "1.0.0",
+   "artifact_state": "approved",
+   "lineage": {
+    "parent_registry_ids": [
+     "artifact-persona-paper-baseline-06d4775a9b6a8f63b311"
+    ],
+    "source_run_ids": [
+     "persona-provisioning-forward-artifact-06d4775a9b6a8f63b311"
+    ],
+    "source_dataset_refs": null,
+    "source_strategy_spec_id": "reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+   },
+   "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+   "owner_tenant": "tenant-dev",
+   "metadata": {
+    "market": "TW",
+    "tenant_id": "tenant-dev",
+    "persona_id": "persona-2448c7053e33ea48da47",
+    "requested_by": "pantheon-dev-admin-test",
+    "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+    "capital_scale_pct": 0.0,
+    "execution_context": "paper",
+    "strategy_artifact": {
+     "lineage": {
+      "source_run_ids": [
+       "persona-provisioning-forward-artifact-06d4775a9b6a8f63b311"
+      ],
+      "parent_registry_ids": [
+       "artifact-persona-paper-baseline-06d4775a9b6a8f63b311"
+      ],
+      "source_strategy_spec_id": "reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+     },
+     "version": "1.0.0",
+     "parameters": {
+      "market": "TW",
+      "symbols": [
+       "2330.TWSE"
+      ],
+      "data_source": "source-ingest:tw_price_daily",
+      "bar_frequency": "1d",
+      "lookback_bars": 2,
+      "quantity_type": "SHARES",
+      "order_quantity": 1,
+      "strength_scale_k": 1.0,
+      "momentum_threshold": 0.0,
+      "zero_momentum_action": "SELL",
+      "strength_floor_momentum": 0.01
+     },
+     "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+     "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+     "algorithm_ref": {
+      "path": "services/registry/strategy_artifact.py",
+      "commit": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+      "engine": "lean",
+      "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "repository": "ajoe734/pantheon",
+      "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+      "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "signal_schema_version": "1.0"
+     },
+     "strategy_logic": {
+      "kind": "close_to_close_momentum",
+      "positive_action": "BUY",
+      "lookback_parameter": "lookback_bars",
+      "non_positive_action": "SELL",
+      "threshold_parameter": "momentum_threshold"
+     },
+     "provenance_refs": [
+      "task:LOOP-PROD-PER-001",
+      "persona-provisioning:06d4775a9b6a8f63b311",
+      "strategy-spec:reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+     ],
+     "mutation_surface": {
+      "controls": [
+       {
+        "step": 1,
+        "value_type": "integer",
+        "allowed_range": {
+         "max": 60,
+         "min": 2
+        },
+        "current_value": 2,
+        "parameter_key": "lookback_bars"
+       },
+       {
+        "step": 0.001,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 0.05,
+         "min": 0.0
+        },
+        "current_value": 0.0,
+        "parameter_key": "momentum_threshold"
+       },
+       {
+        "step": 0.05,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 4.0,
+         "min": 0.25
+        },
+        "current_value": 1.0,
+        "parameter_key": "strength_scale_k"
+       },
+       {
+        "step": 0.001,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 0.05,
+         "min": 0.002
+        },
+        "current_value": 0.01,
+        "parameter_key": "strength_floor_momentum"
+       },
+       {
+        "step": 0.05,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 1.0,
+         "min": 0.0
+        },
+        "current_value": 0.5,
+        "parameter_key": "lever_min_strength"
+       },
+       {
+        "step": 0.05,
+        "value_type": "number",
+        "allowed_range": {
+         "max": 1.0,
+         "min": 0.1
+        },
+        "current_value": 1.0,
+        "parameter_key": "notional_fraction_at_full_strength"
+       }
+      ],
+      "immutable_parameters": [
+       "symbols",
+       "bar_frequency",
+       "data_source",
+       "order_quantity",
+       "quantity_type",
+       "zero_momentum_action",
+       "market"
+      ]
+     },
+     "expression_policy": {
+      "kind": "notional_target_v1",
+      "version": "1.0",
+      "parameters": {
+       "allow_pyramiding": false,
+       "lever_min_strength": 0.5,
+       "close_before_reverse": true,
+       "notional_fraction_at_full_strength": 1.0
+      }
+     },
+     "artifact_schema_version": "1.0"
+    },
+    "fail_closed_baseline": false,
+    "provisioning_request_hash": "91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8",
+    "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+    "rollback_target_registry_id": "artifact-persona-paper-baseline-06d4775a9b6a8f63b311",
+    "source_strategy_spec_registry_id": "reg-strategy-spec-persona-06d4775a9b6a8f63b311",
+    "strategy_artifact_registration_checksum": "sha256:2246fc088efaf9622b060248ccc58b51e8e836f6de8f45d45ee84605c455c744"
+   }
+  },
+  {
+   "registry_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+   "artifact_type": "execution_bundle",
+   "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+   "version": "1.2.0",
+   "artifact_state": "approved",
+   "lineage": {
+    "parent_registry_ids": [
+     "artifact-persona-paper-06d4775a9b6a8f63b311"
+    ],
+    "source_run_ids": null,
+    "source_dataset_refs": null,
+    "source_strategy_spec_id": null
+   },
+   "checksum": "sha256:a6de3edd6a38276bbb99a8247d131422243167695f56ecb188545b8dbe4c29aa",
+   "owner_tenant": "tenant-dev",
+   "metadata": {
+    "market": "TW",
+    "tenant_id": "tenant-dev",
+    "persona_id": "persona-2448c7053e33ea48da47",
+    "pool_digest": "sha256:566c4ce1de0604f6fa136e1623856755640eeb312081e31c6e39e0a0125a3750",
+    "pool_version": 2,
+    "requested_by": "control-plane-bff",
+    "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+    "capital_scale_pct": 0.0,
+    "execution_context": "paper",
+    "strategy_artifact": {
+     "lineage": {
+      "parent_registry_ids": [
+       "artifact-persona-paper-06d4775a9b6a8f63b311"
+      ]
+     },
+     "version": "1.2.0",
+     "parameters": {
+      "market": "TW",
+      "symbols": [
+       "2330.TWSE"
+      ],
+      "data_source": "source-ingest:tw_price_daily",
+      "pool_digest": "sha256:566c4ce1de0604f6fa136e1623856755640eeb312081e31c6e39e0a0125a3750",
+      "pool_version": 2,
+      "bar_frequency": "1d",
+      "lookback_bars": 2,
+      "quantity_type": "SHARES",
+      "order_quantity": 1,
+      "strength_scale_k": 1.0,
+      "momentum_threshold": 0.0,
+      "zero_momentum_action": "SELL",
+      "strength_floor_momentum": 0.01
+     },
+     "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+     "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+     "algorithm_ref": {
+      "path": "services/registry/strategy_artifact.py",
+      "commit": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+      "engine": "lean",
+      "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "repository": "ajoe734/pantheon",
+      "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+      "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+      "signal_schema_version": "1.0"
+     },
+     "strategy_logic": {
+      "kind": "persona_portfolio_v1",
+      "members": [
+       {
+        "version": "1.0.0",
+        "artifact": {
+         "lineage": {
+          "source_run_ids": [
+           "persona-provisioning-forward-artifact-06d4775a9b6a8f63b311"
+          ],
+          "parent_registry_ids": [
+           "artifact-persona-paper-baseline-06d4775a9b6a8f63b311"
+          ],
+          "source_strategy_spec_id": "reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+         },
+         "version": "1.0.0",
+         "parameters": {
+          "market": "TW",
+          "symbols": [
+           "2330.TWSE"
+          ],
+          "data_source": "source-ingest:tw_price_daily",
+          "bar_frequency": "1d",
+          "lookback_bars": 2,
+          "quantity_type": "SHARES",
+          "order_quantity": 1,
+          "strength_scale_k": 1.0,
+          "momentum_threshold": 0.0,
+          "zero_momentum_action": "SELL",
+          "strength_floor_momentum": 0.01
+         },
+         "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+         "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+         "algorithm_ref": {
+          "path": "services/registry/strategy_artifact.py",
+          "commit": "21cbd9987a3a8ea86dfcd3d3708fdd400870746a",
+          "engine": "lean",
+          "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+          "repository": "ajoe734/pantheon",
+          "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+          "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+          "signal_schema_version": "1.0"
+         },
+         "strategy_logic": {
+          "kind": "close_to_close_momentum",
+          "positive_action": "BUY",
+          "lookback_parameter": "lookback_bars",
+          "non_positive_action": "SELL",
+          "threshold_parameter": "momentum_threshold"
+         },
+         "provenance_refs": [
+          "task:LOOP-PROD-PER-001",
+          "persona-provisioning:06d4775a9b6a8f63b311",
+          "strategy-spec:reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+         ],
+         "mutation_surface": {
+          "controls": [
+           {
+            "step": 1,
+            "value_type": "integer",
+            "allowed_range": {
+             "max": 60,
+             "min": 2
+            },
+            "current_value": 2,
+            "parameter_key": "lookback_bars"
+           },
+           {
+            "step": 0.001,
+            "value_type": "number",
+            "allowed_range": {
+             "max": 0.05,
+             "min": 0.0
+            },
+            "current_value": 0.0,
+            "parameter_key": "momentum_threshold"
+           },
+           {
+            "step": 0.05,
+            "value_type": "number",
+            "allowed_range": {
+             "max": 4.0,
+             "min": 0.25
+            },
+            "current_value": 1.0,
+            "parameter_key": "strength_scale_k"
+           },
+           {
+            "step": 0.001,
+            "value_type": "number",
+            "allowed_range": {
+             "max": 0.05,
+             "min": 0.002
+            },
+            "current_value": 0.01,
+            "parameter_key": "strength_floor_momentum"
+           },
+           {
+            "step": 0.05,
+            "value_type": "number",
+            "allowed_range": {
+             "max": 1.0,
+             "min": 0.0
+            },
+            "current_value": 0.5,
+            "parameter_key": "lever_min_strength"
+           },
+           {
+            "step": 0.05,
+            "value_type": "number",
+            "allowed_range": {
+             "max": 1.0,
+             "min": 0.1
+            },
+            "current_value": 1.0,
+            "parameter_key": "notional_fraction_at_full_strength"
+           }
+          ],
+          "immutable_parameters": [
+           "symbols",
+           "bar_frequency",
+           "data_source",
+           "order_quantity",
+           "quantity_type",
+           "zero_momentum_action",
+           "market"
+          ]
+         },
+         "expression_policy": {
+          "kind": "notional_target_v1",
+          "version": "1.0",
+          "parameters": {
+           "allow_pyramiding": false,
+           "lever_min_strength": 0.5,
+           "close_before_reverse": true,
+           "notional_fraction_at_full_strength": 1.0
+          }
+         },
+         "artifact_schema_version": "1.0"
+        },
+        "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
+        "member_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+        "risk_weight": 1.0,
+        "virtual_only": false
+       }
+      ],
+      "risk_limits": {
+       "max_net_strength": 1.0,
+       "gross_weight_limit": 1.0
+      },
+      "combination_rule": "clipped_weighted_sum_v1"
+     },
+     "provenance_refs": [
+      "task:LOOP-PROD-PER-001",
+      "persona-provisioning:06d4775a9b6a8f63b311",
+      "strategy-spec:reg-strategy-spec-persona-06d4775a9b6a8f63b311"
+     ],
+     "mutation_surface": {
+      "controls": [],
+      "immutable_parameters": [
+       "bar_frequency",
+       "data_source",
+       "lookback_bars",
+       "market",
+       "momentum_threshold",
+       "order_quantity",
+       "pool_digest",
+       "pool_version",
+       "quantity_type",
+       "strength_floor_momentum",
+       "strength_scale_k",
+       "symbols",
+       "zero_momentum_action"
+      ]
+     },
+     "expression_policy": {
+      "kind": "notional_target_v1",
+      "version": "1.0",
+      "parameters": {
+       "allow_pyramiding": false,
+       "lever_min_strength": 0.5,
+       "close_before_reverse": true,
+       "notional_fraction_at_full_strength": 1.0
+      }
+     },
+     "artifact_schema_version": "1.0"
+    },
+    "previous_envelope_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+    "previous_envelope_version": "1.0.0",
+    "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+    "rollback_target_registry_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+    "strategy_artifact_registration_checksum": "sha256:645e7c3d13df6b56b45ceafe4b0aa36f230bf1af9ce71fb95b5aacaab8d4f8ec"
+   }
+  }
+ ],
+ "hosted_rules_before": [
+  {
+   "registryId": "artifact-persona-paper-baseline-06d4775a9b6a8f63b311",
+   "role": "rollback_baseline"
+  },
+  {
+   "registryId": "artifact-persona-paper-06d4775a9b6a8f63b311",
+   "role": "rollback_baseline"
+  },
+  {
+   "registryId": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+   "role": "trading"
+  }
+ ]
+}
