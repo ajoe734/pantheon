@@ -1,0 +1,1323 @@
+{
+ "detail_endpoint": "/bff/personas/{id}",
+ "details": {
+  "persona-2448c7053e33ea48da47": {
+   "id": "persona-2448c7053e33ea48da47",
+   "lifecycleStatus": "paper_owner",
+   "personaCycle": {
+    "cycle_present": true,
+    "dayStatus": {
+     "cycle_day": "2026-11-18",
+     "cycle_due_at_utc": "2026-11-18T10:00:00+00:00",
+     "first_failed_precondition": "terminal_packet_today",
+     "passed": false,
+     "preconditions": [
+      {
+       "name": "lifecycle_paper_owner",
+       "reason": "lifecycle_state=paper_owner",
+       "status": "passed"
+      },
+      {
+       "name": "daily_cycle_cron_job",
+       "reason": "inferred_from_consumed_cron_run",
+       "status": "passed"
+      },
+      {
+       "name": "terminal_packet_today",
+       "reason": "tool_record_unavailable:tool_record_no_calls",
+       "status": "failed"
+      },
+      {
+       "name": "memory_read_via_broker",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "proposal_recorded_with_citations",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "pool_cycle_ok",
+       "reason": "",
+       "status": "passed"
+      },
+      {
+       "name": "cycle_health_completed",
+       "reason": "not_completed",
+       "status": "failed"
+      }
+     ]
+    },
+    "harness": {
+     "active_version": 1,
+     "versions": [
+      {
+       "schema_version": "persona_harness.v1",
+       "version": 1
+      }
+     ]
+    }
+   },
+   "state": "paper_owner",
+   "strategyFamily": "daily_learning_paper_momentum",
+   "tenant_present": true
+  },
+  "persona-6507750312870d03a241": {
+   "id": "persona-6507750312870d03a241",
+   "lifecycleStatus": "paper_owner",
+   "personaCycle": {
+    "cycle_present": true,
+    "dayStatus": {
+     "cycle_day": "2026-11-18",
+     "cycle_due_at_utc": "2026-11-18T10:00:00+00:00",
+     "first_failed_precondition": "terminal_packet_today",
+     "passed": false,
+     "preconditions": [
+      {
+       "name": "lifecycle_paper_owner",
+       "reason": "lifecycle_state=paper_owner",
+       "status": "passed"
+      },
+      {
+       "name": "daily_cycle_cron_job",
+       "reason": "inferred_from_consumed_cron_run",
+       "status": "passed"
+      },
+      {
+       "name": "terminal_packet_today",
+       "reason": "tool_record_unavailable:tool_record_no_calls",
+       "status": "failed"
+      },
+      {
+       "name": "memory_read_via_broker",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "proposal_recorded_with_citations",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "pool_cycle_ok",
+       "reason": "",
+       "status": "passed"
+      },
+      {
+       "name": "cycle_health_completed",
+       "reason": "not_completed",
+       "status": "failed"
+      }
+     ]
+    },
+    "harness": {
+     "active_version": 1,
+     "versions": [
+      {
+       "schema_version": "persona_harness.v1",
+       "version": 1
+      }
+     ]
+    }
+   },
+   "state": "paper_owner",
+   "strategyFamily": "daily_learning_paper_momentum",
+   "tenant_present": true
+  },
+  "persona-d64835a203ce276b8fbb": {
+   "id": "persona-d64835a203ce276b8fbb",
+   "lifecycleStatus": "paper_running",
+   "personaCycle": {
+    "cycle_present": false,
+    "dayStatus": {
+     "cycle_day": "2026-11-18",
+     "cycle_due_at_utc": "2026-11-18T10:00:00+00:00",
+     "first_failed_precondition": "daily_cycle_cron_job",
+     "passed": false,
+     "preconditions": [
+      {
+       "name": "lifecycle_paper_owner",
+       "reason": "lifecycle_state=paper_running",
+       "status": "passed"
+      },
+      {
+       "name": "daily_cycle_cron_job",
+       "reason": "no_cron_run_consumed",
+       "status": "failed"
+      },
+      {
+       "name": "terminal_packet_today",
+       "reason": "no_terminal_packet_for_2026-11-18",
+       "status": "failed"
+      },
+      {
+       "name": "memory_read_via_broker",
+       "reason": "no_packet",
+       "status": "failed"
+      },
+      {
+       "name": "proposal_recorded_with_citations",
+       "reason": "no_packet",
+       "status": "failed"
+      },
+      {
+       "name": "pool_cycle_ok",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "cycle_health_completed",
+       "reason": "not_completed",
+       "status": "failed"
+      }
+     ]
+    },
+    "harness": null
+   },
+   "state": "paper_running",
+   "strategyFamily": "dev_paper_baseline",
+   "tenant_present": true
+  },
+  "persona-ee7112a829d38b9135ac": {
+   "id": "persona-ee7112a829d38b9135ac",
+   "lifecycleStatus": "paper_owner",
+   "personaCycle": {
+    "cycle_present": true,
+    "dayStatus": {
+     "cycle_day": "2026-11-18",
+     "cycle_due_at_utc": "2026-11-18T10:00:00+00:00",
+     "first_failed_precondition": "terminal_packet_today",
+     "passed": false,
+     "preconditions": [
+      {
+       "name": "lifecycle_paper_owner",
+       "reason": "lifecycle_state=paper_owner",
+       "status": "passed"
+      },
+      {
+       "name": "daily_cycle_cron_job",
+       "reason": "inferred_from_consumed_cron_run",
+       "status": "passed"
+      },
+      {
+       "name": "terminal_packet_today",
+       "reason": "tool_record_unavailable:tool_record_no_calls",
+       "status": "failed"
+      },
+      {
+       "name": "memory_read_via_broker",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "proposal_recorded_with_citations",
+       "reason": "",
+       "status": "failed"
+      },
+      {
+       "name": "pool_cycle_ok",
+       "reason": "",
+       "status": "passed"
+      },
+      {
+       "name": "cycle_health_completed",
+       "reason": "not_completed",
+       "status": "failed"
+      }
+     ]
+    },
+    "harness": {
+     "active_version": 1,
+     "versions": [
+      {
+       "schema_version": "persona_harness.v1",
+       "version": 1
+      }
+     ]
+    }
+   },
+   "state": "paper_owner",
+   "strategyFamily": "daily_learning_paper_momentum",
+   "tenant_present": true
+  }
+ },
+ "list_endpoint": "/bff/personas?page_size=200",
+ "list_rows": [
+  {
+   "id": "persona-d57f6d76254c20418a9e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-21cdbed183c80cf371df",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9bc44570c2eeef68f259",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-4900b20b038a885dec38",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-79cf73f571e32d848bcc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9e2a17ce62380f17b3d4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e3375f2f59c89158b0af",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a1d7cbb8ccff5e6bb8f9",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-42a98f84de33e2f56b0b",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b52db9473b6e0396f4d9",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-0a1283ddf9a0fdb7ad33",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-95a79aa840d361eefce5",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-72f7acb5d0c3c27a99a1",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-070a7b24589fb129f052",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-0f94f05389a7e092b469",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ae7b97a96e92acd86682",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f258b4a5c3af546933fc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-6e0e6e51e442cd21d1e2",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-aa72f581c620f0d89700",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-839a3016a40783f4dbbc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "agora-servant-fbeaee01e8f34c786555",
+   "lifecycleStatus": "research_only",
+   "ownerLifecycleState": "research_only",
+   "state": "research_only"
+  },
+  {
+   "id": "agora-servant-4eef59cbdf80a6b9fea0",
+   "lifecycleStatus": "research_only",
+   "ownerLifecycleState": "research_only",
+   "state": "research_only"
+  },
+  {
+   "id": "persona-99ff93a7710682dc7bbe",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-371589151c6af3f14288",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-8bd9bdf27d470e8321bc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c6ef44745087d11cc138",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-0ecc7096d5b64302ade9",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b1609121812e22e323fb",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-53cdbb1b52c802c8e1ce",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-6aa5c91b11d07378b4ff",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9e85805df5154fd5af7b",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-5db421c9dd0503bdc3a4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a6d24e9aae650f7ee947",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-28c22ba301b0b5c1eac4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-eea60f107b8df76bfec9",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-775ddebca05d8412861a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f10a7bde4eea7c6ee79e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-922730fe9d6ae8a3f5ac",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-79f86ea79327527ede3a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a523b26ef62a51e2637f",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-de993458431bfd59b693",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e86c50a787a659fb51f5",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-1892f1f1627728797829",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-863dc3fbea5c86e2fdbb",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-1c03ecdc53d146dfc20a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-6d6040d5f750d07b597e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-cb8e9df6c5e90cf0eab3",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-02fc6ca929d84dc0e71a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-79d90cc28aa7c8e1e53e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7bb9cd078901dbef42ee",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ed21aa2ab7e760891b04",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-eafa4e684b022449a2fe",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-79b251495cc1d1c48680",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-edae1c896bc07daa3d64",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-3fee1fc69089f7d4d101",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-79459591354fa57cecc2",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-4a8781087a376181a167",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-fbb03ab8a4d7a235361b",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-1bb38f1d2c50b3430c27",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-97b6c39a479c3a458ba7",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-6a7efd252adbdbfb694f",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2103d10ed4c21c6092cc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b55ea6d39cc9b908b280",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a85720ce179dce771367",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9f3621f2c6e0fe0e0833",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-3e782372a1dfdaf6f5ba",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-4344fa9c809dd473c603",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-508d9aa2024895f80230",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-6850ff548d6368ccc520",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-132519698e6199e80326",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
+   "lifecycleStatus": "draft",
+   "ownerLifecycleState": "draft",
+   "state": "draft"
+  },
+  {
+   "id": "persona-e0adc03618cfbb4b78c3",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ebd1661a577ffeb3b831",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7930c1c2998e41f593bc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c9b07e3f1d38fffd42dc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f53892bd88d08b49d240",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f157083b2b8cc5b8b98a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-5aaabd9ea70d56117b1c",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ddeaf4b21b5ce5ae8d51",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-bdaa2c8bc371fffb4918",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-dev-lifecycle-39057282435",
+   "lifecycleStatus": "research_only",
+   "ownerLifecycleState": "research_only",
+   "state": "research_only"
+  },
+  {
+   "id": "persona-d3c90a0d7cf28ceca530",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-149c69e81d3f12c7be08",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-0d712edaf22c45beffc4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9b7a77fd7c432fe923cf",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-62b01faadc3a071c7697",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d42265c7699f65735335",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-812b1f82559e5af52b86",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b74d2d121d01589eb9c8",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-98e2f843d829665c2cd0",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2f87b8a8d3a7d9c52e40",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d516525ce9053bc3b6bb",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7f4cd7f87611f66cd083",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-27445707e61c1fb987b4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-bd0a3cfbf3851700744f",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
+   "lifecycleStatus": "draft",
+   "ownerLifecycleState": "draft",
+   "state": "draft"
+  },
+  {
+   "id": "persona-2744fc203ec354d9fb0f",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-73dbb636c9b6243585c7",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-47d17c87f0fe7705aedc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-04cf4c32f3b08a5400b2",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-10948e484776211f785b",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d343b4d3312541ae5922",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-3d47ba698b04bd04dd63",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-34c856860d59d103760c",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-41ca37699cd59d0cce03",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b682322da74b31b41ecc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-449df3119ecf0f4c4a1e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-1057366659b64bf05ee6",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c5f206af82206aaf4157",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-440958e93317f8cdc69c",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e699d78447a97f876560",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a",
+   "lifecycleStatus": "draft",
+   "ownerLifecycleState": "draft",
+   "state": "draft"
+  },
+  {
+   "id": "persona-6f4c2c5d3c344efa0834",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e2ff3f604a4852648bab",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-11ccac4a5599af1f85f1",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f915e4ff1147e9e473b7",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d9363cffc0efbbbcbeb9",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9d4fb3f44cbc5e7cb84f",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-be19a1fac471247f2b2a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2ae89593e301902eabe3",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-53c8761f5da0925552a1",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-742f4abb6054b6875ad1",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-325979a0177bc948366d",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-59ab0950d35ba2f0a4f1",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b0691d7de9c5aaa455da",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-9f32c45acc8773d18762",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d890e7cc83a6987dc2e0",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-dbb5d3f406f29fa36f80",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-dead37b66ca2c657b686",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-23b3ad86ee78be92c7bf",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f9254b01097fe0cab35c",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c8569df11fb380528d15",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2d91a82136191fba4270",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2cc049a04aac389246cd",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-424eaea5443e1578bc70",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-252f1ff17a1e8dd5ea32",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-3e444956e4340fd09aad",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-bd4ba9062ea05c737a5e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-162fd16c910a96e1ebcc",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2bd3c6df7cdf5ab31495",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-b09ed5e153524f257144",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ff9a0defde33528a3985",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d356f372d5a8e7a08b90",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c13ec3425c67805c8f32",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-22582e56e0ad8a4f0ca7",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-42a49d11fb6b6a95b242",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7bf0200d6f5471989028",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7e21f56f3d0b9988ebfe",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-034dad74863c32a796a4",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-1f752ba975fed2efef19",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e1903fd43a5df8112592",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-2448c7053e33ea48da47",
+   "lifecycleStatus": "paper_owner",
+   "ownerLifecycleState": "paper_owner",
+   "state": "paper_owner",
+   "tenantId": "tenant-present"
+  },
+  {
+   "id": "persona-a7098d93f96ab8953c89",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-ee7112a829d38b9135ac",
+   "lifecycleStatus": "paper_owner",
+   "ownerLifecycleState": "paper_owner",
+   "state": "paper_owner",
+   "tenantId": "tenant-present"
+  },
+  {
+   "id": "persona-6507750312870d03a241",
+   "lifecycleStatus": "paper_owner",
+   "ownerLifecycleState": "paper_owner",
+   "state": "paper_owner",
+   "tenantId": "tenant-present"
+  },
+  {
+   "id": "persona-57cf4c426b41f3acba51",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a12343c3a6616691aa05",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e5ad9e16fb02b3cb994a",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-582946999880f4bd89c6",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-e20def8bcd72042f615e",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-768098b545ad04699cf5",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-3d4dbb3471758a4a67fa",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-c346771b25ed7e90ed26",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-927e0368618a8dd521bf",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-7df21cca1b969c9a26cb",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-8d4f1c1c8a6f4632a070",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-f54471c9e1dd65bf4517",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-cd0fcfc3240c27b5f239",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-risk-officer",
+   "lifecycleStatus": "draft",
+   "ownerLifecycleState": "draft",
+   "state": "draft"
+  },
+  {
+   "id": "persona-red-team",
+   "lifecycleStatus": "draft",
+   "ownerLifecycleState": "draft",
+   "state": "draft"
+  },
+  {
+   "id": "persona-3a386f372d410c0a6e77",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d58dcaab5fc367455985",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a3cbf64485cc74200158",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-a1ef29db0d7c1f482324",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-d64835a203ce276b8fbb",
+   "lifecycleStatus": "paper_running",
+   "ownerLifecycleState": "research_only",
+   "state": "paper_running",
+   "tenantId": "tenant-present"
+  },
+  {
+   "id": "persona-5d2fd2c7d3a8b111a0aa",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  },
+  {
+   "id": "persona-5f5ebb0c72c8a76c5340",
+   "lifecycleStatus": "retired",
+   "ownerLifecycleState": "retired",
+   "state": "retired"
+  }
+ ],
+ "owner_fact_note": "ownerLifecycleState/tenantId are NOT in the raw list capture; added from authoritative persona.personas facts (coordinator 2026-11-19): baseline persona-d64835a203ce276b8fbb owner lifecycle_state=research_only, projected state=paper_running; the three trading personas paper_owner; other rows' owner state = projected state (all outside daily-cycle states). tenantId is the placeholder 'tenant-present' where details has tenant_present=true (value redacted).",
+ "source": "hosted BFF read-only on 2026-11-19T00:35Z, backend 08d748790; reduced to the fields the probe reads; no names, mandates, memory content or credentials",
+ "state_counts": {
+  "draft": 5,
+  "paper_owner": 3,
+  "paper_running": 1,
+  "research_only": 3,
+  "retired": 165
+ }
+}

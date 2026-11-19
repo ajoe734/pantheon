@@ -171,21 +171,24 @@ def row(pid, owner_state, state=None, tenant="tenant-dev", **kw):
 
 
 def _hosted_1118():
-    """Shape of the 2026-11-18 hosted list. NOT a hosted capture (no credential in the worker): the selection-relevant
-    fields of the rows named in the task are reproduced; the remaining rows are representative non-selected states."""
-    rows = [row(pid, "paper_owner") for pid in TRADING]
-    rows.append(row(BASELINE, "research_only", state="paper_running", name="Pantheon Dev Paper Release 43688794313 Attempt 1",
-                    mandate="Paper-only lifecycle verification in dev", strategyFamily="dev_paper_baseline"))
-    rows += [row(f"s-ret{i}", "retired") for i in range(5)] + [row(f"s-dr{i}", "draft") for i in range(5)]
-    rows += [row(f"s-res{i}", "research_only") for i in range(3)] + [row("agora-a", "consultable")]
-    return rows
+    """The 2026-11-18 hosted persona list: 177 rows, read-only capture reduced to the fields the probe reads, with
+    owner facts (ownerLifecycleState/tenantId) populated from persona.personas (see fixture owner_fact_note)."""
+    import pathlib
+    fx = pathlib.Path(__file__).parent / "fixtures" / "hosted_persona_day_20261118.json"
+    return json.loads(fx.read_text())["list_rows"]
+
+
+def test_hosted_fixture_is_the_177_row_capture_and_selects_only_trading():
+    items = _hosted_1118()
+    assert len(items) == 177
+    assert {x["id"] for x in pd.daily_cycle_personas(items)} == set(TRADING)
 
 
 def test_probe_set_equals_controller_set_for_same_list():
     from services.persona import persona_cycle_controller as ctl
     items = _hosted_1118()
     probe_ids = {x["id"] for x in pd.daily_cycle_personas(items)}
-    controller_ids = {x["id"] for x in items if x["tenantId"]
+    controller_ids = {x["id"] for x in items if x.get("tenantId")
                       and ctl.is_daily_cycle_persona({"lifecycle_state": x["ownerLifecycleState"], "status": "active"})}
     assert probe_ids == controller_ids == set(TRADING)
     assert pd.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
