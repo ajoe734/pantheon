@@ -1,0 +1,19 @@
+{
+  "task": "OPENCLAW-API-ROUTE-LOOP-STDIN-SECOND-KEY-20261118",
+  "fix": "compose() in scripts/openclaw-configure-shared-model-pool.sh redirects stdin from /dev/null, so every compose exec (route loop, openclaw helper, other calls) is detached",
+  "loop_audit": [
+    {"line": 76, "loop": "while read route <<< jq process substitution", "result": "defective (stdin swallowed by compose exec); fixed"},
+    {"line": 223, "loop": "for _ in $(seq 1 30) readiness", "result": "no stdin source; not affected"},
+    {"line": 55, "loop": "parse_chain tr|jq pipe (no loop, no compose call)", "result": "not affected"}
+  ],
+  "tests": {
+    "file": "scripts/test_openclaw_shared_model_pool_contract.py",
+    "double_change": "fake docker consumes stdin on exec -T like docker compose exec",
+    "new_test": "test_second_route_is_registered_and_null_apikey_entry_gets_secretref",
+    "on_e09a12d17_script": "10 failed (4 route tests incl. new one: only first route registered); 6 others need fastapi/httpx in scratch venv",
+    "after_change": "24 passed"
+  },
+  "secrets": "no key value read, printed or written",
+  "pending_after_deploy": "coordinator: read hosted config, record both SecretRefs, remove hand-stored profiles, record one turn per key (AC8)",
+  "residual_findings": []
+}
