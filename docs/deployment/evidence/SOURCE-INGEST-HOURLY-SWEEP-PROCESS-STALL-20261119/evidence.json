@@ -1,0 +1,20 @@
+{
+  "task": "SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119",
+  "cause": {
+    "kind": "blocking work on the event loop (universe RLock wait), not GC or interpreter lock",
+    "path": "services/foundation/health.py livez (async def) -> health_payload -> metrics -> services/source_ingestion/runtime.py:966 journal_stats -> requirement_state.py:1566 stats_extra -> services/source_ingestion/snapshot_universe.py SnapshotUniverse.stats (with self._lock)",
+    "holder": "snapshot_universe.py SnapshotUniverse.sweep holds the same RLock for the whole sweep (live_symbols, withdraw_symbols, seed() of each missing static member from run files)",
+    "reproduction": "tests/test_hourly_sweep_process_stall.py::test_stats_returns_while_the_sweep_holds_the_lock: seed() blocked on an Event inside the lock; journal_stats blocks on origin/dev"
+  },
+  "fix": "SnapshotUniverse.stats() takes no lock; every field is an atomic read (len of dict, int, replaced-not-edited _last_seed reference). No new thread/writer.",
+  "tests": {
+    "before_fix": "new file: 2 failed",
+    "after_fix": "test_hourly_sweep_process_stall + test_snapshot_universe + test_ready_covers_snapshot_lookup + test_active_universe: 37 passed; test_snapshot_sweep_off_request_path (PR 7598): 6 passed",
+    "command": "/tmp/pv/bin/python -m pytest -q services/source_ingestion/tests/<files>"
+  },
+  "not_done": {
+    "hosted_shaped_pause_measurement": "Acceptance 1/5 numbers (longest pause before/after, per-thread stack dump, gc timings) were not measured: no hosted-shaped copy in this worker. Cause is from code and the coordinator's hosted numbers (stall 11.54s/20.47s). Coordinator samples /livez across the 04:33Z+ sweeps after deploy.",
+    "residual_risk": "a lookup that must seed (no stored snapshot) still waits for the sweep by design (PR 7598 docstring); not a health/livez path."
+  },
+  "out_of_scope_files_touched": []
+}

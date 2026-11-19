@@ -176,19 +176,27 @@ class SnapshotUniverse:
             return self.sweep(force=True)
 
     def stats(self) -> dict[str, Any]:
-        with self._lock:
-            out: dict[str, Any] = {
-                "state": self._state,
-                "member_count": len(self._members),
-                "static_member_count": len(static_member_symbols()),
-                "window_trading_days": self.window,
-                "transition_count": self._transitions_total,
-            }
-            if self._reason:
-                out["reason"] = self._reason
-            if self._last_seed:
-                out["last_seed"] = dict(self._last_seed)
-            return out
+        """Health view of the universe.  Takes NO lock (SOURCE-INGEST-HOURLY-SWEEP-PROCESS-STALL-20261119).
+
+        /livez reaches this through ``journal_stats`` on the event loop thread; while the hourly sweep held
+        ``self._lock`` (seeding static members from thousands of run files) it blocked every request of the
+        process.  Every field is one atomic read under the interpreter lock: ``len`` of a dict, an int, and a
+        reference to ``_last_seed`` which is replaced, never edited.
+        """
+        last_seed = self._last_seed
+        out: dict[str, Any] = {
+            "state": self._state,
+            "member_count": len(self._members),
+            "static_member_count": len(static_member_symbols()),
+            "window_trading_days": self.window,
+            "transition_count": self._transitions_total,
+        }
+        reason = self._reason
+        if reason:
+            out["reason"] = reason
+        if last_seed:
+            out["last_seed"] = dict(last_seed)
+        return out
 
     # ----- membership ----------------------------------------------------------------------
     def admits(self, symbol: str) -> bool:
