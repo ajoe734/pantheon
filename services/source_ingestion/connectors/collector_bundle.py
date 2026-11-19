@@ -113,9 +113,11 @@ LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
 LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
 HISTORY_RAW_READ_CONCURRENCY = 16
 # Upper bound on kept-alive connections (= in-flight raw reads) to the collector host within
-# one raw verification window; connections close when the window ends. Eight was the measured
-# knee: 40 reads over 8 fresh connections took 809 ms, and one host gains little beyond that.
-COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL = 8
+# one raw verification window; connections close when the window ends. Equal to the existing
+# history width on purpose: a narrower cap would cut hosted TPEx history from 16 to 8 rows per
+# pull (the 15 s budget is already spent before the raw window; one group of 16 is read).
+# Keep-alive alone removes the per-read handshake; width is unchanged.
+COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL = HISTORY_RAW_READ_CONCURRENCY
 _OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
 _KEEPALIVE_CLIENT: ContextVar[GuardedKeepAliveClient | None] = ContextVar("collector_keepalive", default=None)
 # Process-local, shared across the short-lived adapters built by configured pulls.
