@@ -1,0 +1,48 @@
+{
+  "task_id": "TW-REFRESH-STEADY-CHECK-ORPHAN-AND-START-PERIOD-20261119",
+  "diagnosis": {
+    "run": "44594831526",
+    "log_facts": [
+      "19:28:05.1409Z ##[error]The action 'Execute bounded FinMind fundamentals refresh' has timed out after 15 minutes.",
+      "19:28:05.1578Z the steady check step 'Verify and restore steady source-ingest posture' starts in the same second",
+      "19:29:45.0182Z [remote-deploy] steady posture check failed: source-ingest_starting; running the steady restore",
+      "19:29:55.7905Z [remote-deploy] steady posture check: status=failed reason=steady_restore_incomplete:source-ingest-scheduler_starting",
+      "19:30:02.8899Z steady restore check: status=completed reason=refreshed",
+      "19:30:02.8910Z ##[error]steady_restore_check_completed: refreshed"
+    ],
+    "from_task_brief_not_in_job_log": [
+      "source-ingest recreated on hosted 19:28:42Z, scheduler started 19:29:54Z (container times reported by the remediation coordinator)"
+    ],
+    "who_wrote_what": {
+      "steady_restore_check_json_wrong_content": "The runner path in ssh_bash used /tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID}.json for EVERY refresh-only call of the run, including the steady check. The tw-finmind-valuation call (still running on the VM after its runner step was killed) wrote {completed, refreshed} to that same remote file after the steady check wrote its own result, and copy-from read the orphan's file back.",
+      "source_ingest_recreate_19_28_42": "the left-over remote refresh (its own bounded recreate/restore), not the steady check",
+      "scheduler_judged_starting": "execute_steady_posture_check re-ran steady_posture_problem right after docker start; the scheduler healthcheck (interval 30s, start period 90s) is starting for up to 90s, so it was always judged failed"
+    },
+    "remote_process_kept_running": "Yes, inferred: the recreate at 19:28:42Z happened 37s after the runner stopped the step at 19:28:05Z and nothing in the steady check runs a bounded refresh. The job log itself does not print the remote pid, so this is inference from the timing plus the shared outcome file content, not a direct process listing."
+  },
+  "changes": {
+    "scripts/deploy_nonprod_vm.sh": [
+      "Per call unique remote outcome path /tmp/pantheon-refresh-outcome-<run>-<epoch>-<pid>-<random>.json and PANTHEON_REFRESH_CALL_ID / PANTHEON_REFRESH_RUN_ID exported to the remote script",
+      "Every outcome writer stamps call_id; the runner (verify_refresh_outcome_belongs_to_call) replaces an outcome without its own call id by a failed record whose reason starts outcome_call_mismatch",
+      "steady check: steady_check_settle_refresh_orphans finds refresh-only processes of the same run via /proc/<pid>/environ, waits STEADY_CHECK_ORPHAN_WAIT_SECONDS (default 180) then SIGTERM (its own handler restores services, up to 60s) then SIGKILL, records orphan {action ended|stopped, pids, seconds}",
+      "steady check: waits at most start period + one interval (read from docker inspect, 120s fallback, once per container) while health is starting; still starting at the bound fails with reason <service>_starting; a healthy service is judged at once",
+      "steady check: removes /tmp/pantheon-refresh-outcome-<run>-* and dot-prefixed temp variants of its run except its own output, records cleanup {files, bytes}"
+    ],
+    "unchanged": "deploy components other than refresh-only; scripts/run_with_dev_environment_lease.sh; scripts/dev_remote_guarded_exec.py; the workflow file needed no change"
+  },
+  "leftover_files": {
+    "path": "/tmp/pantheon-refresh-outcome-<run_id>-<nonce>.json on the dev VM",
+    "most_that_can_remain_if_steady_check_does_not_run": "one file per refresh-only call of the run (each is removed by its own runner after copy-back unless the runner is killed first). Each file is one JSON object with a redacted log tail of at most 200 lines, so tens of KB. The next steady check of the same run id would remove them; files of a run whose steady check never ran stay in /tmp until reboot or manual removal",
+    "lock_files": "scripts/deploy_nonprod_vm.sh creates no lock file for refresh calls; the environment lease lock belongs to run_with_dev_environment_lease.sh which is out of scope"
+  },
+  "residual_findings": [
+    "The FinMind fundamentals step 15 minute timeout belongs to the market-data owner.",
+    "When the whole workflow is cancelled before the steady check step starts, left-over outcome files of that run stay until a steady check with the same run id or a reboot."
+  ],
+  "validation": [
+    {"command": "python -m pytest scripts/test_deploy_nonprod_vm.py -q", "result": "211 passed, 2 skipped"},
+    {"command": "python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q", "result": "42 passed"},
+    {"command": "python -m pytest scripts/test_dev_tw_market_refresh.py -q", "result": "132 passed"},
+    {"command": "new tests against the pre-change script", "result": "9 of 9 new tests fail on the previous script (4 runner-path tests on behaviour; 5 steady-check tests because the helper functions did not exist)"}
+  ]
+}
