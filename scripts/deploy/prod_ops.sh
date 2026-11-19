@@ -371,6 +371,73 @@ remove_product_owners() {  # [owner_key...] (default: every product owner)
   done
 }
 
+# Runtime-manager caller-credential check for the product workers that read their owner at startup. Runs INSIDE the
+# started container with that container's OWN PANTHEON_RUNTIME_MANAGER_TOKEN (never printed; only "<http-status> <error-code>").
+# Gates on credential acceptance only (HTTP 200) — never on Docker health/readiness, which also encode functional state.
+WORKER_CRED_PY='
+import json, os, re, sys, urllib.error, urllib.request
+tok = os.environ.get("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip()
+if not tok:
+    print("0 TOKEN_MISSING"); sys.exit(0)
+req = urllib.request.Request("http://runtime-manager:8080/api/runtime-fleet/desired-state?stage=paper",
+                             headers={"Authorization": "Bearer " + tok})
+code, body = 0, b""
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        code = r.status
+except urllib.error.HTTPError as e:
+    code = e.code
+    try: body = e.read(4096)
+    except Exception: body = b""
+except Exception:
+    print("0 UNREACHABLE"); sys.exit(0)
+err = "-"
+if code != 200:
+    try:
+        v = json.loads(body.decode("utf-8", "replace")).get("code")
+        err = re.sub(r"[^A-Za-z0-9_]", "", str(v))[:64] or "-"
+    except Exception:
+        err = "-"
+print(code, err)
+'
+worker_credential_check() {
+  local k svc c out code err tries i
+  for k in paper_fleet_reconciler paper_signal_producer; do
+    svc="$(svc_of "$k")"
+    c="$(container_of "$svc")"; [[ -n "$c" ]] || fail ACTIVATE "product worker ${svc} container not found for credential check"
+    tries="${PROD_WORKER_CRED_TRIES:-15}"; code=0; err="-"
+    for i in $(seq 1 "$tries"); do
+      out="$(run_priv "$DOCKER" exec "$c" python3 -c "$WORKER_CRED_PY" 2>/dev/null)" || out="0 EXEC_FAILED"
+      code="${out%% *}"; err="${out#* }"
+      [[ "$code" =~ ^[0-9]+$ ]] || { code=0; err="EXEC_FAILED"; }
+      err="${err//[^A-Za-z0-9_-]/}"
+      # Status 0 = owner not yet reachable (just started): bounded retry. Any HTTP status is final.
+      [[ "$code" == "0" ]] || break
+      (( i < tries )) && sleep "${PROD_WORKER_CRED_INTERVAL:-2}"
+    done
+    [[ "$code" == "200" ]] || fail ACTIVATE "product worker ${svc} runtime-manager credential rejected: HTTP ${code} ${err:--}"
+  done
+}
+# Reporting only (never a gate): Docker health of every product worker after a bounded (<= 60 s) wait for "starting".
+worker_health_json() {
+  local wait="${PROD_WORKER_HEALTH_WAIT_SECONDS:-60}" waited=0 k svc c h pending rows
+  [[ "$wait" =~ ^[0-9]+$ ]] || wait=60
+  (( wait > 60 )) && wait=60
+  while :; do
+    pending=0; rows=""
+    for k in $PRODUCT_WORKER_KEY; do
+      svc="$(svc_of "$k")"; c="$(container_of "$svc")"
+      h="$(run_priv "$DOCKER" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null | tr -d '[:space:]')"
+      h="${h//[^A-Za-z0-9_-]/}"; [[ -n "$h" ]] || h="unknown"
+      [[ "$h" == "starting" ]] && pending=1
+      rows+="${svc}=${h} "
+    done
+    (( pending == 0 || waited >= wait )) && break
+    sleep 2; waited=$((waited + 2))
+  done
+  python3 -c 'import json,sys;print(json.dumps({"status":"ok","product_worker_health":dict(p.split("=",1) for p in sys.argv[1:]),"product_worker_health_is_gate":False},sort_keys=True))' $rows
+}
+
 verify_runtime_config_internal() {
   local expected_rel="${1:-}"
   local cfg="${PROD_ROOT}/config/runtime-config.js"
@@ -679,6 +746,8 @@ PY
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "singleton image '${simg}' != candidate '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    worker_health_json
     ;;
 
   resume_baseline_singletons)
