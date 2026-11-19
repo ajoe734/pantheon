@@ -1,0 +1,20 @@
+{
+  "task": "TW-REFRESH-STEADY-CHECK-AFTER-LEASE-QUARANTINE-20261119",
+  "diagnosis": {
+    "run": "44421268724",
+    "note": "Log lines of steps 10/12 were not fetched in this worker (no GitHub log access); diagnosis is from the brief and scripts/run_with_dev_environment_lease.sh. Residual: release owner should quote the log lines from the run.",
+    "chain": "chip profile readback failed -> chip loop exit 1 -> guard record_guard_failure(guarded_command_failed) + stop_heartbeat_for_quarantine (cleanup_command/command_status!=0 path) -> next guarded command: heartbeat_is_healthy fails -> 'lease heartbeat is not healthy before command start' exit 75 -> steady_check_transport_exit_75; FinMind fundamentals skipped because chip step had no continue-on-error.",
+    "same_quarantine_reach": "Every guarded step whose command exits non-zero (refresh, chip, fundamentals per profile, TAIFEX/FinMind broker only when not '|| exit 0'), plus any step timeout-minutes (15 fundamentals, 90 chip, 10 steady) or cancellation, which TERMs the wrapper -> cleanup_command stops the heartbeat and records the failure."
+  },
+  "changes": [
+    "chip and fundamentals loops run in ONE guarded call that always exits 0; failures recorded in outcome files + failed-profile file and the step exits 1 after the guard returns, so no quarantine and later steps run",
+    "refresh and chip_refresh get continue-on-error; summary step (PR 7605) turns run red listing profile and reason",
+    "new 'Re-arm lease heartbeat' step before probe: if heartbeat-failure.json exists, old heartbeat must be gone, `verify` confirms this run still owns the same lease, failure kept as heartbeat-failure.quarantine.json, same lease renewed by a new heartbeat (no release, no re-acquire, no gap for other holder)",
+    "probe: guard refusal exit 75 is recorded as probe_not_run_lease_guard_refused_exit_75, never as a probe result",
+    "scripts/run_with_dev_environment_lease.sh (pinned controller) NOT changed; deploy workflows unchanged"
+  ],
+  "validation": [
+    "uv run --no-project --with pytest --with pyyaml python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -> 38 passed (8 of them fail against the dev workflow)",
+    "same command, scripts/test_dev_tw_market_refresh.py -> 129 passed, 1 failed (test_bounded_refresh_controller_writes_the_authoritative_readback_state: ModuleNotFoundError fastapi, environmental, unrelated to this change)"
+  ]
+}
