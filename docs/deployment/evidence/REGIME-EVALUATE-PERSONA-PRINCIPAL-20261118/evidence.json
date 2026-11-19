@@ -1,0 +1,16 @@
+{
+  "task": "REGIME-EVALUATE-PERSONA-PRINCIPAL-20261118",
+  "role": "regime-evaluator",
+  "registry_change": "POST /api/registry/regime/evaluate accepts registry write roles + regime-evaluator via _authenticate_registry_regime_evaluate; role is in neither _REGISTRY_WRITE_ROLES nor _REGISTRY_READ_ROLES so every other route refuses it",
+  "persona_principal_roles": ["registry-reader", "regime-evaluator"],
+  "controller_fix": "observe_regime reads detail as object, string or absent; reports evaluate_refused:<status>:<code|unknown>",
+  "runtime_budget": {
+    "idempotency": "evaluate is idempotent per (session, market): repeat calls return the stored result and add no rows (covered by test_regime_evaluator_role_is_accepted_on_evaluate_only)",
+    "evaluations_per_weekday": "at most 1 (3 personas share the first evaluation; later calls are reads of the stored result)",
+    "regime_records_added_per_day": "one market-state record plus one per-strategy record set for a single session/market; zero on repeats",
+    "store_cap": "existing regime store cap unchanged; this task adds no new writer or scheduler"
+  },
+  "tests": "scripts/test_issue_dev_paper_principals.py services/persona/test_persona_cycle_controller.py services/registry/regime services/registry/test_registry_auth_wiring.py: 192 passed, 7 skipped",
+  "hosted_proof": "pending: next daily cycle after deploy; coordinator records under REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115",
+  "review_independence": "no other-family reviewer capacity confirmed at authoring time; exception to be recorded by reviewer"
+}

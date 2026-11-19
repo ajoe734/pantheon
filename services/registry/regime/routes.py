@@ -63,7 +63,7 @@ def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(defaul
     from .. import service as svc
     from ..models import ArtifactType
 
-    svc._authenticate_registry_write(authorization)
+    svc._authenticate_registry_regime_evaluate(authorization)
     views = svc._filter_strategy_spec_views(None, authorization, x_tenant_id, None)
     latest: dict[str, Any] = {}
     for view in views:

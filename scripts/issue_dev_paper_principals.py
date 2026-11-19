@@ -64,7 +64,7 @@ READERS = {
     # Persona daily pool cycle -> research owner (persona demands, candidate supply).
     "PERSONA_RESEARCH_SERVICE_TOKEN": ("persona-pool-cycle", "viewer"),
     # Persona daily cycle & strategy pool -> registry owner (candidate specs, champions).
-    "PERSONA_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-persona-registry-reader", "registry-reader"),
+    "PERSONA_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-persona-registry-reader", ("registry-reader", "regime-evaluator")),
     # Persona daily cycle case-file assembly -> search owner (hybrid retrieval query).
     "PERSONA_SEARCH_SERVICE_TOKEN": ("persona_cycle_controller", ("researcher", "persona_session")),
     # Evolution automatic consumer -> owner read ports.
