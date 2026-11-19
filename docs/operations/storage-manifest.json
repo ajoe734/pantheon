@@ -2935,7 +2935,7 @@
    },
    "bound_status": "bounded",
    "cap": "MAX_AUTHORIZATIONS = 2000 rows, oldest evicted first at write time; TTL AUTHORIZATION_TTL_SECONDS = 600s",
-   "cleanup": "row deleted on first use by the tool call (one-time), expired rows and rows over the cap deleted at each record_authorization write",
+   "cleanup": "row deleted on first use by the tool call (one-time), expired rows and rows over the cap deleted at each add_authorization write",
    "growth_driver": "one row per authorized persona tool call (before_tool_call hook)",
    "growth_per_day": "about 15 per persona per daily cycle (3 trading personas = about 45 rows/day), each removed within 600s",
    "kind": "table",

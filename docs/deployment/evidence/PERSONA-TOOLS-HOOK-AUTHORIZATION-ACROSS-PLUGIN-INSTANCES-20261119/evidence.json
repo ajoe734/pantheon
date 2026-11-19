@@ -9,7 +9,13 @@
   "fix": "Authorization is no longer held in plugin memory. The hook's /authorize call (with host tool_call_id) makes the broker record (agent_id, session_key, tool_call_id, tool, run_id); /call (agent, session, tool_call_id from the host tool context) consumes it exactly once and takes run_id from the record. A call with no record, another agent, session or tool, an expired record, or a forged run_id is refused (403). Identity still comes only from host context, never model params; a broker refusal/timeout in the hook still blocks.",
   "tests": {
     "plugin": "integrations/openclaw/plugins/pantheon-persona-tools: npm test, 19 pass, including 'a call the hook authorized succeeds when the tool comes from a different plugin instance than the hook' (hook from one register(), tool from a second; the pre-change plugin kept bindings per register() so this scenario returned call_not_authorized_by_hook)",
-    "broker": "services/openclaw-gateway-adapter: pytest 668 passed, 9 skipped (opt-in real-stack tests); new tests cover single use, other agent/session/tool, forged run id, refused authorize records nothing, TTL expiry and cap"
+    "broker": "services/openclaw-gateway-adapter: pytest 668 passed, 9 skipped (opt-in real-stack tests); new tests cover single use, other agent/session/tool, forged run id, refused authorize records nothing, TTL expiry and cap",
+    "broker_callers": {
+      "services/consultation/tests/test_panel_full_interpretations.py": "GatewayDouble._recall now authorizes (authorize_only, host tool_call_id) then calls with the same agent, session and tool_call_id; assertions unchanged",
+      "services/memory/test_mental_models.py": "each call goes through authorize then call. Refusals asserted at authorize: tool_outside_profile (3 forbidden tools) and tool_not_allowed_for_purpose (panel read); invalid_parameters (422) still asserted at call",
+      "result": "consultation + memory + broker tests: 53 passed, 4 skipped"
+    },
+    "bff_concurrent_read": "services/control-plane/bff/tests/test_persona_league_concurrent_read.py: 11 passed, 1 skipped on this branch and on dev (git archive of dev); no residual"
   },
   "pull_request_check": {
     "adapter_tests": "branch-ci.yml job service-suites-runtime (already required via service-suites) runs pytest services/openclaw-gateway-adapter",
