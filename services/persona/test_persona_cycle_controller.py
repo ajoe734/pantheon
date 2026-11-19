@@ -1768,3 +1768,16 @@ def test_pending_lesson_count_from_governance_result():
     assert n({"status": "completed", "results": []}) == 0
     assert n({"status": "unavailable", "reason": "x", "results": []}) is None
     assert n(None) is None
+
+
+@pytest.mark.parametrize("body,expected", [
+    ({"detail": "Insufficient role"}, "evaluate_refused:403:Insufficient role"),
+    ({"detail": {"code": "session_data_incomplete"}}, "evaluate_refused:403:session_data_incomplete"),
+    ({"detail": None}, "evaluate_refused:403:unknown"),
+    (None, "evaluate_refused:403:unknown"),
+    ("plain text", "evaluate_refused:403:unknown"),
+])
+def test_observe_regime_reports_a_refused_evaluate_for_every_body_shape(body, expected):
+    out = regime_consumer.observe_regime(lambda m, p, b: (403, body), session="2026-11-18", strategy_ids=["s"])
+    assert out["status"] == "unavailable" and out["reason"] == expected
+    assert "AttributeError" not in out["reason"]
