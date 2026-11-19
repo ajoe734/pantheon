@@ -4,10 +4,10 @@
     "owner_field": "owner_lifecycle_state / ownerLifecycleState: owner lifecycle_state verbatim, captured before the provisioning overlay in _persona_record_for_provisioning",
     "provisioning_field": "provisioning_lifecycle_state / provisioningLifecycleState: BFF provisioning projection (e.g. paper_running); never copied into the owner field",
     "dto": "_project_persona_dto adds ownerLifecycleState, provisioningLifecycleState, dataScope (metadata.data_scope)",
-    "cycle": "personaCycle.dayStatus now evaluates cycle_views.cycle_owner_lifecycle(record): owner state, with registrar rule paper_running|paper_owner|consultable + status active; tenant guaranteed by tenant-scoped detail read",
+    "cycle": "PersonaService.read_persona_cycle reads the owner record (one get_persona on the already-bound read store) and passes cycle_views.cycle_owner_lifecycle(owner): owner state, with registrar rule paper_running|paper_owner|consultable + status active; tenant guaranteed by tenant-scoped detail read",
     "kept_unchanged": ["state", "lifecycleStatus", "lifecycle_state (projected)"]
   },
-  "runtime_budget": "no new writer; no new store read or network call; pure projection of already-read records",
+  "runtime_budget": "no new writer; one extra get_persona read on the existing read store per detail request (cycle path only); no new network call; projection otherwise pure",
   "frontend_consumers_ajoe734_execute_plans": {
     "grep_terms": ["owner_lifecycle_state","ownerLifecycleState","provisioning_lifecycle_state","lifecycleStatus","dataScope","data_scope"],
     "owner_lifecycle_state/ownerLifecycleState/provisioning*": "no consumers; new fields are additive",
@@ -15,7 +15,7 @@
     "dataScope/data_scope": ["src/lib/bff-v1/management.ts:2726 (fleet row, already supported)"],
     "effect": "No field removed or renamed; lifecycleStatus and state still carry the projection so readiness behaviour is unchanged."
   },
-  "tests": "services/control-plane/bff/tests/test_persona_owner_lifecycle_truth.py: 9 passed (real _persona_record_for_provisioning/_project_persona_league_row/_project_persona_dto/cycle_owner_lifecycle, no monkeypatch). test_bff_pm12_persona_league, test_persona_cycle_views, test_bff_persona_provisioning_baseline_500, test_persona_create_owner_contract, test_persona_provisioning_reconcile: 167 passed, 18 failed in the combined run; the same 18 fail identically on the unchanged base (test-order contamination in test_persona_create_owner_contract, which passes 37/37 alone).",
+  "tests": "services/control-plane/bff/tests/test_persona_owner_lifecycle_truth.py: 10 passed (real _persona_record_for_provisioning/_project_persona_league_row/_project_persona_dto/cycle_owner_lifecycle, no monkeypatch). test_bff_pm12_persona_league, test_persona_cycle_views, test_bff_persona_provisioning_baseline_500, test_persona_create_owner_contract, test_persona_provisioning_reconcile: 167 passed, 18 failed in the combined run; the same 18 fail identically on the unchanged base (test-order contamination in test_persona_create_owner_contract, which passes 37/37 alone).",
   "hosted_proof": "pending deploy; coordinator records persona-league and GET /bff/personas/{id}: research_only for persona-d64835a203ce276b8fbb, paper_owner for the three trading personas",
   "residual_findings": [
     "state and lifecycleStatus still report the provisioning projection (paper_running) for owner research_only personas; the frontend reads them, so changing them needs a coordinated frontend decision.",

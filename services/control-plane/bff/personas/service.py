@@ -16102,7 +16102,17 @@ class PersonaService:
     def read_persona_cycle(self, persona_id, tenant_id, *, identity, authorization, snapshot_at,
                            lifecycle_state=None):
         """Compose authorized detail reads from the existing owning services."""
-        from .cycle_views import read_cycle_views
+        from .cycle_views import cycle_owner_lifecycle, read_cycle_views
+        # The route passes the projected record state; the day check needs the
+        # owner's own lifecycle_state (registrar rule), so read the owner record.
+        try:
+            owner_record = self.get_read_store().get_persona(persona_id)
+        except Exception:
+            owner_record = None
+        if isinstance(owner_record, dict):
+            lifecycle_state = cycle_owner_lifecycle(owner_record)
+        else:
+            lifecycle_state = None
         return read_cycle_views(self.get_read_store(), persona_id, tenant_id, identity,
                                 authorization, snapshot_at, lifecycle_state=lifecycle_state)
 

@@ -119,3 +119,19 @@ def test_cycle_day_check_rejects_inactive_owner():
     persona = _project("persona-y", "paper_owner")
     persona["status"] = "suspended"
     assert cycle_owner_lifecycle(persona) == "paper_owner:status=suspended"
+
+
+@pytest.mark.parametrize("owner_state", ["research_only", "paper_owner"])
+def test_read_persona_cycle_passes_owner_state_not_projection(monkeypatch, owner_state):
+    from types import SimpleNamespace
+    from services.control_plane.bff.personas import cycle_views
+
+    seen = {}
+    monkeypatch.setattr(cycle_views, "read_cycle_views",
+                        lambda *a, **k: seen.update(k) or ({}, {}))
+    store = SimpleNamespace(get_persona=lambda pid: _owner(pid, owner_state))
+    service = svc.PersonaService(read_store=store, write_owner=SimpleNamespace(),
+                                 ranking_write_owner=SimpleNamespace(), command_store=SimpleNamespace())
+    service.read_persona_cycle("p1", TENANT, identity=None, authorization=None,
+                               snapshot_at="t", lifecycle_state="paper_running")
+    assert seen["lifecycle_state"] == owner_state
