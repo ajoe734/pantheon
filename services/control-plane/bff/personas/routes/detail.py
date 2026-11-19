@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.core.owner_reads import request_read_scope
 from services.control_plane.bff.models import ErrorCode
+from ..cycle_views import cycle_owner_lifecycle as _cycle_owner_lifecycle
 from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
     _bff_me_tenant_payload,
@@ -550,7 +551,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             surfaces.update(pool_surfaces)
             data["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
                 persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
-                lifecycle_state=((persona.get("lifecycle_state") or persona.get("state")) if isinstance(persona, dict) else None),
+                lifecycle_state=_cycle_owner_lifecycle(persona),
             )
             surfaces.update(cycle_surfaces)
 
@@ -614,7 +615,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             meta.setdefault("surfaces", {}).update(pool_surfaces)
             dto["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
                 persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
-                lifecycle_state=((raw.get("lifecycle_state") or raw.get("state")) if isinstance(raw, dict) else None),
+                lifecycle_state=_cycle_owner_lifecycle(raw),
             )
             meta["surfaces"].update(cycle_surfaces)
             return {

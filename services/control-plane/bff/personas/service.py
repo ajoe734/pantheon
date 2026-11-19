@@ -2426,6 +2426,9 @@ def _project_persona_dto(
         "successRate": float(metadata.get("success_rate") or 0.0),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
+        "ownerLifecycleState": _persona_owner_lifecycle_state(raw),
+        "provisioningLifecycleState": _persona_provisioning_lifecycle_state(raw),
+        "dataScope": metadata.get("data_scope"),
         "marketScope": list(metadata.get("market_scope") or []),
         "assetClasses": list(metadata.get("asset_classes") or []),
         "paperLedgerId": paper_ledger_id,
@@ -4767,6 +4770,24 @@ def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
     return ""
 
 
+# --- _persona_owner_lifecycle_state ---
+def _persona_owner_lifecycle_state(raw: Mapping[str, Any]) -> Optional[str]:
+    """Owner lifecycle_state verbatim; never the BFF provisioning projection."""
+    owner = raw.get("owner_lifecycle_state")
+    if owner in (None, ""):
+        if raw.get("provisioning_lifecycle_state"):
+            # Projected record without a captured owner state: do not guess.
+            return None
+        owner = raw.get("lifecycle_state")
+    return str(owner or "").strip().lower() or None
+
+
+# --- _persona_provisioning_lifecycle_state ---
+def _persona_provisioning_lifecycle_state(raw: Mapping[str, Any]) -> Optional[str]:
+    value = raw.get("provisioning_lifecycle_state")
+    return str(value).strip().lower() if value else None
+
+
 # --- _persona_record_projected_state ---
 def _persona_record_projected_state(raw: Mapping[str, Any]) -> str:
     # The Persona owner keeps the governance lifecycle_state and the
@@ -5147,16 +5168,20 @@ def _persona_record_for_provisioning(
     }:
         # The owner remains draft/research_only. Only this BFF projection
         # exposes coordinator progress to the response and reconciler.
+        # The owner state is read verbatim from the owner record before the
+        # projection overlays lifecycle_state. The progress lives in its own
+        # provisioning_lifecycle_state field and never feeds the owner field.
         owner_state = persona.get("owner_lifecycle_state")
-        if persona.get("lifecycle_state") in {"draft", "research_only"}:
-            owner_state = persona["lifecycle_state"]
+        if not owner_state and (existing is not None or mutate_store):
+            owner_state = persona.get("lifecycle_state")
         persona = {
             **persona,
             "lifecycle_state": lifecycle_state,
+            "provisioning_lifecycle_state": lifecycle_state,
             "metadata": {**(persona.get("metadata") or {}), **metadata},
         }
         if owner_state:
-            persona["owner_lifecycle_state"] = owner_state
+            persona["owner_lifecycle_state"] = str(owner_state)
     return persona, metadata
 
 
@@ -7502,7 +7527,8 @@ def _project_persona_league_row(
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "updated_at": raw.get("updated_at") or raw.get("created_at") or utc_now(),
         "state": state,
-        "owner_lifecycle_state": str(raw.get("lifecycle_state") or "").strip().lower() or None,
+        "owner_lifecycle_state": _persona_owner_lifecycle_state(raw),
+        "provisioning_lifecycle_state": _persona_provisioning_lifecycle_state(raw),
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
         "routed_strategy_count": int(routed or 0),
