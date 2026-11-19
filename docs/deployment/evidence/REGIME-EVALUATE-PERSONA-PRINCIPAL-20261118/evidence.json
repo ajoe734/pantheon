@@ -10,7 +10,7 @@
     "regime_records_added_per_day": "one market-state record plus one per-strategy record set for a single session/market; zero on repeats",
     "store_cap": "existing regime store cap unchanged; this task adds no new writer or scheduler"
   },
-  "tests": "scripts/test_issue_dev_paper_principals.py services/persona/test_persona_cycle_controller.py services/registry/regime services/registry/test_registry_auth_wiring.py: 192 passed, 7 skipped",
+  "tests": "regime suite (incl. test_routes.py, real run with numpy/pandas): 41 passed, 1 skipped (postgres DSN); principals, persona cycle controller and registry auth wiring suites passed",
   "hosted_proof": "pending: next daily cycle after deploy; coordinator records under REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115",
   "review_independence": "no other-family reviewer capacity confirmed at authoring time; exception to be recorded by reviewer"
 }
