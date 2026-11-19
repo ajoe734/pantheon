@@ -78,7 +78,7 @@ def test_run_aggregates_and_is_get_only():
     def fetch(path):
         seen.append(path)
         if path.startswith("/bff/personas?"):
-            return {"items": [{"persona_id": PID, "state": "research_only", "status": "active"}]}
+            return {"items": [row(PID, "research_only")]}
         raise AssertionError(path)
 
     report = pd.run(fetch, NOW)
@@ -158,24 +158,47 @@ def test_auth_and_read_failures_carry_http_status(monkeypatch, capsys):
     assert [m for m, _ in calls] == ["POST", "GET"]
 
 
+TRADING = ["persona-2448c7053e33ea48da47", "persona-ee7112a829d38b9135ac", "persona-6507750312870d03a241"]
+BASELINE = "persona-d64835a203ce276b8fbb"
+
+
+def row(pid, owner_state, state=None, tenant="tenant-dev", **kw):
+    """Reduced BFF /bff/personas row: only the fields the probe reads, no credential."""
+    r = {"id": pid, "name": kw.pop("name", pid), "mandate": kw.pop("mandate", ""), "state": state or owner_state,
+         "ownerLifecycleState": owner_state, "tenantId": tenant}
+    r.update(kw)
+    return r
+
+
 def _hosted_1118():
-    def p(pid, state, status="active", kind="trading"):
-        return {"persona_id": pid, "state": state, "status": status, "archetype": kind}
-    return [p("t-2448c7", "paper_owner"), p("t-ee7112", "paper_owner"), p("t-650775", "paper_owner"),
-            p("agora-a", "consultable", kind="agora_servant"), p("agora-b", "consultable", kind="agora_servant"),
-            p("s-draft", "draft"), p("s-research", "research_only"), p("s-draft2", "draft"),
-            p("persona-dev-lifecycle", "development"), p("risk-officer", "draft"), p("red-team", "draft"),
-            p("s-retired-owner", "paper_owner", status="retired")]
+    """The 2026-11-18 hosted persona list: 177 rows, read-only capture reduced to the fields the probe reads, with
+    owner facts (ownerLifecycleState/tenantId) populated from persona.personas (see fixture owner_fact_note)."""
+    import pathlib
+    fx = pathlib.Path(__file__).parent / "fixtures" / "hosted_persona_day_20261118.json"
+    return json.loads(fx.read_text())["list_rows"]
+
+
+def test_hosted_fixture_is_the_177_row_capture_and_selects_only_trading():
+    items = _hosted_1118()
+    assert len(items) == 177
+    assert {x["id"] for x in pd.daily_cycle_personas(items)} == set(TRADING)
 
 
 def test_probe_set_equals_controller_set_for_same_list():
     from services.persona import persona_cycle_controller as ctl
     items = _hosted_1118()
-    probe_ids = {x["persona_id"] for x in pd.daily_cycle_personas(items)}
-    controller_ids = {x["persona_id"] for x in items
-                      if ctl.is_daily_cycle_persona({"lifecycle_state": x["state"], "status": x["status"]})}
-    assert probe_ids == controller_ids == {"t-2448c7", "t-ee7112", "t-650775"}
+    probe_ids = {x["id"] for x in pd.daily_cycle_personas(items)}
+    controller_ids = {x["id"] for x in items if x.get("tenantId")
+                      and ctl.is_daily_cycle_persona({"lifecycle_state": x["ownerLifecycleState"], "status": "active"})}
+    assert probe_ids == controller_ids == set(TRADING)
     assert pd.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
+
+
+def test_baseline_left_out_by_owner_lifecycle_not_bff_state():
+    judged, left = pd.partition_personas(_hosted_1118())
+    assert [x["id"] for x in judged] == TRADING
+    reasons = {x["persona_id"]: x["reason"] for x in left}
+    assert reasons[BASELINE] == "owner_lifecycle_state_not_daily_cycle:research_only"
 
 
 def test_hosted_replay_evaluates_exactly_the_three_trading_personas():
@@ -189,10 +212,45 @@ def test_hosted_replay_evaluates_exactly_the_three_trading_personas():
                                                          "preconditions": [{}]}}}}
 
     report = pd.run(fetch, NOW)
-    assert [r["persona_id"] for r in report["personas"]] == ["t-2448c7", "t-ee7112", "t-650775"]
+    assert [r["persona_id"] for r in report["personas"]] == TRADING
     assert report["verdict"] == "passed"
+    assert report["left_out_count"] == len(_hosted_1118()) - 3 == len(report["left_out"])
+
+
+def test_selected_persona_without_cron_or_packet_still_fails_verdict():
+    def fetch(path):
+        if path.startswith("/bff/personas?"):
+            return {"items": [row(TRADING[0], "paper_owner")]}
+        return {"data": {"personaCycle": {"dayStatus": pd.evaluate_persona_day(
+            TRADING[0], lifecycle_state="paper_owner", cron_jobs=0, packets=[], now=NOW)}}}
+    report = pd.run(fetch, NOW)
+    assert report["verdict"] == "failed" and report["personas"][0]["first_failed_precondition"] == "daily_cycle_cron_job"
+
+
+def test_probe_test_and_acceptance_personas_are_never_judged():
+    items = [row("p-release", "paper_owner", name="Release Probe 1"),
+             row("p-test", "paper_owner", dataScope="test"),
+             row("p-acc", "paper_owner", metadata={"acceptance_run": True}),
+             row("p-ok", "paper_owner")]
+    judged, left = pd.partition_personas(items)
+    assert [x["id"] for x in judged] == ["p-ok"]
+    assert {x["persona_id"] for x in left if x["reason"] == "probe_or_test_persona"} == {"p-release", "p-test", "p-acc"}
+
+
+def test_controller_conditions_status_and_tenant():
+    judged, left = pd.partition_personas([row("a", "paper_owner", tenant=""), row("b", "paper_owner", state="archived"),
+                                          row("c", "paper_owner", status="suspended")])
+    assert not judged and [x["reason"] for x in left] == ["no_tenant_id", "status_not_active:archived",
+                                                          "status_not_active:suspended"]
 
 
 def test_eligible_persona_without_cron_is_failed_not_dropped():
     r = pd.evaluate_persona_day("t-1", lifecycle_state="paper_running", cron_jobs=0, packets=[], now=NOW)
     assert status(r)["daily_cycle_cron_job"] == "failed" and status(r)["lifecycle_paper_owner"] == "passed"
+
+
+def test_row_without_owner_lifecycle_field_is_not_selected_by_projection():
+    # A row carrying only the projected/legacy fields must not be guessed into the set.
+    r = {"id": "x", "state": "paper_running", "lifecycleStatus": "paper_owner", "tenantId": "t"}
+    judged, left = pd.partition_personas([r])
+    assert judged == [] and left[0]["reason"] == "owner_lifecycle_state_not_daily_cycle:None"

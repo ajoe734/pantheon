@@ -32,14 +32,64 @@ def _controller_eligible_states() -> frozenset:
 DAILY_CYCLE_STATES = _controller_eligible_states() - {"consultable"}
 
 
-def daily_cycle_personas(personas: Iterable[Mapping[str, Any]]) -> list:
-    """Same rule as the controller's is_daily_cycle_persona (BFF rows carry ``state``, controller rows ``lifecycle_state``)."""
-    out = []
+_NOT_ACTIVE_PROJECTED_STATES = frozenset({"archived", "suspended", "retired"})
+_TEST_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+_TEST_FLAGS = ("is_test", "test_data", "acceptance_run", "is_acceptance", "is_probe", "release_probe", "acceptance_probe")
+
+
+def _first(p: Mapping[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if p.get(k) is not None:
+            return p[k]
+    return None
+
+
+def is_probe_or_test_row(p: Mapping[str, Any]) -> bool:
+    """Release probe, test and acceptance personas are never judged (rows carry no metadata, so only declared fields)."""
+    meta = p.get("metadata") if isinstance(p.get("metadata"), Mapping) else {}
+    for src in (p, meta):
+        if str(_first(src, "data_scope", "dataScope") or "").lower() in _TEST_SCOPES:
+            return True
+        if any(src.get(k) is True or str(src.get(k) or "").lower() in {"true", "1", "yes"} for k in _TEST_FLAGS):
+            return True
+    text = " ".join(str(p.get(k) or "") for k in ("persona_id", "id", "name", "mandate")).lower()
+    return "probe" in text and any(w in text for w in ("release", "acceptance"))
+
+
+def _left_out_reason(p: Mapping[str, Any]) -> Optional[str]:
+    """None when the controller would register a daily cycle for this row, else the first failing controller condition.
+
+    The controller's is_daily_cycle_persona reads the OWNER ``lifecycle_state`` and ``status`` and its registrar
+    additionally requires ``tenant_id``. The BFF row ``state`` is a projection (provisioning flow) that can read
+    paper_running while the owner lifecycle_state is not; the owner value is the row's ``ownerLifecycleState`` (owner_lifecycle_state), returned verbatim by the BFF."""
+    if is_probe_or_test_row(p):
+        return "probe_or_test_persona"
+    owner_state = _first(p, "owner_lifecycle_state", "ownerLifecycleState")
+    if owner_state not in DAILY_CYCLE_STATES:
+        return f"owner_lifecycle_state_not_daily_cycle:{owner_state}"
+    if p.get("status") is not None and p["status"] != "active":
+        return f"status_not_active:{p['status']}"
+    if str(p.get("state") or "").lower() in _NOT_ACTIVE_PROJECTED_STATES:  # BFF projects archived/suspended into state
+        return f"status_not_active:{p['state']}"
+    if not str(_first(p, "tenant_id", "tenantId") or "").strip():
+        return "no_tenant_id"
+    return None
+
+
+def partition_personas(personas: Iterable[Mapping[str, Any]]) -> tuple:
+    """(judged rows, left-out [{persona_id, reason}])."""
+    judged, left_out = [], []
     for p in personas:
-        state = p.get("lifecycle_state") if p.get("lifecycle_state") is not None else p.get("state")
-        if state in DAILY_CYCLE_STATES and p.get("status", "active") == "active":
-            out.append(p)
-    return out
+        reason = _left_out_reason(p)
+        if reason is None:
+            judged.append(p)
+        else:
+            left_out.append({"persona_id": p.get("persona_id") or p.get("id"), "reason": reason})
+    return judged, left_out
+
+
+def daily_cycle_personas(personas: Iterable[Mapping[str, Any]]) -> list:
+    return partition_personas(personas)[0]
 
 
 # acceptance-owner: PERSONA-DAY-ACCEPTANCE-PROBE-20261117 / PERSONA-DAY-ACCEPTANCE-PROBE-TRUTHFUL-20261118
@@ -171,13 +221,14 @@ def evaluate_persona_day(persona_id: str, *, lifecycle_state: Optional[str], cro
             "no_consultation_in_7_days": last is None or last < now - timedelta(days=CONSULT_WINDOW_DAYS)}
 
 
-def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate(results: list[dict[str, Any]], left_out: Optional[list] = None) -> dict[str, Any]:
     ok = bool(results) and all(r["passed"] for r in results)
     days = {r.get("cycle_day") for r in results if r.get("cycle_day")}
     return {"verdict": "passed" if ok else "failed", "personas": results,
             "cycle_day": min(days) if days else None,
             "cycle_due_at_utc": cycle_due_at(min(days)) if days else None,
-            "reason": None if results else "no_active_trading_persona"}
+            "reason": None if results else "no_active_trading_persona",
+            "left_out_count": len(left_out or []), "left_out": list(left_out or [])}
 
 
 class ProbeHttpError(Exception):
@@ -217,11 +268,11 @@ def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     listing = fetch("/bff/personas?page_size=200")
     items = listing.get("items") or listing.get("data") or []
-    trading = daily_cycle_personas(items)  # the controller's own rule, shared by file
+    trading, left_out = partition_personas(items)  # the controller's own conditions, read from its source
     results = []
     for p in trading:
         pid = p.get("persona_id") or p.get("id")
-        state = p.get("state") or p.get("lifecycle_state")
+        state = _first(p, "owner_lifecycle_state", "ownerLifecycleState")
         if state not in DAILY_CYCLE_STATES:  # first precondition fails; later ones need no read
             base = evaluate_persona_day(pid, lifecycle_state=state, cron_jobs=None, packets=[], now=now)
             results.append(base)
@@ -231,7 +282,7 @@ def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
         results.append(day_status if isinstance(day_status, dict) and "preconditions" in day_status else
                        {"persona_id": pid, "passed": False, "first_failed_precondition": "terminal_packet_today",
                         "preconditions": [], "reason": "day_status_unavailable"})
-    return aggregate(results)
+    return aggregate(results, left_out)
 
 
 def _fail(reason: str) -> int:

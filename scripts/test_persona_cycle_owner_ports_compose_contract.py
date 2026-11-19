@@ -721,8 +721,34 @@ def test_approval_usage_context_services_all_wire_pantheon_env() -> None:
         ]
 
 
-def test_dev_persona_tool_broker_resolves_enabled_with_shared_token():
+def _persona_broker_stock_plugin_violations(adapter_env, gateway_env, command, env) -> list[str]:
+    """Stock-plugin contract (PR 7579/7601): gateway env carries broker URL + token, no overlay."""
     import re
+    def resolve(value):
+        m = re.fullmatch(r"\$\{(\w+)(?::-([^}]*))?\}", str(value))
+        return env.get(m.group(1), m.group(2) or "") if m else str(value)
+    out: list[str] = []
+    if resolve(adapter_env.get("PERSONA_TOOL_BROKER_ENABLED", "")) != "true":
+        out.append("adapter broker not enabled")
+    adapter_token = resolve(adapter_env.get("PERSONA_TOOL_BROKER_TOKEN", ""))
+    gateway_token = resolve(gateway_env.get("PERSONA_TOOL_BROKER_TOKEN", ""))
+    if not gateway_token:
+        out.append("gateway missing PERSONA_TOOL_BROKER_TOKEN")
+    if not adapter_token or adapter_token != gateway_token:
+        out.append("adapter/gateway broker tokens differ or are empty")
+    url = str(gateway_env.get("PERSONA_TOOL_BROKER_URL", ""))
+    if not re.fullmatch(r"http://openclaw-gateway-adapter:\d+/internal/persona-tools/v1", url):
+        out.append("gateway PERSONA_TOOL_BROKER_URL does not point at the adapter broker")
+    cmd = str(command)
+    if "$include" in cmd or "plugin-overlay" in cmd or "persona-tools.json" in cmd:
+        out.append("gateway command writes a plugin overlay")
+    # openclaw.runtime.json may only be deleted (rm -f), never written.
+    if re.search(r">\s*\S*openclaw\.runtime\.json|tee\s+\S*openclaw\.runtime\.json", cmd):
+        out.append("gateway command writes openclaw.runtime.json")
+    return out
+
+
+def test_dev_persona_tool_broker_resolves_enabled_with_shared_token():
     env = issuer.broker_environment({
         "PANTHEON_ENV": "dev",
         "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE": "/tmp/pantheon-broker-contract-token",
@@ -730,12 +756,18 @@ def test_dev_persona_tool_broker_resolves_enabled_with_shared_token():
     try:
         adapter = SERVICES["openclaw-gateway-adapter"]["environment"]
         gateway = SERVICES["openclaw-gateway"]["environment"]
-        def resolve(value):
-            m = re.fullmatch(r"\$\{(\w+)(?::-([^}]*))?\}", value)
-            return env.get(m.group(1), m.group(2) or "")
-        assert resolve(adapter["PERSONA_TOOL_BROKER_ENABLED"]) == "true"
-        assert resolve(adapter["PERSONA_TOOL_BROKER_TOKEN"]) == resolve(gateway["PERSONA_TOOL_BROKER_TOKEN"]) != ""
-        assert "PERSONA_TOOL_BROKER_TOKEN" in str(SERVICES["openclaw-gateway"]["command"])
+        command = SERVICES["openclaw-gateway"]["command"]
+        assert _persona_broker_stock_plugin_violations(adapter, gateway, command, env) == []
+
+        # Negative cases: each mutation must be caught.
+        no_token = {k: v for k, v in gateway.items() if k != "PERSONA_TOOL_BROKER_TOKEN"}
+        no_url = {k: v for k, v in gateway.items() if k != "PERSONA_TOOL_BROKER_URL"}
+        diff_token = {**gateway, "PERSONA_TOOL_BROKER_TOKEN": "different-token"}
+        assert _persona_broker_stock_plugin_violations(adapter, no_token, command, env)
+        assert _persona_broker_stock_plugin_violations(adapter, no_url, command, env)
+        assert _persona_broker_stock_plugin_violations(adapter, diff_token, command, env)
+        overlay = str(command) + " && echo '{}' > /home/node/.openclaw/openclaw.runtime.json"
+        assert _persona_broker_stock_plugin_violations(adapter, gateway, overlay, env)
     finally:
         Path("/tmp/pantheon-broker-contract-token").unlink(missing_ok=True)
 
