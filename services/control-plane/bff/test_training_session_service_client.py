@@ -1280,7 +1280,14 @@ def test_live_tampered_credential_rejected_by_owner(live_training_session_servic
     ports = create_read_surface_ports()
 
     token = _signed_caller_jwt("tenant-live", "operator-live")
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    header_b64, payload_b64, sig_b64 = token.split(".")
+    orig_sig_bytes = base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4))
+    tampered_sig_raw = bytearray(orig_sig_bytes)
+    tampered_sig_raw[0] ^= 0x01
+    tampered_sig_b64 = base64.urlsafe_b64encode(bytes(tampered_sig_raw)).rstrip(b"=").decode("ascii")
+    decoded_tampered_sig = base64.urlsafe_b64decode(tampered_sig_b64 + "=" * (-len(tampered_sig_b64) % 4))
+    assert decoded_tampered_sig != orig_sig_bytes
+    tampered = f"{header_b64}.{payload_b64}.{tampered_sig_b64}"
     auth_token = authorization.set(f"Bearer {tampered}")
     tenant_token = selected_tenant.set("tenant-live")
 
