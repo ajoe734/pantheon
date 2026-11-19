@@ -27,6 +27,12 @@ class EvaluateRequest(BaseModel):
     verify_inputs: bool = False
 
 
+# Least-privilege role accepted on POST /regime/evaluate only: absent from the registry write and read
+# role sets, so every other registry route refuses it.
+REGIME_EVALUATOR_ROLE = "regime-evaluator"
+REGIME_EVALUATE_ROLES = ("operator", "registry-writer", "admin", REGIME_EVALUATOR_ROLE)
+
+
 def _semver(version: str) -> tuple:
     try:
         return tuple(int(p) for p in str(version).split("."))
@@ -63,7 +69,7 @@ def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(defaul
     from .. import service as svc
     from ..models import ArtifactType
 
-    svc._authenticate_registry_regime_evaluate(authorization)
+    svc._authenticate_registry(authorization, required_roles=REGIME_EVALUATE_ROLES)
     views = svc._filter_strategy_spec_views(None, authorization, x_tenant_id, None)
     latest: dict[str, Any] = {}
     for view in views:

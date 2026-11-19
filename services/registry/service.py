@@ -246,10 +246,6 @@ async def registry_error_handler(request: Request, exc: RegistryError):
 
 
 _REGISTRY_WRITE_ROLES = ("operator", "registry-writer", "admin")
-# Least-privilege role for POST /api/registry/regime/evaluate ONLY (daily persona cycle evaluates on
-# first use). It is deliberately absent from the write and read role sets: no other route accepts it.
-REGIME_EVALUATOR_ROLE = "regime-evaluator"
-_REGISTRY_REGIME_EVALUATE_ROLES = _REGISTRY_WRITE_ROLES + (REGIME_EVALUATOR_ROLE,)
 _REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader", "viewer", "view_only")
 
 
@@ -477,11 +473,6 @@ def _authenticate_registry_write(authorization: Optional[str]) -> AuthContext:
     :func:`_actor_context`) instead of discarding it.
     """
     return _authenticate_registry(authorization, required_roles=_REGISTRY_WRITE_ROLES)
-
-
-def _authenticate_registry_regime_evaluate(authorization: Optional[str]) -> AuthContext:
-    """Auth for the regime evaluate route: registry write roles plus the evaluate-only role."""
-    return _authenticate_registry(authorization, required_roles=_REGISTRY_REGIME_EVALUATE_ROLES)
 
 
 def _authenticate_registry_read(authorization: Optional[str]) -> AuthContext:
