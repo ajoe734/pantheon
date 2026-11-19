@@ -14,6 +14,7 @@ from services.source_ingestion.daily_bars_reader import (
     MAX_RANGE_DAYS, MAX_SYMBOLS, MAX_WINDOW_CLOSES, DailyBarsReader, DailyBarsReadLimit,
 )
 from services.source_ingestion.daily_bars_store import DailyBarsCorrupt, DailyBarsStore
+from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.tests.test_daily_bars_store import make_rows
 
 
@@ -113,7 +114,7 @@ def test_reader_during_replacement_sees_complete_old_or_new_set(tmp_path):
     assert not errors, errors
 
 
-def test_p95_60_closes_of_50_symbols_on_hosted_shaped_data(tmp_path):
+def test_p95_60_closes_of_50_symbols_on_hosted_shaped_data(tmp_path, monkeypatch):
     """22,500 symbols per day (20,200 warrant-like), 60 trade days, 50 symbols: p95 <= 150 ms."""
     store = DailyBarsStore(tmp_path)
     ds = trading_days(60)
@@ -123,6 +124,7 @@ def test_p95_60_closes_of_50_symbols_on_hosted_shaped_data(tmp_path):
         store.write_day(d, rows, ingest_run_id=f"r-{d}")
     reader = DailyBarsReader(tmp_path)
     symbols = [r["symbol"] for r in base[:50]]
+    reads = wall_clock_bounds.count_parquet_reads(monkeypatch)
     timings = []
     for _ in range(40):
         t0 = time.perf_counter()
@@ -132,7 +134,11 @@ def test_p95_60_closes_of_50_symbols_on_hosted_shaped_data(tmp_path):
     timings.sort()
     p95 = timings[int(len(timings) * 0.95) - 1]
     print(f"p95_ms={p95:.1f} median_ms={statistics.median(timings):.1f}")
-    assert p95 <= 150, p95
+    # Counter that does not depend on host speed: a 60-close window of 50 symbols decodes at most one row group of one
+    # file per trade date (the statistics pick it), never a whole day's file set: 2,400 in 40 requests.
+    per_request_ceiling = len(ds) * len(timings)
+    assert reads["row_groups"] <= per_request_ceiling and reads["opens"] <= per_request_ceiling, reads
+    wall_clock_bounds.check("daily_bars_reader.p95_60_closes", p95, 150, unit="ms")
 
 
 # --- SOURCE-DAILY-BARS-READERS-COMPLETE-20261118: symbol forms, listing, columns, cold read ------------------
