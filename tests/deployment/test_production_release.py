@@ -271,6 +271,15 @@ PY
       [[ "${FAKE_DOCKER_FAIL:-}" == *"exec"* ]] && exit 1
       printf 'fake.gate.token\n'; exit 0
     fi
+    if [[ "$args" == "exec "* && "$args" == *"runtime-fleet/desired-state"* ]]; then
+      # In-container runtime-manager credential probe: "<http-status> <error-code>" (never a token).
+      cid="$2"; echo "$cid" >> "$FAKE_STATE/cred_checked"
+      if [[ -n "${FAKE_CRED_STATUS:-}" && ( -z "${FAKE_CRED_ONLY:-}" || "$cid" == "cid-${FAKE_CRED_ONLY}" ) ]]; then
+        printf '%s\n' "${FAKE_CRED_STATUS/:/ }"; exit 0
+      fi
+      printf '200 -\n'; exit 0
+    fi
+    if [[ "$args" == "inspect -f {{if .State.Health}}"* ]]; then printf '%s' "${FAKE_WORKER_HEALTH:-healthy}"; exit 0; fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
       cid="${@: -1}"
@@ -731,6 +740,27 @@ class ProdOpsTests(OpsHarness):
         self.assertNotEqual(dup.returncode, 0)
         self.assertIn("expected exactly 1", dup.stderr)
 
+    def test_activate_checks_each_paper_worker_credential_in_container_and_reports_health(self):
+        r = self.ops("activate_singletons", "rel-1", FAKE_WORKER_HEALTH="unhealthy")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(set((self.state / "cred_checked").read_text().split())),
+                         ["cid-paper-fleet-reconciler", "cid-paper-signal-producer"])
+        rep = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(set(rep["product_worker_health"]),
+                         {"agora-interaction-worker", "paper-fleet-reconciler", "paper-signal-producer"})
+        self.assertEqual(set(rep["product_worker_health"].values()), {"unhealthy"})  # reporting only, not a gate
+        self.assertIs(rep["product_worker_health_is_gate"], False)
+
+    def test_activate_fails_naming_service_status_and_code_when_worker_credential_rejected(self):
+        r = self.ops("activate_singletons", "rel-1", FAKE_CRED_STATUS="403:AUTH_TOKEN_FORMAT",
+                     FAKE_CRED_ONLY="paper-signal-producer")
+        self.assertNotEqual(r.returncode, 0)
+        err = json.loads(r.stderr.strip().splitlines()[-1])
+        self.assertEqual(err["error_code"], "ACTIVATE")
+        for needle in ("paper-signal-producer", "403", "AUTH_TOKEN_FORMAT"):
+            self.assertIn(needle, err["message"])
+        self.assertNotIn("Bearer", r.stderr + r.stdout)
+
     def _product_images_run(self):
         return {svc.removeprefix("cid-"): (self.state / f"image_{svc}").read_text()
                 for svc in sorted(p.name.removeprefix("image_") for p in self.state.glob("image_cid-*"))
@@ -997,6 +1027,89 @@ class BootstrapTests(OpsHarness):
 
     def _run(self, **extra):
         return subprocess.run([str(BOOTSTRAP)], env=self._env(**extra), capture_output=True, text=True, timeout=60)
+
+    def _token_run(self, secrets_text, **extra):
+        secrets = self.tmp / "secrets.env"
+        secrets.write_bytes(secrets_text.encode())
+        secrets.chmod(0o600)
+        r = self._run(**extra)
+        return r, secrets
+
+    def _effective_jwt_env(self):
+        ce = dict(l.split("=", 1) for l in (self.tmp / "compose.env").read_text().splitlines() if "=" in l)
+        return {"PANTHEON_RUNTIME_AUTH_MODE": "permissive", "PANTHEON_RUNTIME_JWT_SECRET": "s2",
+                "PANTHEON_RUNTIME_JWT_ISSUER": ce["PROD_JWT_ISSUER"], "PANTHEON_RUNTIME_JWT_AUDIENCE": ce["PROD_JWT_AUDIENCE"]}
+
+    BASE_SECRETS = ("# header\nPANTHEON_BFF_JWT_SECRET=s1\nPANTHEON_RUNTIME_JWT_SECRET=s2\n"
+                    "PANTHEON_RUNTIME_MANAGER_TOKEN=" + "x" * 64 + "\nPANTHEON_DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db")
+
+    def test_bootstrap_derives_runtime_manager_token_accepted_by_real_verifier_and_opaque_is_rejected(self):
+        from services import runtime_auth_inbound as inbound
+        # self._run -> self._env rewrites secrets.env; pre-write after _env is impossible, so drive via _token_run.
+        before = self.BASE_SECRETS
+        secrets = self.tmp / "secrets.env"
+        orig_env = self._env
+        def env_keep(**extra):
+            e = orig_env(**extra)
+            secrets.write_bytes(before.encode()); secrets.chmod(0o600)
+            return e
+        self._env = env_keep
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = secrets.read_bytes().decode()
+        tok_lines = [l for l in text.split("\n") if l.startswith("PANTHEON_RUNTIME_MANAGER_TOKEN=")]
+        self.assertEqual(len(tok_lines), 1)
+        token = tok_lines[0].split("=", 1)[1]
+        self.assertNotEqual(token, "x" * 64)
+        self.assertEqual(token.count("."), 2)
+        self.assertEqual(secrets.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(secrets.stat().st_uid, os.getuid())
+        self.assertNotIn(token, r.stdout + r.stderr); self.assertNotIn(token, self.log.read_text())
+        self.assertNotIn("s2.", r.stdout + r.stderr)
+        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.startswith(".rm-token.")], [])
+        env = self._effective_jwt_env()
+        for mode in ("permissive", "strict"):
+            ctx = inbound.validate_request_auth(authorization=f"Bearer {token}", required_roles=("operator", "admin", "approver", "reviewer", "risk_owner"),
+                                                env={**env, "PANTHEON_RUNTIME_AUTH_MODE": mode}, allow_shared_secret=True)
+            self.assertEqual(ctx.actor_id, "svc:production-paper-runtime-caller")
+            self.assertEqual(ctx.claims["tenant_id"], PROD_ENV["PROD_TENANT_ID"])
+            self.assertEqual(ctx.claims["allowed_tenants"], [PROD_ENV["PROD_TENANT_ID"]])
+            self.assertLessEqual(ctx.claims["exp"] - ctx.claims["iat"], 604800)
+        # Incident reproduction: the opaque 64-char value is not an accepted bearer.
+        with self.assertRaises(inbound.AuthError) as cm:
+            inbound.validate_request_auth(authorization="Bearer " + "x" * 64, required_roles=("operator",),
+                                          env={**env, "PANTHEON_RUNTIME_AUTH_MODE": "permissive"}, allow_shared_secret=True)
+        self.assertEqual(cm.exception.code, "AUTH_TOKEN_FORMAT")
+        # Re-run (secrets file kept as is) re-mints: exactly one token line, every other line byte-for-byte unchanged.
+        self._env = lambda **extra: self.env(PROD_SECRETS_ENV_FILE=str(secrets),
+                                              PROD_POSTGRES_PASSWORD_FILE=str(self.tmp / "pgpw"), **extra)
+        first = secrets.read_bytes().decode()
+        import time as _t; _t.sleep(1.1)
+        self.assertEqual(self._run().returncode, 0)
+        second = secrets.read_bytes().decode()
+        self.assertEqual(second.count("PANTHEON_RUNTIME_MANAGER_TOKEN="), 1)
+        strip = lambda t: [l for l in t.split("\n") if not l.startswith("PANTHEON_RUNTIME_MANAGER_TOKEN=")]
+        self.assertEqual(strip(first), strip(second))
+        self.assertNotEqual(first, second)
+
+    def test_bootstrap_refuses_out_of_range_token_ttl_and_leaves_secrets_untouched(self):
+        secrets = self.tmp / "secrets.env"
+        orig_env = self._env
+        def env_keep(**extra):
+            e = orig_env(**extra)
+            secrets.write_text(self.BASE_SECRETS + "\n"); secrets.chmod(0o600)
+            return e
+        self._env = env_keep
+        self.assertEqual(self._run().returncode, 0)  # settles the pre-existing fill-in step
+        settled = secrets.read_bytes()
+        self._env = lambda **extra: self.env(PROD_SECRETS_ENV_FILE=str(secrets),
+                                              PROD_POSTGRES_PASSWORD_FILE=str(self.tmp / "pgpw"), **extra)
+        for ttl in ("604801", "0", "-5", "abc"):
+            r = self._run(PROD_RUNTIME_TOKEN_TTL_SECONDS=ttl)
+            self.assertNotEqual(r.returncode, 0, ttl)
+            self.assertIn("RUNTIME_TOKEN_MINT_FAILED", r.stderr)
+            self.assertEqual(secrets.read_bytes(), settled)
+            self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.startswith(".rm-token.")], [])
 
     def test_bootstrap_installs_503_placeholder_prepulls_digests_and_no_invented_release(self):
         r = self._run()
@@ -2213,6 +2326,33 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertEqual(sw2.returncode, 0, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
         self.assertEqual((self.state / "singleton_commit").read_text(), "b" * 40)
         self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-002")
+
+    def test_credential_rejection_at_activate_rolls_back_to_baseline(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="a" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        ok = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_REAL_READYZ="1",
+                              FAKE_WORKER_HEALTH="unhealthy")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        out = json.loads(ok.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_active")
+        self.assertEqual(set(out["product_worker_health"].values()), {"unhealthy"})
+        rb = {"previous_release_id": "pantheon-20261025-001", "frontend_commit": m1["frontend"]["commit"],
+              "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"], "backend_commit": m1["backend"]["commit"],
+              "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+              "backend_images": m1["backend"]["images"], "config_schema_version": m1["config_schema_version"]}
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="b" * 40, digest_char="2", rollback_baseline=rb)
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, FAKE_REAL_READYZ="1",
+                               FAKE_CRED_STATUS="403:AUTH_TOKEN_FORMAT", FAKE_CRED_ONLY="paper-fleet-reconciler")
+        self.assertEqual(sw2.returncode, 2, f"stdout={sw2.stdout}\nstderr={sw2.stderr}")
+        self.assertIn("paper-fleet-reconciler", sw2.stderr)
+        self.assertIn("AUTH_TOKEN_FORMAT", sw2.stderr)
+        self.assertIn("127.0.0.1:8002", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertEqual((self.state / "singleton_release_id").read_text(), "pantheon-20261025-001")
+
 
     def test_candidate_never_ready_after_handoff_rolls_back_to_baseline_singleton(self):
         m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(

@@ -137,3 +137,30 @@ Dev setting.
 - Backend `PANTHEON_REAL_WRITES_ENABLED`, `PANTHEON_PROVIDER_ENABLED`, `PANTHEON_LIVE_BROKER_ENABLED` remain `false`.
 
 This is source-only; no Stage/Prod was dispatched. Hosted acceptance stays `external_wait`.
+
+## Runtime-manager caller token (Paper reconciler / signal producer)
+
+`paper-fleet-reconciler` and `paper-signal-producer` call runtime-manager
+`GET /api/runtime-fleet/desired-state` with `Bearer $PANTHEON_RUNTIME_MANAGER_TOKEN`. Runtime-manager inbound auth
+accepts only an HS256 JWT (or a structured `actor:role` token), never a raw opaque secret, so an opaque value yields
+`403 AUTH_TOKEN_FORMAT`.
+
+- `deploy/production/bootstrap.sh` derives the token on **every run** (every Production Release dispatch runs
+  bootstrap): HS256 JWT signed with `PANTHEON_RUNTIME_JWT_SECRET` from `PROD_SECRETS_ENV_FILE`, `iss`/`aud` equal to the
+  effective `PROD_JWT_ISSUER`/`PROD_JWT_AUDIENCE` that compose gives runtime-manager, `sub`
+  `svc:production-paper-runtime-caller`, `roles ["operator"]`, `tenant_id`/`allowed_tenants` = `PROD_TENANT_ID`,
+  `iat`/`nbf`/`exp`.
+- Lifetime: `PROD_RUNTIME_TOKEN_TTL_SECONDS`, default 604800 s (7 days), hard maximum 604800; a larger, zero,
+  negative or non-integer value fails bootstrap with `RUNTIME_TOKEN_MINT_FAILED` and leaves the file untouched.
+  Until the reconciler/producer mint per call (see the problem register row), the token **expires 7 days after the
+  last Production Release dispatch**; re-dispatching (or re-running bootstrap) re-mints it.
+- Only the single `PANTHEON_RUNTIME_MANAGER_TOKEN` line is rewritten (atomic replace, owner/mode preserved, all other
+  lines unchanged). Neither token nor secret is printed or logged. The atomic temp file is removed on success and
+  failure; the file stays < 1 KB-per-line constant size, with no growth.
+- Switch gate: after `activate_singletons`, the switch runs the desired-state request from inside each started
+  reconciler/producer container with that container's own token and requires HTTP 200; otherwise ACTIVATE fails
+  (naming service, HTTP status, error code) and the normal rollback runs. Product-worker Docker health is only
+  *reported* (bounded wait <= 60 s) as `product_worker_health` in the `prod_active` JSON and is not a gate.
+- Verify without printing the token:
+  `docker exec paper-fleet-reconciler python3 -c 'import os,urllib.request as u;r=u.Request("http://runtime-manager:8080/api/runtime-fleet/desired-state?stage=paper",headers={"Authorization":"Bearer "+os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"]});print(u.urlopen(r,timeout=10).status)'`
+  must print `200`.
