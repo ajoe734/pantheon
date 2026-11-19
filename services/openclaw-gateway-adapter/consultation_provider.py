@@ -23,7 +23,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from consult_agent_provisioning import (
-    ENSURE_PATH, ConsultAgentProvisioningError, ensure_consult_agent,
+    ENSURE_PATH, ConsultAgentProvisioningError, ConsultAgentProvisioningInProgress,
+    ensure_consult_agent,
 )
 
 from assistant_openclaw_provider import (
@@ -1036,6 +1037,12 @@ def create_app(
             return _blocked(400, "consultation provider tenant header does not match payload", retryable=False)
         try:
             return ensure_consult_agent(provider, tenant_id=identity.tenant_id, persona_id=identity.persona_id)
+        except ConsultAgentProvisioningInProgress as exc:
+            # Idempotent in-progress outcome: not a failure; retry finds it ready.
+            return JSONResponse(status_code=202, content={
+                "status": "in_progress", "tenant_id": identity.tenant_id,
+                "persona_id": identity.persona_id,
+                "retry_after_seconds": exc.retry_after_seconds})
         except PanelAdmissionDenied as exc:
             return _blocked(exc.status_code, exc.message, retryable=True)
         except ConsultAgentProvisioningError as exc:

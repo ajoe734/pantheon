@@ -1,0 +1,48 @@
+{
+  "task": "TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119",
+  "scope": "test-only; no production code, no new shared helper module",
+  "interpreter": "/tmp/cl-dbvt-venv/bin/python (python 3.12, pytest)",
+  "changes": [
+    {
+      "file": "services/control-plane/bff/test_downstream_health_monitor.py",
+      "test": "TestBoundedHealthPruneAtHostedScale::test_500k_plus_outbox_and_870k_dead_letter_backlog_drain_under_500ms",
+      "removed": ["max(writer_waits_ms) < 500.0 (always)", "max(prune_holds_ms) < 500.0 (always)"],
+      "replacement": [
+        "every prune call (10 burst calls + drain) removes at most _DELIVERY_PRUNE_BATCH_SIZE (3500) outbox rows; burst calls remove > 0",
+        "after each burst prune call the main thread waits on a Condition until the concurrent record_outcome writer completes a further write (event-gated, 60 s only fails a starved writer): writes happen between prune calls",
+        "total_pruned == 872489 + 10477 and final delivery counts unchanged"
+      ],
+      "opt_in_measured_bound": "writer wait and prune hold 500 ms are printed always ('hosted-scale prune measured: ...') and judged only with PANTHEON_HEALTH_PRUNE_WALL_CLOCK_BOUNDS=1"
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_persona_league_concurrent_read.py",
+      "changes": [
+        {"test": "test_allowed_actions_concurrency_is_bounded", "removed": "sleep(0.02) to create overlap", "replacement": "Barrier(2, timeout=30) the first two lookups must both reach (serial implementation breaks the barrier and fails the request); max in-flight counter still asserts 1 < max <= 8"},
+        {"test": "test_quarterly_telemetry_prefetch_dedupes_and_is_concurrent", "removed": "elapsed < 0.6 s with 50 ms sleeps", "replacement": "Barrier(2, timeout=30) on the first two reads; calls == unique runtime ids (each read once); cache == calls; barrier not broken"},
+        {"test": "test_concurrent_readers_share_one_computation", "removed": "time.sleep(0.3) for readers to arrive", "replacement": "Barrier(6) all readers+main reached the call, 'entered' event for the leader, then release; len(calls)==1 and 5 results (holds whether a reader joins the flight or hits the memo)"},
+        {"test": "test_allowed_actions_parallel_matches_serial_order_and_body (and shared _scrub)", "finding": "pre-existing flake, 2/80 failures on unchanged HEAD file and 1/25 + 7/100 on the first pass: item updated_at is a request-time stamp and differs when two requests straddle a clock-second boundary", "replacement": "updated_at added to the _scrub request-time stamp list"}
+      ],
+      "run_44534477621_shard10_failed_assertion": "Branch CI log prints only the summary (not available here). The only flake reproduced locally is the updated_at body diff above (fixed); the three sleep/elapsed bounds were removed as well. Not confirmed which one failed in CI."
+    },
+    {
+      "file": "scripts/test_dev_remote_watchdog.py",
+      "test": "test_large_envelope_exceeding_pause_succeeds_within_startup_timeout",
+      "removed": "startup_timeout=1.0 (clock includes child Python start) and wait(timeout=4)",
+      "replacement": "startup_timeout=30.0 (default) and wait(timeout=30); streaming still takes ~0.24 s > pause 0.10 s; fail-closed behaviour is still proven by test_envelope_exceeding_startup_timeout_fails_closed_before_launch (unchanged, 0.20 s timeout, marker file never created)"
+    }
+  ],
+  "runs": {
+    "no_load": {
+      "league_file (all tests)": "100 runs, 0 failures (after updated_at fix)",
+      "watchdog large_envelope + fail_closed": "100 runs, 0 failures",
+      "hosted_scale_prune": "10 runs, 0 failures (~45 s each)"
+    },
+    "cpu_load_6_busy_python_processes_of_12_cores": {
+      "league_file (all tests)": "100 runs, 0 failures",
+      "watchdog large_envelope + fail_closed": "100 runs, 0 failures",
+      "hosted_scale_prune": "10 runs (5+5), 0 failures"
+    },
+    "opt_in_judged_mode": "PANTHEON_HEALTH_PRUNE_WALL_CLOCK_BOUNDS=1 passed; unloaded measured max writer wait 134.1 ms, max prune hold 75.9 ms",
+    "command": "python rep.py N <pytest args> (loops pytest.main N times); load = 6 `while True: pass` processes with timeout, killed after each batch"
+  }
+}

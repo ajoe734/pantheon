@@ -291,8 +291,62 @@ class _AdapterModelDouble:
         )
 
 
+class _SlowGatewayDouble(_AdapterModelDouble):
+    """Stateful gateway whose every call costs ``cost`` seconds (hosted CLI spawn).
+
+    Hosted measures 5-7 s per call against a 30 s executor timeout; the tests
+    scale both by 10 (0.6 s vs 3 s) so the ratio, not the wall clock, is what
+    decides the outcome.
+    """
+
+    cost = 0.6
+
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__()
+        self.state_lock = threading.Lock()
+        self.entries: list[dict[str, Any]] = [{"id": "main", "default": True}]
+        self.revision = 0
+        self.log: list[tuple[str, float]] = []
+
+    def _gateway_call(self, method: str, params: Any = None, **kwargs: Any) -> Any:
+        self.log.append((method, time.monotonic()))
+        time.sleep(self.cost)
+        with self.state_lock:
+            if method == "config.get":
+                return {
+                    "valid": True,
+                    "hash": str(self.revision),
+                    "config": {"agents": {"list": copy.deepcopy(self.entries)}},
+                }
+            if method == "config.patch":
+                assert params["baseHash"] == str(self.revision)
+                for desired in json.loads(params["raw"])["agents"]["list"]:
+                    current = next((a for a in self.entries if a["id"] == desired["id"]), None)
+                    assert current is None or current != {**current, **desired}, (
+                        "config.patch sent for an agent that already holds the spec"
+                    )
+                    if current is None:
+                        self.entries.append(desired)
+                    else:
+                        current.update(desired)
+                self.revision += 1
+            return {"ok": True}
+
+    def gateway_agents_list(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.log.append(("agents.list", time.monotonic()))
+        time.sleep(self.cost)
+        with self.state_lock:
+            return [{"id": a["id"]} for a in self.entries]
+
+    def spawns(self) -> int:
+        return len(self.log)
+
+
 @pytest.fixture
-def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+def stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[dict[str, Any]]:
+    real_ensure = getattr(request, "param", None) == "real_ensure"
     monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
     monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", SERVICE_TOKEN)
     monkeypatch.setenv("PANTHEON_TENANT_ID", TENANT)
@@ -314,7 +368,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
 
     from services.memory import main as memory_main
 
-    double = _AdapterModelDouble()
+    double = _SlowGatewayDouble(tmp_path) if real_ensure else _AdapterModelDouble()
     adapter_app = FastAPI()
     create_adapter_app(
         application=adapter_app,
@@ -340,29 +394,30 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
         },
     )
 
-    @adapter_app.post("/api/openclaw-adapter/consultation/agents/ensure")
-    def _ensure_override(payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "status": "ready",
-            "tenant_id": payload["tenant_id"],
-            "persona_id": payload["persona_id"],
-            "agent_id": consult_agent_id(payload["tenant_id"], payload["persona_id"]),
-        }
+    if not real_ensure:
+        @adapter_app.post("/api/openclaw-adapter/consultation/agents/ensure")
+        def _ensure_override(payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "status": "ready",
+                "tenant_id": payload["tenant_id"],
+                "persona_id": payload["persona_id"],
+                "agent_id": consult_agent_id(payload["tenant_id"], payload["persona_id"]),
+            }
 
-    # Override the ensure route with the fast test double while keeping
-    # CONSULTATION_CONTRIBUTION_PATH running through the real consultation_provider!
-    adapter_app.router.routes = [
-        r for r in adapter_app.router.routes if getattr(r, "path", "") != "/api/openclaw-adapter/consultation/agents/ensure"
-    ]
+        # Override the ensure route with the fast test double while keeping
+        # CONSULTATION_CONTRIBUTION_PATH running through the real consultation_provider!
+        adapter_app.router.routes = [
+            r for r in adapter_app.router.routes if getattr(r, "path", "") != "/api/openclaw-adapter/consultation/agents/ensure"
+        ]
 
-    @adapter_app.post("/api/openclaw-adapter/consultation/agents/ensure")
-    def _ensure_fast(payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "status": "ready",
-            "tenant_id": payload["tenant_id"],
-            "persona_id": payload["persona_id"],
-            "agent_id": consult_agent_id(payload["tenant_id"], payload["persona_id"]),
-        }
+        @adapter_app.post("/api/openclaw-adapter/consultation/agents/ensure")
+        def _ensure_fast(payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "status": "ready",
+                "tenant_id": payload["tenant_id"],
+                "persona_id": payload["persona_id"],
+                "agent_id": consult_agent_id(payload["tenant_id"], payload["persona_id"]),
+            }
 
     @adapter_app.post("/api/governance/consultation-handoffs")
     def _handoff_sink(payload: dict[str, Any]) -> dict[str, Any]:
@@ -530,6 +585,15 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
         monkeypatch.setenv("PANTHEON_MEMORY_API_URL", memory_url)
         monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", adapter_url)
         monkeypatch.setenv("PANTHEON_PERSONA_API_URL", adapter_url)
+        if real_ensure:
+            import consult_agent_provisioning as provisioning
+
+            monkeypatch.setenv("PANTHEON_OPENCLAW_AGENT_REGISTRY_LOCK", str(tmp_path / "registry.lock"))
+            monkeypatch.setenv("CONSULT_AGENT_ENSURE_WAIT_SECONDS", "2.0")
+            monkeypatch.setattr(
+                provisioning, "_persona_record",
+                lambda tenant, persona: {"tenant_id": tenant, "persona_id": persona},
+            )
         cfg = ExecutorConfig(
             api_url=api_url,
             tenant_id=TENANT,
@@ -543,7 +607,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str,
             state_path=str(tmp_path / "wf.sqlite3"),
             memory_url=memory_url,
             retry_after_seconds=0,
-            timeout_seconds=15.0,
+            timeout_seconds=3.0 if real_ensure else 15.0,
             batch_size=10,
         )
         client = ConsultationServiceClient(
@@ -973,3 +1037,57 @@ def test_mt4_output_transport_connection_error_records_failed_and_meeting_still_
         assert props_list["items"][0]["downstream"]["id"] is None
 
 
+
+
+@pytest.mark.parametrize("stack", ["real_ensure"], indirect=True)
+def test_mt2_meeting_held_with_slow_gateway_and_concurrent_persona_ensure(
+    stack: dict[str, Any],
+) -> None:
+    """Real executor + real adapter ensure; 0.6 s gateway calls vs a 3 s executor timeout.
+
+    A concurrent persona agent ensure holds the shared agent registry lock for
+    two gateway calls. Before the fix the first ensure alone needs four calls
+    (2.4 s) plus the lock wait, exceeds the executor timeout, and the work item
+    dead-letters after three attempts.
+    """
+    from integrations.openclaw.persona_agent_sync import agent_registry_lock
+
+    double: _SlowGatewayDouble = stack["double"]
+    created = open_persona_meeting(
+        base_url=stack["api_url"], token=SERVICE_TOKEN, tenant_id=TENANT,
+        meeting_type="MT-2", topic="Optimisation review on pending lessons",
+        convened_by={"kind": "persona", "id": "persona-alpha"},
+        participants=["persona-alpha", "persona-beta", "persona-risk-officer"],
+        evidence_refs=["facts:MT-2:1"], idempotency_key="slow-gateway-mt2", iso_week="2026-W47",
+    )
+    meeting_id = created["meeting_id"]
+    holding = threading.Event()
+
+    def _persona_ensure() -> None:
+        with agent_registry_lock():
+            holding.set()
+            double._gateway_call("config.get")
+            double._gateway_call("config.get")
+
+    writer = threading.Thread(target=_persona_ensure, daemon=True)
+    writer.start()
+    assert holding.wait(5)
+
+    state = WorkflowStateStore(stack["cfg"].state_path)
+    statuses: list[str] = []
+    for _ in range(40):
+        _tick(stack)
+        item = state.get(tenant_id=TENANT, request_id=meeting_id)
+        statuses.append(item["status"])
+        assert item["status"] != "dead_letter", (statuses, item)
+        if item["status"] == "completed":
+            break
+    writer.join(10)
+    assert statuses[-1] == "completed", statuses
+    item = state.get(tenant_id=TENANT, request_id=meeting_id)
+    # In-progress holds use the uncapped provisioning-hold rule: never dead_letter.
+    meeting = stack["client"].get_meeting(meeting_id)
+    assert meeting["status"] == "closed" and meeting["rounds"]
+    assert [a["id"] for a in double.entries if a["id"] != "main"]  # provisioned, then reused
+    patched = [m for m, _ in double.log if m == "config.patch"]
+    assert len(patched) == 3  # one write per persona, none repeated

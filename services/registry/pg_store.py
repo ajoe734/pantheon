@@ -853,6 +853,16 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
+    def list_by_artifact_type(self, artifact_type: str) -> list[RegistryEntry]:
+        """Type-filtered read in SQL: other artifact types are never fetched or decoded."""
+        wanted = getattr(artifact_type, "value", artifact_type)
+        rows = self._entries.list_all_selected(
+            "(payload)::text",
+            visible_sql="payload ->> 'artifact_type' = %s",
+            keep_params=(str(wanted),),
+        )
+        return [RegistryEntry.from_dict(json.loads(r[0])) for r in rows if r and r[0] is not None]
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:

@@ -42,6 +42,7 @@ services:
       - dev-paper-training-session-tokens:/issued/training-session-svc
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
       - dev-paper-research-tokens:/issued/research-orchestrator-svc
+      - dev-paper-consultation-tokens:/issued/consultation-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
       - dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter
       # Capital reader principal only, for the paper producer and fleet reconciler.
@@ -259,6 +260,9 @@ services:
       PANTHEON_REGISTRY_SERVICE_TOKEN: ${PANTHEON_REGISTRY_SERVICE_TOKEN:-}
       PANTHEON_PERSONA_API_URL: http://persona:8002
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-}
+      # Issued pool-read principal (persona_pool_reader: strategy-pool GETs only), read per request.
+      CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
+      PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
       PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
@@ -273,6 +277,7 @@ services:
     volumes:
       - consultation-data:/data/consultation
       - worker-health-data:/data/health
+      - dev-paper-consultation-tokens:/run/pantheon-principals:ro
     ports:
       - "${CONSULTATION_PORT:-18096}:8096"
     depends_on:
@@ -2376,7 +2381,7 @@ services:
       REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE: ${REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       REGISTRY_GOVERNANCE_TIMEOUT_SECONDS: ${REGISTRY_GOVERNANCE_TIMEOUT_SECONDS:-5}
       PORT: "8087"
-      REGISTRY_REGIME_STORE_ROOT: /data/source-ingest
+      REGISTRY_REGIME_STORE_ROOT: ${REGISTRY_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       # Hard-enforce Postgres in staging/prod; override to memory only for local
       # dev rollback. Memory is a test double injected directly by unit tests,
@@ -3611,6 +3616,7 @@ volumes:
   dev-paper-training-session-tokens:
   dev-paper-training-worker-tokens:
   dev-paper-research-tokens:
+  dev-paper-consultation-tokens:
   dev-paper-agora-projector-tokens:
   dev-paper-openclaw-adapter-tokens:
   dev-paper-capital-reader-tokens:

@@ -49,6 +49,10 @@ class AgentProvisioningBlocked(ContributionBlocked):
     """Retryable dependency hold; no participant has been dispatched yet."""
 
 
+class AgentProvisioningInProgress(AgentProvisioningBlocked):
+    """The adapter is still provisioning; not a failed attempt, retry later."""
+
+
 def _blocked_http_response(exc: urllib.error.HTTPError) -> ContributionBlocked:
     """Translate the provider endpoint's typed blocked envelope when present."""
 
@@ -224,6 +228,7 @@ class HttpContributionProvider:
         parts = urlsplit(self.endpoint)
         endpoint = urlunsplit((parts.scheme, parts.netloc,
                                "/api/openclaw-adapter/consultation/agents/ensure", "", ""))
+        pending: list[str] = []
         for persona_id in dict.fromkeys(persona_ids):
             request = urllib.request.Request(endpoint, method="POST",
                 data=json.dumps({"tenant_id": tenant_id, "persona_id": persona_id}).encode(),
@@ -234,11 +239,24 @@ class HttpContributionProvider:
                     result = json.load(response)
             except urllib.error.HTTPError as exc:
                 raise _blocked_http_response(exc) from exc
+            except TimeoutError:
+                # The adapter keeps provisioning after we stop waiting; ask again later.
+                pending.append(persona_id)
+                continue
             except (OSError, ValueError) as exc:
+                if isinstance(getattr(exc, "reason", None), TimeoutError):
+                    pending.append(persona_id)
+                    continue
                 raise ContributionBlocked(f"consultation agent ensure transport failed for {persona_id}") from exc
+            if isinstance(result, Mapping) and result.get("status") == "in_progress":
+                pending.append(persona_id)
+                continue
             if (not isinstance(result, Mapping) or result.get("status") != "ready"
                 or result.get("tenant_id") != tenant_id or result.get("persona_id") != persona_id):
                 raise ContributionBlocked(f"consultation agent ensure did not acknowledge {persona_id}")
+        if pending:
+            raise AgentProvisioningInProgress(
+                "consultation agent provisioning in progress for " + ", ".join(pending))
 
     def obtain(
         self,

@@ -38,8 +38,10 @@ def _clean_memo():
 
 
 def _scrub(value: Any) -> Any:
+    # Request-time stamps differ between two requests that straddle a clock-second boundary
+    # (updated_at flaked the serial-vs-parallel body comparison); everything else must be identical.
     if isinstance(value, dict):
-        return {k: _scrub(v) for k, v in value.items() if k not in ("snapshot_at", "generated_at", "observed_time", "last_known_at")}
+        return {k: _scrub(v) for k, v in value.items() if k not in ("snapshot_at", "generated_at", "observed_time", "last_known_at", "updated_at")}
     if isinstance(value, list):
         return [_scrub(v) for v in value]
     return value
@@ -147,25 +149,33 @@ def test_concurrent_readers_share_one_computation(monkeypatch: pytest.MonkeyPatc
         _fresh_client(td, store=_CountingPm12LeagueTestStore())
         calls: List[str] = []
         gate = threading.Event()
+        entered = threading.Event()  # the leader is inside the computation
+        arrived = threading.Barrier(5 + 1, timeout=30)  # every reader is about to read; no fixed sleep
 
         def slow(*, tenant_id=None, **_kw):
             calls.append(str(tenant_id))
-            gate.wait(5)
+            entered.set()
+            assert gate.wait(30)
             return [{"persona_id": "p"}]
 
         monkeypatch.setattr(ps, "_pm12_persona_league_rows", slow)
         results: List[Any] = []
 
         def run():
+            arrived.wait()
             results.append(ps._pm12_persona_league_rows_shared(tenant_id="t"))
 
         threads = [threading.Thread(target=_service_ctx().run, args=(run,)) for _ in range(5)]
         for t in threads:
             t.start()
-        time.sleep(0.3)
+        arrived.wait()
+        assert entered.wait(30)
+        # Readers that join the flight wait on it; any that arrive after it finished hit the memo.
+        # Either way there is exactly one computation, so the release needs no fixed sleep.
         gate.set()
         for t in threads:
-            t.join(10)
+            t.join(30)
+        assert not any(t.is_alive() for t in threads)
         assert len(calls) == 1 and len(results) == 5
 
 
@@ -242,15 +252,21 @@ def test_allowed_actions_item_failure_same_as_serial(monkeypatch: pytest.MonkeyP
 
 
 def test_allowed_actions_concurrency_is_bounded() -> None:
-    active = {"now": 0, "max": 0}
+    active = {"now": 0, "max": 0, "calls": 0}
     lock = threading.Lock()
     store = _league_store(n=30)
+    # The first two lookups must be in flight together: a serial implementation never gets the
+    # second one to the barrier, which breaks it (and fails the request) instead of passing slowly.
+    overlap = threading.Barrier(2, timeout=30)
 
     def allowed(persona_id: str):
         with lock:
             active["now"] += 1
             active["max"] = max(active["max"], active["now"])
-        time.sleep(0.02)
+            active["calls"] += 1
+            first_two = active["calls"] <= 2
+        if first_two:
+            overlap.wait()
         with lock:
             active["now"] -= 1
         return {"a": True}
@@ -260,6 +276,7 @@ def test_allowed_actions_concurrency_is_bounded() -> None:
         client = _fresh_client(td, store=store)
         r = client.get("/bff/management/persona-league", headers=HEADERS, params={"page_size": 30})
         assert r.status_code == 200, r.text
+    assert not overlap.broken
     assert 1 < active["max"] <= 8
 
 
@@ -358,17 +375,19 @@ def test_cockpit_concurrent_bench(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _TelemetryStore:
-    def __init__(self, fail_on: str | None = None, delay: float = 0.0) -> None:
+    def __init__(self, fail_on: str | None = None, overlap: bool = False) -> None:
         self.calls: List[str] = []
         self.fail_on = fail_on
-        self.delay = delay
         self._lock = threading.Lock()
+        # With overlap, the first two reads must be in flight together (see the prefetch test).
+        self.overlap = threading.Barrier(2, timeout=30) if overlap else None
 
     def get_telemetry_summary(self, runtime_id: str):
         with self._lock:
             self.calls.append(runtime_id)
-        if self.delay:
-            time.sleep(self.delay)
+            first_two = len(self.calls) <= 2
+        if self.overlap is not None and first_two:
+            self.overlap.wait()
         if runtime_id == self.fail_on:
             raise RuntimeError("telemetry down")
         return None
@@ -383,15 +402,14 @@ def _runtime_rows(n: int) -> List[Dict[str, Any]]:
 
 
 def test_quarterly_telemetry_prefetch_dedupes_and_is_concurrent(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = _TelemetryStore(delay=0.05)
+    store = _TelemetryStore(overlap=True)
     monkeypatch.setattr(ps, "_get_active_read_store", lambda: store)
     cache: Dict[str, Any] = {}
-    t0 = time.perf_counter()
+    # A serial prefetch never brings a second read to the barrier: it breaks and the read fails.
     ps._pm12_prefetch_runtime_telemetry(_runtime_rows(40), cache)
-    elapsed = time.perf_counter() - t0
+    assert not store.overlap.broken
     assert sorted(store.calls) == sorted({f"rt-{i // 2}" for i in range(40)})  # each runtime read once
     assert set(cache) == set(store.calls)
-    assert elapsed < 20 * 0.05 * 0.6  # serial would be 20 * 50ms
 
 
 def test_quarterly_telemetry_prefetch_failure_not_cached_and_still_raises(monkeypatch: pytest.MonkeyPatch) -> None:

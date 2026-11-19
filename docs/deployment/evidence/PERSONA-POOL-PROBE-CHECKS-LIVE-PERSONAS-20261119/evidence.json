@@ -1,0 +1,10 @@
+{
+  "task": "PERSONA-POOL-PROBE-CHECKS-LIVE-PERSONAS-20261119",
+  "tests": {"command": "python -m pytest acceptance/test_persona_pool_member_rules.py -q", "result": "11 passed"},
+  "hosted_run_command": "ACCEPTANCE_BFF_URL=<hosted dev BFF base url> ACCEPTANCE_VIEWER_CLIENT_ID=<viewer client id> ACCEPTANCE_VIEWER_CLIENT_SECRET=<viewer client secret> acceptance/probes/persona-pool-member-rules",
+  "exit_codes": {"0": "passed (at least one persona checked, none failed)", "1": "failed, including reason no_persona_checked", "77": "skipped, missing variable"},
+  "report_shape": "JSON: read, skipped, skipped_retired, skipped_no_pool, checked, results{persona_id: ok|failed}, failed, passed, reason (only when nothing checked)",
+  "expected_hosted_2026_11_19": "3 trading personas with ok pools checked (persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241); retired and pool-less personas skipped",
+  "hosted_run": "not executed by this worker: no viewer credentials in the worker environment; coordinator to run the command above",
+  "check_logic_unchanged": "check_persona() is unmodified; only listing pagination, applicability counting and the empty-run failure were added"
+}

@@ -519,5 +519,20 @@
     "hosted_pass_claim": false,
     "review_independence_exception": "Reviewer Claude shares model family with author; no different-family reviewer assigned.",
     "next": "After merge the Claude chat session dispatches a fresh Production Release for pantheon-20261108-111; operator approves. Root01a11 must not dispatch."
+  },
+  "prod_runtime_manager_caller_token_repair_20261119": {
+    "cause": "Production Release 44546522009 reported prod_active while paper-fleet-reconciler/paper-signal-producer got 403 AUTH_TOKEN_FORMAT: prod bootstrap never derived the HS256 runtime-manager caller JWT that staging bootstrap derives.",
+    "changes": [
+      "deploy/production/bootstrap.sh derives PANTHEON_RUNTIME_MANAGER_TOKEN on every run (HS256, iss/aud = effective PROD_JWT_ISSUER/AUDIENCE, ttl default and max 604800 s, atomic single-line replace, no token/secret output)",
+      "scripts/deploy/prod_ops.sh activate_singletons: in-container desired-state credential check (HTTP 200 required) for reconciler and producer; worker Docker health recorded as reporting only (<=60 s wait)",
+      "scripts/deploy/prod_atomic_switch.sh: product_worker_health in prod_active JSON",
+      "docs/deployment/production-control-runbook.md: derived token, lifetime, non-printing verification"
+    ],
+    "hosted_acceptance": "external_wait",
+    "register_row": "RC5 Two bootstrap copies (PR #7635)",
+    "release_complete_claimed": false,
+    "runtime_budget": "Only writer: one line rewritten in the existing secrets env file per dispatch; constant size (<1 KB), no growth; atomic temp file removed on success and failure.",
+    "staging_bootstrap_changed": false,
+    "validation": "python3 -m unittest tests.deployment.test_production_release: 113 run, 2 errors, both ModuleNotFoundError (pydantic, fastapi) in the local venv for pre-existing static contract tests; all new and other tests pass. Local mocked tests prove controller behavior only; no hosted evidence."
   }
 }

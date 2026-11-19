@@ -100,3 +100,62 @@ def test_failure_is_retryable_and_not_cached(env):
     assert failed.status_code == 503 and failed.json()["retryable"]
     gateway.fail = False
     assert client.post(provisioning.ENSURE_PATH, json=body, headers=headers()).status_code == 200
+
+
+def _body():
+    return {"tenant_id": "tenant-a", "persona_id": "persona-a"}
+
+
+def test_matching_live_spec_is_one_read_and_does_not_wait_for_the_registry_lock(env):
+    import threading
+    import time
+    from integrations.openclaw.persona_agent_sync import agent_registry_lock
+
+    gateway, client = env
+    assert client.post(provisioning.ENSURE_PATH, json=_body(), headers=headers()).status_code == 200
+    calls = []
+    inner = gateway._gateway_call
+    gateway._gateway_call = lambda m, p=None: (calls.append(m), inner(m, p))[1]
+    held, release = threading.Event(), threading.Event()
+
+    def writer():  # an unrelated writer (persona agent ensure) holds the lock
+        with agent_registry_lock():
+            held.set()
+            release.wait(10)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    assert held.wait(5)
+    started = time.monotonic()
+    result = client.post(provisioning.ENSURE_PATH, json=_body(), headers=headers())
+    elapsed = time.monotonic() - started
+    release.set()
+    thread.join(5)
+    assert result.status_code == 200 and result.json()["changed"] is False
+    assert calls == ["config.get"] and elapsed < 2
+    assert len(gateway.patches) == 1  # never re-patched an agent that already matches
+
+
+def test_slow_first_provisioning_answers_in_progress_then_ready(env, monkeypatch):
+    import threading
+    gateway, client = env
+    monkeypatch.setenv(provisioning.ENSURE_WAIT_ENV, "0.2")
+    gate = threading.Event()
+    inner = gateway._gateway_call
+
+    def slow(method, params=None):
+        if method == "config.patch":
+            gate.wait(10)
+        return inner(method, params)
+
+    gateway._gateway_call = slow
+    first = client.post(provisioning.ENSURE_PATH, json=_body(), headers=headers())
+    assert first.status_code == 202
+    assert first.json()["status"] == "in_progress" and first.json()["retry_after_seconds"] > 0
+    again = client.post(provisioning.ENSURE_PATH, json=_body(), headers=headers())
+    assert again.status_code == 202  # single flight: no second writer started
+    gate.set()
+    monkeypatch.setenv(provisioning.ENSURE_WAIT_ENV, "10")
+    ready = client.post(provisioning.ENSURE_PATH, json=_body(), headers=headers())
+    assert ready.status_code == 200 and ready.json()["status"] == "ready"
+    assert len(gateway.patches) == 1

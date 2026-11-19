@@ -372,6 +372,85 @@ if ! run_priv grep -q '^PROD_TENANT_ID=.' "$PROD_COMPOSE_ENV_FILE"; then
     || fail COMPOSE_ENV "cannot record PROD_TENANT_ID in ${PROD_COMPOSE_ENV_FILE}"
 fi
 
+# Runtime-manager inbound auth rejects opaque bearers (AUTH_TOKEN_FORMAT), which leaves the Paper fleet reconciler and
+# signal producer unable to read their owner. Derive the caller credential on EVERY run as an HS256 JWT signed with
+# PANTHEON_RUNTIME_JWT_SECRET (the format services/runtime_auth_inbound.py verifies), with the exact issuer/audience
+# runtime-manager is configured with in compose. Lifetime default 7 days, hard maximum 604800 s (fail closed).
+# Only the single PANTHEON_RUNTIME_MANAGER_TOKEN line is rewritten (atomic, owner/mode preserved, all other bytes
+# unchanged). Neither the token nor the secret is ever written to stdout/stderr/logs.
+_ce_val() { run_priv sed -n "s/^${1}=//p" "$PROD_COMPOSE_ENV_FILE" | tail -n1; }
+RM_JWT_ISSUER="${PROD_JWT_ISSUER:-$(_ce_val PROD_JWT_ISSUER)}"
+RM_JWT_AUDIENCE="${PROD_JWT_AUDIENCE:-$(_ce_val PROD_JWT_AUDIENCE)}"
+[[ -n "$RM_JWT_ISSUER" && -n "$RM_JWT_AUDIENCE" ]] || fail RUNTIME_TOKEN_MINT_FAILED "effective PROD_JWT_ISSUER/PROD_JWT_AUDIENCE unresolved"
+run_priv python3 - "$PROD_SECRETS_ENV_FILE" "$RM_JWT_ISSUER" "$RM_JWT_AUDIENCE" "$PROD_TENANT_ID" "${PROD_RUNTIME_TOKEN_TTL_SECONDS:-604800}" <<'PY' \
+  || fail RUNTIME_TOKEN_MINT_FAILED "could not derive bounded runtime-manager caller token"
+import base64, hashlib, hmac, json, os, sys, tempfile, time
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+issuer, audience, tenant_id, ttl_raw = sys.argv[2:6]
+try:
+    ttl = int(ttl_raw)
+except ValueError:
+    raise SystemExit("runtime-manager token ttl is not an integer")
+if not 0 < ttl <= 604800:
+    raise SystemExit("runtime-manager token ttl outside (0, 604800]")
+
+lines = env_path.read_bytes().decode("utf-8").splitlines(keepends=True)
+secret = ""
+for raw in lines:
+    k, sep, v = raw.strip().partition("=")
+    if sep and k.strip() == "PANTHEON_RUNTIME_JWT_SECRET":
+        secret = v.strip().strip('"').strip("'")
+if not secret:
+    raise SystemExit("PANTHEON_RUNTIME_JWT_SECRET missing; cannot derive runtime-manager token")
+
+
+def b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+now = int(time.time())
+header = b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+payload = b64(json.dumps({
+    "iss": issuer, "aud": audience, "sub": "svc:production-paper-runtime-caller",
+    "tenant_id": tenant_id, "allowed_tenants": [tenant_id], "roles": ["operator"],
+    "iat": now, "nbf": now - 5, "exp": now + ttl,
+}, separators=(",", ":"), sort_keys=True).encode())
+sig = hmac.new(secret.encode(), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest()
+new_line = f"PANTHEON_RUNTIME_MANAGER_TOKEN={header}.{payload}.{b64(sig)}"
+
+out, replaced = [], False
+for raw in lines:
+    if raw.strip().partition("=")[0].strip() == "PANTHEON_RUNTIME_MANAGER_TOKEN":
+        if not replaced:
+            eol = raw[len(raw.rstrip("\r\n")):] or "\n"
+            out.append(new_line + eol)
+        replaced = True  # a duplicate key line is dropped: exactly one remains
+    else:
+        out.append(raw)
+if not replaced:
+    if out and not out[-1].endswith("\n"):
+        out[-1] += "\n"
+    out.append(new_line + "\n")
+
+st = env_path.stat()
+fd, tmp = tempfile.mkstemp(dir=str(env_path.parent), prefix=".rm-token.")
+try:
+    with os.fdopen(fd, "wb") as fh:
+        fh.write("".join(out).encode("utf-8"))
+    os.chmod(tmp, st.st_mode & 0o7777)
+    try:
+        os.chown(tmp, st.st_uid, st.st_gid)
+    except PermissionError:
+        pass
+    os.replace(tmp, env_path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+PY
+
 # Resolve the EFFECTIVE stateful refs exactly as compose will (shell env wins over --env-file), including an
 # existing compose.env, so the pulled refs always equal the refs compose.up needs (pull_policy: never).
 for _v in PANTHEON_POSTGRES_IMAGE PANTHEON_NATS_IMAGE; do
