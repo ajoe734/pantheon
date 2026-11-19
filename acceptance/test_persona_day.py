@@ -165,7 +165,7 @@ BASELINE = "persona-d64835a203ce276b8fbb"
 def row(pid, owner_state, state=None, tenant="tenant-dev", **kw):
     """Reduced BFF /bff/personas row: only the fields the probe reads, no credential."""
     r = {"id": pid, "name": kw.pop("name", pid), "mandate": kw.pop("mandate", ""), "state": state or owner_state,
-         "lifecycleStatus": owner_state, "tenantId": tenant}
+         "ownerLifecycleState": owner_state, "tenantId": tenant}
     r.update(kw)
     return r
 
@@ -186,7 +186,7 @@ def test_probe_set_equals_controller_set_for_same_list():
     items = _hosted_1118()
     probe_ids = {x["id"] for x in pd.daily_cycle_personas(items)}
     controller_ids = {x["id"] for x in items if x["tenantId"]
-                      and ctl.is_daily_cycle_persona({"lifecycle_state": x["lifecycleStatus"], "status": "active"})}
+                      and ctl.is_daily_cycle_persona({"lifecycle_state": x["ownerLifecycleState"], "status": "active"})}
     assert probe_ids == controller_ids == set(TRADING)
     assert pd.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES == ctl.ELIGIBLE_STATES - {"consultable"}
 
@@ -244,3 +244,10 @@ def test_controller_conditions_status_and_tenant():
 def test_eligible_persona_without_cron_is_failed_not_dropped():
     r = pd.evaluate_persona_day("t-1", lifecycle_state="paper_running", cron_jobs=0, packets=[], now=NOW)
     assert status(r)["daily_cycle_cron_job"] == "failed" and status(r)["lifecycle_paper_owner"] == "passed"
+
+
+def test_row_without_owner_lifecycle_field_is_not_selected_by_projection():
+    # A row carrying only the projected/legacy fields must not be guessed into the set.
+    r = {"id": "x", "state": "paper_running", "lifecycleStatus": "paper_owner", "tenantId": "t"}
+    judged, left = pd.partition_personas([r])
+    assert judged == [] and left[0]["reason"] == "owner_lifecycle_state_not_daily_cycle:None"

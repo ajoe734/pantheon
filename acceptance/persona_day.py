@@ -61,10 +61,10 @@ def _left_out_reason(p: Mapping[str, Any]) -> Optional[str]:
 
     The controller's is_daily_cycle_persona reads the OWNER ``lifecycle_state`` and ``status`` and its registrar
     additionally requires ``tenant_id``. The BFF row ``state`` is a projection (provisioning flow) that can read
-    paper_running while the owner lifecycle_state is not; the owner value is the row's ``lifecycleStatus``."""
+    paper_running while the owner lifecycle_state is not; the owner value is the row's ``ownerLifecycleState`` (owner_lifecycle_state), returned verbatim by the BFF."""
     if is_probe_or_test_row(p):
         return "probe_or_test_persona"
-    owner_state = _first(p, "lifecycle_state", "lifecycleStatus")
+    owner_state = _first(p, "owner_lifecycle_state", "ownerLifecycleState")
     if owner_state not in DAILY_CYCLE_STATES:
         return f"owner_lifecycle_state_not_daily_cycle:{owner_state}"
     if p.get("status") is not None and p["status"] != "active":
@@ -272,7 +272,7 @@ def run(fetch, now: Optional[datetime] = None) -> dict[str, Any]:
     results = []
     for p in trading:
         pid = p.get("persona_id") or p.get("id")
-        state = _first(p, "lifecycle_state", "lifecycleStatus")
+        state = _first(p, "owner_lifecycle_state", "ownerLifecycleState")
         if state not in DAILY_CYCLE_STATES:  # first precondition fails; later ones need no read
             base = evaluate_persona_day(pid, lifecycle_state=state, cron_jobs=None, packets=[], now=now)
             results.append(base)

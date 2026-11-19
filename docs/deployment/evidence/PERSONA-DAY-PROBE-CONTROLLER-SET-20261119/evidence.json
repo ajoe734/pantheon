@@ -1,18 +1,18 @@
 {
   "task": "PERSONA-DAY-PROBE-CONTROLLER-SET-20261119",
-  "rule": "Probe judges a BFF row only when the controller would register a daily cycle for it: owner lifecycle_state (BFF field lifecycleStatus, never the projected `state`) in ELIGIBLE_STATES minus consultable (read from persona_cycle_controller.py by ast); status active (BFF projects archived/suspended into state); tenant id present (registrar requires it); and not a release probe / test / acceptance persona (data_scope test, is_test style flags, text rule).",
+  "rule": "Probe judges a BFF row only when the controller would register a daily cycle for it: owner lifecycle_state (BFF field ownerLifecycleState from BFF-PERSONA-OWNER-LIFECYCLE-TRUTH-20261119, never the projected `state`, `lifecycleStatus` or provisioningLifecycleState) in ELIGIBLE_STATES minus consultable (read from persona_cycle_controller.py by ast); status active (BFF projects archived/suspended into state); tenant id present (registrar requires it); and not a release probe / test / acceptance persona (data_scope test, is_test style flags, text rule).",
   "baseline_persona_exclusion": {
     "persona_id": "persona-d64835a203ce276b8fbb",
-    "field": "lifecycleStatus (owner lifecycle_state) not in {paper_running, paper_owner}",
-    "basis": "Code-derived, NOT confirmed against the hosted record. BFF `state` is projected and the provisioning flow sets it to paper_running (service.py raw[state]); the controller reads the owner lifecycle_state, and enrollment never advances a test persona (bootstrap sets data_scope=test; is_probe_or_test_persona refuses on data_scope). The word-probe text rule is not what applies. Also excluded by the probe's data_scope=test check if the row exposes it.",
+    "field": "ownerLifecycleState (owner lifecycle_state) = research_only, not in daily-cycle states; same field/rule the controller registrar applies",
+    "basis": "Coordinator read hosted 2026-11-19T01:35Z from persona.personas: owner lifecycle_state research_only; three trading personas paper_owner. Probe reads ownerLifecycleState, not personaCycle.harness.",
     "verify_on_hosted": "next persona-day report lists it under left_out with its reason"
   },
-  "hosted_fixture": "NOT captured: the worker has no hosted credential. acceptance/test_persona_day.py::_hosted_1118 reproduces the selection-relevant fields of the named rows and is labelled synthetic; acceptance 3 is proven on that shape only. Coordinator should replay the real 177-row list.",
+  "hosted_fixture": "NOT captured: worker has no hosted credential, so acceptance/fixtures/hosted_persona_day_20261118.json is not created. test_persona_day.py::_hosted_1118 is synthetic (owner states from the coordinator facts above). Coordinator should replay the real 177-row list.",
   "report": "adds left_out_count and left_out [{persona_id, reason}]; every judged persona still lists first_failed_precondition",
   "tests": "acceptance/test_persona_day.py 18 passed (pytest in scratch venv)",
   "scope": "acceptance only; no product service file, no recurring job, no writer",
   "residual_findings": [
-    "Probe reads BFF tenantId (metadata.tenant_id) while the controller reads owner top-level tenant_id; they should match but are different fields.",
-    "BFF rows do not expose owner status; archived/suspended is inferred from projected state."
+    "BFF rows do not expose owner status; archived/suspended is inferred from projected state.",
+    "Probe reads BFF tenantId (metadata.tenant_id) while the controller reads owner top-level tenant_id."
   ]
 }
