@@ -232,3 +232,50 @@ def test_arena_driver_smaps_parser_classifies_main_heap_and_64mb_aligned_arenas(
     assert parsed["small_mappings_rss_mb"] == 0.5
     assert parsed["total_rss_mb"] == 130.5
 
+
+def test_evidence_records_hosted_series_and_200_round_driver_before_after() -> None:
+    import json
+
+    evidence_path = (
+        REPO_ROOT
+        / "docs"
+        / "deployment"
+        / "evidence"
+        / "SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119"
+        / "evidence.json"
+    )
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["task_id"] == "SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119"
+
+    hosted = evidence["1_coordinator_hosted_series_and_off_hosted_reproduction"][
+        "coordinator_hosted_series"
+    ]
+    assert hosted["backend_commit"] == "08d748790"
+    assert hosted["container_started_at"] == "2026-11-19T00:32:31Z"
+    assert hosted["smaps_series"][0]["aligned_64mb_arenas"] == 36
+    assert hosted["smaps_series"][0]["aligned_64mb_arena_rss_mb"] == 1174
+    assert hosted["smaps_series"][-1]["aligned_64mb_arenas"] == 48
+    assert hosted["smaps_series"][-1]["aligned_64mb_arena_rss_mb"] == 1889
+
+    output = evidence["3_and_4_driver_before_after_and_wall_time_output"]
+    before = output["default_allocator"]
+    after = output["malloc_arena_max_2"]
+    comparison = output["comparison"]
+
+    assert before["rounds"] >= 200
+    assert after["rounds"] >= 200
+    assert before["raw_read_window_workers"] == 16
+    assert before["summary"]["max_aligned_64mb_arenas"] > 2
+    assert after["summary"]["max_aligned_64mb_arenas"] <= 2
+    assert after["summary"]["final_rss_mb"] < before["summary"]["final_rss_mb"]
+    assert "median_ms" in before["summary"]["raw_read_window_wall_ms"]
+    assert "p99_ms" in before["summary"]["raw_read_window_wall_ms"]
+    assert "median_ms" in after["summary"]["raw_read_window_wall_ms"]
+    assert "p99_ms" in after["summary"]["raw_read_window_wall_ms"]
+    assert "median_ms" in before["summary"]["stored_snapshot_lookup_wall_ms"]
+    assert "p99_ms" in before["summary"]["stored_snapshot_lookup_wall_ms"]
+    assert "median_ms" in after["summary"]["stored_snapshot_lookup_wall_ms"]
+    assert "p99_ms" in after["summary"]["stored_snapshot_lookup_wall_ms"]
+    assert comparison["slowdown_above_10_pct"] is False
+
+

@@ -1,0 +1,457 @@
+{
+  "task_id": "SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119",
+  "title": "Source ingestion image limits glibc arenas so source-ingest memory stops growing",
+  "problem_register": {
+    "domain": "Market data and source storage (cb4f6795)",
+    "class": "RC3 WP3.4 container memory (remediation coordinator holds hosted acceptance of memory)",
+    "classification": "Repairs merged work; not a feature",
+    "precedent": [
+      "docs/deployment/evidence/BFF-MALLOC-ARENA-LIMIT-20261107/evidence.json",
+      "docs/deployment/evidence/BFF-HEALTH-STALL-MEMORY-ACCEPTANCE-20261107/evidence.json"
+    ]
+  },
+  "1_coordinator_hosted_series_and_off_hosted_reproduction": {
+    "coordinator_hosted_series": {
+      "container": "pantheon-source-ingest-1",
+      "backend_commit": "08d748790",
+      "container_started_at": "2026-11-19T00:32:31Z",
+      "sample_window_utc": "2026-11-19T01:43:00Z to 2026-11-19T03:43:00Z (every 20 minutes, read-only /proc/<uvicorn pid>/smaps)",
+      "host_cpu_count": 12,
+      "glibc_default_arena_limit": 96,
+      "smaps_series": [
+        {
+          "time_utc": "01:43Z",
+          "total_rss_mb": 3379,
+          "aligned_64mb_arenas": 36,
+          "aligned_64mb_arena_rss_mb": 1174,
+          "main_heap_mb": 339,
+          "mappings_above_64mb_range_mb": "956-1006",
+          "small_mappings_range_mb": "791-886",
+          "docker_stats_gib": 3.38
+        },
+        {
+          "time_utc": "02:03Z",
+          "total_rss_mb": 3699,
+          "aligned_64mb_arenas": 42,
+          "aligned_64mb_arena_rss_mb": 1483,
+          "main_heap_mb": 339
+        },
+        {
+          "time_utc": "02:23Z",
+          "total_rss_mb": 3744,
+          "aligned_64mb_arenas": 42,
+          "aligned_64mb_arena_rss_mb": 1518,
+          "main_heap_mb": 339
+        },
+        {
+          "time_utc": "02:43Z",
+          "total_rss_mb": 3998,
+          "aligned_64mb_arenas": 46,
+          "aligned_64mb_arena_rss_mb": 1812,
+          "main_heap_mb": 339
+        },
+        {
+          "time_utc": "03:03Z",
+          "total_rss_mb": 3982,
+          "aligned_64mb_arenas": 47,
+          "aligned_64mb_arena_rss_mb": 1851,
+          "main_heap_mb": 339
+        },
+        {
+          "time_utc": "03:23Z",
+          "total_rss_mb": 4001,
+          "aligned_64mb_arenas": 46,
+          "aligned_64mb_arena_rss_mb": 1760,
+          "main_heap_mb": 339
+        },
+        {
+          "time_utc": "03:43Z",
+          "total_rss_mb": 4121,
+          "aligned_64mb_arenas": 48,
+          "aligned_64mb_arena_rss_mb": 1889,
+          "main_heap_mb": 339,
+          "mappings_above_64mb_range_mb": "956-1006",
+          "small_mappings_range_mb": "791-886",
+          "docker_stats_gib": 4.03
+        }
+      ],
+      "thread_list_at_03_45z": {
+        "live_thread_count": 18,
+        "main_thread_tid": 7,
+        "main_thread_wait": "ep_poll",
+        "request_pool_thread_tids": "156-169 (14 threads)",
+        "long_lived_thread_tid": 44,
+        "recently_created_thread_tids": [
+          39181,
+          39220
+        ],
+        "diagnosis": "Each collector raw read window in services/source_ingestion/connectors/collector_bundle.py (_verify_raw_window) creates a short-lived ThreadPoolExecutor(max_workers=16) alongside the request thread pool; new threads claim new 64 MB-aligned glibc thread arenas up to 8 * CPU (96 on the 12-CPU host) and retain fragmented/pinned resident pages after thread exit."
+      }
+    },
+    "off_hosted_driver_command": "DOCKER_CONFIG=/tmp/si-docker-cfg BUILDX_CONFIG=/tmp/si-buildx-cfg docker build -q -f services/source_ingestion/Dockerfile -t pantheon-source-ingest-arena-test:20261119 . && docker run --rm pantheon-source-ingest-arena-test:20261119 python docs/deployment/evidence/SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119/arena_driver.py --rounds 200 --compare",
+    "source_ingestion_image_sha256": "sha256:566e05a96ac638d416e3528787d05a1a465e2eed0f92c97b10836f9ef36ee846"
+  },
+  "2_dockerfile_and_compose_service_coverage": {
+    "dockerfile": "services/source_ingestion/Dockerfile",
+    "setting": "ENV MALLOC_ARENA_MAX=2",
+    "image_config_env": [
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.16",
+      "PYTHON_SHA256=b5796915dc45ff745cfb4e990a7e7c93d6f546328a102ce31448d69ebc37575c",
+      "PYTHONDONTWRITEBYTECODE=1",
+      "PYTHONUNBUFFERED=1",
+      "MALLOC_ARENA_MAX=2",
+      "PORT=8097"
+    ],
+    "compose_services_built_from_dockerfile": [
+      "source-ingest",
+      "source-ingest-controller-migrate",
+      "source-ingest-scheduler",
+      "source-ingest-agora-projector",
+      "strategy-distillation-worker"
+    ],
+    "guard_test": "services/source_ingestion/tests/test_source_ingest_image_allocator.py"
+  },
+  "3_and_4_driver_before_after_and_wall_time_output": {
+    "default_allocator": {
+      "malloc_arena_max": "default (unset)",
+      "cpu_count": 12,
+      "rounds": 200,
+      "raw_read_window_workers": 16,
+      "request_pool_workers": 14,
+      "concurrent_windows_per_round": 1,
+      "snapshot_lookups_per_round": 4,
+      "series": [
+        {
+          "round": 0,
+          "total_rss_mb": 68.39,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 0,
+          "aligned_64mb_arena_rss_mb": 0.0,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 48.09,
+          "live_threads": 1,
+          "max_tid": 7
+        },
+        {
+          "round": 1,
+          "total_rss_mb": 75.65,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 9,
+          "aligned_64mb_arena_rss_mb": 6.49,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 48.86,
+          "live_threads": 4,
+          "max_tid": 10
+        },
+        {
+          "round": 25,
+          "total_rss_mb": 108.86,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 39.46,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.11,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 50,
+          "total_rss_mb": 112.35,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 42.84,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 75,
+          "total_rss_mb": 113.41,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 43.91,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 100,
+          "total_rss_mb": 113.76,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 44.26,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 125,
+          "total_rss_mb": 115.16,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 45.66,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 150,
+          "total_rss_mb": 115.46,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 22,
+          "aligned_64mb_arena_rss_mb": 45.96,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 175,
+          "total_rss_mb": 118.15,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 23,
+          "aligned_64mb_arena_rss_mb": 48.65,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.2,
+          "live_threads": 15,
+          "max_tid": 92
+        },
+        {
+          "round": 200,
+          "total_rss_mb": 118.25,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 23,
+          "aligned_64mb_arena_rss_mb": 48.74,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.21,
+          "live_threads": 15,
+          "max_tid": 92
+        }
+      ],
+      "summary": {
+        "initial_rss_mb": 68.39,
+        "round_50_rss_mb": 112.35,
+        "final_rss_mb": 118.25,
+        "peak_rss_mb": 118.25,
+        "rss_growth_round_50_to_end_mb": 5.9,
+        "main_heap_initial_mb": 20.3,
+        "main_heap_final_mb": 20.3,
+        "initial_aligned_64mb_arenas": 0,
+        "round_50_aligned_64mb_arenas": 22,
+        "final_aligned_64mb_arenas": 23,
+        "max_aligned_64mb_arenas": 23,
+        "round_50_aligned_64mb_arena_rss_mb": 42.84,
+        "final_aligned_64mb_arena_rss_mb": 48.74,
+        "arena_rss_growth_round_50_to_end_mb": 5.9,
+        "raw_read_window_wall_ms": {
+          "count": 200,
+          "median_ms": 25.016,
+          "p99_ms": 40.426
+        },
+        "stored_snapshot_lookup_wall_ms": {
+          "count": 800,
+          "median_ms": 4.241,
+          "p99_ms": 14.192
+        }
+      }
+    },
+    "malloc_arena_max_2": {
+      "malloc_arena_max": "2",
+      "cpu_count": 12,
+      "rounds": 200,
+      "raw_read_window_workers": 16,
+      "request_pool_workers": 14,
+      "concurrent_windows_per_round": 1,
+      "snapshot_lookups_per_round": 4,
+      "series": [
+        {
+          "round": 0,
+          "total_rss_mb": 68.64,
+          "main_heap_rss_mb": 20.3,
+          "aligned_64mb_arenas": 0,
+          "aligned_64mb_arena_rss_mb": 0.0,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 48.34,
+          "live_threads": 1,
+          "max_tid": 1343
+        },
+        {
+          "round": 1,
+          "total_rss_mb": 74.33,
+          "main_heap_rss_mb": 21.2,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 4.0,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.14,
+          "live_threads": 5,
+          "max_tid": 1347
+        },
+        {
+          "round": 25,
+          "total_rss_mb": 78.04,
+          "main_heap_rss_mb": 23.88,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 4.82,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.35,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 50,
+          "total_rss_mb": 78.67,
+          "main_heap_rss_mb": 23.88,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.41,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.38,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 75,
+          "total_rss_mb": 78.09,
+          "main_heap_rss_mb": 22.98,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.71,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.39,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 100,
+          "total_rss_mb": 76.32,
+          "main_heap_rss_mb": 23.28,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 3.65,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.39,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 125,
+          "total_rss_mb": 78.71,
+          "main_heap_rss_mb": 23.58,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.73,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.4,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 150,
+          "total_rss_mb": 78.12,
+          "main_heap_rss_mb": 22.98,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.73,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.4,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 175,
+          "total_rss_mb": 79.01,
+          "main_heap_rss_mb": 23.88,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.73,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.4,
+          "live_threads": 15,
+          "max_tid": 1423
+        },
+        {
+          "round": 200,
+          "total_rss_mb": 79.01,
+          "main_heap_rss_mb": 23.88,
+          "aligned_64mb_arenas": 1,
+          "aligned_64mb_arena_rss_mb": 5.73,
+          "above_64mb_rss_mb": 0.0,
+          "small_mappings_rss_mb": 49.4,
+          "live_threads": 15,
+          "max_tid": 1423
+        }
+      ],
+      "summary": {
+        "initial_rss_mb": 68.64,
+        "round_50_rss_mb": 78.67,
+        "final_rss_mb": 79.01,
+        "peak_rss_mb": 79.01,
+        "rss_growth_round_50_to_end_mb": 0.34,
+        "main_heap_initial_mb": 20.3,
+        "main_heap_final_mb": 23.88,
+        "initial_aligned_64mb_arenas": 0,
+        "round_50_aligned_64mb_arenas": 1,
+        "final_aligned_64mb_arenas": 1,
+        "max_aligned_64mb_arenas": 1,
+        "round_50_aligned_64mb_arena_rss_mb": 5.41,
+        "final_aligned_64mb_arena_rss_mb": 5.73,
+        "arena_rss_growth_round_50_to_end_mb": 0.32,
+        "raw_read_window_wall_ms": {
+          "count": 200,
+          "median_ms": 22.92,
+          "p99_ms": 33.464
+        },
+        "stored_snapshot_lookup_wall_ms": {
+          "count": 800,
+          "median_ms": 3.598,
+          "p99_ms": 13.37
+        }
+      }
+    },
+    "comparison": {
+      "max_aligned_64mb_arenas_before": 23,
+      "max_aligned_64mb_arenas_after": 1,
+      "final_aligned_64mb_arena_rss_mb_before": 48.74,
+      "final_aligned_64mb_arena_rss_mb_after": 5.73,
+      "final_rss_mb_before": 118.25,
+      "final_rss_mb_after": 79.01,
+      "rss_growth_round_50_to_end_mb_before": 5.9,
+      "rss_growth_round_50_to_end_mb_after": 0.34,
+      "raw_read_window_median_ms_change_pct": -8.38,
+      "raw_read_window_p99_ms_change_pct": -17.22,
+      "stored_snapshot_lookup_median_ms_change_pct": -15.16,
+      "stored_snapshot_lookup_p99_ms_change_pct": -5.79,
+      "slowdown_above_10_pct": false
+    }
+  },
+  "5_post_deploy_hosted_measurement_plan": {
+    "owner": "Remediation coordinator (RC3 WP3.4 hosted memory acceptance) and market-data coordinator (cb4f6795)",
+    "method": "Read-only inspection of /proc/<uvicorn pid>/smaps and docker stats for pantheon-source-ingest-1 every 20 minutes for 4 hours from container start, plus TPEx and TWSE history rows per pull",
+    "expectation": {
+      "max_arenas_besides_main_heap": 2,
+      "expected_rss_growth_per_hour_after_warmup": "0 to 50 MB/h (plateaued after metadata/snapshot cache warm-up, down from ~360-1400 MB/h arena growth before MALLOC_ARENA_MAX=2), keeping steady-state RSS around 2.2-2.6 GiB well inside the 6 GiB compose mem_limit"
+    }
+  },
+  "6_runtime_budget": {
+    "new_persistent_writers": 0,
+    "new_threads": 0,
+    "compose_memory_limit_changes": "none (docker-compose.yml unchanged; DEV_MEM_LIMIT_SOURCE_INGEST remains 6g)",
+    "temporary_test_images_cleaned": true
+  },
+  "7_validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_source_ingest_image_allocator.py services/source_ingestion/test_compose_activation.py scripts/test_check_service_lock_shared_deps.py",
+      "result": "17 passed in 55.98s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-task.json",
+      "result": "passed=true, failures=[]"
+    },
+    {
+      "command": "docker run --rm pantheon-source-ingest-arena-test:20261119 python docs/deployment/evidence/SOURCE-INGEST-MALLOC-ARENA-LIMIT-20261119/arena_driver.py --rounds 200 --compare",
+      "result": "arenas 23 -> 1; arena RSS 48.74 MB -> 5.73 MB (flat at 5.73 MB from round 125 to 200); total RSS 118.25 MB -> 79.01 MB (flat at 79.01 MB from round 175 to 200); raw_read_window median -8.38% / p99 -17.22%; stored_snapshot_lookup median -15.16% / p99 -5.79%; slowdown_above_10_pct=false"
+    }
+  ],
+  "residual_findings": []
+}

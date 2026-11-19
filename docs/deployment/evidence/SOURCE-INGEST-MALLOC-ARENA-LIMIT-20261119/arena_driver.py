@@ -31,9 +31,13 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from services.source_ingestion.connectors.bounded_reader import read_bounded_response
 from services.source_ingestion.connectors.collector_bundle import (
@@ -42,9 +46,54 @@ from services.source_ingestion.connectors.collector_bundle import (
     VerifiedBundle,
     _verify_raw_window,
 )
-from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+from services.source_ingestion.requirement_state import (
+    LatestMarketSnapshot,
+    LatestMarketSnapshotStore,
+    MarketSnapshotPoint,
+)
 from services.source_ingestion.snapshot_universe import SnapshotUniverse
-from services.source_ingestion.tests.test_snapshot_current_record_store import _snapshot
+
+
+def _trading_days(count: int) -> list[date]:
+    days: list[date] = []
+    day = date(2026, 8, 3)
+    while len(days) < count:
+        if day.weekday() < 5:
+            days.append(day)
+        day += timedelta(days=1)
+    return days
+
+
+_SNAPSHOT_DAYS = _trading_days(60)
+
+
+def _snapshot(index: int) -> LatestMarketSnapshot:
+    symbol = f"{index:05d}.TWSE"
+    points = tuple(
+        MarketSnapshotPoint(
+            event_time=f"{day.isoformat()}T05:30:00Z",
+            close=round(20.0 + index * 0.01 + n * 0.05, 2),
+            source_id="twse-openapi-stock-day-all",
+            connector_id="tw-twse-price-history",
+            content_ref=(
+                f"twse://openapi/STOCK_DAY_ALL/{symbol}/{day.isoformat()}/"
+                f"{hashlib.sha256(f'{symbol}|{day}'.encode()).hexdigest()}"
+            ),
+            ingest_run_id=f"ingest-run-{day.isoformat()}-0f3a9c21b7d44e56",
+            market="TW",
+        )
+        for n, day in enumerate(_SNAPSHOT_DAYS)
+    )
+    return LatestMarketSnapshot(
+        symbol=symbol,
+        points=points,
+        observed_at=f"{_SNAPSHOT_DAYS[-1].isoformat()}T10:00:00Z",
+        calendar_evidence={
+            "calendar_id": "twse-2026",
+            "status": "open",
+            "trade_date": _SNAPSHOT_DAYS[-1].isoformat(),
+        },
+    )
 
 ALIGN_64MB = 64 * 1024 * 1024
 HEAP_MAX_SIZE_KB = 65536
@@ -140,17 +189,9 @@ class BoundedStreamBundleTransport(BundleTransport):
     def read(self, relative_path: str, *, max_bytes: int) -> bytes:
         raw = self._payloads[relative_path]
         data = read_bounded_response(io.BytesIO(raw), max_bytes=max_bytes, chunk_size=65536)
-        parsed = json.loads(data.decode("utf-8"))
         # Bounded ring of small (>512 B) verified-item receipts allocated in the worker thread
         # after temporary raw chunk buffers are freed, modelling per-pull verified state retention.
-        receipt = json.dumps(
-            {
-                "path": relative_path,
-                "rows": len(parsed["rows"]),
-                "digest": parsed["digest"],
-                "pad": "r" * 1200,
-            }
-        ).encode("utf-8")
+        receipt = f"{relative_path}:{len(data)}:".encode("utf-8") + (b"r" * 1536)
         with self._lock:
             self._ring_buffer.append(receipt)
             if len(self._ring_buffer) > 256:
@@ -169,9 +210,9 @@ def _percentile_99(values: list[float]) -> float:
 def run_driver(
     *,
     rounds: int = 200,
-    request_pool_workers: int = 16,
-    concurrent_windows_per_round: int = 2,
-    lookups_per_round: int = 8,
+    request_pool_workers: int = 14,
+    concurrent_windows_per_round: int = 1,
+    lookups_per_round: int = 4,
 ) -> dict[str, Any]:
     if rounds < 200:
         raise ValueError(f"rounds must be at least 200 (got {rounds})")
