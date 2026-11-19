@@ -929,3 +929,74 @@ def test_job_script_paths_have_a_matching_checkout():
                 if match.group(1).rstrip("/") not in checkout_paths:
                     problems.append(f"{job_name} / {step.get('name')}: {match.group(0)}")
     assert not problems, "script path without a matching checkout in the same job: " + "; ".join(problems)
+
+
+def _run_enforce_step(tmp_path, values):
+    """Run the real outcome-enforcing step in a bare checkout layout of its own job."""
+    enforce = next(
+        item for item in COORDINATE["steps"]
+        if item.get("name") == "Enforce accepted or proven compensated outcome"
+    )
+    rendered = re.sub(
+        r"\$\{\{\s*(.*?)\s*\}\}", lambda match: values.get(match.group(1), ""), enforce["run"]
+    )
+    workspace = tmp_path / "workspace"
+    evidence = workspace / "evidence"
+    (evidence / "candidate").mkdir(parents=True)
+    (evidence / "candidate" / "candidate-frontend.json").write_text("{}")
+    (workspace / ".target").mkdir()  # the coordinator's own checkout layout
+    summary = tmp_path / "summary.md"
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", rendered],
+        cwd=workspace, text=True, capture_output=True,
+        env={"PATH": os.environ["PATH"], "RELEASE_EVIDENCE_DIR": str(evidence),
+             "GITHUB_STEP_SUMMARY": str(summary)},
+    )
+    return result, summary.read_text() if summary.exists() else ""
+
+
+def _enforce_values(**overrides):
+    values = {
+        "inputs.run_exact_artifact_roundtrip": "false",
+        "steps.frontend_release.outcome": "success",
+        "steps.final_artifact_verify.outcome": "success",
+        "steps.frontend_release.outputs.release_outcome": "",
+        "steps.frontend_release.outputs.gate_run_id": "44470794822",
+        "steps.frontend_release.outputs.failed_gates": "Gate 1 - npm run test",
+        "steps.compensation.outcome": "skipped",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_deployed_not_accepted_release_exits_zero_and_names_gate_and_owner(tmp_path):
+    result, summary = _run_enforce_step(
+        tmp_path,
+        _enforce_values(**{"steps.frontend_release.outputs.release_outcome": "deployed_not_accepted"}),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "deployed, NOT accepted" in summary
+    assert "44470794822" in summary and "Gate 1 - npm run test" in summary
+    assert "owning chain: frontend" in summary
+
+
+def test_accepted_release_summary_is_unchanged_by_the_new_outcome(tmp_path):
+    result, summary = _run_enforce_step(tmp_path, _enforce_values())
+    assert result.returncode == 0, result.stderr
+    assert "Exact FE/BFF release accepted" in summary
+
+
+def test_failed_frontend_release_still_requires_compensation(tmp_path):
+    result, summary = _run_enforce_step(
+        tmp_path, _enforce_values(**{"steps.frontend_release.outcome": "failure"})
+    )
+    assert result.returncode == 75
+    assert "rollback NOT proven" in summary
+
+
+def test_controller_gets_manifest_and_target_environment_without_new_dispatch_inputs():
+    run = step(COORDINATE, "frontend_release")["run"]
+    assert '--compatibility-manifest-file "${manifest_file}"' in run
+    assert '--environment "${TARGET_ENV}"' in run
+    inputs = set(WORKFLOW[True]["workflow_dispatch"]["inputs"])
+    assert not {name for name in inputs if "unchanged" in name or "tolerate" in name or "gate_failure" in name}

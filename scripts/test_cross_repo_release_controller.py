@@ -114,6 +114,10 @@ class FakeClient:
         self.dispatches.append((workflow, inputs))
         self.dispatch_refs.append((workflow, ref))
 
+    def failed_job_names(self, run_id: int) -> list[str]:
+        assert run_id == 101
+        return ["Gate 1 - npm run test"]
+
     def get_ref(self, ref: str) -> str:
         assert ref == "heads/dev" or ref in {"dev", "task/candidate"}
         return self.controller_sha
@@ -2110,3 +2114,140 @@ def test_identity_fetch_exhaustion_keeps_transient_fetch_reason() -> None:
     cand = {"pantheon_sha": BACKEND_SHA, "execute_plans_sha": FRONTEND_SHA, "pair_id": None}
     with pytest.raises(_ctl.TransientFetchError):
         verify_served_identity(bff_base_url="https://b", expected_candidate=cand, fetch_fn=boom)
+
+
+# --- Dev: a gate failure for an unchanged frontend does not roll the backend back
+
+
+def _manifest_file(
+    tmp_path: Path,
+    *,
+    frontend_sha: str = FRONTEND_SHA,
+    status: str = "accepted",
+    bundle_mismatch: bool = False,
+) -> tuple[Path, str]:
+    import hashlib
+
+    manifest = {
+        "compatibility_status": status,
+        "blocking_reasons": [],
+        "backend": {
+            "runtime_commit": BACKEND_SHA,
+            "contract_commit": "9" * 40,
+            "bundle_index_sha256": "b" * 64,
+            "openapi_sha256": "e" * 64,
+        },
+        "frontend": {
+            "runtime_commit": frontend_sha,
+            "generated_from_contract_commit": "9" * 40,
+            "bundle_index_sha256": "f" * 64 if bundle_mismatch else "b" * 64,
+            "openapi_sha256": "e" * 64,
+        },
+    }
+    raw = json.dumps(manifest).encode()
+    path = tmp_path / "manifest.json"
+    path.write_bytes(raw)
+    return path, hashlib.sha256(raw).hexdigest()
+
+
+def _unchanged_fetch(url: str) -> dict[str, Any]:
+    if "version" in url:
+        return {"source_commit_sha": BACKEND_SHA}
+    return {"frontendSha": FRONTEND_SHA, "bffCommit": PREV_BFF_SHA, "pairId": PREV_PAIR_ID}
+
+
+PREV_BFF_SHA = "b" * 40
+
+
+def _unchanged(client: FakeClient, **overrides: Any) -> dict[str, Any]:
+    return _coordinate(
+        client,
+        fetch_fn=_unchanged_fetch,
+        predecessor_fe_sha=FRONTEND_SHA,
+        predecessor_bff_sha=PREV_BFF_SHA,
+        **overrides,
+    )
+
+
+def test_unchanged_frontend_gate_failure_with_compatible_manifest_keeps_backend(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    evidence = _unchanged(
+        client, compatibility_manifest_path=path, compatibility_manifest_sha256=digest
+    )
+
+    assert evidence["outcome"] == "deployed_not_accepted"
+    assert evidence["acceptance"] == {
+        "deployed": True,
+        "accepted": False,
+        "owning_chain": "frontend",
+        "failed_gates": ["Gate 1 - npm run test"],
+        "gate_run_id": "101",
+        "compatibility": evidence["acceptance"]["compatibility"],
+    }
+    assert evidence["integration_gate"]["conclusion"] == "failure"
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+    assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
+
+
+@pytest.mark.parametrize("case", ["incompatible", "wrong_digest", "unreadable", "missing", "wrong_pair"])
+def test_unchanged_frontend_gate_failure_with_unusable_manifest_rejects(tmp_path: Path, case: str) -> None:
+    path, digest = _manifest_file(tmp_path, bundle_mismatch=case == "incompatible")
+    if case == "wrong_digest":
+        digest = "0" * 64
+    elif case == "unreadable":
+        path.write_bytes(b"{not json")
+        import hashlib
+
+        digest = hashlib.sha256(b"{not json").hexdigest()
+    elif case == "missing":
+        path = tmp_path / "absent.json"
+    elif case == "wrong_pair":
+        path, digest = _manifest_file(tmp_path, frontend_sha="3" * 40)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="not tolerated"):
+        _unchanged(client, compatibility_manifest_path=path, compatibility_manifest_sha256=digest)
+
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+
+
+def test_changed_frontend_gate_failure_rejects(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="concluded failure") as raised:
+        _coordinate(
+            client,
+            fetch_fn=_unchanged_fetch_for(PREV_FRONTEND_SHA),
+            predecessor_fe_sha=PREV_FRONTEND_SHA,
+            predecessor_bff_sha=PREV_BFF_SHA,
+            compatibility_manifest_path=path,
+            compatibility_manifest_sha256=digest,
+        )
+    assert "not tolerated" not in str(raised.value)
+
+
+def _unchanged_fetch_for(frontend_sha: str):
+    def fetch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        return {"frontendSha": frontend_sha, "bffCommit": PREV_BFF_SHA, "pairId": PREV_PAIR_ID}
+
+    return fetch
+
+
+def test_staging_target_unchanged_frontend_gate_failure_rejects(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="concluded failure"):
+        _unchanged(
+            client,
+            environment="staging",
+            compatibility_manifest_path=path,
+            compatibility_manifest_sha256=digest,
+        )
+
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
