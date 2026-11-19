@@ -101,9 +101,8 @@ def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(defaul
     try:
         observations = _preflight_observations(body)
         ctx, header_tenant = svc._strategy_spec_read_scope(authorization, x_tenant_id)
-        registry = svc.get_registry_service()
         latest: dict[str, Any] = {}
-        for view in registry.list_by_artifact_type(ArtifactType.STRATEGY_SPEC):
+        for view in svc.list_views_by_artifact_type(ArtifactType.STRATEGY_SPEC):
             e = view.entry
             if not (svc._can_read(ctx, view)
                     and (header_tenant is None or e.owner_tenant in (header_tenant, svc.BUILTIN_TENANT))):
@@ -116,7 +115,7 @@ def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(defaul
                        "owner_tenant": e.owner_tenant} for e in latest.values()]
         models = [{"registry_id": v.entry.registry_id, "artifact_state": v.entry.artifact_state.value,
                    "metadata": v.entry.metadata or {}, "created_at": v.entry.created_at}
-                  for v in registry.list_by_artifact_type(ArtifactType.MODEL_ARTIFACT)]
+                  for v in svc.list_views_by_artifact_type(ArtifactType.MODEL_ARTIFACT)]
         return RegimeEvaluator(get_regime_store(), lambda: observations).evaluate(
             session=body.session, market=body.market, models=models, strategies=strategies,
             verify_inputs=body.verify_inputs)

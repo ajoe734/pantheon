@@ -359,10 +359,6 @@ class RegistryService:
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
 
-    def list_by_artifact_type(self, artifact_type) -> list[RegistryEntryView]:
-        """Bounded read of one artifact type (no full-registry materialization)."""
-        return [self._to_view(e) for e in self.store.list_by_artifact_type(artifact_type)]
-
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:

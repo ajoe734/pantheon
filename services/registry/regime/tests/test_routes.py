@@ -280,8 +280,9 @@ def test_missing_inputs_refuse_before_any_registry_read(client, seeded, monkeypa
         raise AssertionError("registry entries read before inputs were checked")
 
     cls = type(svc.get_registry_service())
-    for name in ("list_all_entries", "list_by_artifact_type", "list_by_strategy"):
+    for name in ("list_all_entries", "list_by_strategy"):
         monkeypatch.setattr(cls, name, forbidden)
+    monkeypatch.setattr(cls.__mro__[0], "_to_view", forbidden)  # any entry view built means entries were read
     r = client.post("/api/registry/regime/evaluate", headers=a, json={"session": session})
     assert r.status_code == 409
     detail = r.json()["detail"]

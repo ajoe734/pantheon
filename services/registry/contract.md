@@ -474,7 +474,7 @@ store's `evaluator_commit` / `evaluator_invalidate`). Paper scope only; no place
   an invalid request, an unmounted root, a declared input dataset with no normalized directory (each listed in a
   `409 session_data_incomplete` detail `missing_datasets:...`) or a missing session index close refuses before any
   registry entry is read. Only then are strategy specs and model artifacts read, each with an artifact-type-filtered
-  query (`list_by_artifact_type`; SQL-filtered on Postgres), never the whole registry. Observations come from
+  query (`list_views_by_artifact_type`; SQL-filtered on Postgres), never the whole registry. Observations come from
   `services.research.regime.features.load_governed_observations`, which reads
   every input through the feature catalogue (point in time).
 - Statistical dependencies (numpy, pandas, scipy, scikit-learn, statsmodels) run in the registry image (design K5).
