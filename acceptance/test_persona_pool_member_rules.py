@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PROBE = ROOT / "probes" / "persona-pool-member-rules"
 FIXTURE = json.loads((ROOT / "fixtures" / "hosted_persona_pool_20261119.json").read_text())
+LIST = json.loads((ROOT / "fixtures" / "hosted_persona_list_20261119.json").read_text())["pages"]
 PID = FIXTURE["persona_list"]["data"][0]["id"]
 
 _loader = SourceFileLoader("persona_pool_member_rules_probe", str(PROBE))
@@ -23,7 +24,7 @@ def run_case(case, calls=None):
     def fetch(path):
         if calls is not None:
             calls.append(path)
-        if path == "/bff/personas":
+        if path.startswith("/bff/personas?"):
             return FIXTURE["persona_list"]
         assert path == f"/bff/personas/{PID}", path  # retired persona is never read
         return FIXTURE["details"][case]
@@ -37,8 +38,10 @@ def test_probe_is_executable_read_only_with_owner_header():
 
 def test_pass_and_missing_observation_are_not_failures():
     calls = []
-    assert run_case("pass", calls) == {"passed": True, "checked": 1, "failed": {}}
-    assert calls == ["/bff/personas", f"/bff/personas/{PID}"]
+    report = run_case("pass", calls)
+    assert report["passed"] is True and report["checked"] == 1 and report["failed"] == {}
+    assert report["results"] == {PID: "ok"} and report["read"] == 2 and report["skipped"] == 1
+    assert calls == ["/bff/personas?page_size=200", f"/bff/personas/{PID}"]
     assert run_case("no_observation")["passed"] is True
 
 
@@ -84,3 +87,43 @@ def test_unreachable_bff_fails_without_leaking_secret():
     done = subprocess.run([sys.executable, str(PROBE)], env=env, capture_output=True, text=True, timeout=60)
     assert done.returncode == 1
     assert "s3cret-value" not in done.stdout + done.stderr
+
+
+def _paged_fetch(calls, detail):
+    def fetch(path):
+        calls.append(path)
+        if path == "/bff/personas?page_size=200":
+            return LIST["page1"]
+        if path == "/bff/personas?page_size=200&page_token=tok-2":
+            return LIST["page2"]
+        pid = path.rsplit("/", 1)[1]
+        assert pid in ("persona-2448c7053e33ea48da47", "persona-nopool"), path
+        if pid == "persona-nopool":
+            return {"meta": {"surfaces": {"strategy_pool": {"status": "unavailable"}}}, "data": {}}
+        return detail
+    return fetch
+
+
+def test_first_page_all_retired_then_live_page_is_checked():
+    calls = []
+    report = probe.run(_paged_fetch(calls, FIXTURE["details"]["pass"]))
+    assert report["passed"] is True and report["checked"] == 1
+    assert report["results"] == {"persona-2448c7053e33ea48da47": "ok"}
+    assert report["read"] == 6 and report["skipped"] == 5 and report["skipped_no_pool"] == 1
+    assert calls[:2] == ["/bff/personas?page_size=200", "/bff/personas?page_size=200&page_token=tok-2"]
+    assert not any("retired" in c or "archived" in c for c in calls)
+
+
+def test_paged_failure_is_reported_per_persona():
+    report = probe.run(_paged_fetch([], FIXTURE["details"]["fail_member_rules_missing"]))
+    assert report["passed"] is False and report["results"] == {"persona-2448c7053e33ea48da47": "failed"}
+
+
+def test_zero_checked_personas_fails_with_reason():
+    only_retired = {"data": LIST["page1"]["data"]}
+    report = probe.run(lambda path: only_retired)
+    assert report["passed"] is False and report["checked"] == 0 and report["reason"] == "no_persona_checked"
+    assert probe.run(lambda path: {"data": []})["reason"] == "no_persona_checked"
+    no_pool = {"meta": {"surfaces": {"strategy_pool": {"status": "unavailable"}}}, "data": {}}
+    live = {"data": [{"id": "p1", "lifecycle_state": "paper_running"}]}
+    assert probe.run(lambda path: live if path.startswith("/bff/personas?") else no_pool)["passed"] is False
