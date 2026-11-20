@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -471,6 +472,22 @@ def _is_nonfill_unsubmitted_event(
     return True
 
 
+def _is_risk_gate_rejection(event: Mapping[str, Any]) -> bool:
+    """An order_rejection stopped before the broker by the risk gate.
+
+    Recorded shape: stage failed, submitted_to_broker false, no broker ids (the
+    caller already proved the latter). Explicit risk_gate_evaluated or
+    risk_status rejected also qualify.
+    """
+    if event.get("event_type") not in {"order_rejection", "order_rejection_simulated"}:
+        return False
+    if event.get("risk_gate_evaluated") is True:
+        return True
+    if str(event.get("risk_status") or "").strip().lower() == "rejected":
+        return True
+    return event.get("submitted_to_broker") is False
+
+
 def _effective_snapshot_and_diagnostics(
     snapshot: Mapping[str, Any],
     diagnostics: Sequence[Mapping[str, Any]],
@@ -525,6 +542,7 @@ def _effective_snapshot_and_diagnostics(
         if isinstance(item, Mapping) and item.get("stage") == "order_submission"
     ]
     inferred_status: Optional[str] = None
+    inferred_reason: Optional[str] = None
     if submission_events:
         if (
             order_status == "skipped"
@@ -555,6 +573,13 @@ def _effective_snapshot_and_diagnostics(
             for item in submission_events
         ):
             inferred_status = "rejected"
+        elif order_status in {"failed", "rejected"}:
+            gate_event = next(
+                (item for item in submission_events if _is_risk_gate_rejection(item)), None
+            )
+            if gate_event is not None:
+                inferred_status = "rejected"
+                inferred_reason = str(gate_event.get("reason_code") or "").strip() or None
     if inferred_status is None:
         return dict(snapshot), diag_list
     stages["risk_evaluation"] = {
@@ -562,6 +587,8 @@ def _effective_snapshot_and_diagnostics(
         "updated_at": order_stage.get("updated_at"),
         "revision": order_stage.get("revision", 1),
     }
+    if inferred_reason:
+        stages["risk_evaluation"]["reason_code"] = inferred_reason
     raw_completeness = snapshot.get("completeness")
     completeness = dict(raw_completeness) if isinstance(raw_completeness, Mapping) else {}
     missing_stages = [
@@ -606,6 +633,9 @@ def _current_stage(snapshot: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+_REJECTION_STAGES = ("risk_evaluation", "order_submission", "broker_acknowledgement")
+
+
 def _flags(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]) -> Dict[str, bool]:
     stages = snapshot.get("stages") or {}
     statuses = {info.get("status") for info in stages.values()}
@@ -613,8 +643,12 @@ def _flags(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]
     return {
         "waiting_human": snapshot.get("status") == "waiting_human" or "waiting_human" in statuses,
         "blocked": snapshot.get("status") == "blocked" or "blocked" in statuses,
-        "rejected": bool({"rejected", "failed"} & statuses),
-        "mismatch": snapshot.get("status") == "completed_with_variance",
+        "rejected": any(
+            (stages.get(name) or {}).get("status") in {"rejected", "failed"}
+            for name in _REJECTION_STAGES
+        ),
+        "mismatch": snapshot.get("status") == "completed_with_variance"
+        or (stages.get("reconciliation") or {}).get("status") == "failed",
         "orphan": "orphan_identifier" in codes,
     }
 
@@ -691,19 +725,15 @@ _REASON_NOT_RECORDED = "reason_not_recorded"
 _CASH_REJECT_REASONS = frozenset({"insufficient_cash", "insufficient_buying_power"})
 
 
-def _persona_directory(list_personas: Optional[Callable[[], Any]]) -> Dict[str, Dict[str, Any]]:
-    """One batched persona read per response: id -> {name, is_probe}.
+_PERSONA_DIRECTORY_TTL_SECONDS = 60.0
+_PERSONA_DIRECTORY_STALE_SECONDS = 300.0
+_persona_directory_cache: Dict[Callable[[], Any], Tuple[float, Dict[str, Dict[str, Any]]]] = {}
+_persona_directory_lock = threading.Lock()
 
-    An unreadable owner leaves the directory empty so rows keep a null name.
-    """
-    if list_personas is None:
-        return {}
-    try:
-        records = list_personas() or []
-    except Exception:
-        return {}
+
+def _read_persona_directory(list_personas: Callable[[], Any]) -> Dict[str, Dict[str, Any]]:
     directory: Dict[str, Dict[str, Any]] = {}
-    for record in records:
+    for record in list_personas() or []:
         if not isinstance(record, Mapping):
             continue
         persona_id = str(record.get("persona_id") or record.get("id") or "").strip()
@@ -715,6 +745,35 @@ def _persona_directory(list_personas: Optional[Callable[[], Any]]) -> Dict[str, 
             "is_probe": bool(is_probe_or_test_persona(record)),
         }
     return directory
+
+
+def _persona_directory(
+    list_personas: Optional[Callable[[], Any]],
+    *,
+    clock: Callable[[], float] = time.monotonic,
+) -> Dict[str, Dict[str, Any]]:
+    """id -> {name, is_probe}, read at most once per 60s per process.
+
+    Shared by list, detail and evidence reads. A failed read keeps the previous
+    directory for up to 300s, then an empty one so rows keep a null name.
+    """
+    if list_personas is None:
+        return {}
+    key = list_personas
+    with _persona_directory_lock:
+        now = clock()
+        cached = _persona_directory_cache.get(key)
+        if cached is not None and now - cached[0] < _PERSONA_DIRECTORY_TTL_SECONDS:
+            return cached[1]
+        try:
+            directory = _read_persona_directory(list_personas)
+        except Exception:
+            if cached is not None and now - cached[0] < _PERSONA_DIRECTORY_STALE_SECONDS:
+                return cached[1]
+            _persona_directory_cache.pop(key, None)
+            return {}
+        _persona_directory_cache[key] = (now, directory)
+        return directory
 
 
 def _event_for_stage(timeline: Sequence[Mapping[str, Any]], stage: str) -> Optional[Mapping[str, Any]]:
@@ -792,7 +851,10 @@ def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]])
     ):
         for name in ("broker_acknowledgement", "risk_evaluation", "order_submission"):
             if stage_status(name) in {"failed", "rejected"}:
-                code, detail = _rejected_reason(_event_for_stage(timeline, name))
+                event = _event_for_stage(timeline, name)
+                if event is None and name == "risk_evaluation":
+                    event = _event_for_stage(timeline, "order_submission")  # inferred stage
+                code, detail = _rejected_reason(event)
                 return {"kind": "rejected", "reason_code": code, "reason_detail": detail, "rejected_stage": name}
         return {"kind": "rejected", "reason_code": _REASON_NOT_RECORDED, "reason_detail": None}
     if status == "partially_filled":
@@ -999,6 +1061,14 @@ def _timeline_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     row.setdefault("status", event.get("stage_status"))
     row.setdefault("payload_redaction", "none")
     row.setdefault("schema_version", event.get("schema_version", "1"))
+    code = str(row.get("reason_code") or "").strip()
+    if code in _EXPRESSION_REASON_CODES:
+        row["reason_code"] = _REASON_NOT_RECORDED
+        row["expression_reason_code"] = code
+    envelope = event.get("correlation_envelope")
+    producer = envelope.get("producer") if isinstance(envelope, Mapping) else None
+    if producer:
+        row["source"] = str(producer)
     return row
 
 

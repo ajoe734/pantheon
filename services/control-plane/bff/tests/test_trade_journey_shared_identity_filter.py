@@ -40,9 +40,12 @@ def test_shared_dimension_filter_reads_journey_summary_and_legacy_links():
         tenant_id="t", environment="paper", filters={"persona_id": "p-1", "order_id": "o-1"}
     )
     shared, per_journey = clauses[2], clauses[3]
-    assert "current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s" in shared and "identity_links" in shared
+    assert "current_identity_summary -> 'identifiers', current_identity_summary)) @> %s::jsonb" in shared and "identity_links" in shared
     assert "current_identity_summary" not in per_journey
-    assert params == ["t", "paper", "persona_id", "p-1", "persona_id", "p-1", "order_id", "o-1"]
+    assert params == [
+        "t", "paper", '{"persona_id": ["p-1"]}', '{"persona_id": "p-1"}', "t", "paper", "persona_id", "p-1",
+        "order_id", "o-1",
+    ]
 
 
 def test_resolve_shared_dimension_unions_journey_rows_and_legacy_links():

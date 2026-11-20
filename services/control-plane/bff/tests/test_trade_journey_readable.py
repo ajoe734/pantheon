@@ -234,7 +234,8 @@ def test_detail_reports_upstream_lineage_unlinked_without_attention():
     assert detail["outcome"]["kind"] == "variance" and detail["quantity"] == 1.0
 
 
-def test_detail_keeps_missing_observable_stage_separate():
+def test_detail_infers_risk_stage_for_risk_gate_rejection():
+    # BFF-TRADE-JOURNEY-READABLE-RESIDUALS-20261120: a gate rejection is no longer a missing stage.
     detail = tj._detail(projection("tj_79726064"), now=NOW)
-    missing = [d for d in detail["diagnostics"] if d["code"] == "missing_stages"]
-    assert [d["stages"] for d in missing] == [["risk_evaluation"]]
+    assert [d for d in detail["diagnostics"] if d["code"] == "missing_stages"] == []
+    assert detail["stages"]["risk_evaluation"]["status"] == "rejected"
