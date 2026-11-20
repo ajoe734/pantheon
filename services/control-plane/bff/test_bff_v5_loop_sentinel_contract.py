@@ -736,6 +736,9 @@ def _health_monitor(tmp_path: Path, **overrides) -> DownstreamHealthMonitor:
         "state_path": str(tmp_path / "downstream-health.sqlite3"),
         "probe_interval_seconds": 60,
         "failure_threshold": 2,
+        "recovery_successes": 1,
+        "recovery_min_seconds": 0,
+        "reopen_window_seconds": 0,
         "delivery_max_attempts": 2,
         "delivery_backoff_seconds": 0.1,
     }
