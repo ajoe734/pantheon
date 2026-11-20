@@ -32,6 +32,7 @@ def _get_test_pg_dsn() -> str | None:
     for candidate in (
         os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN"),
         os.getenv("TEST_DATABASE_URL"),
+        "postgresql://postgres:postgres@127.0.0.1:26432/postgres",
         "postgresql://postgres:postgres@127.0.0.1:25432/postgres",
         "postgresql://postgres:postgres@127.0.0.1:15432/postgres",
     ):
@@ -568,4 +569,24 @@ def test_mock_postgres_read_visibility_and_query_dispatch(monkeypatch):
 
     # Verify query parameters
     assert any("record_type = %s" in sql and params == ("evidence_bundle", "@t11:tenant-mock:b-mock-1") for sql, params in dispatched)
+
+
+def test_postgres_dedupe_and_unscoped_read_one_bootstrap_indexes(real_pg_tables):
+    """Bootstrap creates concurrent lookup indexes used by dedupe and unscoped reads."""
+    dsn, table = real_pg_tables
+    repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+    try:
+        with repo._get_connection() as conn:
+            indexes = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = %s",
+                    (repo.schema,),
+                ).fetchall()
+            }
+        assert "source_evidence_dedupe_lookup_idx" in indexes
+        assert "source_evidence_object_id_lookup_idx" in indexes
+    finally:
+        repo.close()
+
 

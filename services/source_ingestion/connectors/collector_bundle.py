@@ -370,10 +370,17 @@ class VerifiedBundle:
     verified_through: int | None = None
     # manifest.json + items.jsonl bytes read for this bundle (cache accounting).
     source_bytes: int = 0
+    # Why a producer-partial bundle was acknowledged without delivering rows
+    # ("superseded:<run_id>" or "market_closure:<date>"); empty = unresolved.
+    resolution: str = ""
 
     @property
     def status(self) -> str:
         return str(self.manifest.get("status"))
+
+    @property
+    def unresolved_partial(self) -> bool:
+        return self.status == "partial" and not self.resolution
 
 
 @dataclass(frozen=True)
@@ -417,6 +424,32 @@ BREADTH_GROUPS = ("whole_market", "stocks")
 BREADTH_COUNT_KEYS = ("advancers", "limit_up", "decliners", "limit_down", "unchanged", "untraded", "no_comparison")
 PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
 _BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
+
+
+_PRICE_HISTORY_PEERS = {"collector-tw-twse-price-history": "collector-tw-tpex-price-history",
+                        "collector-tw-tpex-price-history": "collector-tw-twse-price-history"}
+MARKET_CLOSURES_FILE = "market_closures.jsonl"
+
+
+def _run_trade_date(run_id: str) -> str | None:
+    match = _BUNDLE_TRADE_DATE_RE.match(run_id)
+    return match.group(1) if match else None
+
+
+def read_market_closures(state_dir: str | Path) -> list[dict[str, Any]]:
+    """Recorded unscheduled market closures (``<raw_root>/state/market_closures.jsonl``)."""
+    path = Path(state_dir) / MARKET_CLOSURES_FILE
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
 
 
 def _held_codes(symbols: Sequence[str]) -> tuple[str, ...]:
@@ -1012,24 +1045,28 @@ class CollectorBundleAdapter:
             namespace = (id(transport),)
         return (str(self._raw_root().resolve()), self.source_id, namespace)
 
-    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
+    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any],
+                           source_id: str | None = None) -> VerifiedBundle:
         """Reuse only fully verified immutable metadata bound to the live index.
 
         Entries without a digest retain the full-read contract. HTTP authorization
         and local roots isolate cache populations; injected transports are held by
         reference so object-id reuse cannot alias an earlier reader.
         """
+        expected = source_id or self.source_id
         digest = str(entry.get("bundle_sha256") or "").lower()
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+            return verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
         scope = self._metadata_scope(transport)
+        if expected != self.source_id:
+            scope = (*scope[:1], expected, *scope[2:])
         key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
         with _METADATA_CACHE_LOCK:
             cached = _METADATA_CACHE.get(key)
             if cached is not None:
                 _METADATA_CACHE.move_to_end(key)
                 return cached[1]
-        bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        bundle = verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
         size = bundle.source_bytes
         if size <= VERIFIED_METADATA_CACHE_BYTES:
             with _METADATA_CACHE_LOCK:
@@ -1049,7 +1086,7 @@ class CollectorBundleAdapter:
         if not self._priority_latest_enabled():
             return verify_bundle(transport, expected_source_id=expected_source_id, entry=entry,
                                  item_window=item_window, deadline=deadline, raw_read_concurrency=raw_read_concurrency)
-        bundle = self._verified_metadata(transport, entry)
+        bundle = self._verified_metadata(transport, entry, expected_source_id)
         return _verify_raw_window(transport, bundle, item_window=item_window,
                                   deadline=deadline if deadline is not None else _OP_DEADLINE.get(),
                                   raw_read_concurrency=raw_read_concurrency)
@@ -1139,7 +1176,7 @@ class CollectorBundleAdapter:
                 if known_day is not None and known_day < best[0]:
                     continue  # proven earlier session for this exact bundle; not a candidate
             bundle = self._verified_metadata(transport, entry)
-            if not bundle.items:
+            if bundle.status != "complete" or not bundle.items:
                 continue
             trade_date = _bundle_trade_date(entry, bundle.items)
             if "trade_date" in bundle.manifest:
@@ -1288,6 +1325,7 @@ class CollectorBundleAdapter:
         window_stops: dict[str, int] = {}
         remaining = max(total_cap, 1)
         unverified_pending = False
+        closures: list[dict[str, Any]] = []
         deadline = _OP_DEADLINE.get()
         if deadline is None and self.read_budget_seconds is not None:
             deadline = time.monotonic() + max(self.read_budget_seconds, 0.0)
@@ -1354,6 +1392,18 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
+                if self.source_id in _PRICE_HISTORY_PEERS and self.source_type == "market":
+                    # Resolve a producer-partial bundle from verified metadata before any raw read.
+                    metadata_bundle = metadata_bundle or self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "partial":
+                        early = self._resolve_partial_bundle(transport, metadata_bundle, source_entries, deadline)
+                        if early is not None:
+                            verified.append(replace(metadata_bundle, items=(), resolution=early[0]))
+                            acknowledged_only_keys.add(key)
+                            window_stops[key] = 0
+                            if early[1] is not None:
+                                closures.append(early[1])
+                            continue
                 with _METADATA_CACHE_LOCK:
                     # The bundle whose raw rows this pull windows is the one being backfilled.
                     reading_set = _HISTORY_READING.setdefault(self._metadata_scope(transport), set())
@@ -1379,6 +1429,16 @@ class CollectorBundleAdapter:
                 raise
             verified.append(bundle)
             window_stops[bundle.cursor] = skip + remaining
+            if bundle.status == "partial":
+                resolution = self._resolve_partial_bundle(transport, bundle, source_entries, deadline)
+                if resolution is not None:
+                    # Acknowledged without delivering its rows (traversal only, like a rejected bundle).
+                    verified[-1] = replace(bundle, items=(), resolution=resolution[0])
+                    window_stops[bundle.cursor] = 0
+                    acknowledged_only_keys.add(bundle.cursor)
+                    if resolution[1] is not None:
+                        closures.append(resolution[1])
+                    continue
             if bundle.verified_through is not None:
                 # Read budget exhausted mid-window: later rows/bundles stay pending.
                 unverified_pending = True
@@ -1463,6 +1523,11 @@ class CollectorBundleAdapter:
         )
         if rejected:
             observed = {**observed, "rejected_bundles": rejected}
+        resolved = [{"run_id": b.run_id, "resolution": b.resolution} for b in verified if b.resolution]
+        if resolved:
+            observed = {**observed, "resolved_partial_bundles": resolved}
+        if closures and not _DEFER_ACK.get():
+            self._record_market_closures(closures)
         if rejected_items:
             observed = {**observed, "rejected_items": rejected_items, "rejected_item_count": len(rejected_items)}
         no_new_data = bool(verified and boundary is not None
@@ -1506,6 +1571,7 @@ class CollectorBundleAdapter:
         )
         if _DEFER_ACK.get():
             def acknowledge() -> None:
+                self._record_market_closures(closures)
                 self._commit_governed_features(replace(plan, rows=selected), limit=None,
                                                trace_id=trace_id, persisted=True)
                 if complete and boundary is not None and next_cursor == boundary.cursor and not feature_rejected:
@@ -1513,6 +1579,96 @@ class CollectorBundleAdapter:
                 self.save_resume_cursor(result)
             result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
         return result
+
+    # -- partial bundle resolution -------------------------------------------------
+    def _resolve_partial_bundle(
+        self, transport: BundleTransport, bundle: VerifiedBundle,
+        source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
+    ) -> tuple[str, dict[str, Any] | None] | None:
+        """Why a producer-partial price bundle may be acknowledged without rows, else None.
+
+        Only the two price-history sources resolve, and only on independent evidence:
+        a later complete bundle of the same source for the same trade date (the rows come
+        from that bundle once), or an unscheduled closure confirmed by both venues.
+        Anything else keeps the sweep stopped (None).
+        """
+        if self.source_type != "market" or self.source_id not in _PRICE_HISTORY_PEERS:
+            return None
+        trade_day = _run_trade_date(bundle.run_id)
+        if trade_day is None:
+            return None
+        try:
+            for key, entry in source_entries:
+                if key <= bundle.cursor or _run_trade_date(str(entry.get("run_id") or "")) != trade_day:
+                    continue
+                later = self._verify_ordered_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if (later.status == "complete" and later.items
+                        and {str(r.get("trade_date") or "") for r in later.items} == {trade_day}):
+                    return f"superseded:{later.run_id}", None
+            if bundle.items or bundle.manifest.get("reason") != "no_data_for_date":
+                return None
+            return self._confirm_market_closure(transport, bundle, trade_day, source_entries, deadline)
+        except (SourceEvidenceError, ValueError, OSError):
+            return None
+
+    def _confirm_market_closure(
+        self, transport: BundleTransport, bundle: VerifiedBundle, trade_day: str,
+        source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        # The sweep must not have any complete bundle of this date on this venue.
+        for _, entry in source_entries:
+            if _run_trade_date(str(entry.get("run_id") or "")) == trade_day and entry.get("run_id") != bundle.run_id:
+                other = self._verify_ordered_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if other.status == "complete" or other.items:
+                    return None
+        peer_id = _PRICE_HISTORY_PEERS[self.source_id]
+        peer_index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
+        peer_runs = []
+        for entry in peer_index.get("bundles", []):
+            if (isinstance(entry, dict) and str(entry.get("source_id") or "") == peer_id
+                    and _run_trade_date(str(entry.get("run_id") or "")) == trade_day):
+                peer = self._verify_ordered_bundle(
+                    transport, expected_source_id=peer_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if peer.status == "complete" or peer.items:
+                    return None
+                peer_runs.append(peer)
+        if not peer_runs or any(p.status != "partial" or p.manifest.get("reason") != "no_data_for_date" for p in peer_runs):
+            return None
+        day = date.fromisoformat(trade_day)
+        if day.weekday() >= 5 or not self._calendar_lists_session(trade_day):
+            return None
+        record = {"trade_date": trade_day, "kind": "unscheduled_market_closure",
+                  "evidence": "both_venues_no_data_for_date_on_scheduled_session",
+                  "bundles": sorted([f"{self.source_id}:{bundle.run_id}", f"{peer_id}:{peer_runs[0].run_id}"])}
+        return f"market_closure:{trade_day}", record
+
+    def _calendar_lists_session(self, trade_day: str) -> bool:
+        """The governed holiday calendar covers the year and does not close ``trade_day`` on both venues."""
+        from ..candidate_pool_market_feed import _partitions, _read_closed_days
+        from ..survivorship_attestation import HOLIDAY_DATASET
+
+        closed = _read_closed_days(_partitions(self._raw_root(), HOLIDAY_DATASET))
+        year = trade_day[:4]
+        return trade_day not in closed and any(d.startswith(year) for d in closed)
+
+    def _market_closures_path(self) -> Path:
+        return self._raw_root() / "state" / MARKET_CLOSURES_FILE
+
+    def _record_market_closures(self, closures: Sequence[Mapping[str, Any]]) -> None:
+        """Append-only closure ledger (one ~300 byte line per closure date, kept indefinitely)."""
+        if not closures:
+            return
+        path = self._market_closures_path()
+        known = {r.get("trade_date") for r in read_market_closures(path.parent)}
+        fresh = [c for c in closures if c["trade_date"] not in known]
+        if not fresh:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            for record in fresh:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
 
     # -- durable resume cursor (capped public pulls) -------------------------------
     def _resume_cursor_path(self) -> Path:
@@ -1913,7 +2069,7 @@ class CollectorBundleAdapter:
             if bundle.status == "paused":
                 break
             next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
-                           if bundle.status == "partial" else bundle.cursor)
+                           if bundle.unresolved_partial else bundle.cursor)
         records = list(all_records[:budget])
         # Truncation must not skip unconsumed bundles: advance the cursor past whole
         # bundles fully represented in `records`. A bundle larger than the remaining
@@ -1939,7 +2095,7 @@ class CollectorBundleAdapter:
                     break
                 running += n
                 next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
-                               if bundle.status == "partial" else bundle.cursor)
+                               if bundle.unresolved_partial else bundle.cursor)
                 consumed_bundles.append(bundle)
             keep_ids = {id(b) for b in consumed_bundles}
             raw_plan = [(b, x) for b, x in raw_plan if id(b) in keep_ids]

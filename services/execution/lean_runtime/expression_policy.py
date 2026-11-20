@@ -18,6 +18,8 @@ import json
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable, Mapping, Sequence
 
+from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+
 POLICY_VERSION = "1.0"
 POLICY_KIND = "notional_target_v1"
 
@@ -253,6 +255,46 @@ def clamped_units(candidate: Mapping[str, Any], target: Decimal) -> int:
     return int(min(max(raw, Decimal(1)), Decimal(int(candidate["max_units_by_risk"]))))
 
 
+def _cash_buy_required(candidate: Mapping[str, Any], units: int) -> Decimal:
+    """Cash a cash-share buy needs: notional plus commission (single shared source)."""
+    return _dec(
+        buy_cash_required(
+            candidate.get("underlying") or str(candidate["instrument_id"]).split(":", 1)[-1],
+            units * int(candidate.get("unit") or 1),
+            float(candidate["price"]),
+        )
+    )
+
+
+def fit_cash_share_buy(
+    candidate: Mapping[str, Any],
+    units: int,
+    target: Decimal,
+    budget: Mapping[str, Any],
+    *,
+    floor_one: bool = False,
+) -> int:
+    """Shrink a cash-share buy until notional plus commission fits.
+
+    The cap is ``min(target, available_cash)`` using ``taiwan_cash_costs`` (the
+    same cost the ledger and paper risk gate charge). ``floor_one`` keeps one unit
+    when the target alone is below its cost but cash still affords it. Returns 0
+    when even one unit plus commission exceeds available cash.
+    """
+    available = budget.get("available_cash")
+    cash_cap = _dec(available) if available is not None else None
+    one = _cash_buy_required(candidate, 1)
+    if cash_cap is not None and one > cash_cap:
+        return 0
+    cap = target if cash_cap is None else min(target, cash_cap)
+    units = int(units)
+    while units > 1 and _cash_buy_required(candidate, units) > cap:
+        units -= 1
+    if units < 1 or (_cash_buy_required(candidate, units) > cap and not floor_one):
+        return 0
+    return units
+
+
 def round_trip_cost_per_unit(candidate: Mapping[str, Any]) -> Decimal:
     return _dec(candidate.get("fee_per_unit_per_side") or 0) * 2 + _unit_notional(
         candidate
@@ -456,9 +498,17 @@ def decide(
     for c in feasible:
         per_unit = _unit_notional(c)
         units = clamped_units(c, target)
+        if direction == "LONG" and c.get("kind") == "cash_share":
+            units = fit_cash_share_buy(c, units, target, budget, floor_one=True)
+            if units < 1:
+                continue
         score = abs(units * per_unit - target) + units * round_trip_cost_per_unit(c)
         scored.append((score, per_unit, str(c["instrument_id"]), c, units))
     scored.sort(key=lambda item: (item[0], item[1], item[2]))
+    if not scored:
+        return _no_trade(
+            view, candidates, "no_feasible_instrument", "insufficient_cash_for_commission"
+        )
     score, _, instrument_id, winner, units = scored[0]
 
     # Step 6: reason code.
@@ -664,6 +714,8 @@ def decide_target_position(view, candidates, book, budget, parameters):
     for c in feasible:
         unit = _unit_notional(c)
         units = min(clamped_units(c, delta), int(delta / unit))
+        if units >= 1 and direction == "LONG" and c.get("kind") == "cash_share":
+            units = fit_cash_share_buy(c, units, delta, budget)
         if units < 1:
             continue
         score = abs(units * unit - delta) + units * round_trip_cost_per_unit(c)

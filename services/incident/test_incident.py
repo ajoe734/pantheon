@@ -46,7 +46,10 @@ from services.incident.incident import (
     ORPHAN_RECOVERED_RESOLUTION_REASON,
     Postmortem,
     PostmortemStatus,
+    _merge_summary,
+    build_incident_timeline,
     canonical_monitor_agent_finding_key,
+    derive_incident_summary_fields,
     extract_incident_last_observed_at,
     extract_incident_resolution_reason,
     extract_infrastructure_incident_component,
@@ -652,37 +655,65 @@ class TestLineageEdgeCoverage(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestIncidentEvidenceMergeBound(unittest.TestCase):
-    def test_merge_incident_evidence_bounds_evidence_summary_at_4000(self):
+    def test_merge_incident_evidence_replaces_single_report_summary_and_increments_occurrences(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = IncidentStore(path=Path(tmpdir) / "incidents.json")
             inc = _make_incident(
                 incident_id="inc-bound-001",
+                created_at="2026-11-18T11:36:14Z",
                 evidence_summary="Initial breach report",
                 telemetry_event_ids=["te-0"],
                 reconciliation_ids=["rec-0"],
+                kind="drift",
+                metric="rolling_drawdown_multiple",
+                observed=1.30,
+                threshold=1.25,
+                comparator="gt",
+                occurrence_count=1,
+                first_seen_at="2026-11-18T11:36:14Z",
+                last_seen_at="2026-11-18T11:36:14Z",
             )
             store.create_incident(inc)
 
             for i in range(1, 30):
                 incoming = _make_incident(
                     incident_id="inc-bound-001",
+                    created_at=f"2026-11-18T12:{i:02d}:00Z",
                     evidence_summary=f"Drift report breach #{i} with details: " + ("x" * 200),
                     telemetry_event_ids=[f"te-{i}"],
                     reconciliation_ids=[f"rec-{i}"],
+                    kind="drift",
+                    metric="rolling_drawdown_multiple",
+                    observed=1.30 + (i * 0.1),
+                    threshold=1.25,
+                    comparator="gt",
                 )
                 updated = store.merge_incident_evidence("inc-bound-001", incoming)
-                self.assertLessEqual(len(updated.evidence_summary), 4000)
+                self.assertEqual(
+                    updated.evidence_summary,
+                    f"Drift report breach #{i} with details: " + ("x" * 200),
+                )
+                self.assertNotIn("Drift report breach #0", updated.evidence_summary)
+                self.assertEqual(updated.occurrence_count, i + 1)
 
             final = store.get_incident("inc-bound-001")
             self.assertIsNotNone(final)
-            self.assertLessEqual(len(final.evidence_summary), 4000)
-            self.assertIn("[older entries dropped] ", final.evidence_summary)
-            self.assertTrue(final.evidence_summary.endswith("Drift report breach #29 with details: " + ("x" * 200)))
+            self.assertEqual(
+                final.evidence_summary,
+                "Drift report breach #29 with details: " + ("x" * 200),
+            )
+            self.assertNotIn("[older entries dropped] ", final.evidence_summary)
+            self.assertEqual(final.occurrence_count, 30)
+            self.assertEqual(final.first_seen_at, "2026-11-18T11:36:14Z")
+            self.assertEqual(final.last_seen_at, "2026-11-18T12:29:00Z")
+            self.assertAlmostEqual(final.observed, 4.20)
             for i in range(30):
                 self.assertIn(f"te-{i}", final.telemetry_event_ids)
                 self.assertIn(f"rec-{i}", final.reconciliation_ids)
             self.assertEqual(len(final.telemetry_event_ids), 30)
             self.assertEqual(len(final.reconciliation_ids), 30)
+            timeline = build_incident_timeline(final)
+            self.assertEqual(len(timeline), 30)
 
     def test_merge_incident_evidence_reduces_existing_oversized_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -704,9 +735,8 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
                 reconciliation_ids=["rec-new-1"],
             )
             updated = store.merge_incident_evidence("inc-bound-002", incoming)
-            self.assertLessEqual(len(updated.evidence_summary), 4000)
-            self.assertIn("[older entries dropped] ", updated.evidence_summary)
-            self.assertIn("Newest incoming breach report 2026-10-09", updated.evidence_summary)
+            self.assertEqual(updated.evidence_summary, "Newest incoming breach report 2026-10-09")
+            self.assertEqual(updated.occurrence_count, 3)
             self.assertEqual(
                 set(updated.telemetry_event_ids),
                 {"te-old-1", "te-old-2", "te-new-1"},
@@ -716,7 +746,7 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
                 {"rec-old-1", "rec-new-1"},
             )
 
-    def test_merge_incident_evidence_truncated_summary_retains_marker_and_whole_field(self):
+    def test_merge_incident_evidence_bounds_single_oversized_incoming_and_dedupes_repeat(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = IncidentStore(path=Path(tmpdir) / "incidents.json")
             inc = _make_incident(
@@ -728,31 +758,25 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
             for i in range(40):
                 incoming = _make_incident(
                     incident_id="inc-bound-003",
-                    evidence_summary=f"metric_{i}=drawdown; value_{i}=0.{i:03d}; details_{i}=" + ("e" * 300),
+                    evidence_summary=f"metric_{i}=drawdown; observed=0.{i:03d}; details_{i}=" + ("e" * 300),
                 )
                 store.merge_incident_evidence("inc-bound-003", incoming)
 
-            truncated = store.get_incident("inc-bound-003")
-            self.assertIsNotNone(truncated)
-            self.assertLessEqual(len(truncated.evidence_summary), 4000)
-            self.assertTrue(truncated.evidence_summary.startswith("[older entries dropped] "))
-            tail = truncated.evidence_summary[len("[older entries dropped] "):]
-            first_field = tail.split(";")[0].strip()
-            self.assertTrue(first_field.startswith("metric_"), f"Expected whole field but got: {first_field}")
-            self.assertIn("=", first_field)
-            self.assertTrue(truncated.evidence_summary.endswith("details_39=" + ("e" * 300)))
+            latest = store.get_incident("inc-bound-003")
+            self.assertIsNotNone(latest)
+            self.assertLessEqual(len(latest.evidence_summary), 4000)
+            self.assertTrue(latest.evidence_summary.startswith("metric_39=drawdown;"))
+            self.assertNotIn("metric_38=", latest.evidence_summary)
+            self.assertEqual(latest.occurrence_count, 41)
+            self.assertAlmostEqual(latest.observed, 0.039)
 
             short_incoming = _make_incident(
                 incident_id="inc-bound-003",
                 evidence_summary="short_metric=breach",
             )
             updated_short = store.merge_incident_evidence("inc-bound-003", short_incoming)
-            self.assertLessEqual(len(updated_short.evidence_summary), 4000)
-            self.assertTrue(updated_short.evidence_summary.startswith("[older entries dropped] "))
-            self.assertTrue(updated_short.evidence_summary.endswith("short_metric=breach"))
-            tail_short = updated_short.evidence_summary[len("[older entries dropped] "):]
-            first_field_short = tail_short.split(";")[0].strip()
-            self.assertTrue(first_field_short.startswith("metric_"), f"Expected whole field but got: {first_field_short}")
+            self.assertEqual(updated_short.evidence_summary, "short_metric=breach")
+            self.assertEqual(updated_short.occurrence_count, 42)
 
             dup_incoming = _make_incident(
                 incident_id="inc-bound-003",
@@ -760,8 +784,7 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
             )
             updated_dup = store.merge_incident_evidence("inc-bound-003", dup_incoming)
             self.assertEqual(updated_dup.evidence_summary, updated_short.evidence_summary)
-            self.assertTrue(updated_dup.evidence_summary.startswith("[older entries dropped] "))
-            self.assertLessEqual(len(updated_dup.evidence_summary), 4000)
+            self.assertEqual(updated_dup.occurrence_count, 42)
 
     def test_merge_incident_evidence_skips_save_when_unchanged(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1127,6 +1150,330 @@ class TestInfrastructureIncidentOrphanResolve(unittest.TestCase):
             self.assertEqual(store.require_incident("infra-bff-cap-active").status, IncidentStatus.OPEN.value)
             self.assertEqual(store.require_incident("agent-keep-open-001").status, IncidentStatus.OPEN.value)
             self.assertEqual(store.require_incident("inc-runtime-keep-open").status, IncidentStatus.OPEN.value)
+
+
+# ---------------------------------------------------------------------------
+# INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120 (RC6 WP6.1)
+# ---------------------------------------------------------------------------
+
+_HOSTED_INC_DRIFT_5F668EC4C8D9_EVIDENCE_SUMMARY = (
+    "[older entries dropped] DriftReport drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown; "
+    "cluster=drift:drawdown; reconciliation_ids=drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown,"
+    "recon-76586033-ad6a-4f09-ae0d-9a2e756617a5,eval-76586033-ad6a-4f09-ae0d-9a2e756617a5; "
+    "telemetry_event_ids=76586033-ad6a-4f09-ae0d-9a2e756617a5; worst_metric=drawdown; "
+    "threshold_metric=rolling_drawdown_multiple; observed=9.609309450237793; comparator=gt; "
+    "threshold_value=1.25; threshold_window=paper-daily-sweep; "
+    "policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+    "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision; "
+    "DriftReport drift-0b7a8a43-5c02-403e-970f-1a637517a78a-drawdown; cluster=drift:drawdown; "
+    "reconciliation_ids=drift-0b7a8a43-5c02-403e-970f-1a637517a78a-drawdown,"
+    "recon-0b7a8a43-5c02-403e-970f-1a637517a78a,eval-0b7a8a43-5c02-403e-970f-1a637517a78a; "
+    "telemetry_event_ids=0b7a8a43-5c02-403e-970f-1a637517a78a; worst_metric=drawdown; "
+    "threshold_metric=rolling_drawdown_multiple; observed=9.609309450237793; comparator=gt; "
+    "threshold_value=1.25; threshold_window=paper-daily-sweep; "
+    "policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+    "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision; "
+    "DriftReport drift-94f2d4bb-75e5-4f50-ae40-53124d5872e7-drawdown; cluster=drift:drawdown; "
+    "reconciliation_ids=drift-94f2d4bb-75e5-4f50-ae40-53124d5872e7-drawdown,"
+    "recon-94f2d4bb-75e5-4f50-ae40-53124d5872e7,eval-94f2d4bb-75e5-4f50-ae40-53124d5872e7; "
+    "telemetry_event_ids=94f2d4bb-75e5-4f50-ae40-53124d5872e7; worst_metric=drawdown; "
+    "threshold_metric=rolling_drawdown_multiple; observed=9.609309450237793; comparator=gt; "
+    "threshold_value=1.25; threshold_window=paper-daily-sweep; "
+    "policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+    "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision; "
+    "DriftReport drift-bf92e54f-13a9-4a76-b7a2-875427646c5c-drawdown; cluster=drift:drawdown; "
+    "reconciliation_ids=drift-bf92e54f-13a9-4a76-b7a2-875427646c5c-drawdown,"
+    "recon-bf92e54f-13a9-4a76-b7a2-875427646c5c,eval-bf92e54f-13a9-4a76-b7a2-875427646c5c; "
+    "telemetry_event_ids=bf92e54f-13a9-4a76-b7a2-875427646c5c; worst_metric=drawdown; "
+    "threshold_metric=rolling_drawdown_multiple; observed=9.609309450237793; comparator=gt; "
+    "threshold_value=1.25; threshold_window=paper-daily-sweep; "
+    "policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+    "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision"
+)
+
+_CURRENT_DEV_INCIDENT_CASE_FIELDS = frozenset({
+    "incident_id",
+    "title",
+    "status",
+    "severity",
+    "created_at",
+    "binding_id",
+    "deployment_stage",
+    "deployment_plan_id",
+    "capital_pool_id",
+    "persona_capital_binding_id",
+    "artifact_id",
+    "artifact_version",
+    "runtime_id",
+    "trace_id",
+    "resolved_at",
+    "telemetry_event_ids",
+    "reconciliation_ids",
+    "incident_cluster_id",
+    "evidence_summary",
+    "lineage_ref",
+    "threshold_identity",
+})
+
+
+class TestIncidentHumanSummaryAndOccurrences(unittest.TestCase):
+    def test_reproduce_current_dev_four_drift_reports_vs_bounded_single_report_update(self):
+        """Acceptance 1, 2, 3: Reproduce current dev (BFF fb8ed951d, 2026-11-20 sweep)
+        where feeding 4 DriftReports for one binding (cluster drift:drawdown;
+        observed 9.609309450237793; threshold 1.25) concatenated evidence_summary
+        and showed that log as the inbox body, then verify the new bounded store
+        behavior updates occurrence_count, last_seen_at, and observed without
+        growing evidence_summary.
+        """
+        from services.incidents.consumer import (
+            DriftReportIncidentConsumer,
+            build_incident_from_drift_report,
+        )
+
+        event_ids = [
+            "76586033-ad6a-4f09-ae0d-9a2e756617a5",
+            "0b7a8a43-5c02-403e-970f-1a637517a78a",
+            "94f2d4bb-75e5-4f50-ae40-53124d5872e7",
+            "bf92e54f-13a9-4a76-b7a2-875427646c5c",
+        ]
+        timestamps = [
+            "2026-11-18T11:36:14Z",
+            "2026-11-18T12:36:14Z",
+            "2026-11-18T13:36:14Z",
+            "2026-11-18T14:36:14Z",
+        ]
+        reports = []
+        for eid, ts in zip(event_ids, timestamps):
+            reports.append(
+                {
+                    "drift_report_id": f"drift-{eid}-drawdown",
+                    "recon_run_id": f"recon-{eid}",
+                    "evaluation_id": f"eval-{eid}",
+                    "incident_cluster_id": "drift:drawdown",
+                    "drift_type": "pnl",
+                    "status": "open",
+                    "severity": "medium",
+                    "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+                    "runtime_id": "runtime-paper-persona-1",
+                    "deployment_stage": "paper",
+                    "deployment_plan_id": "plan-paper-persona-1",
+                    "capital_pool_id": "pool-paper-persona-1",
+                    "persona_capital_binding_id": "pcb-paper-persona-1",
+                    "artifact_id": "artifact-paper-persona-1",
+                    "artifact_version": "1.0.0",
+                    "trace_id": f"trace-{eid}",
+                    "telemetry_event_ids": [eid],
+                    "worst_metric": "drawdown",
+                    "threshold_metric": "rolling_drawdown_multiple",
+                    "observed": 9.609309450237793,
+                    "comparator": "gt",
+                    "threshold_value": 1.25,
+                    "threshold_window": "paper-daily-sweep",
+                    "policy_source": (
+                        "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+                        "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/"
+                        "EVOLOOP-005-governed-baselines.md#governance-decision"
+                    ),
+                    "generated_at": ts,
+                }
+            )
+
+        # 1. Reproduce current-dev (fb8ed951d) behavior: _merge_summary appended each DriftReport
+        # and current-dev _human_inbox_incident_item fell back to record["evidence_summary"].
+        legacy_appended_summary = ""
+        for rep in reports:
+            built = build_incident_from_drift_report(rep)
+            legacy_appended_summary = _merge_summary(legacy_appended_summary, built.evidence_summary or "")
+        current_dev_inbox_body = None or legacy_appended_summary
+        self.assertEqual(current_dev_inbox_body.count("DriftReport drift-"), 4)
+        self.assertIn("observed=9.609309450237793", current_dev_inbox_body)
+        self.assertIn("threshold_value=1.25", current_dev_inbox_body)
+        self.assertIn("EVOLOOP-005-governed-baselines.md#governance-decision", current_dev_inbox_body)
+
+        # 2. Verify new DriftReportIncidentConsumer + IncidentStore behavior on the same 4 reports
+        store = IncidentStore(path=None)
+        consumer = DriftReportIncidentConsumer(incident_store=store)
+        results = [consumer.consume(rep) for rep in reports]
+        self.assertTrue(results[0].created)
+        self.assertFalse(results[1].created)
+        self.assertFalse(results[2].created)
+        self.assertFalse(results[3].created)
+
+        persisted = store.require_incident(results[-1].incident.incident_id)
+        self.assertEqual(persisted.kind, "drift")
+        self.assertEqual(persisted.metric, "rolling_drawdown_multiple")
+        self.assertAlmostEqual(persisted.observed, 9.609309450237793)
+        self.assertAlmostEqual(persisted.threshold, 1.25)
+        self.assertEqual(persisted.comparator, "gt")
+        self.assertEqual(persisted.occurrence_count, 4)
+        self.assertEqual(persisted.first_seen_at, "2026-11-18T11:36:14Z")
+        self.assertEqual(persisted.last_seen_at, "2026-11-18T14:36:14Z")
+
+        # evidence_summary holds only the latest single report, never an appended log
+        self.assertEqual((persisted.evidence_summary or "").count("DriftReport drift-"), 1)
+        self.assertIn(f"DriftReport drift-{event_ids[-1]}-drawdown", persisted.evidence_summary or "")
+        self.assertNotIn(f"DriftReport drift-{event_ids[0]}-drawdown", persisted.evidence_summary or "")
+
+        # Every report stays retrievable as a timeline entry and evidence reference
+        self.assertEqual(persisted.telemetry_event_ids, event_ids)
+        for eid in event_ids:
+            self.assertIn(f"drift-{eid}-drawdown", persisted.reconciliation_ids)
+        timeline = build_incident_timeline(persisted)
+        self.assertEqual(len(timeline), 4)
+        self.assertEqual(
+            [entry["source_ref"] for entry in timeline],
+            [f"drift-{eid}-drawdown" for eid in event_ids],
+        )
+
+    def test_existing_stored_incident_with_appended_evidence_summary_derives_at_read_time_without_rewrite(self):
+        """Acceptance 6: Existing incidents with an appended evidence_summary get a
+        summary derived from their stored fields at read time; no stored row is
+        rewritten by a migration.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "incidents.json"
+            legacy_raw_row = {
+                "incident_id": "inc-drift-5f668ec4c8d9",
+                "title": "Drift threshold breach: drift:drawdown for rb-3823397e125e4579ba5f4174067087ed",
+                "status": "open",
+                "severity": "medium",
+                "created_at": "2026-11-18T11:36:14Z",
+                "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+                "deployment_stage": "paper",
+                "deployment_plan_id": "plan-3823397e125e4579ba5f4174067087ed",
+                "capital_pool_id": "pool-3823397e125e4579ba5f4174067087ed",
+                "persona_capital_binding_id": "pcb-3823397e125e4579ba5f4174067087ed",
+                "artifact_id": "artifact-3823397e125e4579ba5f4174067087ed",
+                "artifact_version": "1.0.0",
+                "runtime_id": "runtime-3823397e125e4579ba5f4174067087ed",
+                "trace_id": "trace-76586033-ad6a-4f09-ae0d-9a2e756617a5",
+                "incident_cluster_id": "drift:drawdown",
+                "telemetry_event_ids": [
+                    "76586033-ad6a-4f09-ae0d-9a2e756617a5",
+                    "0b7a8a43-5c02-403e-970f-1a637517a78a",
+                    "94f2d4bb-75e5-4f50-ae40-53124d5872e7",
+                    "bf92e54f-13a9-4a76-b7a2-875427646c5c",
+                ],
+                "reconciliation_ids": [
+                    "drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown",
+                    "drift-0b7a8a43-5c02-403e-970f-1a637517a78a-drawdown",
+                    "drift-94f2d4bb-75e5-4f50-ae40-53124d5872e7-drawdown",
+                    "drift-bf92e54f-13a9-4a76-b7a2-875427646c5c-drawdown",
+                ],
+                "evidence_summary": _HOSTED_INC_DRIFT_5F668EC4C8D9_EVIDENCE_SUMMARY,
+            }
+            path.write_text(json.dumps({"incidents": [legacy_raw_row], "postmortems": []}, indent=2))
+            bytes_before = path.read_bytes()
+
+            store = IncidentStore(path=path)
+            loaded = store.require_incident("inc-drift-5f668ec4c8d9")
+            derived = derive_incident_summary_fields(loaded)
+
+            self.assertEqual(derived["kind"], "drift")
+            self.assertEqual(derived["metric"], "rolling_drawdown_multiple")
+            self.assertAlmostEqual(derived["observed"], 9.609309450237793)
+            self.assertAlmostEqual(derived["threshold"], 1.25)
+            self.assertEqual(derived["comparator"], "gt")
+            self.assertEqual(derived["occurrence_count"], 4)
+            self.assertEqual(derived["first_seen_at"], "2026-11-18T11:36:14Z")
+            self.assertEqual(derived["last_seen_at"], "2026-11-18T11:36:14Z")
+            self.assertEqual(derived["summary_key"], "incident.summary.drift_threshold_breach")
+            self.assertEqual(
+                derived["summary"],
+                "Observed rolling drawdown multiple 9.61 (> 1.25) across 4 occurrences.",
+            )
+            self.assertNotIn("DriftReport", derived["summary"])
+            self.assertNotIn("policy_source=", derived["summary"])
+            self.assertEqual(len(derived["timeline"]), 4)
+            # Stored row on disk is completely untouched
+            self.assertEqual(path.read_bytes(), bytes_before)
+
+    def test_rollback_reader_current_dev_from_dict_reads_new_rows_without_error(self):
+        """Acceptance 5: Rows written by the new code are read without error by
+        the current dev IncidentCase.from_dict.
+        """
+        from services.incidents.consumer import (
+            build_incident_from_agent_finding_payload,
+            build_incident_from_drift_report,
+            build_incident_from_infrastructure_health_payload,
+        )
+
+        drift_inc = build_incident_from_drift_report(
+            {
+                "drift_report_id": "drift-rb-001",
+                "recon_run_id": "recon-rb-001",
+                "incident_cluster_id": "drift:drawdown",
+                "status": "open",
+                "severity": "high",
+                "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+                "runtime_id": "runtime-rb-001",
+                "deployment_stage": "paper",
+                "deployment_plan_id": "plan-rb-001",
+                "capital_pool_id": "pool-rb-001",
+                "persona_capital_binding_id": "pcb-rb-001",
+                "artifact_id": "art-rb-001",
+                "artifact_version": "1.0.0",
+                "trace_id": "trace-rb-001",
+                "telemetry_event_ids": ["evt-rb-001"],
+                "threshold_metric": "rolling_drawdown_multiple",
+                "observed": 9.609309450237793,
+                "threshold_value": 1.25,
+                "comparator": "gt",
+                "generated_at": "2026-11-20T01:00:00Z",
+            }
+        )
+        agent_inc = build_incident_from_agent_finding_payload(
+            {
+                "fingerprint": "drawdown:persona-a",
+                "title": "Drawdown spike",
+                "severity": "high",
+                "rationale": "drawdown 9% with no incident",
+                "snapshot_ref": "monitor-snapshot-20261120T010000Z-112233445566",
+                "observed_at": "2026-11-20T01:00:00Z",
+            }
+        )
+        infra_inc = build_incident_from_infrastructure_health_payload(
+            {
+                "schema_version": "pantheon.infrastructure-incident/1",
+                "incident_id": "infra-bff-rollback-001",
+                "tenant_id": "default",
+                "producer": "control-plane-bff",
+                "source_event_id": "evt-infra-rb-001",
+                "title": "BFF downstream degradation: execution",
+                "status": "open",
+                "severity": "high",
+                "created_at": "2026-11-20T01:00:00Z",
+                "component": {
+                    "service_name": "execution",
+                    "component_kind": "http_service",
+                    "endpoint": "http://execution:8007/healthz",
+                },
+                "evidence_summary": "health_probe observed 3/3 failures",
+            }
+        )
+
+        for new_inc in (drift_inc, agent_inc, infra_inc):
+            serialized = new_inc.to_dict()
+            for field_name in (
+                "kind",
+                "metric",
+                "observed",
+                "threshold",
+                "comparator",
+                "occurrence_count",
+                "first_seen_at",
+                "last_seen_at",
+            ):
+                self.assertIn(field_name, serialized)
+                self.assertIsNotNone(serialized[field_name])
+
+            # Simulate current-dev IncidentCase.from_dict filtering by _CURRENT_DEV_INCIDENT_CASE_FIELDS
+            current_dev_filtered = {
+                k: v for k, v in serialized.items() if k in _CURRENT_DEV_INCIDENT_CASE_FIELDS
+            }
+            rollback_loaded = IncidentCase(**current_dev_filtered)
+            self.assertEqual(rollback_loaded.incident_id, new_inc.incident_id)
+            self.assertEqual(rollback_loaded.binding_id, new_inc.binding_id)
 
 
 if __name__ == "__main__":

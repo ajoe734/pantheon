@@ -85,3 +85,36 @@ def test_bff_credential_unconfigured_fails_closed():
     ports = HttpPoolCyclePorts(env={})
     with pytest.raises(RuntimeError, match="owner_credential_unconfigured:bff"):
         ports.publish_pool(PERSONA, 1)
+
+
+def test_dead_lettered_consultation_is_named_failed_and_replaced_once_per_failure():
+    opened, requests = [], []
+
+    class Client:
+        def list_requests(self, **kw): return list(requests)
+        def list_memos(self, **kw): return []
+        def open_persona_panel(self, requirement, **kw):
+            opened.append(kw["request_id"])
+            requests.append({"request_id": kw["request_id"], "status": "submitted", "from_persona_id": kw["persona_id"],
+                             "metadata": {"panel": requirement.to_panel_metadata()}})
+            return {"request_id": kw["request_id"]}
+
+    ports = HttpPoolCyclePorts(lambda *a, **k: {}, consultation_factory=lambda t, a=None: Client(),
+                               pool_store=SimpleNamespace(), env={})
+    p = pool(m("a"), version=3)
+    assert ports.envelope_publication_consultation(PERSONA, p, "k1")["state"] == "opened"
+    for failure in range(1, ct and 3):
+        requests[-1]["status"] = "failed"  # the executor named it failed after the recovery budget
+        out = ports.envelope_publication_consultation(PERSONA, p, f"k{failure + 1}")
+        assert out["state"] == "failed" and out["reason"] == "consultation_dead_lettered"
+        assert out["replacement_opened"] and out["request_id"] == opened[-1] and out["failed_request_id"] != out["request_id"]
+        # the next cycle waits on the live replacement, not on the failed one
+        assert ports.envelope_publication_consultation(PERSONA, p, "again")["state"] == "pending"
+    assert len(opened) == 3 and len(set(opened)) == 3
+    requests[-1]["status"] = "failed"
+    out = ports.envelope_publication_consultation(PERSONA, p, "k-last")
+    assert out["state"] == "operator" and out["reason"] == "consultation_dead_lettered_retries_exhausted"
+    assert len(opened) == 3
+    # other terminal states are unchanged
+    requests[:] = [dict(requests[0], status="cancelled")]
+    assert ports.envelope_publication_consultation(PERSONA, p, "k-c")["state"] == "operator"

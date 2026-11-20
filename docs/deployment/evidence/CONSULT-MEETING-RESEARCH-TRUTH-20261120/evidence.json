@@ -1,0 +1,12 @@
+{
+  "task_id": "CONSULT-MEETING-RESEARCH-TRUTH-20261120",
+  "source": "hosted sweep 2026-11-20 (BFF fb8ed951d) shapes; fixtures only, no VM/SSH access",
+  "acceptance": {
+    "1_reproduce": "fixtures in test_persona_meetings.py (dead_letter MT-1/MT-2, attempt_count 3) and test_research_tasks_read.py (ACCEPTANCE TEST stub/stub, manual rows, rtask-exp-sic-... with null/blank name)",
+    "2_3_consultation": "services/consultation/tests/test_persona_meetings.py::test_list_hides_dead_letter_from_upcoming_with_count_single_read, ::test_list_include_failed_shows_execution_failed_state, ::test_detail_carries_execution_state",
+    "4_bff_meetings": "services/control-plane/bff/meetings/test_client_execution_state.py",
+    "5_6_7_research": "services/control-plane/bff/tests/test_research_tasks_read.py (13 passed)",
+    "8_contract": "services/control-plane/bff/BFF_API_CONTRACT.md updated"
+  },
+  "notes": "router.py not touched (owned by BFF-MGMT-DISPLAY-NAMES-20261120); include_failed forwarded at client only. max_attempts read from CONSULTATION_WORKFLOW_MAX_BLOCKED_ATTEMPTS (default 3)."
+}

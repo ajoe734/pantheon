@@ -149,6 +149,41 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         base_env={k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")},
         lease_held=False, identity_fn=OK)
     # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
-    assert [r["id"] for r in results] == ["check:deployed-pair-identity", "probe:persona-pool-member-rules"]
+    assert [r["id"] for r in results] == ["check:deployed-pair-identity", "probe:mgmt-strategy-meeting-research-readable", "probe:persona-pool-member-rules", "probe:trade-journey-readable"]
     assert "probe:persona-day" not in {r["id"] for r in results}
     assert stage.verdict_status(results) == "passed"
+
+
+def test_probe_output_is_redacted_before_verdict(tmp_path):
+    secret = "s3cr3t-viewer-value"
+    other = "tok-abc-123"
+    probe(tmp_path, "leak", "#!/bin/sh\n# acceptance-owner: OWN\necho \"$ACCEPTANCE_VIEWER_CLIENT_SECRET $SOME_TOKEN\"\nexit 3\n")
+    env = {**os.environ, "ACCEPTANCE_VIEWER_CLIENT_SECRET": secret, "SOME_TOKEN": other,
+           "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer-id"}
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=env, lease_held=False, identity_fn=OK)
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=IDENT, run={})
+    text = json.dumps(verdict)
+    assert secret not in text and other not in text
+    assert "[redacted]" in results[-1]["detail"]
+
+
+def test_redaction_applies_to_custom_runner_output():
+    env = {"ACCEPTANCE_VIEWER_CLIENT_SECRET": "abc-secret-9", "X_PASSWORD": "pw-77", "EMPTY_TOKEN": ""}
+    runner = lambda argv, e, t: (1, "got abc-secret-9 and pw-77")  # noqa: E731
+    check = {"id": "check:x", "kind": "check", "owner": "OWN-x", "mutates": False, "argv": ["x"], "timeout": 1}
+    results = stage.run_stage(checks=[check], probes=[], identity=IDENT, base_env=env, lease_held=False,
+                              runner=runner, identity_fn=OK)
+    assert "abc-secret-9" not in results[-1]["detail"] and "pw-77" not in results[-1]["detail"]
+
+
+def test_probe_environment_carries_viewer_identity(tmp_path):
+    probe(tmp_path, "viewer", "#!/bin/sh\n# acceptance-owner: OWN\n[ \"$ACCEPTANCE_VIEWER_CLIENT_ID\" = vid ] && [ \"$ACCEPTANCE_VIEWER_CLIENT_SECRET\" = vsec ]\n")
+    env = {**os.environ, "ACCEPTANCE_VIEWER_CLIENT_ID": "vid", "ACCEPTANCE_VIEWER_CLIENT_SECRET": "vsec"}
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=env, lease_held=False, identity_fn=OK)
+    assert results[-1]["status"] == "passed"
+
+
+def test_plan_declares_redaction():
+    assert stage.plan([], [])["redacts_output"] is True

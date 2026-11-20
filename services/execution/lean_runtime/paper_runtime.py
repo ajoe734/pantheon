@@ -2152,6 +2152,10 @@ class PaperExecutionAlgorithm:
                 "contract_month": resolved_month,
                 "fee": fut_fill_info["fee"],
                 "tax": fut_fill_info["tax"],
+                "fill_quantity": float(fill_qty),
+                "fill_price": float(fill_price),
+                "position_quantity_before": float(fut_fill_info["position_quantity_before"]),
+                "position_quantity_after": float(fut_fill_info["position_quantity"]),
                 "initial_margin_reserved": fut_fill_info["initial_margin_reserved"],
                 "price_basis": "futures_daily_settlement_prev_session",
                 "position_quantity": fut_fill_info["position_quantity"],
@@ -2184,6 +2188,12 @@ class PaperExecutionAlgorithm:
                 "multiplier": 1.0,
                 "fee": fill_commission,
                 "tax": fill_tax,
+                "fill_quantity": float(fill_qty),
+                "fill_price": float(fill_price),
+                "position_quantity_before": float(current_quantity),
+                "position_quantity_after": float(next_quantity),
+                "cash_before": float(current_cash),
+                "cash_after": float(next_cash),
                 "risk_status": gate_result["risk_status"],
                 "risk_gate_status": gate_result["risk_status"],
                 "risk_decision_id": gate_result["decision_id"],
@@ -2388,6 +2398,7 @@ class PaperExecutionAlgorithm:
             "initial_margin_reserved": init_reserved,
             "maintenance_margin_required": maint_required,
             "position_quantity": q_next,
+            "position_quantity_before": q_prev,
         }
 
     def MarkFuturesSession(  # noqa: N802

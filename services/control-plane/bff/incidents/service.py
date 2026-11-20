@@ -27,6 +27,8 @@ from services.control_plane.bff.models import (
     ObjectType,
     OperatorIdentity,
 )
+from services.control_plane.bff.core.display_names import annotate_subject_row, current_resolver
+from services.incident.incident import derive_incident_summary_fields
 
 log = logging.getLogger(__name__)
 
@@ -162,24 +164,64 @@ def _incident_home_severity(value: Optional[str]) -> Optional[str]:
     return _INCIDENT_SEVERITY_MAP.get(str(value).strip().lower(), str(value))
 
 
+def _with_subject_names(incident: Dict[str, Any], projected: Dict[str, Any]) -> Dict[str, Any]:
+    """Carry the incident's persona/strategy/binding ids plus resolved display names (additive)."""
+    for key in ("persona_id", "strategy_id", "binding_id"):
+        if incident.get(key) and key not in projected:
+            projected[key] = incident[key]
+    return annotate_subject_row(current_resolver(), projected)
+
+
 def _project_incident_home_item(incident: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "incident_id": incident.get("incident_id") or incident.get("id"), "title": incident.get("title"),
-        "severity": _incident_home_severity(incident.get("severity")), "status": incident.get("status"),
+    derived = derive_incident_summary_fields(incident, include_timeline=False)
+    return _with_subject_names(incident, {
+        "incident_id": incident.get("incident_id") or incident.get("id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
         "artifact_id": incident.get("artifact_id"),
         "opened_at": incident.get("opened_at") or incident.get("created_at") or incident.get("submitted_at"),
         "resolved_at": incident.get("resolved_at"),
-    }
+        "kind": derived["kind"],
+        "metric": derived["metric"],
+        "observed": derived["observed"],
+        "threshold": derived["threshold"],
+        "comparator": derived["comparator"],
+        "occurrence_count": derived["occurrence_count"],
+        "first_seen_at": derived["first_seen_at"],
+        "last_seen_at": derived["last_seen_at"],
+        "summary_key": derived["summary_key"],
+        "summary_params": derived["summary_params"],
+        "summary": derived["summary"],
+    })
 
 
 def _project_incident_detail_incident(incident: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "incident_id": incident.get("incident_id") or incident.get("id"), "title": incident.get("title"),
-        "severity": _incident_home_severity(incident.get("severity")), "status": incident.get("status"),
-        "artifact_id": incident.get("artifact_id"), "artifact_version": incident.get("artifact_version"),
-        "runtime_id": incident.get("runtime_id"), "trace_id": incident.get("trace_id") or incident.get("correlation_id"),
+    derived = derive_incident_summary_fields(incident, include_timeline=True)
+    return _with_subject_names(incident, {
+        "incident_id": incident.get("incident_id") or incident.get("id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"),
+        "artifact_version": incident.get("artifact_version"),
+        "runtime_id": incident.get("runtime_id"),
+        "trace_id": incident.get("trace_id") or incident.get("correlation_id"),
         "opened_at": incident.get("opened_at") or incident.get("created_at") or incident.get("submitted_at"),
-    }
+        "kind": derived["kind"],
+        "metric": derived["metric"],
+        "observed": derived["observed"],
+        "threshold": derived["threshold"],
+        "comparator": derived["comparator"],
+        "occurrence_count": derived["occurrence_count"],
+        "first_seen_at": derived["first_seen_at"],
+        "last_seen_at": derived["last_seen_at"],
+        "summary_key": derived["summary_key"],
+        "summary_params": derived["summary_params"],
+        "summary": derived["summary"],
+        "evidence_refs": derived["evidence_refs"],
+        "timeline": derived["timeline"],
+    })
 
 
 def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
@@ -202,7 +244,27 @@ def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
     if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
         payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
 
-    return payload
+    derived = derive_incident_summary_fields(payload, include_timeline=True)
+    payload["kind"] = derived["kind"]
+    payload["metric"] = derived["metric"]
+    payload["observed"] = derived["observed"]
+    payload["threshold"] = derived["threshold"]
+    payload["comparator"] = derived["comparator"]
+    payload["occurrence_count"] = derived["occurrence_count"]
+    payload["first_seen_at"] = derived["first_seen_at"]
+    payload["last_seen_at"] = derived["last_seen_at"]
+    payload["summary_key"] = derived["summary_key"]
+    payload["summary_params"] = derived["summary_params"]
+    payload["summary"] = derived["summary"]
+    payload["description"] = derived["summary"]
+    if not payload.get("evidence_refs"):
+        payload["evidence_refs"] = derived["evidence_refs"]
+    if not payload.get("timeline"):
+        payload["timeline"] = derived["timeline"]
+    if not payload.get("updated_at") and (derived["last_seen_at"] or created_at):
+        payload["updated_at"] = derived["last_seen_at"] or created_at
+
+    return annotate_subject_row(current_resolver(), payload)
 
 
 def _bff_incident_matches_filters(
