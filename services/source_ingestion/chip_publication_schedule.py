@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 from .connector_definitions import TW_CHIP_REFRESH_PROFILES
 
@@ -761,3 +761,62 @@ def evaluate_chip_row_coverage(
                 "detail": f"{connector_id} stored {have} of {listed} provider rows; missing {missing}"}
     return {**base, "status": "complete", "is_failure": False, "missing_count": 0,
             "detail": f"{connector_id} stored all {listed} provider rows for {expected}"}
+
+
+def previous_chip_session(session: date, *, is_session_day: Callable[[date], bool] | None = None) -> date:
+    """The session directly before ``session`` (weekday-only when no calendar is given)."""
+    check = is_session_day or (lambda d: d.weekday() < 5)
+    cursor = session - timedelta(days=1)
+    for _ in range(20):
+        if check(cursor):
+            return cursor
+        cursor -= timedelta(days=1)
+    raise ChipSessionUndecidable(f"no session found before {session.isoformat()}")
+
+
+def verify_margin_session_chain(
+    connector_id: str,
+    inferred_session: date,
+    rows: Sequence[Mapping[str, Any]],
+    stored_previous: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    accept_first_load: bool = False,
+) -> dict[str, Any]:
+    """Verify an inferred margin session with the provider's own balance chain.
+
+    For every symbol in both the payload and the stored session before ``inferred_session``, the payload's
+    ``margin_previous_balance`` / ``short_previous_balance`` (前日餘額) must equal that stored session's
+    ``margin_balance`` / ``short_balance``. A mismatch (early publication stores the next session under the
+    previous key, late publication repeats the previous session) or a missing previous session fails closed with
+    ``ChipSessionUndecidable`` naming the profile and the matched/mismatched counts. A first-ever load (no stored
+    previous session) is accepted only with ``accept_first_load`` and is then recorded in the returned evidence.
+    """
+    if not stored_previous:
+        if accept_first_load:
+            return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "first_load_accepted",
+                    "matched_count": 0, "mismatched_count": 0, "first_load_accepted": True}
+        raise ChipSessionUndecidable(
+            f"{connector_id}: previous session of {inferred_session.isoformat()} is not stored; cannot verify the "
+            "inferred session (matched 0, mismatched 0); first load needs an explicit accept_first_load flag"
+        )
+    matched = mismatched = 0
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        prev = stored_previous.get(symbol)
+        if prev is None:
+            continue
+        same = (
+            row.get("margin_previous_balance") == prev.get("margin_balance")
+            and row.get("short_previous_balance") == prev.get("short_balance")
+        )
+        if same:
+            matched += 1
+        else:
+            mismatched += 1
+    if mismatched or not matched:
+        raise ChipSessionUndecidable(
+            f"{connector_id}: inferred session {inferred_session.isoformat()} fails the provider balance chain "
+            f"(matched {matched}, mismatched {mismatched}); refusing to store"
+        )
+    return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "chain_verified",
+            "matched_count": matched, "mismatched_count": 0, "first_load_accepted": False}

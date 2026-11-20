@@ -196,5 +196,107 @@ def test_deploy_script_lifts_caps_and_wires_coverage_readback() -> None:
 
     script = (Path(__file__).parents[3] / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     assert "SOURCE_INGEST_MAX_RECORDS must be between 1 and 5000" in script
-    assert "evaluate_chip_row_coverage" in script
+    assert "chip_row_coverage_outcome" in script
+    assert "import evaluate_chip_row_coverage" not in script  # readback must not import from the hosted image
     assert "tw-official-twse-margin-balances|tw-official-tpex-margin-balances|tw-official-tpex-institutional-flow)" in script
+
+
+# --- inferred session verified with the provider's own balance chain -------------------------------------------
+
+
+def _chain_rows(previous_margin: int, previous_short: int, count: int = 3) -> list[dict]:
+    return [
+        {"股票代號": f"{1000 + i}", "股票名稱": f"S{i}", "融資前日餘額": str(previous_margin + i),
+         "融資今日餘額": "999", "融券前日餘額": str(previous_short + i), "融券今日餘額": "888"}
+        for i in range(count)
+    ]
+
+
+def _stored_session_1117(margin: int = 100, short: int = 50, count: int = 3) -> dict:
+    return {f"{1000 + i}": {"margin_balance": margin + i, "short_balance": short + i} for i in range(count)}
+
+
+def _chain_adapter(stored, *, accept_first_load: bool = False, calls=None) -> TaiwanOfficialMarketDatasetAdapter:
+    def lookup(connector_id, previous_session):
+        if calls is not None:
+            calls.append((connector_id, previous_session.isoformat()))
+        return stored
+
+    return TaiwanOfficialMarketDatasetAdapter(
+        connector_id=TWSE_MARGIN, previous_session_lookup=lookup, accept_first_load=accept_first_load
+    )
+
+
+def test_correct_chain_is_stored_under_inferred_session() -> None:
+    calls: list = []
+    records = _chain_adapter(_stored_session_1117(), calls=calls).records_from_payload(
+        "tw_margin_short_balance", "TWSE", _chain_rows(100, 50), fetch_time=FETCH_1850, trace_id="t"
+    )
+    assert calls == [(TWSE_MARGIN, "2026-11-17")]
+    assert {r.metadata["date"] for r in records} == {"2026-11-18"}
+    chain = records[0].metadata["normalized_row"]["session_chain"]
+    assert chain["status"] == "chain_verified" and chain["matched_count"] == 3
+
+
+def test_early_publication_next_session_is_refused() -> None:
+    # Provider already published 11/19: its previous balances are 11/18's, not the stored 11/17 balances.
+    with pytest.raises(SourceEvidenceError, match=rf"{TWSE_MARGIN}.*matched 0, mismatched 3"):
+        _chain_adapter(_stored_session_1117()).records_from_payload(
+            "tw_margin_short_balance", "TWSE", _chain_rows(999, 888), fetch_time=FETCH_1850, trace_id="t"
+        )
+
+
+def test_late_publication_previous_session_is_refused() -> None:
+    # Provider still serves 11/17 (previous balances are 11/16's).
+    with pytest.raises(SourceEvidenceError, match="mismatched 3"):
+        _chain_adapter(_stored_session_1117()).records_from_payload(
+            "tw_margin_short_balance", "TWSE", _chain_rows(90, 40), fetch_time=FETCH_1850, trace_id="t"
+        )
+
+
+def test_partial_mismatch_counts_matched_and_mismatched() -> None:
+    rows = _chain_rows(100, 50)
+    rows[2]["融資前日餘額"] = "1"
+    with pytest.raises(SourceEvidenceError, match="matched 2, mismatched 1"):
+        _chain_adapter(_stored_session_1117()).records_from_payload(
+            "tw_margin_short_balance", "TWSE", rows, fetch_time=FETCH_1850, trace_id="t"
+        )
+
+
+def test_missing_previous_session_fails_closed_unless_first_load_flagged() -> None:
+    with pytest.raises(SourceEvidenceError, match=f"{TWSE_MARGIN}.*not stored"):
+        _chain_adapter(None).records_from_payload(
+            "tw_margin_short_balance", "TWSE", _chain_rows(100, 50), fetch_time=FETCH_1850, trace_id="t"
+        )
+    records = _chain_adapter(None, accept_first_load=True).records_from_payload(
+        "tw_margin_short_balance", "TWSE", _chain_rows(100, 50), fetch_time=FETCH_1850, trace_id="t"
+    )
+    assert records[0].metadata["normalized_row"]["session_chain"]["status"] == "first_load_accepted"
+
+
+def test_dated_rows_are_not_chain_checked() -> None:
+    calls: list = []
+    records = _chain_adapter(None, calls=calls).records_from_payload(
+        "tw_institutional_flow", "TPEx", _inst_rows(2, "1151118"), fetch_time=FETCH_1850, trace_id="t"
+    ) if False else _adapter(TPEX_INST).records_from_payload(
+        "tw_institutional_flow", "TPEx", _inst_rows(2, "1151118"), fetch_time=FETCH_1850, trace_id="t"
+    )
+    assert calls == [] and len(records) == 2
+
+
+def test_readback_coverage_helper_handles_old_image_record_shape() -> None:
+    import re
+    from pathlib import Path
+
+    script = (Path(__file__).parents[3] / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    start = script.index("FULL_MARKET_CHIP_CONNECTOR_IDS = frozenset")
+    end = script.index("def finmind_bare_symbol", start)
+    ns: dict = {}
+    exec(script[start:end], ns)
+    assert ns["FULL_MARKET_CHIP_CONNECTOR_IDS"] == FULL_MARKET_CHIP_CONNECTORS
+    out = ns["chip_row_coverage_outcome"](TWSE_MARGIN, {"date": "2026-11-18"}, 500, "2026-11-18", "2026-11-18")
+    assert out["status"] == "coverage_unverified_image_predates_full_market"
+    assert out["is_failure"] is False and out["stored_count"] == 500
+    new = ns["chip_row_coverage_outcome"](TWSE_MARGIN, {"provider_listed_count": 1310}, 500, "2026-11-18", "2026-11-18")
+    assert new["status"] == "partial" and new["missing_count"] == 810
+    assert ns["chip_row_coverage_outcome"]("tw-official-twse-institutional-flow", {}, 1, "x", "y") is None

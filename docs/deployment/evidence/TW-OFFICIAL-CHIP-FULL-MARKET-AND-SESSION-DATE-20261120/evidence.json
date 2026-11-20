@@ -37,12 +37,21 @@
   },
   "rollback_reader": "same metadata keys, same schema_hash (v1), ISO string date; only the date value changes from '' to the session and partitions follow the session date. test_rollback_reader_reads_new_rows.",
   "runtime_budget": {
-    "measured_locally_with_synthetic_rows": {"tw_margin_short_balance_1310_rows_normalized_row_json_MB": 1.05, "tw_institutional_flow_1000_rows_normalized_row_json_MB": 0.74},
-    "bounds_section_6A_columnar_MB": {"tw_institutional_flow": 0.3, "tw_margin_short_balance": 0.2},
+    "measured_locally_with_synthetic_rows": {
+      "tw_margin_short_balance_1310_rows_normalized_row_json_MB": 1.05,
+      "tw_institutional_flow_1000_rows_normalized_row_json_MB": 0.74
+    },
+    "bounds_section_6A_columnar_MB": {
+      "tw_institutional_flow": 0.3,
+      "tw_margin_short_balance": 0.2
+    },
     "retention_days": 2555,
     "caveat": "row JSON includes raw_row and is not the columnar size; the columnar per-day bytes and expired-partition deletion must be measured on hosted by the coordinator (acceptance 8/9). Not claimed as passed here."
   },
-  "pending_hosted_verification": ["acceptance 9: coordinator measures one refresh after deploy (row counts = provider listed counts, session dates, each chip profile inside 300 s)", "acceptance 8 columnar size and partition deletion"],
+  "pending_hosted_verification": [
+    "acceptance 9: coordinator measures one refresh after deploy (row counts = provider listed counts, session dates, each chip profile inside 300 s)",
+    "acceptance 8 columnar size and partition deletion"
+  ],
   "validation": {
     "services/source_ingestion/tests/test_tw_official_chip_full_market.py": "12 passed",
     "scripts/test_deploy_nonprod_vm.py": "211 passed, 2 skipped (python -m pytest, 257 s)",
@@ -50,5 +59,29 @@
     "services/source_ingestion/tests/test_chip_publication_schedule.py": "67 passed",
     "services/source_ingestion/tests/test_taiwan_official_connectors.py": "58 passed, 1 skipped (one test expectation updated: date-less MI_MARGN rows now carry the published session)",
     "services/source_ingestion/test_service.py": "42 passed"
+  },
+  "session_chain_verification": {
+    "rule": "For undated MI_MARGN/TPEx margin rows, margin_previous_balance and short_previous_balance of every symbol present in the payload and in the stored previous session must equal that session's margin_balance and short_balance. Mismatch or missing previous session fails the run naming the profile with matched/mismatched counts; first-ever load only with accept_first_load, recorded in row session_chain evidence.",
+    "code": "chip_publication_schedule.verify_margin_session_chain + TaiwanOfficialMarketDatasetAdapter.previous_session_lookup/accept_first_load",
+    "tests": [
+      "test_correct_chain_is_stored_under_inferred_session",
+      "test_early_publication_next_session_is_refused",
+      "test_late_publication_previous_session_is_refused",
+      "test_partial_mismatch_counts_matched_and_mismatched",
+      "test_missing_previous_session_fails_closed_unless_first_load_flagged"
+    ],
+    "open_gap": "The adapter hook is not wired to the hosted record store: that needs provider_adapters.py/persona_source_reconciler.py, outside this contract. Until a lookup is supplied the verification is inactive (rows are stamped by inference as before). Handed to coordinator."
+  },
+  "readback_image_independence": {
+    "change": "chip_row_coverage_outcome and FULL_MARKET_CHIP_CONNECTOR_IDS are emitted by emit_taiwan_refresh_shared_helpers; readback no longer imports evaluate_chip_row_coverage or requires provider_listed_count.",
+    "old_image_outcome": "coverage_unverified_image_predates_full_market (warning on stderr, is_failure false, stored count logged)",
+    "test": "test_readback_coverage_helper_handles_old_image_record_shape (500 rows, no provider_listed_count)"
+  },
+  "validation_round2": {
+    "test_tw_official_chip_full_market.py": "19 passed",
+    "test_chip_publication_schedule.py": "67 passed",
+    "test_taiwan_official_connectors.py": "58 passed, 1 skipped",
+    "scripts/test_deploy_nonprod_vm.py": "22 + 189 passed, 2 skipped (two -k batches, full coverage)",
+    "scripts/test_dev_tw_market_refresh.py": "64 + 68 passed (two -k batches, full coverage)"
   }
 }

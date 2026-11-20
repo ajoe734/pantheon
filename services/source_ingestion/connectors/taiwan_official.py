@@ -900,6 +900,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     # is in no current exchange listing (expired warrant, unknown code) are not turned into records; the count is
     # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
     listing_filter: Any | None = None
+    # Verification of an inferred (undated) margin session: lookup(connector_id, previous_session_date) returns
+    # {symbol: {"margin_balance", "short_balance"}} stored for that session, or None when it is not stored.
+    previous_session_lookup: Any | None = None
+    accept_first_load: bool = False
 
     def __post_init__(self) -> None:
         # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three full-market chip profiles hold the whole
@@ -1638,8 +1642,11 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             when = when.replace(tzinfo=timezone.utc)
         out: list[dict[str, Any]] = []
         session_cache: dict[str, str] = {}
+        inferred_rows: list[Mapping[str, Any]] = []
         for row in normalized_rows:
             provided = str(row.get("date") or "").strip()
+            if not provided:
+                inferred_rows.append(row)
             if provided in session_cache:
                 session = session_cache[provided]
             else:
@@ -1655,6 +1662,25 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             if not str(stamped.get("available_time") or "").strip() or stamped.get("available_time") == provided:
                 stamped["available_time"] = ""
             out.append(stamped)
+        if inferred_rows and dataset == "tw_margin_short_balance" and self.previous_session_lookup is not None:
+            from ..chip_publication_schedule import previous_chip_session, verify_margin_session_chain
+
+            inferred = date.fromisoformat(session_cache[""])
+            try:
+                stored_previous = self.previous_session_lookup(
+                    self.connector_id, previous_chip_session(inferred, is_session_day=_is_session_day)
+                )
+                evidence = verify_margin_session_chain(
+                    self.connector_id,
+                    inferred,
+                    inferred_rows,
+                    stored_previous,
+                    accept_first_load=self.accept_first_load,
+                )
+            except ChipSessionUndecidable as exc:
+                raise SourceEvidenceError(f"{self.connector_id} {dataset}: {exc}") from exc
+            out = [{**r, "session_chain": evidence} if not str(orig.get("date") or "").strip() else r
+                   for r, orig in zip(out, normalized_rows)]
         return tuple(out)
 
     def _records_from_normalized_rows(
