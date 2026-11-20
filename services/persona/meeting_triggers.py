@@ -156,10 +156,19 @@ MAX_MEETING_REPLACEMENTS = 2
 
 
 def default_meeting_reader(persona: Mapping[str, Any]) -> Callable[[str], "dict | None"]:
+    """meeting_id -> execution state, from one tenant-scoped read of the dead-lettered work items."""
+    cache: dict[str, dict] = {}
+
     def read(meeting_id: str):
-        from services.consultation.client import ConsultationServiceClient
-        client = ConsultationServiceClient(tenant_id=persona["tenant_id"], service_actor=f"persona:{persona['persona_id']}")
-        return client.get_meeting(meeting_id, tenant_id=persona["tenant_id"])
+        if not cache:
+            from services.consultation.client import ConsultationServiceClient
+            from services.consultation.workflow_state import recovery_exhausted
+            client = ConsultationServiceClient(tenant_id=persona["tenant_id"], service_actor=f"persona:{persona['persona_id']}")
+            listing = client._request_json("GET", "/api/consult/workflows?status=dead_letter", tenant_id=persona["tenant_id"])
+            for row in (listing or {}).get("items") or []:
+                cache[str(row.get("request_id"))] = {"status": row.get("status"), "recovery_exhausted": recovery_exhausted(row)}
+            cache.setdefault("", {})
+        return {"meeting_id": meeting_id, "execution_state": cache.get(meeting_id)}
     return read
 
 
@@ -201,10 +210,10 @@ class MeetingTriggers:
 
         Anything else (unreadable, running, other dead-letter reasons) still counts as convened.
         """
-        reader = self._reader
-        if reader is None:
+        reader = self._reader or getattr(self, "_run_reader", None)
+        if reader is None:  # one dead-letter listing per run, never stale across cycles
             try:
-                reader = default_meeting_reader(persona)
+                reader = self._run_reader = default_meeting_reader(persona)
             except Exception:
                 return []
         ids = [str(e["meeting_id"]) for e in entries if e.get("meeting_id")]
@@ -285,6 +294,7 @@ class MeetingTriggers:
     def run(self, persona: Mapping[str, Any], observe: Mapping[str, Any], packet: dict[str, Any],
             snapshots: Mapping[str, Mapping[str, Any]], enrolled: Sequence[str]) -> dict[str, Any]:
         """Never raises. Returns the record stored at ``persona_cycle.meetings``."""
+        self._run_reader = None
         record: dict[str, Any] = {"convened": [], "refused": [], "not_fired": [], "requests": [],
                                   "weekly_outlier_run": None}
         try:

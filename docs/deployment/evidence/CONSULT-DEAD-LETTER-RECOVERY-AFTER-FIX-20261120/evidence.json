@@ -4,7 +4,7 @@
   "change": {
     "workflow_state": "recoverable_kind / recovery_exhausted / redrive_dead_letter; budget rides the existing replay_count column (AUTO_REDRIVE_MAX_PER_ITEM=3), phase, saved contribution and last_error kept",
     "executor": "recover_dead_letters runs at the start of every tick: one probe per reason class (auth: persona + registry owner read with the executor's own credentials, 404 counts as an answer; ensure: adapter ensure route for one persona of the first item), then redrives up to AUTO_REDRIVE_PER_TICK=3; exhausted items stay dead_letter and their request is posted failed once (event workflow_recovery_exhausted + /meetings/{id}/sync request_status=failed)",
-    "meetings_view": "execution_state gains recovery_exhausted and redrive_count (additive)",
+    "meetings_view": "unchanged; the trigger reads GET /api/consult/workflows?status=dead_letter once per run (replay_count, last_error) and applies recovery_exhausted",
     "pool_publish_port": "a request in status failed is reported as state failed / reason consultation_dead_lettered (cycle status consultation_failed), one replacement panel (request id suffix -r<n>) is opened, bounded by MAX_CONSULT_REPLACEMENTS=2 then operator",
     "meeting_triggers": "a convened meeting whose execution_state is dead_letter with recovery_exhausted is not already_convened: the trigger reopens under <key>:retry-<n> (max 2), the record lists it under not_held, and it no longer spends the weekly budget"
   },
@@ -19,12 +19,12 @@
   "ac9_runtime_budget": {
     "idle_tick_no_recoverable_dead_letter": "1 local sqlite read, 0 network calls",
     "recovery_tick_at_hosted_shape": "auth probe: 1 persona read + 1 registry read; ensure probe: 1 request read (+1 meeting read only if participants are not on the request) + 1 adapter ensure call; max 3 redrives; exhausted recording: 1 request read + 1 event + 1 sync per item once per process",
-    "persona_cycle_meetings": "one meeting read per already-convened trigger key per cycle (new; bounded by the six trigger types)",
+    "persona_cycle_meetings": "one dead-letter listing read per cycle, only when an already-convened trigger key exists",
     "new_writer": "none (existing executor, existing sync/event routes)"
   },
   "ac10_tests": "test_workflow_executor.py + test_pool_publish_port.py + test_meeting_triggers.py + test_pool_autonomy_cycle.py: 93 passed; consultation/tests/test_persona_meetings.py: 8 passed",
   "ac11_hosted_proof": "pending deploy; persona-loop owner records health dead_letter_count and a 11/19 or new meeting reaching a contribution",
-  "interaction": "CONSULT-MEETING-RESEARCH-TRUTH-20261120 can read execution_state.recovery_exhausted / redrive_count and effective_status execution_failed",
+  "interaction": "CONSULT-MEETING-RESEARCH-TRUTH-20261120 can read workflow item replay_count (recovery_exhausted) and effective_status execution_failed",
   "residual": [
     "The redrive resets blocked_count, so each redrive buys up to max_blocked_attempts further tries; total effort per item is at most 3 redrives x those tries",
     "In-process exhaustion marker is rebuilt after restart by one request read per exhausted item"

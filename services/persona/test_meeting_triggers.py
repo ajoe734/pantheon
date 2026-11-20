@@ -721,3 +721,21 @@ def test_not_held_meeting_does_not_spend_the_weekly_budget():
                         opener=Opener(), reader=_reader(state), now=lambda: at_weekday(6))
     record = run(t, observe={"pending_lesson_candidates": 4}, snapshots=snaps)
     assert [c for c in record["convened"] if c["meeting_type"] == "MT-2"]
+
+
+def test_default_reader_uses_one_dead_letter_listing_and_the_recovery_rule(monkeypatch):
+    from services.consultation import client as cc
+    from services.consultation.workflow_state import AUTO_REDRIVE_MAX_PER_ITEM
+    calls = []
+
+    def fake(self, method, path, payload=None, *, tenant_id=None):
+        calls.append(path)
+        return {"items": [
+            {"request_id": "m-spent", "status": "dead_letter", "replay_count": AUTO_REDRIVE_MAX_PER_ITEM,
+             "last_error": "consultation agent ensure transport failed for p"},
+            {"request_id": "m-other", "status": "dead_letter", "replay_count": 9, "last_error": "schema invalid"}]}
+    monkeypatch.setattr(cc.ConsultationServiceClient, "_request_json", fake)
+    read = mt.default_meeting_reader(PERSONA)
+    assert read("m-spent")["execution_state"]["recovery_exhausted"] is True
+    assert read("m-other")["execution_state"]["recovery_exhausted"] is False
+    assert read("m-live")["execution_state"] is None and len(calls) == 1
