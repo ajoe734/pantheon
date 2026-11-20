@@ -27,6 +27,7 @@ from .connectors.taiwan_official import (
     TaiwanOfficialMarketDatasetAdapter,
     TaifexDerivativesChipAdapter,
 )
+from .chip_publication_schedule import margin_chain_wiring
 from .connector_definitions import (
     ConnectorDefinition, get_connector_definition, list_connector_definitions, TW_CHIP_REFRESH_PROFILES,
 )
@@ -297,6 +298,7 @@ def chip_profile_provider(connector_id: str) -> SourceConnectorProvider:
     if profile["base"] == TW_OFFICIAL_CONNECTOR_ID:
         return TaiwanOfficialMarketDatasetAdapter(
             connector_id=connector_id, max_records=500, connector_metadata=metadata,
+            **margin_chain_wiring(connector_id),
         )
     if profile["base"] == "tw-finmind-fundamentals":
         return FinMindTaiwanFundamentalsAdapter(
@@ -326,7 +328,9 @@ class SourceProvisioningReconciler:
         self.controller_name = controller_name
         self.provider_factories: dict[str, ProviderFactory] = {
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
-            TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
+            TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(
+                connector_id=connector_id, **margin_chain_wiring(connector_id)
+            ),
         }
         for connector_id in TW_CHIP_REFRESH_PROFILES:
             self.provider_factories[connector_id] = chip_profile_provider
