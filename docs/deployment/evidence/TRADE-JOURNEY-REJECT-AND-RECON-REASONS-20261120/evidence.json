@@ -1,1 +1,251 @@
-{"task":"TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120","tests":"services/reconciliation-drift/tests + services/trade_journey/test_lifecycle_projector.py + test_canonical_paper_lifecycle_integration.py: 392 passed, 1 skipped","fixture":"hosted_scheduled_evaluations_rb-3823397e.json (recorded 2026-11-14/16)","residual":"journey reconciliation never compares the booked position with the fill (not in scope)"}
+{
+ "task": "TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120",
+ "tests": "services/reconciliation-drift/tests + services/trade_journey/test_lifecycle_projector.py + test_canonical_paper_lifecycle_integration.py: 392 passed, 1 skipped",
+ "residual": "journey reconciliation never compares the booked position with the fill (not in scope)",
+ "hosted_scheduled_evaluations_rb-3823397e": [
+  {
+   "evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-14T-rb-3823397e125e4579ba5f4-9e461e3ff2175792",
+   "status": "critical",
+   "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+   "runtime_id": "rt-ad81501b",
+   "tenant_id": "tenant-dev",
+   "tick_id": "scheduled:tenant-dev:2026-11-14T07:45:00Z:PT300S",
+   "evaluated_at": "2026-11-14T07:48:57Z",
+   "drift_checks": [
+    {
+     "metric": "drawdown",
+     "status": "critical",
+     "baseline": 0.00235,
+     "observed": 0.022581877208058817,
+     "one_sided": true,
+     "comparator": "gt",
+     "signal_type": "performance_degradation",
+     "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision",
+     "relative_delta": 8.609309450237793,
+     "baseline_source": {
+      "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+      "baseline_key": "expected_drawdown",
+      "policy_source": "docs/deployment/evidence/PAPER-SUCCESSOR-BASELINES-20261108/policy.md#reviewer-decision",
+      "instrument_class": "cash_share"
+     },
+     "threshold_value": 1.25,
+     "instrument_class": "cash_share",
+     "threshold_metric": "rolling_drawdown_multiple",
+     "threshold_window": "paper-daily-sweep",
+     "drawdown_event_id": "798895c5-bfd3-45da-9c9d-18ff21e56bd3",
+     "observed_multiple": 9.609309450237793,
+     "signed_relative_delta": 8.609309450237793,
+     "warning_relative_delta": 0.2,
+     "critical_relative_delta": 0.5,
+     "governed_threshold_breached": true
+    }
+   ],
+   "reconciliation_checks": [
+    {
+     "check": "authoritative_actual_identity",
+     "detail": "authoritative runtime identity and event evidence linked",
+     "status": "ok",
+     "missing_fields": [],
+     "telemetry_event_ids": [
+      "63d43f5b-f781-5dd6-a071-cb2bd8042f9d",
+      "798895c5-bfd3-45da-9c9d-18ff21e56bd3",
+      "e61dc677-9975-4c58-a7e6-95a4a5683f73",
+      "1453873f-df9f-48a1-80d0-fcb6506480ec"
+     ]
+    },
+    {
+     "check": "runtime_state",
+     "detail": "authoritative runtime state is active",
+     "status": "ok",
+     "observed": "active"
+    },
+    {
+     "check": "runtime_health_summary",
+     "detail": "runtime health summary is authoritative and healthy",
+     "status": "ok",
+     "observed": {
+      "bridge": "not_applicable",
+      "broker": "not_applicable",
+      "telemetry": "ok",
+      "paper_runtime": "ok"
+     },
+     "unhealthy": {}
+    },
+    {
+     "check": "actual_metrics_presence",
+     "detail": "runtime summary exposes authoritative numeric actual-state metrics",
+     "status": "ok",
+     "metric_names": [
+      "avg_slippage_bps",
+      "cash",
+      "event_delivery_lag_ms",
+      "position_qty",
+      "price",
+      "queue_lag_ms"
+     ]
+    },
+    {
+     "check": "queue_lag_ms",
+     "detail": "queue_lag_ms=0ms",
+     "status": "ok",
+     "observed": 0.0,
+     "warning_threshold": 5000.0,
+     "critical_threshold": 15000.0
+    },
+    {
+     "check": "event_delivery_lag_ms",
+     "detail": "event_delivery_lag_ms=423.666ms",
+     "status": "ok",
+     "observed": 423.666,
+     "warning_threshold": 10000.0,
+     "critical_threshold": 30000.0
+    }
+   ]
+  },
+  {
+   "evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-3823397e125e4579ba5f4-96b9b6ff360f5933",
+   "status": "warning",
+   "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+   "runtime_id": "rt-ad81501b",
+   "tenant_id": "tenant-dev",
+   "tick_id": "scheduled:tenant-dev:2026-11-16T06:55:00Z:PT300S",
+   "evaluated_at": "2026-11-16T06:58:29Z",
+   "drift_checks": [],
+   "reconciliation_checks": [
+    {
+     "check": "authoritative_actual_identity",
+     "detail": "authoritative runtime identity and event evidence linked",
+     "status": "ok",
+     "missing_fields": [],
+     "telemetry_event_ids": [
+      "129e8f92-0484-5813-8d06-e12255174582",
+      "99656e0c-c8fc-491c-944c-356ce06030bb",
+      "52e38ad6-f011-430e-abab-cabd6b6eaf20",
+      "f1ea7dbd-f9e5-4fab-b7ec-8172d38d3949"
+     ]
+    },
+    {
+     "check": "runtime_state",
+     "detail": "authoritative runtime state is degraded",
+     "status": "warning",
+     "observed": "degraded"
+    },
+    {
+     "check": "runtime_health_summary",
+     "detail": "runtime health summary is missing or unhealthy",
+     "status": "warning",
+     "observed": {
+      "bridge": "not_applicable",
+      "broker": "not_applicable",
+      "telemetry": "degraded",
+      "paper_runtime": "degraded"
+     },
+     "unhealthy": {
+      "telemetry": "degraded",
+      "paper_runtime": "degraded"
+     }
+    },
+    {
+     "check": "actual_metrics_presence",
+     "detail": "runtime summary exposes authoritative numeric actual-state metrics",
+     "status": "ok",
+     "metric_names": [
+      "avg_slippage_bps",
+      "cash",
+      "event_delivery_lag_ms",
+      "position_qty",
+      "price",
+      "queue_lag_ms"
+     ]
+    },
+    {
+     "check": "queue_lag_ms",
+     "detail": "queue_lag_ms=0ms",
+     "status": "ok",
+     "observed": 0.0,
+     "warning_threshold": 5000.0,
+     "critical_threshold": 15000.0
+    },
+    {
+     "check": "event_delivery_lag_ms",
+     "detail": "event_delivery_lag_ms=55.897ms",
+     "status": "ok",
+     "observed": 55.897,
+     "warning_threshold": 10000.0,
+     "critical_threshold": 30000.0
+    }
+   ]
+  },
+  {
+   "evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-3823397e125e4579ba5f4-48bb476d7e5e5f59",
+   "status": "ok",
+   "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+   "runtime_id": "rt-ad81501b",
+   "tenant_id": "tenant-dev",
+   "tick_id": "scheduled:tenant-dev:2026-11-16T07:00:00Z:PT300S",
+   "evaluated_at": "2026-11-16T07:03:47Z",
+   "drift_checks": [],
+   "reconciliation_checks": [
+    {
+     "check": "authoritative_actual_identity",
+     "detail": "authoritative runtime identity and event evidence linked",
+     "status": "ok",
+     "missing_fields": [],
+     "telemetry_event_ids": [
+      "99656e0c-c8fc-491c-944c-356ce06030bb",
+      "52e38ad6-f011-430e-abab-cabd6b6eaf20",
+      "6c680b8c-d87a-4397-b40b-85494bb38516"
+     ]
+    },
+    {
+     "check": "runtime_state",
+     "detail": "authoritative runtime state is active",
+     "status": "ok",
+     "observed": "active"
+    },
+    {
+     "check": "runtime_health_summary",
+     "detail": "runtime health summary is authoritative and healthy",
+     "status": "ok",
+     "observed": {
+      "bridge": "not_applicable",
+      "broker": "not_applicable",
+      "telemetry": "ok",
+      "paper_runtime": "ok"
+     },
+     "unhealthy": {}
+    },
+    {
+     "check": "actual_metrics_presence",
+     "detail": "runtime summary exposes authoritative numeric actual-state metrics",
+     "status": "ok",
+     "metric_names": [
+      "avg_slippage_bps",
+      "drawdown",
+      "event_delivery_lag_ms",
+      "fill_rate",
+      "pnl",
+      "queue_lag_ms",
+      "total_trades"
+     ]
+    },
+    {
+     "check": "queue_lag_ms",
+     "detail": "queue_lag_ms=0ms",
+     "status": "ok",
+     "observed": 0.0,
+     "warning_threshold": 5000.0,
+     "critical_threshold": 15000.0
+    },
+    {
+     "check": "event_delivery_lag_ms",
+     "detail": "event_delivery_lag_ms=102.196ms",
+     "status": "ok",
+     "observed": 102.196,
+     "warning_threshold": 10000.0,
+     "critical_threshold": 30000.0
+    }
+   ]
+  }
+ ]
+}

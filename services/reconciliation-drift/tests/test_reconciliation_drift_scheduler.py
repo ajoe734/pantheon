@@ -4047,12 +4047,14 @@ def test_class_entries_never_fall_back_to_flat_baseline(tmp_path) -> None:
 _HOSTED_EVALS = (
     Path(__file__).resolve().parents[3]
     / "docs/deployment/evidence/TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120"
-    / "hosted_scheduled_evaluations_rb-3823397e.json"
+    / "evidence.json"
 )
 
 
 def _hosted_eval(evaluated_at: str, summary: dict) -> dict:
-    evaluations = json.loads(_HOSTED_EVALS.read_text())
+    evaluations = json.loads(_HOSTED_EVALS.read_text())[
+        "hosted_scheduled_evaluations_rb-3823397e"
+    ]
     evaluation = next(e for e in evaluations if e["evaluated_at"] == evaluated_at)
     evaluation = json.loads(json.dumps(evaluation))
     evaluation["binding_id"] = summary["binding_id"]
