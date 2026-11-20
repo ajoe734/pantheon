@@ -32,6 +32,17 @@ def configure_display_name_source(read_store: Optional[Any]) -> None:
         _source = read_store
 
 
+def _composed_read_store() -> Optional[Any]:
+    """The read store of the composed persona service (set by the app composition root)."""
+    try:
+        from ..personas import service as persona_service
+
+        svc = getattr(persona_service, "_composed_persona_service", None)
+        return svc.get_read_store() if svc is not None else None
+    except Exception:  # noqa: BLE001 - no composed store means names fall back to ids
+        return None
+
+
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
@@ -62,7 +73,7 @@ class DisplayNameResolver:
         strategy_loader: Optional[Callable[[], Mapping[str, Any]]] = None,
         binding_loader: Optional[Callable[[], Iterable[Mapping[str, Any]]]] = None,
     ) -> None:
-        store = _source if _source is not None else read_store  # composed source wins; explicit store is the fallback
+        store = _source if _source is not None else (_composed_read_store() or read_store)  # configured, then composed, then explicit
         self._store = store
         if persona_loader is None and store is not None and hasattr(store, "list_personas"):
             persona_loader = lambda: shared_persona_directory_list(store, store.list_personas)  # noqa: E731
