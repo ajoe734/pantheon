@@ -197,6 +197,7 @@ returning data.
 | The Agora source connector called `urlopen` with its bearer token, no host check and default redirects; the egress guard test that would have failed runs in no CI job (persona-loop owner) | AGORA-SOURCE-INTERNAL-EGRESS-GUARD-20261119 (#7616) | deployed (1c9fbee93) |
 | A refresh step marked `continue-on-error` failed while the run showed green; FinMind fundamentals never passed since 11/10 (release owner) | TW-REFRESH-NON-BLOCKING-STEP-FAILURE-VISIBLE-20261118 (#7605) | merged |
 | Collector intake re-verifies six whole-day TPEx bundles (131 MB, larger than the 72 MB metadata cache) on every pull, so TPEx history advances 16 rows per pull (market-data owner) | COLLECTOR-PRIORITY-METADATA-REVERIFY-20261119 after COLLECTOR-RAW-READS-KEEPALIVE-CONCURRENT-20261119 (#7611) | open |
+| Collector intake for TWSE price history fails every second scheduled run (9 of the latest 20 ingest jobs on 2026-11-20 01:16Z): `collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days`, cursor `2026-11-11T09:33:18Z#backfill-2026-07-10\|items=0`; TPEx history runs complete (found by the RC6 sweep; market-data owner) | no task yet; under diagnosis | open |
 | The persona page cannot show what a persona trades (operator question 2026-11-19): the pool view returns only member ids; the strategy page labels the trading member a no-order rollback baseline because the pool envelope names it as a parent, and shows the envelope as an unsupported kind; pool health is always `cycle_pool_snapshot_mismatch` because the cycle's refused reweight appends a version after its observation (deliberate: trial counts are read from versions). The only member of each pool is the shared base momentum strategy (persona-loop owner) | BFF-PERSONA-STRATEGY-VISIBILITY-20261119 (#7625, f146fd196), then FE-PERSONA-STRATEGY-VISIBILITY-20261119 (execute-plans #1043, a318cc2d6) | accepted: the repaired probe (PERSONA-POOL-PROBE-CHECKS-LIVE-PERSONAS-20261119, #7640, 394b02a46) read all 177 personas and passed for the three trading personas against hosted at 16:36Z (BFF 2fb152cd3 while its release was switching, frontend a318cc2d6; both backends since d685eb962 contain the fix); its first version had passed with zero personas checked; both pages were read in a browser |
 
 Instances: 20 hosted acceptance tasks not done; enrollment refused 4,121 times;
@@ -390,6 +391,39 @@ On 11/18 04:06Z two conversations started a supervisor runtime promotion 14
 seconds apart because the operator had approved it in both; the second stopped
 on the integrator lock and changed nothing. Since then the market-data owner
 runs promotions and announces each one first.
+
+## RC6. Pages for people show internal records
+
+Opened 2026-11-20 after the operator asked whether two Management pages could
+be read by a person. A read-only sweep of 67 hosted Management pages as
+`admintest` (BFF `fb8ed951d`, 2026-11-20 01:00Z to 01:30Z) found the same
+pattern across the console: pages render what services store (internal ids,
+enum codes, machine logs, debug fields) and nothing turns it into what an
+operator needs, which is a name, a plain state, what happened and what to do.
+The 104-page Management crawl checks only that data loaded, so no check has
+ever read a page the way a person does. Owner: to be assigned by the operator;
+the frontend owner (`065c0719`) for pages, and each producing domain for the
+fields its service emits. No task is open yet.
+
+| Work package | Task | State |
+|---|---|---|
+| WP6.1 Human inbox drift card: the body is the incident `evidence_summary` log (`key=value;` fields, policy file paths), because the inbox falls back to it (`governance/human_inbox.py`); each new DriftReport is appended (`incident.py` `_merge_summary`) until the 4000-character cap drops older entries, so one card repeats the same report four times | no task yet | open |
+| WP6.1 Persona intent audit is a debug view since execute-plans `f5db9972f` (2026-07-03), and the BFF redacts every message even for an admin (`personas/service.py` `_persona_intent_agora_item`), so the summary repeats the title and interpretation, proposed action and tools are always empty; an Agora consult (pool v3 envelope risk review, `in_progress` since 11/19 10:06Z, consulted only its own persona) is listed as a trade intent | no task yet | open |
+| WP6.1 Raw codes shown as text: persona fleet cycle health `failedobserving(tool_record_unavailable:no_proposal_submitted)`; evolution journal ids such as `evolution_decision:evo-sweep-agent-...` and English machine sentences; lineage edge labels `source_strategy_spec`, `capital_pool`; meetings `refused`, `insufficient_participants`, `execution_authority: none`; LLM provider auth and cockpit `answer_probe_not_run`, `codex_mount_missing_credentials`; audit actions `management.nl.ask.accepted`; the tools page shows the translation key `capabilities.actions.disabledReason` | no task yet | open |
+| WP6.2 Rows named by internal id: runtimes (`pcb-persona-paper-...`, `rt-...`, `rb-...`), artifacts (`strategy-persona-...`), deployments (`plan-persona-pool-...-v2`), meetings (title `mtg-...`, chair `persona-...`), trade journeys (`persona-...` where the persona has a name), postmortems, research items, Alpha factory, and inbox and incident titles (`rb-...`) | no task yet | open |
+| WP6.3 Runtimes: CPU, memory, p95 latency, uptime and region show `nan` on every row | no task yet | open |
+| WP6.3 Incidents: a `resolved` incident is labelled with a green `成功` (success) badge, on 19 of the 21 newest rows | no task yet | open |
+| WP6.3 Jobs: the status column mixes `失敗` with untranslated `completed`; a row names neither the source nor the reason, which exist only in `/bff/jobs/{id}`, whose status reads `pending` while the list reads `failed` | no task yet | open |
+| WP6.3 Data sources: the active snapshot reads `fresh` next to `25.2h old of 86400s SLA`; every source count reads 0 | no task yet | open |
+| WP6.3 Empty values presented as data: the strategy list shows 無資料 for ALPHA, PnL, 30-day PnL, Sharpe and drawdown on every row, including running strategies; the strategy detail hypothesis card and in-sample/out-of-sample table are all `—`; the incident detail page has an empty timeline, impact and root cause for the incident whose inbox card holds 4000 characters; the audit time column is `—` on every row | no task yet | open |
+| WP6.4 Machine-generated records bury the ones a person must act on: 19 of the 21 newest incidents are resolved `BFF downstream degradation` records, one every 5 to 15 minutes; 4715 automatic postmortem drafts; 4746 automatic evolution proposals; 4762 draft strategies; the inbox drift card repeats one unchanged value (`observed=9.609309450237793` in every report since 11/15) | no task yet | open |
+| WP6.4 Probe data shown as real: `Pantheon Dev Paper Release 43688794313 Attempt 1` is the first approved, running strategy in the default strategy list and appears as a persona in performance attribution | no task yet | open |
+| WP6.5 The Management crawl also measures readability (internal-id density, raw codes, `nan`, `key=value` text) and reports it; on dev it stays advisory under the 2026-11-17 rules | no task yet | open |
+
+Instances: the two pages the operator raised on 2026-11-20 (human inbox,
+persona intent audit). The sweep script, page text and screenshots are kept
+by the conversation that ran it; the measures are heuristic, so each work
+package confirms its pages in a browser before changing them.
 
 ## Notes for task authors
 
