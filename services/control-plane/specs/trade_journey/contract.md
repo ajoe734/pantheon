@@ -94,6 +94,11 @@ The overall `status` of a `TradeJourney` is calculated deterministically from in
 | `failed` | `risk_evaluation` or `order_submission` or `broker_acknowledgement` is `rejected` or `failed`. |
 | `cancelled` | Overall workflow received a valid operator or broker cancel command. |
 
+### 4.2.1 Variance, Rejection and Reconciliation Reasons
+- `completed_with_variance` means the trade's own reconciliation found a variance (a failed journey-scoped check). Runtime health (`runtime_state`, `runtime_health_summary`, `queue_lag_ms`, `event_delivery_lag_ms`, `actual_metrics_presence`) and strategy performance drift (`drift_checks`) are not journey variance. A runtime-health-only failure defers the journey to the next scheduled tick; once its `position_snapshot` is 60 minutes old it is stamped `reconciliation_failed`. Drift is reported through the drift incident path only.
+- Every `reconciliation_failed` event carries `reason_code` and `reason_detail` (a list of `{check, status, detail, observed, threshold}` per non-ok check). Reason codes: `runtime_unhealthy_at_reconciliation`, `reconciliation_identity_unverified` (non-ok `authoritative_actual_identity`), `reconciliation_check_failed` (any other non-ok check).
+- `order_rejection` / `order_rejection_simulated` events take `reason_code` as the first present of `reject_reason`, `risk_reason`, `reason`, `broker_submission_status`, `reason_code`. Expression choice codes (`long_cash`, `long_lever`, `short_via_future`, `close_leg`) are never a rejection reason and are kept as `expression_reason_code`. `reason_detail` carries the producer-sent `required`, `available`, `limit`, `holding_quantity`, `requested_quantity`. Previously projected events are not rewritten.
+
 ### 4.3 Correction Events & Revision Semantics
 - **Correction Event**: A correction event (`CorrectionEvent`) is an explicit record triggered when an operator or authorized service resolves a detected reconciliation variance. It provides the mechanism to close a `completed_with_variance` journey back to `completed`.
 - **Late-Arriving Events & Immutable Snapshots**: Late-arriving events **MUST NOT** overwrite historical events or existing snapshots directly. Instead, when a late-arriving event or correction event is processed:
