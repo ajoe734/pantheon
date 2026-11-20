@@ -1,6 +1,24 @@
 {
  "entries": [
   {
+   "bound_proof": {
+    "contains": "def _record_market_closures",
+    "file": "services/source_ingestion/connectors/collector_bundle.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one line per confirmed unscheduled market closure date, deduplicated by trade_date in _record_market_closures (a date is never written twice); each line is about 300 bytes (trade_date, kind, evidence, both bundle ids)",
+   "cleanup": "none needed: closures are a few dates a year (about 1 KB per year); kept permanently because the calendar and backtests read them",
+   "growth_driver": "one line per unscheduled weekday closure confirmed by both TWSE and TPEx no_data_for_date bundles (a few dates a year)",
+   "growth_per_day": "about 0 (a few lines per year, about 300 bytes each)",
+   "kind": "jsonl",
+   "name": "market_closures.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/connectors/collector_bundle.py"
+   ],
+   "task": "COLLECTOR-HISTORY-PARTIAL-BUNDLE-RESOLUTION-20261120"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
