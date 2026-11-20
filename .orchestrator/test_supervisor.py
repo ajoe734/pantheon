@@ -8234,6 +8234,123 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     config, candidate_state, self.status, self.task, candidate_receipt,
                 ))
 
+    def test_owner_fallback_prefers_other_family_reviewer_over_listed_own_family(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="todo", owner="Codex", reviewer="Antigravity")
+        state = self._state()
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, self.task, state=state,
+            owner_candidates=["Codex2"], preferred_reviewers=["Codex", "Antigravity"],
+        )
+        self.assertEqual(pair, ("Codex2", "Antigravity"))
+
+    def test_same_family_pair_only_when_every_other_family_unavailable(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="todo", owner="Codex", reviewer="Antigravity")
+        state = self._state()
+        state["delivery_health"]["endpoints"]["antigravity"]["state"] = "unavailable"
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, self.task, state=state,
+            owner_candidates=["Codex2"], preferred_reviewers=["Codex", "Antigravity"],
+        )
+        self.assertEqual(pair, ("Codex2", "Codex"))
+        with mock.patch.object(supervisor, "load_runtime_state", return_value=state):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.config, "Codex2", "Codex", self.task
+            )
+        exception = supervisor.build_review_independence_exception(
+            owner="Codex2", reviewer="Codex", capacity_evidence=evidence
+        )
+        reasons = {e["family"]: e["reason"] for e in exception["considered"]}
+        self.assertTrue(reasons["antigravity"].startswith("antigravity:"))
+        self.assertNotIn("no capacity evidence supplied", reasons.values())
+
+    def test_process_missing_keeps_incumbent_pair_when_branch_has_trailers(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
+        receipt = {"recovery_role": "owner", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        state = self._state()
+        with mock.patch.object(
+            supervisor, "task_branch_incumbent_pair", return_value=("Codex", "Antigravity")
+        ):
+            self.assertEqual(
+                supervisor.worker_recovery_assignment_pair(
+                    self.config, copy.deepcopy(state), self.status, self.task, receipt,
+                ),
+                ("Codex", "Antigravity"),
+            )
+            # Incumbent owner cannot take it -> fallback owner is allowed.
+            down = copy.deepcopy(state)
+            down["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, down, self.status, self.task, receipt,
+            )
+            self.assertNotEqual(pair[0], "Codex")
+
+    def test_replay_20261120_pushed_head_owner_missing_not_same_family(self) -> None:
+        # Owner/reviewer of different families, pushed head with their trailers,
+        # owner process gone while the owner family has capacity (Codex2 first
+        # fallback would have produced a trailer-incompatible same-family pair).
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
+        receipt = {"recovery_role": "owner", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        with mock.patch.object(
+            supervisor, "task_branch_incumbent_pair", return_value=("Codex", "Antigravity")
+        ):
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, self._state(), self.status, self.task, receipt,
+            )
+        self.assertEqual(pair, ("Codex", "Antigravity"))
+        self.assertNotEqual(
+            supervisor.agent_family(pair[0]), supervisor.agent_family(pair[1])
+        )
+
+    def test_reviewer_role_recovery_prefers_other_family_over_listed_own_family(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self._add_agent("claude2", "Claude2")
+        self.task.update(status="review", owner="Codex", reviewer="Claude2")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "lease_expired",
+                   "worker": {"agent": "Claude2"}}
+        with mock.patch.object(
+            supervisor, "reassignment_candidate_order",
+            return_value=["Codex2", "Antigravity"],
+        ):
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, self._state(), self.status, self.task, receipt,
+            )
+        self.assertEqual(pair, ("Codex", "Antigravity"))
+
+    def test_task_branch_incumbent_pair_parses_trailers(self) -> None:
+        self.task["id"] = "T-TRAILER"
+        log = (
+            "newer\n\nTask-ID: OTHER\nLLM-Agent: Claude\nReviewer: Codex\n\x00"
+            "mine\n\nTask-ID: T-TRAILER\nLLM-Agent: Codex\nReviewer: Antigravity\n\x00"
+        )
+        proc = mock.Mock(returncode=0, stdout=log)
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertEqual(
+                supervisor.task_branch_incumbent_pair(self.config, self.task),
+                ("Codex", "Antigravity"),
+            )
+        proc.stdout = "no trailers\x00"
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertIsNone(supervisor.task_branch_incumbent_pair(self.config, self.task))
+
     def test_lost_owner_retries_healthy_incumbent_only_for_process_missing(self) -> None:
         self._add_agent("antigravity", "Antigravity")
         self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
@@ -14565,11 +14682,43 @@ class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "load_runtime_state", return_value={}),
             mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
         ):
             evidence = supervisor._review_exception_capacity_evidence(
                 self.CONFIG, "Claude", "Claude2"
             )
-        self.assertEqual(evidence, {"codex": "codex:terminal_quota:codex"})
+        # Changed expectation (WP4.3): a family with an able agent now carries
+        # a concrete "available:<agent>" reason instead of being omitted, which
+        # used to surface as "no capacity evidence supplied".
+        self.assertEqual(
+            evidence,
+            {
+                "codex": "codex:terminal_quota:codex",
+                "antigravity": "available:antigravity",
+                "copilot": "no_agent_configured",
+                "piastra": "no_agent_configured",
+            },
+        )
+        exception = supervisor.build_review_independence_exception(
+            owner="Claude", reviewer="Claude2", capacity_evidence=evidence
+        )
+        for entry in exception["considered"]:
+            self.assertNotEqual(entry["reason"], "no capacity evidence supplied")
+
+
+    def test_multi_agent_family_not_masked_by_first_unavailable_agent(self) -> None:
+        def fake_unavailable(config: Any, state: Any, agent: str) -> str | None:
+            return "terminal_quota" if agent == "claude" else None
+
+        with (
+            mock.patch.object(supervisor, "load_runtime_state", return_value={}),
+            mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.CONFIG, "Codex", "Codex2"
+            )
+        self.assertEqual(evidence["claude"], "available:claude2")
 
 
 class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
