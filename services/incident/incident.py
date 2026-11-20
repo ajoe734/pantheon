@@ -33,6 +33,7 @@ Canonical JSON schemas live at:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -195,6 +196,15 @@ class IncidentCase:
     # "identity unknown", not "identity matches" (see services/incidents/
     # consumer.py `_require_same_incident_identity`).
     threshold_identity: Optional[str] = None
+    # Structured summary and occurrence fields (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120)
+    kind: Optional[str] = None
+    metric: Optional[str] = None
+    observed: Optional[Any] = None
+    threshold: Optional[Any] = None
+    comparator: Optional[str] = None
+    occurrence_count: Optional[int] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:
@@ -648,9 +658,10 @@ def extract_infrastructure_incident_referenced_ids(inc: IncidentCase) -> Set[str
 def extract_incident_last_observed_at(inc: IncidentCase) -> Optional[datetime]:
     """Return the latest UTC observation timestamp recorded on an IncidentCase."""
     candidates: List[datetime] = []
-    created_dt = _parse_iso_utc(inc.created_at)
-    if created_dt is not None:
-        candidates.append(created_dt)
+    for ts_raw in (inc.created_at, inc.first_seen_at, inc.last_seen_at):
+        parsed_ts = _parse_iso_utc(ts_raw)
+        if parsed_ts is not None:
+            candidates.append(parsed_ts)
 
     summary = str(inc.evidence_summary or "")
     for match in _OBSERVED_AT_RE.finditer(summary):
@@ -690,6 +701,8 @@ def extract_monitor_agent_finding_references(inc: IncidentCase) -> Set[str]:
     refs: Set[str] = set()
     if inc.incident_id:
         refs.add(inc.incident_id.strip())
+    if inc.metric:
+        refs.add(str(inc.metric).strip())
     cluster = str(inc.incident_cluster_id or "").strip()
     if cluster:
         refs.add(cluster)
@@ -1202,25 +1215,121 @@ class IncidentStore:
 
     @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
-        """Merge additional evidence into an existing open IncidentCase."""
+        """Merge additional evidence into an existing open IncidentCase.
+
+        Updates occurrence_count, last_seen_at, and the latest observed value in
+        place. Single-report evidence_summary replacement bounds row growth:
+        evidence_summary no longer grows by appending whole reports.
+        """
         existing = self.require_incident(incident_id)
+        merged_telemetry = _merge_unique(
+            existing.telemetry_event_ids,
+            incoming.telemetry_event_ids,
+        )
+        merged_reconciliation = _merge_unique(
+            existing.reconciliation_ids,
+            incoming.reconciliation_ids,
+        )
+        merged_severity = _max_incident_severity(existing.severity, incoming.severity)
+
+        incoming_summary_clean = (incoming.evidence_summary or "").strip()
+        existing_summary_clean = (existing.evidence_summary or "").strip()
+        has_oversized_existing = len(existing_summary_clean) > MAX_EVIDENCE_SUMMARY_LENGTH
+        has_new_telemetry = merged_telemetry != list(existing.telemetry_event_ids or [])
+        has_new_reconciliation = merged_reconciliation != list(existing.reconciliation_ids or [])
+        has_new_severity = merged_severity != existing.severity
+        has_new_cluster = bool(not existing.incident_cluster_id and incoming.incident_cluster_id)
+        has_new_summary = bool(incoming_summary_clean and incoming_summary_clean != existing_summary_clean)
+        incoming_observed = (
+            incoming.observed
+            if incoming.observed is not None
+            else _extract_observed_from_summary_text(incoming_summary_clean)
+        )
+        has_new_observed = bool(incoming_observed is not None and incoming_observed != existing.observed)
+
+        incoming_obs_dt = extract_incident_last_observed_at(incoming)
+        existing_obs_dt = extract_incident_last_observed_at(existing)
+        has_newer_timestamp = bool(
+            incoming_obs_dt is not None
+            and (existing_obs_dt is None or incoming_obs_dt > existing_obs_dt)
+        )
+        is_new_occurrence = (
+            has_new_telemetry
+            or has_new_reconciliation
+            or has_new_summary
+            or has_new_observed
+            or has_newer_timestamp
+            or has_oversized_existing
+        )
+        if not is_new_occurrence and not has_new_severity and not has_new_cluster:
+            return existing
+
         updates: Dict[str, Any] = {
-            "telemetry_event_ids": _merge_unique(
-                existing.telemetry_event_ids,
-                incoming.telemetry_event_ids,
-            ),
-            "reconciliation_ids": _merge_unique(
-                existing.reconciliation_ids,
-                incoming.reconciliation_ids,
-            ),
-            "severity": _max_incident_severity(existing.severity, incoming.severity),
+            "telemetry_event_ids": merged_telemetry,
+            "reconciliation_ids": merged_reconciliation,
+            "severity": merged_severity,
         }
-        if not existing.incident_cluster_id and incoming.incident_cluster_id:
+        if has_new_cluster:
             updates["incident_cluster_id"] = incoming.incident_cluster_id
-        if incoming.evidence_summary or (
-            existing.evidence_summary and len(existing.evidence_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
-        ):
-            updates["evidence_summary"] = _merge_summary(existing.evidence_summary, incoming.evidence_summary or "")
+
+        base_count = (
+            existing.occurrence_count
+            if isinstance(existing.occurrence_count, int) and existing.occurrence_count >= 1
+            else _infer_stored_occurrence_count(existing.to_dict())
+        )
+        incoming_count = (
+            incoming.occurrence_count
+            if isinstance(incoming.occurrence_count, int) and incoming.occurrence_count >= 1
+            else 1
+        )
+        updates["occurrence_count"] = base_count + incoming_count
+        updates["first_seen_at"] = existing.first_seen_at or existing.created_at
+        incoming_obs_iso = (
+            incoming_obs_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if incoming_obs_dt is not None
+            else None
+        )
+        existing_obs_iso = (
+            existing_obs_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if existing_obs_dt is not None
+            else None
+        )
+        updates["last_seen_at"] = (
+            _latest_iso_timestamp(
+                existing.last_seen_at,
+                existing.created_at,
+                existing_obs_iso,
+                incoming.last_seen_at,
+                incoming.created_at,
+                incoming_obs_iso,
+            )
+            or existing.created_at
+        )
+        if incoming_observed is not None:
+            updates["observed"] = incoming_observed
+        elif existing.observed is not None:
+            updates["observed"] = existing.observed
+
+        for attr in ("kind", "metric"):
+            existing_val = getattr(existing, attr)
+            incoming_val = getattr(incoming, attr)
+            if existing_val is not None:
+                updates[attr] = existing_val
+            elif incoming_val is not None:
+                updates[attr] = incoming_val
+
+        for attr in ("threshold", "comparator"):
+            incoming_val = getattr(incoming, attr)
+            if incoming_val is not None:
+                updates[attr] = incoming_val
+            elif getattr(existing, attr) is not None:
+                updates[attr] = getattr(existing, attr)
+
+        if incoming_summary_clean or has_oversized_existing:
+            updates["evidence_summary"] = _replace_single_report_summary(
+                existing.evidence_summary,
+                incoming.evidence_summary,
+            )
 
         updated = IncidentCase(**{**existing.to_dict(), **updates})
         errors = validate_incident_case(updated)
@@ -1249,35 +1358,113 @@ class IncidentStore:
                 f"Cannot merge infrastructure incident into non-infrastructure incident: {incident_id}"
             )
         extra_telemetry = list(incoming.telemetry_event_ids or [])
-        extra_summary_parts: List[str] = []
         if incoming.incident_id and incoming.incident_id != existing.incident_id:
             extra_telemetry.append(f"merged_incident_id:{incoming.incident_id}")
             if incoming.telemetry_event_ids:
                 extra_telemetry.append(
                     f"merged_event:{incoming.incident_id}:{incoming.telemetry_event_ids[0]}"
                 )
-            extra_summary_parts.append(f"merged_incident_id={incoming.incident_id}")
-        if incoming.evidence_summary:
-            extra_summary_parts.append(incoming.evidence_summary)
+
+        merged_telemetry = _merge_unique(
+            existing.telemetry_event_ids,
+            extra_telemetry,
+        )
+        merged_reconciliation = _merge_unique(
+            existing.reconciliation_ids,
+            incoming.reconciliation_ids,
+        )
+        merged_severity = _max_incident_severity(existing.severity, incoming.severity)
+        incoming_summary = (incoming.evidence_summary or "").strip()
+        existing_summary = (existing.evidence_summary or "").strip()
+        has_oversized_existing = len(existing_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
+
+        incoming_obs_dt = extract_incident_last_observed_at(incoming)
+        existing_obs_dt = extract_incident_last_observed_at(existing)
+        is_new_occurrence = (
+            merged_telemetry != list(existing.telemetry_event_ids or [])
+            or merged_reconciliation != list(existing.reconciliation_ids or [])
+            or bool(incoming_summary and incoming_summary != existing_summary)
+            or bool(incoming.observed is not None and incoming.observed != existing.observed)
+            or bool(
+                incoming_obs_dt is not None
+                and (existing_obs_dt is None or incoming_obs_dt > existing_obs_dt)
+            )
+            or has_oversized_existing
+        )
+        if not is_new_occurrence and merged_severity == existing.severity:
+            return existing
 
         updates: Dict[str, Any] = {
-            "telemetry_event_ids": _merge_unique(
-                existing.telemetry_event_ids,
-                extra_telemetry,
-            ),
-            "reconciliation_ids": _merge_unique(
-                existing.reconciliation_ids,
-                incoming.reconciliation_ids,
-            ),
-            "severity": _max_incident_severity(existing.severity, incoming.severity),
+            "telemetry_event_ids": merged_telemetry,
+            "reconciliation_ids": merged_reconciliation,
+            "severity": merged_severity,
         }
         if not existing.incident_cluster_id and incoming.incident_cluster_id:
             updates["incident_cluster_id"] = incoming.incident_cluster_id
-        incoming_summary = "; ".join(part for part in extra_summary_parts if part)
-        if incoming_summary or (
-            existing.evidence_summary and len(existing.evidence_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
-        ):
-            updates["evidence_summary"] = _merge_summary(existing.evidence_summary, incoming_summary)
+
+        base_count = (
+            existing.occurrence_count
+            if isinstance(existing.occurrence_count, int) and existing.occurrence_count >= 1
+            else _infer_stored_occurrence_count(existing.to_dict(), kind="infrastructure")
+        )
+        incoming_count = (
+            incoming.occurrence_count
+            if isinstance(incoming.occurrence_count, int) and incoming.occurrence_count >= 1
+            else 1
+        )
+        updates["occurrence_count"] = base_count + incoming_count
+        updates["first_seen_at"] = existing.first_seen_at or existing.created_at
+        incoming_obs_iso = (
+            incoming_obs_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if incoming_obs_dt is not None
+            else None
+        )
+        existing_obs_iso = (
+            existing_obs_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if existing_obs_dt is not None
+            else None
+        )
+        updates["last_seen_at"] = (
+            _latest_iso_timestamp(
+                existing.last_seen_at,
+                existing.created_at,
+                existing_obs_iso,
+                incoming.last_seen_at,
+                incoming.created_at,
+                incoming_obs_iso,
+            )
+            or existing.created_at
+        )
+        incoming_observed = (
+            incoming.observed
+            if incoming.observed is not None
+            else _extract_observed_from_summary_text(incoming_summary)
+        )
+        if incoming_observed is not None:
+            updates["observed"] = incoming_observed
+        elif existing.observed is not None:
+            updates["observed"] = existing.observed
+
+        for attr in ("kind", "metric"):
+            existing_val = getattr(existing, attr)
+            incoming_val = getattr(incoming, attr)
+            if existing_val is not None:
+                updates[attr] = existing_val
+            elif incoming_val is not None:
+                updates[attr] = incoming_val
+
+        for attr in ("threshold", "comparator"):
+            incoming_val = getattr(incoming, attr)
+            if incoming_val is not None:
+                updates[attr] = incoming_val
+            elif getattr(existing, attr) is not None:
+                updates[attr] = getattr(existing, attr)
+
+        if incoming_summary or has_oversized_existing:
+            updates["evidence_summary"] = _replace_single_report_summary(
+                existing.evidence_summary,
+                incoming_summary,
+            )
 
         updated = IncidentCase(**{**existing.to_dict(), **updates})
         errors = validate_incident_case(updated)
@@ -1810,3 +1997,749 @@ def _merge_summary(existing: Optional[str], incoming: str, limit: int = MAX_EVID
     if incoming and incoming not in tail:
         tail = incoming if len(incoming) <= max_tail else incoming[-max_tail:]
     return f"{marker}{tail}"
+
+
+def _replace_single_report_summary(
+    existing: Optional[str],
+    incoming: Optional[str],
+    limit: int = MAX_EVIDENCE_SUMMARY_LENGTH,
+) -> str:
+    """Keep only the latest single report summary bounded to limit (no multi-report append)."""
+    incoming_clean = (incoming or "").strip()
+    if incoming_clean:
+        return incoming_clean[:limit]
+    existing_clean = (existing or "").strip()
+    marker = "[older entries dropped] "
+    if existing_clean.startswith(marker):
+        existing_clean = existing_clean[len(marker):].strip()
+    return existing_clean[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Read-time summary & timeline derivation (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120)
+# ---------------------------------------------------------------------------
+
+_THRESHOLD_METRIC_KV_RE = re.compile(r"(?:^|;\s*)threshold_metric=([^;\s]+)")
+_WORST_METRIC_KV_RE = re.compile(r"(?:^|;\s*)worst_metric=([^;\s]+)")
+_OBSERVED_KV_RE = re.compile(r"(?:^|;\s*)observed=([^;\s]+)")
+_THRESHOLD_VALUE_KV_RE = re.compile(r"(?:^|;\s*)threshold(?:_value)?=([^;\s]+)")
+_COMPARATOR_KV_RE = re.compile(r"(?:^|;\s*)comparator=([^;\s]+)")
+_DRIFT_REPORT_SEG_RE = re.compile(r"DriftReport\s+([A-Za-z0-9_.:-]+)(.*?)(?=(?:;\s*DriftReport\s+)|$)")
+_INFRA_FAILURE_PROBE_RE = re.compile(
+    r"(?:^|;\s*)(?P<probe>[A-Za-z0-9_.-]+)\s+observed\s+(?P<obs>\d+)/(?P<thresh>\d+)\s+failures"
+)
+_RATIONALE_KV_RE = re.compile(
+    r"(?:^|;\s*)rationale=(.*?)(?=(?:;\s*(?:resolution_reason|non_trading_infrastructure_incident|"
+    r"tenant_id|producer|service_name|component_kind|component|endpoint|source_event_id|"
+    r"fingerprint|canonical_key|observed_at|snapshot_ref)=)|$)"
+)
+_PRODUCER_KV_RE = re.compile(r"(?:^|;\s*)producer=([^;\s]+)")
+_SNAPSHOT_REF_KV_RE = re.compile(r"(?:^|;\s*)snapshot_ref=([^;\s]+)")
+
+
+def _coerce_numeric_or_value(raw: Any) -> Any:
+    if raw is None or isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[+-]?\d+", text):
+        try:
+            return int(text)
+        except ValueError:
+            pass
+    try:
+        val = float(text)
+        if math.isfinite(val):
+            return val
+    except ValueError:
+        pass
+    return text
+
+
+def _extract_observed_from_summary_text(summary_text: str) -> Any:
+    if not summary_text:
+        return None
+    obs_matches = _OBSERVED_KV_RE.findall(summary_text)
+    if obs_matches:
+        return _coerce_numeric_or_value(obs_matches[-1])
+    infra_matches = list(_INFRA_FAILURE_PROBE_RE.finditer(summary_text))
+    if infra_matches:
+        return int(infra_matches[-1].group("obs"))
+    return None
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        if abs(value) >= 0.01:
+            formatted = f"{value:.2f}"
+            if "." in formatted:
+                trimmed = formatted.rstrip("0").rstrip(".")
+                return trimmed if len(trimmed.split(".")[1]) >= 1 else f"{value:.2f}" if "." in trimmed else formatted
+            return formatted
+        return f"{value:.4g}"
+    return str(value)
+
+
+def _comparator_symbol(comparator: Optional[str]) -> str:
+    mapping = {
+        "gt": ">",
+        "gte": ">=",
+        "lt": "<",
+        "lte": "<=",
+        "eq": "=",
+        "neq": "!=",
+    }
+    clean = str(comparator or "").strip().lower()
+    return mapping.get(clean, clean or ">")
+
+
+def _humanize_metric_name(metric: Optional[str]) -> str:
+    text = str(metric or "").strip()
+    if not text:
+        return ""
+    if text.startswith("drift:"):
+        text = text[len("drift:"):]
+    cleaned = re.sub(r"[_:\-]+", " ", text)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _non_meta_telemetry_event_ids(raw_ids: Any) -> List[str]:
+    if not isinstance(raw_ids, list):
+        return []
+    result: List[str] = []
+    for item in raw_ids:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if text.startswith(("resolution_reason:", "merged_incident_id:", "merged_event:")):
+            continue
+        if text not in result:
+            result.append(text)
+    return result
+
+
+def _latest_iso_timestamp(*values: Optional[str]) -> Optional[str]:
+    best_dt: Optional[datetime] = None
+    best_raw: Optional[str] = None
+    for raw in values:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        parsed = _parse_iso_utc(text)
+        if parsed is not None:
+            if best_dt is None or parsed >= best_dt:
+                best_dt = parsed
+                best_raw = text
+        elif best_raw is None:
+            best_raw = text
+    return best_raw
+
+
+def _infer_incident_kind(data: Mapping[str, Any]) -> str:
+    raw_kind = str(data.get("kind") or data.get("incident_kind") or "").strip().lower()
+    if raw_kind in {"drift", "threshold", "infrastructure", "agent_finding", "deployment", "runtime"}:
+        return raw_kind
+    incident_id = str(data.get("incident_id") or data.get("id") or "").strip()
+    cluster = str(data.get("incident_cluster_id") or "").strip()
+    summary = str(data.get("evidence_summary") or "")
+    artifact = str(data.get("artifact_id") or "").strip()
+
+    if (
+        incident_id.startswith("agent-")
+        or ":monitor-agent:agent-finding-" in cluster
+        or f"component_kind={MONITOR_AGENT_COMPONENT_KIND}" in summary
+        or artifact.startswith(MONITOR_AGENT_ARTIFACT_PREFIX)
+    ):
+        return "agent_finding"
+    if (
+        incident_id.startswith("inc-drift-")
+        or cluster.startswith("drift:")
+        or "DriftReport " in summary
+    ):
+        return "drift"
+    if (
+        incident_id.startswith("inc-threshold-")
+        or data.get("threshold_identity")
+        or ("threshold_metric=" in summary and not cluster.startswith("drift:"))
+    ):
+        return "threshold"
+    if (
+        cluster.startswith(INFRASTRUCTURE_CLUSTER_PREFIX)
+        or "non_trading_infrastructure_incident=true" in summary
+        or incident_id.startswith("infra-")
+        or artifact.startswith(INFRASTRUCTURE_ARTIFACT_PREFIX)
+    ):
+        return "infrastructure"
+    if cluster.startswith("deployment:") or incident_id.startswith("inc-deployment-"):
+        return "deployment"
+    return raw_kind or "incident"
+
+
+def _infer_stored_occurrence_count(data: Mapping[str, Any], *, kind: Optional[str] = None) -> int:
+    raw_count = data.get("occurrence_count")
+    if isinstance(raw_count, int) and not isinstance(raw_count, bool) and raw_count >= 1:
+        return raw_count
+    resolved_kind = kind or _infer_incident_kind(data)
+    non_meta_telemetry = _non_meta_telemetry_event_ids(data.get("telemetry_event_ids"))
+    reconciliation_ids = [
+        str(x).strip()
+        for x in (data.get("reconciliation_ids") or [])
+        if str(x or "").strip()
+    ]
+    summary = str(data.get("evidence_summary") or "")
+    if resolved_kind == "drift":
+        drift_report_ids = [r for r in reconciliation_ids if r.startswith("drift-")]
+        segment_count = len(_DRIFT_REPORT_SEG_RE.findall(summary))
+        return max(1, len(non_meta_telemetry), len(drift_report_ids), segment_count)
+    if resolved_kind == "agent_finding":
+        snap_matches = _SNAPSHOT_REF_KV_RE.findall(summary)
+        return max(1, len(non_meta_telemetry), len(dict.fromkeys(snap_matches)))
+    if resolved_kind == "infrastructure":
+        merged_ids = [
+            str(x).strip()
+            for x in (data.get("telemetry_event_ids") or [])
+            if str(x or "").strip().startswith("merged_incident_id:")
+        ]
+        summary_merged = _MERGED_INCIDENT_ID_KV_RE.findall(summary)
+        all_merged = set(
+            item.split(":", 1)[1].strip() for item in merged_ids if ":" in item
+        ) | {m.strip() for m in summary_merged if m.strip()}
+        return max(1, 1 + len(all_merged), len(non_meta_telemetry))
+    return max(1, len(non_meta_telemetry))
+
+
+def _snapshot_iso_from_token(token: str) -> Optional[str]:
+    match = _SNAPSHOT_TS_RE.search(str(token or ""))
+    if not match:
+        return None
+    y, m, d, hh, mm, ss = (int(g) for g in match.groups())
+    try:
+        dt = datetime(y, m, d, hh, mm, ss, tzinfo=timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    except ValueError:
+        return None
+
+
+def build_incident_timeline(
+    incident_or_data: IncidentCase | Mapping[str, Any],
+    *,
+    summary_fields: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Build chronological occurrence and lifecycle timeline entries for an incident."""
+    data = (
+        incident_or_data.to_dict()
+        if isinstance(incident_or_data, IncidentCase)
+        else dict(incident_or_data)
+    )
+    fields = dict(summary_fields) if summary_fields is not None else derive_incident_summary_fields(data, include_timeline=False)
+    incident_id = str(data.get("incident_id") or data.get("id") or "incident").strip()
+    kind = str(fields.get("kind") or "incident")
+    metric = fields.get("metric")
+    metric_label = _humanize_metric_name(metric) or "metric"
+    observed = fields.get("observed")
+    threshold = fields.get("threshold")
+    comparator = fields.get("comparator")
+    comp_sym = _comparator_symbol(comparator)
+    occurrence_count = int(fields.get("occurrence_count") or 1)
+    first_seen_at = str(fields.get("first_seen_at") or data.get("created_at") or _utc_now())
+    last_seen_at = str(fields.get("last_seen_at") or first_seen_at)
+    summary_text = str(data.get("evidence_summary") or "")
+
+    non_meta_telemetry = _non_meta_telemetry_event_ids(data.get("telemetry_event_ids"))
+    reconciliation_ids = [
+        str(x).strip()
+        for x in (data.get("reconciliation_ids") or [])
+        if str(x or "").strip()
+    ]
+
+    entries: List[Dict[str, Any]] = []
+
+    if kind == "drift":
+        drift_report_ids = [r for r in reconciliation_ids if r.startswith("drift-")]
+        if not drift_report_ids and reconciliation_ids:
+            drift_report_ids = list(reconciliation_ids)
+        seg_map: Dict[str, Dict[str, Any]] = {}
+        for report_id, seg_body in _DRIFT_REPORT_SEG_RE.findall(summary_text):
+            obs_m = _OBSERVED_KV_RE.findall(seg_body)
+            thr_m = _THRESHOLD_VALUE_KV_RE.findall(seg_body)
+            cmp_m = _COMPARATOR_KV_RE.findall(seg_body)
+            seg_map[report_id] = {
+                "observed": _coerce_numeric_or_value(obs_m[-1]) if obs_m else observed,
+                "threshold": _coerce_numeric_or_value(thr_m[-1]) if thr_m else threshold,
+                "comparator": cmp_m[-1] if cmp_m else comparator,
+            }
+        total = max(occurrence_count, len(non_meta_telemetry), len(drift_report_ids), 1)
+        for idx in range(total):
+            rep_id = drift_report_ids[idx] if idx < len(drift_report_ids) else (
+                drift_report_ids[-1] if drift_report_ids else None
+            )
+            tel_id = non_meta_telemetry[idx] if idx < len(non_meta_telemetry) else (
+                non_meta_telemetry[-1] if non_meta_telemetry else None
+            )
+            source_ref = rep_id or tel_id or str(data.get("trace_id") or incident_id)
+            seg_info = seg_map.get(rep_id or "", {})
+            entry_obs = seg_info.get("observed", observed)
+            entry_thr = seg_info.get("threshold", threshold)
+            entry_cmp = seg_info.get("comparator", comparator)
+            entry_sym = _comparator_symbol(entry_cmp)
+            ts = first_seen_at if idx == 0 else (last_seen_at if idx == total - 1 else first_seen_at)
+            if entry_obs is not None and entry_thr is not None:
+                note = (
+                    f"Occurrence {idx + 1} of {total}: drift report {source_ref} "
+                    f"observed {metric_label} {_format_metric_value(entry_obs)} "
+                    f"({entry_sym} {_format_metric_value(entry_thr)})."
+                )
+            else:
+                note = f"Occurrence {idx + 1} of {total}: drift report {source_ref} on {metric_label}."
+            entry_params = {
+                "occurrence_index": idx + 1,
+                "occurrence_count": total,
+                "source_ref": source_ref,
+                "drift_report_id": rep_id,
+                "telemetry_event_id": tel_id,
+                "metric": metric,
+                "observed": entry_obs,
+                "threshold": entry_thr,
+                "comparator": entry_cmp,
+            }
+            entries.append(
+                {
+                    "entry_id": f"{incident_id}:occurrence:{idx + 1}",
+                    "incident_id": incident_id,
+                    "ts": ts,
+                    "timestamp": ts,
+                    "actor": "reconciliation-drift",
+                    "actor_ref": "reconciliation-drift",
+                    "entry_type": "occurrence",
+                    "source_ref": source_ref,
+                    "evidence_ref": source_ref,
+                    "summary_key": "incident.timeline.drift_occurrence",
+                    "summary_params": entry_params,
+                    "summary": note,
+                    "note": note,
+                }
+            )
+    elif kind == "agent_finding":
+        snap_refs = list(non_meta_telemetry)
+        for snap_match in _SNAPSHOT_REF_KV_RE.findall(summary_text):
+            if snap_match not in snap_refs:
+                snap_refs.append(snap_match)
+        obs_times = [m.group(1) for m in _OBSERVED_AT_RE.finditer(summary_text)]
+        rationale_matches = [m.strip() for m in _RATIONALE_KV_RE.findall(summary_text) if m.strip()]
+        total = max(occurrence_count, len(snap_refs), 1)
+        for idx in range(total):
+            source_ref = snap_refs[idx] if idx < len(snap_refs) else (
+                snap_refs[-1] if snap_refs else str(data.get("trace_id") or incident_id)
+            )
+            snap_ts = _snapshot_iso_from_token(source_ref)
+            obs_ts = obs_times[idx] if idx < len(obs_times) else None
+            ts = obs_ts or snap_ts or (first_seen_at if idx == 0 else last_seen_at)
+            rat = (
+                rationale_matches[idx]
+                if idx < len(rationale_matches)
+                else (rationale_matches[-1] if rationale_matches else str(data.get("title") or metric_label))
+            )
+            note = f"Occurrence {idx + 1} of {total}: {rat} (snapshot {source_ref})."
+            entry_params = {
+                "occurrence_index": idx + 1,
+                "occurrence_count": total,
+                "source_ref": source_ref,
+                "snapshot_ref": source_ref,
+                "metric": metric,
+                "rationale": rat,
+            }
+            entries.append(
+                {
+                    "entry_id": f"{incident_id}:occurrence:{idx + 1}",
+                    "incident_id": incident_id,
+                    "ts": ts,
+                    "timestamp": ts,
+                    "actor": "monitor-agent",
+                    "actor_ref": "monitor-agent",
+                    "entry_type": "occurrence",
+                    "source_ref": source_ref,
+                    "evidence_ref": source_ref,
+                    "summary_key": "incident.timeline.agent_finding_occurrence",
+                    "summary_params": entry_params,
+                    "summary": note,
+                    "note": note,
+                }
+            )
+    elif kind == "infrastructure":
+        producer_match = _PRODUCER_KV_RE.search(summary_text)
+        actor = producer_match.group(1).strip() if producer_match else "control-plane-bff"
+        service_match = _SERVICE_NAME_KV_RE.search(summary_text)
+        comp_name = (
+            service_match.group(1).strip()
+            if service_match
+            else str(fields.get("summary_params", {}).get("service_name") or metric_label or "component")
+        )
+        event_refs = list(non_meta_telemetry)
+        if not event_refs:
+            event_refs = [str(data.get("trace_id") or incident_id)]
+        total = max(occurrence_count, len(event_refs), 1)
+        for idx in range(total):
+            source_ref = event_refs[idx] if idx < len(event_refs) else event_refs[-1]
+            ts = first_seen_at if idx == 0 else last_seen_at
+            note = (
+                f"Occurrence {idx + 1} of {total}: infrastructure health event "
+                f"{source_ref} on {comp_name}."
+            )
+            entry_params = {
+                "occurrence_index": idx + 1,
+                "occurrence_count": total,
+                "source_ref": source_ref,
+                "service_name": comp_name,
+                "metric": metric,
+                "observed": observed,
+                "threshold": threshold,
+                "comparator": comparator,
+            }
+            entries.append(
+                {
+                    "entry_id": f"{incident_id}:occurrence:{idx + 1}",
+                    "incident_id": incident_id,
+                    "ts": ts,
+                    "timestamp": ts,
+                    "actor": actor,
+                    "actor_ref": actor,
+                    "entry_type": "occurrence",
+                    "source_ref": source_ref,
+                    "evidence_ref": source_ref,
+                    "summary_key": "incident.timeline.infrastructure_occurrence",
+                    "summary_params": entry_params,
+                    "summary": note,
+                    "note": note,
+                }
+            )
+    else:
+        actor = "telemetry-engine" if kind == "threshold" else "incident-svc"
+        event_refs = list(non_meta_telemetry) or list(reconciliation_ids) or [str(data.get("trace_id") or incident_id)]
+        total = max(occurrence_count, len(event_refs), 1)
+        for idx in range(total):
+            source_ref = event_refs[idx] if idx < len(event_refs) else event_refs[-1]
+            ts = first_seen_at if idx == 0 else last_seen_at
+            if observed is not None and threshold is not None and threshold != 0:
+                note = (
+                    f"Occurrence {idx + 1} of {total}: observed {metric_label} "
+                    f"{_format_metric_value(observed)} ({comp_sym} {_format_metric_value(threshold)}) "
+                    f"({source_ref})."
+                )
+            else:
+                title_text = str(data.get("title") or f"Incident on {metric_label}").strip()
+                note = f"Occurrence {idx + 1} of {total}: {title_text} ({source_ref})."
+            entry_params = {
+                "occurrence_index": idx + 1,
+                "occurrence_count": total,
+                "source_ref": source_ref,
+                "metric": metric,
+                "observed": observed,
+                "threshold": threshold,
+                "comparator": comparator,
+            }
+            entries.append(
+                {
+                    "entry_id": f"{incident_id}:occurrence:{idx + 1}",
+                    "incident_id": incident_id,
+                    "ts": ts,
+                    "timestamp": ts,
+                    "actor": actor,
+                    "actor_ref": actor,
+                    "entry_type": "occurrence",
+                    "source_ref": source_ref,
+                    "evidence_ref": source_ref,
+                    "summary_key": "incident.timeline.occurrence",
+                    "summary_params": entry_params,
+                    "summary": note,
+                    "note": note,
+                }
+            )
+
+    status = str(data.get("status") or "").strip().lower()
+    resolved_at = str(data.get("resolved_at") or "").strip() or None
+    if status in {"resolved", "closed"} or resolved_at:
+        res_ts = resolved_at or last_seen_at or first_seen_at
+        reason_matches = _RESOLUTION_REASON_KV_RE.findall(summary_text)
+        res_reason: Optional[str] = reason_matches[-1] if reason_matches else None
+        if not res_reason:
+            for item in reversed(data.get("telemetry_event_ids") or []):
+                text = str(item or "").strip()
+                if text.startswith("resolution_reason:"):
+                    res_reason = text.split(":", 1)[1].strip() or None
+                    if res_reason:
+                        break
+        res_note = (
+            f"Incident {status or 'resolved'} ({res_reason})."
+            if res_reason
+            else f"Incident {status or 'resolved'}."
+        )
+        res_source = f"resolution_reason:{res_reason}" if res_reason else incident_id
+        entries.append(
+            {
+                "entry_id": f"{incident_id}:resolved",
+                "incident_id": incident_id,
+                "ts": res_ts,
+                "timestamp": res_ts,
+                "actor": "incident-svc",
+                "actor_ref": "incident-svc",
+                "entry_type": "resolved",
+                "source_ref": res_source,
+                "evidence_ref": res_source,
+                "summary_key": "incident.timeline.resolved",
+                "summary_params": {
+                    "status": status or "resolved",
+                    "resolved_at": res_ts,
+                    "resolution_reason": res_reason,
+                },
+                "summary": res_note,
+                "note": res_note,
+            }
+        )
+
+    return entries
+
+
+def derive_incident_summary_fields(
+    incident_or_data: IncidentCase | Mapping[str, Any],
+    *,
+    include_timeline: bool = True,
+) -> Dict[str, Any]:
+    """Derive localizable summary fields, occurrence counts, and timeline at read time.
+
+    Never mutates stored rows. Works on both newly written IncidentCase records
+    and legacy rows that carry an appended evidence_summary.
+    """
+    data = (
+        incident_or_data.to_dict()
+        if isinstance(incident_or_data, IncidentCase)
+        else dict(incident_or_data)
+    )
+    kind = _infer_incident_kind(data)
+    summary_text = str(data.get("evidence_summary") or "")
+    cluster_id = str(data.get("incident_cluster_id") or "").strip()
+    artifact_id = str(data.get("artifact_id") or "").strip()
+
+    service_match = _SERVICE_NAME_KV_RE.search(summary_text)
+    service_name: Optional[str] = service_match.group(1).strip() if service_match else None
+    if not service_name and kind == "infrastructure":
+        if artifact_id.startswith(INFRASTRUCTURE_ARTIFACT_PREFIX):
+            service_name = normalize_infrastructure_component(
+                artifact_id[len(INFRASTRUCTURE_ARTIFACT_PREFIX):]
+            )
+        elif cluster_id.startswith(INFRASTRUCTURE_CLUSTER_PREFIX):
+            parts = cluster_id.split(":", 3)
+            if len(parts) == 4:
+                service_name = normalize_infrastructure_component(parts[3])
+
+    infra_probe_matches = list(_INFRA_FAILURE_PROBE_RE.finditer(summary_text))
+    infra_probe_match = infra_probe_matches[-1] if infra_probe_matches else None
+
+    metric: Optional[str] = (
+        str(data["metric"]).strip()
+        if data.get("metric") not in (None, "")
+        else None
+    )
+    if not metric:
+        tm_matches = _THRESHOLD_METRIC_KV_RE.findall(summary_text)
+        wm_matches = _WORST_METRIC_KV_RE.findall(summary_text)
+        if tm_matches:
+            metric = tm_matches[-1].strip()
+        elif wm_matches:
+            metric = wm_matches[-1].strip()
+        elif data.get("threshold_identity"):
+            try:
+                parsed_ident = json.loads(str(data["threshold_identity"]))
+                if isinstance(parsed_ident, list) and parsed_ident and parsed_ident[0]:
+                    metric = str(parsed_ident[0]).strip()
+            except Exception:
+                pass
+        if not metric:
+            if kind == "drift" and cluster_id.startswith("drift:"):
+                metric = cluster_id.split(":")[-1].strip() or "drift"
+            elif kind == "agent_finding":
+                ck_matches = _CANONICAL_KEY_KV_RE.findall(summary_text)
+                fp_matches = _FINGERPRINT_KV_RE.findall(summary_text)
+                if ck_matches:
+                    metric = ck_matches[-1].strip()
+                elif fp_matches:
+                    metric = fp_matches[-1].strip()
+                elif ":monitor-agent:agent-finding-" in cluster_id:
+                    metric = cluster_id.split(":monitor-agent:agent-finding-", 1)[1].strip()
+                elif artifact_id.startswith(MONITOR_AGENT_ARTIFACT_PREFIX):
+                    metric = artifact_id[len(MONITOR_AGENT_ARTIFACT_PREFIX):].strip()
+                else:
+                    metric = "agent_finding"
+            elif kind == "infrastructure":
+                if infra_probe_match is not None:
+                    metric = infra_probe_match.group("probe").strip()
+                elif service_name:
+                    metric = service_name
+                else:
+                    metric = "health_probe"
+            elif cluster_id:
+                metric = cluster_id.split(":")[-1].strip() or kind
+            else:
+                metric = kind
+
+    observed: Any = data.get("observed")
+    if observed is None:
+        obs_matches = _OBSERVED_KV_RE.findall(summary_text)
+        if obs_matches:
+            observed = _coerce_numeric_or_value(obs_matches[-1])
+        elif infra_probe_match is not None:
+            observed = int(infra_probe_match.group("obs"))
+
+    threshold: Any = data.get("threshold")
+    if threshold is None:
+        thr_matches = _THRESHOLD_VALUE_KV_RE.findall(summary_text)
+        if thr_matches:
+            threshold = _coerce_numeric_or_value(thr_matches[-1])
+        elif infra_probe_match is not None:
+            threshold = int(infra_probe_match.group("thresh"))
+
+    comparator: Optional[str] = (
+        str(data["comparator"]).strip()
+        if data.get("comparator") not in (None, "")
+        else None
+    )
+    if not comparator:
+        cmp_matches = _COMPARATOR_KV_RE.findall(summary_text)
+        if cmp_matches:
+            comparator = cmp_matches[-1].strip()
+        elif infra_probe_match is not None:
+            comparator = "gte"
+        elif observed is not None and threshold is not None:
+            comparator = "gt"
+
+    occurrence_count = _infer_stored_occurrence_count(data, kind=kind)
+    created_at = (
+        str(
+            data.get("created_at")
+            or data.get("opened_at")
+            or data.get("triggered_at")
+            or data.get("submitted_at")
+            or ""
+        ).strip()
+        or None
+    )
+    first_seen_at = str(data.get("first_seen_at") or "").strip() or created_at
+
+    observed_at_candidates: List[Optional[str]] = [
+        str(data.get("last_seen_at") or "").strip() or None,
+        str(data.get("updated_at") or "").strip() or None,
+        first_seen_at,
+        created_at,
+    ]
+    for match in _OBSERVED_AT_RE.finditer(summary_text):
+        observed_at_candidates.append(match.group(1))
+    for source in [summary_text, *(str(x or "") for x in (data.get("telemetry_event_ids") or []))]:
+        snap_iso = _snapshot_iso_from_token(source)
+        if snap_iso:
+            observed_at_candidates.append(snap_iso)
+    last_seen_at = _latest_iso_timestamp(*observed_at_candidates) or first_seen_at
+
+    occurrence_label = "1 occurrence" if occurrence_count == 1 else f"{occurrence_count} occurrences"
+    comp_sym = _comparator_symbol(comparator)
+    metric_label = _humanize_metric_name(metric) or "metric"
+    rationale_matches = [m.strip() for m in _RATIONALE_KV_RE.findall(summary_text) if m.strip()]
+    rationale = rationale_matches[-1] if rationale_matches else None
+
+    if kind == "drift":
+        if observed is not None and threshold is not None:
+            summary_key = "incident.summary.drift_threshold_breach"
+            summary = (
+                f"Observed {metric_label} {_format_metric_value(observed)} "
+                f"({comp_sym} {_format_metric_value(threshold)}) across {occurrence_label}."
+            )
+        else:
+            summary_key = "incident.summary.drift_detected"
+            summary = f"Drift detected on {metric_label} ({occurrence_label})."
+    elif kind == "threshold":
+        summary_key = "incident.summary.threshold_breach"
+        if observed is not None and threshold is not None:
+            summary = (
+                f"Observed {metric_label} {_format_metric_value(observed)} "
+                f"({comp_sym} {_format_metric_value(threshold)}) across {occurrence_label}."
+            )
+        else:
+            summary = f"Threshold breach on {metric_label} ({occurrence_label})."
+    elif kind == "infrastructure":
+        summary_key = "incident.summary.infrastructure_degradation"
+        target_label = service_name or metric_label or "component"
+        if infra_probe_match is not None or (
+            observed is not None and threshold is not None and threshold != 0
+        ):
+            summary = (
+                f"Infrastructure health check failed for {target_label}: "
+                f"{_format_metric_value(observed)}/{_format_metric_value(threshold)} probe failures "
+                f"({occurrence_label})."
+            )
+        else:
+            summary = f"Infrastructure degradation on {target_label} ({occurrence_label})."
+    elif kind == "agent_finding":
+        summary_key = "incident.summary.agent_finding"
+        clean_finding = rationale or str(data.get("title") or "").strip() or f"Monitor finding on {metric_label}"
+        summary = f"{clean_finding} ({occurrence_label})."
+    else:
+        summary_key = "incident.summary.deployment" if kind == "deployment" else "incident.summary.generic"
+        if observed is not None and threshold is not None and threshold != 0:
+            summary = (
+                f"Observed {metric_label} {_format_metric_value(observed)} "
+                f"({comp_sym} {_format_metric_value(threshold)}) across {occurrence_label}."
+            )
+        else:
+            title_text = str(data.get("title") or "").strip() or f"Incident on {metric_label}"
+            summary = f"{title_text} ({occurrence_label})."
+
+    binding_id = str(data.get("binding_id") or data.get("runtime_binding_id") or "").strip() or None
+    deployment_stage = str(data.get("deployment_stage") or data.get("deployment_mode") or "").strip() or None
+    summary_params: Dict[str, Any] = {
+        "kind": kind,
+        "metric": metric,
+        "observed": observed,
+        "threshold": threshold,
+        "comparator": comparator,
+        "comparator_symbol": comp_sym if comparator else None,
+        "occurrence_count": occurrence_count,
+        "first_seen_at": first_seen_at,
+        "last_seen_at": last_seen_at,
+        "binding_id": binding_id,
+        "deployment_stage": deployment_stage,
+    }
+    if service_name:
+        summary_params["service_name"] = service_name
+    if rationale:
+        summary_params["rationale"] = rationale
+
+    evidence_refs: List[str] = []
+    for ref in [*(data.get("reconciliation_ids") or []), *(data.get("telemetry_event_ids") or [])]:
+        ref_str = str(ref or "").strip()
+        if ref_str and not ref_str.startswith(("resolution_reason:", "merged_event:")) and ref_str not in evidence_refs:
+            evidence_refs.append(ref_str)
+
+    result: Dict[str, Any] = {
+        "kind": kind,
+        "metric": metric,
+        "observed": observed,
+        "threshold": threshold,
+        "comparator": comparator,
+        "occurrence_count": occurrence_count,
+        "first_seen_at": first_seen_at,
+        "last_seen_at": last_seen_at,
+        "summary_key": summary_key,
+        "summary_params": summary_params,
+        "summary": summary,
+        "evidence_refs": evidence_refs,
+    }
+    if include_timeline:
+        result["timeline"] = build_incident_timeline(data, summary_fields=result)
+    return result
