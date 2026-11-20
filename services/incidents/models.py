@@ -59,6 +59,12 @@ class UpdateIncidentStatusRequest(BaseModel):
     resolved_at: Optional[str] = None
     source_event_id: Optional[str] = None
     telemetry_event_ids: List[str] = Field(default_factory=list)
+    resolution_reason: Optional[str] = None
+
+
+class ResolveRetiredBindingRequest(BaseModel):
+    binding_id: str
+    retired_at: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

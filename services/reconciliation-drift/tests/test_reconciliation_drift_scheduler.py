@@ -3605,7 +3605,11 @@ def _run_drawdown_tick(
         with (
             mock.patch.dict(
                 "os.environ",
-                {"RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path)},
+                {
+                    "RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path),
+                    # Projected fixtures carry fixed past drawdown_at values.
+                    "RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS": "999999999",
+                },
             ),
             mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
             mock.patch.object(
@@ -4118,3 +4122,127 @@ def test_identity_and_other_check_failures_have_reason_codes() -> None:
     )
     event, _ = _scheduled_event(other, "2026-07-15T10:05:00Z")
     assert event["reason_code"] == "reconciliation_check_failed"
+
+
+def _critical_drawdown_check(observed: float = 9.609309450237793):
+    return [
+        {
+            "metric": "drawdown",
+            "status": "critical",
+            "baseline": 1.0,
+            "observed": observed,
+            "relative_delta": observed - 1.0,
+        }
+    ]
+
+
+def test_scheduled_tick_marks_unchanged_stale_drawdown_as_stale_not_breach() -> None:
+    """Telemetry carries the last drawdown forward; the same old value must not re-breach each tick."""
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.609309450237793,
+            drawdown_at="2000-01-01T00:00:00Z",
+            drawdown_event_id="evt-drawdown-old",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check()),
+            mock.patch.object(svc, "_classify_drift_report_incident") as classify,
+        ):
+            payloads = [
+                client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": f"tick-stale-{n}"},
+                ).json()
+                for n in range(3)
+            ]
+        for payload in payloads:
+            assert payload["stale_input_binding_ids"] == [summary["binding_id"]]
+            assert payload["drift_report_ids"] == []
+            assert payload["incident_ids"] == []
+            assert payload["status"] != "critical"
+        classify.assert_not_called()
+        evaluation = svc.store.get_evaluation(
+            svc._tick_evaluation_id("tick-stale-2", summary["binding_id"]),
+            tenant_id=svc._configured_tenant_id() if hasattr(svc, "_configured_tenant_id") else None,
+        )
+        check = evaluation["drift_checks"][0]
+        assert check["stale_input"] is True
+        assert check["status"] == "degraded"
+        assert check["input_observed_at"] == "2000-01-01T00:00:00Z"
+
+
+def test_scheduled_tick_fresh_drawdown_still_breaches() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.6,
+            drawdown_at=svc.utc_now(),
+            drawdown_event_id="evt-drawdown-new",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check(9.6)),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-fresh-001"}
+            ) as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-fresh-001"},
+            ).json()
+        assert payload["stale_input_binding_ids"] == []
+        assert payload["incident_ids"] == ["inc-fresh-001"]
+        assert classify.call_count == 1
+
+
+def test_scheduled_tick_retirement_between_ticks_resolves_open_drift_incidents() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        binding_id = summary["binding_id"]
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                side_effect=[
+                    {"binding_id": binding_id, "status": "active"},
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                ],
+            ),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-drift-001"}
+            ) as classify,
+            mock.patch.object(
+                svc,
+                "_resolve_retired_binding_incidents",
+                return_value={"resolved_incident_ids": ["inc-drift-001"]},
+            ) as resolve,
+        ):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-1"}
+            ).json()
+            second = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-2"}
+            ).json()
+            third = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-3"}
+            ).json()
+        assert first["incident_ids"] == ["inc-drift-001"]
+        assert second["retired_binding_ids"] == [binding_id]
+        assert second["retired_incident_resolutions"] == [{"resolved_incident_ids": ["inc-drift-001"]}]
+        assert third["incident_ids"] == []
+        assert classify.call_count == 1  # nothing opened after retirement
+        assert resolve.call_count == 2
