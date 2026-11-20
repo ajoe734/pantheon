@@ -489,7 +489,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
             # prove strict authenticated tenant/session behavior after restore;
             # it must not receive any write-capable identity.
             assert artifact_capture.count(secret_ref) == 1
-            assert workflow.count(secret_ref) == 7  # +1: post-Root original read-only QA caller step
+            assert workflow.count(secret_ref) == 8  # +1: post-Root original read-only QA caller step; +1: dev acceptance stage probe step
         else:
             assert secret_ref not in hosted_probe
             assert secret_ref not in artifact_capture
