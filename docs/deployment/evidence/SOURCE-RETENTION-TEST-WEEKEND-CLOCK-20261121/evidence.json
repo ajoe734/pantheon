@@ -1,0 +1,20 @@
+{
+  "task": "SOURCE-RETENTION-TEST-WEEKEND-CLOCK-20261121",
+  "reproduction": {
+    "method": "simulated Taipei date 2026-11-21 (Saturday) by patching retention.datetime.now in a scratch pytest plugin, before the fix",
+    "test": "services/source_ingestion/tests/test_retention.py::test_the_source_ingest_health_payload_carries_the_retention_fields",
+    "result": "FAILED with KeyError: 'mode' (run_if_due returned not_a_trading_day without mode)",
+    "ci_reference": "PR 7708 run 44784309427 job 136455228300 (as cited in the task brief; not re-fetched)"
+  },
+  "fix": "test-only: monkeypatch.setattr(ret, '_taipei_today', lambda: TODAY) in that test (TODAY=2026-11-17, Tuesday); assertions unchanged; no production code change; no wall-clock threshold",
+  "wall_clock_audit": {
+    "test_the_source_ingest_health_payload_carries_the_retention_fields": "was real-date dependent (router builds its own sweeper); now pinned",
+    "all other tests in the file": "build sweepers via _sweeper(today=...) / explicit today=lambda, or pass today= to controller_worker.run_retention_sweep; no real-date dependency",
+    "time.monotonic uses": "only duration measurement / export-marker in the RETENTION_SHAPED-skipped hosted test and the pin-snapshot fixture; no assertion on the wall date"
+  },
+  "verification_after_fix": [
+    {"simulated_taipei_date": "2026-11-21 (Saturday)", "result": "27 passed, 1 skipped (RETENTION_SHAPED)"},
+    {"simulated_taipei_date": "2026-11-18 (Wednesday)", "result": "27 passed, 1 skipped (RETENTION_SHAPED)"}
+  ],
+  "environment_note": "scratch venv with pytest, pyarrow, fastapi, httpx, jsonschema"
+}
