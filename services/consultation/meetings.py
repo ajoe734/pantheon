@@ -39,6 +39,7 @@ import uuid
 
 from services.persona import consult_triggers
 
+from .workflow_state import recovery_exhausted
 from .models import (
     ActorRef,
     AuthorType,
@@ -2655,6 +2656,10 @@ def _execution_state_from_row(row: Optional[Mapping[str, Any]]) -> Optional[Dict
         "max_attempts": _max_attempts(),
         "last_error": row.get("last_error"),
         "updated_at": _iso_from_epoch(row.get("updated_at")),
+        # Automatic redrive spent its budget: the meeting was not held and its
+        # idempotency key may be reused by the next trigger.
+        "recovery_exhausted": recovery_exhausted(row),
+        "redrive_count": int(row.get("replay_count") or 0),
     }
 
 

@@ -1,0 +1,33 @@
+{
+  "task": "CONSULT-DEAD-LETTER-RECOVERY-AFTER-FIX-20261120",
+  "base": "f9feee4ce",
+  "change": {
+    "workflow_state": "recoverable_kind / recovery_exhausted / redrive_dead_letter; budget rides the existing replay_count column (AUTO_REDRIVE_MAX_PER_ITEM=3), phase, saved contribution and last_error kept",
+    "executor": "recover_dead_letters runs at the start of every tick: one probe per reason class (auth: persona + registry owner read with the executor's own credentials, 404 counts as an answer; ensure: adapter ensure route for one persona of the first item), then redrives up to AUTO_REDRIVE_PER_TICK=3; exhausted items stay dead_letter and their request is posted failed once (event workflow_recovery_exhausted + /meetings/{id}/sync request_status=failed)",
+    "meetings_view": "execution_state gains recovery_exhausted and redrive_count (additive)",
+    "pool_publish_port": "a request in status failed is reported as state failed / reason consultation_dead_lettered (cycle status consultation_failed), one replacement panel (request id suffix -r<n>) is opened, bounded by MAX_CONSULT_REPLACEMENTS=2 then operator",
+    "meeting_triggers": "a convened meeting whose execution_state is dead_letter with recovery_exhausted is not already_convened: the trigger reopens under <key>:retry-<n> (max 2), the record lists it under not_held, and it no longer spends the weekly budget"
+  },
+  "ac1_probe_gate": "test_hosted_shape_recovers_only_after_probes_pass_and_converges: failing probes redrive 0 of 7",
+  "ac2_bounds": {"per_item_redrive_budget": 3, "per_tick_cap": 3, "test": "test_budget_exhausted_item_stays_dead_letter_and_is_named_failed_..."},
+  "ac3_other_reasons": "test_other_dead_letter_reasons_keep_today_behaviour (schema invalid, http_500, http_404: no probe, no redrive, no write)",
+  "ac4_publication": "test_dead_lettered_consultation_is_named_failed_and_replaced_once_per_failure",
+  "ac5_meetings": "test_meeting_dead_lettered_with_exhausted_budget_is_not_already_convened; ..._stays_convened (running / other reason / unreadable); test_replacement_meetings_are_bounded; test_not_held_meeting_does_not_spend_the_weekly_budget",
+  "ac6_no_duplicates": "test_completed_item_is_never_redriven_and_request_id_is_reused; redrive updates the same row (request id and saved contribution kept); replacement meetings/panels use a new key only after the earlier one is exhausted",
+  "ac7_hosted_shape": {"shape": "3 publication items http_401 at 56 attempts, 3 meetings ensure transport failed, 1 older ensure failed", "ticks_after_probes_pass": 3, "ticks_with_failing_probes_redriven": 0, "result": "dead_letter 0, completed 7 without a manual write"},
+  "ac8_rollback": "No schema change. Previous release reads the same table; replay_count is an existing column (test_old_release_reads_the_table_unchanged). meetings execution_state fields are additive.",
+  "ac9_runtime_budget": {
+    "idle_tick_no_recoverable_dead_letter": "1 local sqlite read, 0 network calls",
+    "recovery_tick_at_hosted_shape": "auth probe: 1 persona read + 1 registry read; ensure probe: 1 request read (+1 meeting read only if participants are not on the request) + 1 adapter ensure call; max 3 redrives; exhausted recording: 1 request read + 1 event + 1 sync per item once per process",
+    "persona_cycle_meetings": "one meeting read per already-convened trigger key per cycle (new; bounded by the six trigger types)",
+    "new_writer": "none (existing executor, existing sync/event routes)"
+  },
+  "ac10_tests": "test_workflow_executor.py + test_pool_publish_port.py + test_meeting_triggers.py + test_pool_autonomy_cycle.py: 93 passed; consultation/tests/test_persona_meetings.py: 8 passed",
+  "ac11_hosted_proof": "pending deploy; persona-loop owner records health dead_letter_count and a 11/19 or new meeting reaching a contribution",
+  "interaction": "CONSULT-MEETING-RESEARCH-TRUTH-20261120 can read execution_state.recovery_exhausted / redrive_count and effective_status execution_failed",
+  "residual": [
+    "The redrive resets blocked_count, so each redrive buys up to max_blocked_attempts further tries; total effort per item is at most 3 redrives x those tries",
+    "In-process exhaustion marker is rebuilt after restart by one request read per exhausted item"
+  ],
+  "review_independence_exception": "no other model family has capacity at review time unless Antigravity (reviewer) is not of another family; record the exception if so"
+}

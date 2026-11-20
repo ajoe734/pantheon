@@ -642,3 +642,82 @@ def test_mt2_three_pending_fire_once_per_week_key_and_two_do_not():
 def test_mt2_names_unavailable_pending_count():
     rec = run(triggers(Opener(), day=at_weekday(6)), observe={"pending_lesson_candidates": None})
     assert {"meeting_type": "MT-2", "reason": "pending_lesson_count_unavailable"} in rec["not_fired"]
+
+
+# --- CONSULT-DEAD-LETTER-RECOVERY-AFTER-FIX-20261120: a meeting that was never held does not block the next trigger
+def _mt2_snapshot(first):
+    return {"p0": {"packet_id": "p0", "tenant_id": "t1", "persona_ids": ["persona-b"],
+                   "persona_cycle": {"meetings": first}}}
+
+
+def _reader(states):
+    seen = []
+    def read(meeting_id):
+        seen.append(meeting_id)
+        return {"meeting_id": meeting_id, "execution_state": states.get(meeting_id)}
+    read.seen = seen
+    return read
+
+
+def _mt2_run(opener, reader, snapshots):
+    t = MeetingTriggers(config=MeetingTriggerConfig(), opener=opener, reader=reader, now=lambda: at_weekday(6))
+    return run(t, observe={"pending_lesson_candidates": 4}, snapshots=snapshots)
+
+
+def test_meeting_dead_lettered_with_exhausted_budget_is_not_already_convened():
+    first = _mt2_run(Opener(), _reader({}), {})
+    entry = [c for c in first["convened"] if c["meeting_type"] == "MT-2"][0]
+    snaps = _mt2_snapshot(first)
+    exhausted = {entry["meeting_id"]: {"status": "dead_letter", "recovery_exhausted": True}}
+    op = Opener()
+    record = _mt2_run(op, _reader(exhausted), snaps)
+    mt2 = [c for c in record["convened"] if c["meeting_type"] == "MT-2"]
+    assert len(mt2) == 1 and mt2[0]["idempotency_key"] == entry["idempotency_key"] + ":retry-1"
+    assert op.calls[0]["idempotency_key"] == mt2[0]["idempotency_key"]
+    assert record["not_held"] == [{"meeting_type": "MT-2", "trigger": entry["trigger"],
+                                   "idempotency_key": entry["idempotency_key"], "meeting_id": entry["meeting_id"],
+                                   "reason": "execution_failed_recovery_exhausted"}]
+
+
+def test_meeting_still_running_or_dead_lettered_for_other_reasons_stays_convened():
+    first = _mt2_run(Opener(), _reader({}), {})
+    snaps = _mt2_snapshot(first)
+    mid = [c for c in first["convened"] if c["meeting_type"] == "MT-2"][0]["meeting_id"]
+    for state in (None, {"status": "pending"}, {"status": "dead_letter", "recovery_exhausted": False},
+                  {"status": "completed"}):
+        op = Opener()
+        record = _mt2_run(op, _reader({mid: state}), snaps)
+        assert not [c for c in record["convened"] if c["meeting_type"] == "MT-2"]
+        assert {"meeting_type": "MT-2", "reason": "already_convened"}.items() <= [
+            n for n in record["not_fired"] if n.get("meeting_type") == "MT-2"][0].items()
+        assert "not_held" not in record
+
+    def boom(_):
+        raise RuntimeError("consultation down")
+    assert not [c for c in _mt2_run(Opener(), boom, snaps)["convened"] if c["meeting_type"] == "MT-2"]
+
+
+def test_replacement_meetings_are_bounded():
+    snaps = {}
+    states = {}
+    for n in range(mt.MAX_MEETING_REPLACEMENTS + 1):
+        record = _mt2_run(Opener(), _reader(states), snaps)
+        entry = [c for c in record["convened"] if c["meeting_type"] == "MT-2"][0]
+        states[entry["meeting_id"] + ""] = {"status": "dead_letter", "recovery_exhausted": True}
+        snaps[f"p{n}"] = {"packet_id": f"p{n}", "tenant_id": "t1", "persona_ids": ["persona-b"],
+                          "persona_cycle": {"meetings": record}}
+    # the Opener reuses m-1 across instances, so key the states by id above; the chain ends at the cap
+    last = _mt2_run(Opener(), _reader({"m-1": {"status": "dead_letter", "recovery_exhausted": True}}), snaps)
+    assert not [c for c in last["convened"] if c["meeting_type"] == "MT-2"]
+    assert [n for n in last["not_fired"] if n.get("meeting_type") == "MT-2"][0]["reason"] == "replacement_budget_spent"
+
+
+def test_not_held_meeting_does_not_spend_the_weekly_budget():
+    first = _mt2_run(Opener(), _reader({}), {})
+    entry = [c for c in first["convened"] if c["meeting_type"] == "MT-2"][0]
+    snaps = _mt2_snapshot(first)
+    state = {entry["meeting_id"]: {"status": "dead_letter", "recovery_exhausted": True}}
+    t = MeetingTriggers(config=MeetingTriggerConfig(max_meetings_per_persona_per_week=len(first["convened"])),
+                        opener=Opener(), reader=_reader(state), now=lambda: at_weekday(6))
+    record = run(t, observe={"pending_lesson_candidates": 4}, snapshots=snaps)
+    assert [c for c in record["convened"] if c["meeting_type"] == "MT-2"]
