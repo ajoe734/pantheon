@@ -105,6 +105,16 @@ The overall `status` of a `TradeJourney` is calculated deterministically from in
   - `reconciliation_failed` `reason_detail` lists each check with `expected`, `actual`, `difference`; `reconciliation_completed` lists every passed check with its values. Journeys without a fill (rejected, no-order) are reconciled as before.
 - `order_rejection` / `order_rejection_simulated` events take `reason_code` as the first present of `reject_reason`, `risk_reason`, `reason`, `broker_submission_status`, `reason_code`. Expression choice codes (`long_cash`, `long_lever`, `short_via_future`, `close_leg`) are never a rejection reason and are kept as `expression_reason_code`. `reason_detail` carries the producer-sent `required`, `available`, `limit`, `holding_quantity`, `requested_quantity`. Previously projected events are not rewritten.
 
+### 4.2.2 Readable BFF Read Fields
+The BFF list and detail rows (`/bff/management/trade-journeys`) add these fields on top of the stored journey:
+- `persona_name` and `persona_is_probe`: the name from the persona owner record and the `is_probe_or_test_persona` rule. One persona read serves a whole response; a persona that cannot be read leaves `persona_name` null and the row is still returned.
+- `include_probe` (query, default false): journeys of probe or test personas are excluded from the list unless `include_probe=true`; `page_info.total` counts the filtered result.
+- `attention` (query): `attention` (any of the next three plus `recon_mismatch`), `risk_reject`, `broker_reject`, `partial_fill`, `recon_mismatch`. Applied on the server before pagination; any other value is a 400. `recon_mismatch` returns `completed_with_variance` rows whose reconciliation was not deferred for runtime health. Rows of kind `no_trade` are never counted by `attention`.
+- `quantity`: the order's requested quantity. `filled_quantity`: the quantity filled (null when nothing filled). Neither is the position after the fill.
+- `outcome`: `kind` is `normal`, `no_trade` (a hold or any other no-order decision), `rejected`, `reconciliation_deferred`, `variance` or `open`, with `reason_code` and `reason_detail` from the stage event that decided it. A rejection decided before reason fields existed (no `reason_code`, or only an expression choice code) carries `reason_code` `reason_not_recorded`.
+- `next_step`: for `rejected` and `variance` rows, `{action_needed, href}` — a link to an open incident that names the binding (`/incidents/{id}`), otherwise to the persona page (`/personas/{persona_id}`). It is a link, not an action; governed actions stay on the actions route.
+- Detail `diagnostics`: stages 1-6 that were never linked to this journey are reported as one `upstream_lineage_unlinked` item with `attention: false`; it is not an attention flag.
+
 ### 4.3 Correction Events & Revision Semantics
 - **Correction Event**: A correction event (`CorrectionEvent`) is an explicit record triggered when an operator or authorized service resolves a detected reconciliation variance. It provides the mechanism to close a `completed_with_variance` journey back to `completed`.
 - **Late-Arriving Events & Immutable Snapshots**: Late-arriving events **MUST NOT** overwrite historical events or existing snapshots directly. Instead, when a late-arriving event or correction event is processed:

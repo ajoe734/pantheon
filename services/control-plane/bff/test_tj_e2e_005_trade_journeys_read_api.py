@@ -509,7 +509,7 @@ def test_tj_e2e_005_detail_includes_stages_diagnostics_and_identifiers() -> None
         # expected and structural (they never carry this journey_id, see
         # contract.md section 5.1) — it must not count as an anomaly.
         diagnostic_codes = {item["code"] for item in data["diagnostics"]}
-        assert diagnostic_codes <= {"missing_stages"}
+        assert diagnostic_codes <= {"missing_stages", "upstream_lineage_unlinked"}
         assert data["read_state"] == "formal"
         assert data["event_count"] == 8
 
@@ -1245,6 +1245,8 @@ def test_lifecycle_proj_bff_list_uses_selected_postgres_reader() -> None:
                 "stalled": None,
                 "waiting_human": None,
                 "reconciliation_state": None,
+                "attention": None,
+                "exclude_persona_ids": None,
                 "date_from": None,
                 "date_to": None,
             },
