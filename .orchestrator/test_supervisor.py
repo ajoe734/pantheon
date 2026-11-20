@@ -8265,6 +8265,58 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         self.assertTrue(reasons["antigravity"].startswith("antigravity:"))
         self.assertNotIn("no capacity evidence supplied", reasons.values())
 
+    def test_real_lock_same_family_reassignment_records_concrete_reasons(self) -> None:
+        # Replay of the 2026-11-20 ENV-PROD-CONTROL-IMPL-001 recovery: no
+        # patched runtime-state loader, real task_state lock and lock-order
+        # check. The evidence read must not take runtime_admission.
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Codex2")
+        status = supervisor.load_status(self.config)
+        status["tasks"] = [self.task]
+        supervisor.write_status(self.config, status, source="test-seed")
+        state = runtime_state.default_state()
+        state["delivery_health"] = healthy_delivery_health(self.config)
+        runtime_state.save_runtime_state(self.config, state)
+        captured: list[dict[str, object]] = []
+
+        def drain(config: dict[str, object]) -> bool:
+            outbox = supervisor.load_status(config).get("status_activity_outbox")
+            captured.append(json.loads(json.dumps(outbox)))
+            return self._drain_status_outbox(config)
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=drain):
+            self.assertTrue(
+                supervisor.persist_task_reassignment(
+                    self.config,
+                    task_id="TASK-1",
+                    new_owner="Codex2",
+                    new_reviewer="Codex",
+                    message="incumbent retry",
+                    expected_owner="Codex",
+                    expected_reviewer="Codex2",
+                    expected_status="in_progress",
+                )
+            )
+        text = json.dumps(captured)
+        self.assertNotIn("no capacity evidence supplied", text)
+        self.assertNotIn("evidence_unavailable", text)
+        self.assertIn("review_independence_exception", text)
+        self.assertIn("available:antigravity", text)
+
+    def test_evidence_failure_records_evidence_unavailable_with_error_class(self) -> None:
+        with mock.patch.object(
+            supervisor, "load_runtime_state_snapshot", side_effect=RuntimeError("boom")
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.config, "Codex2", "Codex", self.task
+            )
+        exception = supervisor.build_review_independence_exception(
+            owner="Codex2", reviewer="Codex", capacity_evidence=evidence
+        )
+        self.assertTrue(exception["considered"])
+        for entry in exception["considered"]:
+            self.assertEqual(entry["reason"], "evidence_unavailable:RuntimeError")
+
     def test_process_missing_keeps_incumbent_pair_when_branch_has_trailers(self) -> None:
         self._add_agent("antigravity", "Antigravity")
         self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
@@ -14680,7 +14732,7 @@ class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
             return {"codex": "terminal_quota:codex", "antigravity": None}.get(agent, None)
 
         with (
-            mock.patch.object(supervisor, "load_runtime_state", return_value={}),
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
             mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
             mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
         ):
@@ -14711,7 +14763,7 @@ class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
             return "terminal_quota" if agent == "claude" else None
 
         with (
-            mock.patch.object(supervisor, "load_runtime_state", return_value={}),
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
             mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
             mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
         ):
