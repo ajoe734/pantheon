@@ -7,7 +7,7 @@
    },
    "bound_status": "bounded",
    "cap": "one line per confirmed unscheduled market closure date, deduplicated by trade_date in _record_market_closures (a date is never written twice); each line is about 300 bytes (trade_date, kind, evidence, both bundle ids)",
-   "cleanup": "none needed: closures are a few dates a year (about 1 KB per year); kept permanently because the calendar and backtests read them",
+   "cleanup": "none needed: closures are a few dates a year (about 1 KB per year); kept permanently for the calendar and backtests once they read it (register residual: governed calendar coverage)",
    "growth_driver": "one line per unscheduled weekday closure confirmed by both TWSE and TPEx no_data_for_date bundles (a few dates a year)",
    "growth_per_day": "about 0 (a few lines per year, about 300 bytes each)",
    "kind": "jsonl",
