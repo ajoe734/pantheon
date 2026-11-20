@@ -8307,6 +8307,50 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             supervisor.agent_family(pair[0]), supervisor.agent_family(pair[1])
         )
 
+    def test_reviewer_role_recovery_prefers_other_family_over_listed_own_family(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self._add_agent("claude2", "Claude2")
+        self.task.update(status="review", owner="Codex", reviewer="Claude2")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "lease_expired",
+                   "worker": {"agent": "Claude2"}}
+        with mock.patch.object(
+            supervisor, "reassignment_candidate_order",
+            return_value=["Codex2", "Antigravity"],
+        ):
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, self._state(), self.status, self.task, receipt,
+            )
+        self.assertEqual(pair, ("Codex", "Antigravity"))
+
+    def test_task_branch_incumbent_pair_parses_trailers(self) -> None:
+        self.task["id"] = "T-TRAILER"
+        log = (
+            "newer\n\nTask-ID: OTHER\nLLM-Agent: Claude\nReviewer: Codex\n\x00"
+            "mine\n\nTask-ID: T-TRAILER\nLLM-Agent: Codex\nReviewer: Antigravity\n\x00"
+        )
+        proc = mock.Mock(returncode=0, stdout=log)
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertEqual(
+                supervisor.task_branch_incumbent_pair(self.config, self.task),
+                ("Codex", "Antigravity"),
+            )
+        proc.stdout = "no trailers\x00"
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertIsNone(supervisor.task_branch_incumbent_pair(self.config, self.task))
+
     def test_lost_owner_retries_healthy_incumbent_only_for_process_missing(self) -> None:
         self._add_agent("antigravity", "Antigravity")
         self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
@@ -14660,6 +14704,21 @@ class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
         )
         for entry in exception["considered"]:
             self.assertNotEqual(entry["reason"], "no capacity evidence supplied")
+
+
+    def test_multi_agent_family_not_masked_by_first_unavailable_agent(self) -> None:
+        def fake_unavailable(config: Any, state: Any, agent: str) -> str | None:
+            return "terminal_quota" if agent == "claude" else None
+
+        with (
+            mock.patch.object(supervisor, "load_runtime_state", return_value={}),
+            mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.CONFIG, "Codex", "Codex2"
+            )
+        self.assertEqual(evidence["claude"], "available:claude2")
 
 
 class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):

@@ -10363,7 +10363,9 @@ def _review_exception_capacity_evidence(
     evidence: dict[str, str] = {}
     for agent_id in sorted(config.get("agents", {}) or {}):
         family = agent_family(agent_id)
-        if family is None or family == owner_family or family in evidence:
+        if family is None or family == owner_family:
+            continue
+        if evidence.get(family, "").startswith("available:"):
             continue
         try:
             reason = assignment_terminal_unavailability(config, state, agent_id)
@@ -10373,10 +10375,13 @@ def _review_exception_capacity_evidence(
                 reason = "cannot_take_task"
         except Exception:  # noqa: BLE001
             reason = "health_unreadable"
-        if reason:
-            evidence[family] = f"{agent_id}:{reason}"
+        entry = f"{agent_id}:{reason}" if reason else f"available:{agent_id}"
+        if not reason:
+            evidence[family] = entry
+        elif family in evidence:
+            evidence[family] = f"{evidence[family]}; {entry}"[:300]
         else:
-            evidence[family] = f"available:{agent_id}"
+            evidence[family] = entry
     for family in set(AGENT_FAMILIES.values()) - {owner_family}:
         evidence.setdefault(family, "no_agent_configured")
     return evidence
@@ -13558,7 +13563,8 @@ def worker_recovery_assignment_pair(
             owner_candidates=[owner],
             preferred_reviewers=[reviewer],
             allowed_reviewers=[reviewer],
-            require_reviewer_ready=False,
+            require_owner_ready=role != "reviewer",
+            require_reviewer_ready=role == "reviewer",
         )
         if pair == (owner, reviewer) and _worker_recovery_candidate_has_capacity(
             config, state, status, task,
@@ -13572,6 +13578,9 @@ def worker_recovery_assignment_pair(
             settings.get("reviewer_fallbacks", {}) or {},
             roots=[reviewer, owner, previous_reviewer, previous_owner],
             exclude={reviewer, owner, lost_agent},
+        )
+        reviewer_candidates = order_reviewers_cross_family_first(
+            config, owner, reviewer_candidates
         )
         for candidate_reviewer in reviewer_candidates:
             pair = plan_task_assignment_pair(
