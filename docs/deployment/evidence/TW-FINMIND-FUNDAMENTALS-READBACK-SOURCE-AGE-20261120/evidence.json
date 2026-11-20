@@ -1,0 +1,22 @@
+{
+  "task_id": "TW-FINMIND-FUNDAMENTALS-READBACK-SOURCE-AGE-20261120",
+  "reproduction": {
+    "hosted": "Taiwan refresh run 44722543925 at 2026-11-20 10:50Z: tw-finmind-monthly-revenue failed 'terminal source readback failed closed: tw-finmind-monthly-revenue:source_data_stale'; provenance available_time 2026-11-10T10:00:00Z (monthly), 2026-11-14T10:00:00Z (quarterly), cadence daily => CADENCE_SOURCE_AGE_LIMIT_SECONDS 864000 s",
+    "baseline_test_result": "on unmodified controller_worker.py the new test file: 8 failed, 7 passed (hosted monthly shape on 2026-11-20, quarterly on 2026-11-24, and boundary cases)"
+  },
+  "fix": "_validate_terminal_readback: new branch for tw-finmind-monthly-revenue / tw-finmind-quarterly-statements decides source age with finmind_fundamental_publication_fresh(dataset, available_at, now) (same rule as runtime freshness, PR 7634); future-availability tolerance (300 s) kept; generic cadence limit no longer applies to these two.",
+  "age_checks_in__validate_terminal_readback": [
+    {"check": "captured_at older than 300 s (authoritative readback stale)", "rule": "unchanged: readback capture age, not record age"},
+    {"check": "freshness.status != fresh (freshness_not_accepted)", "rule": "publication schedule for these two connectors via runtime._connector_freshness_summary_from_snapshot (PR 7634); unchanged for others"},
+    {"check": "freshness.staleness_seconds > schedule interval (freshness_outside_cadence)", "rule": "time since last successful refresh vs schedule interval; not source age; unchanged for all"},
+    {"check": "provenance available_time age vs max_source_age (source_data_stale)", "rule": "CHANGED for the two connectors: publication schedule + 300 s future tolerance; all other connectors keep cadence limit / 1d gate; collector PIT check and tw-official market freshness unchanged"}
+  ],
+  "other_connectors": "test_other_connectors_keep_generic_cadence_rule asserts tw-finmind-valuation and a chip connector still fail at >10 days and pass at 9 days; existing controller worker, manual_once and tw_close_reconcile tests unchanged and passing",
+  "fail_closed": "tests cover day before / inside grace / past grace for month (2026-11-09,11,13; 12-09,13) and quarter (11-13,15,17; 2027-03-30, 04-03)",
+  "runtime_budget": "no new writer, thread, or wall-clock threshold",
+  "validation": {
+    "command": "pytest services/source_ingestion/tests/{test_finmind_fundamentals_readback_source_age,test_finmind_fundamentals_freshness,test_chip_publication_schedule,test_controller_worker,test_controller_worker_manual_once,test_tw_close_reconcile}.py",
+    "result": "337 passed"
+  },
+  "post_deploy_acceptance_5": "pending: coordinator read-only check of the next Taiwan refresh FinMind fundamentals step after deploy"
+}
