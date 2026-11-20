@@ -44,7 +44,12 @@
     ],
     ".github/workflows/dev-tw-market-refresh.yml": "plan step (scripts/tw_refresh_outcome_summary.py --plan) gives the egress union, FinMind flag and max records; every refresh step passes them; the steady check step keeps the bounded_runtime summary in the outcome artifact; no step other than the steady check restores",
     "scripts/tw_refresh_outcome_summary.py": "PROFILE_HOSTS table, plan_run(), --plan; not_run is a failing connector status",
-    "not_changed": ["scripts/run_with_dev_environment_lease.sh", "scripts/dev_remote_guarded_exec.py", "lease heartbeat and release steps", "no persistent writer added"]
+    "not_changed": [
+      "scripts/run_with_dev_environment_lease.sh",
+      "scripts/dev_remote_guarded_exec.py",
+      "lease heartbeat and release steps",
+      "no persistent writer added"
+    ]
   },
   "acceptance_2_recreates": {
     "design": "at most 2: one recreate into the bounded runtime by the first profile call that needs a refresh, one restore by the steady check",
@@ -55,7 +60,13 @@
     "full_profile_set": "openapi.taifex.com.tw,www.taifex.com.tw,api.finmindtrade.com,storage.googleapis.com,openapi.twse.com.tw,www.tpex.org.tw",
     "morning_crons": "openapi.taifex.com.tw,www.taifex.com.tw,openapi.twse.com.tw,www.tpex.org.tw (no FinMind token)",
     "afternoon_crons": "api.finmindtrade.com,storage.googleapis.com (FinMind token)",
-    "tests": ["test_run_plan_names_the_egress_union_for_the_full_profile_set_and_each_schedule", "test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime", "test_chip_and_fundamentals_profile_hosts_match_the_plan_table", "test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change", "test_run_without_finmind_profile_carries_no_finmind_token_into_the_bounded_runtime"]
+    "tests": [
+      "test_run_plan_names_the_egress_union_for_the_full_profile_set_and_each_schedule",
+      "test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime",
+      "test_chip_and_fundamentals_profile_hosts_match_the_plan_table",
+      "test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change",
+      "test_run_without_finmind_profile_carries_no_finmind_token_into_the_bounded_runtime"
+    ]
   },
   "acceptance_4_guarantees": "lease acquire, heartbeat, re-arm and release steps unchanged (the lease is held from before the first recreate until after the steady check); the steady check still waits for or stops a left-over process, waits for health start periods, removes created leftovers and checks container counts, and only reads its own call outcome; interrupt tests: test_interrupt_at_any_profile_leaves_one_restore_for_the_steady_check (profiles 0, 1, 6, 11 x TERM, HUP), test_interrupt_while_entering_is_retried_by_the_next_profile_and_still_restored_once",
   "acceptance_5_no_overlap": "every run-mode profile call first settles left-over refresh processes of the run (wait STEADY_CHECK_ORPHAN_WAIT_SECONDS, default 180, then TERM, grace 60, then KILL) and records previous_profile_process {action ended|stopped, pids, seconds} in its outcome; the loops keep going after a failed profile and every outcome file is listed by the summary step",
@@ -64,11 +75,23 @@
   "acceptance_8_validation": {
     "behavior_tests_fail_on_dev": "with scripts/deploy_nonprod_vm.sh from 9f3044ab9 the 19 new behavior tests selected by -k 'full_run_with_timed or interrupt_at_any or trading_day_before or market_open_guard or dead_run or preflight_waits' fail (the run-level functions do not exist and a run recreates per profile); with the change they pass",
     "commands": [
-      {"command": "python -m pytest scripts/test_deploy_nonprod_vm.py -q -p no:cacheprovider", "result": "234 passed, 2 skipped in 291.25s"},
-      {"command": "python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -p no:cacheprovider", "result": "45 passed in 56.43s"},
-      {"command": "python -m pytest scripts/test_dev_tw_market_refresh.py -q -p no:cacheprovider", "result": "132 passed in 300.33s"}
+      {
+        "command": "python -m pytest scripts/test_deploy_nonprod_vm.py -q -p no:cacheprovider",
+        "result": "234 passed, 2 skipped in 291.25s"
+      },
+      {
+        "command": "python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -p no:cacheprovider",
+        "result": "45 passed in 56.43s"
+      },
+      {
+        "command": "python -m pytest scripts/test_dev_tw_market_refresh.py -q -p no:cacheprovider",
+        "result": "132 passed in 300.33s"
+      }
     ],
-    "existing_test_edits": ["test_dev_tw_market_refresh.py preflight fixture allows a per-call timeout of 3 to 10 s and no pause between retries", "test_dev_tw_market_refresh_workflow.py chip step assertion narrowed from 'finmind' to 'tw-finmind' (the step now carries --run-finmind)"],
+    "existing_test_edits": [
+      "test_dev_tw_market_refresh.py preflight fixture allows a per-call timeout of 3 to 10 s and no pause between retries",
+      "test_dev_tw_market_refresh_workflow.py chip step assertion narrowed from 'finmind' to 'tw-finmind' (the step now carries --run-finmind)"
+    ],
     "persistent_writer_added": false
   },
   "residual_findings": [
@@ -76,5 +99,13 @@
     "During the bounded window the steady scheduler and projector stay stopped for the whole run instead of per profile (the operator decision); collector steady pulls pause for the run duration.",
     "If a run's first profile is interrupted while entering, the next profile enters again from the recorded steady state (one extra recreate, documented in test_interrupt_while_entering_is_retried_by_the_next_profile_and_still_restored_once).",
     "Hosted recreate count and memory.peak of a real run are not yet observed: post-merge read of the next hosted run by the release owner."
-  ]
+  ],
+  "run_cap_derivation": {
+    "change": "plan_run max_records = max over run profiles of TW_CHIP_REFRESH_PROFILES max_records (default 500), no constant",
+    "test": "scripts/test_dev_tw_market_refresh_workflow.py::test_morning_run_cap_covers_full_market_chip_profile_budget",
+    "validation": {
+      "scripts/test_dev_tw_market_refresh_workflow.py + scripts/test_dev_tw_market_refresh.py": "178 passed",
+      "scripts/test_deploy_nonprod_vm.py": "234 passed, 2 skipped"
+    }
+  }
 }

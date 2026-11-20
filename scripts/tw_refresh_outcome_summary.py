@@ -76,7 +76,18 @@ PROFILE_HOSTS: dict[str, str] = {
 MORNING_SCHEDULES = frozenset({"0 7 * * 1-5", "0 8 * * 1-5"})
 AFTERNOON_SCHEDULES = frozenset({"30 10 * * 1-5", "30 12 * * 1-5"})
 FINMIND_PROFILES = frozenset(c for c in PROFILE_HOSTS if c.startswith("tw-finmind-"))
-RUN_MAX_RECORDS = 500
+DEFAULT_RUN_MAX_RECORDS = 500
+
+
+def _profile_max_records(connector: str) -> int:
+    """Per-job record budget of a profile, read from the connector definitions (never a constant here)."""
+    repo_root = str(Path(__file__).resolve().parents[1])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    profile = TW_CHIP_REFRESH_PROFILES.get(connector) or {}
+    return int(profile.get("max_records", DEFAULT_RUN_MAX_RECORDS))
 
 
 def plan_run(schedule: str, finmind_token_present: bool) -> dict[str, object]:
@@ -102,7 +113,7 @@ def plan_run(schedule: str, finmind_token_present: bool) -> dict[str, object]:
         "profiles": profiles,
         "hosts": ",".join(hosts),
         "finmind": any(c in FINMIND_PROFILES for c in profiles),
-        "max_records": RUN_MAX_RECORDS,
+        "max_records": max([DEFAULT_RUN_MAX_RECORDS] + [_profile_max_records(c) for c in profiles]),
     }
 
 

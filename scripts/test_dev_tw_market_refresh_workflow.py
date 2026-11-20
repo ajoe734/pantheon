@@ -1088,3 +1088,27 @@ def test_chip_and_fundamentals_profile_hosts_match_the_plan_table() -> None:
         assert module.PROFILE_HOSTS[connector] == hosts, connector
     for connector in module.PROFILE_HOSTS:
         assert connector in text
+
+
+def test_morning_run_cap_covers_full_market_chip_profile_budget() -> None:
+    """The one bounded runtime caps MAX_RECORDS_PER_JOB for the whole run: it must be the maximum over the
+    profiles of the run, so the 3000-record full-market chip profiles are not 413'd by a 500 cap."""
+    import sys
+
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from scripts.tw_refresh_outcome_summary import MORNING_SCHEDULES, plan_run
+    from services.source_ingestion.connector_definitions import (
+        TW_CHIP_REFRESH_PROFILES,
+        TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS,
+    )
+
+    for schedule in sorted(MORNING_SCHEDULES) + [""]:
+        plan = plan_run(schedule, finmind_token_present=True)
+        assert plan["max_records"] >= TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, schedule
+        assert plan["max_records"] >= max(
+            TW_CHIP_REFRESH_PROFILES[c].get("max_records", 0) for c in plan["profiles"] if c in TW_CHIP_REFRESH_PROFILES
+        )
+    # An afternoon (FinMind-only) run has no chip profile and keeps the default cap.
+    assert plan_run("30 10 * * 1-5", True)["max_records"] == 500
