@@ -37,13 +37,33 @@ def _body(**over):
 
 def test_repeat_finding_updates_open_incident(store):
     client = TestClient(app)
-    first = client.post(URL, json=_body(fingerprint="fp-repeat"))
+    first = client.post(URL, json=_body(fingerprint="fp-repeat", observed_at="2026-11-18T10:00:00Z"))
     assert first.status_code == 201
-    second = client.post(URL, json=_body(fingerprint="fp-repeat", snapshot_ref="snap-2", rationale="still"))
+    second = client.post(
+        URL,
+        json=_body(
+            fingerprint="fp-repeat",
+            snapshot_ref="snap-2",
+            rationale="still",
+            observed_at="2026-11-18T10:15:00Z",
+        ),
+    )
     assert second.status_code == 200
     assert second.json()["incident_id"] == first.json()["incident_id"]
-    summary = store.get_incident(first.json()["incident_id"]).evidence_summary
-    assert "snap-1" in summary and "snap-2" in summary and "rationale=" in summary
+    persisted = store.get_incident(first.json()["incident_id"])
+    assert persisted.kind == "agent_finding"
+    assert persisted.metric == "fp-repeat"
+    assert persisted.occurrence_count == 2
+    assert persisted.first_seen_at == "2026-11-18T10:00:00Z"
+    assert persisted.last_seen_at == "2026-11-18T10:15:00Z"
+    assert persisted.telemetry_event_ids == ["snap-1", "snap-2"]
+    summary = persisted.evidence_summary or ""
+    assert "snap-2" in summary and "rationale=still" in summary
+    assert "snap-1" not in summary
+    body = second.json()
+    assert body["summary_key"] == "incident.summary.agent_finding"
+    assert body["summary"] == "still (2 occurrences)."
+    assert [entry["source_ref"] for entry in body["timeline"]] == ["snap-1", "snap-2"]
 
 
 def test_different_fingerprint_opens_new_incident():
@@ -126,9 +146,12 @@ def test_finding_naming_stable_reference_merges_and_never_opens_new_incident(sto
     assert third.json()["incident_id"] == inc_id
     assert len(store.find_open_incidents()) == 1
     persisted = store.require_incident(inc_id)
-    assert "snap-1" in (persisted.evidence_summary or "")
-    assert "snap-2" in (persisted.evidence_summary or "")
+    assert persisted.occurrence_count == 3
+    assert persisted.telemetry_event_ids == ["snap-1", "snap-2", "snap-3"]
     assert "snap-3" in (persisted.evidence_summary or "")
+    assert "snap-1" not in (persisted.evidence_summary or "")
+    assert "snap-2" not in (persisted.evidence_summary or "")
+    assert [entry["source_ref"] for entry in third.json()["timeline"]] == ["snap-1", "snap-2", "snap-3"]
 
 
 def test_twenty_differently_worded_reconciler_and_fleet_findings_keep_at_most_one_open_each(store):

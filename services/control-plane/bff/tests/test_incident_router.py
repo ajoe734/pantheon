@@ -713,3 +713,159 @@ def test_production_app_incident_routes_wiring() -> None:
 
     resp_audit = client.get("/bff/audit", headers=prod_headers)
     assert resp_audit.status_code == 200
+
+
+def test_bff_incident_detail_returns_localizable_summary_and_timeline_for_four_drift_reports() -> None:
+    """INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120 Acceptance 4, 5, 6:
+    GET /bff/incidents/{id} returns a localizable summary (summary_key +
+    summary_params + plain summary), never uses evidence_summary as the summary
+    or description body, and returns the timeline that the inbox card no longer
+    carries.
+    """
+    import pytest
+    from services.control_plane.bff.governance.human_inbox import _human_inbox_incident_item
+    from services.incident.incident import IncidentStore
+    from services.incidents.consumer import DriftReportIncidentConsumer
+
+    event_ids = [
+        "76586033-ad6a-4f09-ae0d-9a2e756617a5",
+        "0b7a8a43-5c02-403e-970f-1a637517a78a",
+        "94f2d4bb-75e5-4f50-ae40-53124d5872e7",
+        "bf92e54f-13a9-4a76-b7a2-875427646c5c",
+    ]
+    timestamps = [
+        "2026-11-18T11:36:14Z",
+        "2026-11-18T12:36:14Z",
+        "2026-11-18T13:36:14Z",
+        "2026-11-18T14:36:14Z",
+    ]
+    inc_store = IncidentStore(path=None)
+    consumer = DriftReportIncidentConsumer(incident_store=inc_store)
+    for eid, ts in zip(event_ids, timestamps):
+        consumer.consume(
+            {
+                "drift_report_id": f"drift-{eid}-drawdown",
+                "recon_run_id": f"recon-{eid}",
+                "evaluation_id": f"eval-{eid}",
+                "incident_cluster_id": "drift:drawdown",
+                "drift_type": "pnl",
+                "status": "open",
+                "severity": "medium",
+                "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+                "runtime_id": "runtime-3823397e125e4579ba5f4174067087ed",
+                "deployment_stage": "paper",
+                "deployment_plan_id": "plan-3823397e125e4579ba5f4174067087ed",
+                "capital_pool_id": "pool-3823397e125e4579ba5f4174067087ed",
+                "persona_capital_binding_id": "pcb-3823397e125e4579ba5f4174067087ed",
+                "artifact_id": "artifact-3823397e125e4579ba5f4174067087ed",
+                "artifact_version": "1.0.0",
+                "trace_id": f"trace-{eid}",
+                "telemetry_event_ids": [eid],
+                "worst_metric": "drawdown",
+                "threshold_metric": "rolling_drawdown_multiple",
+                "observed": 9.609309450237793,
+                "comparator": "gt",
+                "threshold_value": 1.25,
+                "threshold_window": "paper-daily-sweep",
+                "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+                "generated_at": ts,
+            }
+        )
+
+    stored_inc = inc_store.list_incidents()[0]
+    inc_id = stored_inc.incident_id
+    read_store = MockReadStore(incidents={inc_id: stored_inc.to_dict()})
+    client = _build_test_client(read_store)
+
+    resp = client.get(f"/bff/incidents/{inc_id}")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["incident_id"] == inc_id
+    assert data["kind"] == "drift"
+    assert data["metric"] == "rolling_drawdown_multiple"
+    assert data["observed"] == pytest.approx(9.609309450237793)
+    assert data["threshold"] == pytest.approx(1.25)
+    assert data["comparator"] == "gt"
+    assert data["occurrence_count"] == 4
+    assert data["first_seen_at"] == "2026-11-18T11:36:14Z"
+    assert data["last_seen_at"] == "2026-11-18T14:36:14Z"
+    assert data["summary_key"] == "incident.summary.drift_threshold_breach"
+    assert data["summary_params"]["occurrence_count"] == 4
+    assert data["summary"] == "Observed rolling drawdown multiple 9.61 (> 1.25) across 4 occurrences."
+    assert data["description"] == data["summary"]
+    assert data["summary"] != data["evidence_summary"]
+    assert len(data["timeline"]) == 4
+    assert [entry["source_ref"] for entry in data["timeline"]] == [
+        f"drift-{eid}-drawdown" for eid in event_ids
+    ]
+
+    # Compare against inbox projection: inbox item carries summary_key/summary_params/summary
+    # and omits timeline
+    inbox_item = _human_inbox_incident_item(stored_inc.to_dict())
+    assert inbox_item is not None
+    assert inbox_item["summary"] == data["summary"]
+    assert inbox_item["summary_key"] == data["summary_key"]
+    assert inbox_item["occurrence_count"] == 4
+    assert "timeline" not in inbox_item
+    assert "timeline" not in inbox_item["details"]
+
+
+def test_bff_incident_detail_derives_summary_and_timeline_for_legacy_appended_row() -> None:
+    """Acceptance 6: Existing stored incidents with an appended evidence_summary
+    get a summary and timeline derived from their stored fields at read time on
+    GET /bff/incidents/{id} without mutating the stored row.
+    """
+    import json
+    import pytest
+
+    legacy_row = {
+        "incident_id": "inc-drift-5f668ec4c8d9",
+        "title": "Drift threshold breach: drift:drawdown for rb-3823397e125e4579ba5f4174067087ed",
+        "status": "open",
+        "severity": "medium",
+        "created_at": "2026-11-18T11:36:14Z",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-3823397e125e4579ba5f4174067087ed",
+        "capital_pool_id": "pool-3823397e125e4579ba5f4174067087ed",
+        "persona_capital_binding_id": "pcb-3823397e125e4579ba5f4174067087ed",
+        "artifact_id": "artifact-3823397e125e4579ba5f4174067087ed",
+        "artifact_version": "1.0.0",
+        "runtime_id": "runtime-3823397e125e4579ba5f4174067087ed",
+        "trace_id": "trace-76586033-ad6a-4f09-ae0d-9a2e756617a5",
+        "incident_cluster_id": "drift:drawdown",
+        "telemetry_event_ids": [
+            "76586033-ad6a-4f09-ae0d-9a2e756617a5",
+            "0b7a8a43-5c02-403e-970f-1a637517a78a",
+            "94f2d4bb-75e5-4f50-ae40-53124d5872e7",
+            "bf92e54f-13a9-4a76-b7a2-875427646c5c",
+        ],
+        "reconciliation_ids": [
+            "drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown",
+            "drift-0b7a8a43-5c02-403e-970f-1a637517a78a-drawdown",
+            "drift-94f2d4bb-75e5-4f50-ae40-53124d5872e7-drawdown",
+            "drift-bf92e54f-13a9-4a76-b7a2-875427646c5c-drawdown",
+        ],
+        "evidence_summary": (
+            "[older entries dropped] DriftReport drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown; "
+            "cluster=drift:drawdown; worst_metric=drawdown; threshold_metric=rolling_drawdown_multiple; "
+            "observed=9.609309450237793; comparator=gt; threshold_value=1.25; threshold_window=paper-daily-sweep"
+        ),
+    }
+    before = json.dumps(legacy_row, sort_keys=True)
+    read_store = MockReadStore(incidents={"inc-drift-5f668ec4c8d9": legacy_row})
+    client = _build_test_client(read_store)
+
+    resp = client.get("/bff/incidents/inc-drift-5f668ec4c8d9")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["kind"] == "drift"
+    assert data["metric"] == "rolling_drawdown_multiple"
+    assert data["observed"] == pytest.approx(9.609309450237793)
+    assert data["threshold"] == pytest.approx(1.25)
+    assert data["comparator"] == "gt"
+    assert data["occurrence_count"] == 4
+    assert data["summary_key"] == "incident.summary.drift_threshold_breach"
+    assert data["summary"] == "Observed rolling drawdown multiple 9.61 (> 1.25) across 4 occurrences."
+    assert len(data["timeline"]) == 4
+    assert json.dumps(read_store.incidents["inc-drift-5f668ec4c8d9"], sort_keys=True) == before
