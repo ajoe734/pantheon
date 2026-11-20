@@ -1253,3 +1253,69 @@ def test_chair_declared_review_keeps_its_summary_and_empty_synthesis_keeps_the_u
     assert declared["proposals"] == [] and declared["tally"]["by_stance"] == {"request_more_research": 2}
     for raw in (None, {}, {"unreadable": True}, {"outcome": "REVIEW"}):
         assert "empty or unreadable" in build(raw)["summary"]
+
+
+# --- MEETING-OPERATOR-ROSTER-SUBJECT-REF-20261120 ---------------------------
+
+_ROSTER_DIR = {
+    "persona-2448c7053e33ea48da47": {"metadata": {"trading": True}},
+    "persona-alpha": {"metadata": {"trading": True}},
+}
+
+
+def _roster(subject_ref, *, convened_by=None, participants=None):
+    spec = meetings_mod.resolve_meeting_type_spec("MT-1")
+    return meetings_mod.resolve_and_validate_roster(
+        spec=spec,
+        convened_by=convened_by or {"kind": "operator", "id": "op-1"},
+        raw_participants=participants,
+        subject_ref=subject_ref,
+        attribution_record=None,
+        persona_directory=_ROSTER_DIR,
+    )
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["persona:persona-2448c7053e33ea48da47", "persona-2448c7053e33ea48da47"],
+)
+def test_operator_default_roster_chair_is_bare_persona_id(ref):
+    roster, chair = _roster(ref)
+    assert chair == "persona-2448c7053e33ea48da47"
+    assert roster[0]["persona_id"] == "persona-2448c7053e33ea48da47"
+    assert all(":" not in p["persona_id"] for p in roster)
+
+
+@pytest.mark.parametrize(
+    "ref,reason",
+    [
+        ("persona:persona-unknown", "subject_persona_not_found"),
+        ("persona:bad id:x", "invalid_subject_persona"),
+        ("persona:", "invalid_subject_persona"),
+    ],
+)
+def test_operator_default_roster_refuses_unknown_subject_persona(ref, reason):
+    with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+        _roster(ref)
+    assert exc.value.reason == reason
+    assert 400 <= exc.value.status_code < 500
+
+
+def test_persona_convened_and_explicit_participants_unchanged():
+    roster, chair = _roster(
+        "persona:persona-unknown",
+        convened_by={"kind": "persona", "id": "persona-alpha"},
+    )
+    assert chair == "persona-alpha"
+    roster, chair = _roster(
+        "persona:persona-unknown",
+        participants=[{"persona_id": "persona-alpha", "role": "chair"}],
+    )
+    assert chair == "persona-alpha"
+
+
+@pytest.mark.parametrize("ref", ["trader:t1", "agora_user:u1", "user:u1"])
+def test_other_subject_ref_kinds_unchanged(ref):
+    roster, chair = _roster(ref)
+    # directory-derived default roster (sorted), not the subject_ref path
+    assert chair == "persona-2448c7053e33ea48da47"
