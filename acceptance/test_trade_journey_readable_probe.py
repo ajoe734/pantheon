@@ -24,8 +24,19 @@ def row(jid, name, probe_flag=False):
     return {"journey_id": jid, "persona_id": PERSONA, "persona_name": name, "persona_is_probe": probe_flag}
 
 
-def fetcher(rows, filtered):
-    return lambda path: {"data": {"items": filtered if "attention=recon_mismatch" in path else rows}}
+def fetcher(rows, filtered, total=None, filtered_total=None):
+    def fetch(path):
+        flt = "attention=recon_mismatch" in path
+        data = {"items": filtered if flt else rows}
+        t = filtered_total if flt else total
+        if t is not None:
+            data["page_info"] = {"total": t}
+        return {"data": data}
+    return fetch
+
+
+def variance(jid):
+    return {**row(jid, "n"), "status": "completed_with_variance"}
 
 
 def test_executable_with_owner_header():
@@ -35,16 +46,38 @@ def test_executable_with_owner_header():
 
 def test_passes_on_readable_rows():
     rows = [row("tj_a", FIXTURE["persona_names"][PERSONA]), row("tj_b", None)]
-    report = probe.check(fetcher(rows, rows[:1]))
+    report = probe.check(fetcher(rows, [variance("tj_a")], 2, 1))
     assert report["passed"] and report["rows"] == 2 and report["recon_mismatch_rows"] == 1
 
 
-def test_fails_without_persona_name_probe_rows_or_filter():
+def test_hosted_20261120_full_pages_pass():
+    rows = [row(f"tj_{i}", "n") for i in range(50)]
+    filtered = [variance(f"tj_{i}") for i in range(50)]
+    report = probe.check(fetcher(rows, filtered, 158033, 6941))
+    assert report["passed"], report
+    assert report["rows"] == 50 and report["recon_mismatch_rows"] == 50
+
+
+def test_fails_when_server_ignores_filter():
+    rows = [row("tj_a", "n")]
+    report = probe.check(fetcher(rows, [variance("tj_a")], 158033, 158033))
+    assert report["failed"] == ["attention_filter_not_applied"]
+    assert probe.check(fetcher(rows, [variance("tj_a")]))["failed"] == ["attention_filter_not_applied"]
+
+
+def test_fails_when_filtered_row_is_not_variance():
+    rows = [row("tj_a", "n")]
+    bad = {**row("tj_bad", "n"), "status": "completed"}
+    ok = {**row("tj_ok", "n"), "outcome": {"kind": "variance"}}
+    report = probe.check(fetcher(rows, [ok, bad], 10, 2))
+    assert report["failed"] == ["attention_row_not_variance:tj_bad"]
+
+
+def test_fails_without_persona_name_or_probe_rows():
     rows = [row("tj_a", None), row("tj_b", None, True)]
-    report = probe.check(fetcher(rows, rows))
-    assert not report["passed"]
+    report = probe.check(fetcher(rows, [variance("tj_a")], 2, 1))
     assert {f.split(":")[0] for f in report["failed"]} == {
-        "persona_name_missing", "probe_persona_rows_listed", "attention_filter_not_applied"}
+        "persona_name_missing", "probe_persona_rows_listed"}
 
 
 def test_exit_77_without_viewer_identity():
