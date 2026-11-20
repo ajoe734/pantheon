@@ -4040,3 +4040,79 @@ def test_class_entries_never_fall_back_to_flat_baseline(tmp_path) -> None:
     )
     assert evaluation["summary"]["baseline_metric_count"] == 0
     assert "stock_future" in evaluation["baseline_unresolved"][0]["reason"]
+
+
+# --- journey-scoped scheduled reconciliation (TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120)
+
+_HOSTED_EVALS = (
+    Path(__file__).resolve().parents[3]
+    / "docs/deployment/evidence/TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120"
+    / "hosted_scheduled_evaluations_rb-3823397e.json"
+)
+
+
+def _hosted_eval(evaluated_at: str, summary: dict) -> dict:
+    evaluations = json.loads(_HOSTED_EVALS.read_text())
+    evaluation = next(e for e in evaluations if e["evaluated_at"] == evaluated_at)
+    evaluation = json.loads(json.dumps(evaluation))
+    evaluation["binding_id"] = summary["binding_id"]
+    evaluation["runtime_id"] = summary["runtime_id"]
+    return evaluation
+
+
+def _scheduled_event(evaluation: dict, timestamp: str):
+    svc = _load_service_module(tempfile.mkdtemp())
+    return svc._scheduled_lifecycle_event(
+        summary=_paper_lifecycle_summary(), evaluation=evaluation, timestamp=timestamp
+    )
+
+
+def test_hosted_degraded_then_ok_defers_then_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, reason = _scheduled_event(degraded, "2026-07-15T10:05:00Z")
+    assert event is None
+    assert reason == "reconciliation_deferred_runtime_unhealthy"
+    ok = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    event, reason = _scheduled_event(ok, "2026-07-15T10:10:00Z")
+    assert reason is None
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_hosted_drawdown_critical_with_ok_checks_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    evaluation = _hosted_eval("2026-11-14T07:48:57Z", summary)
+    assert evaluation["status"] == "critical"
+    event, _ = _scheduled_event(evaluation, "2026-07-15T10:05:00Z")
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_runtime_unhealthy_stamps_failed_after_sixty_minutes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, _ = _scheduled_event(degraded, "2026-07-15T11:00:00Z")
+    assert event["event_type"] == "reconciliation_failed"
+    assert event["reason_code"] == "runtime_unhealthy_at_reconciliation"
+    names = {d["check"] for d in event["reason_detail"]}
+    assert names == {"runtime_state", "runtime_health_summary"}
+    assert {"detail", "observed", "threshold"} <= set(event["reason_detail"][0])
+
+
+def test_identity_and_other_check_failures_have_reason_codes() -> None:
+    summary = _paper_lifecycle_summary()
+    base = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    ident = json.loads(json.dumps(base))
+    ident["reconciliation_checks"][0]["status"] = "degraded"
+    event, _ = _scheduled_event(ident, "2026-07-15T10:05:00Z")
+    assert event["reason_code"] == "reconciliation_identity_unverified"
+    other = json.loads(json.dumps(base))
+    for c in other["reconciliation_checks"]:
+        if c["check"] == "queue_lag_ms":
+            c["status"] = "critical"
+        if c["check"] == "authoritative_actual_identity":
+            c["status"] = "ok"
+    other["reconciliation_checks"].append(
+        {"check": "position_vs_fill", "status": "critical", "detail": "x"}
+    )
+    event, _ = _scheduled_event(other, "2026-07-15T10:05:00Z")
+    assert event["reason_code"] == "reconciliation_check_failed"

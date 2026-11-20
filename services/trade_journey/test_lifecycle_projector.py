@@ -3017,3 +3017,39 @@ def test_hosted_shape_growth_bound_and_rollback_with_previous_worker_mode(
 
 
 
+
+
+def test_rejection_keeps_producer_reason_not_expression_code() -> None:
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+
+    source = {
+        "event_id": "evt-rej-1",
+        "event_type": "order_rejection",
+        "created_at": "2026-11-19T23:46:17Z",
+        "reject_reason": "insufficient_cash",
+        "required": 100034.3461,
+        "available": 100000,
+        "limit": 100000,
+        "requested_quantity": 452,
+        "metadata": {"reason_code": "long_cash"},
+    }
+    entry = {
+        "event": source,
+        "identity": {
+            "journey_id": "tj-1", "tenant_id": "t", "environment": "paper",
+            "persona_id": "p", "persona_capital_binding_id": "b",
+            "artifact_id": "a", "artifact_version": "1", "plan_id": "pl",
+            "trace_id": "tr",
+        },
+        "source_mode": "live",
+        "sequence_no": 1,
+    }
+    (event,) = LifecycleProjector._journey_events(entry)
+    assert event["reason_code"] == "insufficient_cash"
+    assert event["expression_reason_code"] == "long_cash"
+    assert event["reason_detail"] == {
+        "required": 100034.3461,
+        "available": 100000,
+        "limit": 100000,
+        "requested_quantity": 452,
+    }
