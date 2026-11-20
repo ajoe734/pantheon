@@ -20,6 +20,8 @@ try:
 except (ImportError, ValueError):
     from models import CommandType, ObjectType, OperatorIdentity
 
+from services.incident.incident import derive_incident_summary_fields
+
 from .promotion_review import (
     _PROMOTION_REVIEW_DECISIONS,
     _promotion_review_clean_id,
@@ -399,17 +401,32 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     status = str(record.get("status") or "open").strip().lower() or "open"
     if status not in _HUMAN_INBOX_OPEN_INCIDENT_STATUSES:
         return None
-    kind = str(record.get("kind") or "incident").strip().lower() or "incident"
+    derived = derive_incident_summary_fields(record, include_timeline=False)
+    incident_kind = str(derived.get("kind") or record.get("kind") or "incident").strip().lower() or "incident"
     risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
     priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
-    created_at = _human_inbox_record_time(record, "triggered_at", "created_at", "opened_at")
-    updated_at = record.get("updated_at") or record.get("last_seen_at") or created_at
+    created_at = _human_inbox_record_time(record, "triggered_at", "created_at", "opened_at") or derived.get("first_seen_at")
+    updated_at = record.get("updated_at") or record.get("last_seen_at") or derived.get("last_seen_at") or created_at
     runtime_id = record.get("runtime_id") or record.get("target_id")
     persona_id = record.get("persona_id")
     target_type = "Persona" if persona_id else "Runtime" if runtime_id else record.get("target_type")
     target_id = persona_id or runtime_id or record.get("target_id") or incident_id
     route = f"/management/incidents/{incident_id}"
     action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_INCIDENT_STATUSES)
+    details = _management_json_clone(record)
+    if isinstance(details, dict):
+        details.pop("timeline", None)
+        details["kind"] = incident_kind
+        details["metric"] = derived.get("metric")
+        details["observed"] = derived.get("observed")
+        details["threshold"] = derived.get("threshold")
+        details["comparator"] = derived.get("comparator")
+        details["occurrence_count"] = derived.get("occurrence_count")
+        details["first_seen_at"] = derived.get("first_seen_at")
+        details["last_seen_at"] = derived.get("last_seen_at")
+        details["summary_key"] = derived.get("summary_key")
+        details["summary_params"] = _management_json_clone(derived.get("summary_params") or {})
+        details["summary"] = derived.get("summary")
     projected = {
         "id": f"incident:{incident_id}",
         "item_id": incident_id,
@@ -418,13 +435,19 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
         "source_type": "incident",
         "source_id": incident_id,
         "incident_id": incident_id,
-        "title": record.get("title") or f"Incident: {kind}",
-        "summary": (
-            record.get("summary")
-            or record.get("evidence_summary")
-            or record.get("description")
-            or "Incident requires operator review."
-        ),
+        "incident_kind": incident_kind,
+        "title": record.get("title") or f"Incident: {incident_kind}",
+        "summary": derived.get("summary") or "Incident requires operator review.",
+        "summary_key": derived.get("summary_key"),
+        "summary_params": _management_json_clone(derived.get("summary_params") or {}),
+        "metric": derived.get("metric"),
+        "observed": derived.get("observed"),
+        "threshold": derived.get("threshold"),
+        "comparator": derived.get("comparator"),
+        "occurrence_count": derived.get("occurrence_count"),
+        "first_seen_at": derived.get("first_seen_at"),
+        "last_seen_at": derived.get("last_seen_at"),
+        "evidence_refs": list(derived.get("evidence_refs") or []),
         "priority": priority,
         "risk_level": risk_level,
         "status": status,
@@ -438,7 +461,14 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
         "route": route,
         "bff_detail_path": f"/bff/incidents/{incident_id}",
         "incident_context": {
-            "kind": kind,
+            "kind": incident_kind,
+            "metric": derived.get("metric"),
+            "observed": derived.get("observed"),
+            "threshold": derived.get("threshold"),
+            "comparator": derived.get("comparator"),
+            "occurrence_count": derived.get("occurrence_count"),
+            "first_seen_at": derived.get("first_seen_at"),
+            "last_seen_at": derived.get("last_seen_at"),
             "runtime_id": runtime_id,
             "persona_id": persona_id,
         },
@@ -446,7 +476,7 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
             "canReview": action_state == "pending",
             "canRemediate": action_state == "pending",
         }),
-        "details": _management_json_clone(record),
+        "details": details,
     }
     return _human_inbox_attach_common_fields(
         projected,

@@ -415,7 +415,7 @@ def test_list_research_tasks_projects_hosted_shapes_name_fallback_and_stub_runs(
     calls = _install_owner_urllib_stub(monkeypatch)
     client = _build_client()
 
-    resp = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    resp = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -486,7 +486,7 @@ def test_two_tenant_isolation_and_unscoped_exclusion(monkeypatch: pytest.MonkeyP
     _install_owner_urllib_stub(monkeypatch)
     client = _build_client()
 
-    resp_dev = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    resp_dev = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert resp_dev.status_code == 200
     dev_ids = {item["task_id"] for item in resp_dev.json()["items"]}
     assert dev_ids == {
@@ -498,7 +498,7 @@ def test_two_tenant_isolation_and_unscoped_exclusion(monkeypatch: pytest.MonkeyP
     assert "rtask-20261025-tenant-b" not in dev_ids
     assert resp_dev.json()["meta"]["excluded_unscoped_count"] == 1
 
-    resp_b = client.get("/bff/research-tasks", headers=_auth_headers("tenant-b"))
+    resp_b = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-b"))
     assert resp_b.status_code == 200
     b_ids = {item["task_id"] for item in resp_b.json()["items"]}
     assert b_ids == {"rtask-20261025-tenant-b"}
@@ -575,7 +575,7 @@ def test_get_research_task_detail_returns_all_runs_and_non_disclosing_404(
 
 def test_unconfigured_orchestrator_url_returns_surface_unavailable() -> None:
     client = _build_client()
-    resp = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    resp = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
     body = resp.json()
     assert body["items"] == []
@@ -587,7 +587,7 @@ def test_unconfigured_orchestrator_url_returns_surface_unavailable() -> None:
 def test_owner_read_failure_returns_surface_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_owner_urllib_stub(monkeypatch, fail_tasks=True)
     client = _build_client()
-    resp = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    resp = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
     body = resp.json()
     assert body["items"] == []
@@ -598,7 +598,7 @@ def test_owner_read_failure_returns_surface_unavailable(monkeypatch: pytest.Monk
 def test_healthy_owner_with_zero_tasks_returns_surface_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_owner_urllib_stub(monkeypatch, tasks=[], runs=[])
     client = _build_client()
-    resp = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    resp = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
     body = resp.json()
     assert body["items"] == []
@@ -613,7 +613,7 @@ def test_list_pagination_and_single_runs_call(monkeypatch: pytest.MonkeyPatch) -
 
     page1 = client.get(
         "/bff/research-tasks",
-        params={"page_size": 2},
+        params={"page_size": 2, "include_non_real": "true"},
         headers=_auth_headers("tenant-dev"),
     )
     assert page1.status_code == 200
@@ -626,7 +626,7 @@ def test_list_pagination_and_single_runs_call(monkeypatch: pytest.MonkeyPatch) -
 
     page2 = client.get(
         "/bff/research-tasks",
-        params={"page_size": 2, "page_token": body1["page_info"]["next_page_token"]},
+        params={"page_size": 2, "include_non_real": "true", "page_token": body1["page_info"]["next_page_token"]},
         headers=_auth_headers("tenant-dev"),
     )
     assert page2.status_code == 200
@@ -662,7 +662,7 @@ def test_research_experiments_and_post_experiments_are_unchanged_and_unmerged(
     assert created.status_code == 201
     assert created.json()["status"] == "queued"
 
-    tasks_list = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev"))
+    tasks_list = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev"))
     assert tasks_list.status_code == 200
     task_ids = [item["task_id"] for item in tasks_list.json()["items"]]
     assert all(task_id.startswith("rtask-") for task_id in task_ids)
@@ -694,7 +694,113 @@ def test_collector_query_plan_task_exposes_exact_diff_and_other_tasks_do_not(
     plain = deepcopy(HOSTED_TASK_FALLBACK_TO_TASK_ID)
     _install_owner_urllib_stub(monkeypatch, tasks=[plan_task, plain], runs=[])
     client = _build_client()
-    body = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev")).json()
+    body = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev")).json()
     by_id = {item["task_id"]: item for item in body["items"]}
     assert by_id[plan_task["task_id"]]["query_plan"] == plan_task["query_plan"]
     assert "query_plan" not in by_id[plain["task_id"]]
+
+
+# --- RC6 WP6.2/WP6.4: non-real hidden by default, display summary (hosted shapes) ---
+
+HOSTED_TASK_ACCEPTANCE_TEST: Dict[str, Any] = {
+    "id": "rtask-20261119-acc",
+    "task_id": "rtask-20261119-acc",
+    "title": "ACCEPTANCE TEST stub/stub",
+    "objective": "acceptance probe",
+    "task_type": "alpha_replication",
+    "tenant_id": "tenant-dev",
+    "status": "completed",
+    "created_by": "acceptance-runner",
+    "created_at": "2026-11-19T09:00:00Z",
+    "updated_at": "2026-11-19T09:01:00Z",
+    "source_refs": [],
+    "constraints": {},
+}
+
+HOSTED_TASK_SCOPED_TEST: Dict[str, Any] = {
+    "id": "rtask-20261119-scope",
+    "task_id": "rtask-20261119-scope",
+    "title": "Real looking name",
+    "objective": "x",
+    "tenant_id": "tenant-dev",
+    "status": "completed",
+    "created_at": "2026-11-19T08:00:00Z",
+    "source_refs": [],
+    "constraints": {"data_scope": "synthetic"},
+}
+
+
+def _extra_tasks_and_runs() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    tasks = [
+        HOSTED_TASK_CONSTRAINTS_TENANT,
+        HOSTED_TASK_TOP_LEVEL_TENANT_NO_TITLE,
+        HOSTED_TASK_FALLBACK_TO_TASK_ID,
+        HOSTED_TASK_ACCEPTANCE_TEST,
+        HOSTED_TASK_SCOPED_TEST,
+    ]
+    runs = list(HOSTED_RUNS) + [
+        _make_hosted_run(
+            run_id="rrun-20261119-acc", task_id="rtask-20261119-acc", adapter="stub",
+            dispatch_mode="stub", requested_mode="stub", status="completed",
+            created_at="2026-11-19T09:00:30Z",
+        ),
+        _make_hosted_run(
+            run_id="rrun-20261119-scope", task_id="rtask-20261119-scope", adapter="vectorbt",
+            dispatch_mode="real", requested_mode="real", status="completed",
+            created_at="2026-11-19T08:01:00Z",
+        ),
+    ]
+    return tasks, runs
+
+
+def test_list_hides_non_real_by_default_with_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks, runs = _extra_tasks_and_runs()
+    _install_owner_urllib_stub(monkeypatch, tasks=tasks, runs=runs)
+    client = _build_client()
+    body = client.get("/bff/research-tasks", headers=_auth_headers("tenant-dev")).json()
+    assert [i["task_id"] for i in body["items"]] == ["rtask-20261023-008"]
+    assert body["meta"]["hidden_non_real_count"] == 4
+    assert body["page_info"]["total"] == 1
+    assert body["items"][0]["is_non_real"] is False
+    assert body["items"][0]["non_real_reason"] is None
+
+
+def test_list_include_non_real_reasons_and_display_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks, runs = _extra_tasks_and_runs()
+    _install_owner_urllib_stub(monkeypatch, tasks=tasks, runs=runs)
+    client = _build_client()
+    body = client.get(
+        "/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers("tenant-dev")
+    ).json()
+    by_id = {i["task_id"]: i for i in body["items"]}
+    assert body["meta"]["hidden_non_real_count"] == 0
+    assert body["page_info"]["total"] == 5
+    assert by_id["rtask-20261119-acc"]["non_real_reason"] == "acceptance_test"
+    assert by_id["rtask-20261119-scope"]["non_real_reason"] == "acceptance_test"
+    assert by_id["rtask-exp-sic-30bcef4d067e4c0111fc28cfe8101a7b"]["non_real_reason"] == "stub_run"
+    assert by_id["rtask-20261022-blank-name"]["non_real_reason"] == "manual_record"
+    assert all(by_id[k]["is_non_real"] for k in by_id if k != "rtask-20261023-008")
+
+    rapid = by_id["rtask-exp-sic-30bcef4d067e4c0111fc28cfe8101a7b"]
+    assert rapid["name_is_fallback_id"] is False  # objective present
+    assert rapid["display_summary"] == {
+        "task_kind": "rapid_eval", "subject_ref": None,
+        "symbol": "2330.TW", "dataset_ref": "dataset:tw-equities-daily",
+    }
+    blank = by_id["rtask-20261022-blank-name"]
+    assert blank["name"] == "rtask-20261022-blank-name"
+    assert blank["name_is_fallback_id"] is True
+    assert blank["display_summary"]["task_kind"] is None
+    alpha = by_id["rtask-20261023-008"]
+    assert alpha["display_summary"]["subject_ref"] == "reg-strategy-spec-persona-aa060d53ff712cbba704"
+
+
+def test_detail_carries_non_real_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks, runs = _extra_tasks_and_runs()
+    _install_owner_urllib_stub(monkeypatch, tasks=tasks, runs=runs)
+    client = _build_client()
+    d = client.get("/bff/research-tasks/rtask-20261119-acc", headers=_auth_headers("tenant-dev")).json()
+    assert d["is_non_real"] is True and d["non_real_reason"] == "acceptance_test"
+    assert d["data"]["display_summary"]["symbol"] == "2330.TW"
+    d2 = client.get("/bff/research-tasks/rtask-20261023-008", headers=_auth_headers("tenant-dev")).json()
+    assert d2["is_non_real"] is False and d2["name_is_fallback_id"] is False

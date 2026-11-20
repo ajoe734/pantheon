@@ -1,0 +1,7 @@
+{
+  "task_id": "BFF-JOBS-DETAIL-STATUS-AND-LIST-REASON-20261120",
+  "reproduction": "Coordinator hosted reads 2026-11-20 (BFF fb8ed951d): GET /bff/jobs listed job-ingest-ingest-5d3c7b7750de failed; detail returned status pending with detail.run.status failed. New test test_source_ingest_detail_unwraps_run_and_agrees_with_list fails on prior projection (status pending) and passes now.",
+  "change": "jobs/projection.py project_job unwraps owner {run, receipt}, reads status/started/finished from run, adds connector_id and failure_reason (last failed/rejected event message or owner error field) to every row.",
+  "owner_calls": "List test asserts a single owner list request and no per-row detail request.",
+  "tests": "pytest test_jobs_source_owner_contract.py test_bff_jobs_newest_first.py: 48 passed"
+}

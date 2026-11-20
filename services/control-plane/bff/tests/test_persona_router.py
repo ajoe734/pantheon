@@ -335,6 +335,15 @@ def test_bff_management_persona_intent(client: TestClient):
     assert resp.status_code == 200
     data = resp.json()
     assert "data" in data or "items" in data or "summary" in data
+    items = (data.get("data") or {}).get("items") or []
+    assert all(item.get("kind") == "trade_intent" for item in items)
+    for item in items:
+        assert item.get("topic")
+        assert item.get("proposed_action")
+        assert item.get("outcome")
+        assert item.get("persona_display_name")
+        assert item.get("redaction", {}).get("policy") != "management_persona_intent_public_summary"
+        assert item.get("withheld_fields")
 
 
 def test_bff_management_quarterly_ranking_formula(client: TestClient):
