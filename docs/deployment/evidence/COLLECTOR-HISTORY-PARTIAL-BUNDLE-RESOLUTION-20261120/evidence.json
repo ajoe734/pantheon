@@ -1,0 +1,31 @@
+{
+  "task": "COLLECTOR-HISTORY-PARTIAL-BUNDLE-RESOLUTION-20261120",
+  "reproduction": {
+    "coordinator_hosted_reads": "2026-11-20 ~02:35Z read-only: TWSE resume cursor 2026-11-11T09:33:18Z#backfill-2026-07-10|items=0 unchanged since 2026-11-19 21:49Z, 118 index entries behind it; backfill-2026-07-10 partial/no_data_for_date for TWSE and TPEx; backfill-2026-10-23 partial for both; TPEx partial close-* bundles superseded by later complete runs",
+    "code_cause": "_pull_ordered stops at any partial/paused bundle (unverified_pending + break); the collector never completes these dates",
+    "test_shape": "test_collector_partial_bundle_resolution.py::test_unconfirmed_partial_still_stops_the_sweep reproduces the stall (partial day, cursor stays at |items=0)"
+  },
+  "change": {
+    "file": "services/source_ingestion/connectors/collector_bundle.py",
+    "superseded": "a partial price-history bundle is acknowledged without rows when a later complete bundle of the same source has rows for exactly the same trade date (date from run_id backfill-/close-YYYY-MM-DD); its rows come from that bundle once",
+    "closure": "a 0-item partial bundle with reason no_data_for_date is acknowledged as an unscheduled market closure only if: the peer venue's (TWSE<->TPEx) bundles of that date are all partial/no_data_for_date with 0 items, neither venue has a complete bundle or rows for the date, the date is a weekday, and the governed tw_trading_holidays calendar covers that year and does not list the date as closed on both venues",
+    "everything_else": "any other partial/paused bundle (other reason, one venue empty, weekend, calendar closed/absent, non price-history source) stops the sweep exactly as before",
+    "outcome_truth_rule": "unchanged: collector_complete_boundary_unverified / cursor_lag_over_7_days not touched; the check passes only because the cursor now moves"
+  },
+  "closure_record": {
+    "where": "<raw_root>/state/market_closures.jsonl (SOURCE_INGEST_DATA_DIR/market_data_store/state on hosted), one JSON line {trade_date, kind, evidence, bundles[both bundle ids]}; read via collector_bundle.read_market_closures(); also surfaced in pull observed.resolved_partial_bundles",
+    "written": "after delivery acknowledgement when deferred-ack, else at end of pull; deduplicated by trade_date",
+    "size_growth_retention": "~300 bytes per closure, a few dates per year, append-only, kept indefinitely; no new thread; no wall-clock threshold",
+    "readers": "NOT yet wired into candidate_pool_market_feed/survivorship_attestation (outside task scope); that feed currently reads only tw_trading_holidays closed days. Follow-up needed so calendars/backtests consume the ledger."
+  },
+  "official_confirmation": {
+    "2026-07-10": "Typhoon Bavi; Taipei/Keelung/New Taipei/Taoyuan etc. work-and-school suspension, TWSE market closed (media: https://statementdog.com/news/17069, https://finance.ettoday.net/news/3198381). Exchange original notice text not retrieved.",
+    "2026-10-23": "Typhoon Champi; Taipei suspended work, market closed (media: https://uanalyze.com.tw/articles/5914457629, https://www.thestar.com.my/news/2026/10/23/taiwan-shuts-us5-trillion-stock-market-as-typhoon-champi-nears-almost-1000-flights-cancelled). Exchange original notice not retrieved; DGPA/TWSE announcement should be attached by coordinator.",
+    "ingest_side_rule": "the runtime rule relies on both venues' collector-confirmed no_data plus the governed calendar, not on these web sources"
+  },
+  "validation": {
+    "python": "/tmp/ci-si-venv/bin/python -m pytest -q test_collector_partial_bundle_resolution.py test_collector_bundle_connector.py test_collector_outcome_truth.py test_collector_priority_metadata_reads.py",
+    "result": "234 passed, 1 skipped (new file: 12 passed)"
+  },
+  "not_verified_here": "AC6 hosted post-deploy reads (cursor passes backfill-2026-07-10 / 10-23, no empty-outcome failures for 2h, TPEx partial close bundles) are for the coordinator after deploy"
+}
