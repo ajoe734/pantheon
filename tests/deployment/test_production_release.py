@@ -92,6 +92,7 @@ def _live_catalog() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
 ROLLBACK = REPO_ROOT / "scripts" / "deploy" / "prod_rollback.sh"
+ROLLBACK_MODE = REPO_ROOT / "scripts" / "deploy" / "prod_rollback_mode.sh"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-release.yml"
 COMPOSE = REPO_ROOT / "deploy" / "production" / "docker-compose.prod-control.yml"
 CADDY = REPO_ROOT / "deploy" / "production" / "Caddyfile"
@@ -1692,6 +1693,32 @@ class SwitchHarness(unittest.TestCase):
 
 
 class SwitchTests(SwitchHarness):
+    def test_journal_is_archived_per_dispatch_and_retention_keeps_newest_ten(self):
+        rid = self._prepare()["release_id"]
+        jroot = self.root / "state" / "journal"
+        old = jroot / rid
+        old.mkdir(parents=True)
+        for marker in ("bootstrap", "bff_switched", "fe_switched", "singletons_drained"):
+            (old / marker).write_text("")
+        names = [f"{rid}.archived-20260101T0000{i:02d}Z" for i in range(12)]
+        for n in names:
+            (jroot / n).mkdir()
+        (jroot / "other-release.archived-20200101T000000Z").mkdir()
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archives = sorted(p.name for p in jroot.glob(f"{rid}.archived-*"))
+        self.assertEqual(len(archives), 10)
+        self.assertNotIn(names[0], archives)
+        self.assertNotIn(names[1], archives)
+        self.assertNotIn(names[2], archives)
+        self.assertIn(names[3], archives)
+        self.assertTrue((jroot / "other-release.archived-20200101T000000Z").is_dir())
+        newest_new = [a for a in archives if a not in names]
+        self.assertEqual(len(newest_new), 1)  # this dispatch's archive of the previous journal
+        self.assertTrue((jroot / newest_new[0] / "bootstrap").exists())
+        for marker in ("bootstrap",):
+            self.assertFalse((jroot / rid / marker).exists())  # current journal carries no stale marker
+
     def test_successful_switch_order_and_state(self):
         rid = self._prepare()["release_id"]
         r = self._run()
@@ -2186,6 +2213,145 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertIn("no_rollback_target", r.stdout)
         self.assertFalse((self.root / "state" / "baseline.json").exists())
         self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    # --- Journal per dispatch + protected rollback operation (ENV-PROD-CONTROL-IMPL-001 drill hardening) ---
+
+    def _rollback_mode(self, release_id: str, mpath: Path | None = None, **extra):
+        env = self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID=release_id, FAKE_READY_PORTS="8001 8002", **extra)
+        if mpath is not None:
+            env["RELEASE_MANIFEST_PATH"] = str(mpath)
+        else:
+            env.pop("RELEASE_MANIFEST_PATH", None)  # default: the retained ${PROD_ROOT}/manifests/<release_id>.json
+        return subprocess.run([str(ROLLBACK_MODE)], capture_output=True, text=True, timeout=60, env=env)
+
+    def _switch_second_release(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        return m1, m2
+
+    def test_redispatch_with_stale_bootstrap_journal_rolls_back_to_real_baseline_not_bootstrap_abort(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        rid1 = m1["release_id"]
+        j1 = self.root / "state" / "journal" / rid1
+        self.assertTrue((j1 / "bootstrap").exists())  # stale bootstrap marker from the first dispatch of 001
+        # Re-dispatch 001 (non-bootstrap) over baseline 002; force a failure AFTER the first mutation (singleton hand-off).
+        rb = {
+            "previous_release_id": m2["release_id"],
+            "frontend_commit": m2["frontend"]["commit"],
+            "frontend_artifact_sha256": m2["frontend"]["artifact_sha256"],
+            "backend_commit": m2["backend"]["commit"],
+            "backend_operator_bff_image": m2["backend"]["images"]["operator_bff"],
+            "backend_images": m2["backend"]["images"],
+            "config_schema_version": m2["config_schema_version"],
+        }
+        m1b, sha1b, art1b, mpath1b, epath1b, apath1b = self._prepare_release(
+            release_id=rid1, fe_marker="fe-v1", fe_commit="1" * 40, bff_commit="2" * 40, digest_char="1",
+            bootstrap=False, rollback_baseline=rb)
+        # The regenerated test tarball is not byte-identical; the real immutable 001 dir would match. Drop the test copy.
+        shutil.rmtree(self.root / "fe" / "releases" / rid1)
+        sw = self._run_switch(m1b, sha1b, art1b, mpath1b, epath1b, apath1b, bootstrap=False,
+                              FAKE_READY_PORTS="8001 8002", FAKE_CRED_STATUS="401:BAD_CRED")
+        self.assertEqual(sw.returncode, 2, f"stdout={sw.stdout}\nstderr={sw.stderr}")  # real rollback, NOT bootstrap abort (4)
+        self.assertNotIn("no_rollback_target", sw.stdout)
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith(f"/{m2['release_id']}"))
+        self.assertEqual(json.loads((self.root / "state" / "baseline.json").read_text())["release_id"], m2["release_id"])
+        self.assertIn("127.0.0.1:8001", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertFalse((j1 / "bootstrap").exists())
+        archives = sorted(p.name for p in j1.parent.glob(f"{rid1}.archived-*"))
+        self.assertEqual(len(archives), 1)
+        self.assertTrue((j1.parent / archives[0] / "bootstrap").exists())
+
+    def test_rollback_mode_rolls_back_active_release_and_emits_one_json_result(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        result = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(result["status"], "rolled_back")
+        self.assertEqual(result["from_release"], m2["release_id"])
+        self.assertEqual(result["to_release"], m1["release_id"])
+        self.assertEqual(result["rollback_budget_seconds"], 120)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIsInstance(result["elapsed_ms"], int)
+        self.assertNotIn("token", r.stdout.lower())
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith(f"/{m1['release_id']}"))
+        self.assertEqual(json.loads((self.root / "state" / "active_manifest.json").read_text())["release_id"], m1["release_id"])
+        self.assertEqual((self.state / "singleton_release_id").read_text(), m1["release_id"])
+        # Credential check ran inside the restored paper workers.
+        self.assertTrue((self.state / "cred_checked").exists())
+        # A second rollback of the same (no longer active) release is refused.
+        again = self._rollback_mode(m2["release_id"])
+        self.assertEqual(again.returncode, 10, again.stderr)
+
+    def test_rollback_mode_refusals_change_nothing(self):
+        m1, m2 = self._switch_second_release()
+        rid1, rid2 = m1["release_id"], m2["release_id"]
+        root = self.root
+
+        def snapshot():
+            return (os.readlink(root / "fe" / "current"), (root / "proxy" / "bff_upstream.caddy").read_text(),
+                    (root / "state" / "baseline.json").read_bytes(), (root / "state" / "active_manifest.json").read_bytes())
+        before = snapshot()
+        # not the active release
+        r = self._rollback_mode(rid1)
+        self.assertEqual(r.returncode, 10, r.stderr)
+        self.assertIn("ROLLBACK_RELEASE_NOT_ACTIVE", r.stderr)
+        self.assertEqual(snapshot(), before)
+        # baseline record does not name a retained healthy baseline
+        j2 = root / "state" / "journal" / rid2
+        good = (j2 / "baseline_release.json").read_text()
+        (j2 / "baseline_release.json").write_text(json.dumps({"release_id": "", "healthy": True}))
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 13, r.stderr)
+        self.assertIn("ROLLBACK_NO_BASELINE", r.stderr)
+        self.assertEqual(snapshot(), before)
+        (j2 / "baseline_release.json").write_text(good)
+        # bootstrap journal
+        (j2 / "bootstrap").write_text("")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 12, r.stderr)
+        self.assertIn("ROLLBACK_BOOTSTRAP_JOURNAL", r.stderr)
+        self.assertEqual(snapshot(), before)
+        (j2 / "bootstrap").unlink()
+        # missing journal
+        os.rename(j2, root / "state" / "journal" / "moved-away")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 11, r.stderr)
+        self.assertIn("ROLLBACK_NO_JOURNAL", r.stderr)
+        self.assertEqual(snapshot(), before)
+        os.rename(root / "state" / "journal" / "moved-away", j2)
+        # no retained manifest
+        (root / "manifests" / f"{rid2}.json").rename(root / "manifests" / "x.json")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 14, r.stderr)
+        self.assertEqual(snapshot(), before)
+
+    def test_rollback_mode_refuses_first_release_bootstrap_journal(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        r = self._rollback_mode(m1["release_id"])
+        self.assertEqual(r.returncode, 12, r.stderr)
+        self.assertTrue((self.root / "state" / "baseline.json").is_file())
+        self.assertTrue((self.root / "fe" / "current").is_symlink())
+        self.assertNotIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    def test_rollback_mode_fails_when_restored_worker_credential_check_fails(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"], FAKE_CRED_STATUS="401:BAD_CRED")
+        self.assertEqual(r.returncode, 7, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["status"], "rollback_unverified")
+
+    def test_rollback_mode_over_budget_exits_6(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"], PROD_ROLLBACK_BUDGET_SECONDS="-1")
+        self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["status"], "rollback_over_budget")
 
     def test_paper_owners_must_reuse_training_session_image_and_are_singletons(self):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]
@@ -3086,6 +3252,27 @@ class StaticContractTests(unittest.TestCase):
                     self.assertIsInstance(al, PostgresActionLedger)
                     self.assertEqual(al.dsn, isolated_dsn)
                     self.assertEqual(al.schema, "public")
+
+    def test_workflow_rollback_operation_is_protected_and_driven_by_script(self) -> None:
+        wf = yaml.safe_load(WORKFLOW.read_text())
+        inputs = wf[True]["workflow_dispatch"]["inputs"]
+        self.assertLessEqual(len(inputs), 25)
+        op = inputs["operation"]
+        self.assertEqual((op["type"], op["default"], op["options"]), ("choice", "release", ["release", "rollback"]))
+        text = WORKFLOW.read_text()
+        self.assertIn("scripts/deploy/prod_rollback_mode.sh", text)
+        self.assertIn("PRODUCTION_RELEASE_ENABLED", text)
+        self.assertEqual(wf["jobs"]["deploy"]["environment"], "production")
+        steps = {st["name"]: st for st in wf["jobs"]["deploy"]["steps"] if "name" in st}
+        for name, st in steps.items():
+            if name.startswith(("Retrieve immutable FE", "Transport immutable", "Run atomic switch", "Full production preflight")):
+                self.assertEqual(st["if"], "${{ inputs.operation != 'rollback' }}", name)
+        rb = next(st for n, st in steps.items() if n.startswith("Run protected rollback"))
+        self.assertEqual(rb["if"], "${{ inputs.operation == 'rollback' }}")
+        for forbidden in ("bootstrap.sh", "prepull_images", " migrate ", "snapshot"):
+            self.assertNotIn(forbidden, rb["run"].replace("snapshot.json", ""))
+        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for both operations
+        self.assertIn("prod_preflight.py rollback", text)
 
     def test_prod_rollback_rto_fast_stop_and_healthcheck_parity(self) -> None:
         from scripts.deploy import staging_sanitize

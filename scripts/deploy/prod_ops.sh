@@ -8,7 +8,7 @@
 # pre-acquires only digest-pinned (@sha256:...) images, and never formats, mounts over, or
 # recreates the production data disk.
 #
-# Steps: migrate snapshot_preflight prepull_images baseline_health start_green stop_green
+# Steps: verify_rollback migrate snapshot_preflight prepull_images baseline_health start_green stop_green
 #        gate <name> <port> drain_singletons reload_proxy activate_singletons
 #        resume_baseline_singletons verify_runtime_config post_identity
 #
@@ -403,6 +403,8 @@ print(code, err)
 worker_credential_check() {
   local k svc c out code err tries i
   for k in paper_fleet_reconciler paper_signal_producer; do
+    # Restored-baseline mode: a worker the retained baseline never had is absent by design (never invented).
+    [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" != "absent" && " ${PROD_BASELINE_ABSENT_KEYS:-} " != *" $k "* ]] || continue
     svc="$(svc_of "$k")"
     c="$(container_of "$svc")"; [[ -n "$c" ]] || fail ACTIVATE "product worker ${svc} container not found for credential check"
     tries="${PROD_WORKER_CRED_TRIES:-15}"; code=0; err="-"
@@ -769,6 +771,19 @@ PY
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "baseline singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "baseline singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "restored singleton image '${simg}' != baseline '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    ;;
+
+  verify_rollback)
+    # Post-rollback proof, same checks the switch runs after activation, against the RESTORED baseline only:
+    # every product owner / singleton at the baseline digest, and the in-container runtime-manager credential check.
+    # Public FE /deployment.json + BFF /bff/version + /bff/readyz are already proven by baseline_health (not repeated).
+    baseline_env
+    verify_product_owner_images || fail ROLLBACK_VERIFY "${OWNER_REASON}"
+    sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ROLLBACK_VERIFY "baseline singleton container not found"
+    simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ROLLBACK_VERIFY "baseline singleton inspect failed"
+    [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ROLLBACK_VERIFY "singleton image '${simg}' != baseline '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    printf '{"status":"rollback_verified","release_id":"%s"}\n' "$RELEASE_ID"
     ;;
 
   reload_proxy)
