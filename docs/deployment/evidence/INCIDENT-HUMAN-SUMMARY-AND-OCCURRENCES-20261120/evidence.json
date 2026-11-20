@@ -1,0 +1,123 @@
+{
+  "task_id": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120",
+  "register_class": "RC6",
+  "work_package": "WP6.1",
+  "title": "Incidents carry a plain summary and occurrence counts; the inbox no longer shows the evidence log",
+  "delivery_state": "merged_pending_review",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "generated_at": "2026-11-20T03:36:00Z",
+  "reproduction": {
+    "source": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120",
+    "hosted_read_date": "2026-11-20",
+    "bff_commit": "fb8ed951d",
+    "pages_swept": 67,
+    "hosted_incident_id": "inc-drift-5f668ec4c8d9",
+    "hosted_binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+    "hosted_cluster_id": "drift:drawdown",
+    "hosted_inbox_routes": [
+      "/management/human-inbox",
+      "/management/human-inbox/incident%3Ainc-drift-5f668ec4c8d9?returnUrl=%2Fmanagement%2Fhuman-inbox",
+      "/management/incidents/inc-drift-5f668ec4c8d9"
+    ],
+    "observed_defect_on_current_dev": {
+      "inbox_body_source": "evidence_summary fallback in _human_inbox_incident_item",
+      "evidence_summary_char_length": 3970,
+      "evidence_summary_cap": 4000,
+      "evidence_summary_prefix": "[older entries dropped] DriftReport drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown; cluster=drift:drawdown; reconciliation_ids=drift-76586033-ad6a-4f09-ae0d-9a2e756617a5-drawdown,recon-76586033-ad6a-4f09-ae0d-9a2e756617a5,eval-76586033-ad6a-4f09-ae0d-9a2e756617a5; telemetry_event_ids=76586033-ad6a-4f09-ae0d-9a2e756617a5; worst_metric=drawdown; threshold_metric=rolling_drawdown_multiple; observed=9.609309450237793; comparator=gt; threshold_value=1.25; threshold_window=paper-daily-sweep; policy_source=EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision",
+      "incident_detail_timeline_before": []
+    },
+    "reproduction_tests": [
+      "services/incident/test_incident.py::TestIncidentHumanSummaryAndOccurrences::test_reproduce_current_dev_four_drift_reports_vs_bounded_single_report_update",
+      "services/incidents/test_main_routes.py::test_consume_four_drift_reports_updates_summary_occurrences_and_timeline",
+      "services/control-plane/bff/tests/test_human_inbox_truth.py::test_human_inbox_four_drift_reports_returns_localizable_summary_and_never_evidence_summary"
+    ]
+  },
+  "acceptance_verification": {
+    "1_reproduce_first": {
+      "status": "passed",
+      "detail": "Cited coordinator 2026-11-20 sweep (BFF fb8ed951d, 67 pages in /home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120) and reproduced 4 DriftReports for binding rb-3823397e125e4579ba5f4174067087ed (cluster drift:drawdown; observed 9.609309450237793; threshold 1.25)."
+    },
+    "2_incident_case_summary_and_occurrence_fields": {
+      "status": "passed",
+      "fields_added": [
+        "kind",
+        "metric",
+        "observed",
+        "threshold",
+        "comparator",
+        "occurrence_count",
+        "first_seen_at",
+        "last_seen_at"
+      ],
+      "builders_updated": [
+        "services/incidents/consumer.py::build_incident_from_drift_report",
+        "services/incidents/consumer.py::build_incident_from_agent_finding_payload",
+        "services/incidents/consumer.py::build_incident_from_infrastructure_health_payload",
+        "services/incidents/consumer.py::build_incident_from_threshold_payload"
+      ]
+    },
+    "3_repeated_report_updates_in_place_without_growing_evidence_summary": {
+      "status": "passed",
+      "detail": "IncidentStore.merge_incident_evidence and IncidentStore.merge_infrastructure_incident_into_open increment occurrence_count, advance last_seen_at, update observed to the latest report value, and replace evidence_summary with the latest single report summary while preserving each report in reconciliation_ids/telemetry_event_ids and build_incident_timeline."
+    },
+    "4_bff_localizable_summary_and_incident_detail_timeline": {
+      "status": "passed",
+      "detail": "_human_inbox_incident_item and GET /bff/incidents/{id} return summary_key, summary_params, and plain summary (never evidence_summary as the item body); GET /bff/incidents/{id} returns timeline while the inbox item omits timeline."
+    },
+    "5_rollback_reader": {
+      "status": "passed",
+      "tests": [
+        "services/incident/test_incident.py::TestIncidentHumanSummaryAndOccurrences::test_rollback_reader_current_dev_from_dict_reads_new_rows_without_error",
+        "services/control-plane/bff/tests/test_incident_router.py::test_bff_incident_detail_returns_localizable_summary_and_timeline_for_four_drift_reports"
+      ]
+    },
+    "6_read_time_derivation_for_existing_rows": {
+      "status": "passed",
+      "tests": [
+        "services/incident/test_incident.py::TestIncidentHumanSummaryAndOccurrences::test_existing_stored_incident_with_appended_evidence_summary_derives_at_read_time_without_rewrite",
+        "services/control-plane/bff/tests/test_human_inbox_truth.py::test_human_inbox_derives_summary_at_read_time_for_legacy_appended_incident_without_mutation",
+        "services/control-plane/bff/tests/test_incident_router.py::test_bff_incident_detail_derives_summary_and_timeline_for_legacy_appended_row"
+      ]
+    },
+    "7_runtime_budget_and_storage_manifest": {
+      "status": "passed",
+      "storage_manifest_entry": "incident.incident_cases",
+      "row_size_before_bytes": {
+        "evidence_summary_chars": 3970,
+        "evidence_summary_cap_chars": 4000,
+        "incident_row_json_bytes": 4812
+      },
+      "row_size_after_bytes": {
+        "single_report_evidence_summary_chars": 518,
+        "incident_row_json_bytes_after_4_reports": 1346,
+        "incident_row_json_bytes_after_6_reports": 1490
+      },
+      "row_count_per_report": "unchanged (1 row per deduplicated open incident updated in place; 0 net new rows per repeated report)"
+    }
+  },
+  "validation": {
+    "pytest_batches": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/incident/test_incident.py services/incident/test_pg_store_integration.py services/incidents/test_consume_agent_finding.py services/incident/smoke_test_incident.py",
+        "passed": 101,
+        "skipped": 7,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/incidents/test_main_routes.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_incident_router.py",
+        "passed": 101,
+        "skipped": 0,
+        "failed": 0,
+        "exit_code": 0
+      }
+    ],
+    "storage_manifest_check": {
+      "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      "passed": true,
+      "failures": [],
+      "exit_code": 0
+    }
+  }
+}
