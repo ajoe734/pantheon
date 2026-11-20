@@ -8,7 +8,10 @@ GET /bff/management/trade-journeys and checks that
   * a row of a named persona carries persona_name (a row whose persona is named exists
     only when the persona owner is readable; rows without any persona_id are ignored);
   * no row has persona_is_probe true (probe personas are excluded by default);
-  * attention=recon_mismatch returns fewer rows than the unfiltered list.
+  * attention=recon_mismatch reports a page_info.total smaller than the unfiltered
+    page_info.total (page lengths are never compared: both pages are full at page_size=50)
+    and every row on that page is a variance (status completed_with_variance or outcome
+    kind variance).
 GET only apart from the login. Exit 0 passed, 1 failed, 77 skipped (a variable is missing).
 """
 from __future__ import annotations
@@ -28,6 +31,18 @@ def _items(body):
     return [i for i in (data or {}).get("items") or [] if isinstance(i, dict)]
 
 
+def _total(body):
+    info = ((body.get("data") if isinstance(body, dict) else None) or {}).get("page_info")
+    value = info.get("total") if isinstance(info, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _is_variance(row):
+    outcome = row.get("outcome")
+    kind = outcome.get("kind") if isinstance(outcome, dict) else outcome
+    return row.get("status") == "completed_with_variance" or kind == "variance"
+
+
 def check(fetch) -> dict:
     first = fetch(BASE)
     rows = _items(first)
@@ -40,10 +55,16 @@ def check(fetch) -> dict:
     probe_rows = [r.get("journey_id") for r in rows if r.get("persona_is_probe") is True]
     if probe_rows:
         failures.append("probe_persona_rows_listed:" + ",".join(map(str, probe_rows[:5])))
-    filtered = _items(fetch(BASE + "&attention=recon_mismatch"))
-    if rows and len(filtered) >= len(rows):
+    filtered_body = fetch(BASE + "&attention=recon_mismatch")
+    filtered = _items(filtered_body)
+    total, filtered_total = _total(first), _total(filtered_body)
+    if filtered_total is None or total is None or filtered_total >= total:
         failures.append("attention_filter_not_applied")
-    return {"rows": len(rows), "recon_mismatch_rows": len(filtered), "failed": failures, "passed": not failures}
+    non_variance = [str(r.get("journey_id")) for r in filtered if not _is_variance(r)]
+    if non_variance:
+        failures.append("attention_row_not_variance:" + ",".join(non_variance[:5]))
+    return {"rows": len(rows), "recon_mismatch_rows": len(filtered),
+            "total": total, "recon_mismatch_total": filtered_total, "failed": failures, "passed": not failures}
 
 
 def _request(request):
