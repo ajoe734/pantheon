@@ -1,0 +1,22 @@
+{
+  "task_id": "BFF-PERSONA-CYCLE-MEMORY-PANEL-READ-20261120",
+  "root_cause": {
+    "request_shape": "GET /api/memory/retrieve actor_id=<login id> actor_roles='' scope=persona, caller credential forwarded",
+    "refusing_check": "services/memory/main.py _authenticate_memory_request(required_roles=_MEMORY_READ_ROLES) in _authorize_memory_read refuses a token whose roles are only viewer (dev viewer); reviewer/auditor were also absent from _MEMORY_READ_ROLES although services/governance/authz.py _PERSONA_OPERATOR_ROLES allows them. With empty actor_roles memory-svc also adopted ALL token roles, so a token carrying a *_session role plus operator was denied for missing session_persona_id.",
+    "login_roles": {"pantheon-dev-viewer": ["viewer"], "dev operator login": ["operator"]},
+    "token_printed": false,
+    "note": "Role of dev logins derived from code/tests (BFF viewer-level role check and memory role sets), not from a hosted token dump."
+  },
+  "changes": [
+    "cycle_views.py: BFF asserts actor_roles = login roles ∩ (operator, admin, reviewer, auditor); no such role -> named state memory_read_role_not_allowed without calling memory-svc; rest of page loads",
+    "memory/main.py: _authorize_memory_read admits reviewer and auditor at the token gate; governance remains final decision",
+    "No new memory read grant for viewers (test_no_broad_grant_for_viewer_role); no operator decision needed"
+  ],
+  "isolation": "Entries with another tenant_id or persona_id yield memory_scope_or_identity_mismatch and are never shown (tests).",
+  "tests": {
+    "passed": ["services/control-plane/bff/tests/test_persona_cycle_views_memory.py", "services/memory/test_memory_authz_persona_read.py", "services/memory/test_main.py", "services/control-plane/bff/tests/test_persona_cycle_views.py (except pre-existing acceptance persona_day failure, untouched code)"],
+    "unrelated_failures_observed": ["services/governance/tests/test_paper_grant_persona_lifecycle_integration.py (2)", "services/governance postgres tests need a DB"],
+    "bff_page_note": "auditor allowed by memory policy but cannot open the BFF page (no viewer-level role); covered at memory/governance level only"
+  },
+  "hosted_proof": "PENDING: after deploy, persona-loop owner records no 403 for /api/memory/retrieve with dev operator login (AC6). Persona banks are empty on hosted, so panel shows no_memory_records until writers run."
+}

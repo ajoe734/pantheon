@@ -253,7 +253,9 @@ services:
       # handoff sink above. A panel blocks, never silently skips, if absent.
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
-      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      # Issued consultation-svc memory principal (learn-feedback as write_authority consultation-svc), read per request.
+      CONSULTATION_MEMORY_WRITE_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
       # Decision case files read their facts from the existing owner APIs.
       # Credentials must be supplied by the environment; no new authority.
       PANTHEON_REGISTRY_API_URL: http://registry:8087
@@ -269,8 +271,13 @@ services:
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
+      # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this
+      # credential and send the matching actor id/roles; the write principal above stays write-only.
       PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
       PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
+      CONSULTATION_MEMORY_READ_TOKEN_FILE: ${CONSULTATION_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_READ_ACTOR_ID: pantheon-dev-consultation-memory-reader
+      PANTHEON_MEMORY_READ_ACTOR_ROLES: consultation_session
       # No depends_on for evolution: it transitively depends on this service
       # (via runtime-manager). A harness-patch panel probes it and blocks.
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093

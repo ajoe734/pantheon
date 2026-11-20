@@ -28,3 +28,6 @@ Supersedes 103/104 as the Ops execution plan; 103/104 remain unchanged as immuta
 Source: `/tmp/pantheon-prod-release-20261107/prepared-same-B-baseline-candidate/` (copied byte-for-byte; `release_manifest.py hash` and `validate --require-dev-verified` exit 0 for both). Both reuse BFF d77e03a05 / FE b7cd3d847, FE artifact d45f1d34. 106 rollback is 105; 105 rollback refs are historical 103 artifact metadata only.
 
 Status: 105 and 106 are unqualified until each has actual Stage evidence for the 3 accounts. Prod bootstrap, restore, FRESHBOOT, two real rollbacks and the 1800 s observation are all pending (external_wait). The earlier Production 95-pass and serial Stage results (2 documented baseline failures, unrelated) are preserved and not rerun.
+
+## Snapshot schedule and restore drill (2026-11-20)
+Source only (e2887095d): scripts/deploy/prod_snapshot_schedule.sh, scripts/deploy/prod_restore_drill.sh, runbook section 5, 7 new tests. Hourly incrementals, 72 kept, ~200 MB, 3-day cap; drill leaves no resources and prints cleanup readback. tests/deployment/test_production_release.py: 126 pass, 2 env-only errors (fastapi/pydantic absent locally). No hosted evidence; hosted acceptance remains external_wait; release_complete not claimed.

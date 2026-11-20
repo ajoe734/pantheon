@@ -299,7 +299,7 @@ def test_known_connector_that_is_malformed_still_fails_closed(api) -> None:
     broken = json.loads(json.dumps(next(e for e in entries if e["payload"]["connector"]["connector_id"] == NEWER_DEFINITION_ID)))
     broken["payload"]["connector"]["connector_id"] = "known-but-malformed"
     broken["payload"]["connector"]["metadata"].pop("definition_id", None)
-    broken["payload"]["fetch"]["max_records"] = 5000
+    broken["payload"]["fetch"]["max_records"] = 50000
     broken["record_id"] = "known-but-malformed"
     with config_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(broken, sort_keys=True, separators=(",", ":")) + "\n")
@@ -308,7 +308,7 @@ def test_known_connector_that_is_malformed_still_fails_closed(api) -> None:
     response = _reconcile(client, module, personas)
 
     assert response.status_code == 400, response.text
-    assert "fetch.max_records must be > 0 and <= 1000" in response.json()["detail"]
+    assert "fetch.max_records must be > 0 and <= 5000" in response.json()["detail"]
 
 
 def test_unknown_requirement_candidate_is_skipped_with_reason_and_known_one_proceeds(api) -> None:

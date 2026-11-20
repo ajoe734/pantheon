@@ -115,6 +115,19 @@ jobs:
             --initial-visibility-wait-seconds 15 \
             --initial-visibility-poll-seconds 1 >/dev/null
 
+      - name: Plan the one bounded runtime of this run
+        # One refresh run recreates source-ingest once into the bounded runtime (egress = the union of
+        # the hosts of every profile this schedule runs; the FinMind token only when a FinMind profile
+        # runs) and once back to the steady posture (the steady check step). Local only: no SSH.
+        id: plan
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          HAS_FINMIND_TOKEN: ${{ secrets.FINMIND_API_TOKEN != '' }}
+        run: |
+          plan_args=(--plan "${SCHEDULE}")
+          [[ "${HAS_FINMIND_TOKEN}" == "true" ]] && plan_args+=(--finmind-token-present)
+          python3 scripts/tw_refresh_outcome_summary.py "${plan_args[@]}" | tee -a "${GITHUB_OUTPUT}"
+
       - name: Execute bounded TAIFEX contract refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: taifex_refresh
@@ -135,13 +148,19 @@ jobs:
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/taifex-ssf-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
         run: |
           refresh_rc=0
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
             bash -c '
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
-              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${REFRESH_OUTPUT_PATH}" || exit 0
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" "${run_args[@]}" --connector-id tw-taifex-futures-options-chip --allowed-hosts openapi.taifex.com.tw,www.taifex.com.tw --dataset taifex_ssf_contracts --output "${REFRESH_OUTPUT_PATH}" || exit 0
             ' || refresh_rc=$?
           python3 - "${REFRESH_OUTPUT_PATH}" "${refresh_rc}" <<'PY'
           import json, pathlib, sys
@@ -183,6 +202,9 @@ jobs:
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/finmind-broker-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
         run: |
           refresh_rc=0
           if [[ -z "${FINMIND_API_TOKEN}" ]]; then
@@ -195,7 +217,9 @@ jobs:
             bash -c '
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
-              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || exit 0
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" "${run_args[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || exit 0
             ' || refresh_rc=$?
           echo "FinMind broker refresh rc=${refresh_rc}"
 
@@ -219,6 +243,10 @@ jobs:
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
         run: |
           rc_file="${RUNNER_TEMP}/refresh-step-rc.txt"
           rm -f "${rc_file}"
@@ -231,7 +259,9 @@ jobs:
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
               rc=0
-              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" --output "${REFRESH_OUTPUT_PATH}" || rc=$?
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" "${run_args[@]}" --output "${REFRESH_OUTPUT_PATH}" || rc=$?
               echo "${rc}" > "${RC_FILE}"
               exit 0
             '
@@ -248,9 +278,11 @@ jobs:
         # command returns 0, so the lease guard does not quarantine the lease) and by the
         # summary step; later steps still run.
         continue-on-error: true
-        # Measured 9.1-9.5 min per profile in run 44273374890 (recreate + 51-67s lease wait +
-        # two bounded one-shots + restore): 6 x 15 min budget; each profile is also bounded
-        # at 15 min so a timeout stops at a profile boundary instead of mid-recreate.
+        # Measured 9.1-9.5 min per profile in run 44273374890 when every profile recreated
+        # source-ingest twice. All profiles of the run now share one bounded runtime (entered by the
+        # first profile that needs a refresh, restored once by the steady check): the 6 x 15 min budget
+        # stays as the ceiling; each profile is bounded at 15 min and a timed out profile never
+        # overlaps the next (the next call waits for its left-over process or stops it).
         timeout-minutes: 90
         env:
           SOURCE_INGEST_MAX_RECORDS: 500
@@ -266,6 +298,10 @@ jobs:
           PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
         run: |
           failed_file="${RUNNER_TEMP}/chip-refresh-failed-profiles.txt"
           rm -f "${failed_file}"
@@ -276,10 +312,12 @@ jobs:
             bash -c '
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
               while read -r connector dataset hosts; do
                 out="${RUNNER_TEMP}/${connector}-refresh-outcome.json"
                 rc=0
-                timeout --kill-after=60 900 ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
+                timeout --kill-after=60 900 ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" "${run_args[@]}" \
                   --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
                   --output "${out}" </dev/null || rc=$?
                 if (( rc != 0 )); then
@@ -322,6 +360,9 @@ jobs:
           PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
         run: |
           PROFILES='tw-finmind-monthly-revenue tw_monthly_revenue api.finmindtrade.com
           tw-finmind-quarterly-statements tw_financial_statement api.finmindtrade.com
@@ -342,10 +383,12 @@ jobs:
             bash -c '
               force_arg=()
               [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
               while read -r connector dataset hosts; do
                 out="${RUNNER_TEMP}/${connector}-refresh-outcome.json"
                 rc=0
-                ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" \
+                ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" "${run_args[@]}" \
                   --connector-id "${connector}" --dataset "${dataset}" --allowed-hosts "${hosts}" \
                   --output "${out}" </dev/null || rc=$?
                 if (( rc != 0 )); then
@@ -520,6 +563,10 @@ jobs:
               except Exception:
                   outcome = {}
           outcome["steady_restore_check"] = {"reason": str(check.get("reason") or ""), "status": str(check.get("status") or "failed")}
+          if isinstance(check.get("bounded_runtime"), dict):
+              outcome["bounded_runtime"] = check["bounded_runtime"]
+              br = check["bounded_runtime"]
+              print(f"bounded runtime: recreates={br.get('enter_recreates')}+{br.get('restore_recreates')} memory.peak={br.get('memory_peak_bytes')} limit={br.get('memory_limit_bytes')} oom_killed={br.get('oom_killed')} hosts={br.get('hosts')} finmind_token={br.get('finmind_token')}")
           outcome_path.write_text(json.dumps(outcome, sort_keys=True) + "\n", encoding="utf-8")
           status, reason = outcome["steady_restore_check"]["status"], outcome["steady_restore_check"]["reason"]
           print(f"steady restore check: status={status} reason={reason or 'none'}")

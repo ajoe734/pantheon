@@ -79,6 +79,10 @@ class ProviderAdapterSpec:
         kwargs["connector_id"] = connector.connector_id
         if "secret_ref_id" in self.config_keys and "secret_ref_id" not in kwargs and connector.secret_ref_id:
             kwargs["secret_ref_id"] = connector.secret_ref_id
+        if self.adapter_cls is TaiwanOfficialMarketDatasetAdapter:
+            from .chip_publication_schedule import margin_chain_wiring
+
+            kwargs.update(margin_chain_wiring(connector.connector_id))
         return self.adapter_cls(**kwargs)
 
 
@@ -566,6 +570,12 @@ def _taiwan_official_records(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    from .chip_publication_schedule import margin_chain_wiring
+
+    if adapter.previous_session_lookup is None:
+        wiring = margin_chain_wiring(adapter.connector_id)
+        if wiring:
+            adapter = dataclasses.replace(adapter, **wiring)
     request_listing_filter = request.get("listing_filter")
     if request_listing_filter is not None and request_listing_filter is not adapter.listing_filter:
         adapter = dataclasses.replace(adapter, listing_filter=request_listing_filter)
@@ -578,6 +588,8 @@ def _taiwan_official_records(
             connector_metadata=adapter.connector_metadata,
             bundle_transport=request.get("bundle_transport") or adapter.bundle_transport,
             bundle_root=request.get("bundle_root") or adapter.bundle_root,
+            previous_session_lookup=adapter.previous_session_lookup,
+            accept_first_load=adapter.accept_first_load,
         )
     dataset = str(request.get("dataset") or "tw_price_daily")
     venues = _string_list(request.get("venues") or request.get("venue")) or ["TWSE", "TPEx"]
