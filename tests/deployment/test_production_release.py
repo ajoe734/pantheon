@@ -3386,8 +3386,9 @@ SNAP_ENV_KEYS = ("PROD_GCP_PROJECT_ID", "PROD_GCP_ZONE", "PROD_DATA_DISK", "PROD
 
 
 class SnapshotDrillHarness(unittest.TestCase):
-    ENSURE = REPO_ROOT / "scripts" / "deploy" / "prod_snapshot_schedule.sh"
-    DRILL = REPO_ROOT / "scripts" / "deploy" / "prod_restore_drill.sh"
+    OPS = REPO_ROOT / "scripts" / "deploy" / "prod_ops.sh"
+    ENSURE = (OPS, "snapshot_schedule")
+    DRILL = (OPS, "restore_drill")
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -3428,7 +3429,7 @@ class SnapshotDrillHarness(unittest.TestCase):
         (self.state / "snapshot").write_text(f"auto-snap-1\t{ts}\n")
 
     def run_script(self, script, *args, **env):
-        return subprocess.run(["bash", str(script), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+        return subprocess.run(["bash", *map(str, script if isinstance(script, tuple) else (script,)), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
 
     def calls(self):
         p = self.state / "calls.log"
