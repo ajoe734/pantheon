@@ -16,7 +16,7 @@
     "preexisting_failure": "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies fails on the unmodified base as well"
   },
   "tests": {
-    "bff": "services/control-plane/bff/tests/test_strategy_synthetic_stubs.py, test_meetings_include_failed_forward.py (+ existing strategy/meeting suites: 111 passed, 1 preexisting failure)",
+    "bff": "services/control-plane/bff/tests/test_strategy_synthetic_stubs.py incl. meetings include_failed forward (+ existing strategy/meeting suites: 111 passed, 1 preexisting failure)",
     "acceptance": "acceptance/test_mgmt_strategy_meeting_research_readable.py and scripts/test_dev_acceptance_stage.py: 21 passed"
   },
   "runtime_budget": "read-only projections and one read-only probe; zero owner writes, stores or background writers"

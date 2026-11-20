@@ -228,7 +228,7 @@ def strategy_stub_reason(
     title = _row_text(row, "title", "name")
     if sid.startswith("strat-tw-official") or title.startswith("TW official "):
         return STUB_RAW_MARKET_SEED
-    if title.startswith("SIMULATION ") or "dev-product-" in sid or "dev-product-" in title:
+    if title.startswith("SIMULATION "):
         return STUB_SIMULATION_FIXTURE
     return None
 
