@@ -1036,7 +1036,7 @@ def _run_preflight_script(
     def urlopen(request, *, timeout):
         parsed = urllib.parse.urlparse(request.full_url)
         assert parsed.hostname == "preflight.test", "tests must never reach a service/provider"
-        assert timeout == 3  # Keep the production read timeout bounded.
+        assert 3 <= timeout <= 10  # Bounded per call; the preflight retries a warming-up source-ingest.
         assert request.get_method() == "GET"
         if parsed.path.endswith("/snapshots/latest"):
             status, payload = (404, {}) if snapshot_json is None and http_status == 200 else (http_status, snapshot_json)
@@ -1063,6 +1063,7 @@ def _run_preflight_script(
             "PANTHEON_REFRESH_PREFLIGHT_NOW": now_dt.isoformat(),
             "FINMIND_SOURCE_RECORDS_PATH": records_file.name if source_records is not None else "",
             "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+            "PANTHEON_PREFLIGHT_API_PAUSE_SECONDS": "0",
         }
         output = io.StringIO()
         with patch.dict(os.environ, env), patch.object(sys, "argv", ["-", str(force)]), \
