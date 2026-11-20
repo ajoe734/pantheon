@@ -273,6 +273,8 @@ services:
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
       # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this
       # credential and send the matching actor id/roles; the write principal above stays write-only.
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
       CONSULTATION_MEMORY_READ_TOKEN_FILE: ${CONSULTATION_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_READ_TOKEN}
       PANTHEON_MEMORY_READ_ACTOR_ID: pantheon-dev-consultation-memory-reader
       PANTHEON_MEMORY_READ_ACTOR_ROLES: consultation_session

@@ -864,9 +864,17 @@ def _compose_panel_case_file(
             if entry.get("owner_tenant", entry.get("tenant_id")) not in (config.tenant_id, "__builtin__"):
                 raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
             families.setdefault(str(entry["strategy_id"]), []).append(entry)
+        if os.getenv(_READ_FILE_ENV, "").strip():
+            _tok, caller_actor, caller_roles = memory_read_identity()
+        else:
+            # Legacy shared credential: explicit caller context only, never defaulted.
+            caller_actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip()
+            caller_roles = tuple(
+                x.strip() for x in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "").split(",")
+                if x.strip())
         caller = decision_case.Caller(
-            actor_id=memory_read_identity()[1],
-            actor_roles=memory_read_identity()[2],
+            actor_id=caller_actor,
+            actor_roles=caller_roles,
             session_id=f"consult-{request['request_id']}",
             # Service caller: the shared file may NEVER include private memory.
             persona_id="")
