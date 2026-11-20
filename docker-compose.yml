@@ -254,6 +254,7 @@ services:
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
       # Issued consultation-svc memory principal (learn-feedback as write_authority consultation-svc), read per request.
+      CONSULTATION_MEMORY_WRITE_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
       PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
       # Decision case files read their facts from the existing owner APIs.
       # Credentials must be supplied by the environment; no new authority.
