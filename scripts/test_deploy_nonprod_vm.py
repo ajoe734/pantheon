@@ -5645,6 +5645,7 @@ def test_twse_margin_stored_empty_date_shape_shared_helper_and_missing_fields_er
                 },
                 "source_dataset": "MI_MARGN",
                 "symbol_canonical": "2330.TWSE",
+                "provider_listed_count": 1310,
                 "source_ingest_run_id": "ingest-2f56b4efe47f",
             },
             "provenance": {
@@ -5691,6 +5692,7 @@ def test_twse_margin_stored_empty_date_shape_shared_helper_and_missing_fields_er
             "finished_at": "2026-11-18T23:53:58Z",
             "created_at": "2026-11-18T23:57:32Z",
             "ingest_run_id": "ingest-2f56b4efe47f",
+            "normalized_count": 1310,
         }
     ]
     ok_dir = tmp_path / "twse-margin-ok"
@@ -6103,6 +6105,7 @@ def test_preflight_and_readback_take_shared_helpers_from_running_script_not_host
                     "dataset": "tw_margin_short_balance",
                     "available_time": "",
                 },
+                "provider_listed_count": 1310,
                 "source_ingest_run_id": twse_margin_run_id,
             },
             "provenance": {
@@ -6126,6 +6129,7 @@ def test_preflight_and_readback_take_shared_helpers_from_running_script_not_host
         "finished_at": "2026-11-18T23:53:58Z",
         "created_at": "2026-11-18T23:57:32Z",
         "ingest_run_id": twse_margin_run_id,
+        "normalized_count": 1310,
     }
 
     fm_run_id = "ingest-78b81ff0f04d"

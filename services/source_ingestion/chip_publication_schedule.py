@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 from .connector_definitions import TW_CHIP_REFRESH_PROFILES
 
@@ -664,3 +664,159 @@ __all__ = [
     "get_chip_publication_schedule",
     "latest_published_chip_session",
 ]
+
+
+# --- TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120 -------------------------------------------------
+# Full-market storage contract (operator decision 2026-11-19; SD_MARKET_DATA_ONE_WRITE_PER_DAY section 6A):
+# every listed TWSE/TPEx share and ETF of the session is stored once, keyed
+#   tw_margin_short_balance: (symbol, trade_date)
+#   tw_institutional_flow:   (symbol, trade_date, investor_class)
+# and every row carries its provider session date.
+
+FULL_MARKET_CHIP_CONNECTORS: frozenset[str] = frozenset(
+    connector_id
+    for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
+    if profile.get("full_market")
+)
+
+FULL_MARKET_CHIP_KEYS: dict[str, tuple[str, ...]] = {
+    "tw_margin_short_balance": ("symbol", "trade_date"),
+    "tw_institutional_flow": ("symbol", "trade_date", "investor_class"),
+}
+
+# Retention and size bounds of section 6A, used by the runtime-budget evidence.
+FULL_MARKET_CHIP_RETENTION_DAYS = 2555
+FULL_MARKET_CHIP_DAILY_MB_BOUND: dict[str, float] = {
+    "tw_institutional_flow": 0.3,
+    "tw_margin_short_balance": 0.2,
+}
+
+
+class ChipSessionUndecidable(ValueError):
+    """A stored chip row has no provider date and the published-session rule cannot decide one."""
+
+
+def is_full_market_chip_connector(connector_id: str) -> bool:
+    return str(connector_id or "").strip() in FULL_MARKET_CHIP_CONNECTORS
+
+
+def resolve_chip_row_session(
+    connector_id: str,
+    row_date: Any,
+    fetch_time: datetime,
+    *,
+    is_session_day: Callable[[date], bool] | None = None,
+) -> date:
+    """Session date of one chip row.
+
+    A provider-supplied row date wins. A row without one (TWSE ``MI_MARGN`` and TPEx margin carry none) gets
+    the latest session the profile's schedule has published at the fetch time - the same
+    ``latest_published_chip_session`` rule the refresh preflight and readback use. Raises
+    ``ChipSessionUndecidable`` naming the profile when no session can be decided; never falls back to the
+    fetch date.
+    """
+    text = str(row_date or "").strip()
+    if text:
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError as exc:
+            raise ChipSessionUndecidable(f"{connector_id}: invalid row date {text!r}") from exc
+    try:
+        return latest_published_chip_session(connector_id, fetch_time, is_session_day=is_session_day)
+    except (ValueError, KeyError) as exc:
+        raise ChipSessionUndecidable(f"{connector_id}: cannot decide session for a row without a date: {exc}") from exc
+
+
+def evaluate_chip_row_coverage(
+    connector_id: str,
+    *,
+    provider_listed_count: int,
+    stored_count: int,
+    stored_session: date | str | None,
+    expected_session: date | str,
+) -> dict[str, Any]:
+    """Compare stored rows of one session with the provider's listed count for that session.
+
+    ``complete`` only when the stored session equals the expected one and every provider row is stored;
+    ``partial`` (with ``missing_count``) when fewer are stored; ``session_mismatch`` when the stored rows carry
+    another session. Never passes a short or mis-dated run.
+    """
+    expected = str(expected_session)[:10]
+    stored = str(stored_session or "")[:10]
+    listed = int(provider_listed_count)
+    have = int(stored_count)
+    base = {
+        "connector_id": connector_id,
+        "expected_session": expected,
+        "stored_session": stored,
+        "provider_listed_count": listed,
+        "stored_count": have,
+    }
+    if stored != expected:
+        return {**base, "status": "session_mismatch", "is_failure": True, "missing_count": max(listed - have, 0),
+                "detail": f"{connector_id} stored session {stored!r} != expected {expected!r}"}
+    missing = max(listed - have, 0)
+    if missing:
+        return {**base, "status": "partial", "is_failure": True, "missing_count": missing,
+                "detail": f"{connector_id} stored {have} of {listed} provider rows; missing {missing}"}
+    return {**base, "status": "complete", "is_failure": False, "missing_count": 0,
+            "detail": f"{connector_id} stored all {listed} provider rows for {expected}"}
+
+
+def previous_chip_session(session: date, *, is_session_day: Callable[[date], bool] | None = None) -> date:
+    """The session directly before ``session`` (weekday-only when no calendar is given)."""
+    check = is_session_day or (lambda d: d.weekday() < 5)
+    cursor = session - timedelta(days=1)
+    for _ in range(20):
+        if check(cursor):
+            return cursor
+        cursor -= timedelta(days=1)
+    raise ChipSessionUndecidable(f"no session found before {session.isoformat()}")
+
+
+def verify_margin_session_chain(
+    connector_id: str,
+    inferred_session: date,
+    rows: Sequence[Mapping[str, Any]],
+    stored_previous: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    accept_first_load: bool = False,
+) -> dict[str, Any]:
+    """Verify an inferred margin session with the provider's own balance chain.
+
+    For every symbol in both the payload and the stored session before ``inferred_session``, the payload's
+    ``margin_previous_balance`` / ``short_previous_balance`` (前日餘額) must equal that stored session's
+    ``margin_balance`` / ``short_balance``. A mismatch (early publication stores the next session under the
+    previous key, late publication repeats the previous session) or a missing previous session fails closed with
+    ``ChipSessionUndecidable`` naming the profile and the matched/mismatched counts. A first-ever load (no stored
+    previous session) is accepted only with ``accept_first_load`` and is then recorded in the returned evidence.
+    """
+    if not stored_previous:
+        if accept_first_load:
+            return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "first_load_accepted",
+                    "matched_count": 0, "mismatched_count": 0, "first_load_accepted": True}
+        raise ChipSessionUndecidable(
+            f"{connector_id}: previous session of {inferred_session.isoformat()} is not stored; cannot verify the "
+            "inferred session (matched 0, mismatched 0); first load needs an explicit accept_first_load flag"
+        )
+    matched = mismatched = 0
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        prev = stored_previous.get(symbol)
+        if prev is None:
+            continue
+        same = (
+            row.get("margin_previous_balance") == prev.get("margin_balance")
+            and row.get("short_previous_balance") == prev.get("short_balance")
+        )
+        if same:
+            matched += 1
+        else:
+            mismatched += 1
+    if mismatched or not matched:
+        raise ChipSessionUndecidable(
+            f"{connector_id}: inferred session {inferred_session.isoformat()} fails the provider balance chain "
+            f"(matched {matched}, mismatched {mismatched}); refusing to store"
+        )
+    return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "chain_verified",
+            "matched_count": matched, "mismatched_count": 0, "first_load_accepted": False}

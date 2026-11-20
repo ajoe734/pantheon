@@ -26,6 +26,11 @@ from .process_lock import exclusive_file_lock
 from .scheduler import IngestBatch
 
 
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the full TWSE/TPEx chip response (~1310 rows) must fit one
+# run; the profile budget is 3000 (connector_definitions.TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS). Adapters with
+# their own tighter guard (FinMind per-job budget in deploy_nonprod_vm.sh) keep enforcing it themselves.
+PROVIDER_OWNED_ADAPTER_MAX_RECORDS = 5000
+
 SENSITIVE_CONFIG_KEYS = {
     "api_key",
     "apikey",
@@ -460,8 +465,10 @@ class JsonlConfiguredConnectorStore:
                 str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "")
             )
             max_records = int(fetch.get("max_records") or 100)
-            if max_records <= 0 or max_records > 1000:
-                raise SourceEvidenceError("fetch.max_records must be > 0 and <= 1000")
+            if max_records <= 0 or max_records > PROVIDER_OWNED_ADAPTER_MAX_RECORDS:
+                raise SourceEvidenceError(
+                    f"fetch.max_records must be > 0 and <= {PROVIDER_OWNED_ADAPTER_MAX_RECORDS}"
+                )
             adapter_config = fetch.get("adapter_config") or {}
             request = fetch.get("request") or {}
             if not isinstance(adapter_config, Mapping):
