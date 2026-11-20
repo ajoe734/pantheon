@@ -7,6 +7,10 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Opti
 
 from fastapi import HTTPException
 
+from services.control_plane.bff.personas.fleet_classification import (
+    DATA_SCOPE_TEST,
+    classify_persona_data_scope,
+)
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from ..service import (
     ROLE_ROLLBACK_BASELINE,
@@ -69,6 +73,24 @@ class PersonaStateLookup:
     states_by_id: Mapping[str, str] = field(default_factory=dict)
     operational_states: FrozenSet[str] = frozenset()
     failure: Optional[str] = None
+    # Personas whose data_scope classifies as test (classify_persona_data_scope),
+    # taken from the same single directory read as ``states_by_id``.
+    test_persona_ids: FrozenSet[str] = frozenset()
+    # Persona display names from the same single directory read.
+    display_names_by_id: Mapping[str, str] = field(default_factory=dict)
+
+    def persona_display_names(self, persona_ids: Iterable[str]) -> Dict[str, str]:
+        """Persona id -> display name; unnamed or unknown ids map to themselves."""
+        return {
+            pid: (self.display_names_by_id.get(pid) or pid) for pid in persona_ids
+        }
+
+    def is_test_scoped(self, persona_ids: Iterable[str]) -> bool:
+        """True only when the strategy has personas and all are test-scoped."""
+        ids = list(persona_ids)
+        if not self.available or not ids or not self.test_persona_ids:
+            return False
+        return all(pid in self.test_persona_ids for pid in ids)
 
     def persona_states(self, persona_ids: Iterable[str]) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
@@ -129,6 +151,17 @@ def read_persona_state_lookup(
             str(persona_id): str(projected_state(record))
             for persona_id, record in directory.records_by_id.items()
         }
+        test_ids = frozenset(
+            str(persona_id)
+            for persona_id, record in directory.records_by_id.items()
+            if isinstance(record, Mapping)
+            and classify_persona_data_scope(record)[0] == DATA_SCOPE_TEST
+        )
+        names = {
+            str(persona_id): label
+            for persona_id, record in directory.records_by_id.items()
+            if isinstance(record, Mapping) and (label := _persona_label(record))
+        }
     except Exception as exc:  # noqa: BLE001 - any owner failure degrades, never hides rows
         log.warning("strategy persona state read failed: %s", exc)
         return unavailable_lookup(f"persona directory read failed: {type(exc).__name__}")
@@ -136,7 +169,71 @@ def read_persona_state_lookup(
         available=True,
         states_by_id=states,
         operational_states=frozenset(str(s) for s in operational_states),
+        test_persona_ids=test_ids,
+        display_names_by_id=names,
     )
+
+
+def _persona_label(record: Mapping[str, Any]) -> str:
+    meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+    for candidate in (
+        record.get("display_name"),
+        record.get("displayName"),
+        record.get("name"),
+        meta.get("display_name"),
+        meta.get("name"),
+    ):
+        text = str(candidate).strip() if candidate is not None else ""
+        if text:
+            return text
+    return ""
+
+
+# --- Unbound synthetic / raw-seed stubs ---------------------------------------
+STUB_RAW_MARKET_SEED = "raw_market_seed_without_rules"
+STUB_SIMULATION_FIXTURE = "simulation_fixture"
+STUB_TEST_PERSONA_PROBE = "test_persona_probe"
+_TEST_DATA_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+
+
+def _row_text(row: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def strategy_stub_reason(
+    row: Mapping[str, Any], persona_lookup: Optional[PersonaStateLookup]
+) -> Optional[str]:
+    """Why a strategy is a synthetic or raw-seed stub, or None for a real one.
+
+    Pure over the summary/detail row and the request's one Persona directory
+    read; no owner call. A strategy bound to a live (non-test) Persona is never
+    a stub, so only unbound rows match the raw-seed and simulation patterns.
+    """
+    ids = summary_persona_ids(row)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+    scope = (
+        _row_text(row, "data_scope", "dataScope") or _row_text(metadata, "data_scope", "dataScope")
+    ).lower()
+    if scope in _TEST_DATA_SCOPES:
+        return STUB_TEST_PERSONA_PROBE
+    if persona_lookup is not None and persona_lookup.is_test_scoped(ids):
+        return STUB_TEST_PERSONA_PROBE
+    sid = _row_text(row, "strategy_id", "id")
+    title = _row_text(row, "title", "name")
+    # Pre-2026-11-03 deploy probes lack data_scope=test; recognise them by name.
+    if title.startswith("Pantheon Dev Paper Release ") and " Attempt " in title:
+        return STUB_TEST_PERSONA_PROBE
+    if ids:
+        return None
+    if sid.startswith("strat-tw-official") or title.startswith("TW official "):
+        return STUB_RAW_MARKET_SEED
+    if title.startswith("SIMULATION "):
+        return STUB_SIMULATION_FIXTURE
+    return None
 
 
 def summary_persona_ids(row: Mapping[str, Any]) -> List[str]:
@@ -704,6 +801,7 @@ class StrategyRouteContext:
         if persona_lookup is not None:
             dto["personaStates"] = persona_lookup.persona_states(persona_ids)
             dto["operationalStatus"] = persona_lookup.operational_status(persona_ids)
+            dto["persona_display_names"] = persona_lookup.persona_display_names(persona_ids)
         if include_spec:
             spec_source = detail if (isinstance(detail, dict) and detail) else summary
             dto["spec"] = _project_strategy_spec_detail(spec_source)

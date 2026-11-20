@@ -22,7 +22,11 @@ carries `review_independence_exception`:
 
 - Supervisor: reasons come from runtime delivery health
   (`assignment_terminal_unavailability`); a family with any viable agent is
-  recorded as `no capacity evidence supplied`, never as exhausted.
+  recorded as `available:<agent>`, never as exhausted. The supervisor reads
+  runtime state through the lock-free snapshot because the caller already holds
+  the task_state lock (taking runtime_admission there violates the lock order).
+  If evidence cannot be computed each family records
+  `evidence_unavailable:<ErrorClass>` and the supervisor log names the error.
 - Human/Ops: supply `TASK_REVIEW_EXCEPTION_EVIDENCE="codex=<ref>;antigravity=<ref>"`.
 - A cross-family pair records nothing. The record lives in the activity audit,
   so it stays readable after the task is archived. The event id digest does not
@@ -126,3 +130,31 @@ edit task JSON.
    AI_NAME=<Human/Ops or current reviewer> \
    "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" reconcile_merged_done <TASK> "<message>"
    ```
+
+## Reviewer selection order and the pushed-head incumbent rule
+
+Source: SUP-RECOVERY-CROSS-FAMILY-REVIEWER-20261120 (problem register RC4 WP4.3).
+Live only after the supervisor runtime promotion.
+
+`plan_task_assignment_pair` (ordinary dispatch, availability reassignment and
+lost-lease recovery, owner and reviewer role) orders reviewer candidates as:
+
+1. every candidate of a **different model family** than the candidate owner
+   (`AGENT_FAMILIES`), in the configured order, that can take the task;
+2. only when none of those can, a candidate of the owner's **own family**.
+
+A same-family pick records `review_independence_exception` with one entry per
+other family and a concrete, capped reason (`<agent>:<terminal reason>`,
+`<agent>:cannot_take_task`, `available:<agent>` when an agent was able but the
+pair was pinned, `no_agent_configured`, or `evidence_unavailable:<ErrorClass>`
+when the evidence read failed). The supervisor never writes
+`no capacity evidence supplied`. An explicit manual (human) reviewer gate is unchanged.
+
+**Incumbent rule.** For lost-lease recovery with reason `worker_process_missing`,
+if the task branch already has commits ahead of the base whose `LLM-Agent` and
+`Reviewer` trailers (and `Task-ID`) name the current owner/reviewer pair, the
+supervisor keeps that pair whenever the incumbent of the lost role can still
+take the task, because any other pair would be refused by handoff trailer
+admission. It moves to a fallback owner only when the incumbent owner cannot
+take the task. `review_approved` closeout recovery still reuses only the
+current pair, and trailer admission in `scripts/ai_status.py` is unchanged.

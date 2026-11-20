@@ -1692,6 +1692,32 @@ class SwitchHarness(unittest.TestCase):
 
 
 class SwitchTests(SwitchHarness):
+    def test_journal_is_archived_per_dispatch_and_retention_keeps_newest_ten(self):
+        rid = self._prepare()["release_id"]
+        jroot = self.root / "state" / "journal"
+        old = jroot / rid
+        old.mkdir(parents=True)
+        for marker in ("bootstrap", "bff_switched", "fe_switched", "singletons_drained"):
+            (old / marker).write_text("")
+        names = [f"{rid}.archived-20260101T0000{i:02d}Z" for i in range(12)]
+        for n in names:
+            (jroot / n).mkdir()
+        (jroot / "other-release.archived-20200101T000000Z").mkdir()
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archives = sorted(p.name for p in jroot.glob(f"{rid}.archived-*"))
+        self.assertEqual(len(archives), 10)
+        self.assertNotIn(names[0], archives)
+        self.assertNotIn(names[1], archives)
+        self.assertNotIn(names[2], archives)
+        self.assertIn(names[3], archives)
+        self.assertTrue((jroot / "other-release.archived-20200101T000000Z").is_dir())
+        newest_new = [a for a in archives if a not in names]
+        self.assertEqual(len(newest_new), 1)  # this dispatch's archive of the previous journal
+        self.assertTrue((jroot / newest_new[0] / "bootstrap").exists())
+        for marker in ("bootstrap",):
+            self.assertFalse((jroot / rid / marker).exists())  # current journal carries no stale marker
+
     def test_successful_switch_order_and_state(self):
         rid = self._prepare()["release_id"]
         r = self._run()
@@ -2186,6 +2212,145 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         self.assertIn("no_rollback_target", r.stdout)
         self.assertFalse((self.root / "state" / "baseline.json").exists())
         self.assertIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    # --- Journal per dispatch + protected rollback operation (ENV-PROD-CONTROL-IMPL-001 drill hardening) ---
+
+    def _rollback_mode(self, release_id: str, mpath: Path | None = None, **extra):
+        env = self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID=release_id, FAKE_READY_PORTS="8001 8002", **extra)
+        if mpath is not None:
+            env["RELEASE_MANIFEST_PATH"] = str(mpath)
+        else:
+            env.pop("RELEASE_MANIFEST_PATH", None)  # default: the retained ${PROD_ROOT}/manifests/<release_id>.json
+        return subprocess.run([str(ROLLBACK), "--protected", release_id], capture_output=True, text=True, timeout=60, env=env)
+
+    def _switch_second_release(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        return m1, m2
+
+    def test_redispatch_with_stale_bootstrap_journal_rolls_back_to_real_baseline_not_bootstrap_abort(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        rid1 = m1["release_id"]
+        j1 = self.root / "state" / "journal" / rid1
+        self.assertTrue((j1 / "bootstrap").exists())  # stale bootstrap marker from the first dispatch of 001
+        # Re-dispatch 001 (non-bootstrap) over baseline 002; force a failure AFTER the first mutation (singleton hand-off).
+        rb = {
+            "previous_release_id": m2["release_id"],
+            "frontend_commit": m2["frontend"]["commit"],
+            "frontend_artifact_sha256": m2["frontend"]["artifact_sha256"],
+            "backend_commit": m2["backend"]["commit"],
+            "backend_operator_bff_image": m2["backend"]["images"]["operator_bff"],
+            "backend_images": m2["backend"]["images"],
+            "config_schema_version": m2["config_schema_version"],
+        }
+        m1b, sha1b, art1b, mpath1b, epath1b, apath1b = self._prepare_release(
+            release_id=rid1, fe_marker="fe-v1", fe_commit="1" * 40, bff_commit="2" * 40, digest_char="1",
+            bootstrap=False, rollback_baseline=rb)
+        # The regenerated test tarball is not byte-identical; the real immutable 001 dir would match. Drop the test copy.
+        shutil.rmtree(self.root / "fe" / "releases" / rid1)
+        sw = self._run_switch(m1b, sha1b, art1b, mpath1b, epath1b, apath1b, bootstrap=False,
+                              FAKE_READY_PORTS="8001 8002", FAKE_CRED_STATUS="401:BAD_CRED")
+        self.assertEqual(sw.returncode, 2, f"stdout={sw.stdout}\nstderr={sw.stderr}")  # real rollback, NOT bootstrap abort (4)
+        self.assertNotIn("no_rollback_target", sw.stdout)
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith(f"/{m2['release_id']}"))
+        self.assertEqual(json.loads((self.root / "state" / "baseline.json").read_text())["release_id"], m2["release_id"])
+        self.assertIn("127.0.0.1:8001", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+        self.assertFalse((j1 / "bootstrap").exists())
+        archives = sorted(p.name for p in j1.parent.glob(f"{rid1}.archived-*"))
+        self.assertEqual(len(archives), 1)
+        self.assertTrue((j1.parent / archives[0] / "bootstrap").exists())
+
+    def test_rollback_mode_rolls_back_active_release_and_emits_one_json_result(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        result = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(result["status"], "rolled_back")
+        self.assertEqual(result["from_release"], m2["release_id"])
+        self.assertEqual(result["to_release"], m1["release_id"])
+        self.assertEqual(result["rollback_budget_seconds"], 120)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIsInstance(result["elapsed_ms"], int)
+        self.assertNotIn("token", r.stdout.lower())
+        self.assertTrue(os.readlink(self.root / "fe" / "current").endswith(f"/{m1['release_id']}"))
+        self.assertEqual(json.loads((self.root / "state" / "active_manifest.json").read_text())["release_id"], m1["release_id"])
+        self.assertEqual((self.state / "singleton_release_id").read_text(), m1["release_id"])
+        # Credential check ran inside the restored paper workers.
+        self.assertTrue((self.state / "cred_checked").exists())
+        # A second rollback of the same (no longer active) release is refused.
+        again = self._rollback_mode(m2["release_id"])
+        self.assertEqual(again.returncode, 10, again.stderr)
+
+    def test_rollback_mode_refusals_change_nothing(self):
+        m1, m2 = self._switch_second_release()
+        rid1, rid2 = m1["release_id"], m2["release_id"]
+        root = self.root
+
+        def snapshot():
+            return (os.readlink(root / "fe" / "current"), (root / "proxy" / "bff_upstream.caddy").read_text(),
+                    (root / "state" / "baseline.json").read_bytes(), (root / "state" / "active_manifest.json").read_bytes())
+        before = snapshot()
+        # not the active release
+        r = self._rollback_mode(rid1)
+        self.assertEqual(r.returncode, 10, r.stderr)
+        self.assertIn("ROLLBACK_RELEASE_NOT_ACTIVE", r.stderr)
+        self.assertEqual(snapshot(), before)
+        # baseline record does not name a retained healthy baseline
+        j2 = root / "state" / "journal" / rid2
+        good = (j2 / "baseline_release.json").read_text()
+        (j2 / "baseline_release.json").write_text(json.dumps({"release_id": "", "healthy": True}))
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 13, r.stderr)
+        self.assertIn("ROLLBACK_NO_BASELINE", r.stderr)
+        self.assertEqual(snapshot(), before)
+        (j2 / "baseline_release.json").write_text(good)
+        # bootstrap journal
+        (j2 / "bootstrap").write_text("")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 12, r.stderr)
+        self.assertIn("ROLLBACK_BOOTSTRAP_JOURNAL", r.stderr)
+        self.assertEqual(snapshot(), before)
+        (j2 / "bootstrap").unlink()
+        # missing journal
+        os.rename(j2, root / "state" / "journal" / "moved-away")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 11, r.stderr)
+        self.assertIn("ROLLBACK_NO_JOURNAL", r.stderr)
+        self.assertEqual(snapshot(), before)
+        os.rename(root / "state" / "journal" / "moved-away", j2)
+        # no retained manifest
+        (root / "manifests" / f"{rid2}.json").rename(root / "manifests" / "x.json")
+        r = self._rollback_mode(rid2)
+        self.assertEqual(r.returncode, 14, r.stderr)
+        self.assertEqual(snapshot(), before)
+
+    def test_rollback_mode_refuses_first_release_bootstrap_journal(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        r = self._rollback_mode(m1["release_id"])
+        self.assertEqual(r.returncode, 12, r.stderr)
+        self.assertTrue((self.root / "state" / "baseline.json").is_file())
+        self.assertTrue((self.root / "fe" / "current").is_symlink())
+        self.assertNotIn("503", (self.root / "proxy" / "bff_upstream.caddy").read_text())
+
+    def test_rollback_mode_fails_when_restored_worker_credential_check_fails(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"], FAKE_CRED_STATUS="401:BAD_CRED")
+        self.assertEqual(r.returncode, 7, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["status"], "rollback_unverified")
+
+    def test_rollback_mode_over_budget_exits_6(self):
+        m1, m2 = self._switch_second_release()
+        r = self._rollback_mode(m2["release_id"], PROD_ROLLBACK_BUDGET_SECONDS="-1")
+        self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["status"], "rollback_over_budget")
 
     def test_paper_owners_must_reuse_training_session_image_and_are_singletons(self):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]
@@ -3087,6 +3252,27 @@ class StaticContractTests(unittest.TestCase):
                     self.assertEqual(al.dsn, isolated_dsn)
                     self.assertEqual(al.schema, "public")
 
+    def test_workflow_rollback_operation_is_protected_and_driven_by_script(self) -> None:
+        wf = yaml.safe_load(WORKFLOW.read_text())
+        inputs = wf[True]["workflow_dispatch"]["inputs"]
+        self.assertLessEqual(len(inputs), 25)
+        op = inputs["operation"]
+        self.assertEqual((op["type"], op["default"], op["options"]), ("choice", "release", ["release", "rollback"]))
+        text = WORKFLOW.read_text()
+        self.assertIn("prod_rollback.sh\\\" --protected", text)
+        self.assertIn("PRODUCTION_RELEASE_ENABLED", text)
+        self.assertEqual(wf["jobs"]["deploy"]["environment"], "production")
+        steps = {st["name"]: st for st in wf["jobs"]["deploy"]["steps"] if "name" in st}
+        for name, st in steps.items():
+            if name.startswith(("Retrieve immutable FE", "Transport immutable", "Run atomic switch", "Full production preflight")):
+                self.assertEqual(st["if"], "${{ inputs.operation != 'rollback' }}", name)
+        rb = next(st for n, st in steps.items() if n.startswith("Run protected rollback"))
+        self.assertEqual(rb["if"], "${{ inputs.operation == 'rollback' }}")
+        for forbidden in ("bootstrap.sh", "prepull_images", " migrate ", "snapshot"):
+            self.assertNotIn(forbidden, rb["run"].replace("snapshot.json", ""))
+        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for both operations
+        self.assertIn("prod_preflight.py rollback", text)
+
     def test_prod_rollback_rto_fast_stop_and_healthcheck_parity(self) -> None:
         from scripts.deploy import staging_sanitize
 
@@ -3140,6 +3326,238 @@ class StaticContractTests(unittest.TestCase):
             self.assertEqual(stage_services[svc_name]["healthcheck"].get("interval"), "5s", svc_name)
         for paper_svc in ("paper-fleet-reconciler", "paper-signal-producer"):
             self.assertEqual(prod_services[paper_svc]["healthcheck"].get("start_period"), "5s", paper_svc)
+
+
+FAKE_SNAP_BIN = r"""#!/usr/bin/env bash
+# fake gcloud/docker/sudo/mount/umount for snapshot-schedule and restore-drill tests. State in $FAKE_STATE.
+S="$FAKE_STATE"; mkdir -p "$S"/disks "$S"/attached "$S"/ctr "$S"/net
+tool="$(basename "$0")"; echo "$tool $*" >> "$S/calls.log"
+all="$*"
+disk_arg() { local a=("$@"); set -- $all; while [[ $# -gt 0 ]]; do [[ "$1" == --disk ]] && { echo "$2"; return; }; shift; done; }
+case "$tool" in
+  sudo) exec "$@" ;;
+  mount) [[ "${FAIL:-}" == mount_readonly ]] && exit 32; [[ "$all" == *"-o ro,noload"* ]] || exit 33
+         cp -a "$S/content/." "${@: -1}/" ;;
+  umount) rm -rf "$1"/* 2>/dev/null; exit 0 ;;
+  gcloud)
+    case "$all" in
+      "config get-value project") echo "${FAKE_PROJECT:-prod-proj}" ;;
+      "compute disks describe pantheon-prod-control-data"*"resourcePolicies"*) cat "$S/disk_policies" 2>/dev/null; exit 0 ;;
+      "compute disks describe pantheon-prod-control-data"*) exit 0 ;;
+      "compute disks describe "*) n="$4"; [[ -e "$S/disks/$n" ]] || exit 1 ;;
+      "compute disks create"*) [[ "${FAIL:-}" == create_disk ]] && exit 1; touch "$S/disks/$4" ;;
+      "compute disks delete"*) rm -f "$S/disks/$4" ;;
+      "compute disks list"*) ls "$S/disks" ;;
+      "compute disks add-resource-policies"*) echo "$all" >> "$S/mutations.log"; echo "https://x/resourcePolicies/pantheon-prod-data-hourly" > "$S/disk_policies" ;;
+      "compute instances attach-disk"*) echo "$all" >> "$S/attach.log"; [[ "${FAIL:-}" == attach_readonly ]] && exit 1; touch "$S/attached/$(disk_arg)" ;;
+      "compute instances detach-disk"*) rm -f "$S/attached/$(disk_arg)" ;;
+      "compute snapshots list"*) cat "$S/snapshot" 2>/dev/null ;;
+      "compute resource-policies describe"*) [[ -f "$S/policy.json" ]] && cat "$S/policy.json" || exit 1 ;;
+      "compute resource-policies create"*) echo "$all" >> "$S/mutations.log"
+        echo '{"snapshotSchedulePolicy":{"schedule":{"hourlySchedule":{"hoursInCycle":1}},"retentionPolicy":{"maxRetentionDays":3}}}' > "$S/policy.json" ;;
+      *) echo "unexpected gcloud: $all" >&2; exit 99 ;;
+    esac ;;
+  docker)
+    case "$1" in
+      ps) if [[ "$all" == *compose.service=postgres* ]]; then echo live; else n="${all##*name=^}"; n="${n%\$}"; [[ -e "$S/ctr/$n" ]] && echo "$n"; fi; exit 0 ;;
+      network) case "$2" in
+        create) [[ "$all" == *--internal* ]] || exit 1; touch "$S/net/${@: -1}" ;;
+        rm) rm -f "$S/net/$3" ;;
+        ls) n="${all##*name=^}"; n="${n%\$}"; [[ -e "$S/net/$n" ]] && echo "$n" ;; esac; exit 0 ;;
+      run) [[ "${FAIL:-}" == start_postgres ]] && exit 1
+           [[ "$all" == *" -p "* || "$all" == *"--publish"* || "$all" == *"/var/lib/pantheon-production"* ]] && exit 1
+           echo "$all" >> "$S/run.log"; touch "$S/ctr/$4" ;;
+      stop) exit 0 ;;
+      rm) rm -f "$S/ctr/$3" ;;
+      exec) shift; [[ "$1" == -i ]] && shift; c="$1"; shift; [[ "$1" == pg_isready ]] && exit 0
+            key=restored; [[ "$c" == live ]] && key=live
+            sql="$(cat)"
+            case "$sql" in
+              *"information_schema.columns"*) cat "$S/catalog_$key" ;;
+              *"information_schema.tables"*) cut -d= -f1 "$S/counts_$key" ;;
+              *"select count(*)"*) t="${sql#*from }"; t="$(echo "$t" | tr -d '"')"; grep "^$t=" "$S/counts_$key" | cut -d= -f2 ;;
+            esac ;;
+    esac ;;
+esac
+exit 0
+"""
+
+SNAP_ENV_KEYS = ("PROD_GCP_PROJECT_ID", "PROD_GCP_ZONE", "PROD_DATA_DISK", "PROD_RPO_SECONDS")
+
+
+class SnapshotDrillHarness(unittest.TestCase):
+    OPS = REPO_ROOT / "scripts" / "deploy" / "prod_ops.sh"
+    ENSURE = (OPS, "snapshot_schedule")
+    DRILL = (OPS, "restore_drill")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        for tool in ("gcloud", "docker", "sudo", "mount", "umount"):
+            (self.bin / tool).write_text(FAKE_SNAP_BIN)
+            (self.bin / tool).chmod(0o755)
+        self.state = self.tmp / "state"
+        (self.state / "content").mkdir(parents=True)
+        for d in ("postgres", "bff", "runtime", "governance", "product"):
+            (self.state / "content" / d).mkdir()
+            (self.state / "content" / d / "f.dat").write_text(d)
+        (self.state / "catalog_live").write_text("public.t.a:int\n")
+        (self.state / "catalog_restored").write_text("public.t.a:int\n")
+        (self.state / "counts_live").write_text("public.t=12\n")
+        (self.state / "counts_restored").write_text("public.t=10\n")
+        self.data_mount = self.tmp / "var-lib-pantheon-production"
+        (self.data_mount / "postgres").mkdir(parents=True)
+        (self.data_mount / "postgres" / "live.dat").write_text("live")
+        self.mnt, self.tmpbase = self.tmp / "mnt", self.tmp / "vtmp"
+        self.mnt.mkdir(); self.tmpbase.mkdir()
+        self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_STATE": str(self.state),
+                    "PROD_GCP_PROJECT_ID": "prod-proj", "PROD_GCP_ZONE": "asia-east1-b",
+                    "PROD_DATA_DISK": "pantheon-prod-control-data", "PROD_VM_NAME": "prod-vm",
+                    "PROD_RPO_SECONDS": "3600", "PROD_RTO_SECONDS": "1800", "PROD_DATA_MOUNT": str(self.data_mount),
+                    "PROD_POSTGRES_USER": "pgu", "PROD_POSTGRES_DB": "pdb", "PROD_DRILL_POLL_SECONDS": "0",
+                    "PANTHEON_POSTGRES_IMAGE": "postgres:16@sha256:" + "c" * 64,
+                    "PROD_DRILL_MNT_BASE": str(self.mnt), "PROD_DRILL_TMP_BASE": str(self.tmpbase)}
+        self.env.pop("CLOUDSDK_CORE_PROJECT", None)
+        self.env.pop("FAIL", None)
+
+    def snapshot(self, age_seconds):
+        import datetime as dt
+        ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=age_seconds)).isoformat()
+        (self.state / "snapshot").write_text(f"auto-snap-1\t{ts}\n")
+
+    def run_script(self, script, *args, **env):
+        return subprocess.run(["bash", *map(str, script if isinstance(script, tuple) else (script,)), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+
+    def calls(self):
+        p = self.state / "calls.log"
+        return p.read_text() if p.exists() else ""
+
+    def assert_clean(self, out):
+        res = json.loads(out.strip().splitlines()[-1])
+        self.assertEqual(res["cleanup"], {"clean": True, "container": 0, "network": 0, "temp_copy": 0, "mount": 0, "scratch_disk": 0}, res)
+        self.assertEqual(list((self.state / "disks").iterdir()), [])
+        self.assertEqual(list((self.state / "attached").iterdir()), [])
+        self.assertEqual(list((self.state / "ctr").iterdir()), [])
+        self.assertEqual(list((self.state / "net").iterdir()), [])
+        self.assertEqual(list(self.tmpbase.iterdir()), [])
+        self.assertEqual(list(self.mnt.iterdir()), [])
+        return res
+
+    def assert_live_untouched(self):
+        self.assertEqual(sorted(p.name for p in self.data_mount.rglob("*")), ["live.dat", "postgres"])
+        self.assertEqual((self.data_mount / "postgres" / "live.dat").read_text(), "live")
+        self.assertNotIn(str(self.data_mount), self.calls())
+
+    # ---- snapshot schedule ----
+    def test_ensure_is_idempotent_and_touches_only_the_data_disk(self):
+        self.snapshot(60)
+        first = self.run_script(self.ENSURE, "ensure")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        mutations = (self.state / "mutations.log").read_text()
+        for needle in ("--hourly-schedule=1", "--max-retention-days=3", "--on-source-disk-delete=keep-auto-snapshots",
+                       "--storage-location asia-east1", "--region asia-east1", "environment=production,managed_by=pantheon",
+                       "add-resource-policies pantheon-prod-control-data"):
+            self.assertIn(needle, mutations)
+        before = mutations
+        second = self.run_script(self.ENSURE, "ensure")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual((self.state / "mutations.log").read_text(), before)
+        out = json.loads(second.stdout)
+        self.assertTrue(out["policy_present"] and out["attached"])
+        self.assertEqual((out["schedule"], out["retention_days"], out["newest_snapshot"]), ("hourly/1h", 3, "auto-snap-1"))
+        self.assertNotRegex(self.calls(), r"(?i)boot|snapshots delete|disks delete")
+
+    def test_check_is_read_only_and_fails_on_stale_snapshot(self):
+        self.snapshot(60)
+        self.assertEqual(self.run_script(self.ENSURE, "ensure").returncode, 0)
+        (self.state / "mutations.log").unlink()
+        self.snapshot(3600 + 900 - 30)
+        self.assertEqual(self.run_script(self.ENSURE, "check").returncode, 0)
+        self.snapshot(3600 + 900 + 120)
+        stale = self.run_script(self.ENSURE, "check")
+        self.assertEqual(stale.returncode, 1)
+        self.assertGreater(json.loads(stale.stdout)["newest_age_seconds"], 4500)
+        (self.state / "snapshot").unlink()
+        self.assertEqual(self.run_script(self.ENSURE, "check").returncode, 1)
+        self.assertFalse((self.state / "mutations.log").exists())
+
+    def test_schedule_refuses_wrong_project_or_missing_disk(self):
+        wrong = self.run_script(self.ENSURE, "ensure", FAKE_PROJECT="other-proj")
+        self.assertEqual(wrong.returncode, 1)
+        self.assertIn("WRONG_PROJECT", wrong.stderr)
+        self.assertFalse((self.state / "mutations.log").exists())
+        missing = self.run_script(self.ENSURE, "ensure", PROD_DATA_DISK="no-such-disk")
+        self.assertIn("DISK_NOT_FOUND", missing.stderr)
+        self.assertFalse((self.state / "mutations.log").exists())
+
+    # ---- restore drill ----
+    def test_drill_success_proves_readability_and_cleans_up(self):
+        self.snapshot(900)
+        r = self.run_script(self.DRILL)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        res = self.assert_clean(r.stdout)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["snapshot"], "auto-snap-1")
+        self.assertTrue(895 <= res["rpo_seconds"] <= 905)
+        self.assertLessEqual(res["rto_seconds"], 60)
+        c = res["checks"]
+        self.assertTrue(c["catalog_hash_equal"] and c["owner_store_manifest_equal"] and c["tables_match_live"])
+        self.assertEqual(c["row_count_drift_vs_live"], {"public.t": 2})
+        attach = (self.state / "attach.log").read_text()
+        self.assertIn("--mode ro", attach)
+        self.assertIn("pantheon-prod-restore-drill-", attach)
+        run = (self.state / "run.log").read_text()
+        self.assertIn("--network pantheon-restore-drill-", run)
+        self.assertIn("postgres:16@sha256:" + "c" * 64, run)
+        self.assertNotRegex(run, r"PASSWORD|dsn|://")
+        self.assert_live_untouched()
+        self.assertNotIn("pwd", r.stdout.lower())
+
+    def test_drill_over_budget_fails_but_still_cleans_up(self):
+        self.snapshot(3601 + 5)
+        r = self.run_script(self.DRILL)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.assert_clean(r.stdout)["status"], "over_budget")
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, PROD_RTO_SECONDS="-1")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.assert_clean(r.stdout)["status"], "over_budget")
+
+    def test_drill_tears_down_on_failure_injected_at_each_stage(self):
+        self.snapshot(60)
+        cases = [("create_disk", {"FAIL": "create_disk"}), ("attach_readonly", {"FAIL": "attach_readonly"}),
+                 ("mount_readonly", {"FAIL": "mount_readonly"}), ("start_postgres", {"FAIL": "start_postgres"})]
+        for stage, env in cases:
+            with self.subTest(stage=stage):
+                r = self.run_script(self.DRILL, **env)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                res = self.assert_clean(r.stdout)
+                self.assertEqual((res["status"], res["failed_stage"]), ("failed", stage))
+                self.assert_live_untouched()
+        with self.subTest(stage="copy"):
+            shutil.rmtree(self.state / "content" / "governance")
+            r = self.run_script(self.DRILL)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "copy")
+            (self.state / "content" / "governance").mkdir()
+        with self.subTest(stage="verify"):
+            (self.state / "catalog_restored").write_text("public.t.a:int\npublic.t.b:text\n")
+            r = self.run_script(self.DRILL)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "verify")
+        with self.subTest(stage="select_snapshot"):
+            (self.state / "snapshot").unlink()
+            r = self.run_script(self.DRILL)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "select_snapshot")
+
+    def test_drill_refuses_wrong_project_without_creating_anything(self):
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, FAKE_PROJECT="other-proj")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("disks create", self.calls())
 
 
 if __name__ == "__main__":

@@ -37,6 +37,14 @@ from services.control_plane.bff.downstream_health_monitor import (
 OPERATOR_TOKEN = "Bearer op-2:operator"
 
 
+@pytest.fixture(autouse=True)
+def _immediate_recovery_defaults(monkeypatch):
+    """Legacy tests assume one OK probe resolves; flap tests pass explicit values."""
+    monkeypatch.setenv("PANTHEON_BFF_HEALTH_RECOVERY_SUCCESSES", "1")
+    monkeypatch.setenv("PANTHEON_BFF_HEALTH_RECOVERY_MIN_SECONDS", "0")
+    monkeypatch.setenv("PANTHEON_BFF_HEALTH_REOPEN_WINDOW_SECONDS", "0")
+
+
 def _run(coro):
     """Run a coroutine in a new event loop (no pytest-asyncio needed)."""
     loop = asyncio.new_event_loop()
@@ -3014,3 +3022,135 @@ def test_maintenance_skips_instead_of_waiting_when_writer_holds_lock(tmp_path):
         thread.join()
     assert time.monotonic() - started < 1.5
     assert result["skipped"] is None or str(result["skipped"]).startswith("busy")
+
+
+# ---------------------------------------------------------------------------
+# INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120
+# ---------------------------------------------------------------------------
+
+
+def _flap_monitor(tmp_path, **kwargs):
+    params = dict(
+        telemetry_url="",
+        incidents_url="http://inc:8090",
+        probe_interval_seconds=1,
+        failure_threshold=3,
+        recovery_successes=3,
+        recovery_min_seconds=120,
+        reopen_window_seconds=600,
+        state_path=str(tmp_path / "health.sqlite3"),
+    )
+    params.update(kwargs)
+    return DownstreamHealthMonitor(**params)
+
+
+def _drive(monitor, steps, start=1_800_000_000):
+    """steps: list of (ok, seconds_offset). Returns incident ids seen."""
+    from datetime import datetime, timezone
+
+    seen = []
+    for ok, offset in steps:
+        checked_at = datetime.fromtimestamp(start + offset, timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        result = DownstreamProbeResult(
+            target_name="paper-signal-producer",
+            ok=ok,
+            status_code=200 if ok else 503,
+            latency_ms=5.0,
+            checked_at=checked_at,
+            failure_reason=None if ok else "http 503",
+        )
+        monitor._record_probe_result_sync(result)
+        inc = monitor._store.get_incident("paper-signal-producer")
+        if inc and inc["incident_id"] not in seen:
+            seen.append(inc["incident_id"])
+    return seen
+
+
+def _open_deliveries(monitor):
+    with monitor._store._connect() as c:
+        return c.execute(
+            "SELECT channel FROM delivery_outbox WHERE channel IN "
+            "('incident_open','incident_resolve') ORDER BY rowid"
+        ).fetchall()
+
+
+class TestIncidentFlapOnePerOutage:
+    FLAP = [(False, 0), (False, 30), (False, 60), (True, 90),
+            (False, 120), (False, 150), (False, 180), (True, 210)]
+
+    def test_legacy_single_ok_recovery_opens_two_incidents(self, tmp_path):
+        """Reproduction: pre-fix behaviour (1 OK resolves, no hold) flaps."""
+        monitor = _flap_monitor(
+            tmp_path, recovery_successes=1, recovery_min_seconds=0,
+            reopen_window_seconds=0,
+        )
+        with patch("services.control_plane.bff.downstream_health_monitor._post_json",
+                   return_value=(True, 200)):
+            seen = []
+            for step in self.FLAP:
+                seen = _drive(monitor, [step], start=1_800_000_000) or seen
+                monitor._deliver_due_sync()
+        # fail fail fail ok -> resolved, fail fail fail -> new incident id
+        with monitor._store._connect() as c:
+            opens = c.execute(
+                "SELECT COUNT(*) FROM delivery_outbox WHERE channel='incident_open'"
+            ).fetchone()[0]
+        assert opens == 2
+
+    def test_flap_within_hold_is_one_incident(self, tmp_path):
+        monitor = _flap_monitor(tmp_path)  # 3 OK / 120s / 600s hold
+        with patch("services.control_plane.bff.downstream_health_monitor._post_json",
+                   return_value=(True, 200)):
+            seen = _drive(monitor, self.FLAP)
+            monitor._deliver_due_sync()
+        assert len(seen) == 1
+        with monitor._store._connect() as c:
+            kinds = [r[0] for r in c.execute(
+                "SELECT channel FROM delivery_outbox WHERE channel LIKE 'incident_%'")]
+        assert kinds == ["incident_open"]
+        assert monitor._store.get_incident("paper-signal-producer")["status"] in {"opening", "open"}
+
+    def test_recovery_needs_count_and_duration_then_hold(self, tmp_path):
+        monitor = _flap_monitor(tmp_path)
+        steps = [(False, 0), (False, 30), (False, 60)]
+        # 3 OK probes but only 60s apart (<120s): not sustained
+        steps += [(True, 90), (True, 120), (True, 150), (True, 160)]
+        with patch("services.control_plane.bff.downstream_health_monitor._post_json",
+                   return_value=(True, 200)):
+            _drive(monitor, steps)
+        assert monitor._store.get_incident("paper-signal-producer")["status"] in {"opening", "open"}
+        # sustained at 90+120=210 -> recovered; resolve only after 600s hold
+        with patch("services.control_plane.bff.downstream_health_monitor._post_json",
+                   return_value=(True, 200)):
+            _drive(monitor, [(True, 210), (True, 500)])
+            assert monitor._store.get_incident("paper-signal-producer")["status"] in {"opening", "open"}
+            _drive(monitor, [(True, 820)])
+        assert monitor._store.get_incident("paper-signal-producer")["status"] == "resolving"
+
+    def test_failure_after_window_opens_new_incident(self, tmp_path):
+        monitor = _flap_monitor(tmp_path, recovery_successes=2,
+                                recovery_min_seconds=30, reopen_window_seconds=100)
+        steps = [(False, 0), (False, 30), (False, 60), (True, 90), (True, 120),
+                 (True, 240)]
+        with patch("services.control_plane.bff.downstream_health_monitor._post_json",
+                   return_value=(True, 200)):
+            first = _drive(monitor, steps)
+            monitor._deliver_due_sync()
+            assert monitor._store.get_incident("paper-signal-producer")["status"] == "resolved"
+            second = _drive(monitor, [(False, 300), (False, 330), (False, 360)])
+        assert len(first) == 1
+        assert [i for i in second if i not in first] == [second[-1]]
+        assert second[-1] != first[0]
+
+    def test_continuous_outage_opens_exactly_one_at_threshold(self, tmp_path):
+        monitor = _flap_monitor(tmp_path)
+        seen = _drive(monitor, [(False, 0), (False, 30)])
+        assert seen == []
+        seen = _drive(monitor, [(False, 60)] + [(False, 90 + 30 * i) for i in range(20)])
+        assert len(seen) == 1
+        with monitor._store._connect() as c:
+            assert c.execute(
+                "SELECT COUNT(*) FROM delivery_outbox WHERE channel='incident_open'"
+            ).fetchone()[0] == 1

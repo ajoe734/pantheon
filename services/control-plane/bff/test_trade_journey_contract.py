@@ -277,3 +277,18 @@ def test_pre_signal_envelope_validation():
     del invalid_envelope["correlation_id"]
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance=invalid_envelope, schema=correlation_envelope_schema)
+
+
+def test_readable_read_fields_are_accepted_by_schema():
+    payload = get_base_trade_journey()
+    payload.update(
+        persona_name="青禾｜2330 台股 Paper 學習 R3",
+        persona_is_probe=False,
+        filled_quantity=1.0,
+        outcome={"kind": "rejected", "reason_code": "insufficient_cash", "reason_detail": {"required": 100034.3461}},
+        next_step={"action_needed": "review_cash_and_risk_limits", "href": "/personas/persona-1"},
+    )
+    jsonschema.validate(instance=payload, schema=trade_journey_schema)
+    payload["outcome"] = {"kind": "unknown_kind"}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=payload, schema=trade_journey_schema)

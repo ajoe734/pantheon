@@ -6094,6 +6094,28 @@ def reviewer_fallback_search_order(
     )
 
 
+def order_reviewers_cross_family_first(
+    config: dict[str, Any],
+    candidate_owner: str,
+    reviewer_order: list[str],
+) -> list[str]:
+    """Stable-partition reviewers: other model families before the owner's own.
+
+    Same-family reviewers stay available as a last resort so a task is never
+    stranded, but only after every other-family reviewer has been tried.
+    """
+
+    owner_family = agent_family(candidate_owner)
+    if owner_family is None:
+        return list(reviewer_order)
+    other: list[str] = []
+    same: list[str] = []
+    for name in reviewer_order:
+        canonical = canonical_agent_name(config, name)
+        (same if agent_family(canonical) == owner_family else other).append(name)
+    return other + same
+
+
 def plan_task_assignment_pair(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -6186,6 +6208,10 @@ def plan_task_assignment_pair(
                     owner=owner,
                     candidate_owner=candidate_owner,
                 )
+            )
+        if not explicit_human_reviewer:
+            reviewer_order = order_reviewers_cross_family_first(
+                config, candidate_owner, reviewer_order
             )
         seen_reviewers: set[str] = set()
         for candidate_reviewer in reviewer_order:
@@ -10284,7 +10310,7 @@ def build_review_independence_exception(
     }
     considered = []
     for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family}):
-        reason = evidence.get(family) or "no capacity evidence supplied"
+        reason = evidence.get(family) or "evidence_unavailable"
         considered.append(
             {"family": family, "reason": reason[:_REVIEW_EXCEPTION_REASON_LIMIT]}
         )
@@ -10312,37 +10338,64 @@ def attach_review_independence_exception(
 
 
 def _review_exception_capacity_evidence(
-    config: dict[str, Any], owner: str, reviewer: str
+    config: dict[str, Any],
+    owner: str,
+    reviewer: str,
+    task: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Per-family unavailability evidence for a same-family reviewer pick.
+    """Per-family concrete reason for a same-family reviewer pick.
 
     Only computed when owner and reviewer share a family; best effort and
     bounded (one health lookup per configured agent, once per reassignment).
+    Every other family gets a concrete reason: the first agent's terminal
+    unavailability, "cannot_take_task" when a task-level gate refused it, or
+    "available:<agent>" when an agent could take the task but the pair was
+    pinned (e.g. incumbent-only recovery).
     """
 
     owner_family = agent_family(owner)
     if owner_family is None or owner_family != agent_family(reviewer):
         return {}
     try:
-        state = load_runtime_state(config)
-    except Exception:  # noqa: BLE001 - evidence is advisory, never blocks assignment
-        return {}
+        # Lock-free snapshot: the caller holds the task_state lock, and taking
+        # runtime_admission (lower rank) here would violate the lock order.
+        state = load_runtime_state_snapshot(config)
+    except Exception as exc:  # noqa: BLE001 - evidence is advisory, never blocks assignment
+        error_class = type(exc).__name__
+        print(
+            f"supervisor: review exception capacity evidence unavailable: "
+            f"{error_class}: {exc}",
+            file=sys.stderr,
+        )
+        return {
+            family: f"evidence_unavailable:{error_class}"
+            for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family})
+        }
     evidence: dict[str, str] = {}
-    viable: set[str] = set()
     for agent_id in sorted(config.get("agents", {}) or {}):
         family = agent_family(agent_id)
         if family is None or family == owner_family:
             continue
+        if evidence.get(family, "").startswith("available:"):
+            continue
         try:
             reason = assignment_terminal_unavailability(config, state, agent_id)
+            if not reason and not agent_can_take_task(
+                config, agent_id, task, state=state
+            ):
+                reason = "cannot_take_task"
         except Exception:  # noqa: BLE001
             reason = "health_unreadable"
-        if reason:
-            evidence.setdefault(family, f"{agent_id}:{reason}")
+        entry = f"{agent_id}:{reason}" if reason else f"available:{agent_id}"
+        if not reason:
+            evidence[family] = entry
+        elif family in evidence:
+            evidence[family] = f"{evidence[family]}; {entry}"[:300]
         else:
-            viable.add(family)
-    # A family with any viable agent has capacity: it carries no evidence.
-    return {family: why for family, why in evidence.items() if family not in viable}
+            evidence[family] = entry
+    for family in set(AGENT_FAMILIES.values()) - {owner_family}:
+        evidence.setdefault(family, "no_agent_configured")
+    return evidence
 
 
 def _persist_task_reassignment_locked(
@@ -10519,7 +10572,7 @@ def _persist_task_reassignment_locked(
     attach_review_independence_exception(
         event,
         _review_exception_capacity_evidence(
-            config, assignment.new_owner, assignment.new_reviewer
+            config, assignment.new_owner, assignment.new_reviewer, task
         ),
     )
     if recovery_receipt is not None:
@@ -13401,6 +13454,57 @@ def _worker_recovery_candidate_has_capacity(
     return bool(decision.eligible)
 
 
+_BRANCH_TRAILER_RE = re.compile(
+    r"^(LLM-Agent|Reviewer|Task-ID):[ \t]*(.+?)[ \t]*$", re.MULTILINE
+)
+
+
+def task_branch_incumbent_pair(
+    config: dict[str, Any], task: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """Return the (owner, reviewer) named by the task branch's own commits.
+
+    Reads the commits the task branch has ahead of the repository base and
+    returns the pair from the newest commit whose Task-ID matches and which
+    carries both an LLM-Agent and a Reviewer trailer. None when the branch,
+    base or trailers are unavailable (best effort; never raises).
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return None
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+        source = worker_worktree_source_root(config, repository_id=repository_id)
+        base_ref = worker_repository_base_ref(config, repository_id)
+        branch = worker_task_branch(config, task_id)
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            proc = subprocess.run(
+                [
+                    "git", "log", "--no-merges", "--format=%B%x00",
+                    f"{base_ref}..{ref}",
+                ],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                continue
+            for body in proc.stdout.split("\x00"):
+                trailers = {k: v for k, v in _BRANCH_TRAILER_RE.findall(body)}
+                if trailers.get("Task-ID", "").strip() != task_id:
+                    continue
+                owner = canonical_agent_name(config, trailers.get("LLM-Agent", ""))
+                reviewer = canonical_agent_name(config, trailers.get("Reviewer", ""))
+                if owner and reviewer:
+                    return owner, reviewer
+    except Exception:  # noqa: BLE001 - advisory evidence
+        return None
+    return None
+
+
 def worker_recovery_assignment_pair(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -13452,12 +13556,42 @@ def worker_recovery_assignment_pair(
     )
     role = str(receipt.get("recovery_role") or "owner")
     lost_agent = str((receipt.get("worker") or {}).get("agent") or "")
+    if (
+        receipt.get("reason_kind") == "worker_process_missing"
+        and owner
+        and reviewer
+        and owner.casefold() != reviewer.casefold()
+        and task_branch_incumbent_pair(config, task)
+        == (owner, reviewer)
+    ):
+        # A pushed head already carries the incumbent LLM-Agent/Reviewer
+        # trailers; any other pair would be refused at handoff. Keep the pair
+        # whenever the incumbent of the lost role can still take the task.
+        pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=[owner],
+            preferred_reviewers=[reviewer],
+            allowed_reviewers=[reviewer],
+            require_owner_ready=role != "reviewer",
+            require_reviewer_ready=role == "reviewer",
+        )
+        if pair == (owner, reviewer) and _worker_recovery_candidate_has_capacity(
+            config, state, status, task,
+            owner=owner, reviewer=reviewer,
+            target_agent=reviewer if role == "reviewer" else owner,
+        ):
+            return pair
     if role == "reviewer":
         reviewer_candidates = reassignment_candidate_order(
             config,
             settings.get("reviewer_fallbacks", {}) or {},
             roots=[reviewer, owner, previous_reviewer, previous_owner],
             exclude={reviewer, owner, lost_agent},
+        )
+        reviewer_candidates = order_reviewers_cross_family_first(
+            config, owner, reviewer_candidates
         )
         for candidate_reviewer in reviewer_candidates:
             pair = plan_task_assignment_pair(

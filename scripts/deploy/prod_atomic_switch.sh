@@ -160,10 +160,29 @@ if [[ -e "$FE_RELEASE" ]]; then
     || die_json "IMMUTABLE_RELEASE_DIR" "release dir exists with different content; never overwritten"
 fi
 
+# 2b. Journal per dispatch. A journal left by an earlier dispatch of the same release id is archived (atomic rename)
+# BEFORE any marker is written or any baseline check reads it, so rollback/recovery only ever see the current
+# dispatch (a stale `bootstrap` marker would otherwise force the bootstrap-abort path; stale *_switched markers
+# would mislead recovery). Runtime budget: ~50 KB per dispatch, at most JOURNAL_ARCHIVE_KEEP archives per release id.
+JOURNAL_ARCHIVE_KEEP=10
+JOURNAL_ROOT="${STATE}/journal"
+if [[ -d "$JOURNAL" ]]; then
+  ARCHIVE="${JOURNAL}.archived-$(date -u +%Y%m%dT%H%M%SZ)"
+  [[ ! -e "$ARCHIVE" ]] || ARCHIVE="${ARCHIVE}-$$"
+  mv -T "$JOURNAL" "$ARCHIVE" || die_json "JOURNAL_ARCHIVE_FAILED" "cannot archive the previous journal for ${RELEASE_ID}; nothing switched"
+fi
+if [[ -d "$JOURNAL_ROOT" ]]; then
+  # Newest N archives per release id are kept (UTC timestamp names sort chronologically); older ones are deleted.
+  ls -1d "${JOURNAL_ROOT}/${RELEASE_ID}.archived-"* 2>/dev/null | sort -r | tail -n +$((JOURNAL_ARCHIVE_KEEP + 1)) \
+    | while IFS= read -r old; do [[ -n "$old" ]] && rm -rf -- "$old"; done
+fi
+
 # 3. Snapshot preflight + healthy retained baseline (absent only for explicit bootstrap).
-"$PROD_OPS_CMD" snapshot_preflight "$RELEASE_ID" || die_json "SNAPSHOT_FAILED" "pre-release snapshot failed; nothing switched"
+# A refusal here changes nothing: the archived journal is renamed back (no new journal exists yet).
+unarchive_journal() { [[ -z "${ARCHIVE:-}" || -e "$JOURNAL" ]] || mv -T "$ARCHIVE" "$JOURNAL" 2>/dev/null; }
+"$PROD_OPS_CMD" snapshot_preflight "$RELEASE_ID" || { unarchive_journal; die_json "SNAPSHOT_FAILED" "pre-release snapshot failed; nothing switched"; }
 if [[ "$BOOTSTRAP" == "false" ]]; then
-  "$PROD_OPS_CMD" baseline_health "$RELEASE_ID" || die_json "BASELINE_UNHEALTHY" "retained baseline is not healthy; refusing to switch"
+  "$PROD_OPS_CMD" baseline_health "$RELEASE_ID" || { unarchive_journal; die_json "BASELINE_UNHEALTHY" "retained baseline is not healthy; refusing to switch"; }
 fi
 
 # 4. Journal the restore targets (FE symlink, upstream, baseline manifest/images/config, runtime-config) BEFORE any mutation.

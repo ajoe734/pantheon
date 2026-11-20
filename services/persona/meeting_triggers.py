@@ -150,13 +150,37 @@ def default_opener(persona: Mapping[str, Any], env: Mapping[str, str] | None = N
     return open_
 
 
+# A meeting whose consultation work dead-lettered past its recovery budget was never held; its
+# idempotency key is released for a bounded number of replacements (``<key>:retry-<n>``).
+MAX_MEETING_REPLACEMENTS = 2
+
+
+def default_meeting_reader(persona: Mapping[str, Any]) -> Callable[[str], "dict | None"]:
+    """meeting_id -> execution state, from one tenant-scoped read of the dead-lettered work items."""
+    cache: dict[str, dict] = {}
+
+    def read(meeting_id: str):
+        if not cache:
+            from services.consultation.client import ConsultationServiceClient
+            from services.consultation.workflow_state import recovery_exhausted
+            client = ConsultationServiceClient(tenant_id=persona["tenant_id"], service_actor=f"persona:{persona['persona_id']}")
+            listing = client._request_json("GET", "/api/consult/workflows?status=dead_letter", tenant_id=persona["tenant_id"])
+            for row in (listing or {}).get("items") or []:
+                cache[str(row.get("request_id"))] = {"status": row.get("status"), "recovery_exhausted": recovery_exhausted(row)}
+            cache.setdefault("", {})
+        return {"meeting_id": meeting_id, "execution_state": cache.get(meeting_id)}
+    return read
+
+
 class MeetingTriggers:
     def __init__(self, *, config: MeetingTriggerConfig | None = None,
                  opener: Callable[..., dict[str, Any]] | None = None,
+                 reader: Callable[[str], "dict | None"] | None = None,
                  attribution: AttributionPort | None = None,
                  now: Callable[[], datetime] | None = None):
         self.config = config or MeetingTriggerConfig()
         self._opener = opener
+        self._reader = reader
         self.attribution = attribution
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._day_counts: dict[str, int] = {}
@@ -172,28 +196,82 @@ class MeetingTriggers:
             n += sum(1 for c in meetings.get("convened", []) if c.get("iso_week") == week)
         return n
 
-    def _already(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], key: str) -> bool:
-        if (str(persona.get("tenant_id") or ""), key) in self._convened_keys:
-            return True
+    def _convened_entries(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], key: str) -> list[dict]:
+        out: list[dict] = []
         for p in snapshots.values():
             if p.get("tenant_id") != persona["tenant_id"]:
                 continue
             meetings = (p.get("persona_cycle") or {}).get("meetings") or {}
-            if any(c.get("idempotency_key") == key for c in meetings.get("convened", [])):
-                return True
-        return False
+            out.extend(c for c in meetings.get("convened", []) if c.get("idempotency_key") == key)
+        return out
+
+    def _not_held(self, persona: Mapping[str, Any], entries: Sequence[Mapping[str, Any]]) -> list[str]:
+        """Meeting ids whose consultation work dead-lettered with its recovery budget spent.
+
+        Anything else (unreadable, running, other dead-letter reasons) still counts as convened.
+        """
+        reader = self._reader or getattr(self, "_run_reader", None)
+        if reader is None:  # one dead-letter listing per run, never stale across cycles
+            try:
+                reader = self._run_reader = default_meeting_reader(persona)
+            except Exception:
+                return []
+        ids = [str(e["meeting_id"]) for e in entries if e.get("meeting_id")]
+        if not ids:
+            return []
+        failed = []
+        for meeting_id in dict.fromkeys(ids):
+            try:
+                state = (reader(meeting_id) or {}).get("execution_state") or {}
+            except Exception:
+                return []
+            if state.get("status") == "dead_letter" and state.get("recovery_exhausted") is True:
+                failed.append(meeting_id)
+        return failed if len(failed) == len(set(ids)) else []
+
+    def _already(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], key: str) -> bool:
+        if (str(persona.get("tenant_id") or ""), key) in self._convened_keys:
+            return True
+        return bool(self._convened_entries(snapshots, persona, key))
+
+    def _resolve_key(self, ctx: dict[str, Any], key: str) -> tuple[str | None, list[str]]:
+        """The idempotency key to open under, or None when the meeting counts as held.
+
+        Returns ``(key, earlier_not_held_meeting_ids)``.
+        """
+        persona, snapshots = ctx["persona"], ctx["snapshots"]
+        not_held: list[str] = []
+        for attempt in range(MAX_MEETING_REPLACEMENTS + 1):
+            candidate = key if attempt == 0 else f"{key}:retry-{attempt}"
+            if (str(persona.get("tenant_id") or ""), candidate) in self._convened_keys:
+                return None, not_held
+            entries = self._convened_entries(snapshots, persona, candidate)
+            if not entries:
+                return candidate, not_held
+            failed = self._not_held(persona, entries)
+            if not failed:
+                return None, not_held
+            not_held.extend(failed)
+        return None, not_held
 
     def _convene(self, ctx: dict[str, Any], meeting_type: str, trigger: str, topic: str, key: str, **body: Any) -> dict | None:
         """Open one meeting inside the budgets; a refusal is recorded with its reason, never raised."""
         persona, record, cfg = ctx["persona"], ctx["record"], self.config
         label = {"meeting_type": meeting_type, "trigger": trigger, "idempotency_key": key}
-        if self._already(ctx["snapshots"], persona, key):
-            record["not_fired"].append({**label, "reason": "already_convened"})
+        resolved, not_held = self._resolve_key(ctx, key)
+        released = ctx.setdefault("released_meetings", set())
+        released.update(not_held)  # a meeting that never ran does not spend the weekly budget
+        for meeting_id in not_held:
+            record.setdefault("not_held", []).append(
+                {**label, "meeting_id": meeting_id, "reason": "execution_failed_recovery_exhausted"})
+        if resolved is None:
+            record["not_fired"].append({**label, "reason": "already_convened" if not not_held else "replacement_budget_spent"})
             return None
+        key = label["idempotency_key"] = resolved
         today = ctx["today"].isoformat()
         for name, used, cap in (
                 ("cycle_meeting_budget_spent", len(record["convened"]), cfg.max_meetings_per_cycle),
-                ("weekly_meeting_budget_spent", ctx["week_used"] + len(record["convened"]),
+                ("weekly_meeting_budget_spent", ctx["week_used"] - len(released) + len(record["convened"]),
                  cfg.max_meetings_per_persona_per_week),
                 ("daily_meeting_budget_spent", self._day_counts.get(today, 0), cfg.max_meetings_per_day)):
             if used >= cap:
@@ -216,6 +294,7 @@ class MeetingTriggers:
     def run(self, persona: Mapping[str, Any], observe: Mapping[str, Any], packet: dict[str, Any],
             snapshots: Mapping[str, Mapping[str, Any]], enrolled: Sequence[str]) -> dict[str, Any]:
         """Never raises. Returns the record stored at ``persona_cycle.meetings``."""
+        self._run_reader = None
         record: dict[str, Any] = {"convened": [], "refused": [], "not_fired": [], "requests": [],
                                   "weekly_outlier_run": None}
         try:

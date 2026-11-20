@@ -19,6 +19,11 @@ class CycleReadUnavailable(ValueError):
     pass
 
 
+# Mirrors services.governance.authz._PERSONA_OPERATOR_ROLES minus the service-only reader:
+# the roles memory policy lets read persona memory on behalf of a logged-in person.
+PERSONA_MEMORY_PANEL_ROLES = ("operator", "admin", "reviewer", "auditor")
+
+
 def read_cycle_records(read_store, tenant_id):
     """Use the controller's existing decoder and the application's injected owner."""
     port = read_store.ooda_management.ooda
@@ -146,8 +151,14 @@ def read_cycle_views(read_store, persona_id, tenant_id, identity, authorization,
     memory_client = MemoryReviewClient(auth, tenant_id)
 
     def memories(*, experiences_only=False):
+        # Assert only roles the login holds AND memory policy allows, so memory-svc can verify them
+        # as a subset of the token roles. Other roles (e.g. viewer) never get a memory read grant.
+        held = {str(r) for r in (getattr(identity, "roles", None) or [])}
+        panel_roles = [r for r in PERSONA_MEMORY_PANEL_ROLES if r in held]
+        if not panel_roles:
+            raise CycleReadUnavailable("memory_read_role_not_allowed")
         query = {
-            "actor_id": identity.operator_id, "actor_roles": "", "scope": "persona", "limit": 100,
+            "actor_id": identity.operator_id, "actor_roles": ",".join(panel_roles), "scope": "persona", "limit": 100,
             "session_id": "bff-persona-cycle:" + persona_id, "persona_id": persona_id,
         }
         if experiences_only:

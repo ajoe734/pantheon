@@ -234,6 +234,30 @@ class TradeJourneyProjectionStore:
         if filters.get("reconciliation_state"):
             clauses.append("stage_coverage -> 'reconciliation' ->> 'status' = %s")
             params.append(str(filters["reconciliation_state"]))
+        if filters.get("exclude_persona_ids"):
+            persona_ref = "COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> 'persona_id'"
+            clauses.append(f"NOT COALESCE({persona_ref} ?| %s::text[], false)")
+            params.append([str(item) for item in filters["exclude_persona_ids"]])
+        attention = filters.get("attention")
+        if attention:
+            broker_failed = "stage_coverage -> 'broker_acknowledgement' ->> 'status' IN ('failed', 'rejected')"
+            deferred = (
+                f"EXISTS (SELECT 1 FROM {self.schema}.journey_stages recon WHERE recon.tenant_id={self.schema}.journeys.tenant_id "
+                f"AND recon.environment={self.schema}.journeys.environment AND recon.journey_id={self.schema}.journeys.journey_id "
+                "AND recon.stage_name='reconciliation' AND recon.contract_fields ->> 'reason_code' = 'runtime_unhealthy_at_reconciliation')"
+            )
+            if attention == "recon_mismatch":
+                clauses.append(f"(status='completed_with_variance' AND NOT {deferred})")
+            elif attention == "partial_fill":
+                clauses.append("status='partially_filled'")
+            elif attention == "broker_reject":
+                clauses.append(f"(status='failed' AND {broker_failed})")
+            elif attention == "risk_reject":
+                clauses.append(f"(status='failed' AND NOT COALESCE({broker_failed}, false))")
+            elif attention == "attention":
+                clauses.append(f"((status IN ('failed', 'partially_filled')) OR (status='completed_with_variance' AND NOT {deferred}))")
+            else:
+                raise ValueError("unsupported attention filter")
         if "waiting_human" in filters:
             waiting_stage = "EXISTS (SELECT 1 FROM jsonb_each(COALESCE(stage_coverage, '{}'::jsonb)) AS stage(stage_name, stage_state) WHERE stage.stage_state ->> 'status' = 'waiting_human')"
             if bool(filters["waiting_human"]):
@@ -253,8 +277,25 @@ class TradeJourneyProjectionStore:
             if filters.get(key):
                 link_match = f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)"
                 if identifier_type in SHARED_IDENTIFIER_TYPES:
-                    clauses.append(f"({link_match} OR COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s)")
-                    params.extend((identifier_type, str(filters[key]), identifier_type, str(filters[key])))
+                    # Containment matches idx_journeys_summary_gin; legacy identity_links rows join as a
+                    # once-evaluated id array so the OR stays a bitmap scan instead of a per-row subplan.
+                    summary_ref = "(COALESCE(current_identity_summary -> 'identifiers', current_identity_summary))"
+                    legacy_ids = (
+                        f"journey_id = ANY(ARRAY(SELECT link.journey_id FROM {self.schema}.identity_links link "
+                        "WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_type=%s AND link.identifier_value=%s))"
+                    )
+                    clauses.append(f"({summary_ref} @> %s::jsonb OR {summary_ref} @> %s::jsonb OR {legacy_ids})")
+                    value = str(filters[key])
+                    params.extend(
+                        (
+                            json.dumps({identifier_type: [value]}),
+                            json.dumps({identifier_type: value}),
+                            tenant_id,
+                            environment,
+                            identifier_type,
+                            value,
+                        )
+                    )
                 else:
                     clauses.append(link_match)
                     params.extend((identifier_type, str(filters[key])))

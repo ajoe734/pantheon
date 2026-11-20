@@ -632,3 +632,298 @@ def test_idle_tick_publishes_admissible_controller_truth() -> None:
     assert projected["downstream_actual_state"]["authoritative"] is True
     assert projected["evidence_refs"]
     assert projected["controller_health"]["status"] == "healthy"
+
+
+# ---------------------------------------------------------------------------
+# CONSULT-DEAD-LETTER-RECOVERY-AFTER-FIX-20261120: bounded automatic redrive
+# ---------------------------------------------------------------------------
+from services.consultation import workflow_executor as wf  # noqa: E402
+from services.consultation.workflow_state import (  # noqa: E402
+    AUTO_REDRIVE_MAX_PER_ITEM,
+    AUTO_REDRIVE_PER_TICK,
+    recovery_exhausted,
+)
+
+_AUTH = "panel_case_file: http_401:missing Bearer token"
+_ENSURE_T = "consultation agent ensure transport failed for persona-x"
+_ENSURE_F = "consultation agent ensure failed: persona owner or gateway unavailable/unsafe"
+
+
+def _dead(state: WorkflowStateStore, request_id: str, reason: str, *, replays: int = 0) -> None:
+    state.ensure_request(tenant_id=TENANT, request_id=request_id)
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    assert claim is not None and claim.request_id == request_id
+    state.block(claim, reason=reason, max_blocked_attempts=1, retry_after_seconds=0)
+    with state._connect() as c:
+        c.execute("UPDATE consultation_work_items SET replay_count=? WHERE request_id=?", (replays, request_id))
+
+
+def _recovery_env(monkeypatch, tmp_path, *, auth_ok, ensure_ok):
+    calls = {"auth": 0, "ensure": 0, "posts": [], "status": "in_progress"}
+
+    def auth(_config):
+        calls["auth"] += 1
+        if not auth_ok["v"]:
+            raise RuntimeError("http_401")
+
+    def ensure(_config, _provider, _rid):
+        calls["ensure"] += 1
+        if not ensure_ok["v"]:
+            raise RuntimeError("adapter down")
+
+    monkeypatch.setattr(wf, "_probe_case_file_credentials", auth)
+    monkeypatch.setattr(wf, "_probe_ensure_route", ensure)
+    monkeypatch.setattr(wf, "_api_get", lambda _c, path: {"status": calls["status"]})
+    monkeypatch.setattr(wf, "_api_post", lambda _c, path, body: calls["posts"].append((path, body)) or {})
+    wf._EXHAUSTION_RECORDED.clear()
+    config = ExecutorConfig(
+        api_url="http://x", tenant_id=TENANT, api_token="t", provider_url="http://p", provider_token="t",
+        provider_service_actor="a", handoff_sink_url="", handoff_token="", worker_id="w",
+        state_path=str(tmp_path / "s.sqlite3"))
+    return config, calls
+
+
+def test_hosted_shape_recovers_only_after_probes_pass_and_converges(tmp_path, monkeypatch):
+    auth_ok, ensure_ok = {"v": False}, {"v": False}
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok=auth_ok, ensure_ok=ensure_ok)
+    state = WorkflowStateStore(config.state_path)
+    ids = {
+        "pub": [f"consult-envelope-publication-{i}" for i in "abc"],
+        "mtg": ["mtg-1f38", "mtg-6edaf", "mtg-16d4"],
+        "old": ["mtg-0f7f"],
+    }
+    for rid in ids["pub"]:
+        _dead(state, rid, _AUTH)
+        with state._connect() as c:
+            c.execute("UPDATE consultation_work_items SET attempt_count=56 WHERE request_id=?", (rid,))
+    for rid in ids["mtg"]:
+        _dead(state, rid, _ENSURE_T)
+    _dead(state, ids["old"][0], _ENSURE_F)
+
+    # probes fail: nothing is redriven, every item stays dead_letter
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and len(out["probe_failed"]) == 2
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 7
+
+    auth_ok["v"] = ensure_ok["v"] = True
+    ticks, completed = 0, []
+    while state.counts(tenant_id=TENANT)["dead_letter"] and ticks < 10:
+        ticks += 1
+        before = dict(calls)
+        out = wf.recover_dead_letters(config=config, state=state, provider=None)
+        assert len(out["redriven"]) <= AUTO_REDRIVE_PER_TICK
+        assert calls["auth"] - before["auth"] <= 1 and calls["ensure"] - before["ensure"] <= 1
+        while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
+            state.complete(claim, memo_id="m-" + claim.request_id, handoff_id="h")
+            completed.append(claim.request_id)
+    assert ticks == 3  # 7 items, cap 3 per tick
+    assert sorted(completed) == sorted(sum(ids.values(), []))
+    assert state.counts(tenant_id=TENANT) == {"pending": 0, "leased": 0, "blocked": 0, "dead_letter": 0, "completed": 7}
+    # a completed item is never redriven again and no request was failed
+    assert wf.recover_dead_letters(config=config, state=state, provider=None)["redriven"] == []
+    assert calls["posts"] == []
+
+
+def test_budget_exhausted_item_stays_dead_letter_and_is_named_failed(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r-spent", _AUTH, replays=AUTO_REDRIVE_MAX_PER_ITEM)
+    _dead(state, "r-last", _AUTH, replays=AUTO_REDRIVE_MAX_PER_ITEM - 1)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == ["r-last"] and out["exhausted"] == ["r-spent"]
+    row = state.get(tenant_id=TENANT, request_id="r-spent")
+    assert row["status"] == "dead_letter" and "http_401" in row["last_error"] and recovery_exhausted(row)
+    assert ("/api/consult/meetings/r-spent/sync" in [p for p, _ in calls["posts"]])
+    # recorded once per process even over many ticks
+    n = len(calls["posts"])
+    wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert len(calls["posts"]) == n
+    # the last item redriven once more and failing again is exhausted too
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    state.block(claim, reason=_AUTH, max_blocked_attempts=1, retry_after_seconds=0)
+    assert recovery_exhausted(state.get(tenant_id=TENANT, request_id="r-last"))
+
+
+def test_non_recoverable_dead_letter_is_named_failed_within_one_tick(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    for rid, reason in (("a", "provider schema invalid"), ("b", "panel_case_file: http_500 boom"),
+                        ("c", "panel_case_file: http_404 not found")):
+        _dead(state, rid, reason)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and sorted(out["exhausted"]) == ["a", "b", "c"]
+    assert calls["auth"] == 0 and calls["ensure"] == 0
+    synced = [p for p, b in calls["posts"] if p.endswith("/sync") and b["request_status"] == "failed"]
+    assert len(synced) == 3
+    assert all(recovery_exhausted(state.get(tenant_id=TENANT, request_id=r)) for r in "abc")
+
+
+_WB = "http_error=403 Forbidden url=http://memory/api/memory/writebacks/learn-feedback"
+_MEMO = "http_error=409 Conflict url=http://api/api/consult/memos"
+
+
+def test_hosted_1431_shape_ends_redriven_or_named_failed(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    wb_ok = {"v": True}
+    probes = {"wb": 0}
+
+    def wb(_config):
+        probes["wb"] += 1
+        if not wb_ok["v"]:
+            raise RuntimeError("http_403")
+
+    monkeypatch.setattr(wf, "_probe_writeback_identity", wb)
+    state = WorkflowStateStore(config.state_path)
+    for i in "abc":
+        _dead(state, f"consult-envelope-publication-{i}", "caller_context_missing", replays=1)
+    _dead(state, "mtg-wb1", _WB, replays=1)
+    _dead(state, "mtg-wb2", _WB, replays=1)
+    _dead(state, "mtg-wb3", _WB, replays=0)
+    _dead(state, "mtg-memo1", _MEMO, replays=1)
+    _dead(state, "mtg-memo2", _MEMO, replays=0)
+    _dead(state, "mtg-roster", "roster identity refused", replays=0)
+
+    wb_ok["v"] = False
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert sorted(out["exhausted"]) == sorted(
+        [f"consult-envelope-publication-{i}" for i in "abc"] + ["mtg-roster"])
+    assert out["probe_failed"] and probes["wb"] == 1
+    assert sorted(out["redriven"]) == ["mtg-memo1", "mtg-memo2"]  # idempotent kind needs no probe
+
+    wb_ok["v"] = True
+    for _ in range(6):
+        wf.recover_dead_letters(config=config, state=state, provider=None)
+        while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
+            state.complete(claim, memo_id="m", handoff_id="h")
+    failed_ids = {b["request_status"] and p.split("/")[-2] for p, b in calls["posts"] if p.endswith("/sync")}
+    for row in state.list_items(tenant_id=TENANT, status="dead_letter"):
+        assert row["request_id"] in failed_ids  # no dead_letter without a failed request
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 4
+    assert state.counts(tenant_id=TENANT)["completed"] == 5
+
+
+def test_budget_survives_reason_change_between_redrives(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    monkeypatch.setattr(wf, "_probe_writeback_identity", lambda _c: None)
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r", _AUTH)
+    for reason in (_WB, _MEMO, _AUTH):
+        out = wf.recover_dead_letters(config=config, state=state, provider=None)
+        assert out["redriven"] == ["r"]
+        claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+        state.block(claim, reason=reason, max_blocked_attempts=1, retry_after_seconds=0)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and out["exhausted"] == ["r"]
+
+
+def test_completed_item_is_never_redriven_and_request_id_is_reused(tmp_path, monkeypatch):
+    config, _ = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r1", _ENSURE_T)
+    assert state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    assert claim.request_id == "r1"
+    state.complete(claim, memo_id="m", handoff_id="h")
+    assert not state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    assert [i["request_id"] for i in state.list_items(tenant_id=TENANT)] == ["r1"]
+
+
+def test_old_release_reads_the_table_unchanged(tmp_path):
+    import sqlite3
+    state = WorkflowStateStore(tmp_path / "s.sqlite3")
+    cols = [r[1] for r in sqlite3.connect(state.path).execute("PRAGMA table_info(consultation_work_items)")]
+    assert "replay_count" in cols and "recovery" not in " ".join(cols)  # budget rides the existing column
+    _dead(state, "r1", _AUTH)
+    assert state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    # the previous release's own replay path still reads and moves the same row
+    assert state.get(tenant_id=TENANT, request_id="r1")["status"] == "pending"
+
+
+# ---- CONSULTATION-MEMORY-READ-IDENTITY-20261120 ----------------------------
+def _read_double(tokens: dict[str, tuple[str, set[str]]]):
+    """Memory double enforcing services/memory/main.py _authorize_memory_read."""
+    read_roles = {"researcher", "operator", "admin", "system", "analyst", "consultation_session",
+                  "persona_memory_reader", "persona_session"}
+    seen: list[dict[str, Any]] = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            import urllib.parse as up
+            q = up.parse_qs(up.urlparse(self.path).query)
+            tok = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            ident = tokens.get(tok)
+            roles = [r for r in q.get("actor_roles", []) for r in r.split(",") if r]
+            actor = (q.get("actor_id") or [""])[0]
+            code = 200
+            if ident is None or not (ident[1] & read_roles):
+                code = 403
+            elif actor != ident[0] or not roles or not set(roles) <= ident[1]:
+                code = 403
+            seen.append({"code": code, "actor": actor, "roles": roles})
+            body = json.dumps({"hits": []} if code == 200 else {"detail": {"error": "unauthorized"}}).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_panel_case_file_composes_with_issued_read_identity(tmp_path, monkeypatch):
+    import time
+    from scripts.issue_dev_paper_principals import issue_environment
+    from services.knowledge import case_file as cf
+    from services.runtime_auth_inbound import _verify_jwt_hs256
+
+    key = "synthetic-dev-principal-unit-key-" * 2
+    now = int(time.time())
+    env = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+           "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}
+    import scripts.test_issue_dev_paper_principals as t
+    values = issue_environment(t.configured(), now=now)
+    claims = {n: _verify_jwt_hs256(values[n], secret=key, issuer="isolated-issuer",
+                                   audience="isolated-audience", now=now + 1)
+              for n in ("CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN")}
+    tokens = {values[n]: (c["sub"], set(c["roles"])) for n, c in claims.items()}
+    srv, seen = _read_double(tokens)
+    try:
+        read_file = tmp_path / "read"
+        read_file.write_text(values["CONSULTATION_MEMORY_READ_TOKEN"])
+        monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
+        monkeypatch.setenv("PANTHEON_MEMORY_READ_ACTOR_ID", "pantheon-dev-consultation-memory-reader")
+        monkeypatch.setenv("PANTHEON_MEMORY_READ_ACTOR_ROLES", "consultation_session")
+        for k in ("PANTHEON_MEMORY_ACTOR_ID", "PANTHEON_MEMORY_ACTOR_ROLES"):
+            monkeypatch.delenv(k, raising=False)  # hosted-shaped: legacy vars empty
+        token, actor, roles = wf.memory_read_identity()
+        assert actor and roles == ("consultation_session",)
+        owners = cf.Owners(memory=cf.OwnerEndpoint(f"http://127.0.0.1:{srv.server_port}", token))
+        subject = cf.Subject(decision_type="consult", persona_id="persona-a", tenant_id="tenant-dev",
+                             strategy_family="fam-1", member_artifact_refs=("r1",))
+        caller = cf.Caller(actor_id=actor, actor_roles=roles, session_id="consult-x", persona_id="")
+        case = cf.compose_case_file(subject, caller, owners)
+        assert seen and all(s["code"] == 200 for s in seen)
+        assert not any("http_" in str(u) for g in case["groups"].values() for u in g["unavailable"]), case["groups"]
+        # The write credential is refused as a reader (no 403-free path through it).
+        bad = cf.Owners(memory=cf.OwnerEndpoint(f"http://127.0.0.1:{srv.server_port}",
+                                                values["CONSULTATION_MEMORY_WRITE_TOKEN"]))
+        seen.clear()
+        cf.compose_case_file(subject, caller, bad)
+        assert seen and all(s["code"] == 403 for s in seen)
+        assert values["CONSULTATION_MEMORY_READ_TOKEN"] not in json.dumps(case)
+    finally:
+        srv.shutdown()
+
+
+def test_memory_read_identity_never_empty_roles(monkeypatch):
+    monkeypatch.delenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "")
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", raising=False)
+    _t, actor, roles = wf.memory_read_identity()
+    assert actor and roles

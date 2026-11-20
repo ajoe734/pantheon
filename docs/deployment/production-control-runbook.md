@@ -99,10 +99,22 @@ The control compose packages the same existing product owners and Agora request 
 
 ## 5. Hosted drills (not executed; `external_wait`)
 
-- Backup/restore drill: restore latest snapshot to a scratch disk, record measured RPO against `PROD_RPO_SECONDS` and RTO against `PROD_RTO_SECONDS`.
+- Backup/restore drill: `prod_ops.sh restore_drill` (below) measures RPO against `PROD_RPO_SECONDS` and RTO against `PROD_RTO_SECONDS`.
+- Snapshot schedule (run on an operator host with `PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_RPO_SECONDS`, active gcloud project = `PROD_GCP_PROJECT_ID`): `scripts/deploy/prod_ops.sh snapshot_schedule ensure` creates (if absent) policy `pantheon-prod-data-hourly` (hourly, 3-day retention, keep auto-snapshots on disk delete, storage location = disk region, labels `environment=production managed_by=pantheon`) and attaches it to the data disk only; `check` is read-only and prints one JSON line (`policy_present attached schedule retention_days newest_snapshot newest_age_seconds max_age_seconds`), exit 1 if the newest auto-snapshot is older than RPO + `PROD_SNAPSHOT_GRACE_SECONDS` (default 900), absent or the policy is unattached. Never deletes snapshots; never touches the boot disk. Budget: hourly incrementals, 72 kept; ~200 MB used, so storage is bounded by the 3-day window (initial full copy plus 72 deltas of observed churn).
+- Drill: on the control VM, `PROD_VM_NAME PROD_DATA_MOUNT PROD_RTO_SECONDS PROD_POSTGRES_USER PROD_POSTGRES_DB PANTHEON_POSTGRES_IMAGE` plus the above, `scripts/deploy/prod_ops.sh restore_drill`. Newest auto-snapshot to scratch disk `pantheon-prod-restore-drill-<UTC>`, attached and mounted read-only, postgres/owner stores copied to a boot-disk temp dir, throwaway digest-pinned postgres (no ports, own internal network). Proof as section 4: catalog hash and table set vs the live DB read at drill end (a difference means a migration landed after the snapshot and fails), row-count drift reported (live churns), owner-store manifest of `bff runtime governance product`. Output: one JSON line `{status snapshot rpo_seconds rto_seconds failed_stage checks cleanup}`; exit 0 ok, 2 over RPO/RTO, 3 stage failed. A trap always removes container, network, temp copy, mount and scratch disk and reads each back (`cleanup`); nothing is written under `PROD_DATA_MOUNT`.
 - VM replacement drill: replace the control VM from the template, attach the existing data disk, verify identities.
 - Two non-capital production-shaped deploy/rollback drills, each with rollback under 120 s.
 - Protected exact-release publication, then a 30-minute observation window. Thresholds come from measured policy approved by the named owners; no green SLO is assumed here.
+
+## 5a. Protected drill rollback (`operation=rollback`) and per-dispatch journal
+
+Source-only contract; hosted execution still needs the genuine `production` Environment approval.
+
+**Journal per dispatch.** `prod_atomic_switch.sh` renames an existing `state/journal/<release_id>` to `<release_id>.archived-<UTC timestamp>` before any baseline check or marker write, so rollback reads only the current dispatch. A refusal before the new journal is written renames the archive back. The newest 10 archives per release id are kept (about 50 KB each).
+
+**Dispatch** (`Pantheon Production Release`): `operation=rollback`, `release_id` = the currently ACTIVE release; other release inputs are ignored. Still required: `PRODUCTION_RELEASE_ENABLED=true`, protected `production` Environment approval by a permitted reviewer (`prod_preflight.py rollback`), WIF auth and IAP transport. Skipped: FE retrieval, snapshot, bootstrap, pre-pull, migrate. This is application rollback, not data recovery.
+
+`scripts/deploy/prod_rollback.sh --protected` refuses without changing anything: exit 1 `MISSING_INPUT`; 10 `ROLLBACK_RELEASE_NOT_ACTIVE` (not the release in `state/active_manifest.json`); 11 `ROLLBACK_NO_JOURNAL`; 12 `ROLLBACK_BOOTSTRAP_JOURNAL` (would remove Production); 13 `ROLLBACK_NO_BASELINE` (no retained healthy baseline, or its FE dir/upstream is gone); 14 `ROLLBACK_NO_MANIFEST`. Otherwise it runs `prod_rollback.sh` (verifies via `baseline_health`), then `prod_ops.sh verify_rollback` (owners/singleton at baseline digest, paper-worker credential check) and prints one secret-free JSON line `{"status","from_release","to_release","elapsed_ms","rollback_budget_seconds","exit_code"}`. Exit: 0 ok, 3 restoration failed, 6 over the 120 s budget, 7 post-rollback verification failed.
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 

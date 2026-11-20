@@ -1,0 +1,65 @@
+{
+  "task_id": "BFF-PERSONA-INTENT-CONTENT-20261120",
+  "title": "Persona intent audit returns what each session proposed and decided; only private memory stays hidden",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "problem_register_ref": "docs/operations/problem-register.md#RC6-WP6.1",
+  "design_authority": [
+    "docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md#12.2",
+    "execute-plans:.lovable/spec/management-2026-05-20/Pantheon_Management_Lovable_Spec_2026-05-20.md#6.7"
+  ],
+  "owned_layer": "BFF persona intent projection (_persona_intent_trace_item, _persona_intent_trainer_item, _persona_intent_agora_item, _persona_intent_redaction, _persona_intent_filter_items, _persona_intent_summary) and GET /bff/management/persona-intent kind filter",
+  "not_changed": [
+    "consultation service persistent storage",
+    "persona service persistent storage",
+    "memory service private bank writes"
+  ],
+  "reproduction_2026_11_20": {
+    "source": "Coordinator hosted read-only sweep of 67 Management pages on 2026-11-20 (01:00Z-01:30Z)",
+    "hosted_bff_commit": "fb8ed951d",
+    "development_host_artifact_dir": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120",
+    "cited_files": [
+      "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120/full/text/persona-intent.txt",
+      "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120/full/analysis.json",
+      "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120/full/results.json"
+    ],
+    "observed_defects": [
+      "All 14 items returned by GET /bff/management/persona-intent were marked redacted with policy 'management_persona_intent_public_summary'",
+      "Every item had userIntentSummary / summary identical to title, personaInterpretation empty ('—'), proposedAction empty ('—'), and toolsUsed empty ('[]')",
+      "Agora consultation 'agora_session:consult-envelope-publication-98f3c36b851627e3814268877ddb33db' ('Risk review of paper envelope publication of pool v3 (live membership changed)', status 'in_progress' since 2026-11-19T10:06:11Z, persona 'persona-ee7112a829d38b9135ac') was listed in the default trade intent audit list and listed only its own persona ID as consultedPersonas",
+      "Agora deliberative meetings (e.g. 'agora_session:mtg-16d42d0b44dfeab5', intent 'persona_meeting') and teaching advisories ('creq-teach-*') were also mixed into the default trade intent list without a kind separator"
+    ]
+  },
+  "acceptance_verification": {
+    "ac1_reproduce_first": "Cited coordinator hosted reads 2026-11-20 (BFF fb8ed951d, mgmt-readability-sweep-20261120) and reproduced exact consult-envelope-publication-98f3c36b851627e3814268877ddb33db and mtg-16d42d0b44dfeab5 shapes in test_persona_intent_reproduces_hosted_20261120_sweep_and_separates_kinds_and_strips_private_memory.",
+    "ac2_sd_persona_meetings_12_2_facts_and_private_boundary": "Each item returns topic, outcome, decision, proposed_action, tools_used (and tool_path), and consulted_personas; _persona_intent_strip_private_content recursively removes all private memory and private interpretation fields and scope:persona_private items before projection, verified by test assertion that secret values and private field keys are absent.",
+    "ac3_kind_classification_and_default_filter": "Each item carries kind in {'trade_intent', 'consultation', 'meeting', 'trainer'}; GET /bff/management/persona-intent accepts kind query parameter and defaults to trade_intent when kind and source_type are omitted.",
+    "ac4_withheld_field_reason_codes": "Withheld fields carry structured reason_code entries ('private_memory_withheld', 'private_interpretation_withheld', 'raw_control_diff_withheld') in item.withheld_fields, item.withheld_reason_codes, and item.redaction; 'management_persona_intent_public_summary' is replaced by 'sd_persona_meetings_12_2_private_memory_boundary'.",
+    "ac5_persona_display_names_next_to_ids": "Items carry persona_display_name / persona_name / persona_label next to persona_id, plus personas, persona_display_names, and consulted_personas entries carrying {'id', 'persona_id', 'name', 'display_name'}."
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_router.py -k test_bff_management_persona_intent",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -k 'not test_execute_plans_final_seeded_detail_paths_use_read_model_dtos'",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+      ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check"
+    ],
+    "results": {
+      "test_bff_b3_persona_intent.py": "7 passed in 2.59s",
+      "test_persona_router.py::test_bff_management_persona_intent": "1 passed",
+      "test_execute_plans_final_live_wiring_contract.py (non-exempt)": "6 passed, 1 skipped",
+      "test_bff_persona_provisioning_baseline_500.py": "28 passed",
+      "ci_test_inventory_check": "test inventory ok"
+    }
+  },
+  "residual_findings": [
+    {
+      "finding": "services/control-plane/bff/tests/test_bff_b3_persona_intent.py::test_persona_intent_real_domain_consultation_port_store_fallback was previously listed as failing in docs/operations/ci-test-inventory.json and now passes (7/7 pass in test_bff_b3_persona_intent.py).",
+      "register_class": "RC2 (CI-EVERY-TEST-FILE-RUNS-20261119 exemption cleanup)",
+      "disposition": "docs/operations/ci-test-inventory.json is outside this task's artifact contract; recorded for the BFF/CI inventory coordinator to remove the exemption entry."
+    }
+  ],
+  "hosted_behavior_claimed": false,
+  "delivery_state": "in_review"
+}

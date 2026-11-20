@@ -43,9 +43,17 @@ from .provider import (
     QualifiedContribution,
 )
 from .workflow_state import (
+    AUTO_REDRIVE_MAX_PER_ITEM,
+    AUTO_REDRIVE_PER_TICK,
+    REDRIVE_AUTH,
+    REDRIVE_ENSURE,
     StaleWorkflowClaim,
     WorkflowClaim,
     WorkflowStateStore,
+    recoverable_kind,
+    REDRIVE_IDEMPOTENT,
+    REDRIVE_WRITEBACK,
+    recovery_exhausted,
 )
 
 
@@ -827,7 +835,7 @@ def _compose_panel_case_file(
     owners = decision_case.Owners.from_env()
     if config.memory_url:
         owners = replace(owners, memory=decision_case.OwnerEndpoint(
-            config.memory_url, _memory_headers().get("Authorization", "").removeprefix("Bearer ")))
+            config.memory_url, memory_read_identity()[0]))
     persona = str(request["from_persona_id"])
     panel = request["metadata"]["panel"]
     canary = "paper_canary_candidacy" in (panel.get("touches") or [])
@@ -858,10 +866,17 @@ def _compose_panel_case_file(
             if entry.get("owner_tenant", entry.get("tenant_id")) not in (config.tenant_id, "__builtin__"):
                 raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
             families.setdefault(str(entry["strategy_id"]), []).append(entry)
+        if os.getenv(_READ_FILE_ENV, "").strip():
+            _tok, caller_actor, caller_roles = memory_read_identity()
+        else:
+            # Legacy shared credential: explicit caller context only, never defaulted.
+            caller_actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip()
+            caller_roles = tuple(
+                x.strip() for x in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "").split(",")
+                if x.strip())
         caller = decision_case.Caller(
-            actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip(),
-            actor_roles=tuple(x.strip() for x in os.getenv(
-                "PANTHEON_MEMORY_ACTOR_ROLES", "").split(",") if x.strip()),
+            actor_id=caller_actor,
+            actor_roles=caller_roles,
             session_id=f"consult-{request['request_id']}",
             # Service caller: the shared file may NEVER include private memory.
             persona_id="")
@@ -1126,6 +1141,39 @@ def _memory_headers() -> dict[str, str]:
             default_token="",
         ).headers(),
     }
+
+
+_READ_FILE_ENV = "CONSULTATION_MEMORY_READ_TOKEN_FILE"
+_READ_ACTOR_DEFAULT = "pantheon-dev-consultation-memory-reader"
+
+
+def memory_read_identity() -> tuple[str, str, tuple[str, ...]]:
+    """(bearer token, actor_id, actor_roles) for memory reads; roles never empty.
+
+    The issued read principal wins when its file is configured: actor id and
+    roles then describe that credential (memory-svc requires actor_id to equal
+    the token identity and roles to be a subset of the token roles). Without it
+    the legacy shared credential and PANTHEON_MEMORY_ACTOR_* apply. The token is
+    never logged or returned in any error text.
+    """
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    def _csv(raw: str) -> tuple[str, ...]:
+        return tuple(x.strip() for x in raw.split(",") if x.strip())
+
+    if os.getenv(_READ_FILE_ENV, "").strip():
+        auth = resolve_runtime_manager_auth(
+            token_env_key="CONSULTATION_MEMORY_READ_TOKEN",
+            token_file_env_key=_READ_FILE_ENV, default_token="")
+        actor = os.getenv("PANTHEON_MEMORY_READ_ACTOR_ID", "").strip() or _READ_ACTOR_DEFAULT
+        roles = _csv(os.getenv("PANTHEON_MEMORY_READ_ACTOR_ROLES", "")) or ("consultation_session",)
+        return auth.token, actor, roles
+    auth = resolve_runtime_manager_auth(
+        token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE", default_token="")
+    actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip() or "consultation-svc"
+    roles = _csv(os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "")) or ("consultation_session",)
+    return auth.token, actor, roles
 
 
 def _write_panel_memory(
@@ -1626,22 +1674,38 @@ class _HttpMeetingStoreProxy:
         )
 
     def put_memo(self, memo: Any) -> dict[str, Any]:
-        submitted = _api_post(
-            self.config,
-            "/api/consult/memos",
-            {
-                "request_id": memo.request_id,
-                "memo_type": memo.memo_type.value,
-                "author_type": memo.author_type.value,
-                "author_ref": memo.author_ref,
-                "summary": memo.summary,
-                "findings": [f.model_dump(mode="json") for f in memo.findings],
-                "recommendation": memo.recommendation.value,
-                "confidence": memo.confidence,
-                "trace_id": memo.trace_id,
-                "idempotency_key": memo.memo_id,
-            },
-        )
+        payload = {
+            "request_id": memo.request_id,
+            "memo_type": memo.memo_type.value,
+            "author_type": memo.author_type.value,
+            "author_ref": memo.author_ref,
+            "summary": memo.summary,
+            "findings": [f.model_dump(mode="json") for f in memo.findings],
+            "recommendation": memo.recommendation.value,
+            "confidence": memo.confidence,
+            "trace_id": memo.trace_id,
+            "idempotency_key": memo.memo_id,
+        }
+        try:
+            submitted = _api_post(self.config, "/api/consult/memos", payload)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 409:
+                raise
+            # A retried step re-synthesized different text under the same stable key.
+            # The memo already recorded for this request is the record: reuse, never re-create.
+            query = urllib.parse.urlencode({"request_id": memo.request_id})
+            existing = next(
+                (
+                    row for row in (_api_get(self.config, f"/api/consult/memos?{query}") or [])
+                    if isinstance(row, Mapping)
+                    and row.get("memo_type") == payload["memo_type"]
+                    and row.get("author_ref") == payload["author_ref"]
+                ),
+                None,
+            )
+            if existing is None or not existing.get("memo_id"):
+                raise
+            submitted = existing
         memo_id = str(submitted["memo_id"])
         published = _api_post(
             self.config,
@@ -1733,6 +1797,178 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
+# Request ids whose exhausted recovery was already recorded on the request.
+_EXHAUSTION_RECORDED: set[tuple[str, str]] = set()
+
+
+def _probe_case_file_credentials(config: ExecutorConfig) -> None:
+    """Persona and registry owner reads with the executor's own credentials.
+
+    A 404 on the probe id is an answer; 401/403, 5xx or no transport is not.
+    """
+    from dataclasses import replace
+
+    owners = decision_case.Owners.from_env()
+    if config.memory_url:
+        owners = replace(owners, memory=decision_case.OwnerEndpoint(
+            config.memory_url, memory_read_identity()[0]))
+    for endpoint, path in (
+        (owners.pool, "/api/personas/consult-redrive-probe/strategy-pool"),
+        (owners.registry, "/api/registry/entries/consult-redrive-probe"),
+    ):
+        try:
+            decision_case.http_json(endpoint, path, tenant_id=config.tenant_id)
+        except decision_case.OwnerUnavailable as exc:
+            if exc.reason.startswith(("http_404", "http_400", "http_422")):
+                continue
+            raise
+
+
+def _probe_writeback_identity(config: ExecutorConfig) -> None:
+    """Authenticate to the memory writeback with the consultation write identity.
+
+    An intentionally empty payload is rejected by validation (400/422) after
+    authentication, so nothing is written; 401/403, 5xx or no transport fails.
+    """
+    if not config.memory_url:
+        raise WorkflowBlocked("memory writeback address is not configured")
+    try:
+        _json_request(
+            config.memory_url + "/api/memory/writebacks/learn-feedback",
+            method="POST",
+            timeout_seconds=config.timeout_seconds,
+            headers=_memory_headers(),
+            payload={},
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 404, 409, 422):
+            return
+        raise
+
+
+def _request_persona_ids(config: ExecutorConfig, request_id: str) -> list[str]:
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    metadata = (request.get("metadata") or {}) if isinstance(request, Mapping) else {}
+    found: list[str] = []
+    panel = metadata.get("panel") or {}
+    meeting = metadata.get("meeting") or {}
+    for group in (panel.get("participants"), meeting.get("participants")):
+        for item in group or []:
+            if isinstance(item, Mapping):
+                value = item.get("persona_id") or item.get("id")
+            else:
+                value = item
+            if value:
+                found.append(str(value))
+    if not found:
+        meeting_row = _api_get(config, f"/api/consult/meetings/{request_id}")
+        for item in (meeting_row or {}).get("participants") or []:
+            value = item.get("persona_id") or item.get("id") if isinstance(item, Mapping) else item
+            if value:
+                found.append(str(value))
+    if not found and isinstance(request, Mapping) and request.get("from_persona_id"):
+        found.append(str(request["from_persona_id"]))
+    return list(dict.fromkeys(found))[:1]
+
+
+def _probe_ensure_route(
+    config: ExecutorConfig, provider: HttpContributionProvider, request_id: str
+) -> None:
+    persona_ids = _request_persona_ids(config, request_id)
+    if not persona_ids:
+        raise WorkflowBlocked("ensure probe has no persona to reconcile")
+    provider.ensure_agents(tenant_id=config.tenant_id, persona_ids=persona_ids)
+
+
+def _record_recovery_exhausted(
+    config: ExecutorConfig, row: Mapping[str, Any]
+) -> None:
+    """Name the failure on the request itself so readers stop treating it as pending."""
+    request_id = str(row["request_id"])
+    key = (config.tenant_id, request_id)
+    if key in _EXHAUSTION_RECORDED:
+        return
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    if isinstance(request, Mapping) and str(request.get("status") or "") not in (
+        "failed", "published", "cancelled"
+    ):
+        reason = str(row.get("last_error") or "")[:300]
+        try:
+            _api_post(config, f"/api/consult/requests/{request_id}/events", {
+                "request_id": request_id, "event_type": "workflow_recovery_exhausted",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": {"reason": reason, "redrive_count": int(row.get("replay_count") or 0)},
+                "idempotency_key": f"{request_id}:recovery-exhausted"})
+        except Exception:  # the status below is the contract; the event is advisory
+            pass
+        _api_post(config, f"/api/consult/meetings/{request_id}/sync", {
+            "request_status": "failed", "completed_at": _utc_now()})
+    _EXHAUSTION_RECORDED.add(key)
+
+
+def recover_dead_letters(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+) -> dict[str, Any]:
+    """Redrive dead letters whose cause is fixed, bounded, once probes answer.
+
+    Per tick: at most ``AUTO_REDRIVE_PER_TICK`` items redriven, one probe per
+    reason class (one persona + one registry read for auth; one adapter ensure
+    call for ensure), nothing when there is no recoverable dead letter. An item
+    redriven ``AUTO_REDRIVE_MAX_PER_ITEM`` times stays dead_letter with its
+    reason and is named failed on its request.
+    """
+    summary: dict[str, Any] = {"redriven": [], "exhausted": [], "probe_failed": [], "errors": []}
+    rows = state.list_items(tenant_id=config.tenant_id, status="dead_letter")
+    candidates: dict[str, list[dict[str, Any]]] = {
+        REDRIVE_AUTH: [], REDRIVE_ENSURE: [], REDRIVE_WRITEBACK: [], REDRIVE_IDEMPOTENT: []}
+    for row in rows:
+        kind = recoverable_kind(row.get("last_error"))
+        if recovery_exhausted(row):
+            try:
+                _record_recovery_exhausted(config, row)
+                summary["exhausted"].append(str(row["request_id"]))
+            except Exception as exc:
+                summary["errors"].append(
+                    f"request_id={row['request_id']} exhausted_record={_error_detail(exc)}")
+        elif kind is not None:
+            candidates[kind].append(row)
+    healthy: dict[str, bool] = {}
+    for kind, items in candidates.items():
+        if not items:
+            continue
+        try:
+            if kind == REDRIVE_AUTH:
+                _probe_case_file_credentials(config)
+            elif kind == REDRIVE_WRITEBACK:
+                _probe_writeback_identity(config)
+            elif kind == REDRIVE_IDEMPOTENT:
+                pass  # retry is idempotent by recorded step keys; nothing to probe
+            else:
+                _probe_ensure_route(config, provider, str(items[0]["request_id"]))
+            healthy[kind] = True
+        except Exception as exc:
+            healthy[kind] = False
+            summary["probe_failed"].append(f"{kind}: {_error_detail(exc)}"[:300])
+    budget = AUTO_REDRIVE_PER_TICK
+    for kind, items in candidates.items():
+        if not healthy.get(kind):
+            continue
+        for row in items:
+            if budget <= 0:
+                break
+            if state.redrive_dead_letter(
+                tenant_id=config.tenant_id,
+                request_id=str(row["request_id"]),
+                max_redrives=AUTO_REDRIVE_MAX_PER_ITEM,
+            ):
+                summary["redriven"].append(str(row["request_id"]))
+                budget -= 1
+    return summary
+
+
 def run_tick(
     *,
     config: ExecutorConfig | None = None,
@@ -1769,6 +2005,13 @@ def run_tick(
             )
     except Exception as exc:  # discovery failure must not hide durable backlog
         errors.append(f"discovery_error={_error_detail(exc)}")
+
+    recovery: dict[str, Any] = {}
+    try:
+        recovery = recover_dead_letters(config=config, state=state, provider=provider)
+        errors.extend(recovery.get("errors") or [])
+    except Exception as exc:  # recovery must never block the normal queue
+        errors.append(f"dead_letter_recovery_error={_error_detail(exc)}")
 
     for _ in range(config.batch_size):
         claim = state.claim_next(
@@ -1849,6 +2092,7 @@ def run_tick(
         ),
         "errors": errors,
         "outcomes": outcomes,
+        "recovery": {k: v for k, v in recovery.items() if k != "errors"},
         "state_counts": counts,
     }
 

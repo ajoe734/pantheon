@@ -101,7 +101,10 @@ from services.control_plane.cron.workflows import (  # noqa: E402
 
 from integrations.openclaw.adapter.cron_transport import force_run_job  # noqa: E402
 from integrations.openclaw.persona_ooda_runtime import (  # noqa: E402
+    ALWAYS_ELIDED_KEYS,
+    PACKET_LIST_BOUND,
     PersonaOodaTurn,
+    bound_observe,
     build_ooda_prompt,
     run_persona_ooda_turn,
 )
@@ -193,42 +196,10 @@ def resolve_ooda_packet_store_path() -> Path:
 
 # --- Bounded packet store (PERSONA-OODA-PACKET-STORE-BOUNDED-20261117) -------
 # A persisted packet never embeds an unbounded series; the live observe bundle
-# handed to the turn is untouched because only the persisted copy is reduced.
-PACKET_LIST_BOUND = 64
-ALWAYS_ELIDED_KEYS = frozenset({"quarter_equity_observations"})
+# handed to the turn is bounded by the same shared rule (persona_ooda_runtime.bound_observe).
 DEFAULT_RETENTION_DAYS = 30
 DEFAULT_MAX_RECORDS = 1000
 _INDEX_SUFFIX = ".index"
-
-
-def _digest(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-
-
-def _elided(value: list[Any], source_ref: str | None) -> dict[str, Any]:
-    return {"elided": True, "length": len(value), "sha256": _digest(value), "source_ref": source_ref}
-
-
-def _bound_value(value: Any, source_ref: str | None) -> Any:
-    if isinstance(value, dict):
-        runtime_id = value.get("runtime_id")
-        ref = f"telemetry://runtime-summaries/{runtime_id}" if isinstance(runtime_id, str) and runtime_id else source_ref
-        out: dict[str, Any] = {}
-        for key, item in value.items():
-            if isinstance(item, list) and (key in ALWAYS_ELIDED_KEYS or len(item) > PACKET_LIST_BOUND):
-                out[f"{key}_elided"] = _elided(item, ref)
-            else:
-                out[key] = _bound_value(item, ref)
-        return out
-    if isinstance(value, list):
-        return [
-            _elided(item, source_ref) if isinstance(item, list) and len(item) > PACKET_LIST_BOUND
-            else _bound_value(item, source_ref)
-            for item in value
-        ]
-    return value
 
 
 def bound_packet_payload(packet_dict: Mapping[str, Any]) -> dict[str, Any]:
@@ -240,7 +211,7 @@ def bound_packet_payload(packet_dict: Mapping[str, Any]) -> dict[str, Any]:
     out = json.loads(json.dumps(packet_dict, ensure_ascii=False))
     cycle = out.get("persona_cycle")
     if isinstance(cycle, dict) and isinstance(cycle.get("observe_bundle"), dict):
-        cycle["observe_bundle"] = _bound_value(cycle["observe_bundle"], None)
+        cycle["observe_bundle"] = bound_observe(cycle["observe_bundle"])
     return out
 
 

@@ -1036,7 +1036,7 @@ def _run_preflight_script(
     def urlopen(request, *, timeout):
         parsed = urllib.parse.urlparse(request.full_url)
         assert parsed.hostname == "preflight.test", "tests must never reach a service/provider"
-        assert timeout == 3  # Keep the production read timeout bounded.
+        assert 3 <= timeout <= 10  # Bounded per call; the preflight retries a warming-up source-ingest.
         assert request.get_method() == "GET"
         if parsed.path.endswith("/snapshots/latest"):
             status, payload = (404, {}) if snapshot_json is None and http_status == 200 else (http_status, snapshot_json)
@@ -1063,6 +1063,7 @@ def _run_preflight_script(
             "PANTHEON_REFRESH_PREFLIGHT_NOW": now_dt.isoformat(),
             "FINMIND_SOURCE_RECORDS_PATH": records_file.name if source_records is not None else "",
             "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+            "PANTHEON_PREFLIGHT_API_PAUSE_SECONDS": "0",
         }
         output = io.StringIO()
         with patch.dict(os.environ, env), patch.object(sys, "argv", ["-", str(force)]), \
@@ -3420,11 +3421,13 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
         )
         record = {'source_id': f'{prefix}:{dataset}:recorded',
                   'metadata': {'dataset': dataset, 'schema_hash': profile['schema_hash'],
-                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0]},
+                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0],
+                               'provider_listed_count': 1000},
                   'provenance': {'dataset': dataset, 'source_ingest_run_id': 'chip-run'}}
         receipts = {'receipts': [{'connector_id': cid, 'status': 'completed', 'typed_failure': None,
                                  'source_timestamp': '2026-11-13T10:00:00Z', 'source_timestamp_status': 'valid',
-                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run'}]}
+                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run',
+                                 'normalized_count': 1000}]}
         (tmp_path / 'receipts.json').write_text(json.dumps(receipts))
         (tmp_path / 'projection.json').write_text('{}')
         cases = [({}, {}, True), ({'dataset': 'other'}, {}, False), ({'schema_hash': 'wrong'}, {}, False),
@@ -3570,6 +3573,7 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
                 "finished_at": "2026-11-18T23:53:58Z",
                 "created_at": "2026-11-18T23:57:32Z",
                 "ingest_run_id": "ingest-2f56b4efe47f",
+                "normalized_count": 1310,
             }
         ]
     }
@@ -3608,6 +3612,7 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
                             "dataset": "tw_margin_short_balance",
                             "available_time": "",
                         },
+                        "provider_listed_count": 1310,
                         "source_ingest_run_id": "ingest-2f56b4efe47f",
                     },
                     "provenance": {

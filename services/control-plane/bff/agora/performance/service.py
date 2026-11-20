@@ -1472,6 +1472,40 @@ def pm12_performance_attribution_rows(
     return rows
 
 
+def pm12_attribution_test_scope_hiding(
+    facts: List[Dict[str, Any]],
+    personas_by_id: Mapping[str, Any],
+) -> tuple:
+    """Split facts of test-scoped personas out of ``facts``.
+
+    Uses the persona records already read for this request (no extra read).
+    Returns ``(kept_facts, hidden_persona_count, hidden_strategy_count)``; a
+    strategy counts as hidden only when every persona it appears with is
+    test-scoped.
+    """
+    from services.control_plane.bff.personas.fleet_classification import (
+        DATA_SCOPE_TEST,
+        classify_persona_data_scope,
+    )
+
+    test_ids = {
+        str(pid)
+        for pid, record in personas_by_id.items()
+        if isinstance(record, Mapping)
+        and classify_persona_data_scope(record)[0] == DATA_SCOPE_TEST
+    }
+    if not test_ids:
+        return facts, 0, 0
+    kept = [f for f in facts if str(f.get("persona_id") or "") not in test_ids]
+    hidden = [f for f in facts if str(f.get("persona_id") or "") in test_ids]
+    hidden_personas = {str(f.get("persona_id")) for f in hidden}
+    kept_strategies = {str(f.get("strategy_id") or "") for f in kept}
+    hidden_strategies = {
+        str(f.get("strategy_id") or "") for f in hidden if str(f.get("strategy_id") or "")
+    } - kept_strategies
+    return kept, len(hidden_personas), len(hidden_strategies)
+
+
 def pm12_performance_attribution_response(
     *,
     dimensions: List[str],
@@ -1498,6 +1532,7 @@ def pm12_performance_attribution_response(
     stage: Optional[str] = None,
     as_of: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    include_test_personas: bool = False,
     utc_now: Optional[Callable[[], str]] = None,
     read_store: Optional[Any] = None,
     sources_fn: Optional[Callable[[Optional[str]], Dict[str, Any]]] = None,
@@ -1525,6 +1560,16 @@ def pm12_performance_attribution_response(
         retired_runtime_ids = pm12_attribution_retired_runtime_ids_without_data(sources)
         if retired_runtime_ids:
             facts = [fact for fact in facts if fact.get("runtime_id") not in retired_runtime_ids]
+
+    # Test-scoped personas (classify_persona_data_scope) are hidden by default,
+    # never silently: the counts are reported in summary and meta, and
+    # include_test_personas=true returns them.
+    hidden_test_persona_count = 0
+    hidden_test_strategy_count = 0
+    if not include_test_personas:
+        facts, hidden_test_persona_count, hidden_test_strategy_count = (
+            pm12_attribution_test_scope_hiding(facts, sources["personas_by_id"])
+        )
 
     # ``period`` is deliberately not passed: every fact carries the applied
     # period, so comparing it with itself would filter nothing while implying
@@ -1640,6 +1685,9 @@ def pm12_performance_attribution_response(
         "instrument_regret": learning["instrument_regret"],
         "margin_use": learning["margin_use"],
         "instrument_learning": learning,
+        "hidden_test_persona_count": hidden_test_persona_count,
+        "hidden_test_strategy_count": hidden_test_strategy_count,
+        "include_test_personas": bool(include_test_personas),
     }
     data = {
         "id": data_id,
@@ -1670,5 +1718,7 @@ def pm12_performance_attribution_response(
             "period": period_scope,
             "dimensions": dimensions,
             "policy": "read_only_performance_attribution",
+            "hidden_test_persona_count": hidden_test_persona_count,
+            "hidden_test_strategy_count": hidden_test_strategy_count,
         },
     }

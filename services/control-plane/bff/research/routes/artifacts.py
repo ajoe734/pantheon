@@ -13,6 +13,7 @@ from .common import (
     _signature,
     _signature_query,
 )
+from services.control_plane.bff.core.display_names import DisplayNameResolver, current_resolver
 from ..service import ResearchNotFoundError, ResearchValidationError
 
 try:
@@ -39,6 +40,35 @@ def _validate_artifact_status(ctx: ResearchRouteContext, value: Optional[str]) -
 
 
 
+
+
+def _annotate_artifact_names(names: DisplayNameResolver, row: Any) -> Any:
+    """Add strategy/persona display names; registry rows name the artifact by its strategy id."""
+    if not isinstance(row, dict):
+        return row
+    names.annotate(row, strategy_keys=())
+    strategy_id = row.get("strategy_id") or (
+        row.get("name") if row.get("source_kind") == "registry" else None
+    )
+    if strategy_id:
+        label, missing = names.strategy(strategy_id)
+        row.setdefault("strategy_display_name", label)
+        if missing:
+            row.setdefault("strategy_name_missing", True)
+    return row
+
+
+def _annotate_artifact_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    names = current_resolver()
+    seen: set[int] = set()
+    for key in ("items", "data"):
+        value = payload.get(key)
+        rows = value if isinstance(value, list) else [value]
+        for row in rows:
+            if isinstance(row, dict) and id(row) not in seen:
+                seen.add(id(row))
+                _annotate_artifact_names(names, row)
+    return payload
 
 
 def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
@@ -119,10 +149,10 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
     ) -> Dict[str, Any]:
         ctx.require_read_role(ctx.extract_identity(authorization))
         try:
-            return ctx.service.list_artifact_catalog(
+            return _annotate_artifact_payload(ctx.service.list_artifact_catalog(
                 page_token=page_token,
                 page_size=page_size,
-            )
+            ))
         except (ResearchNotFoundError, ResearchValidationError) as exc:
             ctx.raise_service_error(exc)
             raise AssertionError("unreachable")
@@ -134,7 +164,7 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
     ) -> Dict[str, Any]:
         ctx.require_read_role(ctx.extract_identity(authorization))
         try:
-            return ctx.service.get_artifact_catalog_detail(artifact_id)
+            return _annotate_artifact_payload(ctx.service.get_artifact_catalog_detail(artifact_id))
         except (ResearchNotFoundError, ResearchValidationError) as exc:
             ctx.raise_service_error(exc)
             raise AssertionError("unreachable")

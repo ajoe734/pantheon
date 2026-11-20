@@ -13,9 +13,11 @@ from ..service import (
 from ..service import STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES
 from .common import (
     STATUS_RETIRED,
+    STUB_TEST_PERSONA_PROBE,
     StrategyRouteContext,
     _build_ranking_strategy_index,
     operational_counts,
+    strategy_stub_reason,
     summary_persona_ids,
 )
 
@@ -110,6 +112,8 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         hide_retired_personas: bool = False,
+        include_test_personas: bool = False,
+        include_test: bool = False,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -145,6 +149,34 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             page_size=page_size,
         )
         persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+        # Strategies whose personas are all test-scoped are hidden by default
+        # and counted in meta; include_test_personas=true returns them. Only
+        # needed when the one directory read found test-scoped personas.
+        # Unbound synthetic / raw-seed stubs are hidden under the same switch.
+        include_test_personas = include_test_personas or include_test
+        hide_test = not include_test_personas
+        # Walking every owner page is only forced by hiding retired personas or
+        # by test-scoped personas that exist in the directory. Stub-only hiding
+        # stays on the bounded owner page and reconciles against the candidate
+        # set whenever that is already read for operational counts.
+        walk_hide_test = hide_test and bool(persona_lookup.test_persona_ids)
+        hidden_test_persona_strategy_count = 0
+        hidden_unbound_stub_strategy_count = 0
+
+        def _hide_test_and_stubs(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            nonlocal hidden_test_persona_strategy_count, hidden_unbound_stub_strategy_count
+            visible: List[Dict[str, Any]] = []
+            for row in rows:
+                reason = strategy_stub_reason(row, persona_lookup)
+                if reason is None:
+                    visible.append(row)
+                elif reason == STUB_TEST_PERSONA_PROBE:
+                    hidden_test_persona_strategy_count += 1
+                else:
+                    hidden_unbound_stub_strategy_count += 1
+            return visible
+
+        walk_for_hiding = hide_retired_personas or walk_hide_test
         # Full candidate set selected by state / exclude_state / persona_id,
         # before the hide filter. None until a path has loaded it.
         candidates: Optional[List[Dict[str, Any]]] = None
@@ -165,6 +197,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             if (
                 ctx.service
                 and hide_retired_personas
+                and not walk_hide_test
                 and norm_state is None
                 and norm_exclude_state is None
                 and persona_id is None
@@ -180,7 +213,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
             )
-            if (ctx.service and hide_retired_personas and bounded_hide is None)
+            if (ctx.service and walk_for_hiding and bounded_hide is None)
             else None
         )
         if not (ctx.service and bounded_hide is None and owner_walk is None):
@@ -217,14 +250,20 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             precomputed_operational_counts = bounded_hide["operational_counts"]
         elif owner_walk is not None:
             candidates = list(owner_walk["items"])
+            if hide_test:
+                candidates = _hide_test_and_stubs(candidates)
             for summary in candidates:
                 strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
                 if not strategy_id:
                     raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
             state_counts = owner_walk["state_counts"]
-            page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
-                candidates, persona_lookup, page_token, page_size
-            )
+            if hide_retired_personas:
+                page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
+                    candidates, persona_lookup, page_token, page_size
+                )
+            else:
+                total = len(candidates)
+                page_summaries, next_page_token = ctx.page_slice(candidates, page_token, page_size)
         elif owner_page is not None:
             if not isinstance(owner_page, dict) or not isinstance(owner_page.get("items"), list):
                 raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
@@ -366,6 +405,8 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                         continue
                     filtered_summaries.append(summary)
                 summaries = filtered_summaries
+            if hide_test:
+                summaries = _hide_test_and_stubs(summaries)
             candidates = summaries
             if hide_retired_personas:
                 page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
@@ -374,6 +415,26 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             else:
                 total = len(summaries)
                 page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
+        if hide_test and not walk_hide_test and (bounded_hide is not None or owner_page is not None):
+            # Bounded owner page: hide stubs on the returned page and subtract
+            # the stubs found in the candidate set when it was read (exact),
+            # else on the page alone. Hidden counts are never silent.
+            basis = candidates if candidates is not None else page_summaries
+            visible_basis = _hide_test_and_stubs(list(basis))
+            hidden_here = len(basis) - len(visible_basis)
+            if hidden_here:
+                if candidates is not None and candidates is not page_summaries:
+                    page_summaries, next_page_token = ctx.page_slice(
+                        visible_basis, page_token, page_size
+                    )
+                    total = len(visible_basis)
+                else:
+                    page_summaries = [
+                        row for row in page_summaries if strategy_stub_reason(row, persona_lookup) is None
+                    ]
+                    total = max(0, total - hidden_here)
+                if candidates is not None:
+                    candidates = visible_basis
         try:
             ranking_snapshot, ranking_read_failed = (
                 ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
@@ -436,6 +497,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             }
         meta["surfaces"] = surfaces
         meta["hidden_retired_persona_count"] = hidden_retired_persona_count
+        meta["hidden_test_persona_strategy_count"] = hidden_test_persona_strategy_count
+        meta["hidden_unbound_stub_strategy_count"] = hidden_unbound_stub_strategy_count
+        meta["include_test_personas"] = bool(include_test_personas)
         return {
             "data": page_items,
             "items": page_items,

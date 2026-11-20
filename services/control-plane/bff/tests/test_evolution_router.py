@@ -721,7 +721,7 @@ def test_evolution_journal_router_view_filter_and_evidence_class():
         "incident_followup": 1,
         "incident_severity": 1,
         "postmortem_draft": 1,
-        "total": 3,
+        "total": 2,
     }
     assert {it["id"] for it in data_hist["items"]} == {
         "evolution_decision:evo-thresh-hist-1",

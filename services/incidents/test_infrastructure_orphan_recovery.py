@@ -335,6 +335,9 @@ def test_hosted_dev_reproduction_end_to_end_within_one_probe_interval(tmp_path):
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=3,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         state_path=str(tmp_path / "bff-health-state.sqlite3"),
     )
     with monitor._store._connect() as conn:
@@ -543,6 +546,9 @@ def test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless(tmp_pa
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=1,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         delivery_max_attempts=5,
         delivery_backoff_seconds=0.1,
         state_path=str(tmp_path / "bff-dead-letter-hosted-20261104.sqlite3"),
@@ -728,6 +734,9 @@ def test_inflight_deliveries_and_unhealthy_targets_with_dead_letter_stay_open(tm
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=1,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         state_path=str(tmp_path / "bff-active-and-unhealthy.sqlite3"),
     )
 
