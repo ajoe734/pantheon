@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import uuid
@@ -3605,7 +3606,11 @@ def _run_drawdown_tick(
         with (
             mock.patch.dict(
                 "os.environ",
-                {"RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path)},
+                {
+                    "RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path),
+                    # Projected fixtures carry fixed past drawdown_at values.
+                    "RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS": "999999999",
+                },
             ),
             mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
             mock.patch.object(
@@ -4040,3 +4045,288 @@ def test_class_entries_never_fall_back_to_flat_baseline(tmp_path) -> None:
     )
     assert evaluation["summary"]["baseline_metric_count"] == 0
     assert "stock_future" in evaluation["baseline_unresolved"][0]["reason"]
+
+
+# --- journey-scoped scheduled reconciliation (TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120)
+
+_HOSTED_EVALS = (
+    Path(__file__).resolve().parents[3]
+    / "docs/deployment/evidence/TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120"
+    / "evidence.json"
+)
+
+
+def _hosted_eval(evaluated_at: str, summary: dict) -> dict:
+    evaluations = json.loads(_HOSTED_EVALS.read_text())[
+        "hosted_scheduled_evaluations_rb-3823397e"
+    ]
+    evaluation = next(e for e in evaluations if e["evaluated_at"] == evaluated_at)
+    evaluation = json.loads(json.dumps(evaluation))
+    evaluation["binding_id"] = summary["binding_id"]
+    evaluation["runtime_id"] = summary["runtime_id"]
+    return evaluation
+
+
+def _scheduled_event(evaluation: dict, timestamp: str):
+    svc = _load_service_module(tempfile.mkdtemp())
+    return svc._scheduled_lifecycle_event(
+        summary=_paper_lifecycle_summary(), evaluation=evaluation, timestamp=timestamp
+    )
+
+
+def test_hosted_degraded_then_ok_defers_then_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, reason = _scheduled_event(degraded, "2026-07-15T10:05:00Z")
+    assert event is None
+    assert reason == "reconciliation_deferred_runtime_unhealthy"
+    ok = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    event, reason = _scheduled_event(ok, "2026-07-15T10:10:00Z")
+    assert reason is None
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_hosted_drawdown_critical_with_ok_checks_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    evaluation = _hosted_eval("2026-11-14T07:48:57Z", summary)
+    assert evaluation["status"] == "critical"
+    event, _ = _scheduled_event(evaluation, "2026-07-15T10:05:00Z")
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_runtime_unhealthy_stamps_failed_after_sixty_minutes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, _ = _scheduled_event(degraded, "2026-07-15T11:00:00Z")
+    assert event["event_type"] == "reconciliation_failed"
+    assert event["reason_code"] == "runtime_unhealthy_at_reconciliation"
+    names = {d["check"] for d in event["reason_detail"]}
+    assert names == {"runtime_state", "runtime_health_summary"}
+    assert {"detail", "observed", "threshold"} <= set(event["reason_detail"][0])
+
+
+def test_identity_and_other_check_failures_have_reason_codes() -> None:
+    summary = _paper_lifecycle_summary()
+    base = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    ident = json.loads(json.dumps(base))
+    ident["reconciliation_checks"][0]["status"] = "degraded"
+    event, _ = _scheduled_event(ident, "2026-07-15T10:05:00Z")
+    assert event["reason_code"] == "reconciliation_identity_unverified"
+    other = json.loads(json.dumps(base))
+    for c in other["reconciliation_checks"]:
+        if c["check"] == "queue_lag_ms":
+            c["status"] = "critical"
+        if c["check"] == "authoritative_actual_identity":
+            c["status"] = "ok"
+    other["reconciliation_checks"].append(
+        {"check": "position_vs_fill", "status": "critical", "detail": "x"}
+    )
+    event, _ = _scheduled_event(other, "2026-07-15T10:05:00Z")
+    assert event["reason_code"] == "reconciliation_check_failed"
+
+
+def _critical_drawdown_check(observed: float = 9.609309450237793):
+    return [
+        {
+            "metric": "drawdown",
+            "status": "critical",
+            "baseline": 1.0,
+            "observed": observed,
+            "relative_delta": observed - 1.0,
+        }
+    ]
+
+
+def test_scheduled_tick_marks_unchanged_stale_drawdown_as_stale_not_breach() -> None:
+    """Telemetry carries the last drawdown forward; the same old value must not re-breach each tick."""
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.609309450237793,
+            drawdown_at="2000-01-01T00:00:00Z",
+            drawdown_event_id="evt-drawdown-old",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check()),
+            mock.patch.object(svc, "_classify_drift_report_incident") as classify,
+        ):
+            payloads = [
+                client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": f"tick-stale-{n}"},
+                ).json()
+                for n in range(3)
+            ]
+        for payload in payloads:
+            assert payload["stale_input_binding_ids"] == [summary["binding_id"]]
+            assert payload["drift_report_ids"] == []
+            assert payload["incident_ids"] == []
+            assert payload["status"] != "critical"
+        classify.assert_not_called()
+        evaluation = svc.store.get_evaluation(
+            svc._tick_evaluation_id("tick-stale-2", summary["binding_id"]),
+            tenant_id=svc._configured_tenant_id() if hasattr(svc, "_configured_tenant_id") else None,
+        )
+        check = evaluation["drift_checks"][0]
+        assert check["stale_input"] is True
+        assert check["status"] == "degraded"
+        assert check["input_observed_at"] == "2000-01-01T00:00:00Z"
+
+
+def test_scheduled_tick_fresh_drawdown_still_breaches() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.6,
+            drawdown_at=svc.utc_now(),
+            drawdown_event_id="evt-drawdown-new",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check(9.6)),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-fresh-001"}
+            ) as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-fresh-001"},
+            ).json()
+        assert payload["stale_input_binding_ids"] == []
+        assert payload["incident_ids"] == ["inc-fresh-001"]
+        assert classify.call_count == 1
+
+
+def test_scheduled_tick_retirement_between_ticks_resolves_open_drift_incidents() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        binding_id = summary["binding_id"]
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                side_effect=[
+                    {"binding_id": binding_id, "status": "active"},
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                ],
+            ),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-drift-001"}
+            ) as classify,
+            mock.patch.object(
+                svc,
+                "_resolve_retired_binding_incidents",
+                return_value={"resolved_incident_ids": ["inc-drift-001"]},
+            ) as resolve,
+        ):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-1"}
+            ).json()
+            second = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-2"}
+            ).json()
+            third = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-3"}
+            ).json()
+        assert first["incident_ids"] == ["inc-drift-001"]
+        assert second["retired_binding_ids"] == [binding_id]
+        assert second["retired_incident_resolutions"] == [{"resolved_incident_ids": ["inc-drift-001"]}]
+        assert third["incident_ids"] == []
+        assert classify.call_count == 1  # nothing opened after retirement
+        assert resolve.call_count == 2
+
+
+def _sweep_incident(binding_id: str, n: int) -> dict:
+    return {
+        "incident_id": f"inc-drift-sweep-{n}",
+        "binding_id": binding_id,
+        "incident_cluster_id": f"drift:{binding_id}",
+    }
+
+
+def _run_sweep(svc, incidents, lookup, *, resolve=None, env=None):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(svc.app)
+    summary = _healthy_runtime_summary()
+    resolve = resolve or mock.Mock(return_value={"resolved_incident_ids": ["x"]})
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_INCIDENTS_API_URL": "http://incidents",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://rm",
+                **(env or {}),
+            },
+        ),
+        mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+        mock.patch.object(svc, "_get_json", return_value=incidents),
+        mock.patch.object(svc, "_authoritative_runtime_binding", side_effect=lookup) as look,
+        mock.patch.object(svc, "_resolve_retired_binding_incidents", resolve),
+    ):
+        payload = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-sweep"}
+        ).json()
+    return payload, look, resolve, summary
+
+
+def test_sweep_resolves_incident_of_retired_binding_after_runtime_rebound() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        old = "rb-old-retired"
+        payload, look, resolve, summary = _run_sweep(
+            svc,
+            [_sweep_incident(old, 1), _sweep_incident(_healthy_runtime_summary()["binding_id"], 2)],
+            lambda bid, **kw: _retired_binding(bid, "2026-11-18T07:00:00Z"),
+        )
+        look.assert_called_once()
+        assert look.call_args.args[0] == old  # evaluated binding is not looked up
+        resolve.assert_called_once()
+        assert resolve.call_args.args[:2] == (old, "2026-11-18T07:00:00Z")
+        assert payload["retired_binding_sweep"]["retired_binding_ids"] == [old]
+        assert payload["retired_incident_resolutions"] == [{"resolved_incident_ids": ["x"]}]
+
+
+def test_sweep_lookup_failure_leaves_incident_open_and_continues() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+
+        def lookup(bid, **kw):
+            if bid == "rb-a":
+                raise RuntimeError("down")
+            return {"binding_id": bid, "status": "active"}
+
+        payload, look, resolve, _ = _run_sweep(
+            svc, [_sweep_incident("rb-a", 1), _sweep_incident("rb-b", 2)], lookup
+        )
+        resolve.assert_not_called()
+        assert payload["retired_binding_sweep"]["lookup_failures"] == 1
+        assert look.call_count == 2
+
+
+def test_sweep_lookups_are_bounded_per_pass() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        incidents = [_sweep_incident(f"rb-{i}", i) for i in range(5)]
+        payload, look, resolve, _ = _run_sweep(
+            svc,
+            incidents,
+            lambda bid, **kw: {"binding_id": bid, "status": "active"},
+            env={"PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS": "2"},
+        )
+        assert look.call_count == 2
+        assert payload["retired_binding_sweep"]["truncated"] is True
+        resolve.assert_not_called()

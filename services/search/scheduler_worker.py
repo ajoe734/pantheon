@@ -84,15 +84,24 @@ def assess_progress(refresh: Any, last_backlog: int | None) -> tuple[bool, int |
     """Classify a refresh result: (progressing, backlog_remaining, reason).
 
     Progress = backlog drained, or embedded items / smaller backlog than last tick. A refresh
-    answered "in_progress" (another run owns the pipeline) is a stalled tick, tolerated up to
+    answered "in_progress" counts as progress only when its snapshot's backlog_remaining is below the
+    previous tick's; otherwise it is a stalled tick, tolerated up to
     SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS consecutive ticks.
     """
 
     if not isinstance(refresh, dict):
         return True, last_backlog, "no_refresh_detail"
-    if refresh.get("status") == "in_progress":
-        return False, last_backlog, "refresh_already_in_progress"
     snap = refresh.get("pipeline_snapshot") or {}
+    if refresh.get("status") == "in_progress":
+        # Another run owns the pipeline; the snapshot is the latest recorded run. A backlog that
+        # fell since the previous tick is a drain in progress, not a stall.
+        raw = snap.get("backlog_remaining") if isinstance(snap, dict) else None
+        if raw is not None:
+            backlog = int(raw)
+            if last_backlog is not None and backlog < last_backlog:
+                return True, backlog, f"backlog_draining_during_in_progress remaining={backlog}"
+            return False, backlog, f"refresh_already_in_progress remaining={backlog}"
+        return False, last_backlog, "refresh_already_in_progress"
     backlog = int(snap.get("backlog_remaining") or 0)
     if backlog == 0:
         return True, 0, "backlog_drained"

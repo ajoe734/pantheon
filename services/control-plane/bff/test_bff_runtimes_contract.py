@@ -243,3 +243,42 @@ def test_bff_runtime_detail_reports_downstream_unavailable_when_runtime_store_mi
 
     assert detail_response.status_code == 503, detail_response.text
     assert detail_response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_bff_runtimes_list_and_detail_carry_display_names_resolved_by_bff() -> None:
+    from services.control_plane.bff.core.display_names import configure_display_name_source
+
+    class _Names:
+        def __init__(self) -> None:
+            self.persona_reads = 0
+            self.strategy_reads = 0
+
+        def list_personas(self):
+            self.persona_reads += 1
+            return [{"persona_id": "persona-rt003", "display_name": "RT Persona"}]
+
+        def get_strategy_labels(self):
+            self.strategy_reads += 1
+            return {"strategy-rt003": {"title": "RT Strategy"}}
+
+    names = _Names()
+    records = [
+        {**r, "persona_id": "persona-rt003", "strategy_id": "strategy-rt003"}
+        for r in _runtime_records()
+    ]
+    configure_display_name_source(names)
+    try:
+        with _isolated_runtime_bff(records) as client:
+            listing = client.get("/bff/runtimes", headers=HEADERS)
+            detail = client.get("/bff/runtimes/runtime-rt003-paper-001", headers=HEADERS)
+    finally:
+        configure_display_name_source(None)
+
+    assert listing.status_code == 200, listing.text
+    for row in listing.json()["items"]:
+        assert row["persona_id"] == "persona-rt003"  # additive: id kept
+        assert row["persona_display_name"] == "RT Persona"
+        assert row["strategy_display_name"] == "RT Strategy"
+    assert detail.json()["data"]["persona_display_name"] == "RT Persona"
+    # one directory read per request for each of the two requests
+    assert names.persona_reads <= 2 and names.strategy_reads <= 2

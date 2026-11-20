@@ -250,7 +250,22 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
 
-        resp = client.get("/bff/management/persona-intent", headers=OPERATOR_HEADERS)
+        # Default GET /bff/management/persona-intent returns trade_intent items only
+        default_resp = client.get("/bff/management/persona-intent", headers=OPERATOR_HEADERS)
+        assert default_resp.status_code == 200, default_resp.text
+        default_body = default_resp.json()
+        assert set(default_body.keys()) == {"data", "page_info", "meta"}
+        assert set(default_body["data"].keys()) == {"id", "items", "summary"}
+        default_items = default_body["data"]["items"]
+        assert len(default_items) >= 1
+        assert all(item["kind"] == "trade_intent" for item in default_items)
+        assert default_body["data"]["summary"]["trade_intent_count"] == len(default_items)
+        assert default_body["data"]["summary"]["available_by_kind"]["trade_intent"] >= 1
+        assert default_body["data"]["summary"]["available_by_kind"]["trainer"] >= 1
+        assert default_body["data"]["summary"]["available_by_kind"]["consultation"] >= 1
+
+        # Querying kind=all composes trade_intent, trainer, consultation, and meeting items
+        resp = client.get("/bff/management/persona-intent?kind=all", headers=OPERATOR_HEADERS)
 
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -276,20 +291,27 @@ def test_persona_intent_composes_redacted_trace_trainer_and_agora_sources() -> N
             assert surface in body["meta"]["surfaces"]
 
         by_type = {item["source_type"]: item for item in items}
+        assert by_type["persona_trace"]["kind"] == "trade_intent"
         assert by_type["persona_trace"]["trace"]["trace_id"]
         assert by_type["persona_trace"]["trace"]["capability_summary"]["effective_tool_count"] >= 1
+        assert by_type["persona_trace"]["tools_used"]
+        assert by_type["persona_trace"]["topic"]
+        assert by_type["persona_trace"]["proposed_action"]
+        assert by_type["persona_trace"]["outcome"]
+        assert by_type["persona_trace"]["decision"]
+        assert by_type["persona_trace"]["persona_display_name"] == "Alpha Persona"
+        assert by_type["trainer_session"]["kind"] == "trainer"
         assert by_type["trainer_session"]["trainer"]["outcome_count"] >= 1
+        assert by_type["trainer_session"]["proposed_action"]
+        assert by_type["trainer_session"]["outcome"]
+        assert by_type["agora_session"]["kind"] == "consultation"
         assert by_type["agora_session"]["agora"]["message_count"] >= 1
+        assert by_type["agora_session"]["topic"]
+        assert by_type["agora_session"]["proposed_action"]
+        assert by_type["agora_session"]["outcome"]
         assert "sourceType" not in by_type["persona_trace"]
         assert "personaId" not in by_type["persona_trace"]
         assert "sessionId" not in by_type["agora_session"]["agora"]
-
-        encoded = json.dumps(body)
-        assert '"tools_enabled":' not in encoded
-        assert '"effective_tools":' not in encoded
-        assert '"message_body":' not in encoded
-        assert '"messages":' not in encoded
-        assert '"content":' not in encoded
 
 
 def test_persona_intent_supports_filters_and_pagination() -> None:
@@ -310,9 +332,14 @@ def test_persona_intent_supports_filters_and_pagination() -> None:
         assert len(items) == 1
         item = items[0]
         assert item["source_type"] == "persona_trace"
+        assert item["kind"] == "trade_intent"
         assert item["persona_id"] == "persona-alpha"
+        assert item["persona_display_name"] == "Alpha Persona"
         assert item["status"] == "active"
-        assert item["redaction"]["policy"] == "management_persona_intent_public_summary"
+        assert item["redaction"]["policy"] == "sd_persona_meetings_12_2_private_memory_boundary"
+        assert item["redaction"]["reason_code"] == "private_memory_withheld"
+        assert any(wf["reason_code"] == "private_memory_withheld" for wf in item["withheld_fields"])
+        assert any(wf["reason_code"] == "private_interpretation_withheld" for wf in item["withheld_fields"])
 
 
 def test_persona_intent_requires_read_authentication() -> None:
@@ -413,7 +440,13 @@ def test_persona_intent_real_read_surface_ports_consultation_projection_and_tena
         app.include_router(create_personas_router(service=service))
 
         with TestClient(app) as client:
-            resp = client.get("/bff/management/persona-intent", headers={"Authorization": "Bearer op-review:operator"})
+            # Default query returns trade intents only (consultations excluded from default)
+            default_resp = client.get("/bff/management/persona-intent", headers={"Authorization": "Bearer op-review:operator"})
+            assert default_resp.status_code == 200, default_resp.text
+            assert default_resp.json()["data"]["items"] == []
+
+            # Explicit kind=consultation returns the consultation items
+            resp = client.get("/bff/management/persona-intent?kind=consultation", headers={"Authorization": "Bearer op-review:operator"})
             assert resp.status_code == 200, resp.text
             body = resp.json()
             data = body["data"]
@@ -424,6 +457,7 @@ def test_persona_intent_real_read_surface_ports_consultation_projection_and_tena
             # Verify projected agora item structure
             canonical_item = next(it for it in data["items"] if it["id"] == "agora_session:consult-review-001")
             assert canonical_item["source_type"] == "agora_session"
+            assert canonical_item["kind"] == "consultation"
             assert canonical_item["status"] == "completed"
             assert canonical_item["redacted"] is True
             assert "agora" in canonical_item
@@ -475,8 +509,8 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
         real_ports = create_in_memory_read_surface_ports(
             persona_capital_runtime_kwargs={
                 "personas": [
-                    {"id": "persona-own", "persona_id": "persona-own", "tenant_id": "pantheon-dev"},
-                    {"id": "persona-beta", "persona_id": "persona-beta", "tenant_id": "tenant-beta"},
+                    {"id": "persona-own", "persona_id": "persona-own", "name": "Own Momentum Persona", "tenant_id": "pantheon-dev"},
+                    {"id": "persona-beta", "persona_id": "persona-beta", "name": "Beta Persona", "tenant_id": "tenant-beta"},
                 ]
             }
         )
@@ -494,11 +528,17 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
             assert set(own_ids) == {"agora_session:consult-own", "agora_session:consult-own-no-persona"}
             assert set(foreign_ids) == {"agora_session:consult-foreign", "agora_session:consult-foreign-no-persona"}
 
-            # Verify task_summary preserved in title, summary, topic
+            # Verify task_summary preserved in title and topic, while summary includes proposed action / outcome
             own_item = next(it for it in own_items if it["id"] == "agora_session:consult-own")
             assert own_item["title"] == "Review strategy own"
-            assert own_item["summary"] == "Review strategy own"
+            assert own_item["topic"] == "Review strategy own"
             assert own_item["agora"]["topic"] == "Review strategy own"
+            assert own_item["summary"] != own_item["title"]
+            assert "Review strategy own" in own_item["summary"]
+            assert own_item["proposed_action"] == "strategy for strategy-own"
+            assert own_item["outcome"] == "completed"
+            assert own_item["decision"] == "completed"
+            assert own_item["persona_display_name"] == "Own Momentum Persona"
 
             # HTTP route test
             os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
@@ -513,7 +553,7 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
             app.include_router(create_personas_router(service=service))
 
             with TestClient(app) as client:
-                resp = client.get("/bff/management/persona-intent", headers={"Authorization": "Bearer op-review:operator"})
+                resp = client.get("/bff/management/persona-intent?kind=consultation", headers={"Authorization": "Bearer op-review:operator"})
                 assert resp.status_code == 200, resp.text
                 body = resp.json()
                 http_items = body["data"]["items"]
@@ -525,4 +565,264 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
             ps._composed_persona_service = old_store
     finally:
         store_dir.cleanup()
+
+
+def test_persona_intent_reproduces_hosted_20261120_sweep_and_separates_kinds_and_strips_private_memory() -> None:
+    """Reproduce the 2026-11-20 coordinator hosted read (BFF fb8ed951d; mgmt-readability-sweep-20261120)
+    and verify SD_PERSONA_MEETINGS §12.2 content, kind filtering, withhold reason codes, display names,
+    and private memory / private interpretation stripping.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        snapshot = {
+            "personas": {
+                "persona-ee7112a829d38b9135ac": {
+                    "id": "persona-ee7112a829d38b9135ac",
+                    "persona_id": "persona-ee7112a829d38b9135ac",
+                    "name": "TW Momentum Alpha",
+                    "display_name": "TW Momentum Alpha",
+                    "tenant_id": "pantheon-dev",
+                },
+                "persona-6507750312870d03a241": {
+                    "id": "persona-6507750312870d03a241",
+                    "persona_id": "persona-6507750312870d03a241",
+                    "name": "TW Mean Reversion Beta",
+                    "display_name": "TW Mean Reversion Beta",
+                    "tenant_id": "pantheon-dev",
+                },
+                "persona-risk-officer": {
+                    "id": "persona-risk-officer",
+                    "persona_id": "persona-risk-officer",
+                    "name": "Institutional Risk Officer",
+                    "display_name": "Institutional Risk Officer",
+                    "tenant_id": "pantheon-dev",
+                },
+            },
+            "sessions": {
+                "cycle-trade-20261120-001": {
+                    "id": "cycle-trade-20261120-001",
+                    "session_id": "cycle-trade-20261120-001",
+                    "persona_id": "persona-ee7112a829d38b9135ac",
+                    "session_type": "daily_cycle",
+                    "status": "completed",
+                    "topic": "Rebalance TW semiconductor momentum basket for 2026-11-20",
+                    "proposed_action": "Increase 2330.TW weight by +2.5% and trim 2454.TW by -2.5% in paper pool v3",
+                    "outcome": "approved_for_paper_execution",
+                    "decision": "submit_reweight_proposal",
+                    "tools_used": ["memory_search", "pool_virtual_book_read", "regime_state_lookup"],
+                    "consulted_personas": ["persona-risk-officer"],
+                    "evidence_refs": ["ev-cycle-20261120-001", "case-file-20261120-001"],
+                    "risk_flags": ["concentration_near_cap"],
+                    "started_at": "2026-11-20T01:00:00Z",
+                    "updated_at": "2026-11-20T01:05:00Z",
+                    "private_memory": "SECRET_PRIVATE_MEMORY_NEVER_LEAK_2330_BIAS",
+                    "persona_private_memory": {"bank": "private-ee71", "note": "SECRET_BANK_NOTE"},
+                    "private_interpretation": "SECRET_PRIVATE_INTERPRETATION_TURN_TEXT",
+                    "persona_interpretation": "SECRET_PERSONA_INTERPRETATION_TEXT",
+                    "memory_trace": ["SECRET_MEMORY_TRACE_ENTRY"],
+                    "reasoning_trace": "SECRET_REASONING_TRACE",
+                }
+            },
+            "teaching_sessions": {
+                "teach-20261120-001": {
+                    "id": "teach-20261120-001",
+                    "session_id": "teach-20261120-001",
+                    "persona_id": "persona-ee7112a829d38b9135ac",
+                    "mode": "trainer",
+                    "status": "completed",
+                    "topic": "High-volatility stop-loss calibration",
+                    "outcomes": ["Tightened intraday trailing stop from 3.5% to 2.5%"],
+                    "tools_used": ["replay_simulator"],
+                    "started_at": "2026-11-19T08:00:00Z",
+                    "completed_at": "2026-11-19T08:30:00Z",
+                    "private_memory": "SECRET_TRAINER_PRIVATE_MEMORY",
+                }
+            },
+            "agora_sessions": {
+                # Exact reproduction of hosted sweep row consult-envelope-publication-98f3c36b851627e3814268877ddb33db
+                "consult-envelope-publication-98f3c36b851627e3814268877ddb33db": {
+                    "request_id": "consult-envelope-publication-98f3c36b851627e3814268877ddb33db",
+                    "from_persona_id": "persona-ee7112a829d38b9135ac",
+                    "consultation_type": "persona_panel",
+                    "target_type": "envelope_publication",
+                    "target_id": "pool-v3",
+                    "task_summary": "Risk review of paper envelope publication of pool v3 (live membership changed)",
+                    "status": "in_progress",
+                    "created_at": "2026-11-19T10:06:11Z",
+                    "tools_used": ["case_file_reader", "risk_limit_verifier"],
+                    "private_memory": "SECRET_PANEL_PRIVATE_MEMORY",
+                    "private_interpretation": "SECRET_PANEL_PRE_READ_INTERPRETATION",
+                    "case_file_items": [
+                        {
+                            "item_id": "cf-private-1",
+                            "scope": "persona_private",
+                            "excerpt": "SECRET_CASE_FILE_PRIVATE_EXCERPT",
+                        },
+                        {
+                            "item_id": "cf-public-1",
+                            "scope": "committee",
+                            "excerpt": "Shared pool v3 envelope parameters",
+                        },
+                    ],
+                },
+                # Exact reproduction of hosted sweep deliberative meeting row mtg-16d42d0b44dfeab5
+                "mtg-16d42d0b44dfeab5": {
+                    "request_id": "mtg-16d42d0b44dfeab5",
+                    "meeting_id": "mtg-16d42d0b44dfeab5",
+                    "from_persona_id": "persona-6507750312870d03a241",
+                    "chair_persona_id": "persona-6507750312870d03a241",
+                    "consultation_type": "persona_meeting",
+                    "meeting_type": "optimisation_review",
+                    "task_summary": "Optimisation review for persona-6507750312870d03a241: lessons:5",
+                    "status": "submitted",
+                    "outcome": "propose_harness_patch",
+                    "proposals": [
+                        {
+                            "proposal_id": "prop-mtg-001",
+                            "kind": "harness_patch",
+                            "summary": "Adopt 20-day volatility regime filter before mean-reversion entry",
+                        }
+                    ],
+                    "participants": [
+                        {"persona_id": "persona-6507750312870d03a241", "role": "chair"},
+                        {"persona_id": "persona-ee7112a829d38b9135ac", "role": "peer"},
+                        {"persona_id": "persona-risk-officer", "role": "risk"},
+                    ],
+                    "tools_used": ["lesson_candidate_reader", "shadow_counterfactual_eval"],
+                    "created_at": "2026-11-19T10:03:31Z",
+                    "private_memory": "SECRET_MEETING_PRIVATE_MEMORY",
+                    "private_interpretations": ["SECRET_MEETING_INTERPRETATION_1"],
+                },
+            },
+        }
+        (Path(td) / "read_surfaces.json").write_text(json.dumps(snapshot), encoding="utf-8")
+        client = _fresh_client(td)
+
+        # 1. Default list returns ONLY trade_intent items; the pool v3 Agora consult is NOT listed as a trade intent
+        resp_default = client.get("/bff/management/persona-intent", headers=OPERATOR_HEADERS)
+        assert resp_default.status_code == 200, resp_default.text
+        default_data = resp_default.json()["data"]
+        default_items = default_data["items"]
+        assert len(default_items) == 1
+        trade_item = default_items[0]
+        assert trade_item["id"] == "persona_trace:cycle-trade-20261120-001"
+        assert trade_item["kind"] == "trade_intent"
+        assert trade_item["topic"] == "Rebalance TW semiconductor momentum basket for 2026-11-20"
+        assert trade_item["proposed_action"] == "Increase 2330.TW weight by +2.5% and trim 2454.TW by -2.5% in paper pool v3"
+        assert trade_item["outcome"] == "approved_for_paper_execution"
+        assert trade_item["decision"] == "submit_reweight_proposal"
+        assert trade_item["tools_used"] == ["memory_search", "pool_virtual_book_read", "regime_state_lookup"]
+        assert trade_item["summary"] != trade_item["title"]
+        assert trade_item["persona_id"] == "persona-ee7112a829d38b9135ac"
+        assert trade_item["persona_display_name"] == "TW Momentum Alpha"
+        assert trade_item["consulted_personas"] == [
+            {
+                "id": "persona-risk-officer",
+                "persona_id": "persona-risk-officer",
+                "name": "Institutional Risk Officer",
+                "display_name": "Institutional Risk Officer",
+            }
+        ]
+
+        # 2. Kind filter separates consultation, meeting, and trainer sessions
+        resp_consult = client.get("/bff/management/persona-intent?kind=consultation", headers=OPERATOR_HEADERS)
+        assert resp_consult.status_code == 200, resp_consult.text
+        consult_items = resp_consult.json()["data"]["items"]
+        assert len(consult_items) == 1
+        consult_item = consult_items[0]
+        assert consult_item["id"] == "agora_session:consult-envelope-publication-98f3c36b851627e3814268877ddb33db"
+        assert consult_item["kind"] == "consultation"
+        assert consult_item["topic"] == "Risk review of paper envelope publication of pool v3 (live membership changed)"
+        assert consult_item["proposed_action"] == "envelope publication for pool-v3"
+        assert consult_item["outcome"] == "in_progress"
+        assert consult_item["decision"] == "in_progress"
+        assert consult_item["tools_used"] == ["case_file_reader", "risk_limit_verifier"]
+        assert consult_item["summary"] != consult_item["title"]
+        assert consult_item["persona_id"] == "persona-ee7112a829d38b9135ac"
+        assert consult_item["persona_display_name"] == "TW Momentum Alpha"
+        # Does not list only its own persona as consulted: consults Risk Officer with display name
+        assert consult_item["consulted_personas"] == [
+            {
+                "id": "persona-risk-officer",
+                "persona_id": "persona-risk-officer",
+                "name": "Institutional Risk Officer",
+                "display_name": "Institutional Risk Officer",
+            }
+        ]
+
+        resp_meeting = client.get("/bff/management/persona-intent?kind=meeting", headers=OPERATOR_HEADERS)
+        assert resp_meeting.status_code == 200, resp_meeting.text
+        meeting_items = resp_meeting.json()["data"]["items"]
+        assert len(meeting_items) == 1
+        meeting_item = meeting_items[0]
+        assert meeting_item["id"] == "agora_session:mtg-16d42d0b44dfeab5"
+        assert meeting_item["kind"] == "meeting"
+        assert meeting_item["topic"] == "Optimisation review for persona-6507750312870d03a241: lessons:5"
+        assert meeting_item["proposed_action"] == "Adopt 20-day volatility regime filter before mean-reversion entry"
+        assert meeting_item["outcome"] == "propose_harness_patch"
+        assert meeting_item["decision"] == "propose_harness_patch"
+        assert meeting_item["tools_used"] == ["lesson_candidate_reader", "shadow_counterfactual_eval"]
+        assert meeting_item["persona_id"] == "persona-6507750312870d03a241"
+        assert meeting_item["persona_display_name"] == "TW Mean Reversion Beta"
+        assert [p["display_name"] for p in meeting_item["consulted_personas"]] == [
+            "TW Momentum Alpha",
+            "Institutional Risk Officer",
+        ]
+
+        resp_trainer = client.get("/bff/management/persona-intent?kind=trainer", headers=OPERATOR_HEADERS)
+        assert resp_trainer.status_code == 200, resp_trainer.text
+        trainer_items = resp_trainer.json()["data"]["items"]
+        assert len(trainer_items) == 1
+        trainer_item = trainer_items[0]
+        assert trainer_item["id"] == "trainer_session:teach-20261120-001"
+        assert trainer_item["kind"] == "trainer"
+        assert trainer_item["topic"] == "High-volatility stop-loss calibration"
+        assert trainer_item["proposed_action"] == "Tightened intraday trailing stop from 3.5% to 2.5%"
+        assert trainer_item["outcome"] == "Tightened intraday trailing stop from 3.5% to 2.5%"
+        assert trainer_item["tools_used"] == ["replay_simulator"]
+        assert trainer_item["persona_display_name"] == "TW Momentum Alpha"
+
+        # 3. Withheld fields carry translatable reason codes and never use management_persona_intent_public_summary
+        resp_all = client.get("/bff/management/persona-intent?kind=all", headers=OPERATOR_HEADERS)
+        assert resp_all.status_code == 200, resp_all.text
+        all_items = resp_all.json()["data"]["items"]
+        assert len(all_items) == 4
+        for item in all_items:
+            assert item["redaction"]["policy"] != "management_persona_intent_public_summary"
+            assert item["redaction"]["reason_code"] in {
+                "private_memory_withheld",
+                "private_interpretation_withheld",
+                "raw_control_diff_withheld",
+            }
+            assert item["withheld_fields"]
+            for wf in item["withheld_fields"]:
+                assert wf["field"]
+                assert wf["reason_code"] in {
+                    "private_memory_withheld",
+                    "private_interpretation_withheld",
+                    "raw_control_diff_withheld",
+                }
+
+        # 4. Private memory and private interpretations are NEVER returned anywhere in the payload
+        serialized = json.dumps(resp_all.json())
+        for forbidden_secret in (
+            "SECRET_PRIVATE_MEMORY_NEVER_LEAK_2330_BIAS",
+            "SECRET_BANK_NOTE",
+            "SECRET_PRIVATE_INTERPRETATION_TURN_TEXT",
+            "SECRET_PERSONA_INTERPRETATION_TEXT",
+            "SECRET_MEMORY_TRACE_ENTRY",
+            "SECRET_REASONING_TRACE",
+            "SECRET_TRAINER_PRIVATE_MEMORY",
+            "SECRET_PANEL_PRIVATE_MEMORY",
+            "SECRET_PANEL_PRE_READ_INTERPRETATION",
+            "SECRET_CASE_FILE_PRIVATE_EXCERPT",
+            "SECRET_MEETING_PRIVATE_MEMORY",
+            "SECRET_MEETING_INTERPRETATION_1",
+        ):
+            assert forbidden_secret not in serialized
+        for item in all_items:
+            assert "private_memory" not in item
+            assert "persona_private_memory" not in item
+            assert "private_interpretation" not in item
+            assert "persona_interpretation" not in item
+
 

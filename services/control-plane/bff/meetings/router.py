@@ -11,6 +11,7 @@ from services.control_plane.bff.agora.identity.scope import (
     resolve_agora_user_scope,
 )
 from services.control_plane.bff.models import ErrorCode, utc_now as default_utc_now
+from services.control_plane.bff.core.display_names import DisplayNameResolver, current_resolver
 
 from .client import (
     MeetingsOwnerClient,
@@ -126,6 +127,38 @@ def _caller_context(
     return identity, scope.tenant_id, is_operator, caller_user_id
 
 
+def _annotate_meeting_names(meeting: Any, names: DisplayNameResolver) -> None:
+    """Add persona display names to a shaped meeting row or detail, in place."""
+    if not isinstance(meeting, dict):
+        return
+    names.annotate(
+        meeting,
+        persona_keys=("chair_persona_id", "persona_id", "sponsor_persona_id", "subject_persona_id"),
+        strategy_keys=("strategy_id",),
+    )
+    for participant in meeting.get("participants") or []:
+        names.annotate(participant, persona_keys=("persona_id",), strategy_keys=())
+    for rnd in meeting.get("rounds") or []:
+        if isinstance(rnd, dict):
+            for pos in rnd.get("positions") or []:
+                names.annotate(pos, persona_keys=("persona_id",), strategy_keys=())
+
+
+def _annotate_meeting_envelope(payload: Any) -> Any:
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        return payload
+    names = current_resolver()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else None
+    if isinstance(payload.get("items"), list):  # list envelope; data.items shares the same row objects
+        for row in payload["items"]:
+            _annotate_meeting_names(row, names)
+        return payload
+    _annotate_meeting_names(payload, names)
+    if data is not None:
+        _annotate_meeting_names(data, names)
+    return payload
+
+
 def create_meetings_router(
     *,
     extract_identity: Callable[..., Any],
@@ -152,6 +185,7 @@ def create_meetings_router(
         page_token: Optional[str],
         limit: int,
         page_size: Optional[int],
+        include_failed: bool = False,
     ) -> Dict[str, Any]:
         identity, tenant_id, is_operator, caller_user_id = _caller_context(
             request,
@@ -175,16 +209,17 @@ def create_meetings_router(
                 persona_id=eff_persona,
                 cursor=eff_cursor,
                 limit=eff_limit,
+                include_failed=include_failed,
             )
         except MeetingsOwnerUnavailableError as exc:
             return unavailable_meetings_envelope("meetings", exc.reason, snapshot_at=snap)
-        return shape_meeting_list(
+        return _annotate_meeting_envelope(shape_meeting_list(
             owner_payload,
             is_operator=is_operator,
             caller_user_id=caller_user_id,
             snapshot_at=snap,
             limit=eff_limit,
-        )
+        ))
 
     def _handle_list_proposals(
         request: Request,
@@ -262,12 +297,12 @@ def create_meetings_router(
             ) from exc
         except MeetingsOwnerUnavailableError as exc:
             return unavailable_meetings_envelope("meeting_detail", exc.reason, snapshot_at=snap)
-        return shape_meeting_detail(
+        return _annotate_meeting_envelope(shape_meeting_detail(
             raw_detail,
             is_operator=is_operator,
             caller_user_id=caller_user_id,
             snapshot_at=snap,
-        )
+        ))
 
     def _handle_convene_meeting(
         body: OperatorConveneMeetingRequest,
@@ -415,6 +450,7 @@ def create_meetings_router(
         page_token: Optional[str] = Query(default=None),
         limit: int = Query(default=50, ge=1, le=500),
         page_size: Optional[int] = Query(default=None, ge=1, le=500),
+        include_failed: bool = Query(default=False),
     ) -> Dict[str, Any]:
         return _handle_list_meetings(
             request,
@@ -427,6 +463,7 @@ def create_meetings_router(
             page_token=page_token,
             limit=limit,
             page_size=page_size,
+            include_failed=include_failed,
         )
 
     @router.get("/bff/meetings", operation_id="bff_list_meetings")
@@ -441,6 +478,7 @@ def create_meetings_router(
         page_token: Optional[str] = Query(default=None),
         limit: int = Query(default=50, ge=1, le=500),
         page_size: Optional[int] = Query(default=None, ge=1, le=500),
+        include_failed: bool = Query(default=False),
     ) -> Dict[str, Any]:
         return _handle_list_meetings(
             request,
@@ -453,6 +491,7 @@ def create_meetings_router(
             page_token=page_token,
             limit=limit,
             page_size=page_size,
+            include_failed=include_failed,
         )
 
     @router.post("/bff/management/meetings", status_code=202, operation_id="bff_management_convene_meeting")

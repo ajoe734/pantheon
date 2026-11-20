@@ -37,7 +37,11 @@ from services.incident.incident import (
     Postmortem,
     extract_incident_resolution_reason,
 )
-from services.incident.pg_store import PostgresIncidentStore
+from services.incident.pg_store import (
+    PostgresIncidentStore,
+    build_incident_timeline,
+    derive_incident_summary_fields,
+)
 
 
 @pytest.fixture
@@ -566,6 +570,31 @@ def test_postgres_upsert_and_resolve_orphaned_infrastructure_incidents(pg_case):
     reader = _store(pg_case, bootstrap=False)
     durable_gov = reader.require_incident("infra-bff-0847594c513bbe71b6aedcd3")
     assert durable_gov.status == "resolved"
+    assert durable_gov.occurrence_count == 2
+    assert durable_gov.first_seen_at == "2026-10-22T08:00:00Z"
+    assert durable_gov.last_seen_at == "2026-10-27T01:32:00Z"
     assert extract_incident_resolution_reason(durable_gov) == ORPHAN_RECOVERED_RESOLUTION_REASON
     assert reader.require_incident("inc-pg-runtime-keep-open").status == "open"
+
+
+def test_pg_store_summary_and_timeline_reexports():
+    inc = replace(
+        _incident(),
+        status="open",
+        resolved_at=None,
+        kind="drift",
+        metric="rolling_drawdown_multiple",
+        observed=9.609309450237793,
+        threshold=1.25,
+        comparator="gt",
+        occurrence_count=4,
+        first_seen_at="2026-11-18T11:36:14Z",
+        last_seen_at="2026-11-18T14:36:14Z",
+        telemetry_event_ids=["evt-1", "evt-2", "evt-3", "evt-4"],
+        reconciliation_ids=["drift-1", "drift-2", "drift-3", "drift-4"],
+    )
+    derived = derive_incident_summary_fields(inc)
+    assert derived["summary_key"] == "incident.summary.drift_threshold_breach"
+    assert derived["occurrence_count"] == 4
+    assert len(build_incident_timeline(inc)) == 4
 

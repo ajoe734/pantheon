@@ -566,6 +566,8 @@ def test_execute_plans_final_stub_auth_smoke_avoids_server_errors(monkeypatch) -
             "/bff/artifacts",
             "/bff/artifacts/art_001",
             "/bff/capital-pools/pool-main",
+            "/bff/management/persona-intent",
+            "/bff/management/persona-intent?kind=all",
             "/bff/v5/execution/strategy-health",
         ]:
             response = client.get(path, headers=HEADERS)

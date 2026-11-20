@@ -1,0 +1,27 @@
+{
+  "task_id": "SUP-RECOVERY-CROSS-FAMILY-REVIEWER-20261120",
+  "commands": [
+    {
+      "command": "cd .orchestrator && python3 -m unittest test_supervisor",
+      "result": "Ran 428 tests; 4 failures/errors, all pre-existing and identical on unmodified dev HEAD (OrphanUnmergedWorktreeStalenessTests x3, SupervisorCycleLatencyRecoveryTests.test_ignored_build_artifacts_do_not_dirty_worktree); all new and changed tests pass"
+    }
+  ],
+  "new_tests": [
+    "test_owner_fallback_prefers_other_family_reviewer_over_listed_own_family",
+    "test_same_family_pair_only_when_every_other_family_unavailable",
+    "test_process_missing_keeps_incumbent_pair_when_branch_has_trailers",
+    "test_replay_20261120_pushed_head_owner_missing_not_same_family",
+    "test_reviewer_role_recovery_prefers_other_family_over_listed_own_family",
+    "test_task_branch_incumbent_pair_parses_trailers",
+    "test_multi_agent_family_not_masked_by_first_unavailable_agent"
+  ],
+  "changed_expectations": [
+    {
+      "test": "ReviewIndependenceExceptionEvidenceTests.test_same_family_evidence_lists_only_unavailable_families",
+      "reason": "Families with an able agent now carry 'available:<agent>' and absent families 'no_agent_configured' instead of being omitted (which produced 'no capacity evidence supplied'); agent_can_take_task is patched because the bare config has no agent definitions."
+    }
+  ],
+  "runtime_budget": "No recurring job or persistent writer added; exception record stays one entry per other family with reasons capped at 120 chars; one bounded git log (30s timeout) per worker_process_missing recovery.",
+  "activation": "Live only after the supervisor runtime promotion. Accepted when a real reassignment on the promoted runtime shows other-family reviewer preference or incumbent-pair retention.",
+  "reopen_fixes": "Reviewer-role lost-lease recovery orders candidates cross-family first; incumbent-retention readiness flags gated on recovery role; capacity evidence aggregates every agent of a family (an available agent wins, otherwise reasons are joined, capped at 300 chars before the 120-char per-reason cap in the exception record)."
+}

@@ -1040,3 +1040,26 @@ def test_final_artifact_verify_and_compensation_skip_deployed_not_accepted():
     comp = step(COORDINATE, "compensation")
     # compensation keys off final_artifact_verify being non-skipped, so a skipped verify never compensates
     assert "final_artifact_verify.conclusion != 'skipped'" in comp["if"]
+
+
+def test_acceptance_viewer_credentials_only_in_probe_step_env():
+    text = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text()
+    acceptance = WORKFLOW["jobs"]["dev-acceptance-stage"]
+    assert acceptance["continue-on-error"] is True
+    holders = []
+    for name, job in WORKFLOW["jobs"].items():
+        for key in ("env",):
+            if any(k.startswith("ACCEPTANCE_VIEWER_") for k in job.get(key, {})):
+                holders.append((name, "<job>"))
+        for item in job.get("steps", []):
+            if any(k.startswith("ACCEPTANCE_VIEWER_") for k in item.get("env", {})):
+                holders.append((name, item.get("name")))
+    assert holders == [("dev-acceptance-stage", "Run acceptance checks and probes")]
+    env = step(acceptance, "stage")["env"]
+    assert set(k for k in env if k.startswith("ACCEPTANCE_VIEWER_")) == {
+        "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET"}
+    assert "secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in env["ACCEPTANCE_VIEWER_CLIENT_SECRET"]
+    assert "vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1'" in env["ACCEPTANCE_VIEWER_CLIENT_ID"]
+    assert "steps.plan.outputs.redacts_output == 'true'" in env["ACCEPTANCE_VIEWER_CLIENT_SECRET"]
+    assert text.count("ACCEPTANCE_VIEWER_CLIENT_SECRET") == 1
+    assert "ACCEPTANCE_VIEWER" not in "".join(WORKFLOW[True]["workflow_dispatch"]["inputs"])

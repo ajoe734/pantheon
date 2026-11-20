@@ -546,7 +546,7 @@ def create_incident_router(
             )
 
         return {
-            "data": incident,
+            "data": _project_bff_incident_case(incident),
             "meta": {
                 "staleness": _service.get_staleness(),
             },

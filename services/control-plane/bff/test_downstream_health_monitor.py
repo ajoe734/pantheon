@@ -199,6 +199,9 @@ class TestRecoveryReadBack:
             tenant_id="tenant-test",
             probe_interval_seconds=9999,
             failure_threshold=2,
+            recovery_successes=1,
+            recovery_min_seconds=0,
+            reopen_window_seconds=0,
         )
 
         # 1. Trigger failure to open incident
@@ -266,6 +269,9 @@ def _safety_monitor(tmp_path, **overrides):
         tenant_id="tenant-test",
         probe_interval_seconds=60,
         failure_threshold=2,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         state_path=str(tmp_path / "downstream_health.sqlite3"),
     )
     kwargs.update(overrides)

@@ -128,3 +128,46 @@ def test_search_index_scheduler_failed_tick_never_marks_alive(tmp_path) -> None:
 
         assert main() == 0
     assert not alive_file.exists()
+
+
+def _drain_env(alive_file, ticks: int, max_stalled: int = 3) -> dict:
+    return {
+        "SEARCH_INDEX_SCHEDULER_ALIVE_PATH": str(alive_file),
+        "SEARCH_INDEX_SCHEDULER_MAX_TICKS": str(ticks),
+        "SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS": "1",
+        "SEARCH_INDEX_SCHEDULER_MATERIALIZE": "false",
+        "SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS": str(max_stalled),
+    }
+
+
+def _run_main_with_backlogs(tmp_path, capsys, backlogs: list[int], max_stalled: int = 3) -> list[dict]:
+    alive_file = tmp_path / "alive"
+    seq = iter(backlogs)
+
+    def urlopen(request, timeout=None):
+        return _FakeHttpResponse(
+            {"status": "in_progress", "pipeline_snapshot": {"backlog_remaining": next(seq)}}
+        )
+
+    with mock.patch("services.search.scheduler_worker.urllib.request.urlopen", urlopen), \
+         mock.patch("services.search.scheduler_worker.time.sleep"), \
+         mock.patch.dict("os.environ", _drain_env(alive_file, len(backlogs), max_stalled)):
+        from services.search.scheduler_worker import main
+
+        assert main() == 0
+    return [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+
+
+def test_in_progress_ticks_with_falling_backlog_stay_healthy(tmp_path, capsys) -> None:
+    # 2026-11-20 08:16Z-09:11Z shape: every tick answers in_progress while backlog 1095 -> 140.
+    backlogs = [1095, 900, 700, 520, 300, 140, 100, 60]
+    lines = _run_main_with_backlogs(tmp_path, capsys, backlogs, max_stalled=3)
+    assert all(line["health"] == "healthy" for line in lines)
+    assert (tmp_path / "alive").exists()
+
+
+def test_in_progress_ticks_without_backlog_decrease_turn_unhealthy(tmp_path, capsys) -> None:
+    lines = _run_main_with_backlogs(tmp_path, capsys, [500, 400, 400, 400, 400, 400], max_stalled=3)
+    assert [line["health"] for line in lines[:4]] == ["healthy"] * 4
+    assert lines[4]["health"] == "unhealthy"
+    assert lines[4]["stalled_ticks"] == 3

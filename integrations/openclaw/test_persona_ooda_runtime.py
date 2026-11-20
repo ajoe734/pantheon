@@ -122,3 +122,54 @@ def test_plain_reply_has_no_blocked_reason_and_auth_failure_is_named():
 
     turn = rt.run_persona_ooda_turn("persona-crypto", "p", token="t", post=denied)
     assert turn.status == "error" and turn.error == "model_auth_failed"
+
+
+# --- PERSONA-CYCLE-TURN-INPUT-BOUNDED-20261120 --------------------------------
+PROMPT_BUDGET_CHARS = 40_000  # stated in evidence.json
+
+
+def _hosted_observe(count=78, valued=37, mark_chars=14_600):
+    rows = []
+    for i in range(count):
+        row = {"schema_version": "quarter_equity.v1", "as_of": f"2026-11-{1 + i // 4:02d}T{i % 24:02d}:00:00Z",
+               "status": "known" if i < valued else "unknown", "equity": 1_000_000.0 + i}
+        if i < valued:
+            row["mark_refs"] = ["m" * 40] * (mark_chars // 41)
+        rows.append(row)
+    return {"pool": {"digest": "d"}, "telemetry": [{
+        "runtime_id": "rt-3b65a843", "pnl": -1234.5, "ledger_fill_count": 17,
+        "positions_status": "marks_unavailable", "positions_unavailable_reason": "mark_stale_for_2330",
+        "quarter_equity_observations": rows}]}
+
+
+def test_hosted_shape_prompt_is_bounded_and_keeps_the_facts():
+    observe = _hosted_observe()
+    assert len(json.dumps(observe)) > 500_000
+    prompt = rt.build_brokered_cycle_prompt({"persona_id": "p"}, observe)
+    assert len(prompt) < PROMPT_BUDGET_CHARS
+    assert "mark_refs" not in prompt
+    for fact in ("-1234.5", "17", "marks_unavailable", "mark_stale_for_2330", "1000036.0"):
+        assert fact in prompt
+    el = json.loads(prompt.split("Observe:\n", 1)[1])["telemetry"][0]["quarter_equity_observations_elided"]
+    assert el["length"] == 78 and el["first_as_of"] < el["last_as_of"]
+    assert el["latest_valued"]["equity"] == 1_000_036.0
+    assert len(el["last_valued"]) == rt.VALUED_POINTS_KEPT == 5
+    assert el["source_ref"] == "telemetry://runtime-summaries/rt-3b65a843"
+    assert len(observe["telemetry"][0]["quarter_equity_observations"]) == 78  # input untouched
+
+
+def test_prompt_size_does_not_grow_with_series_length():
+    small = len(rt.build_brokered_cycle_prompt({"persona_id": "p"}, _hosted_observe()))
+    huge = rt.build_brokered_cycle_prompt({"persona_id": "p"}, _hosted_observe(20000, 10000, 1000))
+    assert len(huge) < PROMPT_BUDGET_CHARS and abs(len(huge) - small) < 2_000
+
+
+def test_context_overflow_is_a_named_turn_error():
+    import urllib.error, io
+
+    def refused(url, body, headers, timeout):
+        raise urllib.error.HTTPError(url, 400, "bad", {}, io.BytesIO(
+            b"[context-overflow-precheck] estimatedPromptTokens=203248 promptBudgetBeforeReserve=180000"))
+
+    turn = rt.run_persona_ooda_turn("p", "x", token="t", post=refused)
+    assert turn.status == "error" and turn.error == rt.TURN_CONTEXT_OVERFLOW

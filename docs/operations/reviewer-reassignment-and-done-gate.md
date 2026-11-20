@@ -126,3 +126,31 @@ edit task JSON.
    AI_NAME=<Human/Ops or current reviewer> \
    "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" reconcile_merged_done <TASK> "<message>"
    ```
+
+## Reviewer selection order and the pushed-head incumbent rule
+
+Source: SUP-RECOVERY-CROSS-FAMILY-REVIEWER-20261120 (problem register RC4 WP4.3).
+Live only after the supervisor runtime promotion.
+
+`plan_task_assignment_pair` (ordinary dispatch, availability reassignment and
+lost-lease recovery, owner and reviewer role) orders reviewer candidates as:
+
+1. every candidate of a **different model family** than the candidate owner
+   (`AGENT_FAMILIES`), in the configured order, that can take the task;
+2. only when none of those can, a candidate of the owner's **own family**.
+
+A same-family pick records `review_independence_exception` with one entry per
+other family and a concrete, capped reason (`<agent>:<terminal reason>`,
+`<agent>:cannot_take_task`, `available:<agent>` when an agent was able but the
+pair was pinned, or `no_agent_configured`). The text
+`no capacity evidence supplied` is not recorded for a family that had an agent
+able to take the task. An explicit manual (human) reviewer gate is unchanged.
+
+**Incumbent rule.** For lost-lease recovery with reason `worker_process_missing`,
+if the task branch already has commits ahead of the base whose `LLM-Agent` and
+`Reviewer` trailers (and `Task-ID`) name the current owner/reviewer pair, the
+supervisor keeps that pair whenever the incumbent of the lost role can still
+take the task, because any other pair would be refused by handoff trailer
+admission. It moves to a fallback owner only when the incumbent owner cannot
+take the task. `review_approved` closeout recovery still reuses only the
+current pair, and trailer admission in `scripts/ai_status.py` is unchanged.

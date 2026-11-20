@@ -3861,6 +3861,105 @@ _PERSONA_INTENT_SOURCE_ALIASES = {
     "agora_sessions": "agora_session",
 }
 
+_PERSONA_INTENT_KIND_ALIASES = {
+    "trade": "trade_intent",
+    "trade_intent": "trade_intent",
+    "trade_intents": "trade_intent",
+    "intent": "trade_intent",
+    "intents": "trade_intent",
+    "persona_trace": "trade_intent",
+    "persona_traces": "trade_intent",
+    "consult": "consultation",
+    "consultation": "consultation",
+    "consultations": "consultation",
+    "persona_panel": "consultation",
+    "gate_panel": "consultation",
+    "panel": "consultation",
+    "panels": "consultation",
+    "meeting": "meeting",
+    "meetings": "meeting",
+    "persona_meeting": "meeting",
+    "persona_meetings": "meeting",
+    "deliberative_meeting": "meeting",
+    "trainer": "trainer",
+    "trainers": "trainer",
+    "trainer_session": "trainer",
+    "trainer_sessions": "trainer",
+    "teaching": "trainer",
+    "teaching_session": "trainer",
+    "teaching_sessions": "trainer",
+}
+
+_PERSONA_INTENT_PRIVATE_SCOPES = frozenset({
+    "persona_private",
+    "private",
+    "private_user",
+    "user_private",
+})
+
+_PERSONA_INTENT_PRIVATE_MEMORY_KEYS = frozenset({
+    "private_memory",
+    "private_memories",
+    "private_memory_text",
+    "persona_private_memory",
+    "memory_trace",
+    "private_bank",
+    "private_memory_entries",
+    "private_text",
+    "private_content",
+    "privateMemory",
+    "privateMemories",
+    "privateMemoryText",
+    "personaPrivateMemory",
+    "memoryTrace",
+    "privateBank",
+    "privateMemoryEntries",
+    "privateText",
+    "privateContent",
+})
+
+_PERSONA_INTENT_PRIVATE_INTERPRETATION_KEYS = frozenset({
+    "private_interpretation",
+    "private_interpretations",
+    "persona_interpretation",
+    "persona_interpretations",
+    "interpretation_turn",
+    "reasoning_trace",
+    "privateInterpretation",
+    "privateInterpretations",
+    "personaInterpretation",
+    "personaInterpretations",
+    "interpretationTurn",
+    "reasoningTrace",
+})
+
+_PERSONA_INTENT_BUILTIN_PERSONA_NAMES = {
+    "persona-risk-officer": "Risk Officer",
+    "persona-red-team": "Red Team",
+    "persona-risk-chief": "Risk Chief",
+    "persona-execution-sponsor": "Execution Sponsor",
+    "p-risk-analyst": "Risk Analyst Persona",
+}
+
+_PERSONA_INTENT_FIELD_REASON_CODES = {
+    "private_memory": "private_memory_withheld",
+    "private_memories": "private_memory_withheld",
+    "private_memory_text": "private_memory_withheld",
+    "persona_private_memory": "private_memory_withheld",
+    "memory_trace": "private_memory_withheld",
+    "private_bank": "private_memory_withheld",
+    "private_memory_entries": "private_memory_withheld",
+    "private_text": "private_memory_withheld",
+    "private_content": "private_memory_withheld",
+    "persona_interpretation": "private_interpretation_withheld",
+    "persona_interpretations": "private_interpretation_withheld",
+    "private_interpretation": "private_interpretation_withheld",
+    "private_interpretations": "private_interpretation_withheld",
+    "interpretation_turn": "private_interpretation_withheld",
+    "reasoning_trace": "private_interpretation_withheld",
+    "raw_control_diff": "raw_control_diff_withheld",
+}
+
 
 # --- _persona_intent_csv_filter ---
 def _persona_intent_csv_filter(value: Optional[str]) -> Optional[set[str]]:
@@ -3878,6 +3977,23 @@ def _persona_intent_source_filter(value: Optional[str]) -> Optional[set[str]]:
     return {
         _PERSONA_INTENT_SOURCE_ALIASES.get(source_type, source_type)
         for source_type in requested
+    }
+
+
+# --- _persona_intent_kind_filter ---
+def _persona_intent_kind_filter(
+    value: Optional[str],
+    *,
+    default_to_trade_intent: bool = True,
+) -> Optional[set[str]]:
+    requested = _persona_intent_csv_filter(value)
+    if not requested:
+        return {"trade_intent"} if default_to_trade_intent else None
+    if "all" in requested or "*" in requested:
+        return None
+    return {
+        _PERSONA_INTENT_KIND_ALIASES.get(kind_token, kind_token)
+        for kind_token in requested
     }
 
 
@@ -3903,12 +4019,193 @@ def _persona_intent_timestamp(record: Dict[str, Any]) -> str:
     )
 
 
+# --- _persona_intent_format_fallback_persona_name ---
+def _persona_intent_format_fallback_persona_name(persona_id: str) -> str:
+    clean_id = _persona_intent_text(persona_id)
+    if not clean_id:
+        return ""
+    if clean_id in _PERSONA_INTENT_BUILTIN_PERSONA_NAMES:
+        return _PERSONA_INTENT_BUILTIN_PERSONA_NAMES[clean_id]
+    parts = [part for part in clean_id.replace("_", "-").split("-") if part]
+    if len(parts) == 2 and parts[0].lower() in {"persona", "p"} and len(parts[1]) >= 16 and all(
+        c in "0123456789abcdef" for c in parts[1].lower()
+    ):
+        return f"Persona {parts[1][:8]}"
+    return " ".join(part.capitalize() for part in parts) or clean_id
+
+
 # --- _persona_intent_persona_label ---
-def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
-    persona = _get_active_read_store().get_persona(persona_id)
-    if not persona:
+def _persona_intent_persona_label(
+    persona_id: str,
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hint_name: Optional[str] = None,
+) -> Optional[str]:
+    clean_id = _persona_intent_text(persona_id)
+    if not clean_id:
         return None
-    return persona.get("name") or persona.get("display_name") or persona_id
+    if persona_names_by_id and clean_id in persona_names_by_id and persona_names_by_id[clean_id]:
+        return persona_names_by_id[clean_id]
+    clean_hint = _persona_intent_text(hint_name)
+    if clean_hint and clean_hint != clean_id:
+        return clean_hint
+    store = _get_active_read_store()
+    persona: Optional[Dict[str, Any]] = None
+    if hasattr(store, "get_persona"):
+        try:
+            persona = store.get_persona(clean_id)
+        except Exception:
+            persona = None
+    if not persona and hasattr(store, "list_personas"):
+        try:
+            for candidate in store.list_personas() or []:
+                if isinstance(candidate, dict):
+                    cid = _persona_intent_text(candidate.get("persona_id") or candidate.get("id"))
+                    if cid == clean_id:
+                        persona = candidate
+                        break
+        except Exception:
+            persona = None
+    if isinstance(persona, dict):
+        meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        label = _persona_intent_text(
+            persona.get("display_name")
+            or persona.get("displayName")
+            or persona.get("name")
+            or meta.get("display_name")
+            or meta.get("name")
+        )
+        if label:
+            return label
+    if clean_hint:
+        return clean_hint
+    return _persona_intent_format_fallback_persona_name(clean_id)
+
+
+# --- _persona_intent_persona_entry ---
+def _persona_intent_persona_entry(
+    persona_id: str,
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hint_name: Optional[str] = None,
+) -> Dict[str, str]:
+    clean_id = _persona_intent_text(persona_id)
+    display_name = (
+        _persona_intent_persona_label(
+            clean_id,
+            persona_names_by_id=persona_names_by_id,
+            hint_name=hint_name,
+        )
+        or clean_id
+    )
+    return {
+        "id": clean_id,
+        "persona_id": clean_id,
+        "name": display_name,
+        "display_name": display_name,
+    }
+
+
+# --- _persona_intent_build_persona_entries ---
+def _persona_intent_build_persona_entries(
+    persona_ids: List[str],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hints_by_id: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
+    entries: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for pid in persona_ids:
+        clean_id = _persona_intent_text(pid)
+        if not clean_id or clean_id in seen:
+            continue
+        seen.add(clean_id)
+        entries.append(
+            _persona_intent_persona_entry(
+                clean_id,
+                persona_names_by_id=persona_names_by_id,
+                hint_name=(hints_by_id or {}).get(clean_id),
+            )
+        )
+    return entries
+
+
+# --- _persona_intent_is_private_item ---
+def _persona_intent_is_private_item(item: Mapping[str, Any]) -> Optional[str]:
+    for key in ("relevance_scope", "memory_layer", "scope", "visibility_scope", "memory_scope", "owner_scope"):
+        val = _persona_intent_text(item.get(key)).lower()
+        if val in _PERSONA_INTENT_PRIVATE_SCOPES:
+            kind_token = _persona_intent_text(
+                item.get("kind") or item.get("memory_type") or item.get("type")
+            ).lower()
+            if "interpretation" in kind_token:
+                return "private_interpretation_withheld"
+            return "private_memory_withheld"
+    if item.get("is_private") is True or item.get("private") is True:
+        return "private_memory_withheld"
+    for key in ("kind", "memory_type", "type", "event_type"):
+        val = _persona_intent_text(item.get(key)).lower()
+        if val in {"private_memory", "persona_private", "persona_private_memory"}:
+            return "private_memory_withheld"
+        if val in {"private_interpretation", "persona_interpretation", "interpretation_turn"}:
+            return "private_interpretation_withheld"
+    return None
+
+
+# --- _persona_intent_strip_private_content ---
+def _persona_intent_strip_private_content(
+    obj: Any,
+    withheld_acc: Optional[List[Dict[str, str]]] = None,
+) -> tuple[Any, List[Dict[str, str]]]:
+    acc = withheld_acc if withheld_acc is not None else []
+
+    def _record(field_name: str, reason_code: str) -> None:
+        canonical_field = _management_camel_to_snake_key(field_name) if _MANAGEMENT_CAMEL_KEY_RE.search(field_name) else field_name
+        entry = {"field": canonical_field, "reason_code": reason_code}
+        if entry not in acc:
+            acc.append(entry)
+
+    if isinstance(obj, Mapping):
+        item_reason = _persona_intent_is_private_item(obj)
+        if item_reason is not None:
+            field_for_reason = (
+                "persona_interpretation"
+                if item_reason == "private_interpretation_withheld"
+                else "private_memory"
+            )
+            _record(field_for_reason, item_reason)
+            return None, acc
+        cleaned: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key_str = str(k)
+            if key_str in _PERSONA_INTENT_PRIVATE_MEMORY_KEYS:
+                _record(key_str, "private_memory_withheld")
+                continue
+            if key_str in _PERSONA_INTENT_PRIVATE_INTERPRETATION_KEYS:
+                _record(key_str, "private_interpretation_withheld")
+                continue
+            stripped_val, _ = _persona_intent_strip_private_content(v, acc)
+            if stripped_val is not None or v is None:
+                cleaned[key_str] = stripped_val
+        return cleaned, acc
+    if isinstance(obj, list):
+        out: List[Any] = []
+        for elem in obj:
+            if isinstance(elem, Mapping):
+                elem_reason = _persona_intent_is_private_item(elem)
+                if elem_reason is not None:
+                    field_for_reason = (
+                        "persona_interpretation"
+                        if elem_reason == "private_interpretation_withheld"
+                        else "private_memory"
+                    )
+                    _record(field_for_reason, elem_reason)
+                    continue
+            stripped_elem, _ = _persona_intent_strip_private_content(elem, acc)
+            if stripped_elem is not None or elem is None:
+                out.append(stripped_elem)
+        return out, acc
+    return obj, acc
 
 
 # --- _persona_intent_capability_summary ---
@@ -3916,8 +4213,9 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
     snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
     snapshot = _get_active_read_store().get_capability_snapshot(snapshot_id) if snapshot_id else None
     if not snapshot:
-        persona_id = _persona_intent_text(session.get("persona_id"))
-        snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id)
+        persona_id = _persona_intent_text(session.get("persona_id") or session.get("from_persona_id"))
+        if persona_id:
+            snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id)
         snapshot_id = _persona_intent_text((snapshot or {}).get("snapshot_id") or snapshot_id)
     if not snapshot:
         return {
@@ -3927,10 +4225,15 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
             "effective_skill_count": 0,
             "restriction_count": 0,
         }
+    effective_tools = [
+        _persona_intent_text(t)
+        for t in (snapshot.get("effective_tools") or snapshot.get("tools_enabled") or [])
+        if _persona_intent_text(t)
+    ]
     return {
         "snapshot_id": snapshot_id or snapshot.get("snapshot_id") or snapshot.get("id"),
         "available": True,
-        "effective_tool_count": len(snapshot.get("effective_tools") or []),
+        "effective_tool_count": len(effective_tools),
         "effective_skill_count": len(snapshot.get("effective_skills") or []),
         "effective_workflow_count": len(snapshot.get("effective_workflows") or []),
         "restriction_count": len(snapshot.get("restrictions") or []),
@@ -3938,112 +4241,628 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
     }
 
 
+# --- _persona_intent_extract_tools_used ---
+def _persona_intent_extract_tools_used(session: Dict[str, Any], *, persona_id: Optional[str] = None) -> List[str]:
+    tools: List[str] = []
+
+    def _add_tool(val: Any) -> None:
+        if isinstance(val, str):
+            clean = val.strip()
+            if clean and clean not in tools:
+                tools.append(clean)
+        elif isinstance(val, Mapping):
+            name = _persona_intent_text(
+                val.get("tool_name")
+                or val.get("toolName")
+                or val.get("name")
+                or val.get("tool")
+                or val.get("tool_id")
+                or val.get("id")
+            )
+            if name and name not in tools:
+                tools.append(name)
+        elif isinstance(val, list):
+            for elem in val:
+                _add_tool(elem)
+
+    for key in (
+        "tools_used",
+        "toolsUsed",
+        "tool_path",
+        "toolPath",
+        "tool_calls",
+        "toolCalls",
+        "tools_enabled",
+        "toolsEnabled",
+        "effective_tools",
+        "effectiveTools",
+    ):
+        if key in session:
+            _add_tool(session.get(key))
+
+    for container_key in ("events", "messages", "rounds"):
+        for entry in session.get(container_key) or []:
+            if not isinstance(entry, Mapping):
+                continue
+            for key in ("tools_used", "toolsUsed", "tool_calls", "toolCalls", "tool_name", "toolName", "tool"):
+                if key in entry:
+                    _add_tool(entry.get(key))
+
+    if not tools:
+        snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
+        snapshot = _get_active_read_store().get_capability_snapshot(snapshot_id) if snapshot_id else None
+        if not snapshot:
+            eff_pid = _persona_intent_text(persona_id or session.get("persona_id") or session.get("from_persona_id"))
+            if eff_pid:
+                try:
+                    snapshot = _get_active_read_store().get_capability_snapshot_for_persona(eff_pid)
+                except Exception:
+                    snapshot = None
+        if isinstance(snapshot, Mapping):
+            _add_tool(snapshot.get("effective_tools") or snapshot.get("tools_enabled"))
+            if not tools:
+                for cap in snapshot.get("capabilities") or []:
+                    if isinstance(cap, Mapping) and cap.get("effective", True):
+                        _add_tool(cap.get("name") or cap.get("id"))
+    return tools
+
+
+# --- _persona_intent_extract_string_list ---
+def _persona_intent_extract_string_list(*values: Any) -> List[str]:
+    result: List[str] = []
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for raw_item in value:
+            if isinstance(raw_item, Mapping):
+                text = _persona_intent_text(
+                    raw_item.get("id")
+                    or raw_item.get("ref_id")
+                    or raw_item.get("ref")
+                    or raw_item.get("evidence_ref")
+                    or raw_item.get("artifact_ref")
+                    or raw_item.get("item_id")
+                )
+            else:
+                text = _persona_intent_text(raw_item)
+            if text and text not in result:
+                result.append(text)
+    return result
+
+
+# --- _persona_intent_item_kind ---
+def _persona_intent_item_kind(source_type: str, session: Mapping[str, Any]) -> str:
+    explicit_kind = _persona_intent_text(session.get("kind")).lower()
+    if explicit_kind and explicit_kind in _PERSONA_INTENT_KIND_ALIASES:
+        return _PERSONA_INTENT_KIND_ALIASES[explicit_kind]
+    if source_type == "trainer_session":
+        return "trainer"
+    meta = session.get("metadata") if isinstance(session.get("metadata"), Mapping) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), Mapping) else {}
+    consultation_type = _persona_intent_text(
+        session.get("consultation_type") or consult_meta.get("consultation_type")
+    ).lower()
+    session_class = _persona_intent_text(session.get("session_class")).lower()
+    mode = _persona_intent_text(
+        session.get("mode")
+        or session.get("session_type")
+        or session.get("sessionType")
+        or consultation_type
+    ).lower()
+    session_id = _persona_intent_text(
+        _management_record_id(
+            dict(session),
+            "sessionId",
+            "session_id",
+            "id",
+            "requestId",
+            "request_id",
+            "meeting_id",
+        )
+    ).lower()
+
+    if (
+        consultation_type == "persona_meeting"
+        or mode in {"persona_meeting", "meeting", "deliberative_meeting"}
+        or session_class == "deliberative_meeting"
+        or bool(session.get("meeting_type"))
+        or isinstance(meta.get("meeting"), Mapping)
+        or session_id.startswith("mtg-")
+    ):
+        return "meeting"
+
+    if (
+        mode in {"trainer", "trainer_session", "teaching", "teaching_session", "persona_teaching_advisory"}
+        or consultation_type in {"trainer", "teaching", "persona_teaching_advisory"}
+        or session_id.startswith("teach-")
+        or session_id.startswith("creq-teach-")
+    ):
+        return "trainer"
+
+    if source_type == "agora_session":
+        if mode in {"trade_intent", "trading_room", "decision_lock", "trade_proposal", "order_intent"}:
+            return "trade_intent"
+        return "consultation"
+
+    if mode in {
+        "consult",
+        "consultation",
+        "persona_panel",
+        "gate_panel",
+        "committee",
+        "committee_review",
+        "strategy_review",
+        "pre_deployment",
+    }:
+        return "consultation"
+    return "trade_intent"
+
+
 # --- _persona_intent_redaction ---
-def _persona_intent_redaction(fields: List[str]) -> Dict[str, Any]:
+def _persona_intent_redaction(
+    fields: Optional[List[Any]] = None,
+    *,
+    extra_withheld: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    withheld_fields: List[Dict[str, str]] = []
+    seen_fields: set[str] = set()
+
+    def _add_entry(field_name: str, reason_code: Optional[str] = None) -> None:
+        clean_field = _persona_intent_text(field_name)
+        if not clean_field:
+            return
+        canonical_field = (
+            _management_camel_to_snake_key(clean_field)
+            if _MANAGEMENT_CAMEL_KEY_RE.search(clean_field)
+            else clean_field
+        )
+        if canonical_field in seen_fields:
+            return
+        resolved_reason = (
+            _persona_intent_text(reason_code)
+            or _PERSONA_INTENT_FIELD_REASON_CODES.get(canonical_field)
+            or _PERSONA_INTENT_FIELD_REASON_CODES.get(clean_field)
+            or "private_memory_withheld"
+        )
+        seen_fields.add(canonical_field)
+        withheld_fields.append(
+            {
+                "field": canonical_field,
+                "reason_code": resolved_reason,
+            }
+        )
+
+    _add_entry("private_memory", "private_memory_withheld")
+    _add_entry("persona_interpretation", "private_interpretation_withheld")
+
+    for raw in fields or []:
+        if isinstance(raw, Mapping):
+            _add_entry(
+                str(raw.get("field") or ""),
+                str(raw.get("reason_code") or raw.get("reason") or ""),
+            )
+        elif isinstance(raw, str):
+            if raw in _PERSONA_INTENT_FIELD_REASON_CODES:
+                _add_entry(raw, _PERSONA_INTENT_FIELD_REASON_CODES[raw])
+
+    for extra in extra_withheld or []:
+        if isinstance(extra, Mapping):
+            _add_entry(
+                str(extra.get("field") or ""),
+                str(extra.get("reason_code") or extra.get("reason") or ""),
+            )
+
+    reason_codes: List[str] = []
+    for entry in withheld_fields:
+        rc = entry["reason_code"]
+        if rc not in reason_codes:
+            reason_codes.append(rc)
+
     return {
         "is_redacted": True,
         "redacted": True,
-        "policy": "management_persona_intent_public_summary",
-        "redacted_fields": fields,
+        "status": "redacted",
+        "policy": "sd_persona_meetings_12_2_private_memory_boundary",
+        "reason_code": reason_codes[0] if reason_codes else "private_memory_withheld",
+        "reason_codes": reason_codes,
+        "redacted_fields": [entry["field"] for entry in withheld_fields],
+        "withheld_fields": withheld_fields,
+        "field_reasons": {entry["field"]: entry["reason_code"] for entry in withheld_fields},
     }
 
 
+# --- _persona_intent_compose_summary ---
+def _persona_intent_compose_summary(
+    *,
+    title: str,
+    topic: str,
+    proposed_action: str,
+    outcome: str,
+    explicit_summary: Optional[str] = None,
+) -> str:
+    clean_explicit = _persona_intent_text(explicit_summary)
+    if clean_explicit and clean_explicit != _persona_intent_text(title):
+        return clean_explicit
+    parts: List[str] = []
+    if topic:
+        parts.append(topic)
+    if proposed_action and proposed_action != topic:
+        parts.append(f"Proposed: {proposed_action}")
+    if outcome and outcome not in {topic, proposed_action}:
+        parts.append(f"Outcome: {outcome}")
+    composed = " — ".join(parts)
+    if composed and composed != _persona_intent_text(title):
+        return composed
+    return f"{topic or title} (outcome: {outcome or 'recorded'})"
+
+
 # --- _persona_intent_trace_item ---
-def _persona_intent_trace_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "session_id", "id")
+def _persona_intent_trace_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(cleaned_session, "session_id", "id")
     if not session_id:
         return None
-    persona_id = _persona_intent_text(session.get("persona_id"))
-    session_type = _persona_intent_text(session.get("session_type") or "persona_session")
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    occurred_at = _persona_intent_timestamp(session)
+    persona_id = _persona_intent_text(cleaned_session.get("persona_id"))
+    persona_label = (
+        _persona_intent_persona_label(persona_id, persona_names_by_id=persona_names_by_id)
+        if persona_id
+        else None
+    )
+    session_type = _persona_intent_text(cleaned_session.get("session_type") or "persona_session")
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"persona_trace:{session_id}"
+    kind = _persona_intent_item_kind("persona_trace", cleaned_session)
+
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=persona_id)
+    cap_summary = _persona_intent_capability_summary(cleaned_session)
+    if tools_used and not cap_summary.get("effective_tool_count"):
+        cap_summary["effective_tool_count"] = len(tools_used)
+
+    meta = cleaned_session.get("metadata") if isinstance(cleaned_session.get("metadata"), dict) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), dict) else {}
+    deployment_stage = _persona_intent_text(cleaned_session.get("deployment_stage") or "paper")
+    capital_pool_id = _persona_intent_text(
+        cleaned_session.get("capital_pool_id") or cleaned_session.get("pool_scope")
+    )
+    runtime_binding_id = _persona_intent_text(cleaned_session.get("runtime_binding_id"))
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_ref")
+        or cleaned_session.get("objective")
+        or meta.get("topic")
+        or meta.get("task")
+        or (
+            f"{session_type.replace('_', ' ').title()} on {capital_pool_id}"
+            if capital_pool_id
+            else f"{session_type.replace('_', ' ').title()} ({deployment_stage})"
+        )
+    )
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or cleaned_session.get("action")
+        or cleaned_session.get("recommendation")
+        or meta.get("proposed_action")
+        or (
+            f"Execute {session_type.replace('_', ' ')} for {capital_pool_id} ({deployment_stage})"
+            if capital_pool_id
+            else (
+                cleaned_session.get("summary")
+                if _persona_intent_text(cleaned_session.get("summary")) != topic
+                else f"Execute {session_type.replace('_', ' ')} in {deployment_stage} stage"
+            )
+        )
+    )
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or cleaned_session.get("verdict")
+        or consult_meta.get("outcome")
+        or meta.get("outcome")
+        or meta.get("decision")
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or cleaned_session.get("outcome")
+        or consult_meta.get("outcome")
+        or outcome
+    )
+
+    raw_consulted = _persona_intent_extract_string_list(
+        cleaned_session.get("consulted_personas"),
+        cleaned_session.get("consultedPersonas"),
+        consult_meta.get("responder_session_ids"),
+        consult_meta.get("committee_session_ids"),
+    )
+    consulted_entries = _persona_intent_build_persona_entries(
+        raw_consulted,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = [
+        pid
+        for pid in [persona_id, *[e["persona_id"] for e in consulted_entries]]
+        if pid
+    ]
+    all_persona_ids = list(dict.fromkeys(all_persona_ids))
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+        consult_meta.get("evidence_refs"),
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title") or topic or f"Persona trace {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation"],
+        extra_withheld=stripped_withheld,
+    )
+
     trace = {
         "session_id": session_id,
-        "trace_id": session.get("trace_id"),
-        "request_id": session.get("request_id"),
-        "runtime_binding_id": session.get("runtime_binding_id"),
-        "deployment_stage": session.get("deployment_stage"),
-        "capital_pool_id": session.get("capital_pool_id"),
-        "last_heartbeat_at": session.get("last_heartbeat_at"),
-        "capability_summary": _persona_intent_capability_summary(session),
+        "trace_id": cleaned_session.get("trace_id"),
+        "request_id": cleaned_session.get("request_id"),
+        "runtime_binding_id": runtime_binding_id or None,
+        "deployment_stage": cleaned_session.get("deployment_stage"),
+        "capital_pool_id": capital_pool_id or None,
+        "last_heartbeat_at": cleaned_session.get("last_heartbeat_at"),
+        "capability_summary": cap_summary,
+        "tools_used": tools_used,
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "persona_trace",
+        "kind": kind,
         "source_type": "persona_trace",
         "source_id": session_id,
-        "personaId": persona_id or None,
         "persona_id": persona_id or None,
-        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "persona_name": persona_label,
+        "persona_display_name": persona_label,
+        "persona_label": persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
         "intent": session_type,
-        "title": f"Persona trace {session_id}",
-        "summary": f"{session_type.replace('_', ' ').title()} session intent summary.",
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("started_at") or session.get("created_at"),
-        "updated_at": session.get("last_heartbeat_at") or session.get("updated_at"),
+        "created_at": cleaned_session.get("started_at") or cleaned_session.get("created_at"),
+        "updated_at": cleaned_session.get("last_heartbeat_at") or cleaned_session.get("updated_at"),
         "occurred_at": occurred_at,
         "trace": trace,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(
-            ["capability_snapshot", "tools_enabled", "memory_trace", "reasoning_trace"]
-        ),
+        "redaction": redaction,
         "route": "/management/persona-intent?source_type=persona_trace",
         "bff_detail_path": f"/api/v1/sessions/{session_id}",
     }
 
 
 # --- _persona_intent_trainer_item ---
-def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "session_id", "id")
+def _persona_intent_trainer_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(cleaned_session, "session_id", "id")
     if not session_id:
         return None
-    persona_id = _persona_intent_text(session.get("persona_id"))
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    raw_events = [event for event in (session.get("events") or []) if isinstance(event, dict)]
+    persona_id = _persona_intent_text(cleaned_session.get("persona_id"))
+    persona_label = (
+        _persona_intent_persona_label(persona_id, persona_names_by_id=persona_names_by_id)
+        if persona_id
+        else None
+    )
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    raw_events = [event for event in (cleaned_session.get("events") or []) if isinstance(event, dict)]
     latest_event = None
     if raw_events:
         latest_event = sorted(
             raw_events,
             key=lambda event: int(event.get("sequence_number") or 0),
         )[-1]
-    outcomes = list(session.get("outcomes") or [])
-    objective = _persona_intent_text(session.get("objective") or session.get("topic"))
-    occurred_at = _persona_intent_timestamp(session)
+    outcomes = [
+        _persona_intent_text(o)
+        for o in (cleaned_session.get("outcomes") or [])
+        if _persona_intent_text(o)
+    ]
+    evaluation = cleaned_session.get("evaluation") if isinstance(cleaned_session.get("evaluation"), dict) else {}
+    if not outcomes and evaluation:
+        eval_note = _persona_intent_text(evaluation.get("notes") or evaluation.get("summary"))
+        if eval_note:
+            outcomes.append(eval_note)
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("objective")
+        or cleaned_session.get("title")
+        or f"Trainer session for {persona_label or persona_id or session_id}"
+    )
+    objective = _persona_intent_text(cleaned_session.get("objective") or cleaned_session.get("topic") or topic)
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"trainer_session:{session_id}"
+    mode = _persona_intent_text(cleaned_session.get("mode") or cleaned_session.get("session_type") or "trainer")
+
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or (outcomes[0] if outcomes else "")
+        or objective
+    )
+    latest_signal = _persona_intent_text((latest_event or {}).get("outcome_signal"))
+    eval_outcome = ""
+    if evaluation:
+        if "passed" in evaluation:
+            score_part = f" (score {evaluation['score']})" if evaluation.get("score") is not None else ""
+            eval_outcome = f"{'passed' if evaluation.get('passed') else 'failed'}{score_part}"
+        else:
+            eval_outcome = _persona_intent_text(evaluation.get("outcome") or evaluation.get("notes"))
+
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or ("; ".join(outcomes) if outcomes else "")
+        or latest_signal
+        or eval_outcome
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or latest_signal
+        or eval_outcome
+        or outcome
+    )
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=persona_id)
+
+    raw_consulted = _persona_intent_extract_string_list(
+        cleaned_session.get("consulted_personas"),
+        cleaned_session.get("consultedPersonas"),
+    )
+    consulted_entries = _persona_intent_build_persona_entries(
+        raw_consulted,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = [
+        pid
+        for pid in [persona_id, *[e["persona_id"] for e in consulted_entries]]
+        if pid
+    ]
+    all_persona_ids = list(dict.fromkeys(all_persona_ids))
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+        cleaned_session.get("session_artifacts"),
+        cleaned_session.get("artifacts"),
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title") or topic or f"Trainer session {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation", "raw_control_diff"],
+        extra_withheld=stripped_withheld,
+    )
+
     trainer_summary = {
         "session_id": session_id,
         "objective": objective or None,
-        "mode": session.get("mode") or session.get("session_type") or "trainer",
+        "topic": topic or None,
+        "mode": mode,
         "status": status,
-        "started_at": session.get("started_at"),
-        "ended_at": session.get("ended_at") or session.get("completed_at"),
-        "current_control_state": session.get("current_control_state"),
+        "started_at": cleaned_session.get("started_at"),
+        "ended_at": cleaned_session.get("ended_at") or cleaned_session.get("completed_at"),
+        "current_control_state": cleaned_session.get("current_control_state"),
         "event_count": len(raw_events),
         "outcome_count": len(outcomes),
+        "outcomes": outcomes,
         "latest_outcome_signal": (latest_event or {}).get("outcome_signal"),
-        "artifact_count": len(session.get("session_artifacts") or session.get("artifacts") or []),
+        "artifact_count": len(cleaned_session.get("session_artifacts") or cleaned_session.get("artifacts") or []),
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "trainer_session",
+        "kind": "trainer",
         "source_type": "trainer_session",
         "source_id": session_id,
-        "personaId": persona_id or None,
         "persona_id": persona_id or None,
-        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
-        "intent": trainer_summary["mode"],
-        "title": f"Trainer session {session_id}",
-        "summary": objective or "Trainer session intent summary.",
+        "persona_name": persona_label,
+        "persona_display_name": persona_label,
+        "persona_label": persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
+        "intent": mode,
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("started_at") or session.get("created_at"),
-        "updated_at": session.get("ended_at") or session.get("completed_at") or session.get("updated_at"),
+        "created_at": cleaned_session.get("started_at") or cleaned_session.get("created_at"),
+        "updated_at": cleaned_session.get("ended_at") or cleaned_session.get("completed_at") or cleaned_session.get("updated_at"),
         "occurred_at": occurred_at,
         "trainer": trainer_summary,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(["events", "message_body", "raw_control_diff"]),
+        "redaction": redaction,
         "route": "/management/persona-intent?source_type=trainer_session",
         "bff_detail_path": f"/api/v1/trainer/sessions/{session_id}",
     }
@@ -4052,7 +4871,16 @@ def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, 
 # --- _persona_intent_agora_persona_ids ---
 def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
     persona_ids: List[str] = []
+    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId", "chair_persona_id", "chairPersonaId"):
+        raw_val = _persona_intent_text(session.get(key))
+        if raw_val:
+            persona_ids.append(raw_val)
     for participant in session.get("participants") or []:
+        if isinstance(participant, str):
+            clean_p = _persona_intent_text(participant)
+            if clean_p.startswith("persona-") or clean_p.startswith("p-"):
+                persona_ids.append(clean_p)
+            continue
         if not isinstance(participant, dict):
             continue
         actor_id = _persona_intent_text(
@@ -4067,12 +4895,8 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
         ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
         if ref_type == "persona" and ref_id:
             persona_ids.append(ref_id)
-    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId"):
-        raw_val = _persona_intent_text(session.get(key))
-        if raw_val:
-            persona_ids.append(raw_val)
     if session.get("target_type") == "persona":
-        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef"))
+        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef") or session.get("target_id"))
         if target_ref:
             persona_ids.append(target_ref)
     raw_pids = session.get("persona_ids") or session.get("personaIds")
@@ -4090,14 +4914,114 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
     return ordered
 
 
+# --- _persona_intent_agora_consulted_entries ---
+def _persona_intent_agora_consulted_entries(
+    session: Dict[str, Any],
+    *,
+    primary_persona_id: Optional[str],
+    kind: str,
+    mode: str,
+    persona_ids: List[str],
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
+    hints_by_id: Dict[str, str] = {}
+    candidate_ids: List[str] = []
+
+    def _collect_from_list(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for raw in items:
+            if isinstance(raw, str):
+                clean = _persona_intent_text(raw)
+                if clean:
+                    candidate_ids.append(clean)
+            elif isinstance(raw, Mapping):
+                pid = _persona_intent_text(
+                    raw.get("persona_id")
+                    or raw.get("actorId")
+                    or raw.get("actor_id")
+                    or raw.get("participant_ref")
+                    or raw.get("id")
+                )
+                if pid:
+                    candidate_ids.append(pid)
+                    hint = _persona_intent_text(raw.get("display_name") or raw.get("name") or raw.get("label"))
+                    if hint and hint != pid:
+                        hints_by_id[pid] = hint
+
+    _collect_from_list(session.get("consulted_personas") or session.get("consultedPersonas"))
+    _collect_from_list(session.get("participants"))
+
+    meta = session.get("metadata") if isinstance(session.get("metadata"), Mapping) else {}
+    panel_meta = meta.get("panel") if isinstance(meta.get("panel"), Mapping) else {}
+    meeting_meta = meta.get("meeting") if isinstance(meta.get("meeting"), Mapping) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), Mapping) else {}
+
+    _collect_from_list(panel_meta.get("participants"))
+    _collect_from_list(meeting_meta.get("participants"))
+    _collect_from_list(consult_meta.get("committee_participants"))
+    _collect_from_list(consult_meta.get("actual_reviewers"))
+
+    for pid in persona_ids:
+        if pid and pid not in candidate_ids:
+            candidate_ids.append(pid)
+
+    deduped = list(dict.fromkeys([pid for pid in candidate_ids if pid]))
+    non_primary = [pid for pid in deduped if pid != primary_persona_id]
+
+    if non_primary:
+        selected_ids = non_primary
+    elif kind == "consultation" and mode in {"persona_panel", "gate_panel"}:
+        selected_ids = ["persona-risk-officer"]
+    else:
+        selected_ids = deduped
+
+    return _persona_intent_build_persona_entries(
+        selected_ids,
+        persona_names_by_id=persona_names_by_id,
+        hints_by_id=hints_by_id,
+    )
+
+
 # --- _persona_intent_agora_item ---
-def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "sessionId", "session_id", "id", "requestId", "request_id")
+def _persona_intent_agora_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(
+        cleaned_session,
+        "sessionId",
+        "session_id",
+        "id",
+        "requestId",
+        "request_id",
+        "meeting_id",
+    )
     if not session_id:
         return None
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or session.get("consultation_type") or "agora_session")
-    messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    meta = cleaned_session.get("metadata") if isinstance(cleaned_session.get("metadata"), dict) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), dict) else {}
+    panel_meta = meta.get("panel") if isinstance(meta.get("panel"), dict) else {}
+    meeting_meta = meta.get("meeting") if isinstance(meta.get("meeting"), dict) else {}
+
+    mode = _persona_intent_text(
+        cleaned_session.get("mode")
+        or cleaned_session.get("sessionType")
+        or cleaned_session.get("session_type")
+        or cleaned_session.get("consultation_type")
+        or consult_meta.get("consultation_type")
+        or cleaned_session.get("meeting_type")
+        or meeting_meta.get("meeting_type")
+        or "agora_session"
+    )
+    kind = _persona_intent_item_kind("agora_session", cleaned_session)
+
+    messages = [message for message in (cleaned_session.get("messages") or []) if isinstance(message, dict)]
     latest_message_at = max(
         [
             _persona_intent_text(message.get("createdAt") or message.get("created_at"))
@@ -4107,60 +5031,303 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         default=None,
     )
     context_refs = [
-        ref for ref in (session.get("contextRefs") or session.get("context_refs") or [])
+        ref for ref in (cleaned_session.get("contextRefs") or cleaned_session.get("context_refs") or [])
         if isinstance(ref, dict)
     ]
-    persona_ids = _persona_intent_agora_persona_ids(session)
-    topic = _persona_intent_text(
-        session.get("topic")
-        or session.get("title")
-        or session.get("task")
-        or session.get("task_summary")
-        or session.get("taskSummary")
+    persona_ids = _persona_intent_agora_persona_ids(cleaned_session)
+    primary_persona_id = (
+        _persona_intent_text(
+            cleaned_session.get("from_persona_id")
+            or cleaned_session.get("chair_persona_id")
+            or cleaned_session.get("persona_id")
+            or (persona_ids[0] if persona_ids else "")
+        )
+        or None
     )
-    occurred_at = _persona_intent_timestamp(session)
+    primary_persona_label = (
+        _persona_intent_persona_label(primary_persona_id, persona_names_by_id=persona_names_by_id)
+        if primary_persona_id
+        else None
+    )
+
+    consulted_entries = _persona_intent_agora_consulted_entries(
+        cleaned_session,
+        primary_persona_id=primary_persona_id,
+        kind=kind,
+        mode=mode,
+        persona_ids=persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = list(
+        dict.fromkeys(
+            [
+                pid
+                for pid in [primary_persona_id, *persona_ids, *[e["persona_id"] for e in consulted_entries]]
+                if pid
+            ]
+        )
+    )
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("agenda")
+        or cleaned_session.get("title")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_summary")
+        or cleaned_session.get("taskSummary")
+        or meeting_meta.get("topic")
+        or meta.get("task")
+        or f"Agora {mode.replace('_', ' ')} session"
+    )
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"agora_session:{session_id}"
+
+    synthesis = cleaned_session.get("synthesis") if isinstance(cleaned_session.get("synthesis"), dict) else {}
+    raw_proposals = (
+        cleaned_session.get("proposals")
+        if isinstance(cleaned_session.get("proposals"), list)
+        else (synthesis.get("proposals") if isinstance(synthesis.get("proposals"), list) else [])
+    )
+    proposal_texts: List[str] = []
+    for prop in raw_proposals:
+        if isinstance(prop, str) and prop.strip():
+            proposal_texts.append(prop.strip())
+        elif isinstance(prop, Mapping):
+            p_text = _persona_intent_text(
+                prop.get("summary")
+                or prop.get("title")
+                or prop.get("proposed_action")
+                or prop.get("action")
+                or prop.get("description")
+            )
+            if not p_text:
+                p_kind = _persona_intent_text(prop.get("kind"))
+                p_target = _persona_intent_text(
+                    prop.get("target_id")
+                    or ((prop.get("downstream") or {}).get("id") if isinstance(prop.get("downstream"), Mapping) else "")
+                    or ((prop.get("downstream") or {}).get("target") if isinstance(prop.get("downstream"), Mapping) else "")
+                    or prop.get("proposal_id")
+                )
+                if p_kind or p_target:
+                    p_text = f"{p_kind}: {p_target}".strip(": ")
+            if p_text and p_text not in proposal_texts:
+                proposal_texts.append(p_text)
+
+    message_proposal = ""
+    message_outcome = ""
+    for msg in reversed(messages):
+        msg_text = _persona_intent_text(
+            msg.get("proposed_action") or msg.get("recommendation") or msg.get("content") or msg.get("text")
+        )
+        role = _persona_intent_text(msg.get("role")).lower()
+        if msg_text:
+            if not message_proposal and role in {"assistant", "chair", "reviewer", "persona", ""}:
+                message_proposal = msg_text
+            if not message_outcome and role in {"assistant", "chair", "reviewer", "system"}:
+                message_outcome = msg_text
+
+    gated_decision = panel_meta.get("gated_decision") if isinstance(panel_meta.get("gated_decision"), dict) else {}
+    gated_type = _persona_intent_text(gated_decision.get("type") or cleaned_session.get("target_type"))
+    gated_target = _persona_intent_text(
+        gated_decision.get("id")
+        or cleaned_session.get("target_ref")
+        or cleaned_session.get("target_id")
+    )
+    target_action = ""
+    if gated_type and gated_target:
+        target_action = f"{gated_type.replace('_', ' ')} for {gated_target}"
+    elif gated_type:
+        target_action = f"{gated_type.replace('_', ' ')} review"
+
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or cleaned_session.get("recommendation")
+        or synthesis.get("proposed_action")
+        or synthesis.get("recommendation")
+        or ("; ".join(proposal_texts) if proposal_texts else "")
+        or message_proposal
+        or target_action
+        or topic
+    )
+
+    synth_summary = consult_meta.get("synthesis_summary") if isinstance(consult_meta.get("synthesis_summary"), dict) else {}
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or synthesis.get("outcome")
+        or synthesis.get("decision")
+        or synthesis.get("summary")
+        or consult_meta.get("outcome")
+        or synth_summary.get("outcome")
+        or message_outcome
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or synthesis.get("decision")
+        or synthesis.get("outcome")
+        or consult_meta.get("outcome")
+        or outcome
+    )
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=primary_persona_id)
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+         cleaned_session.get("service_evidence_refs"),
+        consult_meta.get("evidence_refs"),
+        synth_summary.get("evidence_refs"),
+        context_refs,
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_summary")
+        or cleaned_session.get("taskSummary")
+        or topic
+        or f"Agora session {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation"],
+        extra_withheld=stripped_withheld,
+    )
+
+    detail_path = (
+        f"/management/meetings/{session_id}"
+        if kind == "meeting"
+        else (
+            f"/api/v1/consultations/{cleaned_session.get('linked_session_id') or session_id}"
+            if kind == "consultation"
+            else None
+        )
+    )
+
     agora_summary = {
-        "sessionId": session_id,
         "session_id": session_id,
+        "kind": kind,
         "mode": mode,
         "status": status,
         "topic": topic or None,
-        "participant_count": len(session.get("participants") or []),
+        "proposed_action": proposed_action or None,
+        "outcome": outcome or None,
+        "decision": decision or None,
+        "participant_count": max(
+            len(cleaned_session.get("participants") or []),
+            len(all_persona_ids),
+        ),
         "context_ref_count": len(context_refs),
         "message_count": len(messages),
         "latest_message_at": latest_message_at,
-        "persona_ids": persona_ids,
-        "sse_topic": session.get("sse_topic"),
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "consulted_personas": consulted_entries,
+        "tools_used": tools_used,
+        "sse_topic": cleaned_session.get("sse_topic"),
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "agora_session",
+        "kind": kind,
         "source_type": "agora_session",
         "source_id": session_id,
-        "personaId": persona_ids[0] if persona_ids else None,
-        "persona_id": persona_ids[0] if persona_ids else None,
-        "persona_ids": persona_ids,
+        "persona_id": primary_persona_id,
+        "persona_name": primary_persona_label,
+        "persona_display_name": primary_persona_label,
+        "persona_label": primary_persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
         "intent": mode,
-        "title": (
-            session.get("title")
-            or session.get("task")
-            or session.get("task_summary")
-            or session.get("taskSummary")
-            or f"Agora session {session_id}"
-        ),
-        "summary": topic or "Agora session intent summary.",
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("createdAt") or session.get("created_at"),
-        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at or session.get("createdAt") or session.get("created_at"),
+        "created_at": cleaned_session.get("createdAt") or cleaned_session.get("created_at") or cleaned_session.get("started_at"),
+        "updated_at": (
+            cleaned_session.get("updatedAt")
+            or cleaned_session.get("updated_at")
+            or latest_message_at
+            or cleaned_session.get("completed_at")
+            or cleaned_session.get("ended_at")
+            or cleaned_session.get("createdAt")
+            or cleaned_session.get("created_at")
+            or cleaned_session.get("started_at")
+        ),
         "occurred_at": occurred_at,
         "agora": agora_summary,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
-        "route": "/management/persona-intent?source_type=agora_session",
-        "bff_detail_path": None,
+        "redaction": redaction,
+        "route": f"/management/persona-intent?kind={kind}",
+        "bff_detail_path": detail_path,
     }
+
+
+# --- _persona_intent_enrich_consult_record ---
+def _persona_intent_enrich_consult_record(
+    session: Dict[str, Any],
+    *,
+    c_store: Any = None,
+) -> Dict[str, Any]:
+    if c_store is None:
+        return session
+    req_id = _persona_intent_text(
+        session.get("request_id") or session.get("session_id") or session.get("id")
+    )
+    if not req_id:
+        return session
+    merged = dict(session)
+    try:
+        if hasattr(c_store, "get_request"):
+            raw_req = c_store.get_request(req_id)
+            if raw_req is not None:
+                req_data = raw_req.model_dump(mode="json") if hasattr(raw_req, "model_dump") else dict(raw_req)
+                for k in ("metadata", "evidence_refs", "task", "target_type", "target_id", "tenant_id", "consultation_type"):
+                    if req_data.get(k) is not None and not merged.get(k):
+                        merged[k] = req_data.get(k)
+        if hasattr(c_store, "get_meeting"):
+            raw_mtg = c_store.get_meeting(req_id)
+            if isinstance(raw_mtg, Mapping):
+                for k in ("meeting_type", "topic", "agenda", "outcome", "chair_persona_id", "participants", "synthesis", "proposals"):
+                    if raw_mtg.get(k) is not None and not merged.get(k):
+                        merged[k] = raw_mtg.get(k)
+    except Exception:
+        pass
+    return merged
 
 
 # --- _persona_intent_all_items ---
@@ -4171,6 +5338,22 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
     List[Dict[str, Any]],
 ]:
     personas = _list_persona_records(tenant_id)
+    persona_names_by_id: Dict[str, str] = {}
+    for persona in personas:
+        pid = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        if not pid:
+            continue
+        meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        pname = _persona_intent_text(
+            persona.get("display_name")
+            or persona.get("displayName")
+            or persona.get("name")
+            or meta.get("display_name")
+            or meta.get("name")
+        )
+        if pname:
+            persona_names_by_id[pid] = pname
+
     items: List[Dict[str, Any]] = []
     persona_sessions: List[Dict[str, Any]] = []
     trainer_sessions: List[Dict[str, Any]] = []
@@ -4178,12 +5361,12 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         persona_id = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
         for session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
             persona_sessions.append(session)
-            item = _persona_intent_trace_item(session)
+            item = _persona_intent_trace_item(session, persona_names_by_id=persona_names_by_id)
             if item is not None:
                 items.append(item)
         for session in _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []:
             trainer_sessions.append(session)
-            item = _persona_intent_trainer_item(session)
+            item = _persona_intent_trainer_item(session, persona_names_by_id=persona_names_by_id)
             if item is not None:
                 items.append(item)
 
@@ -4193,20 +5376,45 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
     }
     active_store = _get_active_read_store()
+    op_port = getattr(active_store, "operations_consultation", None)
+    c_store = None
+    if op_port is not None and hasattr(op_port, "_consultation_store"):
+        try:
+            c_store = op_port._consultation_store()
+        except Exception:
+            c_store = None
+
+    consult_records: List[Dict[str, Any]] = []
     if hasattr(active_store, "list_consult_requests"):
-        consult_records = list(active_store.list_consult_requests() or [])
-    else:
-        consult_records = []
+        try:
+            consult_records = list(active_store.list_consult_requests() or [])
+        except Exception:
+            if c_store is None:
+                raise
+            consult_records = []
+    if not consult_records and c_store is not None and hasattr(c_store, "list_requests"):
+        try:
+            for raw_req in c_store.list_requests() or []:
+                req_dict = raw_req.model_dump(mode="json") if hasattr(raw_req, "model_dump") else dict(raw_req)
+                if hasattr(op_port, "_project_service_request_record") and hasattr(op_port, "_project_consult_request_summary"):
+                    projected = op_port._project_service_request_record(req_dict)
+                    summary = op_port._project_consult_request_summary(projected)
+                    consult_records.append(summary)
+                else:
+                    consult_records.append(req_dict)
+        except Exception:
+            pass
     if not consult_records and hasattr(active_store, "list_agora_sessions"):
         agora_sessions = list(active_store.list_agora_sessions() or [])
     else:
         agora_sessions = consult_records
 
     for session in agora_sessions:
-        session_tenant = _persona_intent_text(session.get("tenant_id") or session.get("tenantId"))
+        enriched_session = _persona_intent_enrich_consult_record(session, c_store=c_store)
+        session_tenant = _persona_intent_text(enriched_session.get("tenant_id") or enriched_session.get("tenantId"))
         if tenant_id and session_tenant and session_tenant != tenant_id:
             continue
-        referenced_persona_ids = _persona_intent_agora_persona_ids(session)
+        referenced_persona_ids = _persona_intent_agora_persona_ids(enriched_session)
         if referenced_persona_ids and not all(
             persona_id in visible_persona_ids for persona_id in referenced_persona_ids
         ):
@@ -4214,7 +5422,7 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
             # session when any referenced Persona lacks an explicit matching
             # tenant admission in the caller's directory.
             continue
-        item = _persona_intent_agora_item(session)
+        item = _persona_intent_agora_item(enriched_session, persona_names_by_id=persona_names_by_id)
         if item is not None:
             items.append(item)
 
@@ -4232,16 +5440,26 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
 def _persona_intent_filter_items(
     items: List[Dict[str, Any]],
     *,
-    source_type: Optional[str],
-    persona_id: Optional[str],
-    status: Optional[str],
-    intent: Optional[str],
+    kind: Optional[str] = None,
+    source_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    intent: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     source_types = _persona_intent_source_filter(source_type)
+    kinds = _persona_intent_kind_filter(
+        kind,
+        default_to_trade_intent=(source_types is None),
+    )
     persona_ids = _persona_intent_csv_filter(persona_id)
     statuses = _persona_intent_csv_filter(status)
     intents = _persona_intent_csv_filter(intent)
     filtered = items
+    if kinds:
+        filtered = [
+            item for item in filtered
+            if str(item.get("kind") or "").lower() in kinds
+        ]
     if source_types:
         filtered = [
             item for item in filtered
@@ -4252,6 +5470,7 @@ def _persona_intent_filter_items(
             item for item in filtered
             if str(item.get("persona_id") or "").lower() in persona_ids
             or any(str(pid or "").lower() in persona_ids for pid in (item.get("persona_ids") or []))
+            or any(str(pid or "").lower() in persona_ids for pid in (item.get("consulted_persona_ids") or []))
         ]
     if statuses:
         filtered = [
@@ -4264,13 +5483,21 @@ def _persona_intent_filter_items(
             if str(item.get("intent") or "").lower() in intents
             or any(token in str(item.get("summary") or "").lower() for token in intents)
             or any(token in str(item.get("title") or "").lower() for token in intents)
+            or any(token in str(item.get("topic") or "").lower() for token in intents)
         ]
     return filtered
 
 
 # --- _persona_intent_summary ---
-def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+def _persona_intent_summary(
+    items: List[Dict[str, Any]],
+    returned_count: int,
+    *,
+    all_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     by_source_type = _management_count_by(items, "source_type")
+    by_kind = _management_count_by(items, "kind")
+    available_by_kind = _management_count_by(all_items if all_items is not None else items, "kind")
     by_status = _management_count_by(items, "status")
     by_intent = _management_count_by(items, "intent")
     persona_ids = sorted(
@@ -4288,6 +5515,9 @@ def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) ->
     return {
         "total_items": len(items),
         "returned_items": returned_count,
+        "trade_intent_count": by_kind.get("trade_intent", 0),
+        "consultation_count": by_kind.get("consultation", 0),
+        "meeting_count": by_kind.get("meeting", 0),
         "persona_trace_count": by_source_type.get("persona_trace", 0),
         "trainer_session_count": by_source_type.get("trainer_session", 0),
         "agora_session_count": by_source_type.get("agora_session", 0),
@@ -4295,11 +5525,10 @@ def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) ->
         "persona_count": len(persona_ids),
         "persona_ids": persona_ids,
         "latest_at": latest_at,
-        "bySourceType": by_source_type,
+        "by_kind": by_kind,
+        "available_by_kind": available_by_kind,
         "by_source_type": by_source_type,
-        "byStatus": by_status,
         "by_status": by_status,
-        "byIntent": by_intent,
         "by_intent": by_intent,
     }
 

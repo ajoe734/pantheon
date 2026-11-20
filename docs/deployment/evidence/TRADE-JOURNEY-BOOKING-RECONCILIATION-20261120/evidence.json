@@ -1,0 +1,25 @@
+{
+  "task_id": "TRADE-JOURNEY-BOOKING-RECONCILIATION-20261120",
+  "fixture": {
+    "journey_id": "tj_29473e86-63ff-5384-bda1-23eef61cebb2",
+    "broker_order": {
+      "order_id": "c771bc1adfff4f2cbbd709face8c6378",
+      "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+      "symbol": "2330", "qty": 1, "side": "sell", "status": "filled",
+      "fill_qty": 1, "fill_price": 2215.0, "instrument_id": "eq:2330",
+      "kind": "cash_share", "fee": 0.0, "tax": 0.0
+    },
+    "ledger_position": {"before": 1, "after": 0},
+    "note": "cash_before/cash_after/fee/tax in tests are synthetic; the hosted fill event body was not recorded"
+  },
+  "tests": {
+    "services/reconciliation-drift/tests/test_journey_booking_reconciliation.py": "9 passed (match, broker qty mismatch, position variance, cash variance, snapshot mismatch, missing order, timeout defer then 60min fail, not_configured, no-fill unchanged)",
+    "services/execution/lean_runtime/test_paper_fill_booking_evidence.py": "2 passed",
+    "services/execution/lean_runtime/test_paper_runtime.py": "143 passed",
+    "services/reconciliation-drift/tests (scheduler, compose_activation, booking)": "91 passed"
+  },
+  "acceptance_notes": {
+    "7": "docker-compose.yml reconciliation-drift-svc gets PANTHEON_PAPER_BROKER_URL=http://broker:8102; staging/prod compose untouched",
+    "10": "one broker GET per reconciled journey, 3s timeout, no new writer"
+  }
+}

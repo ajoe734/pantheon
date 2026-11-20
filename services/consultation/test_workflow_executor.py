@@ -632,3 +632,148 @@ def test_idle_tick_publishes_admissible_controller_truth() -> None:
     assert projected["downstream_actual_state"]["authoritative"] is True
     assert projected["evidence_refs"]
     assert projected["controller_health"]["status"] == "healthy"
+
+
+# ---------------------------------------------------------------------------
+# CONSULT-DEAD-LETTER-RECOVERY-AFTER-FIX-20261120: bounded automatic redrive
+# ---------------------------------------------------------------------------
+from services.consultation import workflow_executor as wf  # noqa: E402
+from services.consultation.workflow_state import (  # noqa: E402
+    AUTO_REDRIVE_MAX_PER_ITEM,
+    AUTO_REDRIVE_PER_TICK,
+    recovery_exhausted,
+)
+
+_AUTH = "panel_case_file: http_401:missing Bearer token"
+_ENSURE_T = "consultation agent ensure transport failed for persona-x"
+_ENSURE_F = "consultation agent ensure failed: persona owner or gateway unavailable/unsafe"
+
+
+def _dead(state: WorkflowStateStore, request_id: str, reason: str, *, replays: int = 0) -> None:
+    state.ensure_request(tenant_id=TENANT, request_id=request_id)
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    assert claim is not None and claim.request_id == request_id
+    state.block(claim, reason=reason, max_blocked_attempts=1, retry_after_seconds=0)
+    with state._connect() as c:
+        c.execute("UPDATE consultation_work_items SET replay_count=? WHERE request_id=?", (replays, request_id))
+
+
+def _recovery_env(monkeypatch, tmp_path, *, auth_ok, ensure_ok):
+    calls = {"auth": 0, "ensure": 0, "posts": [], "status": "in_progress"}
+
+    def auth(_config):
+        calls["auth"] += 1
+        if not auth_ok["v"]:
+            raise RuntimeError("http_401")
+
+    def ensure(_config, _provider, _rid):
+        calls["ensure"] += 1
+        if not ensure_ok["v"]:
+            raise RuntimeError("adapter down")
+
+    monkeypatch.setattr(wf, "_probe_case_file_credentials", auth)
+    monkeypatch.setattr(wf, "_probe_ensure_route", ensure)
+    monkeypatch.setattr(wf, "_api_get", lambda _c, path: {"status": calls["status"]})
+    monkeypatch.setattr(wf, "_api_post", lambda _c, path, body: calls["posts"].append((path, body)) or {})
+    wf._EXHAUSTION_RECORDED.clear()
+    config = ExecutorConfig(
+        api_url="http://x", tenant_id=TENANT, api_token="t", provider_url="http://p", provider_token="t",
+        provider_service_actor="a", handoff_sink_url="", handoff_token="", worker_id="w",
+        state_path=str(tmp_path / "s.sqlite3"))
+    return config, calls
+
+
+def test_hosted_shape_recovers_only_after_probes_pass_and_converges(tmp_path, monkeypatch):
+    auth_ok, ensure_ok = {"v": False}, {"v": False}
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok=auth_ok, ensure_ok=ensure_ok)
+    state = WorkflowStateStore(config.state_path)
+    ids = {
+        "pub": [f"consult-envelope-publication-{i}" for i in "abc"],
+        "mtg": ["mtg-1f38", "mtg-6edaf", "mtg-16d4"],
+        "old": ["mtg-0f7f"],
+    }
+    for rid in ids["pub"]:
+        _dead(state, rid, _AUTH)
+        with state._connect() as c:
+            c.execute("UPDATE consultation_work_items SET attempt_count=56 WHERE request_id=?", (rid,))
+    for rid in ids["mtg"]:
+        _dead(state, rid, _ENSURE_T)
+    _dead(state, ids["old"][0], _ENSURE_F)
+
+    # probes fail: nothing is redriven, every item stays dead_letter
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and len(out["probe_failed"]) == 2
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 7
+
+    auth_ok["v"] = ensure_ok["v"] = True
+    ticks, completed = 0, []
+    while state.counts(tenant_id=TENANT)["dead_letter"] and ticks < 10:
+        ticks += 1
+        before = dict(calls)
+        out = wf.recover_dead_letters(config=config, state=state, provider=None)
+        assert len(out["redriven"]) <= AUTO_REDRIVE_PER_TICK
+        assert calls["auth"] - before["auth"] <= 1 and calls["ensure"] - before["ensure"] <= 1
+        while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
+            state.complete(claim, memo_id="m-" + claim.request_id, handoff_id="h")
+            completed.append(claim.request_id)
+    assert ticks == 3  # 7 items, cap 3 per tick
+    assert sorted(completed) == sorted(sum(ids.values(), []))
+    assert state.counts(tenant_id=TENANT) == {"pending": 0, "leased": 0, "blocked": 0, "dead_letter": 0, "completed": 7}
+    # a completed item is never redriven again and no request was failed
+    assert wf.recover_dead_letters(config=config, state=state, provider=None)["redriven"] == []
+    assert calls["posts"] == []
+
+
+def test_budget_exhausted_item_stays_dead_letter_and_is_named_failed(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r-spent", _AUTH, replays=AUTO_REDRIVE_MAX_PER_ITEM)
+    _dead(state, "r-last", _AUTH, replays=AUTO_REDRIVE_MAX_PER_ITEM - 1)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == ["r-last"] and out["exhausted"] == ["r-spent"]
+    row = state.get(tenant_id=TENANT, request_id="r-spent")
+    assert row["status"] == "dead_letter" and "http_401" in row["last_error"] and recovery_exhausted(row)
+    assert ("/api/consult/meetings/r-spent/sync" in [p for p, _ in calls["posts"]])
+    # recorded once per process even over many ticks
+    n = len(calls["posts"])
+    wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert len(calls["posts"]) == n
+    # the last item redriven once more and failing again is exhausted too
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    state.block(claim, reason=_AUTH, max_blocked_attempts=1, retry_after_seconds=0)
+    assert recovery_exhausted(state.get(tenant_id=TENANT, request_id="r-last"))
+
+
+def test_other_dead_letter_reasons_keep_today_behaviour(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    for rid, reason in (("a", "provider schema invalid"), ("b", "panel_case_file: http_500 boom"),
+                        ("c", "panel_case_file: http_404 not found")):
+        _dead(state, rid, reason)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and out["exhausted"] == [] and calls["auth"] == 0 and calls["ensure"] == 0
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 3 and calls["posts"] == []
+    assert not recovery_exhausted(state.get(tenant_id=TENANT, request_id="a"))
+
+
+def test_completed_item_is_never_redriven_and_request_id_is_reused(tmp_path, monkeypatch):
+    config, _ = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r1", _ENSURE_T)
+    assert state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+    assert claim.request_id == "r1"
+    state.complete(claim, memo_id="m", handoff_id="h")
+    assert not state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    assert [i["request_id"] for i in state.list_items(tenant_id=TENANT)] == ["r1"]
+
+
+def test_old_release_reads_the_table_unchanged(tmp_path):
+    import sqlite3
+    state = WorkflowStateStore(tmp_path / "s.sqlite3")
+    cols = [r[1] for r in sqlite3.connect(state.path).execute("PRAGMA table_info(consultation_work_items)")]
+    assert "replay_count" in cols and "recovery" not in " ".join(cols)  # budget rides the existing column
+    _dead(state, "r1", _AUTH)
+    assert state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
+    # the previous release's own replay path still reads and moves the same row
+    assert state.get(tenant_id=TENANT, request_id="r1")["status"] == "pending"

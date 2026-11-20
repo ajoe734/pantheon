@@ -1,6 +1,24 @@
 {
  "entries": [
   {
+   "bound_proof": {
+    "contains": "def _record_market_closures",
+    "file": "services/source_ingestion/connectors/collector_bundle.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one line per confirmed unscheduled market closure date, deduplicated by trade_date in _record_market_closures (a date is never written twice); each line is about 300 bytes (trade_date, kind, evidence, both bundle ids)",
+   "cleanup": "none needed: closures are a few dates a year (about 1 KB per year); kept permanently for the calendar and backtests once they read it (register residual: governed calendar coverage)",
+   "growth_driver": "one line per unscheduled weekday closure confirmed by both TWSE and TPEx no_data_for_date bundles (a few dates a year)",
+   "growth_per_day": "about 0 (a few lines per year, about 300 bytes each)",
+   "kind": "jsonl",
+   "name": "market_closures.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/connectors/collector_bundle.py"
+   ],
+   "task": "COLLECTOR-HISTORY-PARTIAL-BUNDLE-RESOLUTION-20261120"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -3174,11 +3192,11 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_status": "bounded",
+   "cap": "one row per probe target (PRIMARY KEY target_name, upsert in reserve_incident); a flap inside the reopen window (PANTHEON_BFF_HEALTH_REOPEN_WINDOW_SECONDS, default 600) reuses the open mapping instead of making a new incident id",
+   "cleanup": "row is overwritten in place by the next incident for the same target; no growth to clean",
+   "growth_driver": "one row per downstream target, rewritten per incident",
+   "growth_per_day": "bounded by target count (about 3 to 10 rows); incidents per target per outage: one, was one per flap (about 19 per 2 hours on hosted 2026-11-20)",
    "kind": "table",
    "name": "incident_mappings",
    "owner": "control-plane",
@@ -3186,7 +3204,11 @@
     "services/control-plane/bff/downstream_health_monitor.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120",
+   "bound_proof": {
+    "file": "services/control-plane/bff/downstream_health_monitor.py",
+    "contains": "target_name TEXT PRIMARY KEY,\n                    incident_id TEXT NOT NULL"
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4993,19 +5015,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "def _replace_single_report_summary(",
+    "file": "services/incident/incident.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per deduplicated open incident (by (binding_id, runtime_id, incident_cluster_id) for drift, canonical finding key for monitor-agent findings, and component for infrastructure health); repeated reports update occurrence_count, last_seen_at, and observed in place and replace evidence_summary with the latest single report summary (<= 4000 chars, typically ~450-550 chars vs 4000-char appended log before; row JSON size reduced from ~4,800 B to ~1,350 B on hosted drift shape while row count per report is unchanged at 0 net new rows per repeated report)",
+   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation; open drift incidents of a retired RuntimeBinding are resolved with resolution_reason=runtime_binding_retired (POST /api/incidents/resolve-retired-binding, called by the scheduled drift pass when it sees the binding retired)",
+   "growth_driver": "deduplicated IncidentCase owner-store rows updated in place on repeated reports (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120); BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap (INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120)",
+   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted; drift incidents per active binding per day: before, 1 stuck open incident per retired binding indefinitely (inc-drift-5f668ec4c8d9 open 2026-11-18 to 2026-11-20); after, 0 open once the binding retires, and no new one from stale drawdown",
    "kind": "schema_table",
    "name": "incident.incident_cases",
    "owner": "schema:incident",
    "readers": [
     "services/incident/pg_store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC6",
+   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120; DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120"
   },
   {
    "bound_status": "unreviewed",
@@ -5025,9 +5051,9 @@
   {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cleanup": "none in this task: existing incidents and postmortem drafts are not deleted or rewritten; an age or cap cleanup is still open (RC3)",
+   "growth_driver": "one case and one postmortem draft per resolved incident; BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap",
+   "growth_per_day": "hosted 2026-11-20 before: about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total); after: one per continuous outage, per target at most one per (recovery span + 600s) window, i.e. at most about 144 per target per day in the worst alternating case, expected single digits; not yet re-measured on hosted",
    "kind": "schema_table",
    "name": "incident.postmortems",
    "owner": "schema:incident",
@@ -5303,19 +5329,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_status": "bounded",
+   "cap": "drift report id is deterministic per (causal telemetry event, metric), so a repeated breach of the same event rewrites one row; a drawdown older than the evaluation window (RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS, default RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS=300s) is recorded as a degraded stale_input check and produces no drift report; a retired binding produces none",
+   "cleanup": "none needed beyond the cap; no report is written for stale or retired inputs",
+   "growth_driver": "one row per distinct fresh breaching telemetry event per binding (stale carried-forward drawdown no longer counts)",
+   "growth_per_day": "per active binding at the 300s window: before, up to 288 scheduled evaluations/day each re-reporting a carried-forward drawdown breach (one stable report id, 288 evaluation rows citing it); after, 0 drift reports from a stale drawdown, and at most one per fresh breaching drawdown event. Hosted per-binding counts not re-measured in this task: derived from window config and the coordinator 2026-11-20 reads",
    "kind": "schema_table",
    "name": "reconciliation_drift.drift_reports",
    "owner": "schema:reconciliation_drift",
    "readers": [
     "services/reconciliation-drift/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC6",
+   "task": "DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120",
+   "bound_proof": {
+    "file": "services/reconciliation-drift/main.py",
+    "contains": "def _mark_stale_drawdown_input("
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -5661,26 +5691,45 @@
    "register_class": "RC3",
    "task": "SOURCE-HOSTED-LISTING-STATE-AND-PIN-SOURCE-20261118"
   },
- {
-  "bound_proof": {
-   "contains": "REPORT_MAX_BYTES = 64 * 1024",
-   "file": "services/source_ingestion/retention.py"
+  {
+   "bound_proof": {
+    "contains": "REPORT_MAX_BYTES = 64 * 1024",
+    "file": "services/source_ingestion/retention.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one file, 64 KB (REPORT_MAX_BYTES, asserted on every write: a larger report raises and is not written)",
+   "cleanup": "replaced as a whole by the next run (temp file then rename); no history kept. The sweeper itself is the cleanup of daily bars, lineage, current snapshot records and keyed partitions (retention_days per dataset, expired warrants at the first run after expiry); it deletes only what its dry run report listed and refuses more than 20 percent of a store per run without an override",
+   "growth_driver": "retention sweeper last run report, one compact JSON line (counts and bytes per store, at most 10 sample dates each), written once per trading day",
+   "growth_per_day": "0 bytes (one replaced file; measured size recorded in docs/deployment/evidence/SOURCE-RETENTION-SWEEPER-20261118-R2/evidence.json)",
+   "kind": "jsonl",
+   "name": "retention-last-run.jsonl",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/retention.py",
+    "services/source_ingestion/routers/observability.py"
+   ],
+   "register_class": "RC3",
+   "task": "SOURCE-RETENTION-SWEEPER-20261118-R2"
   },
-  "bound_status": "bounded",
-  "cap": "one file, 64 KB (REPORT_MAX_BYTES, asserted on every write: a larger report raises and is not written)",
-  "cleanup": "replaced as a whole by the next run (temp file then rename); no history kept. The sweeper itself is the cleanup of daily bars, lineage, current snapshot records and keyed partitions (retention_days per dataset, expired warrants at the first run after expiry); it deletes only what its dry run report listed and refuses more than 20 percent of a store per run without an override",
-  "growth_driver": "retention sweeper last run report, one compact JSON line (counts and bytes per store, at most 10 sample dates each), written once per trading day",
-  "growth_per_day": "0 bytes (one replaced file; measured size recorded in docs/deployment/evidence/SOURCE-RETENTION-SWEEPER-20261118-R2/evidence.json)",
-  "kind": "jsonl",
-  "name": "retention-last-run.jsonl",
-  "owner": "source_ingestion",
-  "readers": [
-   "services/source_ingestion/retention.py",
-   "services/source_ingestion/routers/observability.py"
-  ],
-  "register_class": "RC3",
-  "task": "SOURCE-RETENTION-SWEEPER-20261118-R2"
- }
+  {
+   "bound_status": "bounded",
+   "cap": "one row per probe target (PRIMARY KEY target_name); deleted when a failure arrives or a new incident is reserved",
+   "cleanup": "clear_recovery on every failed probe and on reserve_incident",
+   "growth_driver": "one row per target with an open incident while probes succeed",
+   "growth_per_day": "none: bounded by target count",
+   "kind": "table",
+   "name": "incident_recovery",
+   "owner": "control-plane",
+   "readers": [
+    "services/control-plane/bff/downstream_health_monitor.py"
+   ],
+   "register_class": "RC3",
+   "task": "INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120",
+   "bound_proof": {
+    "file": "services/control-plane/bff/downstream_health_monitor.py",
+    "contains": "CREATE TABLE IF NOT EXISTS incident_recovery (\n                    target_name TEXT PRIMARY KEY"
+   }
+  }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
  "rule": "AGENTS.md Runtime Budget; how to add a writer: docs/operations/storage-manifest.md",

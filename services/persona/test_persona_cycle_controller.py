@@ -1781,3 +1781,27 @@ def test_observe_regime_reports_a_refused_evaluate_for_every_body_shape(body, ex
     out = regime_consumer.observe_regime(lambda m, p, b: (403, body), session="2026-11-18", strategy_ids=["s"])
     assert out["status"] == "unavailable" and out["reason"] == expected
     assert "AttributeError" not in out["reason"]
+
+
+def test_turn_input_size_is_recorded_and_gateway_overflow_is_a_named_failure(system):
+    controller, state, owner, _ = system
+    packet = controller.consume_run(owner.list_json()[0], "job-1", run(1))
+    cycle = packet["persona_cycle"]
+    assert cycle["turn_input_chars"] == len(state["prompts"][owner.list_json()[0]["persona_id"]])
+    base = controller.turn_runner
+
+    def overflow(persona_id, prompt, session_user=None):
+        return SimpleNamespace(status="error", persona_id=persona_id, model="openclaw/x",
+                               error="turn_context_overflow")
+    controller.turn_runner = overflow
+    refused = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert refused["persona_cycle"]["failure_reason"] == "turn_context_overflow"
+    assert refused["persona_cycle"]["turn_input_chars"] > 0
+
+    def overflow_text(persona_id, prompt, session_user=None):
+        return SimpleNamespace(status="completed", persona_id=persona_id, model="openclaw/x", error=None,
+                               blocked_reason="turn_context_overflow", model_used="m", provider="p")
+    controller.turn_runner = overflow_text
+    refused = controller.consume_run(owner.list_json()[0], "job-1", run(3))
+    assert refused["persona_cycle"]["failure_reason"] == "turn_context_overflow"
+    controller.turn_runner = base

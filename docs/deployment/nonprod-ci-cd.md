@@ -98,6 +98,15 @@ back: the run conclusion measures deploys, the verdict measures acceptance.
 - A check declared `mutates: true` runs only while the job holds the qualification
   lease (same pinned controller as the hosted chain job); without it the check is
   skipped and the verdict stays `pending`.
+- Viewer identity: release probes receive the read-only viewer identity
+  (`ACCEPTANCE_VIEWER_CLIENT_ID` from `vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID`, default
+  `pantheon-dev-viewer-v1`, and `ACCEPTANCE_VIEWER_CLIENT_SECRET` from the existing
+  `DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET`) as env of the `Run acceptance checks and probes`
+  step only, and only when the checked-out stage's `plan` declares `redacts_output`
+  (an older backend keeps skipping credentialed probes with exit 77). Probes must never
+  print it; captured output is redacted (`[redacted]`) for that secret and every
+  `*_SECRET`/`*_TOKEN`/`*_PASSWORD` env value before clipping and writing the verdict.
+  The job stays advisory.
 - Release probes only: the stage runs what the release itself can answer. Daily state
   probes (the persona-day probe, `acceptance/persona_day.py`) run from their own daily
   workflow and never decide a release verdict (`acceptance/README.md`, "Release probes only").
