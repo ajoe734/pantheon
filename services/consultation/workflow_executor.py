@@ -1632,22 +1632,38 @@ class _HttpMeetingStoreProxy:
         )
 
     def put_memo(self, memo: Any) -> dict[str, Any]:
-        submitted = _api_post(
-            self.config,
-            "/api/consult/memos",
-            {
-                "request_id": memo.request_id,
-                "memo_type": memo.memo_type.value,
-                "author_type": memo.author_type.value,
-                "author_ref": memo.author_ref,
-                "summary": memo.summary,
-                "findings": [f.model_dump(mode="json") for f in memo.findings],
-                "recommendation": memo.recommendation.value,
-                "confidence": memo.confidence,
-                "trace_id": memo.trace_id,
-                "idempotency_key": memo.memo_id,
-            },
-        )
+        payload = {
+            "request_id": memo.request_id,
+            "memo_type": memo.memo_type.value,
+            "author_type": memo.author_type.value,
+            "author_ref": memo.author_ref,
+            "summary": memo.summary,
+            "findings": [f.model_dump(mode="json") for f in memo.findings],
+            "recommendation": memo.recommendation.value,
+            "confidence": memo.confidence,
+            "trace_id": memo.trace_id,
+            "idempotency_key": memo.memo_id,
+        }
+        try:
+            submitted = _api_post(self.config, "/api/consult/memos", payload)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 409:
+                raise
+            # A retried step re-synthesized different text under the same stable key.
+            # The memo already recorded for this request is the record: reuse, never re-create.
+            query = urllib.parse.urlencode({"request_id": memo.request_id})
+            existing = next(
+                (
+                    row for row in (_api_get(self.config, f"/api/consult/memos?{query}") or [])
+                    if isinstance(row, Mapping)
+                    and row.get("memo_type") == payload["memo_type"]
+                    and row.get("author_ref") == payload["author_ref"]
+                ),
+                None,
+            )
+            if existing is None or not existing.get("memo_id"):
+                raise
+            submitted = existing
         memo_id = str(submitted["memo_id"])
         published = _api_post(
             self.config,

@@ -1351,7 +1351,16 @@ def validate_and_build_synthesis(
             "tally": tally,
             "dissent_memo_id": None,
             "outcome": "REVIEW",
-            "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+            # A chair that itself answers REVIEW with a readable summary (for example when both
+            # stances are request_more_research) is an expected outcome, not an unreadable one.
+            "summary": (
+                str(raw_synthesis.get("summary")).strip()
+                if isinstance(raw_synthesis, Mapping)
+                and raw_synthesis.get("unreadable") is not True
+                and str(raw_synthesis.get("outcome") or "").strip().upper() == "REVIEW"
+                and str(raw_synthesis.get("summary") or "").strip()
+                else "Synthesis empty or unreadable; recorded as REVIEW with no proposal."
+            ),
             "voting": False,
             "rejected_proposals": [],
         }

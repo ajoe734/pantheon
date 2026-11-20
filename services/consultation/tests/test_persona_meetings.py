@@ -1183,6 +1183,78 @@ def test_detail_carries_execution_state():
     assert d3["execution_state"] is None
 
 
+def test_retry_after_blocked_writeback_reuses_recorded_memos_and_closes_mt1(
+    stack: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hosted sequence: memo 201 + publish 200, writeback 403, retry (memo text differs) -> closed."""
+    client: ConsultationServiceClient = stack["client"]
+    double: _AdapterModelDouble = stack["double"]
+    real_write = meetings_mod._write_meeting_memory
+    calls = {"n": 0}
+
+    def _write_once_refused(**kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            double.synthesis_mode = "normal"  # the retry synthesizes different memo text
+            raise urllib.error.HTTPError(
+                kwargs.get("memory_url") or "http://memory", 403, "Forbidden", {}, None
+            )
+        return real_write(**kwargs)
+
+    monkeypatch.setattr(meetings_mod, "_write_meeting_memory", _write_once_refused)
+    created = client.open_persona_meeting(
+        meeting_type="MT-1",
+        topic="Retry after blocked memory writeback",
+        convened_by={"kind": "persona", "id": "persona-alpha"},
+        participants=["persona-alpha", "persona-risk-officer"],
+        iso_week="2026-W52",
+    )
+    mid = created["meeting_id"]
+    double.synthesis_mode = "unreadable"  # first attempt's memo text differs from the retry's
+    second = _tick(stack)
+    assert second["blocked"] == 1 and second["completed"] == 1, second
+    assert all("http_error=403" in e for e in second["errors"]), second
+    detail = client.get_meeting(mid)
+    assert detail["status"] == "closed" and detail["closed_at"]
+    assert detail["round"] == 2
+    assert detail["writebacks"], detail
+    assert calls["n"] == 2
+    memos = [
+        m for m in _api_memos(stack, mid)
+        if m["memo_type"] in {"committee_summary", "dissent"}
+    ]
+    # Never a second memo of a kind for the same request: the 409 reused the recorded record.
+    kinds = [m["memo_type"] for m in memos]
+    assert sorted(kinds) == ["committee_summary", "dissent"], kinds
+    assert all(m["status"] == "published" for m in memos)
+
+
+def _api_memos(stack: dict[str, Any], request_id: str) -> list[dict[str, Any]]:
+    from services.consultation.workflow_executor import _api_get
+
+    return _api_get(stack["cfg"], f"/api/consult/memos?request_id={request_id}")
+
+
+def test_chair_declared_review_keeps_its_summary_and_empty_synthesis_keeps_the_unreadable_text() -> None:
+    def build(raw: Any) -> dict[str, Any]:
+        return meetings_mod.validate_and_build_synthesis(
+            meeting_id="mtg-x", meeting_code="MT-1", spec={}, chair_persona_id="persona-alpha",
+            convened_by={"kind": "persona", "id": "persona-alpha"},
+            participants=[{"persona_id": "persona-alpha", "role": "chair"}],
+            rounds=[{"positions": [
+                {"persona_id": "persona-alpha", "stance": "request_more_research", "confidence": 0.5},
+                {"persona_id": "persona-risk-officer", "stance": "request_more_research", "confidence": 0.5},
+            ]}],
+            raw_synthesis=raw, allowed_case_ids=set(), chair_preread_ids=set(),
+        )
+
+    declared = build({"outcome": "REVIEW", "summary": "Both stances request more research."})
+    assert declared["outcome"] == "REVIEW" and declared["summary"] == "Both stances request more research."
+    assert declared["proposals"] == [] and declared["tally"]["by_stance"] == {"request_more_research": 2}
+    for raw in (None, {}, {"unreadable": True}, {"outcome": "REVIEW"}):
+        assert "empty or unreadable" in build(raw)["summary"]
+
+
 # --- MEETING-OPERATOR-ROSTER-SUBJECT-REF-20261120 ---------------------------
 
 _ROSTER_DIR = {
