@@ -485,7 +485,10 @@ def _is_risk_gate_rejection(event: Mapping[str, Any]) -> bool:
         return True
     if str(event.get("risk_status") or "").strip().lower() == "rejected":
         return True
-    return event.get("submitted_to_broker") is False
+    # Recorded shape needs a stored reason; a reasonless rejection stays partial.
+    return event.get("submitted_to_broker") is False and bool(
+        str(event.get("reason_code") or "").strip()
+    )
 
 
 def _effective_snapshot_and_diagnostics(
