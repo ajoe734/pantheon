@@ -1091,3 +1091,93 @@ def test_mt2_meeting_held_with_slow_gateway_and_concurrent_persona_ensure(
     assert [a["id"] for a in double.entries if a["id"] != "main"]  # provisioned, then reused
     patched = [m for m, _ in double.log if m == "config.patch"]
     assert len(patched) == 3  # one write per persona, none repeated
+
+
+# --- RC6 WP6.1: execution_state / dead_letter truth (hosted shapes 2026-11-20) ---
+
+class _FakeMeetingStore:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def list_meetings(self):
+        return list(self._rows)
+
+    def get_meeting(self, meeting_id):
+        return next((r for r in self._rows if r["meeting_id"] == meeting_id), None)
+
+
+class _FakeWorkflowState:
+    def __init__(self, items):
+        self._items = items
+        self.list_calls = 0
+
+    def list_items(self, *, tenant_id, status=None):
+        self.list_calls += 1
+        return [i for i in self._items if i["tenant_id"] == tenant_id]
+
+    def get(self, *, tenant_id, request_id):
+        return next(
+            (i for i in self._items if i["tenant_id"] == tenant_id and i["request_id"] == request_id),
+            None,
+        )
+
+
+def _hosted_meeting(mid, mtype, topic, status="convened", tenant="t1"):
+    return {
+        "meeting_id": mid, "meeting_type": mtype, "topic": topic, "status": status,
+        "round": 0, "tenant_id": tenant, "created_at": f"2026-11-19T00:00:0{mid[-1]}Z",
+        "participants": [],
+    }
+
+
+def _hosted_fixture():
+    meetings = [
+        _hosted_meeting("m-1", "MT-1", "Pool evolution review for persona-alpha (2026-W47)"),
+        _hosted_meeting("m-2", "MT-2", "Optimisation review for persona-beta: lessons:4"),
+        _hosted_meeting("m-3", "MT-1", "Pool evolution review for persona-gamma (2026-W47)"),
+        _hosted_meeting("m-4", "MT-2", "Optimisation review for persona-delta: lessons:2", status="closed"),
+    ]
+    wf = [
+        {"tenant_id": "t1", "request_id": rid, "status": "dead_letter", "attempt_count": 3,
+         "blocked_count": 3, "last_error": "provider timeout", "updated_at": 1763510400.0}
+        for rid in ("m-1", "m-2")
+    ] + [
+        {"tenant_id": "other", "request_id": "m-3", "status": "dead_letter", "attempt_count": 3,
+         "blocked_count": 3, "last_error": "x", "updated_at": 1763510400.0},
+    ]
+    return _FakeMeetingStore(meetings), _FakeWorkflowState(wf)
+
+
+def test_list_hides_dead_letter_from_upcoming_with_count_single_read():
+    st, wf = _hosted_fixture()
+    out = meetings_mod.list_meetings_view(st, tenant_id="t1", status="upcoming", workflow_state=wf)
+    assert [i["meeting_id"] for i in out["items"]] == ["m-3"]
+    assert out["summary"]["dead_letter_count"] == 2
+    assert wf.list_calls == 1  # no N+1; other-tenant row for m-3 must not leak
+
+
+def test_list_include_failed_shows_execution_failed_state():
+    st, wf = _hosted_fixture()
+    out = meetings_mod.list_meetings_view(
+        st, tenant_id="t1", status="upcoming", workflow_state=wf, include_failed=True
+    )
+    by_id = {i["meeting_id"]: i for i in out["items"]}
+    assert set(by_id) == {"m-1", "m-2", "m-3"}
+    assert by_id["m-1"]["effective_status"] == "execution_failed"
+    assert by_id["m-1"]["status"] == "convened"
+    es = by_id["m-1"]["execution_state"]
+    assert es["status"] == "dead_letter" and es["attempt_count"] == 3
+    assert es["max_attempts"] == 3 and es["last_error"] == "provider timeout"
+    assert es["updated_at"].startswith("2025-11-1") or es["updated_at"]
+    assert by_id["m-3"]["execution_state"] is None
+    assert by_id["m-3"]["effective_status"] == "convened"
+    assert out["summary"]["dead_letter_count"] == 0
+
+
+def test_detail_carries_execution_state():
+    st, wf = _hosted_fixture()
+    d = meetings_mod.get_meeting_detail_view(st, tenant_id="t1", meeting_id="m-2", workflow_state=wf)
+    assert d["effective_status"] == "execution_failed"
+    assert d["execution_state"]["status"] == "dead_letter"
+    d3 = meetings_mod.get_meeting_detail_view(st, tenant_id="t1", meeting_id="m-3", workflow_state=wf)
+    assert d3["execution_state"] is None

@@ -51,13 +51,35 @@ def calculate_job_allowed_actions(
     }
 
 
+def _failure_reason(view: Dict[str, Any]) -> Optional[str]:
+    """Message of the last failed event (or an owner-provided error), if any."""
+    events = view.get("events")
+    if isinstance(events, list):
+        for ev in reversed(events):
+            if isinstance(ev, dict) and str(ev.get("status") or "").lower() in ("failed", "rejected") and ev.get("message"):
+                return str(ev["message"])
+    for key in ("failure_reason", "error_message", "error", "last_error"):
+        val = view.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
+
+
 def project_job(spec: Any, native_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
     """Project a raw domain record into the canonical Management Job model."""
     prefix = getattr(spec, "prefix", "")
     source_name = getattr(spec, "name", "unknown")
     job_id = f"{prefix}{native_id}"
-    status = normalize_job_status(record.get("status") or record.get("state"))
-    allowed_actions = calculate_job_allowed_actions(source_name, status, record)
+    # Source-ingest detail is {run, receipt}; the run is the lifecycle record.
+    # Read status/timestamps from it so detail agrees with the list rows.
+    run = record.get("run") if isinstance(record.get("run"), dict) else None
+    view: Dict[str, Any] = {**record, **run} if run is not None else dict(record)
+    if not view.get("completed_at") and view.get("finished_at"):
+        view["completed_at"] = view["finished_at"]
+    connector_id = view.get("connector_id")
+    failure_reason = _failure_reason(view)
+    status = normalize_job_status(view.get("status") or view.get("state"))
+    allowed_actions = calculate_job_allowed_actions(source_name, status, view)
 
     return {
         "job_id": job_id,
@@ -66,16 +88,18 @@ def project_job(spec: Any, native_id: str, record: Dict[str, Any]) -> Dict[str, 
         "source": source_name,
         "job_type": source_name,
         "status": status,
-        "attempt_number": record.get("attempt_number", 1),
-        "parent_run_id": record.get("parent_run_id") or record.get("parent_job_id"),
-        "root_run_id": record.get("root_run_id") or record.get("root_job_id"),
-        "cancellation_fence": record.get("cancellation_fence"),
-        "created_at": record.get("created_at") or record.get("queued_at") or record.get("dispatched_at"),
-        "updated_at": record.get("updated_at") or record.get("completed_at"),
-        "started_at": record.get("started_at"),
-        "completed_at": record.get("completed_at"),
-        "progress": record.get("progress"),
+        "attempt_number": view.get("attempt_number", 1),
+        "parent_run_id": view.get("parent_run_id") or view.get("parent_job_id"),
+        "root_run_id": view.get("root_run_id") or view.get("root_job_id"),
+        "cancellation_fence": view.get("cancellation_fence"),
+        "created_at": view.get("created_at") or view.get("queued_at") or view.get("dispatched_at"),
+        "updated_at": view.get("updated_at") or view.get("completed_at"),
+        "started_at": view.get("started_at"),
+        "completed_at": view.get("completed_at"),
+        "progress": view.get("progress"),
+        "connector_id": connector_id,
+        "failure_reason": failure_reason,
         "detail": record,
-        "logs": record.get("logs") if isinstance(record.get("logs"), list) else None,
+        "logs": view.get("logs") if isinstance(view.get("logs"), list) else None,
         "allowedActions": allowed_actions,
     }
