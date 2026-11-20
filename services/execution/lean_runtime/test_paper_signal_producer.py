@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import json
 import io
 
+from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
 from services.execution.lean_runtime import paper_signal_producer as _psp
 from services.execution.lean_runtime.paper_signal_producer import (
     BindingRef,
@@ -2548,6 +2549,12 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
                     max(int((target / Decimal(str(price))).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 1),
                     max_units,
                 )
+                # Commission-aware sizing: shrink until notional + buy commission
+                # (taiwan_cash_costs) fits the target and the available cash.
+                while expected > 1 and buy_cash_required(code, expected, price) > float(
+                    min(target, Decimal(str(self.POOL_BUDGET)))
+                ):
+                    expected -= 1
                 self.assertEqual(meta["instrument_id"], f"eq:{code}")
                 self.assertEqual(meta["units"], expected)
                 self.assertEqual(signal["quantity"], expected)
@@ -2695,7 +2702,7 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             self.assertEqual(meta_2330["reason_code"], "long_cash")
 
             # 3. 2317: DHF candidate has max_units_by_risk=0 because one contract's notional 450,000
-            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 444 (long_cash).
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 443 (long_cash; was 444 before commission-aware sizing).
             sig_2317 = self._decide("2317.TWSE", 225.0, fetch=self._fetch(), env=env)
             meta_2317 = sig_2317["metadata"]
             cands_2317 = {c["instrument_id"]: c for c in meta_2317["expression_replay_input"]["candidates"]}
@@ -2704,7 +2711,7 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             self.assertEqual(cands_2317["ssf:DHF:202611"]["price"] * cands_2317["ssf:DHF:202611"]["unit"], 450000.0)
             self.assertEqual(meta_2317["instrument_id"], "eq:2317")
             self.assertEqual(meta_2317["kind"], "cash_share")
-            self.assertEqual(meta_2317["units"], 444)
+            self.assertEqual(meta_2317["units"], 443)
             self.assertEqual(meta_2317["reason_code"], "long_cash")
 
             # 4. Unset, unreadable, tombstone, and stale dataset roots all offer cash share and record

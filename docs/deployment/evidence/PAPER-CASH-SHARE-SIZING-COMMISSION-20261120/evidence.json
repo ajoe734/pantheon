@@ -1,0 +1,18 @@
+{
+  "task_id": "PAPER-CASH-SHARE-SIZING-COMMISSION-20261120",
+  "hosted_rejection": {
+    "timestamp": "2026-11-19T23:46:17Z",
+    "source": "hosted_paper_runtime_rejection_log_20261119.txt",
+    "symbol": "2317.TWSE", "instrument_id": "eq:2317", "units_ordered": 452, "price": 221.0,
+    "risk_gate_reason": "insufficient_cash", "required": 100034.3461, "available": 100000.0, "limit": 100000.0
+  },
+  "change": "expression_policy.fit_cash_share_buy shrinks cash_share buy units until taiwan_cash_costs.buy_cash_required <= min(target, available_cash); used by decide (floor of 1 unit kept when cash affords it) and decide_target_position (strict). One unit + commission over available cash -> no_feasible_instrument. Risk gate and commission rate untouched.",
+  "hosted_case_after": {"units": 451, "buy_cash_required": 99813.0, "before_units": 452, "before_buy_cash_required": 100034.3461},
+  "changed_expected_units": [
+    {"test": "test_paper_signal_producer hosted long views 0050.TWSE", "old": 1081, "new": 1079},
+    {"test": "test_paper_signal_producer hosted long views / real dataset layout 2317.TWSE", "old": 444, "new": 443},
+    {"test": "test_portfolio_target_positions bar allocation (price 100, target 2500)", "old": 25, "new": 24}
+  ],
+  "unchanged": "sells, closes, futures and non-cash_share candidates size as before",
+  "tests": "pytest services/execution/lean_runtime: 752 passed, 14 skipped, 0 failed"
+}
