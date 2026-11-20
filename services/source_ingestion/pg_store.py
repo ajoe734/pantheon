@@ -45,6 +45,26 @@ _EVIDENCE_REPLAY_ORDER = (
     "knowledge_object",
 )
 
+_DEDUPE_KEY_EXPR = (
+    "(CASE record_type "
+    "WHEN 'source_record' THEN payload->'metadata'->>'source_dedupe_key' "
+    "WHEN 'evidence_item' THEN payload->'metadata'->>'evidence_dedupe_key' "
+    "END)"
+)
+_TENANT_SCOPE_EXPR = "COALESCE(payload->'metadata'->>'tenant_id', '')"
+_OBJECT_ID_EXPR = (
+    "(CASE record_type "
+    "WHEN 'source_record' THEN payload->>'source_id' "
+    "WHEN 'evidence_item' THEN payload->>'evidence_item_id' "
+    "WHEN 'evidence_bundle' THEN payload->>'evidence_bundle_id' "
+    "WHEN 'knowledge_object' THEN payload->>'knowledge_object_id' "
+    "END)"
+)
+_DEDUPE_FIELDS_BY_RECORD_TYPE: Dict[str, str] = {
+    "source_record": "source_dedupe_key",
+    "evidence_item": "evidence_dedupe_key",
+}
+
 
 def _quote_pg(identifier: str) -> str:
     parts = identifier.split(".")
@@ -229,6 +249,19 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 f"CREATE INDEX IF NOT EXISTS source_evidence_linked_types_idx ON {self.table} "
                 "USING GIN (evidence_linked_types) WHERE record_type = 'evidence_item'"
             )
+            # Non-blocking concurrent expression indexes for per-record ingest
+            # dedupe and unscoped object-id lookups. CREATE INDEX CONCURRENTLY
+            # takes SHARE UPDATE EXCLUSIVE instead of SHARE / ACCESS EXCLUSIVE,
+            # so active service writers are not blocked while building on the
+            # ~203 MB hosted table.
+            conn.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_dedupe_lookup_idx ON {self.table} "
+                f"(record_type, {_DEDUPE_KEY_EXPR}, append_id DESC, {_TENANT_SCOPE_EXPR})"
+            )
+            conn.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_object_id_lookup_idx ON {self.table} "
+                f"(record_type, {_OBJECT_ID_EXPR}, append_id DESC)"
+            )
 
     def reload(self) -> None:
         self.clear()
@@ -378,8 +411,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         if tenant_id is not _UNSCOPED:
             sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, _scoped_record_id(tenant_id, r_id))
         else:
-            k = "source_id" if r_type == "source_record" else f"{r_type}_id"
-            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND (record_id = %s OR payload->>%s = %s) ORDER BY append_id DESC LIMIT 1", (r_type, r_id, k, r_id)
+            sql = (
+                "SELECT payload FROM ("
+                f"(SELECT append_id, payload FROM {self.table} WHERE record_type = %s AND record_id = %s ORDER BY append_id DESC LIMIT 1) "
+                "UNION ALL "
+                f"(SELECT append_id, payload FROM {self.table} WHERE record_type = %s AND {_OBJECT_ID_EXPR} = %s ORDER BY append_id DESC LIMIT 1)"
+                ") AS matched ORDER BY append_id DESC LIMIT 1"
+            )
+            params = (r_type, r_id, r_type, r_id)
         records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
         k = "source_id" if r_type == "source_record" else f"{r_type}_id"
         return next((r for r in records if getattr(r, k, None) == r_id), records[0] if records else None)
@@ -394,7 +433,22 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         return self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
 
     def _read_by_dedupe(self, r_type: str, field: str, key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> Any | None:
-        if tenant_id is not _UNSCOPED:
+        if _DEDUPE_FIELDS_BY_RECORD_TYPE.get(r_type) == field:
+            if tenant_id is not _UNSCOPED:
+                sql = (
+                    f"SELECT payload FROM {self.table} "
+                    f"WHERE record_type = %s AND {_DEDUPE_KEY_EXPR} = %s AND {_TENANT_SCOPE_EXPR} = %s "
+                    "ORDER BY append_id DESC LIMIT 1"
+                )
+                params: tuple[Any, ...] = (r_type, key, tenant_id or "")
+            else:
+                sql = (
+                    f"SELECT payload FROM {self.table} "
+                    f"WHERE record_type = %s AND {_DEDUPE_KEY_EXPR} = %s "
+                    "ORDER BY append_id DESC LIMIT 1"
+                )
+                params = (r_type, key)
+        elif tenant_id is not _UNSCOPED:
             where = "AND payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "AND (payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
             params = (r_type, field, key, tenant_id) if tenant_id is not None else (r_type, field, key)
             sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND payload->'metadata'->>%s = %s {where} ORDER BY append_id DESC LIMIT 1"
