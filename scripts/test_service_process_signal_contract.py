@@ -26,9 +26,13 @@ ONE_SHOT_ALLOWLIST = {
 
 SHELL_RE = re.compile(r"^(?:(?:/usr)?(?:/local)?/bin/)?(?:ba|da|a|z)?sh$")
 SERVER_BINS = {"uvicorn", "gunicorn", "hypercorn", "daphne", "waitress-serve"}
-SERVER_MODULES = {"uvicorn", "gunicorn", "hypercorn", "daphne", "waitress"}
-LEADING_KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "{", "!"}
+SERVER_MODULES = {"uvicorn", "gunicorn", "hypercorn", "daphne", "waitress", "http.server"}
+LEADING_KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "{", "}", "!"}
 REDIRECT_OPS = {">", ">>", "<", "<<", "<>", ">&", "<&", ">|", "&>", "&>>"}
+
+
+def _is_shell_token(token: str) -> bool:
+    return bool(SHELL_RE.match(token) or SHELL_RE.match(Path(token).name))
 
 
 def _shlex_split(text: str) -> list[str]:
@@ -36,6 +40,69 @@ def _shlex_split(text: str) -> list[str]:
         return shlex.split(text, posix=True)
     except ValueError:
         return text.split()
+
+
+def _unwrap_command_tokens(seg: str) -> list[str]:
+    tokens = _shlex_split(seg)
+    while tokens:
+        head = tokens[0]
+        if head in LEADING_KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", head):
+            tokens.pop(0)
+            continue
+        cmd_name = Path(head).name
+        if cmd_name == "env":
+            tokens.pop(0)
+            while tokens and (
+                re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0])
+                or tokens[0].startswith("-")
+            ):
+                flag = tokens.pop(0)
+                if flag in ("-u", "-C", "-S") and tokens:
+                    tokens.pop(0)
+            continue
+        if cmd_name in ("command", "builtin", "nohup", "setsid", "busybox"):
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                tokens.pop(0)
+            continue
+        if cmd_name in ("poetry", "uv", "pipenv") and len(tokens) > 1 and tokens[1] == "run":
+            tokens = tokens[2:]
+            while tokens and tokens[0].startswith("-"):
+                tokens.pop(0)
+            continue
+        break
+    return tokens
+
+
+def _has_subshell_or_cmd_subst(seg: str) -> bool:
+    quote: str | None = None
+    i = 0
+    n = len(seg)
+    while i < n:
+        ch = seg[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if quote == '"':
+            if ch == "`" or seg[i : i + 2] == "$(":
+                return True
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch in ("(", ")", "`"):
+            return True
+        i += 1
+    return False
 
 
 def _matches_any(rel_path: Path, patterns: list[str]) -> bool:
@@ -68,11 +135,20 @@ def _tracked(patterns: list[str], root: Path | None = None) -> list[Path]:
 
 def _extract_shell_c_script(argv: list[str]) -> str | None:
     tokens = list(argv)
-    if tokens and Path(tokens[0]).name == "env":
-        tokens.pop(0)
-        while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-            tokens.pop(0)
-    if len(tokens) < 3 or not SHELL_RE.match(tokens[0]):
+    while tokens and Path(tokens[0]).name in ("env", "command", "builtin", "nohup", "setsid", "busybox"):
+        cmd_name = Path(tokens.pop(0)).name
+        if cmd_name == "env":
+            while tokens and (
+                re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0])
+                or tokens[0].startswith("-")
+            ):
+                flag = tokens.pop(0)
+                if flag in ("-u", "-C", "-S") and tokens:
+                    tokens.pop(0)
+        else:
+            while tokens and tokens[0].startswith("-"):
+                tokens.pop(0)
+    if len(tokens) < 3 or not _is_shell_token(tokens[0]):
         return None
     i = 1
     while i < len(tokens):
@@ -195,7 +271,7 @@ def _is_redirect_token(tok: str) -> bool:
 
 
 def _is_exec_command(seg: str) -> bool:
-    if not seg or seg.startswith("("):
+    if not seg or _has_subshell_or_cmd_subst(seg):
         return False
     tokens = _shlex_split(seg)
     if not tokens or tokens[0] != "exec":
@@ -216,26 +292,29 @@ def _is_exec_command(seg: str) -> bool:
             i += 1
             continue
         rest = tokens[i:]
-        if Path(rest[0]).name == "env":
-            rest = rest[1:]
-            while rest and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", rest[0]):
-                rest = rest[1:]
-            if not rest:
-                return False
-        if SHELL_RE.match(rest[0]):
+        while rest and Path(rest[0]).name in ("env", "command", "builtin", "nohup", "setsid", "busybox"):
+            cmd_name = Path(rest.pop(0)).name
+            if cmd_name == "env":
+                while rest and (
+                    re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", rest[0])
+                    or rest[0].startswith("-")
+                ):
+                    flag = rest.pop(0)
+                    if flag in ("-u", "-C", "-S") and rest:
+                        rest.pop(0)
+            else:
+                while rest and rest[0].startswith("-"):
+                    rest.pop(0)
+        if not rest:
+            return False
+        if _is_shell_token(rest[0]):
             return _extract_shell_c_script(rest) is not None and shell_c_violation(rest) is None
         return not rest[0].startswith("-") and not rest[0].startswith("#")
     return False
 
 
 def _is_unexeced_server_command(seg: str) -> bool:
-    tokens = _shlex_split(seg)
-    while tokens and (
-        tokens[0] in LEADING_KEYWORDS
-        or Path(tokens[0]).name == "env"
-        or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0])
-    ):
-        tokens.pop(0)
+    tokens = _unwrap_command_tokens(seg)
     if not tokens or tokens[0] == "exec":
         return False
     cmd = Path(tokens[0]).name
@@ -244,10 +323,22 @@ def _is_unexeced_server_command(seg: str) -> bool:
     if cmd.startswith("python"):
         for idx, tok in enumerate(tokens[1:], start=1):
             if tok == "-m" and idx + 1 < len(tokens):
-                mod = tokens[idx + 1].split(".")[0]
-                if mod in SERVER_MODULES:
+                mod_full = tokens[idx + 1]
+                mod_root = mod_full.split(".")[0]
+                if mod_full in SERVER_MODULES or mod_root in SERVER_MODULES:
                     return True
                 break
+    return False
+
+
+def _is_unsafe_prefix_segment(seg: str) -> bool:
+    if _has_subshell_or_cmd_subst(seg) or _is_exec_command(seg) or _is_unexeced_server_command(seg):
+        return True
+    tokens = _unwrap_command_tokens(seg)
+    if not tokens:
+        return False
+    if tokens[0] in ("exec", "eval", "source", ".") or _is_shell_token(tokens[0]):
+        return True
     return False
 
 
@@ -263,14 +354,18 @@ def shell_c_violation(argv: list[str]) -> str | None:
     if final_op not in (None, ";", "\n", "&&") or not _is_exec_command(final_seg):
         return script
     for op, seg in segments[:-1]:
-        if op == "&" or _is_exec_command(seg) or _is_unexeced_server_command(seg):
+        if op == "&" or _is_unsafe_prefix_segment(seg):
             return script
     return None
 
 
 def _normalize_argv_list(items: list[str]) -> list[str]:
     if len(items) == 1 and " " in items[0].strip():
-        return _shlex_split(items[0].strip())
+        raw = items[0].strip()
+        tokens = _shlex_split(raw)
+        if len(_split_shell_segments(raw)) > 1 and _extract_shell_c_script(tokens) is not None:
+            return ["sh", "-c", raw]
+        return tokens
     return items
 
 
@@ -295,7 +390,7 @@ def _dockerfile_exec_forms(path: Path):
             except json.JSONDecodeError:
                 raw = raw.strip("[]").strip()
         tokens = _shlex_split(raw)
-        if _extract_shell_c_script(tokens) is not None:
+        if len(_split_shell_segments(raw)) == 1 and _extract_shell_c_script(tokens) is not None:
             yield kind, tokens
         else:
             yield kind, ["sh", "-c", raw]
@@ -324,7 +419,12 @@ def _compose_argvs(path: Path):
             if isinstance(val, list) and val:
                 yield name, key, _normalize_argv_list([str(v) for v in val])
             elif isinstance(val, str) and val.strip():
-                yield name, key, _shlex_split(val.strip())
+                raw = val.strip()
+                tokens = _shlex_split(raw)
+                if len(_split_shell_segments(raw)) > 1 and _extract_shell_c_script(tokens) is not None:
+                    yield name, key, ["sh", "-c", raw]
+                else:
+                    yield name, key, tokens
 
 
 def collect_violations(
@@ -376,6 +476,13 @@ def test_detector_flags_and_accepts():
     assert shell_c_violation(["sh", "-c", "true || exec echo skipped; uvicorn app:app"])
     assert shell_c_violation(["sh", "-c", "true || exec uvicorn app:app"])
     assert shell_c_violation(["sh", "-c", "uvicorn app:app && exec true"])
+    assert shell_c_violation(["sh", "-c", "sh -c 'uvicorn app:app'; exec true"])
+    assert shell_c_violation(["sh", "-c", "sh -c 'exec uvicorn app:app'; exec true"])
+    assert shell_c_violation(["sh", "-c", "(uvicorn app:app); exec true"])
+    assert shell_c_violation(["sh", "-c", "(exec uvicorn app:app); exec true"])
+    assert shell_c_violation(["sh", "-c", "if true; then sh -c 'uvicorn app:app'; fi; exec true"])
+    assert shell_c_violation(["sh", "-c", "if true; then (uvicorn app:app); fi; exec true"])
+    assert shell_c_violation(["sh", "-c", "exec sh -c \"(uvicorn app:app); exec true\""])
     assert shell_c_violation(["sh", "-c", "exec uvicorn app:app | cat"])
     assert shell_c_violation(["sh", "-c", "exec uvicorn app:app &"])
     assert shell_c_violation(["sh", "-c", "(exec uvicorn app:app)"])
@@ -384,6 +491,7 @@ def test_detector_flags_and_accepts():
     assert shell_c_violation(["sh", "-c", "my-daemon & true; exec wait"])
     assert not shell_c_violation(["sh", "-c", "exec uvicorn a:b --port ${PORT:-1}"])
     assert not shell_c_violation(["sh", "-ec", "mkdir -p /tmp/x && exec uvicorn a:b"])
+    assert not shell_c_violation(["sh", "-c", "exec sh -c 'mkdir -p /tmp/x && exec uvicorn a:b'"])
     assert not shell_c_violation(["uvicorn", "a:b"])
 
 
@@ -399,41 +507,57 @@ def test_collector_flags_shell_and_string_forms_in_isolated_fixture(tmp_path, mo
         'FROM python:3.12-slim\nENTRYPOINT ["sh", "-c", "true || exec echo skipped; uvicorn app:app"]\n',
         encoding="utf-8",
     )
+    dockerfile_nested = tmp_path / "services" / "nested" / "Dockerfile"
+    dockerfile_nested.parent.mkdir(parents=True)
+    dockerfile_nested.write_text(
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT ["sh", "-c", "(uvicorn app:app); exec true"]\n'
+        'CMD ["sh", "-c", "sh -c \'uvicorn app:app\'; exec true"]\n',
+        encoding="utf-8",
+    )
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         "services:\n"
         '  api:\n    command: sh -c "uvicorn app:app"\n'
         '  worker:\n    entrypoint: bash -c "uvicorn app:app"\n'
-        '  decoy:\n    command: ["sh", "-c", "true || exec echo skipped; uvicorn app:app"]\n',
+        '  decoy:\n    command: ["sh", "-c", "true || exec echo skipped; uvicorn app:app"]\n'
+        '  nested-cmd:\n    command: ["sh", "-c", "sh -c \'uvicorn app:app\'; exec true"]\n'
+        '  subshell-ep:\n    entrypoint: ["bash", "-c", "(uvicorn app:app); exec true"]\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
     violations = collect_violations()
-    assert len(violations) == 5
+    assert len(violations) == 9
     assert any("Dockerfile: CMD sh -c without exec: uvicorn app:app" in v for v in violations)
     assert any("services/decoy/Dockerfile: ENTRYPOINT sh -c without exec:" in v for v in violations)
+    assert any("services/nested/Dockerfile: ENTRYPOINT sh -c without exec: (uvicorn app:app); exec true" in v for v in violations)
+    assert any("services/nested/Dockerfile: CMD sh -c without exec: sh -c 'uvicorn app:app'; exec true" in v for v in violations)
     assert any("docker-compose.yml:api: command sh -c without exec: uvicorn app:app" in v for v in violations)
     assert any("docker-compose.yml:worker: entrypoint sh -c without exec: uvicorn app:app" in v for v in violations)
     assert any("docker-compose.yml:decoy: command sh -c without exec:" in v for v in violations)
+    assert any("docker-compose.yml:nested-cmd: command sh -c without exec: sh -c 'uvicorn app:app'; exec true" in v for v in violations)
+    assert any("docker-compose.yml:subshell-ep: entrypoint sh -c without exec: (uvicorn app:app); exec true" in v for v in violations)
 
 
 def test_collector_accepts_valid_exec_and_justified_one_shot_fixture(tmp_path):
     dockerfile_json = tmp_path / "services" / "a" / "Dockerfile"
     dockerfile_json.parent.mkdir(parents=True)
     dockerfile_json.write_text(
-        'FROM python:3.12-slim\nCMD ["sh", "-c", "exec uvicorn app:app --port ${PORT:-8000}"]\n',
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT ["sh", "-ec", "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"]\n'
+        'CMD ["sh", "-c", "exec uvicorn app:app --port ${PORT:-8000}"]\n',
         encoding="utf-8",
     )
     dockerfile_shell = tmp_path / "services" / "b" / "Dockerfile"
     dockerfile_shell.parent.mkdir(parents=True)
     dockerfile_shell.write_text(
-        'FROM python:3.12-slim\nCMD sh -c "exec uvicorn app:app --port ${PORT:-8000}"\n',
+        'FROM python:3.12-slim\nCMD sh -c "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n',
         encoding="utf-8",
     )
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         "services:\n"
-        '  api:\n    command: sh -c "exec uvicorn app:app"\n'
+        '  api:\n    command: sh -c "mkdir -p /tmp/x && exec uvicorn app:app"\n'
         '  gateway:\n    entrypoint: ["bash", "-ec", "mkdir -p /tmp/x && exec uvicorn app:app"]\n'
         '  openclaw-data-init:\n    command: sh -c "mkdir -p /data && chown -R 1000:1000 /data"\n',
         encoding="utf-8",

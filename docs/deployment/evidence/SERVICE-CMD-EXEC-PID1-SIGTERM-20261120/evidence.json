@@ -9,7 +9,7 @@
     "exit_code": 0,
     "sigkill_137": false
   },
-  "contract_test": "scripts/test_service_process_signal_contract.py (5 passed; normalizes JSON/shell Dockerfile CMD/ENTRYPOINT and list/string compose command/entrypoint forms, rejects unsafe server shell wrappers including decoy/non-terminal exec, and includes collector-level regression fixtures)",
+  "contract_test": "scripts/test_service_process_signal_contract.py (5 passed; normalizes JSON/shell Dockerfile CMD/ENTRYPOINT and list/string compose command/entrypoint forms, rejects unsafe server shell wrappers including decoy/non-terminal exec and nested shell/subshell prefix launches, and includes collector-level regression fixtures)",
   "ci_registration": "No inventory exemption needed: Test sweep in branch-ci.yml runs every tracked test file by default",
   "hosted_proof": "pending: read-only check after first Root containing the change (PID 1 of pantheon-source-ingest-1 is uvicorn; next Taiwan refresh run without SIGKILL)"
 }
